@@ -7,7 +7,6 @@ Part B: Generate location background plates
 import asyncio
 import hashlib
 import json
-import re
 from dataclasses import replace
 from pathlib import Path
 
@@ -34,7 +33,7 @@ from novel_to_comic.state_assets import (
     mark_dependent_states_stale,
 )
 from novel_to_comic.asset_generation import (
-    AbstractStyleProofInput,
+    CharacterStyleCalibrationInput,
     CanonicalCharacterReferenceInput,
     CanonicalLocationPlateInput,
     CharacterStateReferenceInput,
@@ -45,66 +44,18 @@ from novel_to_comic.asset_generation import (
     style_reference_plan,
     submit_non_panel_request,
 )
-from novel_to_comic.text_utils import clean, shorten
 from novel_to_comic.usage import ApiResult
 
 console = Console()
 
 
-_clean = clean
-_shorten = shorten
-
-def _tokens(value: str) -> set[str]:
-    return {
-        token
-        for token in re.findall(r"[a-z0-9]+", value.lower())
-        if len(token) > 2 and token not in {"the", "and", "with", "his", "her"}
-    }
 
 
-def _character_signature(char: Character) -> str:
-    features = ", ".join(_clean(f) for f in char.distinguishing_features[:4])
-    pieces = [
-        f"{char.name}: {_clean(char.age_range)} {_clean(char.gender)}".strip(),
-        features,
-        _clean(char.default_outfit),
-    ]
-    return _shorten("; ".join(piece for piece in pieces if piece), 220)
 
 
-def _similar_cast_members(char: Character, story_bible: StoryBible) -> list[Character]:
-    char_outfit_tokens = _tokens(char.default_outfit)
-    matches = []
-    for other in story_bible.characters:
-        if other.id == char.id:
-            continue
-        other_outfit_tokens = _tokens(other.default_outfit)
-        outfit_overlap = len(char_outfit_tokens & other_outfit_tokens)
-        if outfit_overlap >= 1:
-            matches.append((outfit_overlap, other))
-    return [other for _overlap, other in sorted(matches, key=lambda item: item[0], reverse=True)[:3]]
 
 
-def _cast_identity_lock(char: Character, story_bible: StoryBible) -> str:
-    similar = _similar_cast_members(char, story_bible)
-    if not similar:
-        return (
-            f"CAST IDENTITY LOCK: Only {char.name} appears in this reference sheet. "
-            f"Preserve these unique traits: {_character_signature(char)}."
-        )
 
-    comparisons = []
-    own_features = _character_signature(char)
-    for other in similar:
-        comparisons.append(
-            f"distinct from {other.name}, who is {_character_signature(other)}"
-        )
-    return (
-        f"CAST IDENTITY LOCK: Only {char.name} appears in this reference sheet. "
-        f"{char.name} must be immediately recognizable as {_shorten(own_features, 180)}. "
-        f"Keep this face, hairline, build, posture, and silhouette visually "
-        f"{'; '.join(comparisons)}. Do not merge cast members into one generic person."
-    )
 
 
 _SHEET_POSE_BOXES: dict[str, tuple[float, float, float, float]] = {
@@ -264,159 +215,17 @@ def _cast_asset_style_ref(config: Config, style_ref: Path | None) -> Path | None
     return RefStrategy.for_config(config).cast_style_ref(style_ref)
 
 
-def _style_authority_block(asset_kind: str) -> str:
-    return (
-        "STYLE AUTHORITY:\n"
-        f"- The selected style above is mandatory for this {asset_kind}, not decorative.\n"
-        "- Preserve the style's medium, mark-making, palette, lighting language, edge quality, "
-        "shape design, and rendering density.\n"
-        "- Layout or reference-format constraints below describe composition only; do not let "
-        "them flatten the image into generic clean concept art, photorealism, anime, or default "
-        "digital illustration.\n"
-        "- If a style reference image is provided, treat it as the visual authority for how "
-        "surfaces are painted, lit, simplified, and finished."
-    )
-
-
-def _state_anatomy_directive(char_name: str, state: AppearanceState) -> str:
-    """Force a state sheet to depict the altered body consistently.
-
-    The two-view sheet renders the figure twice, so a changed body part (lost
-    hands, prosthetics) must remain consistent between the portrait and the
-    full-body view. State-agnostic: this pins whatever the anchor describes,
-    sharpened by the authored continuity_guard when present.
-    """
-    lines = [
-        f"APPEARANCE STATE — this sheet depicts {char_name} in a specific altered state: {state.label}.",
-        "The altered body (hands, limbs, or other changed features) MUST look identical in both "
-        "views and match the description above exactly — never show a different version of it in "
-        "either view, and never blend in the character's other appearance states.",
-    ]
-    guard = (state.continuity_guard or "").strip()
-    if guard:
-        lines.append(f"Continuity rule: {guard}.")
-    return " ".join(lines)
-
-
-def _character_ref_prompt(
-    config: Config,
-    story_bible: StoryBible,
-    char: Character,
-    addendum: str = "",
-    state: AppearanceState | None = None,
-) -> str:
-    # Both views in one image keep facial identity and body design coherent.
-    identity_lock = _cast_identity_lock(char, story_bible)
-    addendum_block = f"\nUSER FIX NOTE: {addendum.strip()}\n" if addendum.strip() else ""
-    state_block = f"\n{_state_anatomy_directive(char.name, state)}\n" if state is not None else ""
-    return (
-        f"{config.style_template}\n\n"
-        f"{_style_authority_block('character reference sheet')}\n\n"
-        f"CHARACTER REFERENCE SHEET - {char.name}, {char.gender}.\n"
-        f"{identity_lock}\n"
-        f"{char.visual_anchor}\n"
-        f"{addendum_block}"
-        f"{state_block}\n"
-        f"One square image divided into two equal vertical panels: "
-        f"left: head-and-shoulders three-quarter portrait with a restrained neutral expression; "
-        f"right: neutral full-body three-quarter standing view with relaxed arms and anatomy-compatible hands. "
-        f"Both depictions are the SAME character - identical face, hair, build, proportions, and clothing. "
-        f"Use believable adult anatomy and a natural head-to-body ratio appropriate to the described build. "
-        f"Never chibi, super-deformed, big-headed, doll-like, toy-like, mascot-like, or caricatured. "
-        f"Each depiction is fully contained within its half with white space around it. "
-        f"Plain uncluttered reference background; a subtle style-colored studio wash or cast light is allowed, but no scenery. "
-        f"The right figure is full body, head to toe, with no cropping. No text, labels, or divider line. "
-        f"Clean controlled surfaces; no noisy grain, speckled dappling, repeated texture fields, or muddy micro-detail.\n\n"
-        f"Render every figure in the style described above."
-    )
 
 
 
-def _character_ref_clean_text_prompt(
-    config: Config,
-    char: Character,
-    addendum: str = "",
-    state: AppearanceState | None = None,
-) -> str:
-    style = config.style_template.strip()
-    name = char.name
-    gender = char.gender
-    anchor = char.visual_anchor.strip()
-    outfit = char.default_outfit.strip()
-
-    style = RefStrategy.for_config(config).clamp_style_text(style)
-
-    parts = [
-        style,
-        f"CHARACTER REFERENCE SHEET - {name}, {gender}.",
-        anchor,
-    ]
-    if outfit:
-        parts.append(f"Default clothing: {outfit}")
-    if addendum.strip():
-        parts.append(f"USER FIX NOTE: {addendum.strip()}")
-    if state is not None:
-        parts.append(_state_anatomy_directive(name, state))
-
-    grid_desc = (
-        "One square image divided into two equal vertical panels showing the SAME character: "
-        "left: head-and-shoulders three-quarter portrait; right: neutral full-body "
-        "three-quarter standing view with relaxed arms and anatomy-compatible hands. "
-        "Identical face, hair, build, natural adult proportions, and clothing in both panels. "
-        "Never chibi, super-deformed, big-headed, doll-like, toy-like, mascot-like, or "
-        "caricatured. Plain neutral background. No text, labels, or divider line."
-    )
-    parts.append(grid_desc)
-
-    return "\n\n".join(parts)
 
 
-def _character_sheet_prompt(
-    config: Config,
-    story_bible: StoryBible,
-    char: Character,
-    addendum: str = "",
-    state: AppearanceState | None = None,
-) -> str:
-    if RefStrategy.for_config(config).use_clean_text_character_prompt():
-        return _character_ref_clean_text_prompt(config, char, addendum, state)
-    return _character_ref_prompt(config, story_bible, char, addendum, state)
 
 
-def _location_plate_prompt(config: Config, loc, addendum: str = "", anchor: str | None = None) -> str:
-    plate_anchor = anchor or loc.visual_anchor
-    addendum_text = addendum.strip()
-    if RefStrategy.for_config(config).use_structured_location_plate_prompt():
-        addendum_block = f"\nUSER FIX NOTE: {addendum_text}\n" if addendum_text else ""
-        return (
-            f"{config.style_template.strip()}\n\n"
-            f"{_style_authority_block('location design plate')}\n\n"
-            f"LOCATION DESIGN PLATE\n"
-            f"{plate_anchor}\n"
-            f"{addendum_block}\n"
-            f"Create a clean wide environment design plate, not a texture study. "
-            f"No characters present. No text. "
-            f"Build the image from large simple readable masses and clear silhouettes. "
-            f"Use only the setting elements from the anchor, grouped into major shapes such as "
-            f"tree masses, ground plane, path, water, building, fence, sky, or shadow when they apply. "
-            f"If the setting contains dense woods, underbrush, leaves, ferns, grass, debris, or bark, "
-            f"summarize them as a few grouped shapes with calm gaps between them. "
-            f"Leave broad quiet areas of sky, ground, water, or shadow; do not fill every surface. "
-            f"Render with clean edges and minimal surface texture in the selected medium. "
-            f"Do not render leaf-by-leaf, grass-blade-by-grass-blade, bark-chip-by-bark-chip, "
-            f"or fern-frond-by-fern-frond. "
-            f"No repeated stamps, pattern tiling, wallpaper texture, speckled dappling, "
-            f"noisy grain, muddy micro-detail, or fractal foliage."
-        )
-    addendum_block = f" USER FIX NOTE: {addendum_text}." if addendum_text else ""
-    return (
-        f"{config.style_template}\n\n"
-        f"{_style_authority_block('location design plate')}\n\n"
-        f"{plate_anchor}{addendum_block} "
-        f"Wide establishing shot, no characters present, clean readable background, "
-        f"cinematic composition. No text. No noisy grain, speckled dappling, "
-        f"repeated texture fields, pattern tiling, or muddy micro-detail."
-    )
+
+
+
+
 
 
 def _location_plate_dimensions(config: Config) -> tuple[int | None, int | None]:
@@ -424,16 +233,10 @@ def _location_plate_dimensions(config: Config) -> tuple[int | None, int | None]:
 
 
 def _location_plate_jobs(loc) -> list[tuple[str, str, str | None]]:
-    """(plate_stem, anchor, state_id) tuples: the default plate plus one per state.
-
-    Locations with states (pre/post collapse, day/night) need a plate per
-    state — otherwise panels in a non-default state get an image reference
-    that contradicts their text anchor. State ids extend the parent location
-    id, so plates/{stem}.png never collides.
-    """
+    """(plate_stem, anchor, state_id) tuples with entity-scoped state paths."""
     jobs: list[tuple[str, str, str | None]] = [(loc.id, loc.visual_anchor, None)]
     for state in loc.appearance_states or []:
-        jobs.append((state.id, state.visual_anchor, state.id))
+        jobs.append((f"{loc.id}/states/{state.id}", state.visual_anchor, state.id))
     return jobs
 
 
@@ -456,23 +259,6 @@ def _cast_semaphore(config: Config) -> asyncio.Semaphore:
     return asyncio.Semaphore(config.effective_image_concurrency())
 
 
-def _prop_ref_prompt(config: Config, prop: Prop, addendum: str = "") -> str:
-    addendum_block = f" USER FIX NOTE: {addendum.strip()}." if addendum.strip() else ""
-    return (
-        f"{config.style_template}\n\n"
-        f"{_style_authority_block('prop reference')}\n\n"
-        f"PROP REFERENCE - {prop.name}.\n"
-        f"{prop.visual_anchor}{addendum_block}\n\n"
-        f"Single object, isolated on a plain neutral mid-grey background. "
-        f"Three-quarter view, evenly lit, the object centered and fully visible "
-        f"with generous margin on all sides — nothing crops the silhouette. "
-        f"No characters, no hands, no scenery, no other objects. "
-        f"No text, no labels, no captions. "
-        f"Render the object's material, color, condition, and distinctive features "
-        f"clearly so it can be matched in later panels. "
-        f"Clean controlled surfaces; no noisy grain, speckled dappling, "
-        f"repeated texture fields, pattern tiling, or muddy micro-detail."
-    )
 
 
 def _character_generation_input(
@@ -483,8 +269,6 @@ def _character_generation_input(
         "the left and a neutral full-body three-quarter standing view on the right. Keep "
         "the full-body figure visible head to toe on a plain uncluttered background."
     )
-    if addendum.strip():
-        direction += f" User fix note: {addendum.strip()}"
     return CanonicalCharacterReferenceInput(
         asset_identity=f"character_ref:{char.id}",
         prompt=GenerationPromptInput(
@@ -493,11 +277,13 @@ def _character_generation_input(
                 baseline_affect=char.baseline_affect,
             ),),
             visual_brief=direction,
+            editorial_addendum=addendum,
+            editable_facets=("wardrobe color", "wardrobe material", "accessories", "expression"),
             composition="Square two-view character reference sheet, portrait left and full body right.",
             constraints=(
-                "Natural adult head-to-body ratio; no chibi, super-deformed, big-headed, "
-                "doll-like, toy-like, mascot-like, or caricatured proportions; no text, "
-                "labels, divider lines, scenery, or other characters."
+                "Preserve active anatomy, age, and proportions in the selected style. "
+                "Each view stays within its equal vertical half. No text, labels, "
+                "divider lines, scenery, or other characters."
             ),
             width=1024,
             height=1024,
@@ -514,13 +300,19 @@ def _character_style_board_path(project_dir: Path) -> Path:
     return project_dir / "refs" / "character_style_board.png"
 
 
-def _character_style_reference(project_dir: Path, fallback: Path | None) -> Path | None:
-    """Return the character-domain style authority when it has been generated."""
+def _character_style_reference(
+    config: Config, project_dir: Path, fallback: Path | None,
+) -> Path | None:
+    """Use a calibration board only when its producing request is current."""
     board = _character_style_board_path(project_dir)
-    return board if board.exists() else fallback
+    request = compile_non_panel_request(
+        config, _character_style_calibration_input(config),
+        reference_plan=style_reference_plan(config, fallback),
+    )
+    return board if asset_matches_request(board, request) else fallback
 
 
-def _character_style_calibration_input(config: Config) -> AbstractStyleProofInput:
+def _character_style_calibration_input(config: Config) -> CharacterStyleCalibrationInput:
     """Build a subject-diverse style board that de-entangles style from identity.
 
     The approved scene proof often contains one specific person. Character-sheet
@@ -540,7 +332,7 @@ def _character_style_calibration_input(config: Config) -> AbstractStyleProofInpu
             name="older adult", identity="an unrelated older adult with natural proportions",
         ),
     )
-    return AbstractStyleProofInput(
+    return CharacterStyleCalibrationInput(
         asset_identity="cast:character_style_board",
         prompt=GenerationPromptInput(
             subjects=subjects,
@@ -552,9 +344,8 @@ def _character_style_calibration_input(config: Config) -> AbstractStyleProofInpu
             ),
             composition="Landscape three-person character calibration lineup, full body, neutral poses.",
             constraints=(
-                "Natural anatomically believable adult head-to-body ratios appropriate to each "
-                "build; no chibi, super-deformed, big-headed, doll-like, toy-like, mascot-like, "
-                "or caricatured proportions; plain quiet background; no text or labels."
+                "Preserve each subject's distinct age and build in the selected style; "
+                "plain quiet background; no text or labels."
             ),
             width=1344,
             height=768,
@@ -574,8 +365,6 @@ def _location_generation_input(
         "Clean wide environment design plate with large readable masses, clear silhouettes, "
         "quiet areas of sky, ground, water, or shadow, and no characters."
     )
-    if addendum.strip():
-        direction += f" User fix note: {addendum.strip()}"
     return CanonicalLocationPlateInput(
         asset_identity=f"location_plate:{loc.id}",
         prompt=GenerationPromptInput(
@@ -584,6 +373,8 @@ def _location_generation_input(
                 text=anchor or loc.visual_anchor,
             ),),
             visual_brief=direction,
+            editorial_addendum=addendum,
+            editable_facets=("lighting", "weather", "atmosphere", "surface color"),
             composition="Wide environment design plate with no characters or text.",
             constraints="No text, noisy grain, repeated texture fields, or muddy micro-detail.",
             width=1344,
@@ -604,8 +395,6 @@ def _prop_generation_input(
         "Single object isolated on a neutral mid-grey background, three-quarter view, evenly lit, "
         "centered and fully visible with generous margin."
     )
-    if addendum.strip():
-        direction += f" User fix note: {addendum.strip()}"
     return PropReferenceInput(
         asset_identity=f"prop_ref:{prop.id}",
         prompt=GenerationPromptInput(
@@ -614,6 +403,8 @@ def _prop_generation_input(
             ),),
             visual_brief=direction,
             composition="Single centered prop reference, no cropping.",
+            editorial_addendum=addendum,
+            editable_facets=("material", "color", "surface condition"),
             constraints="No characters, hands, scenery, other objects, text, labels, or captions.",
             width=1024,
             height=1024,
@@ -660,6 +451,7 @@ def _state_asset_prompt(spec: StateAssetGenerationSpec) -> GenerationPromptInput
             baseline_affect=spec.baseline_affect,
             appearance_state_id=spec.state_id,
             appearance_locked=True,
+            appearance_guard=spec.continuity_guard,
         )]
         anchors = []
         composition = (
@@ -672,21 +464,24 @@ def _state_asset_prompt(spec: StateAssetGenerationSpec) -> GenerationPromptInput
         anchors = [PromptAnchor(
             kind="prop" if spec.asset_kind == "prop_state_ref" else "location", entity_id=spec.entity_id, name=spec.entity_id,
             appearance_state_id=spec.state_id, text=spec.active_state_anchor,
+            continuity_guard=spec.continuity_guard,
         )]
         composition = ("Single prop on a neutral background; no characters or text."
                        if spec.asset_kind == "prop_state_ref" else "Wide environment design plate with no characters or text.")
     return GenerationPromptInput(
         anchors=tuple(anchors), subjects=tuple(subjects), composition=composition,
         visual_brief=spec.state_direction or None,
+        editorial_addendum=spec.state_addendum,
+        editable_facets=(("wardrobe color", "wardrobe material", "accessories", "expression")
+                         if spec.asset_kind == "character_state_ref"
+                         else ("lighting", "weather", "atmosphere", "surface color")
+                         if spec.asset_kind == "location_state_plate" else ("material", "color", "surface condition")),
         constraints=(
-            "The active-state anchor wins over canonical mutable facts; preserve the "
-            "canonical parent's head-to-body ratio, silhouette, facial modeling, degree "
-            "of simplification, line weight, and rendering density; never chibi, "
-            "super-deformed, big-headed, doll-like, toy-like, mascot-like, or caricatured."
-            if spec.asset_kind == "character_state_ref" else
-            "The active-state anchor wins over changed facets. Preserve compatible canonical "
-            "shape and materials, line weight, and rendering density."
+            "The active-state anchor and verbatim guard win over changed canonical facts. "
+            "Canonical references preserve only explicitly compatible identity facets; "
+            "selected art direction owns rendering."
         ),
+        location_state_id=spec.state_id if spec.asset_kind == "location_state_plate" else None,
         width=spec.effective_width, height=spec.effective_height,
         generation_width=spec.effective_width, generation_height=spec.effective_height,
         generation_shape=spec.requested_shape,
@@ -769,7 +564,7 @@ async def regenerate_character_ref(
     approved_style_ref = _cast_asset_style_ref(
         config, _find_style_ref(project_dir, config.style_template)
     )
-    style_ref = _character_style_reference(project_dir, approved_style_ref)
+    style_ref = _character_style_reference(config, project_dir, approved_style_ref)
     addendum = _read_character_ref_addendum(project_dir, char.id)
     input_data = _character_generation_input(config, story_bible, char, addendum)
     request = compile_non_panel_request(
@@ -817,7 +612,7 @@ async def regenerate_character_state_ref(
     approved_style_ref = _cast_asset_style_ref(
         config, _find_style_ref(project_dir, config.style_template)
     )
-    style_ref = _character_style_reference(project_dir, approved_style_ref)
+    style_ref = _character_style_reference(config, project_dir, approved_style_ref)
     spec = build_character_state_spec(config, project_dir, char, state, style_path=style_ref)
 
     record_asset_version(output_path, project_dir, reason="before_regenerate")
@@ -879,7 +674,7 @@ async def regenerate_location_plate(
         if state is None:
             raise ValueError(f"Location state not found: {state_id}")
         anchor = state.visual_anchor
-        plate_stem = state.id
+        plate_stem = f"{loc.id}/states/{state.id}"
 
     sem = semaphore or asyncio.Semaphore(1)
     output_path = project_dir / "plates" / f"{plate_stem}.png"
@@ -1162,6 +957,7 @@ async def _generate_location_plates(
         async def _one_plate(loc, stem: str, anchor: str, state_id: str | None) -> None:
             label = f"{loc.name} ({state_id})" if state_id else loc.name
             output_path = plates_dir / f"{stem}.png"
+            output_path.parent.mkdir(parents=True, exist_ok=True)
             if state_id:
                 parent_path = artifacts.location_plate_path(project_dir, loc.id)
                 if not parent_path.exists():
@@ -1409,7 +1205,7 @@ def estimate_state_reference_count(
         config, _find_style_ref(project_dir, config.style_template)
     )
     style_ref = (
-        _character_style_reference(project_dir, approved_style_ref)
+        _character_style_reference(config, project_dir, approved_style_ref)
         if asset_kind == "character" else approved_style_ref
     )
     profile = image_model_profile_for_config(config)
@@ -1476,6 +1272,85 @@ def estimate_state_reference_count(
     ).ref_count
 
 
+def ready_asset_count(config: Config, project_dir: Path) -> int | None:
+    """Count a complete, current Cast inventory without generating any assets.
+
+    Individually generated references are sufficient for review. The optional
+    calibration board is an input when present, not a required Cast output.
+    Compare the same frozen requests as generation so changed styles, anchors,
+    instructions, and canonical parents cannot promote obsolete references.
+    """
+    from novel_to_comic.state_assets import build_prop_state_spec
+
+    bible = artifacts.read_story_bible_safe(project_dir)
+    if bible is None:
+        return None
+    style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
+    character_style_ref = _character_style_reference(config, project_dir, style_ref)
+    requests = []
+    try:
+        for char in bible.characters:
+            requests.append((
+                artifacts.character_ref_sheet_path(project_dir, char.id),
+                compile_non_panel_request(
+                    config, _character_generation_input(
+                        config, bible, char, _read_character_ref_addendum(project_dir, char.id)
+                    ), reference_plan=style_reference_plan(config, character_style_ref),
+                ),
+            ))
+            for appearance in char.appearance_states or []:
+                if appearance.visually_significant:
+                    spec = build_character_state_spec(
+                        config, project_dir, char, appearance, style_path=character_style_ref
+                    )
+                    requests.append((
+                        artifacts.character_state_ref_sheet_path(project_dir, char.id, appearance.id),
+                        _compile_state_asset_wire(config, spec, project_dir),
+                    ))
+        for loc in bible.locations:
+            requests.append((
+                artifacts.location_plate_path(project_dir, loc.id),
+                compile_non_panel_request(
+                    config, _location_generation_input(
+                        config, loc, _read_location_plate_addendum(project_dir, loc.id)
+                    ), reference_plan=style_reference_plan(config, style_ref),
+                ),
+            ))
+            for appearance in loc.appearance_states or []:
+                spec = build_location_state_spec(
+                    config, project_dir, loc, appearance, style_path=style_ref
+                )
+                requests.append((
+                    artifacts.location_state_plate_path(project_dir, loc.id, appearance.id),
+                    _compile_state_asset_wire(config, spec, project_dir),
+                ))
+        for prop in bible.props:
+            requests.append((
+                artifacts.prop_ref_path(project_dir, prop.id),
+                compile_non_panel_request(
+                    config, _prop_generation_input(
+                        config, prop, _read_prop_ref_addendum(project_dir, prop.id)
+                    ), reference_plan=style_reference_plan(config, style_ref),
+                ),
+            ))
+            for appearance in prop.appearance_states:
+                if appearance.visually_significant and not appearance.canonical_equivalent:
+                    spec = build_prop_state_spec(
+                        config, project_dir, prop, appearance, style_path=style_ref
+                    )
+                    requests.append((
+                        artifacts.prop_state_ref_path(project_dir, prop.id, appearance.id),
+                        _compile_state_asset_wire(config, spec, project_dir),
+                    ))
+    except (OSError, ValueError):
+        # Missing/unreadable parents and incompatible reference contracts remain
+        # pending; status inspection must never turn into generation or recovery.
+        return None
+    if not requests or not all(asset_matches_request(path, request) for path, request in requests):
+        return None
+    return len(requests)
+
+
 def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
     from novel_to_comic.usage import estimate_image_cost
     from novel_to_comic.asset_generation import estimate_non_panel_request
@@ -1500,7 +1375,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
     style_plan = style_reference_plan(config, style_ref)
     total = 0.0
-    character_style_ref = _character_style_reference(project_dir, style_ref)
+    character_style_ref = _character_style_reference(config, project_dir, style_ref)
     character_style_plan = style_reference_plan(config, character_style_ref)
     if story_bible.characters and not _character_style_board_path(project_dir).exists():
         total += estimate_non_panel_request(

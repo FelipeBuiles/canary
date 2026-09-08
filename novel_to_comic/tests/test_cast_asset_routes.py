@@ -434,3 +434,85 @@ def test_a_model_authored_state_id_is_not_rejected_for_its_spelling():
 
     for legitimate in ("char_001", "silver", "after the fire", "état-2"):
         assert _require_path_safe_id(legitimate, "state_id") == legitimate
+
+
+@pytest.mark.parametrize("blocker", [None, "missing_state", "changed_style", "changed_parent", "missing_provenance", "failed_stage", "active_job", "unselected_style", "unapproved_style", "missing_prop_state"])
+def test_status_recognizes_individually_generated_cast_without_calibration_board(
+    tmp_path: Path, monkeypatch, blocker,
+):
+    from PIL import Image
+    from novel_to_comic.asset_generation import persist_non_panel_provenance
+    from novel_to_comic.server.routers import projects
+    from novel_to_comic.state import PipelineState, StageStatus, load_state, save_state
+    from novel_to_comic.stages import s3_cast
+
+    project_dir = _project(tmp_path)
+    config = Config(style_template="Clean expressive ink drawing")
+    state = PipelineState(project_name="demo", novel_path="novel.txt", created_at="2026-09-08T00:00:00Z")
+    state.stages["style"].status = StageStatus.COMPLETE
+    save_state(state, project_dir)
+    submissions = []
+
+    async def submit(**kwargs):
+        output = kwargs["output_path"]
+        output.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (32, 32), "white").save(output)
+        result = ApiResult(value=output, usage=UsageRecord(provider="test", model="test", operation="image"))
+        persist_non_panel_provenance(
+            request=kwargs["request"], output_path=output,
+            project_dir=project_dir, request_id="test", result=result,
+        )
+        submissions.append(output)
+        return SimpleNamespace(result=result)
+
+    monkeypatch.setattr(s3_cast, "submit_non_panel_request", submit)
+    asyncio.run(s3_cast.regenerate_character_ref(config, project_dir, "char_001"))
+    asyncio.run(s3_cast.regenerate_character_state_ref(config, project_dir, "char_001", "burned"))
+    asyncio.run(s3_cast.regenerate_location_plate(config, project_dir, "loc_001"))
+    asyncio.run(s3_cast.regenerate_location_plate(config, project_dir, "loc_001", state_id="ruined"))
+    asyncio.run(s3_cast.regenerate_prop_ref(config, project_dir, "prop_001"))
+    assert not s3_cast._character_style_board_path(project_dir).exists()
+    assert state.stages["cast"].status == StageStatus.PENDING
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
+    monkeypatch.setattr(projects, "get_db", lambda: db)
+    monkeypatch.setattr(projects, "is_style_selected", lambda *_: True)
+    app = _app()
+    app.state.running_tasks = {}
+    app.state.style_tasks = {}
+    if blocker == "missing_prop_state":
+        bible = artifacts.read_story_bible(project_dir)
+        bible.props[0].appearance_states = [AppearanceState(
+            id="broken", label="Broken key", visual_anchor="broken iron key",
+            visually_significant=True,
+        )]
+        artifacts.write_story_bible(project_dir, bible)
+    elif blocker == "missing_state":
+        artifacts.character_state_ref_sheet_path(project_dir, "char_001", "burned").unlink()
+    elif blocker == "changed_style":
+        config.style_template = "Soft watercolor painting"
+    elif blocker == "changed_parent":
+        Image.new("RGB", (32, 32), "black").save(artifacts.character_ref_sheet_path(project_dir, "char_001"))
+    elif blocker == "missing_provenance":
+        artifacts.write_asset_meta(artifacts.prop_ref_path(project_dir, "prop_001"), {})
+    elif blocker == "failed_stage":
+        state.stages["cast"].status = StageStatus.FAILED
+        state.stages["cast"].error = "Submission outcome is ambiguous"
+        save_state(state, project_dir)
+    elif blocker == "active_job":
+        app.state.generation_jobs["active"] = SimpleNamespace(project_name="test-user:demo", status="running")
+    elif blocker == "unapproved_style":
+        state.stages["style"].status = StageStatus.AWAITING_REVIEW
+    elif blocker == "unselected_style":
+        monkeypatch.setattr(projects, "is_style_selected", lambda *_: False)
+    request = SimpleNamespace(app=app)
+    response = projects.project_status(request, "demo", (project_dir, config, state), "test-user")
+    if blocker:
+        expected = "failed" if blocker == "failed_stage" else "pending"
+        assert response["stages"]["cast"]["status"] == expected
+        assert len(submissions) == 5
+        return
+    assert response["stages"]["cast"]["status"] == "awaiting_review"
+    assert response["stages"]["cast"]["approved"] is not True
+    assert load_state(project_dir).stages["cast"].status == StageStatus.AWAITING_REVIEW
+    assert len(submissions) == 5

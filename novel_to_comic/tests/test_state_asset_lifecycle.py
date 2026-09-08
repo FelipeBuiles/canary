@@ -44,8 +44,7 @@ def test_character_state_spec_uses_exact_anchor_without_base_outfit_or_hands(tmp
     assert state.visual_anchor in spec.rendered_prompt
     assert spec.active_state_anchor == state.visual_anchor
     assert char.default_outfit not in spec.rendered_prompt
-    assert "one hand raised" not in spec.rendered_prompt.lower()
-    assert "hand-raised" not in spec.rendered_prompt.lower()
+    assert state.continuity_guard in spec.rendered_prompt
     assert {"age", "hair", "anatomy", "clothing"} <= set(spec.overridden_facets)
     assert spec.state_addendum_revision == 0
 
@@ -136,6 +135,7 @@ def test_restore_revalidation_marks_parent_mismatch_stale(tmp_path: Path):
     parent.parent.mkdir(parents=True)
     parent.write_bytes(b"new")
     state = artifacts.location_state_plate_path(tmp_path, "loc_001", "loc_001_night")
+    state.parent.mkdir(parents=True, exist_ok=True)
     state.write_bytes(b"state")
     artifacts.write_asset_meta(state, {
         "entity_id": "loc_001", "state_id": "loc_001_night",
@@ -217,7 +217,7 @@ def test_cast_location_state_missing_parent_is_recorded_not_stage_fatal(
         )
     )
 
-    assert failed == ["loc_001", "loc_001_cleared"]
+    assert failed == ["loc_001", "loc_001/states/loc_001_cleared"]
 
 
 def test_state_generation_uses_compiled_wire_with_canonical_conditioning(

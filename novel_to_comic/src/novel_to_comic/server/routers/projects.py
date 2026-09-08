@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import re
@@ -39,11 +40,12 @@ from novel_to_comic.style_contract import (
     page_style_template,
     style_template_for_suggestion,
 )
-from novel_to_comic.models.generation import PromptAnchor
+from novel_to_comic.models.generation import PromptAnchor, PromptSubject
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.asset_generation import (
     ProjectCoverInput,
     compile_non_panel_request,
+    reference_plan_for_assets,
     style_reference_plan,
     submit_non_panel_request,
 )
@@ -268,28 +270,9 @@ def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
                         return sample
         except Exception:
             pass
-    for i in range(1, 20):
-        sample = project_dir / "samples" / f"style_{i}.png"
-        if sample.exists():
-            return sample
     return None
 
 
-def _cover_prompt(config: Config, bible: StoryBible) -> str:
-    characters = "; ".join(
-        f"{c.name}: {c.visual_anchor[:180]}" for c in bible.characters[:3]
-    )
-    locations = "; ".join(
-        f"{loc.name}: {loc.visual_anchor[:160]}" for loc in bible.locations[:2]
-    )
-    return (
-        f"{config.style_template}\n\n"
-        f"Book cover illustration for {bible.title} by {bible.author}. "
-        f"Feature the central mood and conflict of the story without text, title, logos, captions, or typography. "
-        f"Key characters: {characters or 'the central protagonist'}. "
-        f"Key settings: {locations or 'the primary story world'}. "
-        f"Portrait cover composition, one strong focal image, cinematic lighting, finished production art, no words."
-    )
 
 
 def _project_cover_credit_estimate(config: Config) -> dict:
@@ -321,10 +304,8 @@ async def _generate_project_cover(
     bible = StoryBible.model_validate_json(bible_path.read_text())
     output_path = _cover_path(project_dir)
     style_ref = _find_style_ref(project_dir, config.style_template)
+    cover_cast = bible.characters[:3]
     anchors = tuple(
-        PromptAnchor(kind="character", entity_id=char.id, name=char.name, text=char.visual_anchor)
-        for char in bible.characters[:3]
-    ) + tuple(
         PromptAnchor(kind="location", entity_id=loc.id, name=loc.name, text=loc.visual_anchor)
         for loc in bible.locations[:2]
     )
@@ -332,6 +313,10 @@ async def _generate_project_cover(
         asset_identity="project_cover:cover",
         prompt=GenerationPromptInput(
             anchors=anchors,
+            subjects=tuple(
+                PromptSubject(character_id=char.id, name=char.name, identity=char.visual_anchor)
+                for char in cover_cast
+            ),
             visual_brief=(
                 f"Book cover illustration for {bible.title} by {bible.author}. "
                 "Feature the central mood and conflict without text, title, logos, captions, "
@@ -347,8 +332,24 @@ async def _generate_project_cover(
         ),
         selected_style_text=config.style_template,
     )
+    from novel_to_comic import artifacts
+    from novel_to_comic.image_references import AuthorityScope, ReferenceAsset
+
+    references = list(style_reference_plan(config, style_ref).selected)
+    for char in cover_cast:
+        path = artifacts.character_ref_sheet_path(project_dir, char.id)
+        if not path.exists():
+            raise ValueError(f"Generate and approve the character reference for {char.name} before creating this cover.")
+        references.append(ReferenceAsset(
+            path=path, role="subject", entity_id=char.id, appearance_state_id=None,
+            authority_scope=AuthorityScope.FULL_APPEARANCE,
+            preserve_facets=("face", "hair", "build", "anatomy", "wardrobe"),
+            ignore_facets=(), pose=None,
+            content_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+            lineage_parent_sha256=None, label=char.name,
+        ))
     request = compile_non_panel_request(
-        config, input_data, reference_plan=style_reference_plan(config, style_ref)
+        config, input_data, reference_plan=reference_plan_for_assets(config, references)
     )
     with ai_request_context(
         user_id=user_id,
@@ -657,6 +658,22 @@ def project_status(
     style_selected = is_style_selected(project_dir, config)
     if style_selected and clear_style_failures_after_selection(state):
         state_changed = True
+    if (
+        not running
+        and style_selected
+        and state.stages["style"].status == StageStatus.COMPLETE
+        and state.stages["cast"].status == StageStatus.PENDING
+    ):
+        from novel_to_comic.stages.s3_cast import ready_asset_count
+        from novel_to_comic.state import complete_stage, hash_style_template
+
+        count = ready_asset_count(config, project_dir)
+        if count is not None:
+            state.stages["cast"].items_done = count
+            state.stages["cast"].items_total = count
+            state.style_template_hash = hash_style_template(config.style_template)
+            complete_stage(state, "cast")
+            state_changed = True
     if state_changed:
         save_state(state, project_dir)
 

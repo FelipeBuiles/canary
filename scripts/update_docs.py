@@ -122,11 +122,9 @@ def write_models_doc(models: dict) -> None:
     lines = [
         "# Models Reference\n\n",
         "_Auto-generated from `models/*.py`. Do not edit manually._\n\n",
-        "These are the Pydantic models that flow between pipeline stages. "
-        "`story_bible.json` carries the StoryBible. "
-        "`panels/scene_NNN/panel_NNN.json` carries PanelBreakdown. "
-        "`prompts/scene_NNN/panel_NNN.json` carries ImagePrompt. "
-        "`assembly/pages/page_NNN.json` carries ComicPage.\n\n",
+        "These Pydantic models define the current pipeline's typed contracts. "
+        "See [Stage Contracts](stage-contracts.md) for artifact paths, "
+        "ownership, and revision boundaries.\n\n",
     ]
 
     for class_name, info in models.items():

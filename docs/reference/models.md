@@ -2,7 +2,7 @@
 
 _Auto-generated from `models/*.py`. Do not edit manually._
 
-These are the Pydantic models that flow between pipeline stages. `story_bible.json` carries the StoryBible. `panels/scene_NNN/panel_NNN.json` carries PanelBreakdown. `prompts/scene_NNN/panel_NNN.json` carries ImagePrompt. `assembly/pages/page_NNN.json` carries ComicPage.
+These Pydantic models define the current pipeline's typed contracts. See [Stage Contracts](stage-contracts.md) for artifact paths, ownership, and revision boundaries.
 
 ## RevisionedArtifact _(adaptation.py)_
 
@@ -268,6 +268,32 @@ These are the Pydantic models that flow between pipeline stages. `story_bible.js
 | `incidental_text` | `tuple[OCRTextObservation, ...]` | `()` |
 | `observed_regions` | `tuple[ObservedRegion, ...]` | `()` |
 | `observed_reading_order` | `tuple[str, ...]` | `()` |
+| `reading_order_proven` | `bool` | `False` |
+
+## OCRProviderResponse _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `schema_version` | `int` | `1` |
+| `page_number` | `int` | `Field(ge=1)` |
+| `render_revision` | `int` | `Field(ge=1)` |
+| `render_image_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `request_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `response` | `object` |  |
+| `raw_response` | `str | None` | `None` |
+| `parser_version` | `str` | `'page_ocr_v2'` |
+| `usage` | `UsageRecord` |  |
+
+## RawOCRObservation _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `schema_version` | `int` | `1` |
+| `page_number` | `int` | `Field(ge=1)` |
+| `render_revision` | `int` | `Field(ge=1)` |
+| `render_image_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `extraction` | `OCRExtraction` |  |
+| `usage` | `UsageRecord | None` | `None` |
 
 ## LetteringMatch _(draw.py)_
 
@@ -285,6 +311,9 @@ These are the Pydantic models that flow between pipeline stages. `story_bible.js
 | `page_number` | `int` | `Field(ge=1)` |
 | `render_revision` | `int` | `Field(ge=1)` |
 | `render_image_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `validator_version` | `str` | `'legacy'` |
+| `comic_page_sha256` | `str` | `''` |
+| `reading_order_proven` | `bool` | `False` |
 | `punctuation_policy` | `Literal['typographic_lettering_v2']` | `'typographic_lettering_v2'` |
 | `recognized_lettering` | `dict[str, str]` | `Field(default_factory=dict)` |
 | `ocr_observations` | `tuple[OCRTextObservation, ...]` | `()` |
@@ -297,11 +326,37 @@ These are the Pydantic models that flow between pipeline stages. `story_bible.js
 | `evidence` | `tuple[str, ...]` | `()` |
 | `analysis_usage` | `UsageRecord | None` | `None` |
 
+## AnnotationPoint _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `x` | `float` | `Field(ge=0, le=1)` |
+| `y` | `float` | `Field(ge=0, le=1)` |
+
+## CorrectionAnnotation _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(default='', max_length=120)` |
+| `kind` | `Literal['pin', 'rectangle', 'highlight', 'freehand', 'arrow', 'ellipse', 'text']` |  |
+| `points` | `tuple[AnnotationPoint, ...]` | `Field(min_length=1, max_length=64)` |
+| `note` | `str` | `Field(min_length=1, max_length=500)` |
+| `label` | `str | None` | `Field(default=None, max_length=120)` |
+
+## CorrectionChange _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(min_length=1, max_length=120)` |
+| `issue_id` | `str | None` | `Field(default=None, min_length=1)` |
+| `instruction` | `str` | `Field(min_length=1, max_length=1000)` |
+| `annotations` | `tuple[CorrectionAnnotation, ...]` | `Field(default=(), max_length=24)` |
+
 ## PageRenderCorrection _(draw.py)_
 
 | Field | Type | Default |
 |-------|------|---------|
-| `issue_ids` | `tuple[str, ...]` | `Field(min_length=1)` |
+| `issue_ids` | `tuple[str, ...]` | `Field(default=())` |
 | `page_number` | `int` | `Field(ge=1)` |
 | `comic_page_revision` | `int` | `Field(ge=1)` |
 | `comic_page_sha256` | `str` | `Field(min_length=64, max_length=64)` |
@@ -310,6 +365,18 @@ These are the Pydantic models that flow between pipeline stages. `story_bible.js
 | `mode` | `Literal['instructed', 'region_targeted']` |  |
 | `instruction` | `str` | `Field(min_length=1)` |
 | `detected_region_ids` | `tuple[str, ...]` | `()` |
+| `resolved_regions` | `tuple[ObservedRegion, ...]` | `()` |
+| `depiction` | `Literal['canonical', 'less_graphic']` | `'canonical'` |
+| `retained_instructions` | `tuple[str, ...]` | `()` |
+| `changes` | `tuple[CorrectionChange, ...]` | `Field(default=(), max_length=24)` |
+| `note` | `str` | `Field(default='', max_length=1000)` |
+| `context_beat_ids` | `tuple[str, ...]` | `()` |
+| `context_source_unit_ids` | `tuple[str, ...]` | `()` |
+| `context_selected_source_unit_ids` | `tuple[str, ...]` | `()` |
+| `context_adaptation_revision` | `int | None` | `Field(default=None, ge=1)` |
+| `context_adaptation_sha256` | `str | None` | `Field(default=None, min_length=64, max_length=64)` |
+| `context_digest` | `str` | `''` |
+| `context_truncated` | `bool` | `False` |
 | `artifact_kind` | `Literal['complete_page']` | `'complete_page'` |
 
 ## PageCorrectionIntent _(draw.py)_
@@ -464,6 +531,7 @@ These are the Pydantic models that flow between pipeline stages. `story_bible.js
 | `name` | `str` |  |
 | `appearance_state_id` | `str | None` | `None` |
 | `text` | `str` |  |
+| `continuity_guard` | `str | None` | `None` |
 
 ## PromptSubject _(generation.py)_
 

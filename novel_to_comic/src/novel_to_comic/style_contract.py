@@ -1,5 +1,7 @@
 """Book-wide visual production standards selected by the Style stage."""
 
+from typing import Literal
+
 DEFAULT_LETTERING_STANDARD = (
     "Preserve every canonical lettering string and its capitalization exactly. Use one "
     "consistent humanist comic-lettering typeface family throughout the book: regular "
@@ -14,6 +16,14 @@ DEFAULT_PAGE_FRAMING_STANDARD = (
 )
 LETTERING_MARKER = "LETTERING STANDARD —"
 FRAMING_MARKER = "PAGE FRAMING STANDARD —"
+
+
+def rendering_style_template(visual_style: str) -> str:
+    """Extract art direction without page lettering or framing contracts."""
+    rendering = visual_style or ""
+    for marker in (LETTERING_MARKER, FRAMING_MARKER):
+        rendering = rendering.split(marker, 1)[0]
+    return rendering.strip()
 
 
 def page_style_template(
@@ -38,12 +48,27 @@ def page_style_template(
     return "\n\n".join(section for section in sections if section).strip()
 
 
+def normalize_production_standard(
+    value: object, *, kind: Literal["lettering", "page_framing"],
+) -> str:
+    """Normalize production prose without leaking structured Python reprs."""
+    default = DEFAULT_LETTERING_STANDARD if kind == "lettering" else DEFAULT_PAGE_FRAMING_STANDARD
+    if isinstance(value, str):
+        return value.strip() or default
+    if isinstance(value, dict):
+        parts = [
+            f"{str(key).replace('_', ' ')}: {item.strip()}"
+            for key, item in value.items()
+            if isinstance(item, str) and item.strip()
+        ]
+        return "; ".join(parts) or default
+    return default
+
+
 def style_template_for_suggestion(suggestion: dict) -> str:
     """Return the complete selected style authority for samples and pages."""
     return page_style_template(
         str(suggestion.get("template") or ""),
-        lettering=str(suggestion.get("lettering") or DEFAULT_LETTERING_STANDARD),
-        page_framing=str(
-            suggestion.get("page_framing") or DEFAULT_PAGE_FRAMING_STANDARD
-        ),
+        lettering=normalize_production_standard(suggestion.get("lettering"), kind="lettering"),
+        page_framing=normalize_production_standard(suggestion.get("page_framing"), kind="page_framing"),
     )

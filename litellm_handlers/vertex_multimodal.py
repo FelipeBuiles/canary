@@ -438,20 +438,27 @@ def _exact_complete_page_contents(
             (
                 image_parts[0],
                 (
-                    "Parent complete page revision to correct. Preserve all "
-                    "unmentioned artwork and apply the frozen correction instruction."
+                    "Off-canvas parent-edit-base: the complete page to correct, not an "
+                    "approved identity or state reference. Preserve untouched composition "
+                    "and framing beneath the current approved identity/state/style, exact "
+                    "copy and author pins. Apply the authoritative change list."
                 ),
             )
         )
         reference_parts = image_parts[1:]
     for reference, part in zip(references, reference_parts, strict=True):
+        index = reference["order"]
+        suffix = ""
+        while index:
+            index, remainder = divmod(index - 1, 26)
+            suffix = chr(65 + remainder) + suffix
         contents.extend(
             (
                 part,
                 (
-                    f"Reference {reference['order']}: "
-                    f"{reference.get('label') or 'approved subject'}. "
-                    "Use only for the subjects assigned this reference in the page instructions."
+                    f"Off-canvas asset-{suffix}: this immediately preceding image. "
+                    "Use only for its assigned subject and appearance state in the page "
+                    "instructions. This binding is never a visible caption or callout."
                 ),
             )
         )

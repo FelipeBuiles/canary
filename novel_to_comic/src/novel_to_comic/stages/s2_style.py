@@ -11,6 +11,10 @@ import json
 import logging
 import re
 from pathlib import Path
+from itertools import product
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from novel_to_comic import artifacts
 from novel_to_comic.clients import text as text_client
@@ -36,6 +40,7 @@ from novel_to_comic.style_contract import (
     style_template_for_suggestion,
     page_style_template,
 )
+from novel_to_comic.style_contract import normalize_production_standard
 from novel_to_comic.stage_runtime import StageRuntime
 
 logger = logging.getLogger(__name__)
@@ -44,8 +49,8 @@ SAMPLE_COUNT = 5
 LLM_REQUEST_COUNT = 8  # ask for more than we need so dedup still yields >= 5
 SAMPLE_CONCURRENCY = 2
 _GENERATION_MAX_ATTEMPTS = 2
-SUGGESTION_SCHEMA_VERSION = 3
-STYLE_BRIEF_VERSION = 3
+SUGGESTION_SCHEMA_VERSION = 4
+STYLE_BRIEF_VERSION = 4
 PORTFOLIO_ROLES = (
     "story_fit_primary", "story_fit_secondary", "adjacent", "contrast", "wildcard",
 )
@@ -55,6 +60,41 @@ STYLE_VALIDATION_COMPOSITION = (
     "full-body action, and expressive reaction detail, all using the same declared "
     "framing, border, gutter, and lettering system."
 )
+
+VisualLogic = Literal["photographic", "realistic_illustration", "stylized", "graphic"]
+StyleReferenceMode = Literal["faithful", "variation"]
+
+
+class StyleSuggestion(BaseModel):
+    """Declared rendering category, not inferred from technique keywords."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    medium: str
+    visual_logic: VisualLogic
+    portfolio_role: Literal[
+        "story_fit_primary", "story_fit_secondary", "adjacent", "contrast", "wildcard"
+    ]
+    palette: str
+    line_rendering: str
+    lighting_value: str
+    lettering: str
+    page_framing: str
+    sequential_art_strengths: str
+    story_fit: str
+    risk: str
+    template: str = Field(min_length=1)
+
+
+class StyleSuggestionBatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    medium_restriction_quote: str = Field(
+        description="Exact author wording explicitly narrowing permitted medium; empty if absent."
+    )
+    styles: list[StyleSuggestion] = Field(max_length=LLM_REQUEST_COUNT)
+
 
 _SYSTEM_PROMPT = (
     "You are a visual art director for adapted fiction. Surface 8 genuinely distinctive "
@@ -83,12 +123,14 @@ _SYSTEM_PROMPT = (
 
     "2) CURATE (silently). From your brainstorm, pick 8 candidates that are MAXIMALLY "
     "DISTINCT. Hard constraints:\n"
-    "- No two suggestions may share the same primary medium. If one uses an etching, "
-    "no other may use any printmaking technique (etching, engraving, lithography, "
-    "woodblock, screen print). If one uses photography, no other may use a lens-based "
-    "medium. If one uses clay/sculpture, no other may use any 3d medium.\n"
-    "- The 8 must collectively span at least 5 of the 6 dimensions.\n"
-    "- At least 4 must match the story's mood; at least 1 must productively contradict it.\n\n"
+    "- Prefer distinct primary mediums, palette, and finish. For explicitly narrowed "
+    "author requests, vary compatible technique and rendering instead of violating the medium.\n"
+    "- Unless the author explicitly narrows the medium, the final selected portfolio "
+    "MUST include both photographic (credible lens-based anatomy, materials and light) "
+    "and realistic_illustration (credible representational anatomy and materials, drawn "
+    "or painted rather than photographed). These must be viable sequential-art options, "
+    "not stylized art merely labeled realistic. Retain stylized/graphic alternatives.\n"
+    "- At least 4 candidates should match the mood; at least 1 should productively contrast it.\n\n"
 
     "3) WRITE. Every template must name at least one real anchor: a specific artist, "
     "illustrator, magazine, studio, film, decade, movement, region, or publication. "
@@ -102,15 +144,18 @@ _SYSTEM_PROMPT = (
     "visual aesthetic only — do not reference characters, locations, or plot from the "
     "story; those get combined in later.\n\n"
 
-    "For each suggestion also declare its primary medium: the dominant physical or "
-    "digital medium in 1-3 lowercase words (e.g. \"woodblock print\", \"gouache\", "
-    "\"cut-paper collage\", \"35mm photography\"). This is the field your curation "
-    "constraint is checked against, so name the medium honestly and specifically.\n\n"
+    "For each suggestion declare its dominant physical or digital medium in 1-3 "
+    "lowercase words (e.g. gouache, cut-paper collage, 35mm photography). "
+    "Name the medium honestly and specifically.\n\n"
 
-    "The final five positions matter: return the two strongest story-fit directions, "
-    "then one aesthetically adjacent alternative, one viable contrast, and one controlled "
-    "wildcard. Judge every direction as sequential art: panel-size readability, repeatable "
-    "characters, expressive faces and action, clear environments, and value separation.\n\n"
+    "Return eight candidates across five portfolio roles, with at least one candidate "
+    "for every required role. Code selects one per role, not the first five positions. "
+    "Place photographic and realistic_illustration options in different roles so both "
+    "survive final curation. With an author direction, return candidates for "
+    "story_fit_primary, adjacent, contrast, and wildcard; the faithful proof is separate. "
+    "Contrast and wildcard must remain inside any explicit author medium restriction. "
+    "Judge every direction as sequential art: repeatable identities, readable action, "
+    "expressive faces, environments, and value separation.\n\n"
     "For each direction, also define a production system that can remain invariant across "
     "an entire book:\n"
     "- lettering: name one typeface class/family; require preservation of canonical "
@@ -122,11 +167,13 @@ _SYSTEM_PROMPT = (
     "on every page or full bleed on every page — plus one panel-border and gutter treatment. "
     "Never alternate systems by page and never use scribbled borders unless that exact "
     "border treatment is the declared invariant.\n\n"
-    "Output JSON array only, no markdown. Every object needs: label, medium, palette, "
-    "portfolio_role (story_fit_primary, story_fit_secondary, adjacent, contrast, or wildcard), "
-    "line_rendering, lighting_value, lettering, page_framing, sequential_art_strengths, "
-    "story_fit, risk, and template. Template remains a 40-70 word downstream generation "
-    "direction."
+    "Output a JSON object with medium_restriction_quote and styles. The quote must be "
+    "verbatim author wording explicitly limiting medium, or empty; story mood alone "
+    "never narrows medium. Every style needs label, medium, visual_logic "
+    "(photographic, realistic_illustration, stylized, or graphic), portfolio_role, "
+    "palette, line_rendering, lighting_value, lettering, page_framing, "
+    "sequential_art_strengths, story_fit, risk, and template. All production standards "
+    "must be concise prose strings, never objects or arrays. Template is 40-70 words."
 )
 
 
@@ -145,20 +192,22 @@ def _stable_suggestion_id(suggestion: dict) -> str:
 def normalize_suggestion(
     suggestion: dict, *, role: str | None = None, origin: str = "generated",
 ) -> dict:
-    """Normalize generated and safely-read older dictionaries to the v2 shape."""
+    """Retain production standards, declared rendering logic, and image authority."""
     normalized = {
         "id": _stable_suggestion_id(suggestion),
         "origin": suggestion.get("origin") or origin,
         "role": role or suggestion.get("role"),
         "label": suggestion.get("label") or "Untitled direction",
         "medium": suggestion.get("medium") or "mixed media",
+        "visual_logic": suggestion.get("visual_logic"),
+        "style_reference_mode": suggestion.get("style_reference_mode") or (
+            "variation" if (suggestion.get("origin") or origin) == "generated_neighbor" else "faithful"
+        ),
         "palette": suggestion.get("palette") or "",
         "line_rendering": suggestion.get("line_rendering") or "",
         "lighting_value": suggestion.get("lighting_value") or "",
-        "lettering": suggestion.get("lettering") or DEFAULT_LETTERING_STANDARD,
-        "page_framing": (
-            suggestion.get("page_framing") or DEFAULT_PAGE_FRAMING_STANDARD
-        ),
+        "lettering": normalize_production_standard(suggestion.get("lettering"), kind="lettering"),
+        "page_framing": normalize_production_standard(suggestion.get("page_framing"), kind="page_framing"),
         "sequential_art_strengths": suggestion.get("sequential_art_strengths") or "",
         "story_fit": suggestion.get("story_fit") or "",
         "risk": suggestion.get("risk") or "",
@@ -173,13 +222,9 @@ def normalize_suggestion(
 # Suggestion diversity
 # ---------------------------------------------------------------------------
 #
-# Diversity is enforced upstream in _SYSTEM_PROMPT: the LLM brainstorms across
-# six dimensions, curates maximally-distinct candidates, and declares each
-# suggestion's primary medium in its output. The code below is only a thin
-# safety net that drops suggestions whose declared medium repeats one already
-# in the pool. (This replaced ~280 lines of hand-maintained technique-keyword
-# tables and Jaccard token-overlap scoring — bag-of-words overlap misjudges
-# visual similarity in both directions.)
+# Declared rendering categories and portfolio roles are validated together.
+# Exact duplicate directions are excluded, not entire media: an author may
+# explicitly request a single medium, and realistic variants must remain available.
 
 
 def _medium_tokens(value: str) -> frozenset[str]:
@@ -187,30 +232,22 @@ def _medium_tokens(value: str) -> frozenset[str]:
     return frozenset(re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).split())
 
 
-def _mediums_collide(a: frozenset[str], b: frozenset[str]) -> bool:
-    """True when one declared medium equals or refines the other
-    ("etching" vs "copper etching")."""
-    if not a or not b:
-        return False
-    return a <= b or b <= a
 
 
 def _dedupe_suggestions(
     new_suggestions: list[dict],
     existing_suggestions: list[dict] | None = None,
 ) -> list[dict]:
-    """Drop malformed suggestions and ones whose declared primary medium
-    repeats an existing or already-kept suggestion's."""
-    prior = [_medium_tokens(s.get("medium", "")) for s in (existing_suggestions or [])]
+    """Drop empty or repeated directions without excluding a whole medium."""
+    prior = {str(s.get("template") or "").strip().casefold()
+             for s in (existing_suggestions or [])}
     kept: list[dict] = []
     for s in new_suggestions:
-        if not (s.get("template") or "").strip():
-            continue
-        tokens = _medium_tokens(s.get("medium", ""))
-        if any(_mediums_collide(tokens, p) for p in prior):
+        key = str(s.get("template") or "").strip().casefold()
+        if not key or key in prior:
             continue
         kept.append(s)
-        prior.append(tokens)
+        prior.add(key)
     return kept
 
 
@@ -229,24 +266,6 @@ def _portfolio_distance(a: dict, b: dict) -> float:
                for field in _DIVERSITY_FIELDS) / len(_DIVERSITY_FIELDS)
 
 
-def _select_portfolio(candidates: list[dict], count: int = SAMPLE_COUNT) -> list[dict]:
-    """Greedy farthest-first curation with a small model-ranking preference."""
-    if len(candidates) <= count:
-        return candidates
-    selected = [candidates[0]]
-    remaining = list(enumerate(candidates[1:], 1))
-    while remaining and len(selected) < count:
-        index, choice = max(
-            remaining,
-            key=lambda item: (
-                min(_portfolio_distance(item[1], prior) for prior in selected)
-                + max(0.0, 0.08 - item[0] * 0.01),
-                -item[0],
-            ),
-        )
-        selected.append(choice)
-        remaining = [(i, candidate) for i, candidate in remaining if i != index]
-    return selected
 
 
 def _candidate_role(candidate: dict, index: int) -> str:
@@ -258,27 +277,37 @@ def _candidate_role(candidate: dict, index: int) -> str:
     return PORTFOLIO_ROLES[min(index, len(PORTFOLIO_ROLES) - 1)]
 
 
-def _select_role_portfolio(candidates: list[dict], roles: tuple[str, ...]) -> list[dict]:
-    tagged = [(index, candidate, _candidate_role(candidate, index))
-              for index, candidate in enumerate(candidates)]
-    selected: list[dict] = []
-    used: set[int] = set()
-    for desired in roles:
-        eligible = [(index, candidate) for index, candidate, role in tagged
-                    if index not in used and role == desired]
-        if not eligible:
-            raise RuntimeError(f"Style curation did not produce required role: {desired}")
-        index, choice = max(
-            eligible,
-            key=lambda item: (
-                min((_portfolio_distance(item[1], prior) for prior in selected), default=1.0)
-                + max(0.0, 0.08 - item[0] * 0.01),
-                -item[0],
-            ),
+def _select_role_portfolio(
+    candidates: list[dict], roles: tuple[str, ...], *, require_realism: bool = False,
+) -> list[dict]:
+    groups = [
+        [candidate for index, candidate in enumerate(candidates)
+         if _candidate_role(candidate, index) == role]
+        for role in roles
+    ]
+    for role, group in zip(roles, groups):
+        if not group:
+            raise RuntimeError(f"Style curation did not produce required role: {role}")
+    portfolios = (
+        choices for choices in product(*groups)
+        if not require_realism or {"photographic", "realistic_illustration"} <= {
+            candidate.get("visual_logic") for candidate in choices
+        }
+    )
+    selected = max(
+        portfolios,
+        key=lambda choices: sum(
+            _portfolio_distance(left, right)
+            for index, left in enumerate(choices) for right in choices[index + 1:]
+        ),
+        default=None,
+    )
+    if selected is None:
+        raise RuntimeError(
+            "Style curation needs photographic and realistic illustration options "
+            "in distinct portfolio roles; no valid portfolio was generated."
         )
-        used.add(index)
-        selected.append(choice)
-    return selected
+    return list(selected)
 
 
 def _build_avoid_block(pool: list[dict]) -> str:
@@ -286,8 +315,9 @@ def _build_avoid_block(pool: list[dict]) -> str:
         return ""
     mediums = sorted({m for s in pool if (m := (s.get("medium") or "").strip().lower())})
     medium_line = (
-        "Primary mediums already used — none of your suggestions may use these or a "
-        "close relative: " + ", ".join(mediums) + ".\n\n"
+        "Previously used mediums: vary their treatment or choose other mediums, but do "
+        "not sacrifice required realism coverage or author medium restrictions: "
+        + ", ".join(mediums) + ".\n\n"
         if mediums
         else ""
     )
@@ -310,22 +340,17 @@ async def generate_suggestions(
     existing_suggestions: list[dict] | None = None,
     custom_direction: dict | None = None,
 ):
-    """Generate style suggestions via LLM. Returns (suggestions_list, usage).
+    """Generate typed directions and curate roles with real rendering-category coverage.
 
-    When *existing_suggestions* is supplied the LLM prompt is seeded with the
-    template text and declared primary medium of every prior suggestion so it
-    can deliberately avoid overlapping visual territory; a thin declared-medium
-    filter then drops any remaining repeats.
-
-    The LLM is asked for more suggestions than we need (``LLM_REQUEST_COUNT``)
-    so that dedup can still yield at least ``SAMPLE_COUNT``.  If the first
-    attempt falls short a second attempt is made with the existing-pool
-    expanded to steer the LLM further away.
+    Previously shown options guide novelty without excluding entire rendering categories.
+    A bounded second text call may complete an undersized pool; invalid roles or missing
+    realism fail explicitly rather than manufacturing substitute directions.
     """
     first_usage = None
+    medium_restriction_quote = ""
 
     async def _call_llm(avoid_pool: list[dict]) -> list[dict]:
-        nonlocal first_usage
+        nonlocal first_usage, medium_restriction_quote
         system = (
             _SYSTEM_PROMPT
             + _build_avoid_block(avoid_pool)
@@ -354,16 +379,18 @@ async def generate_suggestions(
             user_content=user,
             temperature=1.0,
             feature="style.suggestions",
+            json_schema=StyleSuggestionBatch.model_json_schema(),
         )
         if first_usage is None:
             first_usage = api_result.usage
 
-        result = api_result.value
-        if isinstance(result, list):
-            return result
-        if isinstance(result, dict):
-            return result.get("styles", [])
-        return []
+        result = StyleSuggestionBatch.model_validate(api_result.value)
+        quote = result.medium_restriction_quote.strip()
+        author_text = str((custom_direction or {}).get("text") or "")
+        if quote and (not author_text or quote not in author_text):
+            raise ValueError("Medium restriction must quote the author direction verbatim.")
+        medium_restriction_quote = quote
+        return [style.model_dump() for style in result.styles]
 
     # --- first attempt -------------------------------------------------------
     pool = existing_suggestions or []
@@ -394,7 +421,9 @@ async def generate_suggestions(
             role=portfolio_roles[index],
             origin="generated_neighbor" if custom_direction else "generated",
         )
-        for index, suggestion in enumerate(_select_role_portfolio(suggestions, portfolio_roles))
+        for index, suggestion in enumerate(_select_role_portfolio(
+            suggestions, portfolio_roles, require_realism=not bool(medium_restriction_quote),
+        ))
     ]
     if custom_direction and custom_direction.get("id"):
         for suggestion in curated:
@@ -425,8 +454,8 @@ STYLE_SAMPLE_BRIEF_SYSTEM_PROMPT = (
     "\n"
     "Then write that moment as a single flowing brief of 60-120 words, the way a "
     "film director describes the shared visual content of one three-panel proof page:\n"
-    "- Introduce the character with their full physical description (age, build, "
-    "hair, face, wardrobe) before their action.\n"
+    "- Name the character and location, then describe action and staging only. The "
+    "compiler supplies full physical anchors separately; do not repeat or redesign them.\n"
     "- Use an environment setup, a three-quarter or full-length character view, and one "
     "expressive detail. Keep them in one coherent place and moment sequence.\n"
     "- Name the physical light source and direction, but do not prescribe its color, "
@@ -557,6 +586,7 @@ async def generate_sample_image(
     brief: str | None = None,
     candidate_id: str | None = None,
     style_reference: Path | None = None,
+    style_reference_mode: StyleReferenceMode = "faithful",
     project_dir: Path | None = None,
     subject_action: str | None = None,
     composition: str | None = None,
@@ -576,6 +606,7 @@ async def generate_sample_image(
         config, bible, scene_brief,
         candidate_id=candidate_id or sample_path.stem,
         style_reference=style_reference,
+        style_reference_mode=style_reference_mode,
         subject_action=subject_action,
         composition=composition,
     )
@@ -597,6 +628,7 @@ def build_style_sample_request(
     *,
     candidate_id: str,
     style_reference: Path | None = None,
+    style_reference_mode: StyleReferenceMode = "faithful",
     subject_action: str | None = None,
     composition: str | None = None,
 ):
@@ -608,10 +640,7 @@ def build_style_sample_request(
     character = bible.characters[0] if bible.characters else None
     location = bible.locations[0] if bible.locations else None
     anchors = tuple(filter(None, (
-        PromptAnchor(
-            kind="character", entity_id=character.id, name=character.name,
-            text=character.visual_anchor,
-        ) if character else None,
+        # Character identity is owned once by PromptSubject below.
         PromptAnchor(
             kind="location", entity_id=location.id, name=location.name,
             text=location.visual_anchor,
@@ -637,7 +666,7 @@ def build_style_sample_request(
                 "panels, rendered using the declared invariant outer-page framing, border, "
                 "margin, and gutter system."
             ),
-            setting=location.visual_anchor if location else None,
+            setting=None,
             constraints=(
                 "This is a production-design proof, not wordless concept art. Include exactly "
                 'these three lettering specimens once each: narration “The night held its '
@@ -659,7 +688,7 @@ def build_style_sample_request(
     )
     request = compile_non_panel_request(
         config, input_data,
-        reference_plan=style_reference_plan(config, style_reference),
+        reference_plan=style_reference_plan(config, style_reference, mode=style_reference_mode),
     )
     return request
 
@@ -740,8 +769,8 @@ def style_validation_brief(bible: StoryBible) -> str:
         f"{character.name if character else 'The protagonist'} moves decisively through "
         f"{location.name if location else 'the story environment'} during this beat: {action} "
         "Show a readable full-body action silhouette, expressive face and hands, layered "
-        "environment depth, and distinct foreground and background materials. One frozen "
-        "instant, no lettering or borders."
+        "environment depth, and distinct foreground and background materials across "
+        "setup, action, and reaction panels with the declared production lettering and framing."
     )
 
 
@@ -823,6 +852,7 @@ def missing_sample_indices(
                 brief or style_sample_fallback_brief(bible),
                 candidate_id=suggestion.get("id") or f"style_{idx}",
                 style_reference=_style_reference_for_suggestion(project_dir, suggestion),
+                style_reference_mode=suggestion["style_reference_mode"],
             )
             fresh = asset_matches_request(output, request)
         if not fresh:
@@ -861,6 +891,7 @@ async def generate_samples_for_indices(
             result = await generate_sample_image(
                 sample_config, bible, sample_path, brief=brief,
                 candidate_id=candidate_id, style_reference=reference,
+                style_reference_mode=s["style_reference_mode"],
             )
         if on_sample_done is not None:
             await on_sample_done(idx, result)
@@ -966,6 +997,7 @@ def estimate_style_proof_cost_usd(
     candidate_id: str,
     *,
     style_reference: Path | None = None,
+    style_reference_mode: StyleReferenceMode = "faithful",
     reference_size: tuple[int, int] | None = None,
     subject_action: str | None = None,
     composition: str | None = None,
@@ -999,6 +1031,7 @@ def estimate_style_proof_cost_usd(
         brief or style_sample_fallback_brief(bible),
         candidate_id=candidate_id,
         style_reference=style_reference,
+        style_reference_mode=style_reference_mode,
         subject_action=subject_action,
         composition=composition,
     )

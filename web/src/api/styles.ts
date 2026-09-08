@@ -15,6 +15,8 @@ export interface StyleSuggestion {
   story_fit: string;
   risk: string;
   template: string;
+  visual_logic?: "photographic" | "realistic_illustration" | "stylized" | "graphic" | null;
+  style_reference_mode?: "faithful" | "variation";
   has_sample: boolean;
   sample_stale: boolean;
   has_style_reference: boolean;

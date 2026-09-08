@@ -10,6 +10,7 @@ import {
 } from "../../api/queries";
 import { downloadExportUrl, pageRenderPreviewUrl } from "../../api/pages";
 import { BookReader } from "../../components/BookReader";
+import { PageCheckRecovery } from "../../components/pages/PageCheckRecovery";
 import {
   ConfirmDrawer,
   RoomHeader,
@@ -28,6 +29,7 @@ import type { FinishPreflight, InvariantFailure } from "../../types/api";
 type FinishFindingGroup = {
   key: string;
   pageNumber: number | null;
+  pageNumbers?: number[];
   message: string;
   evidence: string[];
   count: number;
@@ -38,16 +40,18 @@ function groupFinishFindings(preflight?: FinishPreflight): FinishFindingGroup[] 
   const groups = new Map<string, FinishFindingGroup>();
 
   const add = (finding: InvariantFailure, pageNumber: number | null) => {
-    const key = `${pageNumber ?? "book"}:${finding.code}:${finding.message}`;
+    const key = `${pageNumber === null ? "book" : "pages"}:${finding.code}:${finding.message}`;
     const existing = groups.get(key);
     if (existing) {
       existing.count += 1;
+      if (pageNumber !== null) existing.pageNumbers?.push(pageNumber);
       existing.evidence = Array.from(new Set([...existing.evidence, ...finding.evidence]));
       return;
     }
     groups.set(key, {
       key,
       pageNumber,
+      pageNumbers: pageNumber === null ? [] : [pageNumber],
       message: finding.message,
       evidence: finding.evidence,
       count: 1,
@@ -109,7 +113,7 @@ export function BookRoom() {
   const [rebuildFormat, setRebuildFormat] = useState<"pdf" | "cbz" | null>(null);
 
   if (!id) return null;
-  if (finishStatus === "pending" && status?.stages.draw?.status !== "complete") {
+  if (finishStatus === "pending" && !shouldRunPreflight) {
     return (
       <RoomShell project={id}>
         <StagePlaceholder
@@ -300,6 +304,12 @@ export function BookRoom() {
         )}
         {retryPreflight.error && <p role="alert" className="mt-3 font-body text-sm text-hero-red">{retryPreflight.error.message}</p>}
       </section>
+      {completePages?.pages.some((page) => page.active_render && page.analysis_recovery?.status !== "checked") && (
+        <section className="space-y-3">
+          <p className="text-sm font-bold">{t("Artwork saved · Text check incomplete")}</p>
+          <PageCheckRecovery project={id} onRecovered={() => void refetch()} />
+        </section>
+      )}
 
       {unresolvedIssues > 0 && (
         <section aria-label={t("Editorial decisions")}>
@@ -335,21 +345,22 @@ export function BookRoom() {
               <Surface key={finding.key} tone="red" padding="md" border="hard" shadow="paper-sm">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <p className="font-meta text-xs font-bold tracking-[0.08em] text-hero-red">
-                      {finding.pageNumber === null ? t("BOOK") : `${t("Page")} ${finding.pageNumber}`}
+                    <p className="font-meta text-xs font-bold tracking-[0.08em]">
+                      {finding.pageNumber === null ? t("BOOK") : `${t("Page")} ${finding.pageNumbers?.join(", ") ?? finding.pageNumber}`}
                     </p>
                     <p className="mt-1 font-body text-sm font-bold leading-6">{finding.message}</p>
                   </div>
                   {finding.count > 1 && (
-                    <span className="shrink-0 font-meta text-xs font-bold text-ink-muted">
+                    <span className="shrink-0 font-meta text-xs font-bold">
                       ×{finding.count}
                     </span>
                   )}
                 </div>
                 {finding.evidence.length > 0 && (
-                  <p className="mt-2 font-body text-xs leading-5 text-ink-black/70">
-                    {finding.evidence.join(" · ")}
-                  </p>
+                  <details className="mt-2 font-body text-xs leading-5">
+                    <summary className="cursor-pointer">{t("Evidence")}</summary>
+                    <p>{finding.evidence.join(" · ")}</p>
+                  </details>
                 )}
                 {finding.pageNumber !== null ? (
                   <Link className="mt-2 inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4" to={reviewUrl(finding.pageNumber, "checks")}>

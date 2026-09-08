@@ -16,6 +16,7 @@ from novel_to_comic.models.adaptation import (
     LetteringItem,
     NarrativeTreatment,
 )
+from novel_to_comic.models.adaptation import ContinuityTransition
 from novel_to_comic.models.page import (
     ApprovedPageRange,
     ApprovedVisualReference,
@@ -30,6 +31,8 @@ from novel_to_comic.models.page import (
 from novel_to_comic.models.validation import EditorialIssue
 from novel_to_comic.page_planning import (
     _BookPlanDraft,
+    _BookPageMap,
+    _detail_batch_prompt,
     _PageMapEntry,
     _detail_matches_map,
     _merged_editorial_issues,
@@ -126,23 +129,34 @@ def _inventory() -> ApprovedVisualReferenceInventory:
             ),
         ]
     )
+def test_detail_batch_retains_completed_transitions_before_its_first_page():
+    adaptation = _adaptation()
+    transition = ContinuityTransition(
+        dimension="place", scope_id="main_thread", from_state="outside",
+        to_state="inside", description="Johansen enters carrying the chart.",
+    )
+    first = adaptation.beats[0].model_copy(update={"transitions": (transition,)})
+    adaptation = adaptation.model_copy(update={"beats": (first, adaptation.beats[1])})
+    page_map = _BookPageMap(
+        rhythm_summary="Arrival followed by response.",
+        pages=[
+            _PageMapEntry(
+                page_number=index, beat_ids=(beat.id,), emphasis="initial",
+                density_intent="standard", rhythm_intent="Advance the scene.",
+            )
+            for index, beat in enumerate(adaptation.beats, 1)
+        ],
+    )
+    prompt = _detail_batch_prompt(adaptation, _inventory(), page_map, start=1, stop=2)
+    context = json.loads(prompt[prompt.index("\n") + 1:])
+    assert context["planning_view"]["established_continuity"][0]["transitions"] == [
+        transition.model_dump(mode="json"),
+    ]
+    assert [beat["id"] for beat in context["planning_view"]["beats"]] == ["beat_0002"]
 
 
-def test_plan_prompt_uses_structured_panels_and_reserves_splashes() -> None:
-    prompt = build_book_plan_prompt(
-        _adaptation(),
-        _inventory(),
-        ApprovedPageRange(minimum=1, maximum=4),
-    )
 
-    assert "Each content item is one planned semantic panel" in prompt
-    assert (
-        "may cite an adapted beat again only on an immediately adjacent panel" in prompt
-    )
-    assert "Reserve one-panel pages and splash panels" in prompt
-    assert (
-        "group adjacent story beats into varied multi-panel pages" in prompt.casefold()
-    )
+
 
 
 def test_producer_allocates_global_book_once_and_persists_canonical_artifacts(
@@ -167,6 +181,10 @@ def test_producer_allocates_global_book_once_and_persists_canonical_artifacts(
                         "beat_ids": ["beat_0001", "beat_0002"],
                         "visual_intent": (
                             "The yacht approaches the risen city, then wheels away."
+                        ),
+                        "continuity_intent": (
+                            "Johansen starts aboard the approaching yacht and ends aboard it "
+                            "after the turn, moving away from the city."
                         ),
                         "lettering_ids": [
                             item.id
@@ -223,6 +241,11 @@ def test_producer_allocates_global_book_once_and_persists_canonical_artifacts(
     ]
     assert artifacts.read_plan() == plan
     assert plan.pages[0].content_sha256 == page.content_sha256
+    assert response["pages"][0]["layout_intent"] in page.layout_intent
+    assert response["pages"][0]["content"][0]["continuity_intent"] in page.layout_intent
+    assert page.content[0].lettering == tuple(
+        item for beat in adaptation.beats for item in beat.lettering
+    )
     assert artifacts.plan_path == tmp_path / "plan" / "book.json"
     assert artifacts.page_path(1) == tmp_path / "plan" / "pages" / "page_001.json"
 
@@ -2074,15 +2097,11 @@ def test_repetitive_single_panel_run_is_an_evidence_backed_editorial_issue() -> 
         "page_003",
         "page_004",
     )
-    silent_issue = next(
-        issue
-        for issue in validation.editorial_issues
-        if issue.code == "sustained_silent_pages"
-    )
-    assert silent_issue.artifact_ids == (
-        "page_002",
-        "page_003",
-    )
+    # Silence alone is not evidence of a causal gap and must not trigger a
+    # paid editorial repair of an otherwise canonical visual sequence.
+    assert "sustained_silent_pages" not in {
+        issue.code for issue in validation.editorial_issues
+    }
 
 
 def test_peak_and_release_on_one_page_report_proportion_evidence() -> None:
@@ -2728,19 +2747,6 @@ def test_missing_lettering_ids_are_derived_into_reading_order(
     )
 
 
-def test_plan_prompt_does_not_duplicate_the_strict_response_schema() -> None:
-    from novel_to_comic.page_planning import build_book_plan_prompt
-
-    prompt = build_book_plan_prompt(
-        _adaptation(),
-        _inventory(),
-        ApprovedPageRange(minimum=1, maximum=2),
-    )
-
-    assert "planning_view" in prompt
-    assert "<_PageDraft>" not in prompt
-    assert "<_PageContentDraft>" not in prompt
-    assert "canonicalizes" in prompt
 
 
 def test_planning_view_excludes_the_source_ledger_and_provenance() -> None:

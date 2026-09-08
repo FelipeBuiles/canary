@@ -27,6 +27,8 @@ class GenerationPromptInput:
     full_prompt: str | None = None
     style: str | None = None
     constraints: str | None = None
+    editorial_addendum: str = ""
+    editable_facets: tuple[str, ...] = ()
     crop_policy: str | None = None
     has_narration_caption: bool = False
     location_state_id: str | None = None

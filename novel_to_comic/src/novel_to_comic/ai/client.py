@@ -13,6 +13,7 @@ import random
 import re
 import time
 import uuid
+from collections.abc import Callable
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
@@ -1345,7 +1346,15 @@ async def generate_structured_object(
     json_schema: dict[str, Any] | None = None,
     feature: str = "text.generate_json",
     image_attachments: tuple[tuple[bytes, str], ...] = (),
+    response_sink: Callable[[ApiResult[str]], None] | None = None,
+    retry_invalid_json: bool = True,
 ) -> ApiResult[dict]:
+    """Generate JSON, optionally retaining paid response bytes before parsing.
+
+    The synchronous sink receives exact response text and finalized usage.
+    Persistence failures propagate without another provider call. Callers with
+    durable recovery can disable paid JSON repair attempts independently.
+    """
     if isinstance(user_content, bytes):
         raise ValueError(
             "Image-based PDFs are not supported by the LiteLLM gateway path. "
@@ -1356,7 +1365,8 @@ async def generate_structured_object(
     last_exc: json.JSONDecodeError | None = None
     last_text: str = ""
     prior_usage: list[UsageRecord] = []
-    for attempt in range(_JSON_PARSE_MAX_RETRIES + 1):
+    max_parse_retries = _JSON_PARSE_MAX_RETRIES if retry_invalid_json else 0
+    for attempt in range(max_parse_retries + 1):
         data = await _chat_completion(
             config=config,
             model=model,
@@ -1369,6 +1379,12 @@ async def generate_structured_object(
             feature=feature,
             image_attachments=image_attachments,
         )
+        if response_sink is not None:
+            response_sink(ApiResult(
+                value=data["text"],
+                usage=data["usage"],
+                additional_usage=tuple(prior_usage),
+            ))
         text = _strip_code_fence(data["text"])
         try:
             return ApiResult(
@@ -1393,7 +1409,7 @@ async def generate_structured_object(
                 feature,
                 model,
                 attempt + 1,
-                _JSON_PARSE_MAX_RETRIES + 1,
+                max_parse_retries + 1,
                 exc.msg,
                 exc.pos,
                 data.get("finish_reason"),
@@ -1401,7 +1417,7 @@ async def generate_structured_object(
                 stream_info.get("events", "n/a"),
                 stream_info.get("dropped", "n/a"),
             )
-            if attempt < _JSON_PARSE_MAX_RETRIES:
+            if attempt < max_parse_retries:
                 limit_note = ""
                 if str(data.get("finish_reason") or "").lower() in {
                     "length",
@@ -1411,7 +1427,9 @@ async def generate_structured_object(
                 }:
                     limit_note = (
                         " Your previous response reached the output token limit; "
-                        "use shorter field values so the complete object fits."
+                        "shorten optional explanations so the complete object fits, "
+                        "but preserve exact lettering, protected language, visual "
+                        "anchors, and continuity guards verbatim."
                     )
                 attempt_user_content = (
                     f"{base_user_content}\n\n"
@@ -1421,7 +1439,7 @@ async def generate_structured_object(
                 )
     assert last_exc is not None  # loop runs at least once
     raise _format_json_parse_failure(
-        last_exc, last_text, model, feature, _JSON_PARSE_MAX_RETRIES + 1
+        last_exc, last_text, model, feature, max_parse_retries + 1
     ) from last_exc
 
 

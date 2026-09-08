@@ -1,8 +1,10 @@
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "../i18n";
 import type { FinishPreflight } from "../types/api";
+import type * as PagesApi from "../api/pages";
 
 const exportBook = vi.fn();
 const rerunPreflight = vi.fn();
@@ -14,12 +16,17 @@ let preflightError: Error | null = null;
 let exportError: Error | null = null;
 let pendingFormat: "pdf" | "cbz" | null = null;
 let devDiagnostics = false;
+const recoverChecks = vi.fn();
+const finishChecks = vi.fn();
+let finishStageStatus = "complete";
+let drawStageStatus = "complete";
 
 function drawnPage(pageNumber: number, spreadRole: "single" | "left" | "right" = "single", revision: number | null = 1) {
   return {
     page: { page_number: pageNumber, spread_role: spreadRole },
     active_render: revision === null ? null : { render: { revision } },
     issues: [],
+    analysis_recovery: { status: revision === null ? "undrawn" : "checked", requires_paid_call: false },
   };
 }
 let drawnPages = [drawnPage(1)];
@@ -29,7 +36,7 @@ vi.mock("../api/queries", () => ({
   useProjectStatus: () => ({ data: {
     project_name: "The Lantern Keeper",
     finish_ready: true,
-    stages: { finish: { status: "complete" }, draw: { status: "complete" } },
+    stages: { finish: { status: finishStageStatus }, draw: { status: drawStageStatus } },
   } }),
   useFinishPreflight: () => ({
     data: preflightLoading || preflightError ? undefined : {
@@ -50,13 +57,21 @@ vi.mock("../api/queries", () => ({
   useRunFinishPreflight: () => ({ mutate: rerunPreflight, isPending: false, error: null }),
 }));
 
+vi.mock("../api/pages", async (importOriginal) => ({
+  ...await importOriginal<typeof PagesApi>(),
+  recoverPageChecks: (...args: unknown[]) => recoverChecks(...args),
+  runFinishPreflight: (...args: unknown[]) => finishChecks(...args),
+}));
+
 import { BookRoom } from "../pages/rooms/BookRoom";
 
 function renderRoom() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(
+    <QueryClientProvider client={client}>
     <MemoryRouter initialEntries={["/project/demo/book"]}>
       <I18nProvider><Routes><Route path="/project/:id/book" element={<BookRoom />} /></Routes></I18nProvider>
-    </MemoryRouter>,
+    </MemoryRouter></QueryClientProvider>,
   );
 }
 
@@ -69,7 +84,11 @@ beforeEach(() => {
   exportError = null;
   pendingFormat = null;
   devDiagnostics = false;
+  finishStageStatus = "complete";
+  drawStageStatus = "complete";
   rerunPreflight.mockReset();
+  recoverChecks.mockReset();
+  finishChecks.mockReset().mockResolvedValue({ status: "done" });
   window.localStorage.removeItem("canary.showDevContent");
   drawnPages = [drawnPage(1)];
   preflight = {
@@ -81,6 +100,49 @@ beforeEach(() => {
 });
 
 describe("BookRoom edition decisions", () => {
+  it("offers grouped check recovery when Finish is ready before Draw approval", () => {
+    finishStageStatus = "pending";
+    drawStageStatus = "awaiting_review";
+    drawnPages = [drawnPage(1), drawnPage(2)];
+    drawnPages.forEach((page) => {
+      page.analysis_recovery = { status: "requires_ocr", requires_paid_call: true };
+    });
+    preflight.pages = [1, 2].map((page_number) => ({
+      page_number, comic_page_revision: 1, render_revision: 1,
+      invariant_failures: [{ id: `missing-${page_number}`, owner_stage: "draw", code: "exact_ocr_status",
+        message: "Saved artwork needs text evidence", evidence: [`Render ${page_number}`] }],
+      unresolved_editorial_issue_ids: [], accepted_editorial_issue_ids: [],
+    }));
+    renderRoom();
+    expect(screen.getAllByText("Saved artwork needs text evidence")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Recover missing text checks" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("link", { name: "Open page checks · Page 1" })).toBeTruthy();
+  });
+
+  it("groups missing evidence and refreshes preflight after free recovery without exporting", async () => {
+    drawnPages = [drawnPage(1), drawnPage(2)];
+    drawnPages.forEach((page) => { page.analysis_recovery.status = "cached_evidence"; });
+    preflight.pages = [1, 2].map((page_number) => ({
+      page_number, comic_page_revision: 1, render_revision: 1,
+      invariant_failures: [{ id: `missing-${page_number}`, owner_stage: "draw", code: "ocr_evidence_missing",
+        message: "Saved artwork needs text evidence", evidence: [`Render ${page_number}`] }],
+      unresolved_editorial_issue_ids: [], accepted_editorial_issue_ids: [],
+    }));
+    recoverChecks.mockResolvedValue({ pages: [{ page_number: 1, status: "checked" },
+      { page_number: 2, status: "failed", error: "Retained evidence needs parser repair" }] });
+    renderRoom();
+    expect(screen.getAllByText("Saved artwork needs text evidence")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("button", { name: "Recover missing text checks" }));
+    await screen.findByText(/Retained evidence needs parser repair/);
+    await waitFor(() => expect(finishChecks).toHaveBeenCalledWith("demo"));
+    expect(recoverChecks).toHaveBeenCalledOnce();
+    expect(recoverChecks).toHaveBeenCalledWith("demo", false, {});
+    expect(exportBook).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
   it("keeps accepted editorial decisions inspectable without blocking packaging", () => {
     preflight.pages[0].accepted_editorial_issue_ids = ["accepted-concern"];
     renderRoom();

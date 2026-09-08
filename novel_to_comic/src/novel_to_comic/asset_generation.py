@@ -39,7 +39,7 @@ from novel_to_comic.provider_wire import ProviderWireRequest, compile_provider_w
 from novel_to_comic.usage import ApiResult, estimate_image_cost
 
 AssetKind = Literal[
-    "style_sample", "character_ref", "location_plate", "prop_ref", "project_cover",
+    "style_sample", "style_calibration", "character_ref", "location_plate", "prop_ref", "project_cover",
     "labs_image",
 ]
 
@@ -64,6 +64,11 @@ class AbstractStyleProofInput(AssetGenerationInput):
 @dataclass(frozen=True, slots=True)
 class EntityStyleProofInput(AbstractStyleProofInput):
     """Style proof with supplied structured anchors; the compiler protects them."""
+
+
+@dataclass(frozen=True, slots=True)
+class CharacterStyleCalibrationInput(AssetGenerationInput):
+    asset_kind: AssetKind = field(default="style_calibration", init=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,68 +142,40 @@ def reference_plan_for_assets(config: Config, references: list[ReferenceAsset]) 
     """Create a final plan from already-resolved semantic references."""
     profile = image_model_profile_for_config(config)
     selected: list[ReferenceAsset] = []
-    dropped = []
     for reference in references:
         if reference.role not in profile.supported_roles:
-            from novel_to_comic.image_references import DropReason, DroppedReference, SemanticCandidate
-
-            dropped.append(DroppedReference(
-                candidate=SemanticCandidate(
-                    path=reference.path, role=reference.role,
-                    entity_id=reference.entity_id, appearance_state_id=reference.appearance_state_id,
-                    label=reference.label,
-                ),
-                reason=DropReason.UNSUPPORTED_ROLE,
-                detail=f"route {profile.route.value} does not support {reference.role}",
-            ))
-            continue
+            raise ValueError(
+                f"Required reference role {reference.role} is unsupported by route {profile.route.value}."
+            )
         if not reference.path.exists():
-            from novel_to_comic.image_references import DropReason, DroppedReference, SemanticCandidate
-
-            dropped.append(DroppedReference(
-                candidate=SemanticCandidate(path=reference.path, role=reference.role,
-                    entity_id=reference.entity_id, appearance_state_id=reference.appearance_state_id,
-                    label=reference.label),
-                reason=DropReason.MISSING,
-                detail=f"reference is missing at {reference.path}",
-            ))
-            continue
+            raise ValueError(f"Required reference is missing at {reference.path}; regenerate it before continuing.")
         selected.append(reference)
     if len(selected) > profile.max_references:
-        from novel_to_comic.image_references import DropReason, DroppedReference, SemanticCandidate
-
-        overflow = selected[profile.max_references:]
-        dropped.extend(
-            DroppedReference(
-                candidate=SemanticCandidate(
-                    path=reference.path,
-                    role=reference.role,
-                    entity_id=reference.entity_id,
-                    appearance_state_id=reference.appearance_state_id,
-                    label=reference.label,
-                ),
-                reason=DropReason.PROVIDER_CAP,
-                detail=f"route {profile.route.value} allows at most {profile.max_references} references",
-            )
-            for reference in overflow
+        raise ValueError(
+            f"Reference overflow: {len(selected)} required references exceed "
+            f"route {profile.route.value} limit {profile.max_references}."
         )
-        selected = selected[: profile.max_references]
     return ReferencePlan(
         expected_route=profile.route,
         selected=tuple(selected),
-        dropped=tuple(dropped),
+        dropped=(),
         selection_fingerprint=selection_fingerprint_hex(selected),
     )
 
 
-def style_reference_plan(config: Config, style_path: Path | None) -> ReferencePlan:
+def style_reference_plan(
+    config: Config, style_path: Path | None, *,
+    mode: Literal["faithful", "variation"] = "faithful",
+    preserve_facets: tuple[str, ...] = (),
+) -> ReferencePlan:
     """Resolve one optional style reference without filename-based inference."""
     if style_path is None:
         return reference_plan_for_assets(config, [])
     digest = hashlib.sha256(style_path.read_bytes()).hexdigest() if style_path.exists() else ""
     reference = ReferenceAsset(
         path=style_path, role="style", entity_id=None, appearance_state_id=None,
-        authority_scope=AuthorityScope.CONTEXTUAL, preserve_facets=(), ignore_facets=(),
+        authority_scope=AuthorityScope.CONTEXTUAL, preserve_facets=preserve_facets,
+        ignore_facets=("candidate-controlled rendering facets",) if mode == "variation" else (),
         pose=None, content_sha256=digest, lineage_parent_sha256=None,
         label="selected style",
     )

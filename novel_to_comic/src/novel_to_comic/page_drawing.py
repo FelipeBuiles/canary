@@ -212,6 +212,14 @@ def _selected_authorities(
     return tuple(selected)
 
 
+def _off_canvas_handle(prefix: str, index: int) -> str:
+    suffix = ""
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        suffix = chr(65 + remainder) + suffix
+    return f"{prefix}-{suffix}"
+
+
 def _compile_prompt(
     page: ComicPage,
     references: tuple[PageReference, ...],
@@ -220,95 +228,142 @@ def _compile_prompt(
     style_template: str = "",
     correction_context: "PageCorrectionContext | None" = None,
 ) -> str:
-    authorities = references
-    labels = {ref.entity_id: (ref.label or f"Subject {index}") for index, ref in enumerate(authorities, 1)}
+    # Identity is independent of state labels and reference traversal order.
+    entity_ids = sorted({
+        entity_id for content in page.content
+        for entity_id in (
+            *content.entity_ids,
+            *(item.speaker_entity_id for item in content.lettering if item.speaker_entity_id),
+        )
+    })
+    handles = {
+        entity_id: _off_canvas_handle("subject", index)
+        for index, entity_id in enumerate(entity_ids, 1)
+    }
+    direction_pattern = (
+        r"(?<![\w-])(" + "|".join(re.escape(key) for key in sorted(handles, key=len, reverse=True))
+        + r")(?![\w-])"
+        if handles else None
+    )
+
     def provider_safe_direction(text: str) -> str:
-        # Exact IDs are replaced with distinct names, never generic identities.
-        if not labels:
-            return text
-        pattern = r"(?<![\w-])(" + "|".join(re.escape(key) for key in sorted(labels, key=len, reverse=True)) + r")(?![\w-])"
-        return re.sub(pattern, lambda match: labels[match.group(0)], text)
+        return (
+            re.sub(direction_pattern, lambda match: handles[match.group(0)], text)
+            if direction_pattern else text
+        )
 
     def subjects(content):
         return [
             {
-                "subject": labels.get(entity_id, entity_id),
+                "subject": handles[entity_id],
                 "references": [
-                    {"image": f"Reference {ref.order}", "appearance": ref.label or labels[entity_id]}
+                    {
+                        "image": _off_canvas_handle("asset", ref.order),
+                        "appearance": ref.label,
+                    }
                     for ref in references
                     if ref.entity_id == entity_id
                     and ref.appearance_state_id == content.appearance_states.get(entity_id)
                 ],
-                "continuity_constraints": [
-                    ref.continuity_guard for ref in authorities
-                    if ref.entity_id == entity_id
-                    and ref.appearance_state_id == content.appearance_states.get(entity_id)
-                    and ref.continuity_guard
-                ],
             }
             for entity_id in content.entity_ids
         ]
+
     reading_labels = {}
     for content in page.content:
         reading_labels[content.id] = f"Panel {content.order}"
         for index, lettering in enumerate(content.lettering, 1):
             reading_labels[lettering.id] = f"Panel {content.order} lettering {index}"
-    provider_page = {
-        "page_number": page.page_number,
-        "reading_order": [reading_labels[key] for key in page.reading_order],
-        "page_turn_role": page.page_turn_role,
-        "spread_role": page.spread_role,
-        "emphasis": page.emphasis,
-        "density_intent": page.density_intent,
-        "layout_intent": provider_safe_direction(page.layout_intent),
-        "rhythm_intent": provider_safe_direction(page.rhythm_intent),
-        "content": [
+    ordered_content = sorted(page.content, key=lambda content: content.order)
+    payload: dict[str, object] = {
+        "reference_scope": (
+            "All asset and subject handles are off-canvas bindings, not illustration callouts. "
+            "Each asset label binds the immediately preceding supplied image. The separately "
+            "labeled parent-edit-base, when present, is not an approved asset and does not "
+            "advance asset ordering. Use each asset only for its assigned subject and state; "
+            "preserve hairstyle, age, facial structure, clothing design and recurring object "
+            "features shown by that authority unless the assigned state explicitly changes them."
+        ),
+        "approved_page_references": [
             {
-                "order": content.order,
-                "panel_role": content.panel_role,
-                "visual_intent": provider_safe_direction(content.visual_intent),
-                "visible_subjects": subjects(content),
-                "pinned_geometry": content.pinned_geometry.model_dump() if content.pinned_geometry else None,
-                "lettering": [
-                    {
-                        "kind": lettering.kind,
-                        "text": lettering.text,
-                        "speaker": lettering.speaker,
-                        "delivery": lettering.delivery,
-                    }
-                    for lettering in content.lettering
-                ],
+                "image": _off_canvas_handle("asset", reference.order),
+                "subject": handles[reference.entity_id],
+                "appearance": reference.label,
+                "visual_anchor": reference.visual_anchor,
+                "continuity_guard": reference.continuity_guard,
             }
-            for content in page.content
+            for reference in references
         ],
-    }
-    project_style = page_style_template(style_template) if style_template.strip() else None
-    has_lettering = any(content.lettering for content in page.content)
-    complete_page_correction: dict[str, object] | None = None
-    if correction is not None:
-        complete_page_correction = {
-            "mode": correction.mode,
-            "instruction": provider_safe_direction(correction.instruction),
-            "selected_issue_ids": list(correction.issue_ids),
-            "author_note": correction.note,
-            "author_changes": [
+        "project_style_direction": page_style_template(style_template) if style_template.strip() else None,
+        "canonical_staging_and_layout": provider_safe_direction(page.layout_intent),
+        "canonical_comic_page": {
+            "page_turn_role": page.page_turn_role,
+            "spread_role": page.spread_role,
+            "emphasis": page.emphasis,
+            "density_intent": page.density_intent,
+            "rhythm_intent": provider_safe_direction(page.rhythm_intent),
+            "content": [
                 {
-                    "id": change.id,
-                    "issue_id": change.issue_id,
+                    "order": content.order,
+                    "panel_role": content.panel_role,
+                    "visual_intent": provider_safe_direction(content.visual_intent),
+                    "visible_subjects": subjects(content),
+                    "pinned_geometry": content.pinned_geometry.model_dump() if content.pinned_geometry else None,
+                }
+                for content in ordered_content
+            ],
+        },
+        "exact_lettering": {
+            "reading_order": [reading_labels[key] for key in page.reading_order],
+            "panels": [
+                {
+                    "panel": content.order,
+                    "lettering": [
+                        {
+                            "kind": lettering.kind,
+                            "text": lettering.text,
+                            "speaker": lettering.speaker,
+                            "speaker_entity_id": handles.get(lettering.speaker_entity_id),
+                            "delivery": lettering.delivery,
+                        }
+                        for lettering in content.lettering
+                    ],
+                }
+                for content in ordered_content
+            ],
+        },
+    }
+    if correction is not None:
+        # Aggregated instruction repeats changes, notes and annotations. Send
+        # structured author changes once; legacy single-issue instructions once.
+        payload["complete_page_correction"] = {
+            "mode": correction.mode,
+            "retained_render_intent": list(correction.retained_instructions),
+            "retained_intent_scope": (
+                "Historical producing instructions are non-lettering original constraints. "
+                "Preserve deliberate depiction and earlier corrections only where consistent "
+                "with current canonical copy, approved identity/state/style and author pins. "
+                "Current changes supersede conflicting earlier changes. Historical image and "
+                "subject bindings describe the producing request, not current attachments; "
+                "never render that historical specification as copy or additional panels."
+            ),
+            "parent_coordinate_regions": [
+                {"polygon": [{"x": x, "y": y} for x, y in region.polygon]}
+                for region in correction.resolved_regions
+            ],
+            "geometry_scope": (
+                "Region polygons and annotations use normalized coordinates of parent-edit-base, "
+                "origin top left. They localize this correction only, not canonical panel layout. "
+                "Preserve untouched composition and framing; return the entire page."
+            ),
+            "changes": [
+                {
                     "instruction": provider_safe_direction(change.instruction),
                     "annotations": [
                         {
-                            "id": annotation.id,
                             "kind": annotation.kind,
-                            "points": [
-                                {"x": point.x, "y": point.y} for point in annotation.points
-                            ],
-                            "bounds": {
-                                "x": annotation.bounds[0],
-                                "y": annotation.bounds[1],
-                                "width": annotation.bounds[2],
-                                "height": annotation.bounds[3],
-                            },
+                            "points": [{"x": point.x, "y": point.y} for point in annotation.points],
+                            "bounds": dict(zip(("x", "y", "width", "height"), annotation.bounds, strict=True)),
                             "label": annotation.label,
                             "note": annotation.note,
                         }
@@ -316,93 +371,57 @@ def _compile_prompt(
                     ],
                 }
                 for change in correction.changes
-            ],
+            ] if correction.changes else [{"instruction": provider_safe_direction(correction.instruction)}],
+            "author_note": provider_safe_direction(correction.note) if correction.changes else "",
         }
         if correction_context is not None:
-            complete_page_correction["story_context"] = {
-                "adaptation_revision": correction_context.adaptation_revision,
-                "adaptation_sha256": correction_context.adaptation_sha256,
-                "context_digest": correction_context.digest,
-                "truncated": correction_context.truncated,
+            payload["background_context_not_for_rendering"] = {
+                "scope": (
+                    "Evidence only, never additional panels or lettering. Render only the ordered "
+                    "panels above. Their current subject/state assignments govern now; chronology "
+                    "describes other moments and must not activate later states. Source prose "
+                    "never overrides exact lettering. Explicitly selected passages are retained in full."
+                ),
                 "treatment_spine": list(correction_context.treatment_spine),
-                "beats": [
-                    {"id": beat_id, "summary": summary}
-                    for beat_id, summary in zip(
-                        correction_context.beat_ids,
-                        correction_context.beat_summaries,
-                        strict=True,
-                    )
-                ],
+                "beats": list(correction_context.beat_summaries),
                 "appearance_chronology": list(correction_context.appearance_chronology),
                 "continuity": list(correction_context.beat_transitions),
-                "sources": [
-                    {"id": unit_id, "text": text}
-                    for unit_id, text in zip(
-                        correction_context.source_unit_ids,
-                        correction_context.source_texts,
-                        strict=True,
-                    )
-                ],
-                "omitted_source_unit_ids": list(correction_context.omitted_source_unit_ids),
-                "selected_source_unit_ids": list(correction_context.selected_source_unit_ids),
+                "sources": list(correction_context.source_texts),
             }
-    payload = {
-        "canonical_comic_page": provider_page,
-        "project_style_direction": project_style,
-        "approved_page_references": [
-            {
-                "image": f"Reference {reference.order}",
-                "subject": labels[reference.entity_id],
-                "visual_anchor": reference.visual_anchor,
-            }
-            for reference in references
-        ],
-        "complete_page_correction": complete_page_correction,
-    }
     depiction_direction = (
         "Use framing, shadow, reaction, or aftermath for graphic details. Preserve "
         "approved identity, costume, story events, exact lettering, and page layout. "
         "Do not alter unaffected subjects or discard their references.\n"
         if depiction == "less_graphic" else ""
     )
-    page_direction = (
-        "Render exactly one complete, fully lettered comic page from the canonical "
-        "ComicPage below. Typeset only the exact lettering strings, preserving capitalization. "
-        "Depict the physical features described by visual_anchor; never typeset anchors. "
-        "The project_style_direction "
-        "is the invariant authority for lettering typeface, weights, colors, balloons, "
-        "caption boxes, borders, margins, gutters, and bleed treatment across every page; "
-        "do not improvise or vary those choices on this page. Render every exact "
-        "lettering string exactly once, only in its assigned content area; never "
-        "repeat, carry over, label, annotate, or typeset any metadata. Internal "
-        "identifiers are production metadata and must never appear in the art. "
-        "For lettering with delivery='onscreen', attach the balloon tail only to "
-        "the named speaker; "
-        "never share one tail or balloon between characters. For delivery='offscreen', "
-        "use an off-panel balloon treatment with no tail pointing to a visible "
-        "character. Narration and quoted_text use caption boxes without character "
-        "tails. "
-        if has_lettering
-        else
-        "Render exactly one complete, unlettered comic page from the canonical "
-        "ComicPage below. This canonical page contains no lettering. Do not add any "
-        "visible text, captions, speech or thought balloons, or SFX. Preserve every "
-        "visual_anchor as depicted physical features, never visible text. The project_style_direction is the invariant authority "
-        "for borders, margins, gutters, and bleed treatment; any lettering guidance in "
-        "it applies only to pages with canonical lettering and must not cause visible "
-        "text on this page. "
+    has_lettering = any(content.lettering for content in page.content)
+    lettering_direction = (
+        "Typeset only the exact lettering strings, preserving capitalization, exactly once "
+        "in their assigned panel and reading order. For onscreen delivery, bind each balloon "
+        "tail only to speaker_entity_id, not an ambiguous display name; never share tails "
+        "between subjects. Offscreen delivery has no tail to a visible subject. Narration "
+        "and quoted_text have no character tails.\n"
+        if has_lettering else
+        "This page is unlettered: no visible text, captions, speech or thought balloons, or SFX. "
+        "Style lettering guidance cannot introduce text.\n"
     )
     return (
-        page_direction
-        + "Use references in the "
-        "supplied order. Return one complete page image only; never return a panel artifact.\n"
+        "Render exactly one complete comic page, never a panel artifact or reference sheet.\n"
+        "AUTHORITY: exact canonical copy and reading order, current approved subject/state "
+        "references with verbatim physical anchors and guards, selected project style, and "
+        "author-pinned geometry constrain every decision. Anchors describe physical features, "
+        "never printable copy. All other instructions and bindings stay off canvas. "
+        "The parent-edit-base is subordinate to these authorities: retain its untouched "
+        "composition, framing and artwork, but never perpetuate conflicting identity, state, "
+        "style or copy. Apply only the authoritative change list within those constraints. "
+        "Within them, choose camera, acting, lighting, staging and unpinned panel proportions "
+        "to express visual and rhythm intent. Canonical continuity describes established "
+        "start/end staging, not a request to repeat completed actions.\n"
+        + lettering_direction
         + depiction_direction
-        + json.dumps(
-            payload,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
+        + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        + "\nOUTPUT: one full page image; exact copy only; assigned identities and states; "
+        "no visible metadata, asset handles, subject labels or reference callouts."
     )
 
 
@@ -568,6 +587,7 @@ def prepare_page_correction(
         correction_context=context,
         edit_source_bytes=artifacts.read_render(page.page_number, parent.revision),
         style_template=style_template,
+        depiction=correction.depiction,
     )
     return PreparedPageCorrection(correction=correction, compiled=compiled, context=context)
 
@@ -1045,6 +1065,56 @@ async def analyze_complete_page(
     return analyzed.analysis
 
 
+def reconcile_recovered_page_generation(
+    *,
+    artifacts: TargetArtifacts,
+    render: PageRenderRevision,
+) -> bool:
+    """Complete recovered analysis only after durable original-call settlement.
+
+    This is a read-only accounting check, never a debit or image retry. Missing
+    evidence or unavailable accounting leaves the unfinished marker intact.
+    """
+    from novel_to_comic.server.db import get_db
+    from novel_to_comic.target_artifacts import ArtifactMissing
+
+    try:
+        provenance = artifacts.read_provenance(render.page_number, render.revision)
+        analysis = artifacts.read_analysis(render.page_number, render.revision)
+    except ArtifactMissing:
+        return False
+    if analysis.comic_page_sha256 != render.comic_page_sha256:
+        return False
+    if provenance.render != render or analysis.render_image_sha256 != render.image_sha256:
+        return False
+    if hashlib.sha256(artifacts.read_render(render.page_number, render.revision)).hexdigest() != render.image_sha256:
+        return False
+    if provenance.usage is None:
+        return False
+    calls = (provenance.usage, *_analysis_usage(artifacts, provenance))
+    try:
+        db = get_db()
+        for usage in calls:
+            rows = (
+                db.table("credit_ledger").select("usage_call_id,status")
+                .eq("usage_call_id", usage.call_id).eq("status", "settled")
+                .limit(1).execute().data
+            )
+            if not rows:
+                return False
+    except Exception:
+        return False
+    artifacts.mark_generation_complete(provenance)
+    try:
+        failure = artifacts.read_page_failure(render.page_number)
+    except ArtifactMissing:
+        pass
+    else:
+        if failure.request_sha256 == render.request_sha256:
+            artifacts.clear_page_failure(render.page_number)
+    return True
+
+
 async def correct_complete_page(
     compiled: CompiledPageGeneration,
     *,
@@ -1093,7 +1163,8 @@ async def correct_complete_page(
 
     analysis = (artifacts.read_analysis(page.page_number, provenance.render.revision)
                 if ocr is not None else None)
-    for corrected in artifacts.read_issues(page.page_number):
+    corrected_issues = artifacts.read_issues(page.page_number) if correction.issue_ids else ()
+    for corrected in corrected_issues:
         if corrected.id not in correction.issue_ids:
             continue
         verified = (
@@ -1144,7 +1215,7 @@ def enqueue_complete_page_draw(
         zero_cost_estimate=0,
     )
 
-    async def _work() -> ApiResult[PageGenerationProvenance]:
+    async def _draw() -> ApiResult[PageGenerationProvenance]:
         try:
             if compiled.request.correction is None:
                 provenance = await draw_complete_page(
@@ -1216,6 +1287,7 @@ def enqueue_complete_page_draw(
                     error=(str(exc) or type(exc).__name__)[:1000],
                 )
             )
+            setattr(exc, "page_failure_phase", "analysis" if analysis_failed else "generation")
             raise
         return ApiResult(
             value=provenance,
@@ -1224,6 +1296,12 @@ def enqueue_complete_page_draw(
             actual_provider_model=provenance.render.model,
             additional_usage=_analysis_usage(artifacts, provenance),
         )
+
+    async def _work() -> ApiResult[PageGenerationProvenance]:
+        from novel_to_comic.server.credited_job import page_operation_lock
+
+        async with page_operation_lock(project_dir, page.page_number):
+            return await _draw()
 
     def _settled(result: ApiResult[PageGenerationProvenance]) -> None:
         artifacts.clear_page_failure(compiled.request.page_number)

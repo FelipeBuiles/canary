@@ -28,7 +28,7 @@ from novel_to_comic.models.finish import (
 from novel_to_comic.models.page import ComicPage
 from novel_to_comic.models.validation import InvariantFailure
 from novel_to_comic.page_review import normalize_ocr_punctuation
-from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
+from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
 
 
 _CREATIVE_FAILURES = {
@@ -36,7 +36,7 @@ _CREATIVE_FAILURES = {
     "page_render_dimensions",
     "render_lineage",
     "stale_page_render",
-    "exact_ocr_status",
+    "lettering_mismatch",
     "open_draw_invariant",
 }
 
@@ -535,6 +535,7 @@ def finish_book(
     # Validation may invalidate old packages/normalized pages. Finish all such
     # mutations before writing any new production output for this book.
     analyses: dict[int, RenderAnalysis] = {}
+    unavailable_evidence: dict[int, str] = {}
     for page in pages:
         revisions = artifacts.provenance_revisions(page.page_number)
         if not revisions:
@@ -544,10 +545,12 @@ def finish_book(
             analyses[page.page_number] = revalidate_cached_page_render(
                 page=page, render=render, artifacts=artifacts,
             )
-        except (ArtifactMissing, ValueError):
-            # Missing/incompatible observations require an explicit Analyze,
-            # never a provider call from Finish.
-            continue
+        except ArtifactMissing:
+            unavailable_evidence[page.page_number] = "ocr_evidence_missing"
+        except (ArtifactInvalid, ValueError):
+            # Invalid retained evidence must be reparsed, never redrawn or paid
+            # for again automatically.
+            unavailable_evidence[page.page_number] = "ocr_evidence_stale"
     appearance = _appearance_diagnostics(adaptation, pages)
     preflight_pages: list[PreflightPage] = []
     correction_requests: list[DrawCorrectionRequest] = []
@@ -663,8 +666,17 @@ def finish_book(
                     _failure(
                         page_number=selected.page_number,
                         owner_stage="draw",
-                        code="exact_ocr_status",
-                        message="Active page render lacks exact canonical OCR status.",
+                        code=unavailable_evidence.get(page.page_number, "ocr_evidence_missing") if analysis is None else (
+                            "ocr_evidence_stale"
+                            if analysis.render_image_sha256 != render.image_sha256
+                            or analysis.comic_page_sha256 != page.content_sha256
+                            else "lettering_mismatch"
+                        ),
+                        message=(
+                            "Artwork is saved; its text check is incomplete. Recover the check on saved pixels."
+                            if analysis is None else
+                            "Active page render does not have current exact canonical OCR evidence."
+                        ),
                         artifact_ids=(f"render_{render.revision:03d}",),
                         evidence=("Every canonical lettering item must match in order.",),
                     )

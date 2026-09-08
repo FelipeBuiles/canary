@@ -158,11 +158,8 @@ def test_character_co_located_outfit_change_preserves_identity_facets(tmp_path: 
     subject = next(asset for asset in plan.selected if asset.role == "subject")
 
     assert spec.lineage_mode == LineageMode.CONDITIONED
-    assert subject.preserve_facets == (
-        "face", "hair", "build", "proportions", "silhouette",
-        "facial_modeling", "degree_of_simplification", "line_weight",
-        "rendering_density",
-    )
+    assert {"face", "hair", "build"} <= set(subject.preserve_facets)
+    assert not {"line_weight", "rendering_density", "facial_modeling"} & set(subject.preserve_facets)
     assert subject.ignore_facets == ("wardrobe",)
 
 
@@ -861,6 +858,7 @@ def test_restored_version_current_only_when_parent_hash_matches(tmp_path: Path):
     parent = artifacts.location_plate_path(tmp_path, loc.id)
     _write_parent(parent, b"canonical")
     state_plate = artifacts.location_state_plate_path(tmp_path, loc.id, "loc_001_night")
+    state_plate.parent.mkdir(parents=True, exist_ok=True)
     state_plate.write_bytes(b"state")
 
     # Metadata with matching parent hash → stays current.

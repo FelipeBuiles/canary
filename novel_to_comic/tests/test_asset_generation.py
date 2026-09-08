@@ -120,6 +120,119 @@ def test_location_plate_uses_verified_landscape_geometry():
     assert "LOCATION-SENTINEL" in request.wire.prompt_parts[0]
 
 
+def test_non_page_style_omits_production_contract_but_proof_retains_it():
+    from novel_to_comic.asset_generation import PropReferenceInput
+    from novel_to_comic.style_contract import page_style_template, LETTERING_MARKER, FRAMING_MARKER
+
+    config = Config(image_model="image-balanced")
+    style = page_style_template("Watercolor rendering")
+    for input_type, page in ((PropReferenceInput, False), (AbstractStyleProofInput, True)):
+        request = compile_non_panel_request(config, input_type(
+            asset_identity="style-scope",
+            prompt=GenerationPromptInput(constraints="No text, labels, or captions."),
+            selected_style_text=style,
+        ))
+        rendered = request.compiled.final_prompt
+        assert (LETTERING_MARKER in rendered) is page
+        assert (FRAMING_MARKER in rendered) is page
+        assert "No text, labels, or captions." in rendered
+        if page:
+            assert "no sub-panels" not in rendered
+
+
+def test_guard_survives_sanitizing_and_budget_while_subject_direction_is_emitted_once():
+    from novel_to_comic.models.generation import PromptSubject
+    from novel_to_comic.prompt_hygiene import apply_prompt_budget
+
+    guard = "Guard: inscribed NEVER restore this wing. captions remain absent! END_GUARD"
+    identity = "A young winged creature with one cobalt wing."
+    request = compile_non_panel_request(Config(image_model="image-balanced"), AbstractStyleProofInput(
+        asset_identity="guard-proof",
+        prompt=GenerationPromptInput(
+            subjects=(PromptSubject(character_id="bird", name="Bird", identity=identity,
+                                    action="ACTION_SENTINEL", position="POSITION_SENTINEL",
+                                    appearance_guard=guard),),
+            anchors=(PromptAnchor(kind="character", entity_id="bird", name="Bird", text=identity),),
+        ),
+    ))
+    rendered = request.compiled.final_prompt
+    assert rendered.count(identity) == 1
+    assert rendered.count("ACTION_SENTINEL") == 1
+    assert rendered.count("POSITION_SENTINEL") == 1
+    sections = [(section.kind, section.body) for section in request.compiled.sections]
+    budgeted = apply_prompt_budget(sections, char_limit=1)
+    assert guard in budgeted.final_prompt
+
+
+def test_location_state_path_is_entity_scoped(tmp_path):
+    from novel_to_comic.artifacts import location_state_plate_path
+
+    first = location_state_plate_path(tmp_path, "house", "night")
+    second = location_state_plate_path(tmp_path, "forest", "night")
+    assert first != second
+    assert first.parent != second.parent
+
+
+def test_prop_state_reference_emits_only_compatible_parent_facets(tmp_path):
+    from novel_to_comic.compiled_request import compile_reference_instruction
+    from novel_to_comic.image_references import AuthorityScope, ReferenceAsset
+
+    reference = ReferenceAsset(
+        path=tmp_path / "prop.png", role="prop", entity_id="coat", appearance_state_id="torn",
+        authority_scope=AuthorityScope.CONTEXTUAL, preserve_facets=("material",),
+        ignore_facets=("shape", "color"), pose=None, content_sha256="a" * 64,
+        lineage_parent_sha256=None, label="coat / torn",
+    )
+    instruction = compile_reference_instruction(reference, 0)
+    assert instruction.preserve_facets == ("material",)
+    assert {"shape", "color"} <= set(instruction.ignore_facets)
+    assert "shape" in instruction.semantic_instruction
+    assert "color" in instruction.semantic_instruction
+
+
+
+def test_calibration_lineup_is_not_a_page_proof():
+    from novel_to_comic.stages.s3_cast import _character_style_calibration_input
+
+    config = Config(image_model="image-balanced")
+    request = compile_non_panel_request(config, _character_style_calibration_input(config))
+    assert request.compiled.asset_kind == "style_calibration"
+    assert "complete comic page" not in request.compiled.final_prompt
+    assert "calibration lineup" in request.compiled.final_prompt
+
+
+def test_cover_style_lookup_never_substitutes_an_unselected_sample(tmp_path):
+    from novel_to_comic.server.routers.projects import _find_style_ref
+    from novel_to_comic.style_contract import style_template_for_suggestion
+
+    samples = tmp_path / "samples"
+    samples.mkdir()
+    suggestion = {"template": "Graphite drawing"}
+    (samples / "style_suggestions.json").write_text(json.dumps({"suggestions": [suggestion]}))
+    image = samples / "style_1.png"
+    image.write_bytes(b"existing-reference")
+    assert _find_style_ref(tmp_path, "Watercolor") is None
+    assert _find_style_ref(tmp_path, style_template_for_suggestion(suggestion)) == image
+
+
+def test_editable_sanitizer_does_not_match_caption_prefix_inside_words():
+    from novel_to_comic.prompt_hygiene import sanitize_dynamic_text
+
+    assert sanitize_dynamic_text("A captioner stands quietly.") == "A captioner stands quietly."
+
+
+def test_location_guard_is_protected_in_final_asset_prompt():
+    guard = "NIGHT_GUARD: inscribed words are absent. Never restore the roof!"
+    request = compile_non_panel_request(Config(image_model="image-balanced"), CanonicalLocationPlateInput(
+        asset_identity="house:night",
+        prompt=GenerationPromptInput(anchors=(PromptAnchor(
+            kind="location", entity_id="house", name="House", appearance_state_id="night",
+            text="Roofless house under moonlight.", continuity_guard=guard,
+        ),)),
+    ))
+    protected = next(section for section in request.compiled.sections if section.kind == "protected_anchors")
+    assert guard in protected.body
+
 def test_common_non_panel_provenance_has_asset_identity_and_wire_fields():
     config = Config(image_model="image-balanced")
     request = compile_non_panel_request(

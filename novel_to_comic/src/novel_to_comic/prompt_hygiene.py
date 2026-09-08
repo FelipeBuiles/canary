@@ -57,6 +57,10 @@ _TEXT_RENDER_TOKENS = (
     "bold text", "glowing text", "burning text", "corrupted text",
     "readable text", "title card", "lower third",
 )
+_TEXT_RENDER_TOKEN_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(token) for token in _TEXT_RENDER_TOKENS) + r")s?\b",
+    re.IGNORECASE,
+)
 
 # Clauses that attach readable content to a physical object. "a wooden sign
 # reading KEEP OUT" → "a wooden sign". "a book whose pages spell HELP" →
@@ -111,8 +115,7 @@ def sanitize_dynamic_text(value: str | None) -> str:
     sentences = re.split(r"(?<=[.!?])\s+", text)
     kept = []
     for sentence in sentences:
-        lowered = sentence.lower()
-        is_text_instruction = any(tok in lowered for tok in _TEXT_RENDER_TOKENS)
+        is_text_instruction = _TEXT_RENDER_TOKEN_RE.search(sentence) is not None
         if is_text_instruction and not _PHYSICAL_OBJECT_CUE_RE.search(sentence):
             continue
         kept.append(sentence)
@@ -133,7 +136,7 @@ _TEXT_RENDER_PHRASE_RE = re.compile(
     r"word\s+balloon|word\s+bubble|text\s+crawl|floating\s+text|"
     r"scrolling\s+text|on[- ]screen\s+text|onscreen\s+text|bold\s+text|"
     r"glowing\s+text|burning\s+text|corrupted\s+text|readable\s+text|"
-    r"title\s+card|lower\s+third)"
+    r"title\s+card|lower\s+third)s?\b"
     r"(?:\s+[a-z\s]{0,40}?(?=[.,;]|\s+and\s|$))?",
     re.IGNORECASE,
 )

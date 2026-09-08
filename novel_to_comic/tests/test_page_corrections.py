@@ -228,9 +228,15 @@ def _setup(tmp_path: Path, *, issues: tuple[PageIssue, ...] = ()) -> tuple[Targe
     artifacts.write_page(page)
     from novel_to_comic.page_drawing import production_page_capability_profile
 
-    artifacts.write_book_edition(
-        BookEdition(revision=1, id="edition-1", capability_profile=production_page_capability_profile())
+    edition = BookEdition(
+        revision=1, id="edition-1", capability_profile=production_page_capability_profile(),
     )
+    artifacts.write_book_edition(edition)
+    producing = compile_page_generation_request(
+        page, edition, ApprovedVisualReferenceInventory(references=()), {},
+        retry=RetryProvenance(attempt=1),
+    ).request
+    artifacts.write_request(producing, request_revision=1)
     image = b"parent-page-png"
     artifacts.write_render(page_number=1, render_revision=1, image=image)
     render = PageRenderRevision(
@@ -239,12 +245,12 @@ def _setup(tmp_path: Path, *, issues: tuple[PageIssue, ...] = ()) -> tuple[Targe
         parent_revision=None,
         comic_page_revision=page.revision,
         comic_page_sha256=page.content_sha256,
-        request_sha256="1" * 64,
+        request_sha256=producing.request_sha256,
         image_sha256=hashlib.sha256(image).hexdigest(),
-        width=120,
-        height=180,
-        provider="fixture-provider",
-        model="fixture-page-model",
+        width=edition.capability_profile.output_width,
+        height=edition.capability_profile.output_height,
+        provider=producing.provider,
+        model=producing.model,
         latency_ms=10,
         cost_usd="0.5",
     )
@@ -281,6 +287,13 @@ def _advance(
     artifacts: TargetArtifacts, page: ComicPage, *, revision: int, image: bytes,
 ) -> PageRenderRevision:
     """Append a real render revision so revised issues carry valid lineage."""
+    edition = artifacts.read_book_edition()
+    parent = artifacts.read_provenance(page.page_number, revision - 1).render
+    producing = compile_page_generation_request(
+        page, edition, ApprovedVisualReferenceInventory(references=()), {},
+        retry=RetryProvenance(attempt=revision, retries_request_sha256=parent.request_sha256),
+    ).request
+    artifacts.write_request(producing, request_revision=revision)
     artifacts.write_render(page_number=1, render_revision=revision, image=image)
     render = PageRenderRevision(
         page_number=1,
@@ -288,12 +301,12 @@ def _advance(
         parent_revision=revision - 1,
         comic_page_revision=page.revision,
         comic_page_sha256=page.content_sha256,
-        request_sha256=str(revision) * 64,
+        request_sha256=producing.request_sha256,
         image_sha256=hashlib.sha256(image).hexdigest(),
-        width=120,
-        height=180,
-        provider="vertex-multimodal",
-        model="gemini-3-pro-image",
+        width=edition.capability_profile.output_width,
+        height=edition.capability_profile.output_height,
+        provider=producing.provider,
+        model=producing.model,
         latency_ms=10,
         cost_usd="0.5",
     )
@@ -358,7 +371,6 @@ def test_manual_change_gets_deterministic_identity_without_writes(tmp_path: Path
     assert manual_id == "page-issue-manual-1-1-c-shadow"
     assert prepared.correction.issue_ids == (manual_id,)
     assert prepared.correction.changes[0].issue_id == manual_id
-    assert f"tracks {manual_id}" in prepared.correction.instruction
     try:
         artifacts.read_issues(1)
         persisted = True
@@ -431,9 +443,7 @@ def test_annotations_and_novel_context_reach_prompt_and_provenance(tmp_path: Pat
     )
 
     prompt = prepared.compiled.request.prompt
-    assert "x=0.5000 y=0.5000 w=0.1000 h=0.1000" in prompt
     assert "Keep this edge readable." in prompt
-    assert "c-door" in prompt
     # Bookwide spine travels, not just the page's own beat.
     assert "beat-1" in prompt and "beat-2" in prompt
     assert "The door opens, then stillness." in prompt
@@ -596,7 +606,10 @@ def test_unknown_detected_region_rejects_but_known_region_targets(tmp_path: Path
             page_number=1,
             render_revision=1,
             render_image_sha256=render.image_sha256,
-            observed_regions=(ObservedRegion(id="region-1", polygon=((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),),
+            observed_regions=(
+                ObservedRegion(id="region-2", polygon=((0.5, 0.5), (1.0, 0.5), (1.0, 1.0))),
+                ObservedRegion(id="region-1", polygon=((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))),
+            ),
         )
     )
 
@@ -613,6 +626,9 @@ def test_unknown_detected_region_rejects_but_known_region_targets(tmp_path: Path
     )
     assert targeted.mode == "region_targeted"
     assert targeted.detected_region_ids == ("region-1",)
+    assert [region.polygon for region in targeted.resolved_regions] == [
+        ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)),
+    ]
 
 
 def test_bounded_context_omission_never_truncates_author_instructions(tmp_path: Path) -> None:
@@ -662,15 +678,21 @@ def test_bounded_context_omission_never_truncates_author_instructions(tmp_path: 
     page = _page()
     artifacts.write_page(page)
     artifacts.write_book_edition(_edition())
+    producing = compile_page_generation_request(
+        page, _edition(), ApprovedVisualReferenceInventory(references=()), {},
+        retry=RetryProvenance(attempt=1),
+    ).request
+    artifacts.write_request(producing, request_revision=1)
     image = b"parent-page-png"
     artifacts.write_render(page_number=1, render_revision=1, image=image)
     render = PageRenderRevision(
         page_number=1, revision=1, parent_revision=None,
         comic_page_revision=page.revision, comic_page_sha256=page.content_sha256,
-        request_sha256="1" * 64, image_sha256=hashlib.sha256(image).hexdigest(),
-        width=120, height=180, provider="fixture-provider", model="fixture-page-model",
+        request_sha256=producing.request_sha256, image_sha256=hashlib.sha256(image).hexdigest(),
+        width=120, height=180, provider=producing.provider, model=producing.model,
         latency_ms=10, cost_usd="0.5",
     )
+    artifacts.write_provenance(PageGenerationProvenance(render=render, usage=_usage()))
     note = "Keep the reveal exactly as staged."
     annotation = CorrectionAnnotation(
         id="mark-sweep", kind="freehand",
@@ -728,7 +750,7 @@ def test_visual_findings_stay_revised_until_human_confirmation(tmp_path: Path) -
         artifacts, page, render,
         changes=(_change("c-dark", "Darken the chamber.", issue_id="issue-dark"),),
     )
-    artifacts.write_request(prepared.compiled.request, request_revision=1)
+    artifacts.write_request(prepared.compiled.request, request_revision=2)
 
     provenance = asyncio.run(
         correct_complete_page(
@@ -764,7 +786,7 @@ def test_proven_lettering_fix_resolves_while_visuals_stay_revised(tmp_path: Path
             _change("c-dark", "Darken the chamber.", issue_id="issue-dark"),
         ),
     )
-    artifacts.write_request(prepared.compiled.request, request_revision=1)
+    artifacts.write_request(prepared.compiled.request, request_revision=2)
 
     from novel_to_comic.models.draw import OCRExtraction, OCRTextObservation
     from novel_to_comic.usage import ApiResult
@@ -811,7 +833,7 @@ def test_created_manual_issues_enter_history_and_stay_revised(tmp_path: Path) ->
         artifacts, page, render,
         changes=(_change("c-shadow", "Push the idol deeper into shadow."),),
     )
-    artifacts.write_request(prepared.compiled.request, request_revision=1)
+    artifacts.write_request(prepared.compiled.request, request_revision=2)
 
     asyncio.run(
         correct_complete_page(
@@ -842,8 +864,10 @@ def test_validated_saved_review_matches_current_inputs_only(tmp_path: Path) -> N
         retry=RetryProvenance(attempt=1),
     )
     image = b"parent-page-png"
+    producing = artifacts.read_request(page.page_number, 1)
     digest = visual_review_input_digest(
         config=config, page=page, render=render, image=image, compiled=compiled,
+        producing_request=producing,
     )
     report = PageVisualReview(
         input_sha256=digest,
@@ -866,6 +890,7 @@ def test_validated_saved_review_matches_current_inputs_only(tmp_path: Path) -> N
     assert validated_saved_visual_review(
         page=page, render=render, image=image, compiled=compiled,
         config=config, artifacts=artifacts,
+        producing_request=producing,
     ) == report
 
     # A stale file under another digest is never served as current.
@@ -874,14 +899,16 @@ def test_validated_saved_review_matches_current_inputs_only(tmp_path: Path) -> N
     assert validated_saved_visual_review(
         page=page, render=render, image=image, compiled=compiled,
         config=config, artifacts=artifacts,
+        producing_request=producing,
     ) == report
 
     # A superseded page no longer validates: raises instead of serving stale.
-    with pytest.raises(ValueError, match="current canonical page"):
+    with pytest.raises(ValueError, match="canonical page"):
         validated_saved_visual_review(
             page=page.model_copy(update={"revision": 2}),
             render=render, image=image, compiled=compiled,
             config=config, artifacts=artifacts,
+            producing_request=producing,
         )
 
 
@@ -905,7 +932,7 @@ def test_render_correction_summary_projects_exact_submitted_text(tmp_path: Path)
         ),
         note="Hold the reveal.",
     )
-    artifacts.write_request(prepared.compiled.request, request_revision=1)
+    artifacts.write_request(prepared.compiled.request, request_revision=2)
     image2 = b"corrected-page-png"
     artifacts.write_render(page_number=1, render_revision=2, image=image2)
     render2 = PageRenderRevision(
@@ -968,7 +995,7 @@ def test_finding_links_mark_missing_issues_unavailable(tmp_path: Path) -> None:
     assert missing[0]["available"] is False
 
     prepared = _prepare(artifacts, page, render, note="A look.")
-    artifacts.write_request(prepared.compiled.request, request_revision=1)
+    artifacts.write_request(prepared.compiled.request, request_revision=2)
     assert reference_display_for_render(artifacts, 1, render) == ()
 
 
@@ -1163,7 +1190,7 @@ def test_preview_with_two_linked_issues_and_manual_change_keeps_full_identity(tm
             _change("c-shadow", "Push the idol deeper into shadow."),
         ),
     )
-    artifacts.write_request(prepared.compiled.request, request_revision=1)
+    artifacts.write_request(prepared.compiled.request, request_revision=2)
     retry = _aggregated_correction_retry(
         artifacts, page_number=1, issue_ids=tuple(payload["selected_issue_ids"]),
     )

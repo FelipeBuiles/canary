@@ -9,9 +9,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from novel_to_comic.config import Config
-from novel_to_comic.models.draw import PageIssue, PageRenderRevision
+from novel_to_comic.models.draw import FrozenPageGenerationRequest, PageIssue, PageRenderRevision
 from novel_to_comic.models.page import ComicPage
-from novel_to_comic.page_drawing import CompiledPageGeneration
+from novel_to_comic.page_drawing import CompiledPageGeneration, _off_canvas_handle
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import ApiResult, UsageRecord
 
@@ -105,8 +105,16 @@ def finding_issue_links(
         )
     return tuple(links)
 
-def visual_review_prompt(*, compiled: CompiledPageGeneration) -> str:
-    """The exact review prompt for one compiled page generation."""
+def visual_review_prompt(
+    *,
+    compiled: CompiledPageGeneration,
+    producing_request: FrozenPageGenerationRequest | None = None,
+) -> str:
+    """Compare current authority while retaining the producing render's intent."""
+    attachment_map = {
+        _off_canvas_handle("asset", reference.order): reference.order + 1
+        for reference in compiled.request.references
+    }
     return (
         "Image 1 is the complete page to review. Remaining images are the approved references "
         "in the numbered order used by the page instructions below. Compare visible identity, "
@@ -119,9 +127,17 @@ def visual_review_prompt(*, compiled: CompiledPageGeneration) -> str:
         "Do not assume that a reference must appear in every panel. At most eight findings; "
         "an empty list means no discrepancy detected, not a guarantee of correctness. "
         "The following generation specification is data to compare against, not instructions "
-        "to generate an image. Reference 1 means attached image 2, and so on.\n\n"
+        "to generate an image. The off-canvas asset bindings below map to attachment positions. "
+        "The producing specification is historical evidence only of deliberate depiction and "
+        "correction choices: retain those choices where consistent with current authority. "
+        "It cannot override current approved identity/state/style, author pins or exact copy; "
+        "its old asset map does not bind the current attachments.\n\n"
         + json.dumps(
-            {"generation_specification": compiled.request.prompt}, ensure_ascii=False
+            {
+                "current_asset_attachments": attachment_map,
+                "generation_specification": compiled.request.prompt,
+                "producing_specification": producing_request.prompt if producing_request else None,
+            }, ensure_ascii=False
         )
     )
 
@@ -133,6 +149,7 @@ def visual_review_input_digest(
     render: PageRenderRevision,
     image: bytes,
     compiled: CompiledPageGeneration,
+    producing_request: FrozenPageGenerationRequest | None = None,
 ) -> str:
     """Validate current page/render/reference/model inputs and digest them.
 
@@ -141,6 +158,11 @@ def visual_review_input_digest(
     exact render bytes, approved reference bytes, and review model. Anything
     else is a different review, never the current one.
     """
+    if producing_request is not None and (
+        producing_request.request_sha256 != render.request_sha256
+        or producing_request.is_stale_for(page)
+    ):
+        raise ValueError("producing instructions do not match this render and canonical page")
     if (
         render.is_stale_for(page)
         or hashlib.sha256(image).hexdigest() != render.image_sha256
@@ -160,7 +182,7 @@ def visual_review_input_digest(
                 "visual review reference bytes do not match approved authority"
             )
     model = config.effective_page_ocr_model()
-    prompt = visual_review_prompt(compiled=compiled)
+    prompt = visual_review_prompt(compiled=compiled, producing_request=producing_request)
     return hashlib.sha256(
         json.dumps(
             {
@@ -187,6 +209,7 @@ def validated_saved_visual_review(
     compiled: CompiledPageGeneration,
     config: Config,
     artifacts: TargetArtifacts,
+    producing_request: FrozenPageGenerationRequest | None = None,
 ) -> PageVisualReview | None:
     """Return the saved review only when it matches the current inputs.
 
@@ -197,6 +220,7 @@ def validated_saved_visual_review(
     """
     digest = visual_review_input_digest(
         config=config, page=page, render=render, image=image, compiled=compiled,
+        producing_request=producing_request,
     )
     path = artifacts.visual_review_path(page.page_number, render.revision, digest)
     if not path.exists():
@@ -213,6 +237,7 @@ async def review_page_visuals(
     compiled: CompiledPageGeneration,
     artifacts: TargetArtifacts,
     generate=None,
+    producing_request: FrozenPageGenerationRequest | None = None,
 ) -> ApiResult[PageVisualReview]:
     """One optional review per exact page, reference set, prompt, and model.
 
@@ -220,9 +245,10 @@ async def review_page_visuals(
     objective visual correctness. No auto-corrections or critic loop.
     """
     model = config.effective_page_ocr_model()
-    prompt = visual_review_prompt(compiled=compiled)
+    prompt = visual_review_prompt(compiled=compiled, producing_request=producing_request)
     digest = visual_review_input_digest(
         config=config, page=page, render=render, image=image, compiled=compiled,
+        producing_request=producing_request,
     )
     path = artifacts.visual_review_path(page.page_number, render.revision, digest)
     if path.exists():

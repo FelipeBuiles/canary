@@ -1,6 +1,6 @@
 # Canary agent context
 
-**Status: Current, September 7, 2026.** Canary generates complete lettered comic
+**Status: Current, September 8, 2026.** Canary generates complete lettered comic
 pages from novels through an eight-stage Python/FastAPI and React application.
 
 | # | Stage | Checkpoint? |
@@ -32,8 +32,10 @@ implementation instructions.
   missing references; Style Continue can start Cast and a needed cover.
 - Pages reviews exceptions (`open`/`revised` issues), not mandatory per-page
   approvals. URL parameters preserve page, review, filter, and reading context;
-  Book links directly to affected reviews. See [stage contracts](stage-contracts.md)
-  for parameter values and read-only page/remaining-page estimate endpoints.
+  Book links directly to affected reviews. Drawn and text-checked counts are
+  distinct; current artifacts/failure phase outrank historical job failure.
+  Missing/stale OCR evidence blocks Finish but is not a redraw request. See
+  [stage contracts](stage-contracts.md) for recovery and estimate contracts.
 - Immediate estimates and temporary holds are distinct and rounded per job.
   Keep the full Draw-stage estimate for reruns, not remaining-page queues.
   Balance refresh after top-up never substitutes for explicit Resume.
@@ -57,8 +59,16 @@ implementation instructions.
 - Rejected reruns preserve state/artifacts; admitted non-Draw failure has no full
   rollback. Draw retains revisions plus pending/unfinished paid-result evidence,
   recovering the original frozen action until post-settlement acknowledgement.
-  Versioned raw OCR supports provider-free revalidation; uncertain order is
-  nonblocking editorial evidence, not a proven defect.
+  OCR retains complete provider response text with finalized usage before parsing,
+  plus versioned raw observations; malformed JSON has no hidden paid repair retry.
+  `GET /pages/checks/estimate` quotes readiness and OCR-only work.
+  `POST /pages/checks/recover` defaults to `allow_paid: false`, replaying cached
+  evidence under the shared page lock without a credit reservation. Explicit
+  `allow_paid: true` plus a page-number/image-SHA `renders` map authorizes only
+  missing OCR on saved pixels, with per-page outcomes, never a redraw.
+  Cache presence does not promise parsability or successful recovery. OCR checks
+  lettering, not visual correctness; uncertain order is nonblocking editorial
+  evidence. Visual verification and paid artwork corrections remain separate.
 - Deployment is one uvicorn worker on one Fly Machine with persistent `/projects`
   journals. Authenticated drain must precede the idle check; timeout stays drained.
   The first upgrade from a binary without drain needs controlled maintenance, not
@@ -67,6 +77,28 @@ implementation instructions.
   production migration or deployment.
 - Marketing must describe the actual workflow without quality/time guarantees.
   No finished-page showcase was added: the available asset was unsuitable.
+
+## Prompt and reference authority
+
+- Style curation declares `visual_logic` (`photographic`,
+  `realistic_illustration`, `stylized`, `graphic`) and portfolio roles. Without
+  an exact quoted author medium restriction, photographic and realistic
+  illustration coverage must survive selection. Mood is not a restriction;
+  contrast/wildcard options must still honor explicit author limits.
+- Cast references use protected art-only style direction; full-page samples
+  and Draw keep lettering/framing standards. Approved style imagery owns
+  rendering, never subject identity, scene content, or layout. State anchors
+  override changed facets of parent references; provider-safe framing must
+  not reverse anatomy/state. Character calibration is a distinct text-free
+  multi-person lineup, not a page-style sample.
+- Location state plates live at `plates/{location}/states/{state}.png`;
+  instructions and lineage remain location-scoped. No old-artifact migration.
+- Plan draft continuity is folded into existing `ComicPage.layout_intent`,
+  not a new `PageContent.continuity_intent` field. Corrections retain the exact
+  original producing prompt and earlier instructions as subordinate,
+  non-lettering history; current canonical copy, identity/state/style, author
+  pins, and current changes win. No top-level `FrozenPageGenerationRequest.depiction`
+  field or retroactive request rehash is introduced.
 
 ## Code navigation
 
@@ -77,9 +109,15 @@ implementation instructions.
 - `editorial.py`, `server/routers/editorial.py`: revision-scoped decisions,
   story-change preview/apply; all routes under `/api/projects/{project_id}`.
 - `generation_checkpoints.py`: input-keyed resumable structured responses.
-- `state_assets.py`: explicit state conditioning and reference lineage.
+- `style_contract.py`, `compiled_request.py`, `stages/s2_style.py`,
+  `stages/s3_cast.py`: page/art-only style projection, reference authority,
+  typed portfolio curation, and distinct character calibration.
+- `state_assets.py`, `artifacts.py`: explicit state conditioning, scoped state
+  paths, and reference lineage.
 - `page_drawing.py`: frozen page compilation, image submission, explicit corrections.
-- `page_ocr.py`, `page_review.py`: blind OCR, correction context/lineage, issue lifecycle.
+- `page_ocr.py`, `page_review.py`: raw response/observation persistence and
+  provider-free revalidation, producing-intent retention, correction context,
+  and issue lifecycle. `ai/client.py` owns the pre-parse response sink.
 - `page_visual_review.py`: digest-keyed reference-aware review, saved-report validation.
 - `page_finishing.py`, `models/finish.py`, `server/routers/export.py`: persisted
   preflight, package identity/byte validation, provider-free retry and export.
@@ -91,7 +129,7 @@ implementation instructions.
   `server/deployment_status.py` and `scripts/check_deploy_safe.py`: authenticated
   drain/idle deployment guard and explicit operational recovery.
 - `server/routers/pipeline.py`, `server/routers/pages.py`: pipeline plus page
-  correction, visual-review, and render-history APIs.
+  correction, saved-pixel OCR recovery, visual-review, and render-history APIs.
 - `server/auth.py`, `server/deps.py`: authentication and project scoping.
 - `server/routers/projects.py`: source-only upload/import creation.
 
@@ -101,14 +139,15 @@ and plan. Optional correction tools are `components/pages/RevisionDraft.tsx`
 (with `AnnotationEditor.tsx`) and `VisualReviewPanel.tsx`. There is no
 storyboard editing and no page story context UI. API ownership in
 `web/src/api/pageRevisions.ts` (drafts, preview, submit, cached review,
-render history) and `web/src/api/pages.ts`; shared types in
+render history) and `web/src/api/pages.ts` (including check recovery); shared types in
 `web/src/types/api.ts`. Story-change preview/apply has no Pages UI and
 remains a backend API contract (`editorial.py`,
 `server/routers/editorial.py`); automatic correction context stays
 backend-owned (`page_review.py`).
 Story draft ownership is in `StoryRoom.tsx`; estimated starts use
 `components/composites/StagePlaceholder.tsx`. `PagesRoom.tsx` owns review URL
-and exception filters; `BookRoom.tsx` owns package readiness and review links.
+and exception filters; `components/pages/PageCheckRecovery.tsx` owns cached/paid
+OCR recovery selection; `BookRoom.tsx` owns package readiness and review links.
 `components/InsufficientCreditsDialog.tsx` owns explicit post-top-up Resume.
 
 ## Local validation

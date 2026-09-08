@@ -16,6 +16,13 @@ const STORAGE_KEY = "canary.uiLanguage";
 const TEXT: Record<LanguageCode, Record<string, string>> = {
   en: {},
   es: {
+    "Recover missing text checks": "Recuperar comprobaciones de texto pendientes",
+    "Text checks completed": "Comprobaciones de texto completadas",
+    "Text check incomplete": "Comprobación de texto incompleta",
+    "Artwork saved · Text check incomplete": "Ilustración guardada · Comprobación de texto incompleta",
+    "Check text on saved pages?": "¿Comprobar el texto de las páginas guardadas?",
+    "pages need a new text check. Artwork will not be redrawn. Cached checks are free.": "páginas necesitan una nueva comprobación de texto. No se redibujarán las ilustraciones. Las comprobaciones guardadas son gratuitas.",
+    "pages checked": "páginas comprobadas",
     "Saving…": "Guardando…",
     "Settings saved.": "Configuración guardada.",
     "Project deleted.": "Proyecto eliminado.",

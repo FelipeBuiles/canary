@@ -214,6 +214,7 @@ export interface GenerationJob {
   classification?: string | null;
   user_message?: string | null;
   recoverable?: boolean | null;
+  phase?: "generation" | "analysis" | null;
 }
 
 export const STAGE_ORDER: StageName[] = [
@@ -474,11 +475,17 @@ export interface PageIssueSummary {
   accepted_editorial_issue_ids: string[];
 }
 
+export interface PageAnalysisRecovery {
+  status: "undrawn" | "stale_render" | "checked" | "cached_evidence" | "requires_ocr";
+  requires_paid_call: boolean;
+}
+
 export interface CompletePageSummary {
   page: ComicPage;
   active_render: PageGenerationProvenance | null;
   issues: PageIssue[];
   failure: PageGenerationFailure | null;
+  analysis_recovery: PageAnalysisRecovery;
 }
 
 export interface PageGenerationFailure {
@@ -503,6 +510,7 @@ export interface CompletePageDetail {
   analyses: RenderAnalysis[];
   issues: PageIssue[];
   failure: PageGenerationFailure | null;
+  analysis_recovery: PageAnalysisRecovery;
 }
 
 export interface RenderAnalysis {

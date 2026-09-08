@@ -21,6 +21,7 @@ from novel_to_comic.models.draw import (
     PageIssue,
     RenderAnalysis,
     RawOCRObservation,
+    OCRProviderResponse,
 )
 from novel_to_comic.models.finish import FinishPreflight
 from novel_to_comic.models.page import BookPlan, ComicPage
@@ -605,6 +606,23 @@ class TargetArtifacts:
     ) -> RenderAnalysis:
         path = self.analysis_path(page_number, render_revision)
         return self._read_model("render_analysis", path, RenderAnalysis)
+
+    def ocr_response_path(self, page_number: int, render_revision: int) -> Path:
+        return self.analysis_path(page_number, render_revision).with_name(
+            f"ocr_response_{render_revision:03d}.json"
+        )
+
+    def write_ocr_response(self, response: OCRProviderResponse) -> None:
+        self._write_immutable_model(
+            self.ocr_response_path(response.page_number, response.render_revision),
+            response, OCRProviderResponse,
+        )
+
+    def read_ocr_response(self, page_number: int, render_revision: int) -> OCRProviderResponse:
+        return self._read_model(
+            "ocr_response", self.ocr_response_path(page_number, render_revision),
+            OCRProviderResponse,
+        )
 
     def raw_ocr_path(self, page_number: int, render_revision: int) -> Path:
         return self.analysis_path(page_number, render_revision).with_name(

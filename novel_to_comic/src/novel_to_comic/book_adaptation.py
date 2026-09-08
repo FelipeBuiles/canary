@@ -750,6 +750,11 @@ def _story_bible_view(
     location_ids = {scene.location_id for scene in scenes}
     return {
         "title": story_bible.title,
+        "action_constraint_contract": (
+            "Entity-scoped action constraints are verbatim source-established physical "
+            "limits for the active appearance state. Respect them when authoring actions "
+            "and state transitions; they are not instructions to redesign style or identity."
+        ),
         "author": story_bible.author,
         "characters": [
             {
@@ -767,6 +772,7 @@ def _story_bible_view(
                         "id": state.id,
                         "label": state.label,
                         "canonical_equivalent": state.canonical_equivalent,
+                        "action_constraint": state.continuity_guard or "",
                     }
                     for state in character.appearance_states
                 ],
@@ -790,6 +796,7 @@ def _story_bible_view(
                         "id": state.id,
                         "label": state.label,
                         "canonical_equivalent": state.canonical_equivalent,
+                        "action_constraint": state.continuity_guard or "",
                     }
                     for state in location.appearance_states
                 ],

@@ -41,19 +41,13 @@ _UNIFIED_CANVAS = (
 )
 
 _FACIAL_QUALITY = (
-    "Faces have natural individuality, asymmetry, and human proportions; avoid "
-    "airbrushed beauty-filter surfaces, idealized symmetry, caricature, oversized "
-    "eyes, blackened eye sockets, and theatrical eyebrow shapes",
-    "Keep facial acting restrained unless the scene direction explicitly requires "
-    "a stronger reaction; convey emotion primarily through subtle gaze, posture, and "
-    "small changes around the eyes and mouth",
+    "Preserve the active anchor's age, species, anatomy, and facial identity in the "
+    "selected rendering style; avoid accidental distortion, not intentional stylization",
 )
 
 _BODY_PROPORTION_QUALITY = (
-    "Use anatomically believable adult proportions appropriate to the described age, "
-    "height, and build; preserve a natural head-to-body ratio and consistent silhouette",
-    "Never use chibi, super-deformed, big-headed, doll-like, toy-like, mascot-like, "
-    "bobblehead, or squat-caricature proportions",
+    "Use the anatomy, proportions, and silhouette specified by the active anchor; "
+    "explicit changed anatomy and age override canonical-parent proportions",
 )
 
 _CHARACTER_REFERENCE_LAYOUT = (
@@ -67,22 +61,10 @@ _CHARACTER_REFERENCE_LAYOUT = (
 )
 
 _CHARACTER_REFERENCE_PERFORMANCE = (
-    "This is a calm character-design sitting, not an emotional scene; use the same "
-    "restrained resting expression in both views with mouth closed, jaw relaxed, "
-    "brows at rest, and eyes naturally open and normally proportioned",
-    "If an identity anchor names an emotion, interpret it as a low-intensity baseline "
-    "affect rather than an active reaction; do not turn anxiety, sternness, sadness, "
-    "or fatigue into a frightened, startled, deranged, or theatrical face",
+    "Use a resting design pose unless the active anchor or authorized expression "
+    "direction requires otherwise; preserve the described affect without exaggeration",
 )
 
-_VISUAL_STYLE_REFERENCE_AUTHORITY = (
-    "The approved visual style reference precedes this prompt and is the sole authority "
-    "for rendering style; "
-    "match its line weight, facial modeling, wash behavior, palette, edge treatment, "
-    "shadow density, rendering density, and degree of simplification",
-    "Treat textual style notes as secondary descriptive vocabulary only; named-artist "
-    "wording and subject stereotypes must not override the approved visual reference",
-)
 
 _SHARED_ARTISTIC_HAND = (
     "Render every character with one shared artistic hand: identical contour language, "
@@ -92,14 +74,6 @@ _SHARED_ARTISTIC_HAND = (
     "their medium, mark-making, palette, lighting, paper texture, or rendering density",
 )
 
-_CHARACTER_VALUE_STYLE_LOCK = (
-    "A character's youth, pale skin, thin build, anxiety, illness, or light-colored "
-    "wardrobe changes local subject color only; it must not make the illustration "
-    "cleaner, flatter, more cartoon-like, or more simplified than the approved style",
-    "Preserve the approved reference's contour weight, facial modeling depth, texture "
-    "density, shadow structure, edge variation, and background wash coverage even when "
-    "the character's clothing and skin are predominantly light",
-)
 
 _ENGLISH_LABELS = {
     "composition": "Composition",
@@ -173,9 +147,7 @@ def _appearance_lock_clauses(prompt: GenerationPromptInput) -> list[str]:
             f"as described and as the reference image; do not restore {name}'s default "
             f"look or add features not shown"
         )
-        guard = (getattr(subject, "appearance_guard", None) or "").strip().rstrip(".")
-        if guard:
-            clause += f" ({guard})"
+        # Verbatim guards are emitted with their protected entity anchors.
         clauses.append(clause)
 
     # Location appearance lock (significant location state). The location anchor
@@ -243,7 +215,7 @@ def generate_system_constraints(
     else:
         lines = [
             f"exactly {character_count} {character_label}",
-            labels["one_body"],
+            *([labels["one_body"]] if subjects else []),
             labels["single_instant"],
             labels["no_lettering"],
         ]
@@ -256,12 +228,10 @@ def generate_system_constraints(
         lines.append(f"crop policy: {crop_policy}")
     lines.extend(_appearance_lock_clauses(prompt))
     if has_style_reference:
-        lines.extend(_VISUAL_STYLE_REFERENCE_AUTHORITY)
-        if asset_kind == "character_ref":
-            lines.extend(_CHARACTER_VALUE_STYLE_LOCK)
+        # Reference-specific rendering authority is declared once by the compiler.
         if subjects and has_subject_references:
             lines.extend(_SHARED_ARTISTIC_HAND)
-    if asset_kind != "character_ref":
+    if asset_kind not in {"character_ref", "style_sample"}:
         lines.append(_UNIFIED_CANVAS)
     return lines
 

@@ -80,6 +80,7 @@ class _PageContentDraft(BaseModel):
         "inset",
     ] = "standard"
     visual_intent: str = Field(min_length=1)
+    continuity_intent: str = ""
     lettering_ids: tuple[str, ...] = ()
     entity_ids: tuple[str, ...] = ()
     appearance_states: dict[str, str] = Field(default_factory=dict)
@@ -371,6 +372,32 @@ def _reference_view(
         if entity_ids is None or reference.entity_id in entity_ids
     ]
 
+_SEMANTIC_PAGE_CONTRACT = (
+    "For each panel author continuity_intent as non-lettering direction: the established "
+    "start and resulting end scene, actor staging, and important held-object ownership, "
+    "using only the ordered Adapt summaries and transitions. Carry completed arrivals, "
+    "departures, and transfers forward across panels and pages until changed; do not "
+    "re-enact a completed entrance. Do not invent positions, possessions, or transitions "
+    "where the source is silent; leave unestablished composition to Draw. Never use "
+    "previous generated pixels as continuity authority. "
+    "appearance_states maps visible entity IDs to approved entity-scoped state IDs; "
+    "omit base appearances. Explicit Adapt appearance changes own activation timing "
+    "and persist until changed. visual_intent and continuity_intent must agree with "
+    "that state, including time of day: do not introduce dusk before its activation. "
+    "Keep approved anchors and continuity guards verbatim and respect their action "
+    "constraints. Describe relative composition, narrative emphasis, and panel roles; "
+    "do not prescribe templates, fixed positions, exact boxes or coordinates, or "
+    "provider prompts. Only explicit author geometry pins own exact placement. "
+    "Code assigns each beat's complete exact lettering to its first occurrence. "
+    "Supply lettering_ids only to move items to another adjacent occurrence of "
+    "the same beat; each item must occur once, in Adapt order, without rewriting. "
+    "Stage on-screen speakers visibly; off-screen speech must not point at a visible "
+    "character. Silent sequences are valid when action, causality, and transitions "
+    "remain self-explanatory; otherwise regroup complete beats or report missing "
+    "canonical narrative context, never invent copy. "
+)
+
+
 
 def build_book_plan_prompt(
     adaptation: BookAdaptation,
@@ -407,30 +434,16 @@ def build_book_plan_prompt(
         "once and in order. A panel may cite an adapted beat again only on an "
         "immediately adjacent panel or page when decompression reveals a distinct "
         "visual submoment supported by that beat and its source; never return to a "
-        "beat after advancing beyond it. Allocate "
-        "lettering by citing LetteringItem IDs in lettering_ids, on the same page "
-        "content item as the beat that owns them, in reading order; never copy, "
-        "rewrite, shorten, clip, or omit the wording itself. Every lettering ID of "
-        "an allocated beat must be cited exactly once. When lettering has "
-        "delivery='onscreen', make visual_intent visibly stage its speaker so "
-        "balloon ownership is unambiguous; code derives the canonical speaker "
-        "entity into that content item's entity_ids. Off-screen delivery must not "
-        "receive a tail "
-        "pointing at a visible character. Pages may bridge "
+        "beat after advancing beyond it. "
+        + _SEMANTIC_PAGE_CONTRACT
+        + "Pages may bridge "
         "source-scene boundaries. Group adjacent story beats into varied multi-panel "
         "pages when that preserves action, reaction, detail, causality, and rhythm. "
         "Reserve one-panel pages and splash panels for exceptional peaks, reveals, "
-        "or deliberate pauses; do not make them the default page grammar. A fully "
-        "silent page must be a deliberate, self-explanatory visual pause. Do not "
-        "create consecutive fully silent pages: regroup or decompress the "
-        "surrounding lettered beats so an unfamiliar reader retains causal context. "
-        "Author a "
+        "or deliberate pauses; do not make them the default page grammar. Author a "
         "panel_role for every content item and ensure layout_intent describes those "
-        "same ordered panels. appearance_states maps each visible entity_id to its "
-        "appearance_state_id; omit base appearances. You do not need to restate the appearance change an "
-        "allocated beat already declares: its entity and target state are added to "
-        "that content item for you. Cite entity_ids and appearance_states for "
-        "what is visible on the panel beyond those changes. Own actual page count, "
+        "same ordered panels. Cite visible entities beyond explicit appearance changes. "
+        "Own actual page count, "
         + page_range_instruction
         + " "
         "page and spread rhythm, page-turn intent, narrative "
@@ -438,14 +451,9 @@ def build_book_plan_prompt(
         "entity and appearance-state IDs. Sparse, standard, and dense are semantic "
         "intent, not panel-count or word-count caps. "
         + overflow_instruction
-        + "Do not use templates, split beats mechanically, "
-        "assign fixed character positions, create scene-local pagination, add exact "
-        "coordinates, reconcile scene plans, or write image provider prompts. "
-        "Page numbers, content IDs, content order, ordinary lettering allocation, "
-        "and reading_order are deterministic: omit them or return provisional "
-        "values because code canonicalizes them. Cite lettering_ids only when a "
-        "repeated beat requires its lettering on a later occurrence. Return only "
-        "the global page-plan JSON object.\n"
+        + "Page numbers, content IDs, content order, and reading_order are "
+        "deterministic: omit them or return provisional values because code "
+        "canonicalizes them. Return only the global page-plan JSON object.\n"
         + json.dumps(
             context,
             ensure_ascii=False,
@@ -577,6 +585,14 @@ def _detail_batch_prompt(
     context_stop = min(len(page_map.pages), stop + 1)
     target_beat_ids = {beat_id for page in target_pages for beat_id in page.beat_ids}
     planning = _planning_view(adaptation)
+    first_target = next(
+        (index for index, beat in enumerate(planning["beats"]) if beat["id"] in target_beat_ids),
+        len(planning["beats"]),
+    )
+    planning["established_continuity"] = [
+        {key: beat[key] for key in ("id", "summary", "transitions", "appearance_changes")}
+        for beat in planning["beats"][:first_target]
+    ]
     planning["beats"] = [
         beat for beat in planning["beats"] if beat["id"] in target_beat_ids
     ]
@@ -606,13 +622,10 @@ def _detail_batch_prompt(
         "not the neighboring context pages. Each target page's panels must jointly "
         "carry exactly that page-map entry's beat_ids in order. Group or repeat a "
         "beat within the page only for distinct supported visual submoments. Author "
-        "panel_role, visual_intent, visible entity_ids, and layout_intent. Code "
-        "canonicalizes page numbers, content IDs/order, ordinary lettering "
-        "allocation, and reading order. Cite lettering_ids only to move a repeated "
-        "beat's lettering away from its first occurrence. Never rewrite lettering. "
-        "Code derives canonical on-screen speaker entity citations; stage every "
-        "on-screen speaker visibly in visual_intent. Avoid consecutive fully silent "
-        "pages and reserve one-panel pages for exceptional moments."
+        "panel_role, visual_intent, continuity_intent, visible entity_ids, and layout_intent. "
+        "Code canonicalizes page numbers, content IDs/order, and reading order. "
+        + _SEMANTIC_PAGE_CONTRACT
+        + "Reserve one-panel pages for exceptional moments."
         + concern_text
         + "\n"
         + json.dumps(
@@ -820,7 +833,6 @@ async def _produce_book_plan_one_shot(
                     in {
                         "repetitive_page_composition",
                         "density_mismatch",
-                        "sustained_silent_pages",
                     }
                 )
                 if retryable_issues and attempt < _MAX_PLAN_ATTEMPTS:
@@ -1216,7 +1228,6 @@ async def _produce_book_plan_two_pass(
                 in {
                     "repetitive_page_composition",
                     "density_mismatch",
-                    "sustained_silent_pages",
                 }
             ),
         )
@@ -1656,7 +1667,7 @@ def _canonical_pages(
                     states.setdefault(entity_id, active_state_by_entity[entity_id])
             unapproved_changes.extend(unapproved)
             payload = content.model_dump(
-                exclude={"lettering_ids", "entity_ids", "appearance_states"}
+                exclude={"lettering_ids", "entity_ids", "appearance_states", "continuity_intent"}
             )
             content_items.append(
                 PageContent(
@@ -1670,6 +1681,14 @@ def _canonical_pages(
                     ),
                 )
             )
+        continuity = [
+            f"Panel {content.order}: {content.continuity_intent}"
+            for content in sorted(page.content, key=lambda content: content.order)
+            if content.continuity_intent.strip()
+        ]
+        layout_intent = page.layout_intent
+        if continuity:
+            layout_intent += "\n\nCanonical staging (non-lettering):\n" + "\n".join(continuity)
         pages.append(
             ComicPage(
                 revision=1,
@@ -1681,7 +1700,7 @@ def _canonical_pages(
                 emphasis=page.emphasis,
                 density_intent=page.density_intent,
                 rhythm_intent=page.rhythm_intent,
-                layout_intent=page.layout_intent,
+                layout_intent=layout_intent,
                 content=content_items,
                 reading_order=_canonical_reading_order(
                     page.reading_order,
@@ -2111,39 +2130,6 @@ def validate_book_plan(
             )
         single_panel_run = []
 
-    silent_page_run: list[ComicPage] = []
-    for page in (*pages, None):
-        if page is not None and not any(content.lettering for content in page.content):
-            silent_page_run.append(page)
-            continue
-        if len(silent_page_run) >= 2:
-            page_ids = [
-                f"page_{candidate.page_number:03d}" for candidate in silent_page_run
-            ]
-            issues.append(
-                EditorialIssue(
-                    id=(
-                        "plan_issue_sustained_silent_pages_"
-                        f"{silent_page_run[0].page_number:03d}_"
-                        f"{silent_page_run[-1].page_number:03d}"
-                    ),
-                    owner_stage="plan",
-                    code="sustained_silent_pages",
-                    message=(
-                        "Consecutive fully silent pages risk breaking causal "
-                        "comprehension for a reader unfamiliar with the source."
-                    ),
-                    artifact_ids=page_ids,
-                    evidence=[
-                        f"Pages {silent_page_run[0].page_number}-"
-                        f"{silent_page_run[-1].page_number} contain no canonical "
-                        "lettering.",
-                        "Regroup or decompress adjacent lettered beats unless this "
-                        "is an exceptional, self-explanatory visual sequence.",
-                    ],
-                )
-            )
-        silent_page_run = []
 
     for page in pages:
         if page.density_intent == "dense" and len(page.content) == 1:

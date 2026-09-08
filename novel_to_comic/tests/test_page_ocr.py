@@ -237,6 +237,62 @@ def test_adapter_sends_the_page_image_and_no_canonical_wording(
     assert "It was the same face" not in captured["user_content"]
 
 
+def test_invalid_envelope_retains_full_provider_response_before_parsing(tmp_path, monkeypatch):
+    from pydantic import ValidationError
+    from novel_to_comic.target_artifacts import TargetArtifacts
+    from novel_to_comic.usage import ApiResult
+    from tests.test_page_review import _render
+
+    artifacts = TargetArtifacts(tmp_path)
+    payload = {"text": [{"text": "Provider words", "box": {"x": 0, "y": 0, "width": 0.5, "height": 0.1}}]}
+    raw_text = json.dumps(payload)
+    usage = UsageRecord(provider="gemini", model="ocr-balanced", operation="text")
+
+    async def provider(**kwargs):
+        # The complete root contract is actually sent to the provider.
+        schema = kwargs["json_schema"]
+        assert "lettering" in schema["required"]
+        assert schema["additionalProperties"] is False
+        assert "panels" in schema["properties"]
+        kwargs["response_sink"](ApiResult(value=raw_text, usage=usage))
+        return ApiResult(value=payload, usage=usage)
+
+    monkeypatch.setattr("novel_to_comic.clients.text.generate_json", provider)
+    adapter = GatewayPageOCRAdapter(Config(), page_number=34)
+    adapter.bind_render(artifacts, _render())
+    with pytest.raises(ValidationError):
+        asyncio.run(adapter.extract(b"page-34"))
+    retained = artifacts.read_ocr_response(34, 1)
+    assert retained.raw_response == raw_text
+    assert retained.usage == usage
+    assert retained.render_image_sha256 == _render().image_sha256
+    assert not artifacts.raw_ocr_path(34, 1).exists()
+
+
+def test_retained_response_revalidates_without_provider_or_canonical_substitution(tmp_path, monkeypatch):
+    from novel_to_comic.models.draw import OCRProviderResponse
+    from novel_to_comic.page_review import revalidate_cached_page_render
+    from novel_to_comic.target_artifacts import TargetArtifacts
+    from tests.test_page_review import _page, _render
+
+    artifacts = TargetArtifacts(tmp_path)
+    render = _render()
+    artifacts.write_ocr_response(OCRProviderResponse(
+        page_number=34, render_revision=1, render_image_sha256=render.image_sha256,
+        request_sha256=render.request_sha256, response=None,
+        raw_response=json.dumps({"lettering": [{"text": "Actually seen, not canonical",
+            "box": {"x": 0, "y": 0, "width": 0.5, "height": 0.1}}], "panels": []}),
+        usage=UsageRecord(provider="gemini", model="ocr-balanced", operation="text"),
+    ))
+    async def forbidden(**kwargs):
+        raise AssertionError("cached recovery must never call a provider")
+    monkeypatch.setattr("novel_to_comic.clients.text.generate_json", forbidden)
+    analysis = revalidate_cached_page_render(page=_page(), render=render, artifacts=artifacts)
+    assert analysis.ocr_observations[0].text == "Actually seen, not canonical"
+    assert not analysis.lettering_valid
+    assert revalidate_cached_page_render(page=_page(), render=render, artifacts=artifacts) == analysis
+
+
 def test_mock_replay_answers_page_ocr_from_the_canonical_page(
     tmp_path: Path,
 ) -> None:

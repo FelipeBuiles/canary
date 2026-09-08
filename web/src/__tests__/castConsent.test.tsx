@@ -31,6 +31,15 @@ function renderCast() {
 beforeEach(() => { run.mockReset(); stageStatus = "pending"; selectedStyle = true; });
 
 describe("cast consent", () => {
+  it("offers review instead of another generation once individually generated references are ready", () => {
+    stageStatus = "awaiting_review";
+    renderCast();
+    expect(screen.queryByRole("button", { name: "START CAST" })).toBeNull();
+    expect(screen.getByRole("button", { name: "LOOKS RIGHT — CONTINUE →" }).hasAttribute("disabled")).toBe(false);
+    expect(run).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
   it("does not spend on entry and requires confirmation after showing the estimate and hold", async () => {
     const user = userEvent.setup();
     renderCast();
