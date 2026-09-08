@@ -67,7 +67,8 @@ class Admission:
 
 async def admission_middleware(request, call_next):
     match = _PROJECT.match(request.url.path)
-    if not match or request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+    status_read = bool(match and request.method == "GET" and match.group(2) == "/status")
+    if not match or (not status_read and request.method not in {"POST", "PUT", "PATCH", "DELETE"}):
         return await call_next(request)
     project_id, suffix = match.group(1), match.group(2) or ""
     if project_id in {"import-story", "short-stories"}:
@@ -82,6 +83,11 @@ async def admission_middleware(request, call_next):
             account = auth()
             if inspect.isawaitable(account):
                 account = await account
+        if status_read:
+            # Status can reconcile completed artifacts into pipeline state.
+            # Serialize before dependencies load state, including queue admission.
+            async with admission.enter(project_key(account, project_id)):
+                return await call_next(request)
         key = request.headers.get("idempotency-key")
         if _PAID.fullmatch(suffix) and not key:
             raise HTTPException(400, {"code": "idempotency_key_required", "message": "An Idempotency-Key is required for this action."})

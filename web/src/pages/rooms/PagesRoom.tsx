@@ -48,6 +48,7 @@ import {
 } from "../../components/pages/LetteringEvidence";
 import { isOcrIssue } from "../../components/pages/lettering";
 import { RevisionDraft } from "../../components/pages/RevisionDraft";
+import { PageCheckRecovery } from "../../components/pages/PageCheckRecovery";
 import { VisualReviewPanel, type VisualReviewDraftSeed } from "../../components/pages/VisualReviewPanel";
 import type { DrawerKind } from "../../lib/stations";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
@@ -472,6 +473,7 @@ export function PagesRoom() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [pageActionErrors, setPageActionErrors] = useState<Partial<Record<number, string>>>({});
   const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [recoveryRequested, setRecoveryRequested] = useState(0);
   const { data: generationJobs } = useGenerationJobs(id, [], true);
   const observedTerminalJobs = useRef(new Set<string>());
   const firstArtworkObserved = useRef<boolean | null>(null);
@@ -581,10 +583,12 @@ export function PagesRoom() {
   });
   const failedPages = new Set(pages.filter((item) => {
     if (drawingPages.has(item.page.page_number)) return false;
+    if (item.analysis_recovery?.status === "checked") return false;
     const job = latestPageJobs.get(item.page.page_number);
     return job?.status === "failed" || !!pageFailures[item.page.page_number] || !!item.failure;
   }).map((item) => item.page.page_number));
   const unresolvedPages = pages.filter(needsReview);
+  const uncheckedPages = pages.filter((item) => item.active_render && item.analysis_recovery?.status !== "checked");
   const visiblePages = pages.filter((item) => filter === "all"
     || (filter === "needs-review" && needsReview(item))
     || (filter === "drawing" && drawingPages.has(item.page.page_number))
@@ -600,6 +604,10 @@ export function PagesRoom() {
 
   function continueToBook() {
     if (!id) return;
+    if (uncheckedPages.length) {
+      setRecoveryRequested((value) => value + 1);
+      return;
+    }
     setApprovalError(null);
     approve.mutate(
       { project: id, stage: "draw" },
@@ -681,6 +689,7 @@ export function PagesRoom() {
     analyze.mutate({ project: projectId, pageNumber }, {
       onSuccess: () => {
         setPaidIntent(null);
+        setPageFailures((current) => ({ ...current, [pageNumber]: undefined }));
         setPageActionErrors((current) => ({ ...current, [pageNumber]: undefined }));
       },
       onError: (error) => {
@@ -797,16 +806,16 @@ export function PagesRoom() {
             const revision = item.active_render?.render.revision;
             const pageIsDrawing = drawingPages.has(item.page.page_number);
             const serverJob = latestPageJobs.get(item.page.page_number);
-            const pageFailure = serverJob?.status === "failed" ? serverJob : pageFailures[item.page.page_number] ?? item.failure;
-            const failurePhase = pageFailure && "phase" in pageFailure
-              ? pageFailure.phase
-              : undefined;
+            const pageFailure = item.analysis_recovery?.status === "checked" ? null
+              : item.failure ?? pageFailures[item.page.page_number] ?? (serverJob?.status === "failed" ? serverJob : null);
+            const failurePhase = revision && item.analysis_recovery?.status !== "checked"
+              ? "analysis" : pageFailure?.phase;
             const failureCopy = pageFailure
               ? getImageFailureCopy(
                   t,
-                  pageFailure.classification,
-                  pageFailure.user_message,
-                  pageFailure.error,
+                  failurePhase === "analysis" ? "analysis_error" : pageFailure.classification,
+                  failurePhase === "analysis" ? undefined : pageFailure.user_message,
+                  failurePhase === "analysis" ? undefined : pageFailure.error,
                 )
               : null;
             const canRetryGeneration = Boolean(pageFailure?.recoverable)
@@ -844,6 +853,9 @@ export function PagesRoom() {
                       </div>
                     )}
                   </div>
+                  {revision && item.analysis_recovery?.status !== "checked" && (
+                    <p className="mt-2 text-sm font-bold text-ink-muted">{t("Artwork saved · Text check incomplete")}</p>
+                  )}
                   <div className="mt-3 flex items-center justify-between gap-2">
                     <span className="font-display text-lg font-black uppercase">{t("Page")} {item.page.page_number}</span>
                     {item.issues.some((issue) => (issue.status === "open" || issue.status === "revised")) && (
@@ -934,13 +946,23 @@ export function PagesRoom() {
                         className="mt-3"
                         size="xs"
                         fullWidth
-                        onClick={() => requestSpend({ kind: "analysis", pageNumber: item.page.page_number })}
+                        onClick={() => item.analysis_recovery?.requires_paid_call
+                          ? requestSpend({ kind: "analysis", pageNumber: item.page.page_number })
+                          : retryAnalysis(item.page.page_number)}
                         disabled={analyze.isPending}
                       >
                         {analyze.isPending ? t("CHECKING TEXT…") : t("RETRY TEXT CHECK")}
                       </Button>
                     )}
                   </Surface>
+                )}
+                {!failureCopy && revision && item.analysis_recovery?.status !== "checked" && (
+                  <Button className="mt-3" size="xs" fullWidth disabled={analyze.isPending}
+                    onClick={() => item.analysis_recovery?.requires_paid_call
+                      ? requestSpend({ kind: "analysis", pageNumber: item.page.page_number })
+                      : retryAnalysis(item.page.page_number)}>
+                    {t("RETRY TEXT CHECK")}
+                  </Button>
                 )}
                 {!revision && drawStatus !== "pending" && !failureCopy && (
                   <Button
@@ -1021,7 +1043,15 @@ export function PagesRoom() {
           {t("REVIEW FLAGGED PAGES")} ({unresolvedPages.length})
         </Button>
       )}
-      {pages.every((item) => item.active_render) && unresolvedPages.length === 0 && (
+      {uncheckedPages.length > 0 && (
+        <section className="space-y-3">
+          <p role="status" className="text-sm font-bold">
+            {pages.filter((item) => item.active_render).length} {t("pages drawn")} · {pages.filter((item) => item.analysis_recovery?.status === "checked").length} {t("pages checked")}
+          </p>
+          <PageCheckRecovery project={projectId} requested={recoveryRequested} onRecovered={() => void refetch()} />
+        </section>
+      )}
+      {pages.every((item) => item.active_render) && uncheckedPages.length === 0 && unresolvedPages.length === 0 && (
         <p role="status" className="text-sm font-bold text-archive-sage">{t("No unresolved page findings. Read through the edition before export.")}</p>
       )}
 
@@ -1031,7 +1061,7 @@ export function PagesRoom() {
         onPrimary={continueToBook}
         primaryDisabled={
           approve.isPending
-          || drawStatus !== "awaiting_review"
+          || (drawStatus !== "awaiting_review" && drawStatus !== "complete")
           || data.issue_summary.blocking_issue_ids.length > 0
           || data.pages.some((item) => !item.active_render)
         }

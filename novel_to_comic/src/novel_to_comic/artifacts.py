@@ -168,9 +168,7 @@ def location_plate_instructions_path(project_dir: Path, loc_id: str) -> Path:
 
 
 def location_state_plate_path(project_dir: Path, loc_id: str, state_id: str) -> Path:
-    # State ids are globally prefixed by their parent location id; retain the
-    # established plate path consumed by ReferencePlan.
-    return project_dir / "plates" / f"{state_id}.png"
+    return project_dir / "plates" / loc_id / "states" / f"{state_id}.png"
 
 
 def location_state_plate_instructions_path(

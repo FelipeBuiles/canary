@@ -1,9 +1,11 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "../i18n";
 import { SHOW_DEV_CONTENT_KEY } from "../lib/devContent";
 import { usePipelineStore } from "../store/pipeline";
+import type * as PagesApi from "../api/pages";
 import type { CostEstimate, EditorialIssue, StageStatus } from "../types/api";
 
 const previewCorrections = vi.fn();
@@ -14,6 +16,10 @@ const analyzePage = vi.fn();
 const continueToBook = vi.fn();
 const generatePage = vi.fn();
 const runPipeline = vi.fn();
+const recoverChecks = vi.fn();
+const estimateChecks = vi.fn();
+const finishChecks = vi.fn();
+let analysisChecked = true;
 type TestStageInfo = {
   status: StageStatus;
   stale: boolean;
@@ -49,6 +55,7 @@ let generationJobResults: Array<{
   user_message?: string;
   recoverable?: boolean;
   error?: string | null;
+  payload?: { page_number: number };
 }> = [];
 let previewResult: Record<string, unknown> | undefined;
 let estimateError: Error | null = null;
@@ -123,6 +130,7 @@ vi.mock("../api/queries", () => ({
           resolution_revision: null,
         }],
         failure: persistedRenderedFailure,
+        analysis_recovery: { status: analysisChecked ? "checked" : "requires_ocr", requires_paid_call: !analysisChecked },
       }, ...(includeUndrawnPage ? [{
         page: {
           page_number: 2,
@@ -140,6 +148,7 @@ vi.mock("../api/queries", () => ({
         active_render: null,
         issues: [],
         failure: persistedPageFailure,
+        analysis_recovery: { status: "undrawn", requires_paid_call: false },
       }] : [])],
       issue_summary: {
         unresolved_issue_ids: ["page-issue-1"],
@@ -199,17 +208,26 @@ vi.mock("../api/pageRevisions", async (importOriginal) => {
   };
 });
 
+vi.mock("../api/pages", async (importOriginal) => ({
+  ...await importOriginal<typeof PagesApi>(),
+  recoverPageChecks: (...args: unknown[]) => recoverChecks(...args),
+  getPageCheckEstimate: (...args: unknown[]) => estimateChecks(...args),
+  runFinishPreflight: (...args: unknown[]) => finishChecks(...args),
+}));
+
 import { PagesRoom } from "../pages/rooms/PagesRoom";
 
 function renderRoom(url = "/project/demo/pages") {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(
+    <QueryClientProvider client={client}>
     <MemoryRouter initialEntries={[url]}>
       <I18nProvider>
         <Routes>
           <Route path="/project/:id/pages" element={<PagesRoom />} />
         </Routes>
       </I18nProvider>
-    </MemoryRouter>,
+    </MemoryRouter></QueryClientProvider>,
   );
 }
 
@@ -236,6 +254,10 @@ describe("PagesRoom", () => {
     pageIssues = undefined;
     persistedPageFailure = null;
     persistedRenderedFailure = null;
+    analysisChecked = true;
+    recoverChecks.mockReset();
+    estimateChecks.mockReset();
+    finishChecks.mockReset().mockResolvedValue({ status: "done" });
     adaptationIssues = [{
       id: "adapt-issue-1",
       owner_stage: "adapt",
@@ -712,6 +734,7 @@ describe("PagesRoom", () => {
   });
 
   it("retries a failed text check without redrawing the page", () => {
+    analysisChecked = false;
     persistedRenderedFailure = {
       page_number: 1,
       request_sha256: "f".repeat(64),
@@ -725,7 +748,6 @@ describe("PagesRoom", () => {
 
     renderRoom();
 
-    expect(screen.getByText("TEXT CHECK INCOMPLETE")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "RETRY TEXT CHECK" }));
     expect(analyzePage).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "CONFIRM TEXT CHECK" }));
@@ -734,6 +756,51 @@ describe("PagesRoom", () => {
       pageNumber: 1,
     }, expect.any(Object));
     expect(generatePage).not.toHaveBeenCalled();
+  });
+
+  it("recovers missing evidence before seeking explicit OCR-only consent on Continue", async () => {
+    analysisChecked = false;
+    pageIssues = [];
+    const imageHash = "c".repeat(64);
+    recoverChecks.mockResolvedValueOnce({ pages: [{ page_number: 1, status: "requires_ocr" }] })
+      .mockImplementationOnce(async () => {
+        analysisChecked = true;
+        return { pages: [{ page_number: 1, status: "checked" }] };
+      });
+    estimateChecks.mockResolvedValue({ ...cost, paid_pages: 1, pages: [{
+      page_number: 1, status: "requires_ocr", requires_paid_call: true, render_image_sha256: imageHash,
+    }] });
+    renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: "CONTINUE TO BOOK" }));
+    await screen.findByRole("alertdialog");
+    expect(recoverChecks).toHaveBeenCalledOnce();
+    expect(recoverChecks).toHaveBeenCalledWith("demo", false, {});
+    expect(continueToBook).not.toHaveBeenCalled();
+    expect(generatePage).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "CONFIRM TEXT CHECK" }));
+    await waitFor(() => expect(recoverChecks).toHaveBeenLastCalledWith("demo", true, { 1: imageHash }));
+    await waitFor(() => expect(finishChecks).toHaveBeenCalledTimes(2));
+    expect(generatePage).not.toHaveBeenCalled();
+  });
+
+  it("does not let a historical generation failure mask recoverable evidence or recovered analysis", () => {
+    analysisChecked = false;
+    persistedRenderedFailure = {
+      phase: "analysis", classification: "analysis_error", recoverable: true,
+      user_message: "Artwork saved", error: "OCR envelope invalid",
+    };
+    generationJobResults = [{
+      id: "old-image-job", status: "failed", classification: "generation_error",
+      recoverable: true, error: "Old generic failure", payload: { page_number: 1 },
+    }];
+    const room = renderRoom();
+    expect(screen.getByRole("button", { name: "RETRY TEXT CHECK" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "TRY AGAIN" })).toBeNull();
+    room.unmount();
+    analysisChecked = true;
+    renderRoom();
+    expect(screen.queryByRole("button", { name: "RETRY TEXT CHECK" })).toBeNull();
+    expect(screen.queryByText("Old generic failure")).toBeNull();
   });
 
   it("continues to Book through the Draw checkpoint", () => {

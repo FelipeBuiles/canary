@@ -77,6 +77,23 @@ export function getPageAnalysisEstimate(project: string, pageNumber: number): Pr
   return apiFetch(`${projectPath(project)}/pages/${pageNumber}/analyze/estimate`);
 }
 
+export interface PageCheckEstimate extends CostEstimate {
+  pages: Array<{ page_number: number; status: string; requires_paid_call: boolean; render_image_sha256: string | null }>;
+  paid_pages: number;
+}
+
+export function getPageCheckEstimate(project: string): Promise<PageCheckEstimate> {
+  return apiFetch(`${projectPath(project)}/pages/checks/estimate`);
+}
+
+export function recoverPageChecks(project: string, allowPaid = false, renders: Record<number, string> = {}): Promise<{
+  pages: Array<{ page_number: number; status: string; error?: string }>;
+}> {
+  return apiFetch(`${projectPath(project)}/pages/checks/recover`, {
+    method: "POST", body: JSON.stringify({ allow_paid: allowPaid, renders }),
+  });
+}
+
 export function generateCompletePage(
   project: string,
   pageNumber: number,

@@ -60,6 +60,8 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/projects/{project}/pages/{page_number}/generate/estimate` | `estimate_page_generation` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_number}/analyze/estimate` | `estimate_page_analysis` | `pages.py` |
 | `POST` | `/api/projects/{project}/pages/{page_number}/generate` | `generate_page` | `pages.py` |
+| `GET` | `/api/projects/{project}/pages/checks/estimate` | `estimate_missing_page_checks` | `pages.py` |
+| `POST` | `/api/projects/{project}/pages/checks/recover` | `recover_missing_page_checks` | `pages.py` |
 | `POST` | `/api/projects/{project}/pages/{page_number}/analyze` | `analyze_page` | `pages.py` |
 | `POST` | `/api/projects/{project}/pages/{page_number}/issues` | `create_page_issue` | `pages.py` |
 | `POST` | `/api/projects/{project}/pages/{page_number}/issues/{issue_id}/accept` | `accept_page_issue` | `pages.py` |
@@ -77,7 +79,6 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/projects/{project}/generation-jobs` | `get_generation_jobs` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/approve/{stage}` | `approve` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/reset/{stage}` | `reset_stage` | `pipeline.py` |
-| `GET` | `/api/projects/{project}/stage-error/{stage}` | `get_stage_error` | `pipeline.py` |
 | `GET` | `/api/projects/{project}/stage-error/{stage}` | `get_stage_error` | `pipeline.py` |
 | `POST` | `/api/projects` | `create_project` | `projects.py` |
 | `GET` | `/api/projects` | `list_projects` | `projects.py` |

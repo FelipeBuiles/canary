@@ -396,6 +396,18 @@ def test_stale_render_blocks_export_and_emits_complete_page_draw_request(
     assert not (tmp_path / "compose").exists()
 
 
+def test_missing_ocr_blocks_export_without_requesting_redraw(tmp_path: Path) -> None:
+    artifacts, _ = _write_valid_book(tmp_path)
+    artifacts.analysis_path(1, 1).unlink()
+    result = finish_book(
+        artifacts, formats=(),
+        production=FinishProductionSpec(canvas_width=120, canvas_height=180, bleed_px=10),
+    )
+    assert not result.preflight.ready_to_export
+    assert {failure.code for failure in result.preflight.pages[0].invariant_failures} == {"ocr_evidence_missing"}
+    assert result.preflight.correction_requests == ()
+
+
 def test_inexact_ocr_and_wrong_dimensions_block_without_normalizing_pixels(
     tmp_path: Path,
 ) -> None:
@@ -418,7 +430,7 @@ def test_inexact_ocr_and_wrong_dimensions_block_without_normalizing_pixels(
         failure.code
         for failure in result.preflight.pages[0].invariant_failures
     }
-    assert {"exact_ocr_status", "page_render_dimensions"} <= codes
+    assert {"lettering_mismatch", "page_render_dimensions"} <= codes
     assert set(result.preflight.correction_requests[0].failure_codes) >= codes
     assert not artifacts.normalized_page_path(1).exists()
     assert not artifacts.export_path("cbz").exists()

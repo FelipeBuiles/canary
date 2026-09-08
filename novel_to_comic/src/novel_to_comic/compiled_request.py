@@ -90,7 +90,7 @@ from novel_to_comic.text_utils import clean as _clean
 COMPILED_REQUEST_SCHEMA_VERSION = 3
 
 AssetKind = Literal[
-    "character_ref", "location_plate", "prop_ref", "style_sample",
+    "character_ref", "location_plate", "prop_ref", "style_sample", "style_calibration",
     "project_cover", "labs_image",
 ]
 
@@ -189,7 +189,7 @@ _CONTEXTUAL_PRESERVE: dict[str, tuple[str, ...]] = {
 _CONTEXTUAL_IGNORE: dict[str, tuple[str, ...]] = {
     "location_plate": ("depicted content that the active state contradicts",),
     "prop": ("reference backdrop",),
-    "style": ("depicted content",),
+    "style": ("people, objects, scenery, text and caption wording, panels, borders, source composition",),
     "continuity": ("facets incompatible with current states",),
 }
 
@@ -203,9 +203,6 @@ _SUBJECT_STYLE_IGNORE = (
     "paper texture", "edge treatment", "rendering density",
 )
 
-_STATE_PARENT_STYLE_IGNORE = (
-    "medium", "palette", "lighting", "paper texture", "background",
-)
 
 
 def compile_reference_instruction(
@@ -255,11 +252,10 @@ def compile_reference_instruction(
             if state_id:
                 semantic = (
                     f"canonical parent reference for {label} — preserve only {preserve_phrase}; "
-                    f"ignore {ignore_phrase}{conflict_note}; match its compatible head-to-body "
-                    "ratio, silhouette, facial modeling, degree of simplification, line weight, "
-                    "and rendering density; the active-state anchor overrides changed anatomy "
-                    "or wardrobe and the project style direction overrides any global style "
-                    "conflict; do not copy its pose or background"
+                    f"ignore {ignore_phrase}{conflict_note}; also ignore its {style_ignore}; "
+                    "the active-state anchor overrides changed anatomy, age, proportions, "
+                    "or wardrobe; selected art direction owns rendering; "
+                    "do not copy its pose or background"
                 )
             else:
                 semantic = (
@@ -308,21 +304,31 @@ def compile_reference_instruction(
                 f"location reference for {label} — preserve {preserve_phrase}"
             )
     elif role == "prop":
-        preserve = _CONTEXTUAL_PRESERVE["prop"]
-        ignore = _CONTEXTUAL_IGNORE["prop"]
+        preserve = asset.preserve_facets if state_id else _CONTEXTUAL_PRESERVE["prop"]
+        ignore = (*asset.ignore_facets, "reference backdrop") if state_id else _CONTEXTUAL_IGNORE["prop"]
         semantic = (
             f"object reference for {label} — preserve {_facet_phrase(preserve)}; "
             f"ignore {_facet_phrase(ignore)}"
         )
+        if state_id:
+            semantic += "; the active-state anchor overrides every explicitly changed object facet"
     elif role == "style":
-        preserve = _CONTEXTUAL_PRESERVE["style"]
-        ignore = _CONTEXTUAL_IGNORE["style"]
-        semantic = (
-            f"sole visual style authority for {label} — match its exact "
-            f"{_facet_phrase(preserve)} consistently throughout the output; "
-            f"ignore {_facet_phrase(ignore)}; subject matter and named-artist wording "
-            "must not introduce another illustration style"
-        )
+        variation = "candidate-controlled rendering facets" in asset.ignore_facets
+        preserve = asset.preserve_facets if variation else _CONTEXTUAL_PRESERVE["style"]
+        ignore = (*_CONTEXTUAL_IGNORE["style"], *asset.ignore_facets)
+        if variation:
+            semantic = (
+                f"style variation context for {label} — preserve only "
+                f"{_facet_phrase(preserve) or 'the authored thematic inspiration'}; "
+                "the candidate's selected art direction owns all changed rendering facets; "
+                f"ignore {_facet_phrase(ignore)}"
+            )
+        else:
+            semantic = (
+                f"sole visual rendering style authority for {label} — match its exact "
+                f"{_facet_phrase(preserve)} consistently; ignore {_facet_phrase(ignore)}. "
+                "This is rendering evidence, never scene, lettering, or layout authority."
+            )
     elif role == "continuity":
         preserve = _CONTEXTUAL_PRESERVE["continuity"]
         ignore = _CONTEXTUAL_IGNORE["continuity"]
@@ -334,38 +340,18 @@ def compile_reference_instruction(
     else:
         semantic = f"reference for {label}"
 
-    instruction_preserve = (
-            asset.preserve_facets
-            if role == "subject"
-            else (
-                asset.preserve_facets
-                if role == "location_plate"
-                and state_id is not None
-                and bool(
-                    (set(asset.preserve_facets) | set(asset.ignore_facets))
-                    & _LOCATION_STATE_FACETS
-                )
-                else _CONTEXTUAL_PRESERVE.get(role, ())
-            )
-    )
-    instruction_ignore = (
-        tuple(dict.fromkeys((
-            *asset.ignore_facets,
-            *(_STATE_PARENT_STYLE_IGNORE if state_id and scope is AuthorityScope.IDENTITY_ONLY
-              else _SUBJECT_STYLE_IGNORE),
-        )))
-        if role == "subject"
-        else (
-            asset.ignore_facets
-            if role == "location_plate"
-            and state_id is not None
-            and bool(
-                (set(asset.preserve_facets) | set(asset.ignore_facets))
-                & _LOCATION_STATE_FACETS
-            )
-            else _CONTEXTUAL_IGNORE.get(role, ())
-        )
-    )
+    if role == "subject":
+        instruction_preserve = asset.preserve_facets
+        instruction_ignore = tuple(dict.fromkeys((*asset.ignore_facets, *_SUBJECT_STYLE_IGNORE)))
+    elif role in {"prop", "style"}:
+        instruction_preserve = preserve
+        instruction_ignore = ignore
+    elif role == "location_plate" and state_facets:
+        instruction_preserve = asset.preserve_facets
+        instruction_ignore = asset.ignore_facets
+    else:
+        instruction_preserve = _CONTEXTUAL_PRESERVE.get(role, ())
+        instruction_ignore = _CONTEXTUAL_IGNORE.get(role, ())
     return CompiledReferenceInstruction(
         index=index,
         role=role,
@@ -705,7 +691,9 @@ def _build_sections(
     """
     sections: list[CompiledPromptSection] = []
     has_style_reference = any(
-        instruction.role == "style" for instruction in reference_instructions
+        instruction.role == "style"
+        and "candidate-controlled rendering facets" not in instruction.ignore_facets
+        for instruction in reference_instructions
     )
     has_subject_references = any(
         instruction.role == "subject" for instruction in reference_instructions
@@ -714,14 +702,21 @@ def _build_sections(
 
     # ── 1. Protected anchors (verbatim — NEVER sanitized) ────────────────
     anchor_lines: list[str] = []
-    for subject in getattr(prompt, "subjects", []) or []:
-        identity = (subject.identity or "").strip()
-        if identity:
-            anchor_lines.append(f"{subject.name}: {identity}")
-    for anchor in getattr(prompt, "anchors", []) or []:
-        text = (anchor.text or "").strip()
-        if text:
-            anchor_lines.append(f"{anchor.name}: {text}")
+    emitted: set[tuple[str, str | None, str]] = set()
+    for subject in prompt.subjects:
+        key = (subject.character_id or subject.name, subject.appearance_state_id, subject.identity)
+        if subject.identity and key not in emitted:
+            anchor_lines.append(f"{subject.name} [{key[0]} / {key[1] or 'canonical'}]: {subject.identity}")
+            emitted.add(key)
+        if subject.appearance_guard:
+            anchor_lines.append(f"{subject.name} continuity guard: {subject.appearance_guard}")
+    for anchor in prompt.anchors:
+        key = (anchor.entity_id, anchor.appearance_state_id, anchor.text)
+        if anchor.text and key not in emitted:
+            anchor_lines.append(f"{anchor.name} [{anchor.entity_id} / {anchor.appearance_state_id or 'canonical'}]: {anchor.text}")
+            emitted.add(key)
+        if anchor.continuity_guard:
+            anchor_lines.append(f"{anchor.name} continuity guard: {anchor.continuity_guard}")
     if anchor_lines:
         sections.append(CompiledPromptSection(
             kind="protected_anchors",
@@ -731,6 +726,11 @@ def _build_sections(
 
     # ── 2. Scene direction (sanitized editable fields) ───────────────────
     direction_lines: list[str] = []
+    for subject in prompt.subjects:
+        for field_name in ("action", "position", "expression"):
+            value = clean_dynamic(getattr(subject, field_name))
+            if value:
+                direction_lines.append(f"{subject.name} {field_name}: {value}")
     for field_name, label in (
         ("composition", "Composition"),
         ("setting", "Setting"),
@@ -785,6 +785,10 @@ def _build_sections(
 
     # ── 3. Selected style (medium guidance owner — appears once) ─────────
     cleaned_style = _clean(style_text or getattr(prompt, "style", None))
+    if asset_kind != "style_sample":
+        from novel_to_comic.style_contract import rendering_style_template
+
+        cleaned_style = rendering_style_template(cleaned_style)
     if cleaned_style:
         if has_style_reference:
             cleaned_style = _demote_named_style_attributions(cleaned_style)
@@ -826,12 +830,25 @@ def _build_sections(
         ))
 
     # ── 6. User constraint addenda (sanitized) ───────────────────────────
-    user_constraints = clean_dynamic(getattr(prompt, "constraints", None))
+    user_constraints = getattr(prompt, "constraints", None)
+    if prompt.editorial_addendum:
+        addendum = clean_dynamic(prompt.editorial_addendum)
+        sections.append(CompiledPromptSection(
+            kind="user_addenda",
+            title="Authorized editable appearance",
+            lines=(
+                "Only these editable facets may supersede anchor or reference appearance: "
+                + ", ".join(prompt.editable_facets)
+                + ". Identity, age, anatomy, explicit state changes, continuity guards, selected style, "
+                "and task geometry remain binding. All unedited facets remain unchanged.",
+                addendum,
+            ),
+        ))
     if user_constraints:
         sections.append(CompiledPromptSection(
             kind="user_addenda",
             title="User constraint notes",
-            lines=tuple(f"- {part.strip()}" for part in user_constraints.split(";") if part.strip()),
+            lines=(user_constraints,),
         ))
 
     # ── 7. Generation geometry ───────────────────────────────────────────
@@ -850,8 +867,10 @@ def _build_sections(
         lines=tuple(geo_lines),
     ))
 
-    # Final semantic prompt: join section bodies with blank lines.
-    final_prompt = "\n\n".join(s.body for s in sections if s.lines)
+    order = {"system_constraints": 0, "style": 1, "protected_anchors": 2,
+             "reference_instructions": 3, "scene_direction": 4, "user_addenda": 5, "geometry": 6}
+    sections.sort(key=lambda section: order[section.kind])
+    final_prompt = "\n\n".join(f"{s.title}\n{s.body}" for s in sections if s.lines)
     return tuple(sections), final_prompt
 
 
@@ -913,7 +932,7 @@ def compile_generation_request(
     # budget, fail explicitly so no provider prefix-slices it later.
     char_limit = route_profile.prompt_char_limit
     budget = apply_prompt_budget(
-        [(s.kind, s.body) for s in sections], char_limit=char_limit,
+        [(s.kind, f"{s.title}\n{s.body}") for s in sections], char_limit=char_limit,
     )
     if budget.overshoot > 0:
         raise CompiledRequestError(

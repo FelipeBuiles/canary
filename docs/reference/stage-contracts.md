@@ -1,6 +1,6 @@
 # Stage contracts
 
-**Status: Current, September 7, 2026.** Implementation and tests are authoritative.
+**Status: Current, September 8, 2026.** Implementation and tests are authoritative.
 Each stage owns its file boundary. Server orchestration runs the explicit chain;
 stages do not call one another. The CLI has only `init` and `serve`.
 
@@ -17,9 +17,9 @@ stages do not call one another. The CLI has only `init` and `serve`.
 
 `state.py` and `stages/__init__.py` define ordering and gates. All routes below
 serve under `/api/projects/{project_id}`: pipeline operations live in
-`server/routers/pipeline.py`; page generation, correction, visual review, and
-render history live in `server/routers/pages.py`; editorial decisions and
-story changes live in `server/routers/editorial.py`.
+`server/routers/pipeline.py`; page generation, saved-pixel text-check recovery,
+correction, visual review, and render history live in `server/routers/pages.py`;
+editorial decisions and story changes live in `server/routers/editorial.py`.
 
 `TargetArtifacts` owns the active source, brief, adaptation, plan, Draw, and
 Finish paths. `artifacts.py` owns Story Bible and Cast reference paths. Never
@@ -58,6 +58,48 @@ IDs are entity-scoped. Characters, locations, and props share state catalogs.
 State conditioning uses explicit `changed_facets` and `replaces_identity`.
 Preserve `visual_anchor` and `continuity_guard` verbatim through Cast and Draw.
 
+Adapt's appearance changes carry forward until changed; explicit Plan state
+citations remain authoritative for intentional earlier-state imagery. Plan
+drafts author non-lettering `continuity_intent` for scene transitions, staging,
+and held-object ownership. Canonicalization folds it into `ComicPage.layout_intent`
+as ordered panel staging, not a new `PageContent.continuity_intent` field.
+
+### Style and reference authority
+
+Style curation uses typed `visual_logic`: `photographic`,
+`realistic_illustration`, `stylized`, or `graphic`. Selection covers declared
+portfolio roles rather than taking the first candidates. Without an explicit
+author medium restriction, the selected portfolio must include photographic
+and realistic-illustration options in distinct roles; an invalid portfolio
+fails rather than silently dropping coverage. A restriction must quote the
+author direction verbatim; story mood is not a medium restriction. Contrast
+and wildcard directions must also honor that restriction.
+
+Full-page style samples and Draw retain the selected lettering and page-framing
+standards. Cast reference prompts use only the art-rendering projection, not
+page lettering, borders, or gutters. Style and reference authority are not
+disposable scene prose: approved style imagery owns rendering, not depicted
+people, objects, text, or layout. Canonical subject references own compatible
+identity/state facets, not their original rendering style. Active-state anchors
+override explicitly changed anatomy, age, proportions, wardrobe, location, or
+object facets; a provider-safe rewrite must not reverse a state or restore
+missing anatomy. Textual style notes remain secondary to an approved style
+reference; a generated-neighbor variation instead owns its declared changed
+rendering facets.
+
+Character style calibration is a distinct `style_calibration` asset: a
+text-free lineup of unrelated adults with different ages/builds, not a
+lettered full-page style sample or a required Cast approval output. Reuse
+requires its current producing request; otherwise the approved style proof
+is the fallback conditioning image.
+
+Location state plates use `plates/{location}/states/{state}.png`, with
+instructions beside them as `{state}.instructions.jsonl`. Reads, writes, and
+lineage scans stay scoped to that location; there is no migration or alternate
+reader for the old location-state artifact layout.
+
+### Frozen pages and corrections
+
 Draw compiles selected references, distinct subject labels, panel assignments,
 geometry, reading order, and exact lettering into one frozen request. Excess
 references fail before submission. Less-graphic framing retains identity
@@ -77,7 +119,10 @@ A saved visual report is reusable only while the canonical page, exact render
 bytes, approved reference bytes, review model, prompt, and schema still digest
 identically; otherwise the report is null until a matching paid review lands.
 Canonical lettering is immutable for Draw: wording changes return to
-Adapt/Plan, never image correction. A correction is one explicit
+Adapt/Plan, never image correction. Missing or stale OCR evidence blocks Finish
+but is not an artwork defect or an instruction to redraw. Recover checks on
+saved pixels; paid artwork correction is a separate action for an identified
+change. A correction is one explicit
 author-selected batch — linked tracked issues and/or new manual
 instructions — where each change carries an editable instruction plus
 normalized page-fraction marks (origin top-left), an optional author note, and
@@ -95,6 +140,16 @@ per render revision — null for initial draws. A generated visual fix stays
 fixes may resolve by OCR. Finish checks artifact and render lineage, OCR,
 state citations, unresolved issues, dimensions, and packaging. It does not
 invoke a creative model.
+
+Correction lineage retains the exact original producing prompt in
+`PageRenderCorrection.retained_instructions`, then carries prior correction
+instructions and notes forward. These are subordinate, non-lettering historical
+constraints: current canonical copy, approved identity/state/style, and author
+pins remain authoritative, and current changes supersede conflicting earlier
+changes. Historical subject/image bindings are not current attachments, extra
+panels, or copy to render. This preserves deliberate depiction, including
+less-graphic intent, without adding a top-level `depiction` field to
+`FrozenPageGenerationRequest` or rehashing stored requests to invent one.
 
 ## Editorial workflow
 This workflow is a backend API contract; the Pages room exposes no storyboard
@@ -122,8 +177,12 @@ the affected page and review view.
 
 The exception queue contains pages with `open` or `revised` issues; a new
 render alone does not clear it. Filters are pressed-state buttons, not tabs.
-Drawing and failed filters reflect page/job state; next-unresolved navigation
-wraps through remaining flagged pages. Reading Adaptation/Plan stays read-only.
+Drawing and failed filters reflect current page artifacts and failure phase,
+not historical job failure alone; a current completed check supersedes an old
+failed job. Saved artwork with incomplete checks is presented as an analysis
+recovery, not an image-generation failure. Drawn and checked counts are separate.
+Next-unresolved navigation wraps through remaining flagged pages. Reading
+Adaptation/Plan stays read-only.
 
 ## Recovery and costs
 
@@ -179,11 +238,45 @@ and, for queued jobs, post-settlement acknowledgement. A visible render alone
 does not prove settlement or completion. Resume that original action rather than
 redrawing or submitting a different correction.
 
-Versioned raw OCR observations are saved separately from derived analysis.
-Current validators can revalidate saved results provider-free; missing downstream
-artifacts do not justify another OCR call. Proven panel-order contradictions
-block; uncertain order is a nonblocking editorial finding for visual review,
-not proof of a defect or of correctness.
+OCR requests an explicit root schema with `lettering` and `panels` arrays.
+Every text observation includes its exact text, comic-lettering/incidental-text
+role, and normalized `box`; panel coordinates are directly on each panel
+object. This is a blind observation request, never a canonical-copy prompt.
+
+The complete provider response text and finalized usage are durably saved
+before JSON parsing or schema validation, separately from versioned raw OCR
+observations and derived analysis. A malformed response or persistence failure
+does not trigger a hidden paid JSON-repair retry. Saved evidence is replayed
+through current parsers/validators provider-free; invalid cached evidence may
+still fail and does not authorize replacing it with another paid call.
+Missing downstream artifacts alone do not justify new OCR. Proven panel-order
+contradictions block; uncertain order remains nonblocking editorial evidence
+for visual review, not proof of a defect or of correctness.
+
+### Saved-pixel check recovery
+
+`GET /pages/checks/estimate` returns per-page recovery status, active
+`render_image_sha256`, `paid_pages`, and the sum of independently rounded
+OCR-only credit quotes/holds. Status is `undrawn`, `stale_render`, `checked`,
+`cached_evidence`, or `requires_ocr`; `cached_evidence` indicates available
+evidence to validate, not guaranteed successful recovery.
+
+`POST /pages/checks/recover` defaults to `{"allow_paid": false, "renders": {}}`:
+revalidate saved evidence, skip pages needing a paid call, and never generate
+images. Paid OCR requires explicit `allow_paid: true` plus `renders`, a map
+from page number to the approved active image SHA-256. Missing or changed
+selections return `selection_changed`; undrawn/stale renders are not repaired
+by this endpoint. Each page reports its outcome, so one failure does not
+discard successful checks on other pages.
+
+Both bulk recovery and `/pages/{page_number}/analyze` use the shared page
+operation lock. Cache replay and active-image lineage checks occur inside it,
+before credit reservation: successful cached recovery reserves and spends
+nothing, even at zero balance. Only absent reusable OCR evidence, with paid
+permission, reaches an OCR-only provider call on the existing image. Saved
+bytes must match render lineage. None of these actions redraws, verifies visual
+identity, or guarantees provider success; an OCR failure leaves the saved image
+available for inspection and recovery.
 
 Stage estimates include page references and OCR; Cast estimates include state
 references. Provider usage and credit settlement remain distinct from estimates
@@ -194,8 +287,9 @@ Read-only immediate quotes are distinct from the full-stage rerun estimate:
 | GET route | Quoted work |
 |---|---|
 | `/pages/{page_number}/generate/estimate?depiction=canonical` | One undrawn page, compiled references and OCR; `less_graphic` is also supported |
-| `/pages/{page_number}/analyze/estimate` | Text analysis of an existing render, without redrawing |
+| `/pages/{page_number}/analyze/estimate` | Text-check recovery of an existing render: zero for cached evidence, otherwise OCR only; never redraws |
 | `/pages/generate/estimate` | Only pages without saved render provenance, including references and OCR |
+| `/pages/checks/estimate` | Per-page readiness and total OCR-only quote for missing checks on saved pages |
 
 These routes validate prerequisites but neither submit jobs, reserve credits,
 nor mutate generation artifacts. `estimate_credits` is the projected charge;
@@ -233,6 +327,10 @@ uses `/export/?format=pdf|cbz` (`force=true` for rebuild), reruns Finish, and
 packages saved pages without generating artwork or spending credits. Book
 distinguishes technical blockers, unresolved review issues, and accepted
 editorial decisions, with links back to Pages.
+
+Missing, stale, or invalid OCR evidence is a text-check readiness blocker, not
+proof that saved artwork needs replacement. Preflight may revalidate cached
+evidence but never buys OCR; explicit Pages check recovery handles that boundary.
 
 Book's persisted package list supports “ready to download” across refreshes;
 the edition-ready cue reports package creation, never browser download

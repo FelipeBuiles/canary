@@ -6,6 +6,8 @@ is retained for pricing audits and legacy model metadata during the migration.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from novel_to_comic.config import Config
 from novel_to_comic.usage import ApiResult
 from novel_to_comic.ai import (
@@ -74,6 +76,8 @@ async def generate_json(
     json_schema: dict | None = None,
     feature: str = "text.generate_json",
     image_attachments: tuple[tuple[bytes, str], ...] = (),
+    response_sink: Callable[[ApiResult[str]], None] | None = None,
+    retry_invalid_json: bool = True,
 ) -> ApiResult[dict]:
     """Generate structured JSON through the AI gateway."""
     return await generate_structured_object(
@@ -86,6 +90,8 @@ async def generate_json(
         json_schema=json_schema,
         feature=feature,
         image_attachments=image_attachments,
+        response_sink=response_sink,
+        retry_invalid_json=retry_invalid_json,
     )
 
 

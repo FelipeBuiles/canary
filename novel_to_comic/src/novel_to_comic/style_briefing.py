@@ -37,17 +37,14 @@ def style_sample_fallback_brief(story_bible: StoryBible) -> str:
         story_bible.characters[0] if story_bible.characters else None
     )
     first_location = story_bible.locations[0] if story_bible.locations else None
-    character = (
-        (first_character.visual_anchor if first_character else "")
-        or (first_character.name if first_character else "")
-        or "a mysterious cloaked figure"
-    )[:200]
-    location = (
-        (first_location.visual_anchor if first_location else "")
-        or (first_location.name if first_location else "")
-        or "a dramatic atmospheric setting"
-    )[:200]
-    scene = story_bible.scenes[0].summary[:240] if story_bible.scenes else ""
+    character = first_character.name if first_character else "the story's focal subject"
+    location = first_location.name if first_location else "the established story environment"
+    scene = next(
+        (scene.summary for scene in story_bible.scenes
+         if (not first_character or first_character.id in scene.character_ids)
+         and (not first_location or first_location.id == scene.location_id)),
+        "",
+    )
     context = f" Use this quiet story context: {scene}" if scene else ""
     return (
         f"A coherent three-panel micro-beat follows one figure — {character} — in "

@@ -236,6 +236,65 @@ def test_generate_structured_object_retries_then_succeeds_on_malformed_json(
     assert "Expecting value" in retry_message
 
 
+def test_structured_response_retains_malformed_paid_text_without_resubmission(
+    monkeypatch, tmp_path, _patch_events,
+):
+    raw_text = '```json\n{"lettering": [\n```'
+    _patch_http(monkeypatch, {
+        "id": "ocr-response",
+        "model": "google/gemini-3.8-flash",
+        "choices": [{"message": {"content": raw_text}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
+    })
+    retained_path = tmp_path / "response.json"
+
+    def retain(response):
+        retained_path.write_text(json.dumps({
+            "text": response.value,
+            "usage": response.usage.model_dump(),
+        }))
+
+    with pytest.raises(ValueError):
+        asyncio.run(client.generate_structured_object(
+            config=Config(),
+            model="ocr-balanced",
+            system_prompt="Transcribe visible text.",
+            user_content="Read this page.",
+            response_sink=retain,
+            retry_invalid_json=False,
+        ))
+
+    retained = json.loads(retained_path.read_text())
+    assert retained["text"] == raw_text
+    assert retained["usage"]["output_tokens"] == 3
+    assert sum(kind == "insert" for kind, _ in _patch_events) == 1
+
+
+def test_response_persistence_failure_does_not_resubmit_paid_request(
+    monkeypatch, _patch_events,
+):
+    _patch_http(monkeypatch, {
+        "id": "ocr-response",
+        "model": "google/gemini-3.8-flash",
+        "choices": [{"message": {"content": '{"lettering": []}'}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
+    })
+
+    def cannot_persist(_response):
+        raise OSError("storage unavailable")
+
+    with pytest.raises(OSError, match="storage unavailable"):
+        asyncio.run(client.generate_structured_object(
+            config=Config(),
+            model="ocr-balanced",
+            system_prompt="Transcribe visible text.",
+            user_content="Read this page.",
+            response_sink=cannot_persist,
+        ))
+
+    assert sum(kind == "insert" for kind, _ in _patch_events) == 1
+
+
 def test_generate_structured_object_raises_with_context_after_exhausting_retries(
     monkeypatch, _patch_events
 ):

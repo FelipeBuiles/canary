@@ -454,15 +454,25 @@ def enqueue_frozen_generation_job(
 _PAGE_CHECK_LOCKS: WeakValueDictionary = WeakValueDictionary()
 
 
+def page_operation_lock(project_dir: Path, page_number: int) -> asyncio.Lock:
+    """Serialize saved-pixel checks with rendering for the same page."""
+    key = (str(project_dir.resolve()), page_number)
+    return _PAGE_CHECK_LOCKS.setdefault(key, asyncio.Lock())
+
+
 async def run_credited_page_check(*, user_id: str, project_id: str, project_dir: Path,
                                   page_number: int, estimated_cost_usd: float,
-                                  work: Callable[[], Awaitable[Any]]) -> Any:
+                                  work: Callable[[], Awaitable[Any]],
+                                  cached_work: Callable[[], Any] | None = None) -> Any:
     """Run a synchronous page-check endpoint under a releasable credit hold."""
     from .credits import credit_estimate_for_provider_cost
 
-    key = (user_id, project_id, page_number)
-    lock = _PAGE_CHECK_LOCKS.setdefault(key, asyncio.Lock())
+    lock = page_operation_lock(project_dir, page_number)
     async with lock:
+        if cached_work is not None:
+            cached = cached_work()
+            if cached is not None:
+                return cached
         db = get_db()
         estimate = credit_estimate_for_provider_cost(estimated_cost_usd, 'draw', reserve=True)
         reservation, job_id = reserve_credits(db, user_id, project_id, 'draw', estimate["reserved_credits"] or 0)

@@ -348,6 +348,9 @@ async def analyze_page_render(
             # A missing downstream issue/artifact is not evidence that the paid
             # observations are absent, and must never trigger another OCR call.
             raise
+    from novel_to_comic.page_ocr import GatewayPageOCRAdapter
+    if isinstance(ocr, GatewayPageOCRAdapter):
+        ocr.bind_render(artifacts, render)
     read = await ocr.extract(image)
     raw = RawOCRObservation(
         page_number=page.page_number, render_revision=render.revision,
@@ -377,7 +380,30 @@ def revalidate_cached_page_render(
         raw = artifacts.read_raw_ocr(page.page_number, render.revision)
     except ArtifactMissing:
         if saved is None:
-            raise
+            try:
+                response = artifacts.read_ocr_response(page.page_number, render.revision)
+            except ArtifactMissing:
+                # Retain the raw_ocr absence signal; only this authorizes OCR.
+                raise ArtifactMissing("raw_ocr", artifacts.raw_ocr_path(page.page_number, render.revision))
+            if (response.page_number != page.page_number
+                    or response.render_revision != render.revision
+                    or response.render_image_sha256 != render.image_sha256
+                    or response.request_sha256 != render.request_sha256):
+                raise ValueError("saved OCR response belongs to different render lineage")
+            from novel_to_comic.page_ocr import _PageOCRDraft, build_extraction
+            raw = RawOCRObservation(
+                page_number=page.page_number, render_revision=render.revision,
+                render_image_sha256=render.image_sha256, usage=response.usage,
+                extraction=build_extraction(
+                    _PageOCRDraft.model_validate_json(response.raw_response)
+                    if response.raw_response is not None
+                    else _PageOCRDraft.model_validate(response.response)
+                ),
+            )
+            artifacts.write_raw_ocr(raw)
+            analysis = _validate_observations(page=page, render=render, raw=raw, artifacts=artifacts)
+            record_analysis_issues(artifacts, analysis)
+            return analysis
         # Previous validators retained blind observations, but their flat balloon
         # sorting does not become proven panel evidence on migration.
         raw = RawOCRObservation(
@@ -930,11 +956,17 @@ def build_aggregated_correction_request(
         region_id for issue in selected for region_id in issue.detected_region_ids
     ))
     mode = "region_targeted" if region_ids else "instructed"
+    resolved_regions = ()
     if region_ids:
         try:
             analysis = artifacts.read_analysis(parent.page_number, parent.revision)
         except ArtifactMissing as exc:
             raise InvalidCorrectionError("detected regions are unavailable for this render") from exc
+        if analysis.render_image_sha256 != parent.image_sha256:
+            raise InvalidCorrectionError("detected regions belong to different render bytes")
+        resolved_regions = tuple(
+            region for region in analysis.observed_regions if region.id in region_ids
+        )
         known_regions = {region.id for region in analysis.observed_regions}
         unknown = [region_id for region_id in region_ids if region_id not in known_regions]
         if unknown:
@@ -962,6 +994,26 @@ def build_aggregated_correction_request(
             annotation.provider_guidance(index)
             for index, annotation in enumerate(ordered_annotations, 1)
         )
+    producing = next((
+        request for revision in reversed(artifacts.request_revisions(parent.page_number))
+        if (request := artifacts.read_request(parent.page_number, revision)).request_sha256
+        == parent.request_sha256
+    ), None)
+    if producing is None:
+        raise InvalidCorrectionError("correction parent lacks its producing request")
+    previous = producing.correction
+    retained = previous.retained_instructions if previous else (producing.prompt,)
+    if previous:
+        retained += tuple(change.instruction for change in previous.changes)
+        retained += tuple(
+            annotation.provider_guidance(index)
+            for change in previous.changes
+            for index, annotation in enumerate(change.annotations, 1)
+        )
+        if previous.note:
+            retained += (previous.note,)
+        if not previous.changes and not previous.note:
+            retained += (previous.instruction,)
     return PageRenderCorrection(
         issue_ids=tuple(record.issue_id for record in records if record.issue_id is not None),
         page_number=page.page_number,
@@ -972,6 +1024,9 @@ def build_aggregated_correction_request(
         mode=mode,
         instruction="\n".join(directives),
         detected_region_ids=region_ids,
+        resolved_regions=resolved_regions,
+        depiction=previous.depiction if previous else "canonical",
+        retained_instructions=tuple(dict.fromkeys(retained)),
         changes=tuple(records),
         note=cleaned_note,
         context_beat_ids=context.beat_ids,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+import hashlib
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -31,6 +32,8 @@ from novel_to_comic.page_review import (
     dismiss_page_issue,
     record_page_issue,
     summarize_page_issues,
+    revalidate_cached_page_render,
+    DRAW_VALIDATOR_VERSION,
 )
 from novel_to_comic.stages.s5_plan import (
     approved_reference_files,
@@ -80,7 +83,42 @@ def _issues(target: TargetArtifacts, page_number: int):
         return ()
 
 
+def _analysis_recovery(target: TargetArtifacts, page_number: int) -> dict:
+    active = _latest_provenance(target, page_number)
+    if active is None:
+        return {"status": "undrawn", "requires_paid_call": False}
+    render = active.render
+    try:
+        page = target.read_page(page_number)
+        if render.is_stale_for(page):
+            return {"status": "stale_render", "requires_paid_call": False}
+        analysis = target.read_analysis(page_number, render.revision)
+        if (analysis.render_image_sha256 == render.image_sha256
+                and analysis.comic_page_sha256 == page.content_sha256
+                and analysis.validator_version == DRAW_VALIDATOR_VERSION):
+            return {"status": "checked", "requires_paid_call": False}
+    except (ArtifactMissing, ArtifactInvalid):
+        pass
+    cached = any(path.exists() for path in (
+        target.raw_ocr_path(page_number, render.revision),
+        target.ocr_response_path(page_number, render.revision),
+        target.analysis_path(page_number, render.revision),
+    ))
+    return {"status": "cached_evidence" if cached else "requires_ocr",
+            "requires_paid_call": not cached}
+
+
+def _producing_request(target: TargetArtifacts, render):
+    for revision in reversed(target.request_revisions(render.page_number)):
+        request = target.read_request(render.page_number, revision)
+        if request.request_sha256 == render.request_sha256:
+            return request
+    raise ValueError("Saved render lacks its producing request")
+
+
 def _page_failure(target: TargetArtifacts, page_number: int):
+    if _analysis_recovery(target, page_number)["status"] == "checked":
+        return None
     try:
         failure = target.read_page_failure(page_number)
     except ArtifactMissing:
@@ -316,6 +354,7 @@ def list_pages(project=Depends(get_project)):
                 "active_render": _latest_provenance(target, selected.page_number),
                 "issues": _issues(target, selected.page_number),
                 "failure": _page_failure(target, selected.page_number),
+                "analysis_recovery": _analysis_recovery(target, selected.page_number),
             }
             for selected in plan.pages
         ],
@@ -344,6 +383,7 @@ def get_page(page_number: int, project=Depends(get_project)):
         ],
         "issues": _issues(target, page_number),
         "failure": _page_failure(target, page_number),
+        "analysis_recovery": _analysis_recovery(target, page_number),
     }
 
 
@@ -562,7 +602,9 @@ def estimate_page_analysis(page_number: int, project=Depends(get_project)):
     except ArtifactMissing as exc:
         raise HTTPException(409, str(exc)) from exc
     return dict(credit_estimate_for_provider_cost(
-        float(PAGE_OCR_ESTIMATED_COST_USD), "draw", reserve=True,
+        float(PAGE_OCR_ESTIMATED_COST_USD)
+        if _analysis_recovery(target, page_number)["requires_paid_call"] else 0.0,
+        "draw", reserve=True,
     ))
 
 
@@ -608,12 +650,75 @@ def generate_page(
     return {"status": "queued", "job": generation_job_payload(request.app, job)}
 
 
+class PageCheckRecovery(BaseModel):
+    allow_paid: bool = False
+    renders: dict[int, str] = Field(default_factory=dict)
+
+
+@router.get("/pages/checks/estimate")
+def estimate_missing_page_checks(project=Depends(get_project)):
+    from ..credits import credit_estimate_for_provider_cost
+    from novel_to_comic.config import PAGE_OCR_ESTIMATED_COST_USD
+    target = TargetArtifacts(project[0])
+    pages = [
+        {"page_number": selected.page_number, **_analysis_recovery(target, selected.page_number),
+         "render_image_sha256": (
+             active.render.image_sha256
+             if (active := _latest_provenance(target, selected.page_number)) else None
+         )}
+        for selected in target.read_plan().pages
+    ]
+    paid = sum(item["requires_paid_call"] for item in pages)
+    estimate = dict(credit_estimate_for_provider_cost(
+        float(PAGE_OCR_ESTIMATED_COST_USD), "draw", reserve=True,
+    ))
+    for key in ("estimate_credits", "reserved_credits"):
+        if estimate.get(key) is not None:
+            estimate[key] *= paid
+    return {**estimate, "pages": pages, "paid_pages": paid}
+
+
+@router.post("/pages/checks/recover")
+async def recover_missing_page_checks(
+    project_id: str, body: PageCheckRecovery,
+    project=Depends(get_project), user_id: str = Depends(get_current_user),
+):
+    target = TargetArtifacts(project[0])
+    results = []
+    for selected in target.read_plan().pages:
+        number = selected.page_number
+        recovery = _analysis_recovery(target, number)
+        if body.allow_paid:
+            active = _latest_provenance(target, number)
+            if active is None or body.renders.get(number) != active.render.image_sha256:
+                results.append({"page_number": number, "status": "selection_changed"})
+                continue
+        if recovery["status"] in {"undrawn", "stale_render"}:
+            results.append({"page_number": number, **recovery})
+            continue
+        if recovery["requires_paid_call"] and not body.allow_paid:
+            results.append({"page_number": number, **recovery})
+            continue
+        try:
+            await analyze_page(
+                number, project_id, project, user_id, allow_paid=body.allow_paid,
+                expected_image_sha256=body.renders.get(number) if body.allow_paid else None,
+            )
+            results.append({"page_number": number, "status": "checked"})
+        except Exception as exc:
+            results.append({"page_number": number, "status": "failed",
+                            "error": str(exc.detail if isinstance(exc, HTTPException) else exc)})
+    return {"pages": results}
+
+
 @router.post("/pages/{page_number}/analyze")
 async def analyze_page(
     page_number: int,
     project_id: str,
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
+    allow_paid: bool = True,
+    expected_image_sha256: str | None = None,
 ):
     """Read an existing render back without regenerating the page.
 
@@ -635,9 +740,29 @@ async def analyze_page(
     try:
         from ..credited_job import run_credited_page_check
         from novel_to_comic.config import PAGE_OCR_ESTIMATED_COST_USD
+        def cached_work():
+            if hashlib.sha256(image).hexdigest() != active.render.image_sha256:
+                raise HTTPException(409, "Saved artwork bytes do not match render lineage")
+            if expected_image_sha256 is not None and active.render.image_sha256 != expected_image_sha256:
+                raise HTTPException(409, "Approved artwork changed; reload the text-check estimate")
+            latest = _latest_provenance(target, page_number)
+            if latest is None or latest.render != active.render:
+                raise HTTPException(409, "Active artwork changed; reload the text-check estimate")
+            try:
+                analysis = revalidate_cached_page_render(
+                    page=page, render=active.render, artifacts=target,
+                )
+            except ArtifactMissing as exc:
+                if exc.name == "raw_ocr":
+                    if not allow_paid:
+                        raise HTTPException(409, "Text check requires an explicitly approved OCR-only call")
+                    return None
+                raise
+            return analysis
         analysis = await run_credited_page_check(
             user_id=user_id, project_id=project_id, project_dir=project_dir,
             page_number=page_number, estimated_cost_usd=float(PAGE_OCR_ESTIMATED_COST_USD),
+            cached_work=cached_work,
             work=lambda: analyze_complete_page(
                 page=page, render=active.render, image=image,
                 ocr=GatewayPageOCRAdapter(config, page_number=page_number), artifacts=target,
@@ -646,6 +771,8 @@ async def analyze_page(
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
     target.clear_page_failure(page_number)
+    from novel_to_comic.page_drawing import reconcile_recovered_page_generation
+    reconcile_recovered_page_generation(artifacts=target, render=active.render)
     return analysis
 
 
@@ -1120,7 +1247,8 @@ async def visual_review_page(page_number: int, project_id: str,
             user_id=user_id, project_id=project_id, project_dir=project_dir, page_number=page_number,
             estimated_cost_usd=float(PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD),
             work=lambda: review_page_visuals(config=config, page=page, render=active.render,
-                image=target.read_render(page_number, active.render.revision), compiled=compiled, artifacts=target),
+                image=target.read_render(page_number, active.render.revision), compiled=compiled, artifacts=target,
+                producing_request=_producing_request(target, active.render)),
         )
         return result.value
     except ArtifactInvalid as exc:
@@ -1168,6 +1296,7 @@ def read_saved_visual_review(page_number: int, project=Depends(get_project)):
             report = validated_saved_visual_review(
                 page=page, render=active.render, image=image, compiled=compiled,
                 config=config, artifacts=target,
+                producing_request=_producing_request(target, active.render),
             )
         except ValueError:
             # Inputs no longer reproduce any saved digest: nothing is current.

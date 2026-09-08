@@ -118,6 +118,7 @@ def test_story_bible_view_preserves_extracted_appearance_transitions():
                 visual_anchor="1man, adult male, dark hair, pale skin",
                 baseline_affect="alternating unconsciousness and delirium",
                 visually_significant=True,
+                continuity_guard="Keep Henry supported in bed; he cannot walk unaided.",
             ),
             AppearanceState(
                 id="henry_recovered",
@@ -163,18 +164,10 @@ def test_story_bible_view_preserves_extracted_appearance_transitions():
 
     character_view = _story_bible_view(bible)["characters"][0]
 
-    assert character_view["appearance_states"] == [
-        {
-            "id": "henry_delirious",
-            "label": "Feverish delirium",
-            "canonical_equivalent": False,
-        },
-        {
-            "id": "henry_recovered",
-            "label": "Recovered",
-            "canonical_equivalent": True,
-        },
-    ]
+    assert character_view["appearance_states"][0]["action_constraint"] == (
+        character.appearance_states[0].continuity_guard
+    )
+    assert character_view["appearance_states"][1]["canonical_equivalent"] is True
     assert [item["state_id"] for item in character_view["appearance_timeline"]] == [
         "henry_delirious",
         "henry_recovered",

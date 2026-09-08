@@ -14,7 +14,7 @@ Given the complete text of a novel, output a single JSON object matching the sch
     {
       "id": "char_001",
       "name": "Full Name",
-      "visual_anchor": "STRICT DANBOORU-STYLE PHYSICAL IDENTITY TAGS (comma-separated). Use 10-16 evidence-grounded tags of the character's typical look — anatomy, physical appearance, usual clothing, accessories. NO emotion, expression, mood, pose, action, or situational state.",
+      "visual_anchor": "PHYSICAL IDENTITY TAGS (comma-separated). Use only evidence-grounded tags of the character's typical look — anatomy, physical appearance, usual clothing, accessories. Fewer tags are correct for sparse evidence. NO emotion, expression, mood, pose, action, or situational state.",
       "age_range": "early 30s",
       "gender": "female",
       "distinguishing_features": ["feature one", "feature two"],
@@ -49,7 +49,7 @@ Given the complete text of a novel, output a single JSON object matching the sch
     {
       "id": "loc_001",
       "name": "Short Location Name",
-      "visual_anchor": "STRICT DANBOORU-STYLE TAGS (comma-separated). Default-state tags only — used when no state resolves. Minimum 15 tags of physical environment — e.g. 'night, indoors, dim lighting, wooden table'.",
+      "visual_anchor": "PHYSICAL ENVIRONMENT TAGS (comma-separated). Default-state tags only — used when no state resolves. Include only source-supported environment details; no minimum tag count.",
       "time_of_day": "night",
       "mood": "tense",
       "appearance_states": [
@@ -154,7 +154,7 @@ CHARACTERS
 - Ground every visual_anchor tag in textual evidence from the source. Do NOT invent specific clothing items, facial features, or accessories that are not supported by the text.
 - Prefer omission over fabrication. If details are sparse, use broader but evidence-supported tags instead of made-up specifics.
 - Preserve deliberate ambiguity from the source text. If the text frames a character as gender-ambiguous/indeterminate, keep that ambiguity in the tags and avoid collapsing to a strongly gendered archetype unless the source explicitly does so.
-- Cast contrast is required: when two recurring characters share a scene, include at least 3 clearly differentiating visual tags per character so they are not rendered as the same generic person.
+- Highlight source-supported physical distinctions between recurring characters who share a scene. Never invent contrasting traits to meet a quota; sparse evidence may leave visual design decisions for the author and Cast.
 - Avoid generic filler physical tags that make characters converge (e.g., "average face"). Expression and posture do not belong in visual_anchor at all; put a stable demeanor in baseline_affect and leave scene reactions to panel direction.
   WRONG: "A tall woman with short black hair who is wearing a tactical jacket."
   WRONG: "1woman, adult female, tall, short black hair, grey eyes, shivering, thin torn clothes, lips blue from cold" (situational/changed state — belongs in appearance_states)

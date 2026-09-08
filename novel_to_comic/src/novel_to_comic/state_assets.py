@@ -16,6 +16,7 @@ from novel_to_comic.models.appearance import AppearanceState
 from novel_to_comic.models.story_bible import Character, Location
 from novel_to_comic.image_models import image_model_profile_for_config
 from novel_to_comic.image_ref_strategy import RefStrategy
+from novel_to_comic.style_contract import rendering_style_template
 
 STATE_ASSET_SPEC_VERSION = 2
 
@@ -85,6 +86,7 @@ class StateAssetGenerationSpec(BaseModel):
     entity_id: str
     state_id: str
     active_state_anchor: str
+    continuity_guard: str | None = None
     baseline_affect: str | None = None
     canonical_parent_identity: str
     canonical_parent_path: str
@@ -158,35 +160,20 @@ def build_character_state_spec(
     instructions = artifacts.character_state_ref_instructions_path(project_dir, char.id, state.id)
     addendum = artifacts.read_active_addendum(instructions)
     overridden = set(state.changed_facets)
-    stable_features = [] if state.replaces_identity else char.distinguishing_features
     prompt_parts = [
-        config.style_template.strip(),
+        rendering_style_template(config.style_template),
         f"CHARACTER STATE REFERENCE SHEET — {char.name} ({state.label}).",
         state.visual_anchor,
     ]
     direction_parts = [f"CHARACTER STATE REFERENCE SHEET — {char.name} ({state.label})."]
-    if stable_features:
-        direction = "Preserve permanent identity marks: " + "; ".join(stable_features) + "."
-        prompt_parts.append(direction)
-        direction_parts.append(direction)
     if state.continuity_guard:
-        prompt_parts.append("Keep the active state's changed anatomy consistent in every view.")
-        direction_parts.append(
-            "Keep the active state's changed anatomy consistent in every view. "
-            + state.continuity_guard
-        )
-    if addendum:
-        direction = f"USER STATE FIX NOTE: {addendum}"
-        prompt_parts.append(direction)
-        direction_parts.append(direction)
+        prompt_parts.append(state.continuity_guard)
     composition = (
         "One square two-view reference sheet: a head-and-shoulders three-quarter portrait "
         "on the left and a neutral full-body three-quarter standing view on the right. "
-        "Use only poses compatible with the anatomy in the active-state anchor. Preserve "
-        "the canonical parent's natural head-to-body ratio, silhouette, facial modeling, "
-        "degree of simplification, line weight, and rendering density. Same identity and "
-        "active-state appearance in both views. Never chibi, super-deformed, big-headed, "
-        "doll-like, toy-like, mascot-like, or caricatured. No text or labels."
+        "Use only poses compatible with the active-state anatomy, age, and proportions. "
+        "The selected style owns rendering. Same active identity and appearance in both "
+        "views, each fully contained within its equal vertical half. No text or labels."
     )
     prompt_parts.append(composition)
     direction_parts.append(composition)
@@ -194,9 +181,10 @@ def build_character_state_spec(
     return StateAssetGenerationSpec(
         asset_kind="character_state_ref", entity_id=char.id, state_id=state.id,
         active_state_anchor=state.visual_anchor, canonical_parent_identity=char.visual_anchor,
+        continuity_guard=state.continuity_guard,
         baseline_affect=state.baseline_affect or char.baseline_affect,
         canonical_parent_path=_relative(parent, project_dir) or "", canonical_parent_sha256=parent_hash,
-        preserved_facets=("identity", *(() if not stable_features else ("distinguishing_features",))),
+        preserved_facets=() if state.replaces_identity else ("identity",),
         overridden_facets=tuple(sorted(overridden)), replaces_identity=state.replaces_identity, style_path=_relative(style_path, project_dir),
         style_sha256=_sha256(style_path), configured_route_model=config.effective_image_model(),
         configured_route=image_model_profile_for_config(config).route.value,
@@ -216,17 +204,8 @@ def build_location_state_spec(
     instructions = artifacts.location_state_plate_instructions_path(project_dir, loc.id, state.id)
     addendum = artifacts.read_active_addendum(instructions)
     overridden = set(state.changed_facets)
-    stable = []  # The self-contained anchor owns the state; no prose inference.
-    prompt_parts = [config.style_template.strip(), "LOCATION STATE DESIGN PLATE", state.visual_anchor]
+    prompt_parts = [rendering_style_template(config.style_template), "LOCATION STATE DESIGN PLATE", state.visual_anchor]
     direction_parts = ["LOCATION STATE DESIGN PLATE"]
-    if stable:
-        direction = "Preserve non-conflicting stable landmarks: " + ", ".join(stable) + "."
-        prompt_parts.append(direction)
-        direction_parts.append(direction)
-    if addendum:
-        direction = f"USER STATE FIX NOTE: {addendum}"
-        prompt_parts.append(direction)
-        direction_parts.append(direction)
     composition = "Wide environment plate. Active-state conditions win. No characters or text."
     prompt_parts.append(composition)
     direction_parts.append(composition)
@@ -235,8 +214,9 @@ def build_location_state_spec(
     return StateAssetGenerationSpec(
         asset_kind="location_state_plate", entity_id=loc.id, state_id=state.id,
         active_state_anchor=state.visual_anchor, canonical_parent_identity=loc.visual_anchor,
+        continuity_guard=state.continuity_guard,
         canonical_parent_path=_relative(parent, project_dir) or "", canonical_parent_sha256=parent_hash,
-        preserved_facets=tuple(f"landmark:{item}" for item in stable),
+        preserved_facets=(),
         overridden_facets=tuple(sorted(overridden)), replaces_identity=state.replaces_identity, style_path=_relative(style_path, project_dir),
         style_sha256=_sha256(style_path), configured_route_model=config.effective_image_model(),
         configured_route=image_model_profile_for_config(config).route.value,
@@ -256,7 +236,8 @@ def mark_dependent_states_stale(
         if asset_kind == "character" else artifacts.location_plate_path(project_dir, entity_id)
     )
     current_hash = _sha256(parent)
-    pattern = project_dir / "refs" / entity_id / "states" if asset_kind == "character" else project_dir / "plates"
+    pattern = (project_dir / "refs" / entity_id / "states" if asset_kind == "character"
+               else project_dir / "plates" / entity_id / "states")
     warnings: list[dict] = []
     for meta_path in sorted(pattern.glob("**/*.png.meta.json")) if pattern.exists() else []:
         try:
@@ -325,24 +306,15 @@ def revalidate_state_asset_lineage(state_path: Path, parent_path: Path) -> dict 
 #: compatible identity reference preserves only these facets.
 _CHARACTER_IDENTITY_FACETS: tuple[str, ...] = ("face", "hair", "build")
 
-# Rendering facets inherited from the canonical character sheet by every
-# compatible alternate state. These are deliberately separate from identity
-# replacement detection: a total transformation may replace the character,
-# while an ordinary injury/wardrobe state must retain the same proportions and
-# degree of stylization as its parent.
-_CHARACTER_RENDERING_FACETS: tuple[str, ...] = (
-    "proportions", "silhouette", "facial_modeling", "degree_of_simplification",
-    "line_weight", "rendering_density",
-)
 
 #: Facets that a character state anchor may override. When overridden, the
 #: canonical parent ignores them (it must not reassert the canonical version).
 _CHARACTER_OVERRIDABLE_FACETS: dict[str, tuple[str, ...]] = {
-    "age": ("age",),
+    "age": ("age", "build", "proportions"),
     "hair": ("hair",),
     "face": ("face",),
-    "build": ("build",),
-    "anatomy": ("anatomy",),
+    "build": ("build", "proportions", "silhouette"),
+    "anatomy": ("anatomy", "build", "proportions", "silhouette"),
     "clothing": ("wardrobe",),
 }
 
@@ -452,7 +424,7 @@ def _build_character_conditioning_assets(
     # Identity facets not overridden are what the parent can still condition.
     preserve_facets = tuple(
         f for f in _CHARACTER_IDENTITY_FACETS if f not in set(ignore_facets)
-    ) + _CHARACTER_RENDERING_FACETS
+    )
     asset = ReferenceAsset(
         path=parent_path,
         role="subject",
@@ -784,10 +756,11 @@ __all__ = [
 
 def build_prop_state_spec(config: Config, project_dir: Path, prop, state: AppearanceState, *, style_path: Path | None = None) -> StateAssetGenerationSpec:
     parent = artifacts.prop_ref_path(project_dir, prop.id)
-    direction = f"Depict only {prop.name} in state {state.label}. Neutral background. No text. " + (state.continuity_guard or "")
+    direction = f"Depict only {prop.name} in state {state.label}. Neutral background. No text."
     return StateAssetGenerationSpec(
         asset_kind="prop_state_ref", entity_id=prop.id, state_id=state.id,
         active_state_anchor=state.visual_anchor, canonical_parent_identity=prop.visual_anchor,
+        continuity_guard=state.continuity_guard,
         canonical_parent_path=_relative(parent, project_dir) or "", canonical_parent_sha256=_sha256(parent),
         preserved_facets=("identity",), overridden_facets=state.changed_facets,
         replaces_identity=state.replaces_identity,

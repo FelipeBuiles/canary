@@ -199,3 +199,36 @@ async def test_generation_completion_acknowledgement_waits_for_all_settlements(t
     except RuntimeError:
         pass
     assert events == ["settlement", "settlement", "released", "terminal"]
+
+
+@run_async
+async def test_status_reconciliation_waits_for_project_mutation(tmp_path):
+    app = app_at(tmp_path)
+    entered, release = asyncio.Event(), asyncio.Event()
+    observed = []
+
+    @app.post("/api/projects/book/cover")
+    async def paid():
+        entered.set()
+        await release.wait()
+        app.state.generation_jobs["job"] = SimpleNamespace(project_name="account:book", status="queued")
+        return {"job": "job"}
+
+    @app.get("/api/projects/book/status")
+    async def status():
+        observed.append("job" in app.state.generation_jobs)
+        return {"running": observed[-1]}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        mutation = asyncio.create_task(client.post("/api/projects/book/cover", headers={"Idempotency-Key": "action"}))
+        await entered.wait()
+        inspection = asyncio.create_task(client.get("/api/projects/book/status"))
+        await asyncio.sleep(0.02)
+        try:
+            assert observed == []
+        finally:
+            release.set()
+            await mutation
+            result = await inspection
+        assert result.status_code == 200
+        assert result.json()["running"] is True

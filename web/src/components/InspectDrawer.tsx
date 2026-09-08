@@ -204,16 +204,16 @@ export function InspectDrawer({ project, kind, onClose }: InspectDrawerProps) {
       role="dialog"
       aria-modal="true"
       aria-label={title}
-      className="fixed inset-0 z-[120] flex justify-end bg-ink-black/60"
+      className="fixed inset-0 z-[200] flex h-dvh justify-end bg-ink-black/60"
       onClick={() => onCloseRef.current()}
     >
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="flex h-full w-full flex-col border-l-[3px] border-ink-black bg-pulp-paper shadow-ink focus-visible:outline-none sm:max-w-2xl"
+        className="flex h-dvh w-full flex-col border-l-[3px] border-ink-black bg-pulp-paper shadow-ink focus-visible:outline-none sm:max-w-2xl"
         onClick={(event) => event.stopPropagation()}
       >
-        <header className="flex min-h-14 shrink-0 items-center justify-between gap-4 border-b-[3px] border-ink-black bg-bristol px-5 py-3 md:py-4">
+        <header className="flex h-14 min-h-14 shrink-0 items-center justify-between gap-4 border-b-[3px] border-ink-black bg-bristol px-5 py-3 md:h-shell-top md:min-h-0 md:py-4">
           <h2 className="min-w-0 truncate font-display text-[1.55rem] font-black uppercase leading-[0.9] tracking-[-0.03em]">
             {title}
           </h2>

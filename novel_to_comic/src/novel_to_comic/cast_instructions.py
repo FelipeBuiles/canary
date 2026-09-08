@@ -32,6 +32,12 @@ MAX_INSTRUCTION_CHARS = 500
 MAX_ASSET_ADDENDUM_CHARS = 600
 
 AssetKind = Literal["character_ref", "location_plate", "prop_ref"]
+
+EDITABLE_ASSET_FACETS = {
+    "character": ("wardrobe color", "wardrobe material", "accessories", "expression"),
+    "location": ("lighting", "weather", "atmosphere", "surface color"),
+    "prop": ("material", "color", "surface condition"),
+}
 AssetType = Literal["character", "location", "prop"]
 
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -141,8 +147,8 @@ def asset_instruction_rewrite_system_prompt(kind: AssetKind) -> str:
     if kind == "character_ref":
         target = (
             "a single character's two-view reference sheet (portrait and full-body view on a clean background). "
-            "Edits change the character's appearance — features, outfit, color, accessories, expression — "
-            "without renaming the character or changing the sheet layout."
+            "Edits change only wardrobe color/material, accessories, or expression "
+            "without changing identity, age, anatomy, or the sheet layout."
         )
     elif kind == "prop_ref":
         target = (
@@ -167,6 +173,10 @@ def asset_instruction_rewrite_system_prompt(kind: AssetKind) -> str:
         "For an accepted instruction, addendum must be non-empty and describe only the visual change. "
         "If a prior addendum is supplied, merge it with the new request — supersede earlier guidance only "
         "where the new request contradicts it. "
+        "Only asset_context.editable_facets may override appearance-anchor descriptions. "
+        "The entity's state, changed facets, and verbatim continuity guard remain binding. "
+        "Block requests that conflict with those protected facts; non-graphic presentation "
+        "must never restore missing anatomy or reverse an established state. "
         "For provider-safe requests, rewrite toward non-graphic, non-sexualized, text-free visual direction "
         "while preserving the asset. "
         "If the request is not a visual edit, return status blocked or ambiguous with a short message."
@@ -377,6 +387,13 @@ async def _apply_reserved_instruction(
         project_dir, asset_type, asset_id, state_id
     )
     rewrite_context = _rewrite_context(asset_type, asset_obj, state_obj)
+    rewrite_context.update(
+        entity_id=asset_id,
+        appearance_state_id=state_id,
+        continuity_guard=state_obj.continuity_guard if state_obj else None,
+        changed_facets=list(state_obj.changed_facets) if state_obj else [],
+        editable_facets=list(EDITABLE_ASSET_FACETS[asset_type]),
+    )
     rewrite_context["prior_addendum"] = artifacts.read_active_addendum(
         instructions_path
     )

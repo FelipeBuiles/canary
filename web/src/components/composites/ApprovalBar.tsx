@@ -52,7 +52,7 @@ export function ApprovalBar({
 
   return (
     <BottomBarPortal>
-      <footer className="relative flex min-h-shell-footer flex-wrap items-center gap-x-4 gap-y-2 border-t-[3px] border-ink-black bg-bristol px-4 py-3 shadow-[0_-4px_0_0_var(--color-ghost-shadow)] md:py-0 md:pl-0 md:pr-6">
+      <footer className="relative z-0 flex min-h-shell-footer flex-wrap items-center gap-x-4 gap-y-2 border-t-[3px] border-ink-black bg-bristol px-4 py-3 shadow-[0_-4px_0_0_var(--color-ghost-shadow)] md:py-0 md:pl-0 md:pr-6">
         <div className="hidden self-stretch bg-narrator-gold px-5 font-meta text-xs font-bold uppercase tracking-[0.1em] text-ink-black md:flex md:items-center">
           {t("Next:")}
         </div>

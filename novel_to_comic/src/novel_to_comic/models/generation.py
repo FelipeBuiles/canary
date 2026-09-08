@@ -13,6 +13,7 @@ class PromptAnchor(BaseModel):
     name: str
     appearance_state_id: str | None = None
     text: str
+    continuity_guard: str | None = None
 
 
 class PromptSubject(BaseModel):

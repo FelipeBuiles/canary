@@ -16,6 +16,7 @@ from novel_to_comic.models.draw import (
     ObservedRegion,
     OCRExtraction,
     OCRTextObservation,
+    OCRProviderResponse,
 )
 from novel_to_comic.usage import ApiResult
 
@@ -41,9 +42,14 @@ _INSTRUCTION = (
     "Use exactly this shape for every item: "
     '{"text":"exact words","role":"comic_lettering|incidental_text",'
     '"box":{"x":0.0,"y":0.0,"width":0.1,"height":0.1}}. '
-    "Also return panels: a list of bounding boxes using x, y, width, height, "
-    "only for clearly separated rectangular panels. Omit panels when borders "
-    "or reading order are ambiguous. Return only the JSON object."
+    "Return exactly the root object "
+    '{"lettering":[{"text":"exact words","role":"comic_lettering",'
+    '"box":{"x":0.0,"y":0.0,"width":0.1,"height":0.1}}],'
+    '"panels":[{"x":0.0,"y":0.0,"width":1.0,"height":1.0}]}. '
+    "The lettering list includes every visible text item and its role. "
+    "Use empty arrays when no text or no unambiguous rectangular panels exist. "
+    "Panel boxes use x, y, width, height directly, never a nested box. "
+    "Return only this JSON object, with no other root fields."
 )
 
 
@@ -132,7 +138,7 @@ class _ObservedLettering(BaseModel):
 class _PageOCRDraft(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    lettering: tuple[_ObservedLettering, ...] = ()
+    lettering: tuple[_ObservedLettering, ...]
     panels: tuple[_ObservedBox, ...] = ()
 
     @model_validator(mode="before")
@@ -220,6 +226,23 @@ class GatewayPageOCRAdapter:
     def __init__(self, config: Config, *, page_number: int) -> None:
         self._config = config
         self._page_number = page_number
+        self._artifacts = None
+        self._render = None
+
+    def bind_render(self, artifacts, render) -> None:
+        """Attach the durable evidence sink without changing extract callers."""
+        self._artifacts = artifacts
+        self._render = render
+
+    def _persist_response(self, result: ApiResult[str]) -> None:
+        if self._artifacts is not None and self._render is not None:
+            self._artifacts.write_ocr_response(OCRProviderResponse(
+                page_number=self._page_number,
+                render_revision=self._render.revision,
+                render_image_sha256=self._render.image_sha256,
+                request_sha256=self._render.request_sha256,
+                response=None, raw_response=result.value, usage=result.usage,
+            ))
 
     async def extract(self, image: bytes) -> ApiResult[OCRExtraction]:
         from novel_to_comic.clients.text import generate_json
@@ -233,6 +256,9 @@ class GatewayPageOCRAdapter:
             user_content=f"{_INSTRUCTION}\ncanary_page_number: {self._page_number}",
             temperature=0.0,
             feature=PAGE_OCR_FEATURE,
+            json_schema=_PageOCRDraft.model_json_schema(),
+            response_sink=self._persist_response,
+            retry_invalid_json=False,
             image_attachments=((image, "image/png"),),
         )
         return ApiResult(

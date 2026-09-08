@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import json
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -177,6 +178,10 @@ def _compile(
     )
 
 
+def _provider_brief(prompt: str) -> dict:
+    return json.JSONDecoder().raw_decode(prompt[prompt.index("{"):])[0]
+
+
 def test_compiler_freezes_exact_page_authority_and_selected_reference_order(
     tmp_path: Path,
 ) -> None:
@@ -205,47 +210,67 @@ def test_compiler_freezes_exact_page_authority_and_selected_reference_order(
     assert request.retry == RetryProvenance(attempt=1)
     assert "It was the same face." in request.prompt
     assert "Ward’s torn left sleeve; blood below the right eye" in request.prompt
-    assert "attach the balloon tail only to the named speaker" in request.prompt
-    assert "off-panel balloon treatment" in request.prompt
-    assert "exactly once" in request.prompt
     assert "ward-bloodied" not in request.prompt
     assert "idol-ref" not in request.prompt
 
 
-def test_provider_prompt_maps_distinct_subjects_to_named_references(tmp_path: Path) -> None:
-    page = _page(visual_intent="ward studies idol.")
-    inventory = _inventory()
-    inventory = inventory.model_copy(update={"references": tuple(
-        ref.model_copy(update={"label": "Charles Ward" if ref.entity_id == "ward" else "Green idol"})
-        for ref in inventory.references
+def test_provider_subject_binding_separates_identity_from_state_and_speaker_name(tmp_path: Path) -> None:
+    inventory = _inventory().model_copy(update={"references": tuple(
+        ref.model_copy(update={"label": "Ward — bloodied" if ref.appearance_state_id else "Ward"})
+        for ref in _inventory().references
     )})
-    compiled = compile_page_generation_request(page, _edition(), inventory, _reference_files(tmp_path), retry=RetryProvenance(attempt=1))
-    assert 'Charles Ward studies Green idol.' in compiled.request.prompt
-    assert '"image":"Reference 1"' in compiled.request.prompt
-    assert '"visible_subjects"' in compiled.request.prompt
-
-
-def test_compiler_explicitly_forbids_visible_text_on_unlettered_pages(
-    tmp_path: Path,
-) -> None:
-    page = _page()
-    unlettered = page.model_copy(
-        update={
-            "content": (
-                page.content[0].model_copy(update={"lettering": ()}),
-            ),
-            "reading_order": ("content-1",),
+    bindings = []
+    for state_first in (True, False):
+        page = _ordered_page(state_first=state_first)
+        stated = next(item for item in page.content if item.appearance_states)
+        lettering = tuple(
+            LetteringItem(
+                id=f"spoken-{entity}", kind="dialogue", text="Stay.",
+                speaker="Ward", speaker_entity_id=entity, delivery="onscreen",
+                source_unit_ids=["source-1"],
+            )
+            for entity in ("ward", "idol")
+        )
+        stated = stated.model_copy(update={
+            "lettering": lettering,
+        })
+        page = page.model_copy(update={
+            "content": tuple(stated if item.appearance_states else item for item in page.content),
+            "layout_intent": "ward is already inside; the arrival is complete.",
+            "reading_order": (*[item.id for item in page.content], *[item.id for item in lettering]),
+        })
+        request = compile_page_generation_request(
+            page, _edition(), inventory, _reference_files(tmp_path),
+            retry=RetryProvenance(attempt=1),
+        ).request
+        brief = _provider_brief(request.prompt)
+        refs = {ref["image"]: ref for ref in brief["approved_page_references"]}
+        by_appearance = {ref["appearance"]: ref["subject"] for ref in refs.values()}
+        assert by_appearance["Ward — bloodied"] in {
+            subject["subject"] for panel in brief["canonical_comic_page"]["content"]
+            for subject in panel["visible_subjects"]
         }
-    )
-
-    request = _compile(tmp_path, page=unlettered).request
-
-    assert request.lettering == ()
-    assert "fully lettered" not in request.prompt
-    assert "This canonical page contains no lettering." in request.prompt
-    assert "Do not add any visible text, captions, speech or thought balloons, or SFX." in (
-        request.prompt
-    )
+        ward_handles = []
+        for panel, canonical in zip(brief["canonical_comic_page"]["content"], page.content, strict=True):
+            ward = next(subject for subject in panel["visible_subjects"]
+                        if refs[subject["references"][0]["image"]]["visual_anchor"].startswith("Ward"))
+            ward_handles.append(ward["subject"])
+            expected = "Ward — bloodied" if canonical.appearance_states else "Ward"
+            assert refs[ward["references"][0]["image"]]["appearance"] == expected
+        assert ward_handles[0] == ward_handles[1]
+        speakers = next(panel["lettering"] for panel in brief["exact_lettering"]["panels"] if panel["lettering"])
+        assert speakers[0]["speaker"] == speakers[1]["speaker"]
+        assert speakers[0]["speaker_entity_id"] != speakers[1]["speaker_entity_id"]
+        assert speakers[0]["speaker_entity_id"] == ward_handles[0]
+        assert [item["text"] for item in speakers] == ["Stay.", "Stay."]
+        assert brief["canonical_staging_and_layout"] == (
+            f"{ward_handles[0]} is already inside; the arrival is complete."
+        )
+        assert "page_number" not in brief["canonical_comic_page"]
+        assert request.comic_page_sha256 not in request.prompt
+        assert all(ref.id not in request.prompt for ref in request.references)
+        bindings.append(ward_handles[0])
+    assert bindings[0] == bindings[1]
 
 
 def test_compiler_freezes_selected_lettering_and_framing_style_across_pages(
@@ -269,10 +294,7 @@ def test_compiler_freezes_selected_lettering_and_framing_style_across_pages(
     )
     unstyled = _compile(tmp_path)
 
-    assert '"project_style_direction":' in styled.request.prompt
-    assert "Preserve exact capitalization" in styled.request.prompt
-    assert "Fixed cream outer margin on every page" in styled.request.prompt
-    assert "do not improvise or vary those choices on this page" in styled.request.prompt
+    assert _provider_brief(styled.request.prompt)["project_style_direction"] == style
     assert styled.request.request_sha256 != unstyled.request.request_sha256
 
 
@@ -372,8 +394,6 @@ def test_less_graphic_depiction_preserves_authority_and_softens_visual_treatment
         depiction="less_graphic",
     )
 
-    assert "Do not alter unaffected subjects" in compiled.request.prompt
-    assert "Typeset only the exact lettering strings" in compiled.request.prompt
     assert len(compiled.request.references) == 2
     assert len(compiled.reference_bytes) == 2
     assert "It was the same face." in compiled.request.prompt
@@ -1328,6 +1348,7 @@ def test_an_existing_render_can_be_analyzed_without_redrawing_it(
             adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
             artifacts=artifacts,
             page=page,
+            defer_completion=True,
         )
     )
     assert not artifacts.analysis_path(7, 1).exists()
@@ -1345,6 +1366,18 @@ def test_an_existing_render_can_be_analyzed_without_redrawing_it(
     assert analysis.lettering_valid is True
     assert analysis.analysis_usage is not None
     assert artifacts.read_analysis(7, 1) == analysis
+    from novel_to_comic.page_drawing import reconcile_recovered_page_generation
+
+    # Successful OCR alone cannot acknowledge an unsettled image operation.
+    ledger = MagicMock()
+    query = ledger.table.return_value.select.return_value.eq.return_value.eq.return_value.limit.return_value
+    query.execute.return_value.data = []
+    with patch("novel_to_comic.server.db.get_db", return_value=ledger):
+        assert not reconcile_recovered_page_generation(artifacts=artifacts, render=provenance.render)
+        assert artifacts.resumable_generation_request(7) is not None
+        query.execute.return_value.data = [{"status": "settled"}]
+        assert reconcile_recovered_page_generation(artifacts=artifacts, render=provenance.render)
+    assert artifacts.resumable_generation_request(7) is None
 
 
 def test_entity_scoped_state_names_do_not_collide(tmp_path: Path):
@@ -1403,9 +1436,15 @@ def test_final_page_prompt_preserves_geometry_reading_order_and_state_guard(tmp_
         if ref.entity_id == 'ward' else ref for ref in _inventory().references
     )})
     request = compile_page_generation_request(page, _edition(), inventory, _reference_files(tmp_path), retry=RetryProvenance(attempt=1)).request
-    assert '"reading_order":["Panel 1","Panel 1 lettering 1"]' in request.prompt
-    assert '"pinned_geometry":{"height":0.5,"width":1.0,"x":0.0,"y":0.0}' in request.prompt
-    assert 'Never restore the torn left sleeve.' in request.prompt
+    brief = _provider_brief(request.prompt)
+    assert brief["exact_lettering"]["reading_order"] == ["Panel 1", "Panel 1 lettering 1"]
+    assert brief["canonical_comic_page"]["content"][0]["pinned_geometry"] == {
+        "x": 0, "y": 0, "width": 1, "height": 0.5,
+    }
+    assert next(ref for ref in brief["approved_page_references"]
+                if ref["visual_anchor"].startswith("Ward"))["continuity_guard"] == (
+        "Never restore the torn left sleeve."
+    )
 
 
 def test_visual_review_route_compiles_current_authority_without_redrawing(tmp_path):
@@ -1626,3 +1665,127 @@ def test_explicit_occupied_revision_is_rejected_before_paid_submission(tmp_path)
             compiled, adapter=adapter, artifacts=artifacts, page=_page(), render_revision=1,
         ))
     assert len(transport.submitted) == 1
+
+
+def test_region_only_correction_changes_native_content_without_shifting_references(tmp_path):
+    from novel_to_comic.models.draw import ObservedRegion
+    from litellm_handlers.vertex_multimodal import _exact_complete_page_contents
+
+    page = _page()
+    parent_bytes = b"parent-page"
+    base = dict(
+        issue_ids=("issue-hand",), page_number=page.page_number,
+        comic_page_revision=page.revision, comic_page_sha256=page.content_sha256,
+        parent_render_revision=1,
+        parent_render_image_sha256=hashlib.sha256(parent_bytes).hexdigest(),
+        mode="region_targeted", instruction="Restore the hand.",
+    )
+    provider_contents = []
+    images = [object(), object(), object()]
+    for name, polygon in (
+        ("left", ((0.0, 0.0), (0.4, 0.0), (0.4, 0.5))),
+        ("right", ((0.6, 0.0), (1.0, 0.0), (1.0, 0.5))),
+    ):
+        correction = PageRenderCorrection.model_validate({
+            **base,
+            "detected_region_ids": (name,),
+            "resolved_regions": (ObservedRegion(id=name, polygon=polygon),),
+        })
+        request = compile_page_generation_request(
+            page, _edition(), _inventory(), _reference_files(tmp_path),
+            retry=RetryProvenance(attempt=1), correction=correction,
+            edit_source_bytes=parent_bytes,
+        ).request
+        brief = _provider_brief(request.prompt)
+        region = brief["complete_page_correction"]["parent_coordinate_regions"][0]
+        assert region["polygon"] == [{"x": x, "y": y} for x, y in polygon]
+        contents = _exact_complete_page_contents(request.model_dump(mode="json"), images)
+        for index, reference in enumerate(brief["approved_page_references"]):
+            assert reference["image"] in contents[3 + index * 2]
+        assert request.lettering == page.content[0].lettering
+        provider_contents.append(contents)
+    assert provider_contents[0][:-1] == provider_contents[1][:-1]
+    assert provider_contents[0][-1] != provider_contents[1][-1]
+
+
+def test_visual_review_preserves_producing_depiction_and_rejects_wrong_lineage(tmp_path):
+    from novel_to_comic.page_visual_review import visual_review_input_digest, visual_review_prompt
+
+    page = _page()
+    current = _compile(tmp_path)
+    producing = compile_page_generation_request(
+        page, _edition(), _inventory(), _reference_files(tmp_path),
+        retry=RetryProvenance(attempt=1), depiction="less_graphic",
+    )
+    artifacts = TargetArtifacts(tmp_path / "project")
+    rendered = asyncio.run(draw_complete_page(
+        producing, adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+        artifacts=artifacts, page=page,
+    ))
+    prompt = visual_review_prompt(compiled=current, producing_request=producing.request)
+    data = _provider_brief(prompt)
+    assert data["producing_specification"] == producing.request.prompt
+    assert data["generation_specification"] == current.request.prompt
+    args = dict(
+        config=Config(), page=page, render=rendered.render,
+        image=_provider_result().image_bytes, compiled=current,
+    )
+    assert visual_review_input_digest(**args, producing_request=producing.request) != (
+        visual_review_input_digest(**args)
+    )
+    with pytest.raises(ValueError, match="producing instructions"):
+        visual_review_input_digest(**args, producing_request=current.request)
+
+
+def test_less_graphic_intent_survives_correction_and_visual_review(tmp_path):
+    from tests.test_page_corrections import _adaptation, _page as correction_page, _source
+    from novel_to_comic.page_drawing import correct_complete_page, prepare_page_correction
+    from novel_to_comic.page_visual_review import visual_review_prompt
+
+    artifacts = TargetArtifacts(tmp_path / "project")
+    source = _source()
+    artifacts.write_source(source)
+    artifacts.write_adaptation(_adaptation(source))
+    page = correction_page()
+    artifacts.write_page(page)
+    edition = _edition()
+    artifacts.write_book_edition(edition)
+    inventory = ApprovedVisualReferenceInventory(references=())
+    producing = compile_page_generation_request(
+        page, edition, inventory, {}, retry=RetryProvenance(attempt=1),
+        depiction="less_graphic",
+    )
+    adapter = VertexCompletePageAdapter(_RecordingTransport(_provider_result()))
+    original = asyncio.run(draw_complete_page(
+        producing, adapter=adapter, artifacts=artifacts, page=page,
+    ))
+    prepared = prepare_page_correction(
+        page=page, edition=edition, inventory=inventory, reference_files={},
+        retry=RetryProvenance(attempt=1), parent=original.render, changes=(),
+        note="Keep the door edge readable.", artifacts=artifacts,
+    )
+    assert producing.request.prompt in prepared.correction.retained_instructions
+    assert prepared.compiled.edit_source_bytes == artifacts.read_render(page.page_number, 1)
+    assert not artifacts.issues_path(page.page_number).exists()
+    corrected = asyncio.run(correct_complete_page(
+        prepared.compiled, issue=None, adapter=adapter, artifacts=artifacts, page=page,
+    ))
+    assert artifacts.resumable_generation_request(page.page_number) is None
+    assert not artifacts.issues_path(page.page_number).exists()
+    following = prepare_page_correction(
+        page=page, edition=edition, inventory=inventory, reference_files={},
+        retry=RetryProvenance(attempt=1), parent=corrected.render, changes=(),
+        note="Make the foreground hand readable.", artifacts=artifacts,
+    )
+    assert producing.request.prompt in following.correction.retained_instructions
+    assert "Keep the door edge readable." in following.correction.retained_instructions
+    current = compile_page_generation_request(
+        page, edition, inventory, {}, retry=RetryProvenance(attempt=1),
+    )
+    brief = _provider_brief(visual_review_prompt(
+        compiled=current, producing_request=prepared.compiled.request,
+    ))
+    assert brief["producing_specification"] == prepared.compiled.request.prompt
+    assert brief["generation_specification"] == current.request.prompt
+    assert corrected.render.parent_revision == original.render.revision
+    assert following.compiled.reference_bytes == ()

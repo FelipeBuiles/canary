@@ -275,6 +275,7 @@ def get_styles(project_id: str, project=Depends(get_project)):
                 validation_config, bible, style_validation_brief(bible),
                 candidate_id=f"{s['id']}:validation",
                 style_reference=style_reference,
+                style_reference_mode=s["style_reference_mode"],
                 subject_action=STYLE_VALIDATION_ACTION,
                 composition=STYLE_VALIDATION_COMPOSITION,
             )
@@ -865,18 +866,21 @@ async def generate_style_samples(
             exact_cost_usd=estimate_style_proof_cost_usd(
                 sample_config, project_dir, bible, template, candidate_id,
                 style_reference=style_reference,
+                style_reference_mode=s["style_reference_mode"],
             ),
         )
 
         async def _runner(
             sample_config=sample_config, sample_path=sample_path,
             candidate_id=candidate_id, style_reference=style_reference,
+            style_reference_mode=s["style_reference_mode"],
         ) -> None:
             # Brief generation is paid too: keep it inside the queued hold.
             brief = await ensure_style_sample_brief(sample_config, bible, project_dir)
             await generate_sample_image(
                 sample_config, bible, sample_path, brief=brief,
                 candidate_id=candidate_id, style_reference=style_reference,
+                style_reference_mode=style_reference_mode,
             )
 
         job, _created = enqueue_reserved_generation_job(
@@ -944,6 +948,7 @@ async def generate_style_validation(
         style_template_for_suggestion(suggestion),
         f"{suggestion_id}:validation",
         style_reference=style_reference,
+        style_reference_mode=suggestion["style_reference_mode"],
         subject_action=STYLE_VALIDATION_ACTION,
         composition=STYLE_VALIDATION_COMPOSITION,
     )
@@ -964,6 +969,7 @@ async def generate_style_validation(
             sample_config, bible, output_path, brief=brief,
             candidate_id=f"{suggestion_id}:validation",
             style_reference=style_reference,
+            style_reference_mode=suggestion["style_reference_mode"],
             project_dir=project_dir,
             subject_action=STYLE_VALIDATION_ACTION,
             composition=STYLE_VALIDATION_COMPOSITION,

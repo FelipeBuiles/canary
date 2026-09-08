@@ -331,6 +331,21 @@ class OCRExtraction(BaseModel):
         return self
 
 
+class OCRProviderResponse(BaseModel):
+    """Complete untyped OCR JSON retained before contract parsing."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    schema_version: int = 1
+    page_number: int = Field(ge=1)
+    render_revision: int = Field(ge=1)
+    render_image_sha256: str = Field(min_length=64, max_length=64)
+    request_sha256: str = Field(min_length=64, max_length=64)
+    response: object
+    raw_response: str | None = None
+    parser_version: str = "page_ocr_v2"
+    usage: UsageRecord
+
+
 class RawOCRObservation(BaseModel):
     """Reusable provider observations, independent of the creative validator."""
 
@@ -485,6 +500,9 @@ class PageRenderCorrection(BaseModel):
     mode: Literal["instructed", "region_targeted"]
     instruction: str = Field(min_length=1)
     detected_region_ids: tuple[str, ...] = ()
+    resolved_regions: tuple[ObservedRegion, ...] = ()
+    depiction: Literal["canonical", "less_graphic"] = "canonical"
+    retained_instructions: tuple[str, ...] = ()
     changes: tuple[CorrectionChange, ...] = Field(default=(), max_length=24)
     note: str = Field(default="", max_length=1000)
     context_beat_ids: tuple[str, ...] = ()

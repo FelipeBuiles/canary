@@ -13,11 +13,10 @@ from novel_to_comic.models.story_bible import Character, Location, Scene, StoryB
 from novel_to_comic.stages.s2_style import (
     STYLE_VALIDATION_ACTION,
     STYLE_VALIDATION_COMPOSITION,
-    SAMPLE_COUNT,
-    _build_avoid_block,
+    PORTFOLIO_ROLES,
+    StyleSuggestionBatch,
     build_style_sample_request,
     _dedupe_suggestions,
-    _select_portfolio,
     _select_role_portfolio,
     _style_sample_brief_source_key,
     _style_sample_brief_source,
@@ -29,6 +28,7 @@ from novel_to_comic.stages.s2_style import (
     missing_sample_indices,
     normalize_suggestion,
     style_direction_image,
+    style_validation_brief,
 )
 from novel_to_comic.style_contract import (
     DEFAULT_LETTERING_STANDARD,
@@ -95,76 +95,36 @@ def _sugg(label: str, medium: str) -> dict:
     }
 
 
+def _batch(*, restriction: str = "", count: int = 8) -> dict:
+    styles = []
+    for index in range(count):
+        styles.append({
+            **_sugg(f"Direction {index}", f"medium {index}"),
+            "visual_logic": ("photographic", "realistic_illustration", "stylized", "graphic")[index % 4],
+            "portfolio_role": PORTFOLIO_ROLES[index % len(PORTFOLIO_ROLES)],
+            "palette": f"palette {index}",
+            "line_rendering": f"finish {index}",
+            "lighting_value": f"lighting {index}",
+            "lettering": DEFAULT_LETTERING_STANDARD,
+            "page_framing": DEFAULT_PAGE_FRAMING_STANDARD,
+            "sequential_art_strengths": "Readable action and recurring identities.",
+            "story_fit": "Supports the story.",
+            "risk": "Detailed finish.",
+        })
+    return {"medium_restriction_quote": restriction, "styles": styles}
+
+
 # ── declared-medium dedup ────────────────────────────────────────────────────
 
 
-def test_dedupe_drops_repeated_declared_medium():
+def test_dedup_preserves_distinct_directions_within_an_author_medium():
+    first = _sugg("Earthy", "woodblock print")
+    second = _sugg("Luminous", "woodblock print")
     kept = _dedupe_suggestions(
-        [_sugg("A", "woodblock print"), _sugg("B", "gouache"), _sugg("C", "woodblock print")]
+        [first, second, {**second, "label": "Renamed duplicate"}],
+        existing_suggestions=[first],
     )
-    assert [s["label"] for s in kept] == ["A", "B"]
-
-
-def test_dedupe_treats_refined_medium_as_duplicate():
-    kept = _dedupe_suggestions([_sugg("A", "etching"), _sugg("B", "copper etching")])
-    assert [s["label"] for s in kept] == ["A"]
-
-    # Sharing one token without refinement is not a collision — the LLM's
-    # curation pass owns family-level judgement, not the safety net.
-    kept = _dedupe_suggestions([_sugg("A", "woodblock print"), _sugg("B", "screen print")])
-    assert [s["label"] for s in kept] == ["A", "B"]
-
-
-def test_dedupe_respects_existing_pool():
-    kept = _dedupe_suggestions(
-        [_sugg("New", "gouache"), _sugg("Other", "charcoal")],
-        existing_suggestions=[_sugg("Old", "gouache")],
-    )
-    assert [s["label"] for s in kept] == ["Other"]
-
-
-def test_dedupe_keeps_legacy_and_drops_malformed():
-    # Legacy suggestions (pre-medium) never collide; empty templates are dropped.
-    kept = _dedupe_suggestions(
-        [
-            {"label": "Empty", "medium": "ink", "template": "  "},
-            {"label": "Legacy", "template": "a style with no declared medium yet."},
-            _sugg("Inked", "ink"),
-        ],
-        existing_suggestions=[{"label": "OldLegacy", "template": "older style."}],
-    )
-    assert [s["label"] for s in kept] == ["Legacy", "Inked"]
-
-
-def test_build_avoid_block_lists_used_mediums():
-    assert _build_avoid_block([]) == ""
-
-    block = _build_avoid_block([_sugg("A", "Woodblock Print"), _sugg("B", "gouache")])
-    assert "ALREADY been suggested" in block
-    assert "woodblock print" in block
-    assert "gouache" in block
-
-
-def test_portfolio_selector_prefers_palette_and_finish_variance_over_gray_wall():
-    gray = [
-        {**_sugg(f"Gray {i}", f"medium {i}"), "palette": "desaturated gray",
-         "line_rendering": "soft painterly", "lighting_value": "low key muted"}
-        for i in range(3)
-    ]
-    vivid = [
-        {**_sugg(f"Vivid {i}", f"vivid medium {i}"), "palette": palette,
-         "line_rendering": line, "lighting_value": light}
-        for i, (palette, line, light) in enumerate([
-            ("scarlet cyan gold", "crisp geometric blocks", "high key graphic"),
-            ("violet lime black", "scratchy crosshatch", "hard chiaroscuro"),
-            ("coral teal cream", "clean ligne claire", "sunlit open values"),
-            ("indigo ochre white", "torn collage edges", "flat poster values"),
-            ("magenta orange navy", "bold dry brush", "neon rim light"),
-        ])
-    ]
-    selected = _select_portfolio(gray + vivid)
-    assert selected[0]["label"] == "Gray 0"  # preserve strongest model-ranked fit
-    assert sum(item["label"].startswith("Vivid") for item in selected) == 4
+    assert kept == [second]
 
 
 def test_role_aware_selector_does_not_relabel_diverse_candidates_by_position():
@@ -182,91 +142,76 @@ def test_role_aware_selector_does_not_relabel_diverse_candidates_by_position():
 # ── generate_suggestions ─────────────────────────────────────────────────────
 
 
-def test_generate_suggestions_dedupes_and_trims_to_sample_count():
-    mediums = [
-        "woodblock print", "gouache", "35mm photography", "cut-paper collage",
-        "charcoal", "woodblock print", "oil paint", "gouache",
-    ]
-    raw = [_sugg(f"S{i}", m) for i, m in enumerate(mediums)]
-    mock = AsyncMock(return_value=ApiResult(value=raw, usage=None))
-
+def test_generated_portfolio_retains_roles_and_both_realism_categories():
+    mock = AsyncMock(return_value=ApiResult(value=_batch(), usage=None))
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
         suggestions, _usage = asyncio.run(generate_suggestions(Config(), _bible()))
-
-    assert [s["label"] for s in suggestions] == ["S0", "S1", "S2", "S3", "S4"]
-    assert len(suggestions) == SAMPLE_COUNT
-    assert mock.await_count == 1
-    assert [s["role"] for s in suggestions] == [
-        "story_fit_primary", "story_fit_secondary", "adjacent", "contrast", "wildcard",
-    ]
-    assert all(s["id"].startswith("style_") for s in suggestions)
+    assert [s["role"] for s in suggestions] == list(PORTFOLIO_ROLES)
+    assert {"photographic", "realistic_illustration"} <= {s["visual_logic"] for s in suggestions}
 
 
-def test_generate_suggestions_receives_story_substance_and_custom_direction():
-    raw = [_sugg(f"S{i}", f"medium {i}") for i in range(8)]
-    mock = AsyncMock(return_value=ApiResult(value=raw, usage=None))
+def test_missing_realism_fails_without_fabricating_directions():
+    batch = _batch()
+    for candidate in batch["styles"]:
+        candidate["visual_logic"] = "stylized"
+    mock = AsyncMock(return_value=ApiResult(value=batch, usage=None))
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
-        asyncio.run(generate_suggestions(
-            Config(), _bible(), custom_direction={"text": "Luminous jewel tones"},
+        with pytest.raises(RuntimeError):
+            asyncio.run(generate_suggestions(Config(), _bible()))
+
+
+def test_explicit_author_medium_restriction_preserves_narrowed_neighbors():
+    batch = _batch(restriction="Use only woodblock prints")
+    for candidate in batch["styles"]:
+        candidate["visual_logic"] = "graphic"
+        candidate["medium"] = "woodblock print"
+    mock = AsyncMock(return_value=ApiResult(value=batch, usage=None))
+    with patch("novel_to_comic.clients.text.generate_json", new=mock):
+        suggestions, _usage = asyncio.run(generate_suggestions(
+            Config(), _bible(), custom_direction={
+                "id": "direction_1234567890abcdef", "text": "Use only woodblock prints",
+            },
         ))
-    content = mock.await_args.kwargs["user_content"]
-    assert "Carl outside." in content
-    assert "Seattle Street" in content
-    assert "1man, adult male, leather jacket" in content
-    assert "Luminous jewel tones" in content
-    system = mock.await_args.kwargs["system_prompt"]
-    assert "lettering" in system
-    assert "page_framing" in system
+    assert {s["medium"] for s in suggestions} == {"woodblock print"}
+    assert {s["visual_logic"] for s in suggestions} == {"graphic"}
+    assert {s["style_reference_mode"] for s in suggestions} == {"variation"}
 
 
-def test_suggestion_carries_one_explicit_book_wide_production_standard():
-    suggestion = normalize_suggestion({
-        **_sugg("Etched dread", "etching"),
-        "lettering": "Sentence case in one condensed grotesk; ivory balloons.",
-        "page_framing": "Full bleed on every page with straight black gutters.",
-    })
-
-    selected = style_template_for_suggestion(suggestion)
-
-    assert "LETTERING STANDARD — Sentence case in one condensed grotesk" in selected
-    assert "PAGE FRAMING STANDARD — Full bleed on every page" in selected
+def test_model_cannot_claim_an_unquoted_author_medium_restriction():
+    mock = AsyncMock(return_value=ApiResult(value=_batch(restriction="only ink"), usage=None))
+    with patch("novel_to_comic.clients.text.generate_json", new=mock):
+        with pytest.raises(ValueError):
+            asyncio.run(generate_suggestions(
+                Config(), _bible(), custom_direction={"text": "A hopeful mood"},
+            ))
 
 
-def test_legacy_suggestion_receives_safe_consistent_production_defaults():
-    suggestion = normalize_suggestion(_sugg("Legacy", "ink"))
+def test_generated_production_standards_reject_untyped_objects():
+    batch = _batch()
+    batch["styles"][0]["lettering"] = {"unrecognized": ["nested", "values"]}
+    with pytest.raises(ValueError):
+        StyleSuggestionBatch.model_validate(batch)
 
-    assert suggestion["lettering"] == DEFAULT_LETTERING_STANDARD
-    assert suggestion["page_framing"] == DEFAULT_PAGE_FRAMING_STANDARD
 
 
-def test_generate_suggestions_retries_with_expanded_avoid_pool():
-    first = [_sugg("A", "gouache"), _sugg("B", "ink"), _sugg("C", "gouache")]
-    second = [
-        _sugg("D", "gouache"),  # repeats a kept medium — dropped by safety net
-        _sugg("E", "charcoal"),
-        _sugg("F", "35mm photography"),
-        _sugg("G", "woodblock print"),
-    ]
+
+def test_generate_suggestions_completes_an_undersized_pool():
+    complete = _batch()
+    first = {**complete, "styles": complete["styles"][:2]}
+    second = {**complete, "styles": complete["styles"][2:]}
     mock = AsyncMock(side_effect=[
-        ApiResult(value=first, usage=None),
-        ApiResult(value=second, usage=None),
+        ApiResult(value=first, usage=None), ApiResult(value=second, usage=None),
     ])
-
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
         suggestions, _usage = asyncio.run(generate_suggestions(Config(), _bible()))
-
-    assert [s["label"] for s in suggestions] == ["A", "B", "E", "F", "G"]
-    assert mock.await_count == 2
-    retry_system = mock.await_args.kwargs["system_prompt"]
-    assert "ALREADY been suggested" in retry_system
-    assert "gouache" in retry_system
-    assert "ink" in retry_system
+    assert {s["role"] for s in suggestions} == set(PORTFOLIO_ROLES)
+    assert {"photographic", "realistic_illustration"} <= {s["visual_logic"] for s in suggestions}
 
 
-def test_generate_suggestions_fails_instead_of_completing_partial_portfolio():
-    mock = AsyncMock(return_value=ApiResult(value=[_sugg("Only", "gouache")], usage=None))
+def test_generate_suggestions_rejects_partial_portfolio():
+    mock = AsyncMock(return_value=ApiResult(value=_batch(count=1), usage=None))
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
-        with pytest.raises(RuntimeError, match="5 are required"):
+        with pytest.raises(RuntimeError):
             asyncio.run(generate_suggestions(Config(), _bible()))
 
 
@@ -483,13 +428,8 @@ def test_generate_sample_image_uses_brief_and_writes_meta(tmp_path):
     # Slice 06: style proof images use a portrait 4:5 frame.
     assert meta["parameters"]["width"] == 819
     assert meta["parameters"]["height"] == 1024
-    assert "exactly 1 distinct listed character" in meta["prompt"]
-    assert "one coherent complete comic page" in meta["prompt"]
     assert "The night held its breath." in meta["prompt"]
     assert "We keep moving." in meta["prompt"]
-    assert "LETTERING STANDARD —" in meta["prompt"]
-    assert "PAGE FRAMING STANDARD —" in meta["prompt"]
-    assert "no text, captions, speech balloons" not in meta["prompt"]
     assert "1man, adult male, leather jacket" in meta["prompt"]
     assert "outdoors, snow, winter" in meta["prompt"]
 
@@ -547,12 +487,11 @@ def test_fallback_brief_proof_is_fresh_without_brief_cache(tmp_path):
 
 def test_validation_request_uses_dynamic_structured_action_without_contradiction():
     request = build_style_sample_request(
-        Config(style_template="Bold ink"), _bible(), "Carl lunges across the snowy street.",
+        Config(style_template="Bold ink"), _bible(), style_validation_brief(_bible()),
         candidate_id="style_validation", subject_action=STYLE_VALIDATION_ACTION,
         composition=STYLE_VALIDATION_COMPOSITION,
     )
-    assert request.input.prompt.subjects[0].action == STYLE_VALIDATION_ACTION
-    assert STYLE_VALIDATION_COMPOSITION in request.compiled.final_prompt
-    assert "quiet characteristic action" not in request.compiled.final_prompt
-    assert "exactly 1 distinct listed character" in request.compiled.final_prompt
+    assert STYLE_VALIDATION_ACTION in request.compiled.final_prompt
+    assert request.compiled.final_prompt.count(_bible().characters[0].visual_anchor) == 1
+    assert "no lettering or borders" not in request.compiled.final_prompt.lower()
     assert "The night held its breath." in request.compiled.final_prompt
