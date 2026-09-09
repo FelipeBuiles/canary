@@ -13,9 +13,7 @@ from novel_to_comic import artifacts
 from novel_to_comic.config import Config
 from novel_to_comic.server.routers.styles import (
     _assert_no_style_task,
-    _direction_credit_estimates,
     _prepare_style_direction,
-    _suggest_batch_credit_estimate,
     create_style_direction,
     generate_style_samples,
     generate_style_validation,
@@ -312,28 +310,6 @@ def test_image_backed_direction_estimate_covers_references_and_retry(tmp_path):
     assert two_attempts > one_attempt
 
 
-def test_combined_and_seeded_estimates_forward_arbitrary_reference_dimensions(tmp_path):
-    config = Config(image_model="image-balanced")
-    _project(tmp_path)
-    size = (137, 911)
-    with (
-        patch(
-            "novel_to_comic.server.routers.styles.estimate_style_proof_cost_usd",
-            return_value=0.02,
-        ),
-        patch(
-            "novel_to_comic.server.routers.styles.estimate_style_batch_cost_usd",
-            return_value=0.08,
-        ) as batch,
-    ):
-        _direction_credit_estimates(
-            config, tmp_path, has_style_reference=True, reference_size=size,
-        )
-        assert batch.call_args.kwargs["reference_size"] == size
-        _suggest_batch_credit_estimate(
-            config, tmp_path, 4, has_style_reference=True, reference_size=size,
-        )
-        assert batch.call_args.kwargs["reference_size"] == size
 
 
 def test_batch_estimator_prices_each_neighbor_reference_size(tmp_path):

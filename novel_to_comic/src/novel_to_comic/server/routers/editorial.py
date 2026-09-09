@@ -22,6 +22,7 @@ from novel_to_comic.target_artifacts import (
     TargetArtifacts,
 )
 from ..auth import get_current_user
+from ..codex_admission import admit_stage_action
 from ..credits import (
     assert_sufficient_credits,
     estimate_stage_credit_cost,
@@ -185,9 +186,12 @@ def post_editorial_decisions(body: DecisionBody, project=Depends(get_project)):
     return _editorial_body(project_dir)
 
 
+
+
 def _preview_estimate_credits(config, project_dir, state, stage: str) -> int:
     """Project the unbuffered chain cost using the existing stage estimates."""
 
+    admit_stage_action(config, stage)
     chain = [stage, *STAGE_AUTO_CHAIN.get(stage, ())]
     try:
         return sum(
@@ -311,6 +315,7 @@ async def apply_story_change(
             409,
             {"detail": "a style operation is already running", "revision": revision},
         )
+    admit_stage_action(config, proposal.stage)
     # The directive lives outside the stage clean cascade, so the explicit
     # re-run below cannot delete it before the stage run reads it. It is
     # written before gating so the reservation prices the actual instructed

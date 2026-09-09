@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 
 import pytest
+from pydantic import ValidationError
 
 from novel_to_comic.models.adaptation import (
     AdaptationLedgerEntry,
@@ -611,7 +612,13 @@ def test_two_pass_plan_canonicalizes_explicit_lettering_order(
                                 f"Visual moment {page_number}.{panel}."
                             ),
                             "lettering_ids": lettering_ids_by_panel[panel - 1],
-                            "entity_ids": [],
+                            "entity_ids": ["character_johansen"],
+                            "appearance_states": [
+                                {
+                                    "entity_id": "character_johansen",
+                                    "state_id": "johansen_soaked",
+                                },
+                            ],
                         }
                         for panel in range(1, panel_count + 1)
                     ],
@@ -626,7 +633,7 @@ def test_two_pass_plan_canonicalizes_explicit_lettering_order(
     plan = asyncio.run(
         produce_book_plan(
             adaptation,
-            ApprovedVisualReferenceInventory(),
+            _soaked_inventory(),
             ApprovedPageRange(minimum=24, maximum=24),
             artifacts=artifacts,
             ctx=StageRuntime(
@@ -651,6 +658,17 @@ def test_two_pass_plan_canonicalizes_explicit_lettering_order(
         for content in artifacts.read_page(1).content
         for item in content.lettering
     ] == ["lettering_0001", "lettering_0001_second"]
+    for page_number in range(1, 25):
+        assert all(
+            content.appearance_states == {"character_johansen": "johansen_soaked"}
+            for content in artifacts.read_page(page_number).content
+        )
+    assert tuple(
+        item
+        for page_number in range(1, 25)
+        for content in artifacts.read_page(page_number).content
+        for item in content.lettering
+    ) == tuple(item for beat in adaptation.beats for item in beat.lettering)
 
 
 def test_plan_canonicalizes_lettering_order_across_repeated_beat_panels(
@@ -2509,9 +2527,9 @@ def test_mechanical_allocation_and_reference_ids_are_canonicalized(
                         "visual_intent": "Johansen approaches through heavy spray.",
                         "lettering_ids": ["lettering_0001"],
                         "entity_ids": ["character_johansen", "location_alert"],
-                        # Exact production slip: reference IDs are copied into
-                        # the appearance-state field, including base references.
-                        "appearance_states": {"character_johansen": "johansen_soaked"},
+                        "appearance_states": [
+                            {"entity_id": "character_johansen", "state_id": "johansen_soaked"},
+                        ],
                     }
                 ],
                 "reading_order": [
@@ -2843,6 +2861,7 @@ def _two_page_response(content_overrides: dict[str, object]) -> dict:
                         "visual_intent": "The yacht wheels away.",
                         "lettering_ids": ["lettering_0002"],
                         "entity_ids": ["character_johansen", "location_alert"],
+                        "appearance_states": [],
                     }
                 ],
                 "reading_order": ["page_002_content_001", "lettering_0002"],
@@ -2888,6 +2907,88 @@ def _run_plan(
     except PlanInvariantError as error:
         outcome = error
     return artifacts, calls, outcome
+
+
+def test_plan_preserves_explicit_state_bindings_and_exact_lettering(tmp_path: Path) -> None:
+    adaptation = _adaptation()
+    artifacts, calls, plan = _run_plan(
+        adaptation,
+        _soaked_inventory(),
+        _two_page_response({
+            "entity_ids": ["character_johansen", "location_alert"],
+            "appearance_states": [
+                {"entity_id": "character_johansen", "state_id": "johansen_soaked"},
+            ],
+        }),
+        tmp_path,
+    )
+
+    assert isinstance(plan, BookPlan)
+    assert len(calls) == 1
+    assert artifacts.read_page(1).content[0].appearance_states == {
+        "character_johansen": "johansen_soaked",
+    }
+    assert artifacts.read_page(2).content[0].appearance_states == {}
+    assert tuple(
+        item
+        for page_number in (1, 2)
+        for content in artifacts.read_page(page_number).content
+        for item in content.lettering
+    ) == tuple(item for beat in adaptation.beats for item in beat.lettering)
+
+
+@pytest.mark.parametrize("second_state", ["johansen_soaked", "johansen_dry"])
+def test_plan_draft_rejects_duplicate_entity_state_bindings(second_state: str) -> None:
+    response = _two_page_response({
+        "appearance_states": [
+            {"entity_id": "character_johansen", "state_id": "johansen_soaked"},
+            {"entity_id": "character_johansen", "state_id": second_state},
+        ],
+    })
+
+    with pytest.raises(ValidationError) as caught:
+        _BookPlanDraft.model_validate(response)
+
+    assert any(
+        error["loc"][:4] == ("pages", 0, "content", 0)
+        for error in caught.value.errors()
+    )
+
+
+def test_plan_preserves_shared_state_id_for_distinct_entities(tmp_path: Path) -> None:
+    adaptation = _adaptation()
+    entities = ("character_johansen", "location_alert")
+    inventory = ApprovedVisualReferenceInventory(references=[
+        *_inventory().references,
+        *[
+            ApprovedVisualReference(
+                id=f"ref_{entity_id}_soaked",
+                entity_id=entity_id,
+                appearance_state_id="soaked",
+                visual_anchor=f"{entity_id}; soaked by sea spray",
+            )
+            for entity_id in entities
+        ],
+    ])
+    artifacts, calls, plan = _run_plan(
+        adaptation,
+        inventory,
+        _two_page_response({
+            "entity_ids": list(entities),
+            "appearance_states": [
+                {"entity_id": entity_id, "state_id": "soaked"}
+                for entity_id in entities
+            ],
+        }),
+        tmp_path,
+    )
+
+    assert isinstance(plan, BookPlan)
+    assert len(calls) == 1
+    assert artifacts.read_page(1).content[0].appearance_states == {
+        "character_johansen": "soaked",
+        "location_alert": "soaked",
+    }
 
 
 def _onscreen_adaptation() -> BookAdaptation:
@@ -2954,7 +3055,9 @@ def test_deriving_an_appearance_change_never_duplicates_a_cited_id(
         _two_page_response(
             {
                 "entity_ids": ["character_johansen", "location_alert"],
-                "appearance_states": {"character_johansen": "johansen_soaked"},
+                "appearance_states": [
+                    {"entity_id": "character_johansen", "state_id": "johansen_soaked"},
+                ],
             }
         ),
         tmp_path,

@@ -265,9 +265,9 @@ def _character_generation_input(
     config: Config, story_bible: StoryBible, char: Character, addendum: str = "",
 ) -> CanonicalCharacterReferenceInput:
     direction = (
-        "Square two-view reference sheet: a head-and-shoulders three-quarter portrait on "
-        "the left and a neutral full-body three-quarter standing view on the right. Keep "
-        "the full-body figure visible head to toe on a plain uncluttered background."
+        "Square two-view reference sheet: a three-quarter identity close-up on the left "
+        "and a neutral three-quarter whole-body view on the right. Use the natural posture "
+        "and complete anatomy specified by the character's visual anchor, on a plain background."
     )
     return CanonicalCharacterReferenceInput(
         asset_identity=f"character_ref:{char.id}",
@@ -306,45 +306,37 @@ def _character_style_reference(
     """Use a calibration board only when its producing request is current."""
     board = _character_style_board_path(project_dir)
     request = compile_non_panel_request(
-        config, _character_style_calibration_input(config),
+        config, _character_style_calibration_input(config, artifacts.read_story_bible(project_dir)),
         reference_plan=style_reference_plan(config, fallback),
     )
     return board if asset_matches_request(board, request) else fallback
 
 
-def _character_style_calibration_input(config: Config) -> CharacterStyleCalibrationInput:
-    """Build a subject-diverse style board that de-entangles style from identity.
-
-    The approved scene proof often contains one specific person. Character-sheet
-    calls can mistake that person's age/build for part of the style, then drift
-    toward stereotypes for other bodies. This single calibration image shows
-    several unrelated adults under one artistic hand and becomes the style-only
-    reference for every canonical and alternate character sheet.
-    """
-    subjects = (
+def _character_style_calibration_input(
+    config: Config, story_bible: StoryBible,
+) -> CharacterStyleCalibrationInput:
+    """Calibrate rendering on canonical cast anatomy, never an invented human roster."""
+    subjects = tuple(
         PromptSubject(
-            name="slim adult", identity="an unrelated slim adult with natural proportions",
-        ),
-        PromptSubject(
-            name="stout adult", identity="an unrelated stout adult with natural proportions",
-        ),
-        PromptSubject(
-            name="older adult", identity="an unrelated older adult with natural proportions",
-        ),
+            character_id=char.id, name=char.name, identity=char.visual_anchor,
+            baseline_affect=char.baseline_affect,
+        )
+        for char in story_bible.characters[:5]
     )
     return CharacterStyleCalibrationInput(
         asset_identity="cast:character_style_board",
         prompt=GenerationPromptInput(
             subjects=subjects,
             visual_brief=(
-                "Character-rendering calibration board. Show three clearly unrelated adults "
-                "standing side by side at the same scale: one slim, one stout, and one older. "
-                "Use one shared artistic hand, identical facial-modeling depth, line weight, "
-                "mark-making, shadow density, rendering density, and degree of simplification."
+                "Character-rendering calibration board. Show the supplied canonical subjects "
+                "as separate whole-body studies in their natural postures. "
+                "Use one shared artistic hand, consistent line weight, mark-making, "
+                "shadow density, rendering density, and degree of simplification."
             ),
-            composition="Landscape three-person character calibration lineup, full body, neutral poses.",
+            composition="Landscape character calibration lineup, complete bodies, neutral natural poses.",
             constraints=(
-                "Preserve each subject's distinct age and build in the selected style; "
+                "Preserve each exact visual anchor, including nonhuman anatomy, age, and proportions. "
+                "The board supplies rendering evidence only, not identity for other characters; "
                 "plain quiet background; no text or labels."
             ),
             width=1344,
@@ -362,8 +354,9 @@ def _location_generation_input(
     config: Config, loc, addendum: str = "", anchor: str | None = None,
 ) -> CanonicalLocationPlateInput:
     direction = (
-        "Clean wide environment design plate with large readable masses, clear silhouettes, "
-        "quiet areas of sky, ground, water, or shadow, and no characters."
+        "Create a new wide environment design plate of the specified location, with large "
+        "readable masses and clear silhouettes. Construct its architecture and spatial layout "
+        "from the location anchor, not from the scene depicted in rendering references. No characters."
     )
     return CanonicalLocationPlateInput(
         asset_identity=f"location_plate:{loc.id}",
@@ -455,9 +448,9 @@ def _state_asset_prompt(spec: StateAssetGenerationSpec) -> GenerationPromptInput
         )]
         anchors = []
         composition = (
-            "Square two-view reference sheet with a head-and-shoulders three-quarter "
-            "portrait on the left and an anatomy-compatible neutral full-body "
-            "three-quarter view on the right; no text or labels."
+            "Square two-view reference sheet with a three-quarter identity close-up "
+            "on the left and a complete whole-body three-quarter view on the right, "
+            "using the active anchor's anatomy and natural posture; no text or labels."
         )
     else:
         subjects = []
@@ -511,6 +504,7 @@ def _compile_state_asset_wire(
         selected_style_text=config.style_template,
         selected_style_source_hash=spec.style_sha256,
         lineage=spec.lineage_metadata(),
+        edit_parent_indices=tuple(index for index, ref in enumerate(plan.selected) if ref.role != "style"),
     )
     request = compile_non_panel_request(config, input_data, reference_plan=plan)
     spec.compiled_request_sha256 = request.compiled.compiled_request_sha256
@@ -717,7 +711,7 @@ async def _generate_character_style_board(
     approved_style_ref = _cast_asset_style_ref(
         config, _find_style_ref(project_dir, config.style_template)
     )
-    input_data = _character_style_calibration_input(config)
+    input_data = _character_style_calibration_input(config, artifacts.read_story_bible(project_dir))
     request = compile_non_panel_request(
         config,
         input_data,
@@ -1380,7 +1374,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     if story_bible.characters and not _character_style_board_path(project_dir).exists():
         total += estimate_non_panel_request(
             config,
-            _character_style_calibration_input(config),
+            _character_style_calibration_input(config, story_bible),
             reference_plan=style_plan,
         ).cost_usd
     for char in story_bible.characters:

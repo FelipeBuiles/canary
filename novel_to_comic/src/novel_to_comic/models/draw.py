@@ -213,7 +213,7 @@ class PageRenderRevision(BaseModel):
     provider: str = Field(min_length=1)
     model: str = Field(min_length=1)
     latency_ms: int = Field(ge=0)
-    cost_usd: Decimal = Field(ge=0)
+    cost_usd: Decimal | None = Field(ge=0)
 
     @model_validator(mode="after")
     def _validate_lineage(self) -> "PageRenderRevision":
@@ -245,8 +245,9 @@ class CompletePageProviderResult(BaseModel):
     height: int = Field(gt=0)
     latency_ms: int = Field(ge=0)
     provider_request_id: str | None = None
-    actual_provider_model: str = Field(min_length=1)
+    actual_provider_model: str | None = Field(min_length=1)
     usage: UsageRecord
+    response_metadata: dict[str, object] | None = None
 
 
 class PageGenerationProvenance(BaseModel):
@@ -257,6 +258,7 @@ class PageGenerationProvenance(BaseModel):
     render: PageRenderRevision
     usage: UsageRecord
     provider_request_id: str | None = None
+    response_metadata: dict[str, object] | None = None
 
 
 class PageGenerationFailure(BaseModel):

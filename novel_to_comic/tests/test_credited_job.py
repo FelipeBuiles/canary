@@ -51,6 +51,7 @@ class TestEnqueueCreditedJob:
                 payload={"char_id": "foo"},
                 work=_noop,
                 debit_description="test debit",
+                operations=(("image", "image-quality"),),
             )
 
         assert created is False
@@ -84,6 +85,7 @@ class TestEnqueueCreditedJob:
                 payload={"char_id": "c"},
                 work=_work,
                 debit_description="regen",
+                operations=(("image", "image-quality"),),
             )
 
             asyncio.run(job.runner())
@@ -124,6 +126,7 @@ class TestEnqueueCreditedJob:
                 payload={"char_id": "protagonist"},
                 work=_work,
                 debit_description="regen",
+                operations=(("image", "image-quality"),),
             )
 
             asyncio.run(job.runner())
@@ -167,6 +170,7 @@ class TestEnqueueCreditedJob:
                 payload={"page_number": 1},
                 work=_work,
                 debit_description="regen",
+                operations=(("complete_page", "image-balanced"),),
             )
 
             asyncio.run(job.runner())
@@ -193,7 +197,7 @@ def test_page_check_sets_billing_context_and_releases_hold_on_failure(tmp_path):
          patch('novel_to_comic.server.credited_job.release_reservation') as release:
         with pytest.raises(RuntimeError):
             asyncio.run(run_credited_page_check(user_id='u1', project_id='p1', project_dir=tmp_path,
-                page_number=7, estimated_cost_usd=0.02, work=work))
+                page_number=7, estimated_cost_usd=0.02, work=work, operations=(("text", "ocr-balanced"),)))
         assert reserve.call_args.args[-1] > 0
         release.assert_called_once_with(db.return_value, 'hold')
     assert current_ai_request_context().user_id is None
@@ -219,6 +223,7 @@ def test_expired_queued_job_never_calls_provider(tmp_path):
             project_dir=tmp_path, stage="cast", kind="character_ref_regen",
             label="alice", payload={"char_id": "alice"}, work=work,
             debit_description="cast", estimate_credits=5,
+            operations=(("image", "image-quality"),),
         )
         with pytest.raises(RuntimeError, match="lease expired"):
             asyncio.run(job.runner())

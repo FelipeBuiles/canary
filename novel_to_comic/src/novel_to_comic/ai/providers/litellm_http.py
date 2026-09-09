@@ -31,6 +31,12 @@ from novel_to_comic.provider_wire import (
 class LitellmHttpProvider:
     name = "litellm_http"
 
+    def wire_request_params(self, wire: ProviderWireRequest) -> dict[str, Any]:
+        serializer = _PROVIDER_SERIALIZERS.get(wire.provider_key)
+        if serializer is None:
+            raise ProviderWireError(f"unsupported image provider key: {wire.provider_key!r}")
+        return serializer(wire)
+
     def prepare_wire_request(
         self, wire: ProviderWireRequest,
     ) -> tuple[dict[str, Any], list[tuple[str, tuple[str, bytes, str]]]]:
@@ -48,7 +54,7 @@ class LitellmHttpProvider:
         event_id: str,
         metadata: dict[str, Any],
     ) -> ProviderRawResult:
-        """Submit the exact wire payload; never enters ``generate`` legacy logic."""
+        """Submit the exact frozen wire payload."""
         from novel_to_comic.ai import client as ai_client
 
         params, files = self.prepare_wire_request(wire)
@@ -99,26 +105,6 @@ class LitellmHttpProvider:
             actual_provider_model=(data.get("model") if isinstance(data.get("model"), str) else None),
         )
 
-    def request_params(
-        self,
-        *,
-        model_alias: str,
-        width: int,
-        height: int,
-        config: Config,
-    ) -> dict[str, Any]:
-        params: dict[str, Any] = {
-            "model": model_alias,
-            "size": _image_size(model_alias, width, height),
-            "n": 1,
-            "canary_requested_width": width,
-            "canary_requested_height": height,
-            "canary_requested_aspect": aspect_for_dimensions(width, height),
-            "canary_requested_shape": generation_shape_for_aspect(aspect_for_dimensions(width, height)),
-        }
-        if config.image_quality:
-            params["quality"] = config.image_quality
-        return params
 
 
 def serialize_wire_request(

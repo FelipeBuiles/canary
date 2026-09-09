@@ -6,6 +6,7 @@ from pathlib import Path
 
 from novel_to_comic.config import Config
 from novel_to_comic.models.finish import FinishProductionSpec
+from novel_to_comic.page_drawing import page_profile_uses_native_dimensions
 from novel_to_comic.page_finishing import finish_book
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.target_artifacts import TargetArtifacts
@@ -28,7 +29,7 @@ async def run(
             production=FinishProductionSpec(
                 canvas_width=profile.output_width,
                 canvas_height=profile.output_height,
-            ),
+            ) if not page_profile_uses_native_dimensions(profile) else None,
             formats=formats,
             clear_derived_outputs=clear_derived_outputs,
         )

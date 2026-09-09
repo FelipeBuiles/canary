@@ -45,6 +45,7 @@ from novel_to_comic.page_drawing import (
     correct_complete_page,
     correction_credit_estimate,
     prepare_page_correction,
+    production_page_capability_profile,
 )
 from novel_to_comic.page_review import (
     InvalidCorrectionError,
@@ -174,22 +175,8 @@ def _page() -> ComicPage:
     )
 
 
-def _profile(**updates: object) -> PageCapabilityProfile:
-    payload: dict[str, object] = {
-        "id": "profile-1",
-        "provider": "vertex-multimodal",
-        "model": "gemini-3-pro-image",
-        "max_image_references": 4,
-        "reference_ordering": "ordered",
-        "editing_modes": ["instructed", "region_targeted"],
-        "output_width": 120,
-        "output_height": 180,
-        "max_prompt_characters": 20_000,
-        "retry_semantics": "bounded_submission",
-        "price_per_page_usd": "0.5",
-    }
-    payload.update(updates)
-    return PageCapabilityProfile(**payload)
+def _profile() -> PageCapabilityProfile:
+    return production_page_capability_profile()
 
 
 def _edition(profile: PageCapabilityProfile | None = None) -> BookEdition:
@@ -226,11 +213,7 @@ def _setup(tmp_path: Path, *, issues: tuple[PageIssue, ...] = ()) -> tuple[Targe
     artifacts.write_adaptation(_adaptation(source))
     page = _page()
     artifacts.write_page(page)
-    from novel_to_comic.page_drawing import production_page_capability_profile
-
-    edition = BookEdition(
-        revision=1, id="edition-1", capability_profile=production_page_capability_profile(),
-    )
+    edition = _edition()
     artifacts.write_book_edition(edition)
     producing = compile_page_generation_request(
         page, edition, ApprovedVisualReferenceInventory(references=()), {},
@@ -462,10 +445,9 @@ def test_annotations_and_novel_context_reach_prompt_and_provenance(tmp_path: Pat
     assert prepared.correction.context_source_unit_ids == ("source-1",)
     assert prepared.correction.context_digest == prepared.context.digest
     assert prepared.correction.context_adaptation_revision == 1
-    # Fixed profile, references, and lettering survive the correction path.
-    assert prepared.compiled.request.profile_id == "profile-1"
+    # Exact lettering survives the correction path.
     assert prepared.compiled.request.lettering == page.content[0].lettering
-    estimate = correction_credit_estimate(prepared.compiled, reserve=True)
+    estimate = correction_credit_estimate(prepared.compiled, config=Config(), reserve=True)
     assert estimate["estimate_credits"] > 0
     assert estimate["reserved_credits"] is not None and estimate["reserved_credits"] >= estimate["estimate_credits"]
 
@@ -689,7 +671,7 @@ def test_bounded_context_omission_never_truncates_author_instructions(tmp_path: 
         page_number=1, revision=1, parent_revision=None,
         comic_page_revision=page.revision, comic_page_sha256=page.content_sha256,
         request_sha256=producing.request_sha256, image_sha256=hashlib.sha256(image).hexdigest(),
-        width=120, height=180, provider=producing.provider, model=producing.model,
+        width=1696, height=2528, provider=producing.provider, model=producing.model,
         latency_ms=10, cost_usd="0.5",
     )
     artifacts.write_provenance(PageGenerationProvenance(render=render, usage=_usage()))
@@ -715,12 +697,17 @@ def test_bounded_context_omission_never_truncates_author_instructions(tmp_path: 
     assert omitted != ()
 
 
-def test_oversized_prompt_rejects_overflow_before_spend(tmp_path: Path) -> None:
+def test_oversized_prompt_rejects_overflow_before_spend(tmp_path: Path, monkeypatch) -> None:
     artifacts, page, render = _setup(tmp_path, issues=(_issue("issue-dark"),))
+    profile = _profile().model_copy(update={"max_prompt_characters": 100})
+    monkeypatch.setattr(
+        "novel_to_comic.page_drawing.current_page_capability_profile",
+        lambda: profile,
+    )
 
     with pytest.raises(ValueError, match="exceed"):
         _prepare(
-            artifacts, page, render, _profile(max_prompt_characters=100),
+            artifacts, page, render, profile,
             changes=(_change("c-dark", "Fix it.", issue_id="issue-dark"),),
         )
 
@@ -732,8 +719,8 @@ class _Transport:
             artifact_kind="complete_page",
             image_bytes=b"corrected-page-png",
             media_type="image/png",
-            width=120,
-            height=180,
+            width=1696,
+            height=2528,
             latency_ms=10,
             provider_request_id="provider-1",
             actual_provider_model="vertex_ai/gemini-3-pro-image",

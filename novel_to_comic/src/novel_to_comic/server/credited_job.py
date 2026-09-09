@@ -22,6 +22,8 @@ from fastapi import FastAPI
 
 from novel_to_comic.ai import ai_request_context
 from novel_to_comic.config import Config
+from novel_to_comic.codex_dev import classify_operations, funding_scope
+from .codex_admission import Operations, stage_operations
 from novel_to_comic.frozen_requests import (
     FrozenRequestError,
     execute_frozen_request,
@@ -88,6 +90,7 @@ async def run_credited_stage(
     Raises CreditReservationDenied when the reservation cannot be placed
     (insufficient credits or ledger errors); the stage is not started.
     """
+    funding = classify_operations(stage_operations(config, stage))
     db = get_db()
     try:
         reservation_credits = estimate_stage_credit_reservation(config, project_dir, state, stage)
@@ -106,7 +109,7 @@ async def run_credited_stage(
 
     try:
         assert_reservation_active(db, reservation_id)
-        with ai_request_context(
+        with funding_scope(funding), ai_request_context(
             user_id=user_id,
             project_id=project_id,
             project_name=project_dir.name,
@@ -134,6 +137,7 @@ def enqueue_credited_job(
     payload: dict[str, Any],
     work: Callable[[], Awaitable[ApiResult[Any]]],
     debit_description: str,
+    operations: Operations,
     semaphore: asyncio.Semaphore | None = None,
     estimate_credits: int = 0,
 ) -> tuple[GenerationJob, bool]:
@@ -184,6 +188,7 @@ def enqueue_credited_job(
         kind=kind, label=label, payload=payload, work=_work,
         debit_description=debit_description, semaphore=semaphore,
         reservation_credits=estimate_credits,
+        operations=operations,
     )
 
 
@@ -202,12 +207,18 @@ def enqueue_reserved_generation_job(
     work: Callable[[], Awaitable[ApiResult[Any] | None]],
     debit_description: str,
     reservation_credits: int,
+    operations: Operations,
     semaphore: asyncio.Semaphore | None = None,
     existing_hold: tuple[str | None, str] | None = None,
     on_terminal: Callable[[], None] | None = None,
     on_settled: Callable[[ApiResult[Any]], None] | None = None,
 ) -> tuple[GenerationJob, bool]:
     """Queue one request with a hold spanning execution, failure, or cancellation."""
+    funding = classify_operations(operations)
+    if funding == "codex_subscription":
+        reservation_credits = 0
+        if existing_hold is not None and existing_hold[0] is not None:
+            raise ValueError("Subscription jobs cannot inherit an API credit hold")
 
     existing = find_active_generation_job(
         app,
@@ -245,7 +256,7 @@ def enqueue_reserved_generation_job(
     async def _runner() -> None:
         try:
             assert_reservation_active(db, reservation_id)
-            with ai_request_context(
+            with funding_scope(funding), ai_request_context(
                 user_id=user_id,
                 project_id=project_id,
                 project_name=project_dir.name,
@@ -314,6 +325,7 @@ def enqueue_frozen_generation_job(
     wire: ProviderWireRequest,
     output_path: Path,
     debit_description: str,
+    operations: Operations,
     idempotency_key: str | None = None,
     feature: str = "image.frozen_request",
     semaphore: asyncio.Semaphore | None = None,
@@ -329,6 +341,7 @@ def enqueue_frozen_generation_job(
     time; it never receives a prompt builder, reference plan, or mutable asset
     path as a source of provider input.
     """
+    classify_operations(operations)
     try:
         output_path.resolve(strict=False).relative_to(project_dir.resolve())
     except ValueError as exc:
@@ -443,6 +456,7 @@ def enqueue_frozen_generation_job(
         debit_description=debit_description,
         semaphore=semaphore,
         estimate_credits=estimate_credits,
+        operations=operations,
     )
     if created:
         update_frozen_request_status(
@@ -463,6 +477,7 @@ def page_operation_lock(project_dir: Path, page_number: int) -> asyncio.Lock:
 async def run_credited_page_check(*, user_id: str, project_id: str, project_dir: Path,
                                   page_number: int, estimated_cost_usd: float,
                                   work: Callable[[], Awaitable[Any]],
+                                  operations: Operations,
                                   cached_work: Callable[[], Any] | None = None) -> Any:
     """Run a synchronous page-check endpoint under a releasable credit hold."""
     from .credits import credit_estimate_for_provider_cost
@@ -473,12 +488,13 @@ async def run_credited_page_check(*, user_id: str, project_id: str, project_dir:
             cached = cached_work()
             if cached is not None:
                 return cached
+        funding = classify_operations(operations)
         db = get_db()
-        estimate = credit_estimate_for_provider_cost(estimated_cost_usd, 'draw', reserve=True)
+        estimate = credit_estimate_for_provider_cost(estimated_cost_usd, 'draw', reserve=True, funding=funding)
         reservation, job_id = reserve_credits(db, user_id, project_id, 'draw', estimate["reserved_credits"] or 0)
         try:
             assert_reservation_active(db, reservation)
-            with ai_request_context(user_id=user_id, project_id=project_id,
+            with funding_scope(funding), ai_request_context(user_id=user_id, project_id=project_id,
                                     project_name=project_dir.name, stage='draw', job_id=job_id,
                                     page_number=page_number):
                 return await work()

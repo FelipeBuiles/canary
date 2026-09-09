@@ -145,6 +145,14 @@ def serve(host: str, port: int, projects_dir: str, dev: bool, proxy_headers: boo
         pipeline serve --projects-dir ~/projects/
         pipeline serve --dev --projects-dir ~/projects/
     """
+    from novel_to_comic.codex_dev import CodexRoutingError, enabled, validate_startup
+
+    try:
+        validate_startup(host)
+        if enabled() and proxy_headers:
+            raise CodexRoutingError("Codex development serving cannot trust proxy headers")
+    except CodexRoutingError as exc:
+        raise click.ClickException(str(exc)) from exc
     try:
         import uvicorn
     except ImportError:

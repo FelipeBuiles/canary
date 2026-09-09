@@ -191,14 +191,29 @@ def test_prop_state_reference_emits_only_compatible_parent_facets(tmp_path):
 
 
 
-def test_calibration_lineup_is_not_a_page_proof():
-    from novel_to_comic.stages.s3_cast import _character_style_calibration_input
+def test_calibration_and_character_requests_preserve_nonhuman_canonical_anatomy():
+    from novel_to_comic.models.story_bible import Character, StoryBible
+    from novel_to_comic.stages.s3_cast import _character_generation_input, _character_style_calibration_input
 
     config = Config(image_model="image-balanced")
-    request = compile_non_panel_request(config, _character_style_calibration_input(config))
-    assert request.compiled.asset_kind == "style_calibration"
-    assert "complete comic page" not in request.compiled.final_prompt
-    assert "calibration lineup" in request.compiled.final_prompt
+    anchor = "adult tortoiseshell cat, four short legs, round amber eyes, long fluffy tail"
+    cat = Character(
+        id="char_cat", name="Moss", visual_anchor=anchor, age_range="adult",
+        gender="female", distinguishing_features=["amber eyes"], default_outfit="none",
+        first_appearance_scene="scene_001",
+    )
+    bible = StoryBible(
+        title="Test", author="Test", total_scenes=0, characters=[cat],
+        locations=[], scenes=[], narrative_arcs=[],
+    )
+    calibration = _character_style_calibration_input(config, bible)
+    assert [(subject.character_id, subject.identity) for subject in calibration.prompt.subjects] == [
+        (cat.id, anchor),
+    ]
+    for input_data in (calibration, _character_generation_input(config, bible, cat)):
+        request = compile_non_panel_request(config, input_data)
+        assert anchor in "\n\n".join(request.wire.prompt_parts)
+        assert anchor in [protected.text for protected in request.compiled.protected_anchors]
 
 
 def test_cover_style_lookup_never_substitutes_an_unselected_sample(tmp_path):

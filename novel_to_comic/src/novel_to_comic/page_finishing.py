@@ -27,6 +27,7 @@ from novel_to_comic.models.finish import (
 )
 from novel_to_comic.models.page import ComicPage
 from novel_to_comic.models.validation import InvariantFailure
+from novel_to_comic.page_drawing import page_profile_uses_native_dimensions
 from novel_to_comic.page_review import normalize_ocr_punctuation
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
 
@@ -450,7 +451,7 @@ def _package_exports(
     artifacts: TargetArtifacts,
     page_paths: tuple[Path, ...],
     formats: tuple[str, ...],
-    production: FinishProductionSpec,
+    productions: tuple[FinishProductionSpec, ...],
 ) -> tuple[ExportPackage, ...]:
     packages: list[ExportPackage] = []
     page_numbers = tuple(range(1, len(page_paths) + 1))
@@ -461,9 +462,9 @@ def _package_exports(
             pdf = PdfReader(output)
             if len(pdf.pages) != len(page_paths):
                 raise ValueError("PDF page count does not match the active book")
-            expected_width = production.canvas_width / production.dpi * 72
-            expected_height = production.canvas_height / production.dpi * 72
-            for page in pdf.pages:
+            for page, production in zip(pdf.pages, productions, strict=True):
+                expected_width = production.canvas_width / production.dpi * 72
+                expected_height = production.canvas_height / production.dpi * 72
                 if (
                     abs(float(page.mediabox.width) - expected_width) > 0.02
                     or abs(float(page.mediabox.height) - expected_height) > 0.02
@@ -482,7 +483,7 @@ def _package_exports(
                 expected = [f"page_{number:03d}.jpg" for number in page_numbers]
                 if archive.namelist() != expected or archive.testzip() is not None:
                     raise ValueError("CBZ order or archive integrity is invalid")
-                for name in expected:
+                for name, production in zip(expected, productions, strict=True):
                     with Image.open(io.BytesIO(archive.read(name))) as image:
                         if image.format != "JPEG":
                             raise ValueError("CBZ pages must use optimized JPEG encoding")
@@ -513,11 +514,17 @@ def _package_exports(
 def finish_book(
     artifacts: TargetArtifacts,
     *,
-    production: FinishProductionSpec,
+    production: FinishProductionSpec | None = None,
+    dpi: int = 300,
     formats: tuple[str, ...] = ("pdf", "cbz"),
     clear_derived_outputs: bool = True,
 ) -> FinishResult:
-    """Preflight and export active complete pages without any provider seam."""
+    """Export verified pages; an explicit production spec is a fixed constraint.
+
+    Native-profile pages default to their full decoded canvas at ``dpi``.
+    Their saved book-wide production dimensions remain composition intent;
+    PreflightPage records the actual per-page canvas and full-page trim.
+    """
 
     previous_preflight = (
         _read_existing_preflight(artifacts)
@@ -529,6 +536,14 @@ def finish_book(
     plan = artifacts.read_plan()
     adaptation = artifacts.read_adaptation()
     edition = artifacts.read_book_edition()
+    native_dimensions = page_profile_uses_native_dimensions(edition.capability_profile)
+    automatic_native_geometry = native_dimensions and production is None
+    if production is None:
+        production = FinishProductionSpec(
+            canvas_width=edition.capability_profile.output_width,
+            canvas_height=edition.capability_profile.output_height,
+            dpi=dpi,
+        )
     pages = tuple(artifacts.read_page(item.page_number) for item in plan.pages)
     from novel_to_comic.page_review import revalidate_cached_page_render
 
@@ -555,6 +570,7 @@ def finish_book(
     preflight_pages: list[PreflightPage] = []
     correction_requests: list[DrawCorrectionRequest] = []
     normalized_paths: list[Path] = []
+    page_productions: list[FinishProductionSpec] = []
 
     for selected, page in zip(plan.pages, pages, strict=True):
         diagnostics = []
@@ -683,6 +699,7 @@ def finish_book(
                 )
 
         width = height = None
+        page_production = production
         if image is not None and render is not None:
             try:
                 with Image.open(io.BytesIO(image)) as opened:
@@ -699,13 +716,27 @@ def finish_book(
                         evidence=("Pillow could not decode the complete-page image.",),
                     )
                 )
+            if automatic_native_geometry and width is not None and height is not None:
+                page_production = FinishProductionSpec(
+                    canvas_width=width, canvas_height=height, dpi=dpi,
+                )
             if (
-                width != production.canvas_width
-                or height != production.canvas_height
-                or render.width != width
+                render.width != width
                 or render.height != height
-                or edition.capability_profile.output_width != width
-                or edition.capability_profile.output_height != height
+                or (
+                    not native_dimensions
+                    and (
+                        production.canvas_width != width
+                        or production.canvas_height != height
+                    )
+                )
+                or (
+                    not native_dimensions
+                    and (
+                        edition.capability_profile.output_width != width
+                        or edition.capability_profile.output_height != height
+                    )
+                )
             ):
                 failures.append(
                     _failure(
@@ -718,8 +749,26 @@ def finish_book(
                             f"Image={width}x{height}; render={render.width}x"
                             f"{render.height}; profile="
                             f"{edition.capability_profile.output_width}x"
-                            f"{edition.capability_profile.output_height}; production="
-                            f"{production.canvas_width}x{production.canvas_height}.",
+                            f"{edition.capability_profile.output_height}.",
+                        ),
+                    )
+                )
+            if native_dimensions and page_production is not None and (
+                width != page_production.canvas_width
+                or height != page_production.canvas_height
+                or page_production.bleed_px != 0
+            ):
+                failures.append(
+                    _failure(
+                        page_number=selected.page_number,
+                        owner_stage="finish",
+                        code="production_geometry",
+                        message="Requested production geometry cannot preserve the full page.",
+                        artifact_ids=(f"render_{render.revision:03d}",),
+                        evidence=(
+                            f"Image={width}x{height}; requested canvas="
+                            f"{page_production.canvas_width}x{page_production.canvas_height}; "
+                            f"bleed={page_production.bleed_px}. Finish does not crop or resize.",
                         ),
                     )
                 )
@@ -870,15 +919,16 @@ def finish_book(
             )
 
         normalized_sha256 = None
-        if not failures and not unresolved and image is not None:
+        if not failures and not unresolved and image is not None and page_production is not None:
             normalized_path = artifacts.normalized_page_path(selected.page_number)
             try:
                 normalized_sha256 = _normalize_page(
                     image,
                     normalized_path,
-                    production,
+                    page_production,
                 )
                 normalized_paths.append(normalized_path)
+                page_productions.append(page_production)
             except (OSError, ValueError, ImageCms.PyCMSError) as exc:
                 failures.append(
                     _failure(
@@ -905,11 +955,11 @@ def finish_book(
                 ),
                 width=width,
                 height=height,
-                trim_width=production.trim_width,
-                trim_height=production.trim_height,
-                bleed_px=production.bleed_px,
+                trim_width=page_production.trim_width if page_production is not None else None,
+                trim_height=page_production.trim_height if page_production is not None else None,
+                bleed_px=page_production.bleed_px if page_production is not None else 0,
                 color_profile=(
-                    production.color_profile if normalized_sha256 is not None else None
+                    page_production.color_profile if normalized_sha256 is not None else None
                 ),
                 normalized_image_sha256=normalized_sha256,
                 invariant_failures=tuple(failures),
@@ -946,7 +996,7 @@ def finish_book(
             artifacts,
             tuple(normalized_paths),
             formats,
-            production,
+            tuple(page_productions),
         )
     except (OSError, ValueError, zipfile.BadZipFile) as exc:
         _clear_derived_outputs(artifacts)

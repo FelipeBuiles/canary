@@ -16,6 +16,8 @@ from supabase import Client
 
 from novel_to_comic.config import Config, mock_mode_active
 from novel_to_comic.state import PipelineState
+from novel_to_comic.codex_dev import classify_operations
+from .codex_admission import image_operations, prompt_image_operations, stage_operations
 from novel_to_comic.usage import (
     UsageRecord,
     calculate_cost,
@@ -95,6 +97,7 @@ class CreditEstimate(TypedDict):
     reserved_credits: int | None
     reservation_multiplier: float
     confidence: CostConfidence
+    funding: Literal["api", "codex_subscription"]
 
 def credits_per_provider_usd() -> float:
     """Public credits charged per $1 of raw provider cost before markup."""
@@ -121,12 +124,12 @@ def provider_usd_to_credits(cost_usd: float) -> int:
 
 
 def usage_to_credit_debit(usage: UsageRecord) -> tuple[int, float]:
-    """Return (credits, raw provider USD) for one model usage record.
+    """Return (credits, monetary USD liability) for one model usage record.
 
     This is the only place where provider USD is converted to public credits.
     Keep purchase package math separate so margin is not applied twice.
     """
-    if usage.cost_source == "mock":
+    if usage.funding == "codex_subscription" or usage.cost_source == "mock":
         return 0, 0.0
     cost_usd = calculate_cost(usage)
     credits = provider_usd_to_credits(cost_usd)
@@ -142,6 +145,8 @@ def estimate_stage_credit_reservation(
     stage: str,
 ) -> int:
     """Estimate public credits to reserve for a stage from current project inputs."""
+    if classify_operations(stage_operations(config, stage)) == "codex_subscription":
+        return 0
     if mock_mode_active(config):
         return 0
     cost_usd = estimate_stage_provider_cost_usd(config, project_dir, state, stage)
@@ -158,6 +163,8 @@ def estimate_stage_credit_cost(
     stage: str,
 ) -> int:
     """Unbuffered projected final cost in public credits."""
+    if classify_operations(stage_operations(config, stage)) == "codex_subscription":
+        return 0
     if mock_mode_active(config):
         return 0
     cost_usd = estimate_stage_provider_cost_usd(config, project_dir, state, stage)
@@ -184,6 +191,7 @@ def credit_estimate_for_provider_cost(
     *,
     reserve: bool,
     zero_cost_estimate: int = 0,
+    funding: Literal["api", "codex_subscription"] = "api",
 ) -> CreditEstimate:
     """Build the canonical CreditEstimate for one provider-cost figure.
 
@@ -192,9 +200,12 @@ def credit_estimate_for_provider_cost(
     estimate when the provider cost can't be computed — regen estimates floor
     to 1 so the pre-check still runs.
     """
-    estimate = max(1, provider_usd_to_credits(cost_usd)) if cost_usd > 0 else zero_cost_estimate
+    estimate = (
+        0 if funding == "codex_subscription"
+        else max(1, provider_usd_to_credits(cost_usd)) if cost_usd > 0 else zero_cost_estimate
+    )
     multiplier = reservation_buffer()
-    if reserve:
+    if reserve or funding == "codex_subscription":
         reserved: int | None = math.ceil(estimate * multiplier) if estimate > 0 else 0
     else:
         reserved = None
@@ -203,6 +214,7 @@ def credit_estimate_for_provider_cost(
         reserved_credits=reserved,
         reservation_multiplier=multiplier,
         confidence=stage_cost_confidence(stage),
+        funding=funding,
     )
 
 
@@ -224,6 +236,7 @@ def estimate_stage_credit_breakdown(
         reserved_credits=reserved,
         reservation_multiplier=multiplier,
         confidence=stage_cost_confidence(stage),
+        funding=classify_operations(stage_operations(config, stage)),
     )
 
 
@@ -233,6 +246,8 @@ def estimate_stage_provider_cost_usd(
     state: PipelineState,
     stage: str,
 ) -> float:
+    if classify_operations(stage_operations(config, stage)) == "codex_subscription":
+        return 0.0
     from novel_to_comic.stages import REGISTRY
     stage_obj = REGISTRY.get(stage)
     if stage_obj and stage_obj.estimate_cost:
@@ -248,12 +263,16 @@ class UnifiedCostResolver:
         stage: Literal["cast"],
     ) -> CreditEstimate:
         """Add the separately billed prompt rewrite to an image estimate."""
+        funding = classify_operations(prompt_image_operations(config))
+        if funding == "codex_subscription":
+            return credit_estimate_for_provider_cost(0.0, stage, reserve=False, funding=funding)
         if mock_mode_active(config):
             return CreditEstimate(
                 estimate_credits=0,
                 reserved_credits=None,
                 reservation_multiplier=reservation_buffer(),
                 confidence="low_variance",
+                funding=funding,
             )
         text_credits = 0
         for _ in range(INSTRUCTION_TEXT_CALLS_BY_STAGE[stage]):
@@ -277,6 +296,7 @@ class UnifiedCostResolver:
             reserved_credits=None,
             reservation_multiplier=reservation_buffer(),
             confidence="variable",
+            funding=funding,
         )
 
     @staticmethod
@@ -297,6 +317,9 @@ class UnifiedCostResolver:
         asset_id: str,
     ) -> CreditEstimate:
         """Estimate the credits needed to regenerate a single cast asset (character sheet or plate)."""
+        funding = classify_operations(image_operations(config))
+        if funding == "codex_subscription":
+            return credit_estimate_for_provider_cost(0.0, "cast", reserve=False, funding=funding)
         if mock_mode_active(config):
             return credit_estimate_for_provider_cost(0.0, "cast", reserve=False)
         ref_count = 0
@@ -468,7 +491,7 @@ def debit_model_usage(
         # audit color. Log so a persistent pricing-resolver failure surfaces.
         log.warning("calculate_cost_breakdown failed; debiting without metadata", exc_info=True)
         cost = None
-    if credits <= 0:
+    if credits <= 0 and usage.funding != "codex_subscription":
         return
     params = {
         "p_user_id": user_id,
@@ -479,17 +502,23 @@ def debit_model_usage(
         "p_usage_call_id": usage.call_id,
         "p_provider": usage.provider,
         "p_model": usage.model,
-        "p_provider_model": cost.provider_model if cost else None,
+        # Subscription identity is provider evidence, never a pricing alias.
+        "p_provider_model": (
+            usage.provider_model
+            if usage.funding == "codex_subscription"
+            else cost.provider_model if cost else None
+        ),
         "p_operation": usage.operation,
         "p_input_tokens": usage.input_tokens,
         "p_output_tokens": usage.output_tokens,
         "p_image_count": usage.image_count,
-        "p_cost_usd": cost_usd,
+        "p_cost_usd": usage.cost_usd if usage.funding == "codex_subscription" else cost_usd,
         "p_cost_source": cost.source if cost else None,
         "p_pricing_snapshot": cost.pricing_snapshot if cost else None,
         "p_credits_per_usd": credits_per_provider_usd(),
         "p_markup": model_cost_markup(),
         "p_billable": usage_has_billable_activity(usage),
+        "p_funding": usage.funding,
     }
     try:
         db.rpc("settle_model_usage_credits", params).execute()

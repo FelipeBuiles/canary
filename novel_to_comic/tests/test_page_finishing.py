@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import io
 import zipfile
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -128,11 +129,17 @@ def _edition() -> BookEdition:
     )
 
 
-def _write_valid_book(tmp_path: Path) -> tuple[TargetArtifacts, bytes]:
+def _write_valid_book(
+    tmp_path: Path,
+    *,
+    edition: BookEdition | None = None,
+    size: tuple[int, int] = (120, 180),
+) -> tuple[TargetArtifacts, bytes]:
     artifacts = TargetArtifacts(tmp_path)
+    edition = edition or _edition()
     adaptation = _adaptation()
     page = _page(adaptation)
-    image = _png_bytes((15, 35, 55))
+    image = _png_bytes((15, 35, 55), size=size)
     image_sha256 = hashlib.sha256(image).hexdigest()
     render = PageRenderRevision(
         page_number=1,
@@ -141,12 +148,12 @@ def _write_valid_book(tmp_path: Path) -> tuple[TargetArtifacts, bytes]:
         comic_page_sha256=page.content_sha256,
         request_sha256="r" * 64,
         image_sha256=image_sha256,
-        width=120,
-        height=180,
-        provider="deterministic-fixture",
-        model="fixture-page-model",
+        width=size[0],
+        height=size[1],
+        provider=edition.capability_profile.provider,
+        model=edition.capability_profile.model,
         latency_ms=1,
-        cost_usd="0",
+        cost_usd=None if edition.capability_profile.provider == "codex-dev" else "0",
     )
     analysis = RenderAnalysis(
         page_number=1,
@@ -183,17 +190,17 @@ def _write_valid_book(tmp_path: Path) -> tuple[TargetArtifacts, bytes]:
             ],
         )
     )
-    artifacts.write_book_edition(_edition())
+    artifacts.write_book_edition(edition)
     artifacts.write_render(page_number=1, render_revision=1, image=image)
     artifacts.write_provenance(
         PageGenerationProvenance(
             render=render,
             usage=UsageRecord(
-                provider="deterministic-fixture",
-                model="fixture-page-model",
+                provider=edition.capability_profile.provider,
+                model=edition.capability_profile.model,
                 operation="image",
                 image_count=1,
-                cost_usd=0,
+                cost_usd=None if edition.capability_profile.provider == "codex-dev" else 0,
             ),
         )
     )
@@ -1022,3 +1029,102 @@ def test_finish_revalidates_old_observations_without_provider_and_keeps_order_ad
     )
     assert result.preflight.ready_to_export
     assert artifacts.read_issues(1)[0].status == "open"
+
+
+def _native_edition() -> BookEdition:
+    from novel_to_comic.page_drawing import production_page_capability_profile
+
+    profile = production_page_capability_profile().model_copy(update={
+        "id": "codex-dev-complete-page-v1-" + "a" * 64,
+        "provider": "codex-dev",
+        "model": "gpt-image-2",
+        "max_image_references": 5,
+        "max_attempts": 1,
+        "price_per_page_usd": Decimal("0"),
+    })
+    return BookEdition(revision=1, id="native-edition", capability_profile=profile)
+
+
+def test_native_pages_export_at_each_verified_canvas_and_configured_dpi(tmp_path):
+    artifacts, first_image = _write_valid_book(tmp_path, edition=_native_edition())
+    first_page = artifacts.read_page(1)
+    second_page = ComicPage.model_validate(first_page.model_copy(update={
+        "page_number": 2, "content_sha256": "",
+    }).model_dump())
+    artifacts.write_page(second_page)
+    plan = artifacts.read_plan()
+    artifacts.write_plan(BookPlan.model_validate(plan.model_copy(update={
+        "content_sha256": "",
+        "revision": 2,
+        "target_page_min": 2,
+        "target_page_max": 2,
+        "pages": (
+            *plan.pages,
+            PlannedPageRevision(
+                page_number=2, revision=second_page.revision,
+                content_sha256=second_page.content_sha256,
+            ),
+        ),
+    }).model_dump()))
+    second_image = _png_bytes((65, 45, 25), size=(240, 160))
+    second_sha = hashlib.sha256(second_image).hexdigest()
+    first_provenance = artifacts.read_provenance(1, 1)
+    second_render = first_provenance.render.model_copy(update={
+        "page_number": 2,
+        "comic_page_sha256": second_page.content_sha256,
+        "image_sha256": second_sha,
+        "width": 240,
+        "height": 160,
+    })
+    artifacts.write_render(page_number=2, render_revision=1, image=second_image)
+    artifacts.write_provenance(first_provenance.model_copy(update={"render": second_render}))
+    artifacts.write_analysis(artifacts.read_analysis(1, 1).model_copy(update={
+        "page_number": 2,
+        "comic_page_sha256": second_page.content_sha256,
+        "render_image_sha256": second_sha,
+    }))
+    artifacts.write_issues(2, ())
+
+    result = finish_book(artifacts, dpi=144)
+
+    assert result.preflight.ready_to_export
+    assert [(page.width, page.height, page.trim_width, page.trim_height)
+            for page in result.preflight.pages] == [
+        (120, 180, 120, 180), (240, 160, 240, 160),
+    ]
+    pdf = PdfReader(artifacts.export_path("pdf"))
+    assert len(pdf.pages) == 2
+    with zipfile.ZipFile(artifacts.export_path("cbz")) as archive:
+        assert archive.namelist() == ["page_001.jpg", "page_002.jpg"]
+        for index, (size, source) in enumerate(
+            (((120, 180), first_image), ((240, 160), second_image)), start=1,
+        ):
+            page = pdf.pages[index - 1]
+            assert float(page.mediabox.width) == pytest.approx(size[0] / 2, abs=0.02)
+            assert float(page.mediabox.height) == pytest.approx(size[1] / 2, abs=0.02)
+            with Image.open(io.BytesIO(archive.read(f"page_{index:03d}.jpg"))) as image:
+                assert image.size == size
+                assert image.format == "JPEG"
+                assert image.info["icc_profile"]
+            assert artifacts.render_path(index, 1).read_bytes() == source
+            assert artifacts.read_provenance(index, 1).render.cost_usd is None
+            assert artifacts.read_provenance(index, 1).usage.cost_usd is None
+
+
+@pytest.mark.parametrize("production", [
+    FinishProductionSpec(canvas_width=1696, canvas_height=2528),
+    FinishProductionSpec(canvas_width=120, canvas_height=180, bleed_px=10),
+])
+def test_native_page_rejects_fixed_canvas_or_custom_trim_without_redraw(tmp_path, production):
+    artifacts, source = _write_valid_book(tmp_path, edition=_native_edition())
+
+    result = finish_book(artifacts, production=production)
+
+    assert not result.preflight.ready_to_export
+    assert {failure.code for failure in result.preflight.pages[0].invariant_failures} == {
+        "production_geometry",
+    }
+    assert not result.preflight.correction_requests
+    assert not result.packages
+    assert not artifacts.normalized_page_path(1).exists()
+    assert artifacts.render_path(1, 1).read_bytes() == source

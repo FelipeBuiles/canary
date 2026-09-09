@@ -1,6 +1,6 @@
 # Canary agent context
 
-**Status: Current, September 8, 2026.** Canary generates complete lettered comic
+**Status: Current, September 9, 2026.** Canary generates complete lettered comic
 pages from novels through an eight-stage Python/FastAPI and React application.
 
 | # | Stage | Checkpoint? |
@@ -18,6 +18,8 @@ See [stage contracts](stage-contracts.md) for authority, recovery, and validatio
 Read [documentation policy](../README.md) and root `CONTEXT.md` for vocabulary.
 ADRs 0003–0015 record the full-page architecture; historical panel plans are not
 implementation instructions.
+The optional local [Codex adapter guide](codex-dev-capabilities.md) distinguishes
+process routing/funding controls from scoped live evidence, including experimental Draw.
 
 ## Current user workflow
 
@@ -30,6 +32,10 @@ implementation instructions.
   with copy and confirmed discard, never silently merging them into a new Brief.
 - Passive Cast entry spends nothing. Explicit estimated Start/Resume generates
   missing references; Style Continue can start Cast and a needed cover.
+- Instructed Cast corrections enqueue before the text rewrite; the reserved job
+  owns rewrite and image work. A queued receipt is not an applied correction.
+  Pending/running work, durable failures/rejections, and instruction drafts remain
+  visible across navigation; old artwork does not prove new-image completion.
 - Pages reviews exceptions (`open`/`revised` issues), not mandatory per-page
   approvals. URL parameters preserve page, review, filter, and reading context;
   Book links directly to affected reviews. Drawn and text-checked counts are
@@ -80,19 +86,38 @@ implementation instructions.
 
 ## Prompt and reference authority
 
+- Extract classifies private character/scene evidence as `direct_action`,
+  `staged_recollection`, or `background_only`, with source quotes compared using
+  whitespace normalization only (words, punctuation, and case remain significant).
+  Scene rosters contain staged visual participants, not mentioned people.
+  Evidence is removed before canonical Story Bible persistence; the shared
+  `visual_anchor` owns physical identity, including species/anatomy, without a
+  separate species DTO.
 - Style curation declares `visual_logic` (`photographic`,
   `realistic_illustration`, `stylized`, `graphic`) and portfolio roles. Without
   an exact quoted author medium restriction, photographic and realistic
   illustration coverage must survive selection. Mood is not a restriction;
   contrast/wildcard options must still honor explicit author limits.
+- Style's generated shared brief, deterministic fallback, and compiler use the
+  same bounded scene roster/location. Context mentions do not add subjects.
+  Compiled canonical anchors stay exact; v5 brief caching keys selected evidence,
+  model, and prompt rather than reusing an unrelated scene.
 - Cast references use protected art-only style direction; full-page samples
   and Draw keep lettering/framing standards. Approved style imagery owns
-  rendering, never subject identity, scene content, or layout. State anchors
-  override changed facets of parent references; provider-safe framing must
-  not reverse anatomy/state. Character calibration is a distinct text-free
-  multi-person lineup, not a page-style sample.
+  rendering, never subject identity, scene content, layout, or an implicit edit
+  parent. Only explicit edit-parent selection authorizes an edit. Canonical text
+  outranks wrong parent pixels, including restoration of species/anatomy.
+  State anchors override changed facets; provider-safe framing must not reverse
+  anatomy/state. Character calibration is a distinct text-free lineup of
+  canonical subjects in anatomy-appropriate postures, not invented human adults
+  or a page-style sample; it supplies rendering evidence only.
 - Location state plates live at `plates/{location}/states/{state}.png`;
   instructions and lineage remain location-scoped. No old-artifact migration.
+- Provider wire v3 and current profiles are a breaking cutover; local Codex uses
+  runtime v6 execution identity. No old-wire shim or generated-artifact migration
+  is provided. Re-extract/regenerate affected output, or use a new project for an
+  incompatible existing edition. See the adapter guide for current selectors and
+  scoped evidence; a requested image alias does not identify the actual backend.
 - Plan draft continuity is folded into existing `ComicPage.layout_intent`,
   not a new `PageContent.continuity_intent` field. Corrections retain the exact
   original producing prompt and earlier instructions as subordinate,
@@ -109,9 +134,10 @@ implementation instructions.
 - `editorial.py`, `server/routers/editorial.py`: revision-scoped decisions,
   story-change preview/apply; all routes under `/api/projects/{project_id}`.
 - `generation_checkpoints.py`: input-keyed resumable structured responses.
-- `style_contract.py`, `compiled_request.py`, `stages/s2_style.py`,
-  `stages/s3_cast.py`: page/art-only style projection, reference authority,
-  typed portfolio curation, and distinct character calibration.
+- `stages/s1_extract.py`: private participation/source-quote validation.
+- `style_briefing.py`, `style_contract.py`, `compiled_request.py`,
+  `stages/s2_style.py`, `stages/s3_cast.py`: bounded shared proof selection,
+  exact anchors, page/art-only projection, and canonical character calibration.
 - `state_assets.py`, `artifacts.py`: explicit state conditioning, scoped state
   paths, and reference lineage.
 - `page_drawing.py`: frozen page compilation, image submission, explicit corrections.

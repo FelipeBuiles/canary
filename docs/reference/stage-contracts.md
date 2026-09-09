@@ -1,6 +1,6 @@
 # Stage contracts
 
-**Status: Current, September 8, 2026.** Implementation and tests are authoritative.
+**Status: Current, September 9, 2026.** Implementation and tests are authoritative.
 Each stage owns its file boundary. Server orchestration runs the explicit chain;
 stages do not call one another. The CLI has only `init` and `serve`.
 
@@ -23,8 +23,11 @@ editorial decisions and story changes live in `server/routers/editorial.py`.
 
 `TargetArtifacts` owns the active source, brief, adaptation, plan, Draw, and
 Finish paths. `artifacts.py` owns Story Bible and Cast reference paths. Never
-introduce alternate readers for legacy output shapes: incompatible hashes or
-schemas require rerunning the owning stage.
+introduce alternate readers for legacy output shapes. Provider wire v3 is a
+breaking cutover; current profiles and the local Codex runtime v6 execution
+fingerprint reject incompatible saved requests rather than translating old wire.
+Re-extract/regenerate affected output, or use a new project when an existing
+edition is incompatible. There is no generated-artifact migration.
 
 ## User gates
 
@@ -51,6 +54,27 @@ not per-page acceptance.
 
 ## Authority through generation
 
+### Extraction participation
+
+Extract requires private `character_participation` evidence for candidate
+characters and scene rosters: `direct_action` means physically staged action,
+speech, or experience; `staged_recollection` means an embodied sequence in a
+memory, diary, dream, testimony, or flashback; `background_only` means mentions,
+biographical exposition, unseen speakers, or background photos/social images.
+Retrospective narration alone does not exclude a staged participant, and a
+mention alone does not authorize inventing one.
+
+Each character/scene pair has one classification and a nonempty `source_quote`
+found in the source with whitespace normalized only: words, punctuation, and
+case remain significant. Missing, duplicate, or invalid evidence fails
+validation. Scene rosters contain visual participants, not everyone mentioned;
+background-only candidates and references are removed while relevant summary
+facts remain. This evidence is discarded at the extraction boundary, not added
+to the canonical Story Bible. `visual_anchor` remains the shared physical
+identity authority, including species/anatomy; there is no separate species DTO.
+
+### Adaptation and state authority
+
 Adapt owns exact lettering. Plan assigns it to `ComicPage.content` and records
 reading order and optional geometry. Each content item declares visible
 `entity_ids` and an `appearance_states` map from entity ID to state ID. State
@@ -75,6 +99,13 @@ fails rather than silently dropping coverage. A restriction must quote the
 author direction verbatim; story mood is not a medium restriction. Contrast
 and wildcard directions must also honor that restriction.
 
+Style proofs share one bounded scene roster and location across the generated
+brief, deterministic fallback, and request compiler. Contextual mentions cannot
+add subjects or crowds. Brief prose owns staging, not redesigned identities;
+the compiler supplies each selected canonical `visual_anchor` exactly.
+The v5 brief cache fingerprints the selected evidence, model, and prompt;
+stale cache entries are not reused. Candidate styles render the same selection.
+
 Full-page style samples and Draw retain the selected lettering and page-framing
 standards. Cast reference prompts use only the art-rendering projection, not
 page lettering, borders, or gutters. Style and reference authority are not
@@ -88,10 +119,17 @@ reference; a generated-neighbor variation instead owns its declared changed
 rendering facets.
 
 Character style calibration is a distinct `style_calibration` asset: a
-text-free lineup of unrelated adults with different ages/builds, not a
-lettered full-page style sample or a required Cast approval output. Reuse
-requires its current producing request; otherwise the approved style proof
-is the fallback conditioning image.
+text-free lineup of canonical Cast subjects in anatomy-appropriate natural
+postures, not an invented human/adult roster or a lettered page sample.
+It supplies rendering evidence only, never another character's identity, and
+is not a required Cast approval output. Reuse requires its current producing
+request; otherwise the approved style proof is the fallback conditioning image.
+
+Style references are rendering-only, not implicit edit parents. Only explicitly
+selected edit-parent references authorize preserving an existing composition
+or applying an edit. Canonical text outranks mistaken parent pixels: restoring
+canonical species, identity, age, or anatomy is a valid correction, not permission
+to redefine those facts. State anchors still own explicitly changed facets.
 
 Location state plates use `plates/{location}/states/{state}.png`, with
 instructions beside them as `{state}.instructions.jsonl`. Reads, writes, and
@@ -103,9 +141,22 @@ reader for the old location-state artifact layout.
 Draw compiles selected references, distinct subject labels, panel assignments,
 geometry, reading order, and exact lettering into one frozen request. Excess
 references fail before submission. Less-graphic framing retains identity
-references. An edition keeps its selected model/profile; model changes require
-a fresh Draw edition. Request hashes identify input but do not guarantee
+references. An edition keeps its selected model/profile; a different current
+profile rejects without rewriting the existing edition. No reset or migration
+action is provided. Request hashes identify input but do not guarantee
 provider deduplication. Ambiguous image submissions are not automatically retried.
+
+Local Codex development routing can bind a first Draw edition to a separate
+experimental complete-page profile when `image-balanced` and OCR are both
+subscription-selected. It permits five total ordered image inputs, including a
+correction parent; all required authorities and authored lettering remain intact.
+Queue all prepares every page before any hold or enqueue. Subscription quotes,
+holds and debits are zero; observed cost and actual image backend remain unknown.
+This does not relax the production Vertex profile; both use current wire contracts.
+Codex native PNG dimensions are authoritative: 1696×2528 is composition intent,
+not an output guarantee. Finish preserves native bytes and per-page PDF/CBZ
+geometry, rejecting incompatible fixed/custom trims rather than cropping.
+See [Codex development capabilities](codex-dev-capabilities.md) for setup and limits.
 
 Adapt beats cite Brief requirement IDs without repeated requirement prose.
 Missing citations remain validation failures rather than being inferred from
@@ -212,11 +263,18 @@ reconnect history and a 256-event queue per subscriber, dropping oldest overflow
 This is not a durable event log or a substitute for fetching status/jobs.
 
 Cast, instructed Cast rewrites, style direction/suggestions/samples/validation,
-and covers use credit reservations before paid work. Instructed Cast reserves
-before the text rewrite and transfers that hold to the image job; rejected
-rewrites still settle recorded text usage. Holds have a process owner and a
-one-hour lease, renewed every 30 seconds; work checks ownership/expiry before
-starting. Startup requires the reviewed lease/settlement SQL migration before
+and covers use credit reservations before paid work. Instructed Cast enqueues
+a durable job before rewriting instructions; its reserved job owns the text
+rewrite and subsequent image work. Submission reports queued, not an immediately
+applied correction. Rejected rewrites still settle recorded text usage.
+Cast UI retains the instruction draft and exposes pending/running and durable
+failure/rejection observations across navigation; a queued receipt or old visible
+image is not new-image success. Failed work requires explicit recovery, not an
+automatic paid retry.
+
+Holds have a process owner and a one-hour lease, renewed every 30 seconds;
+work checks ownership/expiry before starting. Startup requires the reviewed
+lease/settlement SQL migration before
 admission. Only expired, never-started holds are automatically reclaimable.
 Started-expired holds, legacy unowned holds, and ambiguous settlement require
 operator reconciliation, not global startup/reset release. Ledger settlement

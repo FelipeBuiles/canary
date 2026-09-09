@@ -16,6 +16,8 @@ const STORAGE_KEY = "canary.uiLanguage";
 const TEXT: Record<LanguageCode, Record<string, string>> = {
   en: {},
   es: {
+    "VISUAL ANCHOR": "REFERENCIA VISUAL CANÓNICA",
+    "The current reference has not been replaced. Review your change and try again.": "La referencia actual no se ha reemplazado. Revisa el cambio y vuelve a intentarlo.",
     "Recover missing text checks": "Recuperar comprobaciones de texto pendientes",
     "Text checks completed": "Comprobaciones de texto completadas",
     "Text check incomplete": "Comprobación de texto incompleta",
@@ -1382,6 +1384,8 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
     "AWAITING REVIEW": "PENDIENTE DE REVISIÓN",
   },
   fr: {
+    "VISUAL ANCHOR": "RÉFÉRENCE VISUELLE CANONIQUE",
+    "The current reference has not been replaced. Review your change and try again.": "La référence actuelle n’a pas été remplacée. Vérifiez votre modification et réessayez.",
     "Saving…": "Enregistrement…",
     "Settings saved.": "Paramètres enregistrés.",
     "Project deleted.": "Projet supprimé.",

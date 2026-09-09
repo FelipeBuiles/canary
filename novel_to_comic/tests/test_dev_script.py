@@ -63,7 +63,7 @@ case "$url" in
     [ "$attempts" -ge 2 ]
     ;;
   http://127.0.0.1:8000/api/health/ready)
-    printf '%s' '{"dependencies":{"litellm":"healthy"},"pipeline_contract":"eight-stage-v2"}'
+    printf '%s' '{"checks":{"litellm":"ok"},"model_mode":"api","pipeline_contract":"eight-stage-v2"}'
     ;;
   http://127.0.0.1:5173)
     exit 0
@@ -80,7 +80,7 @@ esac
     env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
     env["DEV_TEST_CURL_ATTEMPTS"] = str(curl_attempts)
     result = subprocess.run(
-        ["bash", str(REPO_ROOT / "scripts" / "dev.sh")],
+        ["bash", str(REPO_ROOT / "scripts" / "dev.sh"), "--api"],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,
@@ -148,23 +148,37 @@ esac
 """,
     )
     _write_executable(bin_dir / "sleep", "#!/bin/sh\nexit 0\n")
+    for command in ("uv", "npm"):
+        _write_executable(
+            bin_dir / command,
+            """#!/bin/sh
+printf '%s\\n' "$*" >> "$DEV_TEST_START_LOG"
+exit 1
+""",
+        )
 
 
-def _run_dev_check(
-    tmp_path: Path, backend_payload: str
+def _run_dev(
+    tmp_path: Path, backend_payload: str, *, check_only: bool = True
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _write_check_stubs(bin_dir)
     docker_log = tmp_path / "docker-invocations"
     docker_log.write_text("")
+    start_log = tmp_path / "start-invocations"
+    start_log.write_text("")
 
     env = os.environ.copy()
     env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
     env["DEV_TEST_BACKEND_PAYLOAD"] = backend_payload
     env["DEV_TEST_DOCKER_LOG"] = str(docker_log)
+    env["DEV_TEST_START_LOG"] = str(start_log)
+    command = ["bash", str(REPO_ROOT / "scripts" / "dev.sh"), "--api"]
+    if check_only:
+        command.append("--check")
     result = subprocess.run(
-        ["bash", str(REPO_ROOT / "scripts" / "dev.sh"), "--check"],
+        command,
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,
@@ -172,12 +186,13 @@ def _run_dev_check(
         timeout=10,
         check=False,
     )
+    assert start_log.read_text() == "", result.stdout + result.stderr
     return result, docker_log.read_text()
 
 
 def test_check_rejects_backend_missing_pipeline_contract(tmp_path: Path) -> None:
-    result, docker_log = _run_dev_check(
-        tmp_path, '{"dependencies":{"litellm":"healthy"}}'
+    result, docker_log = _run_dev(
+        tmp_path, '{"checks":{"litellm":"ok"},"model_mode":"api"}'
     )
 
     assert result.returncode == 1, result.stdout + result.stderr
@@ -185,14 +200,40 @@ def test_check_rejects_backend_missing_pipeline_contract(tmp_path: Path) -> None
     assert "up -d" not in docker_log
 
 
-def test_check_accepts_pipeline_contract_with_json_whitespace(
+def test_check_accepts_compatible_api_backend_without_starting_services(
     tmp_path: Path,
 ) -> None:
     payload = (
-        '{ "dependencies" : { "litellm" : "healthy" },'
-        ' "pipeline_contract" : "eight-stage-v2" }'
+        '{"checks":{"litellm":"ok"},"model_mode":"api",'
+        '"pipeline_contract":"eight-stage-v2"}'
     )
-    result, _ = _run_dev_check(tmp_path, payload)
+    result, docker_log = _run_dev(tmp_path, payload)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Backend (http://127.0.0.1:8000)" in result.stdout
+    assert "up -d" not in docker_log
+
+
+def test_check_rejects_backend_with_old_pipeline_contract(tmp_path: Path) -> None:
+    payload = (
+        '{"checks":{"litellm":"ok"},"model_mode":"api",'
+        '"pipeline_contract":"seven-stage-v1"}'
+    )
+    result, docker_log = _run_dev(tmp_path, payload)
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "incompatible" in result.stdout + result.stderr
+    assert "up -d" not in docker_log
+
+
+def test_api_start_rejects_backend_with_mismatched_mode_without_starting_services(
+    tmp_path: Path,
+) -> None:
+    payload = (
+        '{"checks":{"litellm":"ok"},"model_mode":"codex",'
+        '"pipeline_contract":"eight-stage-v2"}'
+    )
+    result, docker_log = _run_dev(tmp_path, payload, check_only=False)
+
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "incompatible" in result.stdout + result.stderr
+    assert "up -d" not in docker_log

@@ -17,6 +17,7 @@ import httpx
 from novel_to_comic.ai.errors import AIRefusalError
 from novel_to_comic.ai.providers.base import ProviderRawResult
 from novel_to_comic.config import Config
+from novel_to_comic.codex_dev import route_for
 from novel_to_comic.usage import ApiResult, UsageRecord, estimate_image_cost
 
 
@@ -30,6 +31,44 @@ class ImageCallContext:
     started: float
     started_at: datetime.datetime
     langfuse_input: dict[str, Any]
+
+
+def _subscription_usage(ctx: ImageCallContext, model: str, evidence: dict[str, Any], *, image_count: int | None = None) -> UsageRecord:
+    completed = evidence.get("completed_result_metadata") or {}
+    tokens = evidence.get("usage") or {
+        **completed,
+        **{key: value for key, value in evidence.items() if value is not None},
+    }
+    if image_count is None:
+        image_count = int(any(
+            item.get("image_status") == "completed"
+            and isinstance(item.get("image"), dict)
+            and isinstance(item["image"].get("sha256"), str)
+            and len(item["image"]["sha256"]) == 64
+            and all(character in "0123456789abcdef" for character in item["image"]["sha256"])
+            and all(isinstance(item["image"].get(key), int) and item["image"][key] > 0
+                    for key in ("width", "height", "bytes"))
+            and item["image"].get("mime") in {"image/png", "image/jpeg", "image/webp"}
+            for item in (evidence, completed)
+        ))
+    return UsageRecord(
+        call_id=ctx.event_id, provider="codex", model=model, operation="image",
+        input_tokens=tokens.get("prompt_tokens", tokens.get("input_tokens")) or 0,
+        output_tokens=tokens.get("completion_tokens", tokens.get("output_tokens")) or 0,
+        image_count=image_count, funding="codex_subscription",
+        cost_usd=None, cost_source="codex_subscription", provider_model=None,
+    )
+
+
+def _subscription_response(usage: UsageRecord, evidence: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "usage": {
+            "prompt_tokens": usage.input_tokens,
+            "completion_tokens": usage.output_tokens,
+            "image_count": usage.image_count,
+        },
+        "codex_runtime": evidence,
+    }
 
 
 def _open_output_parent(output_path: Path) -> int:
@@ -116,7 +155,9 @@ async def begin_image_call(
     operation = "image"
     ref_data = [(p, d) for p, d in ref_reads if d is not None]
     metadata = ai_client._metadata(feature, operation, model, event_id)
-    estimated_cost_usd = estimate_image_cost(
+    funding = "codex_subscription" if route_for("image", model) else "api"
+    metadata["funding"] = funding
+    estimated_cost_usd = None if funding == "codex_subscription" else estimate_image_cost(
         model,
         1,
         quality=config.image_quality,
@@ -194,24 +235,42 @@ async def finalise_image_success(
     from novel_to_comic.ai import client as ai_client
 
     raw_response = raw.raw_response or {}
+    runtime_evidence = raw_response.get("codex_runtime")
+    if runtime_evidence:
+        ctx.metadata = {**ctx.metadata, "codex_runtime": runtime_evidence}
+    usage = _subscription_usage(ctx, model, raw_response, image_count=1) if ctx.metadata.get("funding") == "codex_subscription" else ai_client._extract_usage(
+        raw_response,
+        ctx.event_id,
+        model,
+        ctx.operation,
+        raw.response_headers,
+    )
     try:
         await asyncio.to_thread(
             _write_image_outputs,
             output_path,
             raw.image_bytes,
         )
-    except asyncio.CancelledError as exc:
-        # The file write runs detached in its worker thread; book the
-        # cancellation exactly once here. Callers keep the success write
-        # outside their cancellation catchers, so this cannot double-write.
+    except BaseException as exc:
+        # Finalization owns write failures too: paid/subscription execution
+        # already completed, so retain its evidence even if saving fails.
+        if runtime_evidence:
+            exc.metadata = {
+                **getattr(exc, "metadata", {}),
+                **runtime_evidence,
+                "completed_result_available": True,
+                "completed_result_metadata": runtime_evidence,
+            }
         await ai_client._finalize_event_shielded(
             event_id=ctx.event_id,
-            status="cancelled",
+            status="cancelled" if isinstance(exc, asyncio.CancelledError) else "failed",
             feature=feature,
             model_alias=model,
             latency_ms=int((time.perf_counter() - ctx.started) * 1000),
             error=exc,
             error_response=None,
+            usage=usage,
+            response_data=raw_response,
             config=config,
             operation=ctx.operation,
             metadata=ctx.metadata,
@@ -220,13 +279,6 @@ async def finalise_image_success(
             started_at=ctx.started_at,
         )
         raise
-    usage = ai_client._extract_usage(
-        raw_response,
-        ctx.event_id,
-        model,
-        ctx.operation,
-        raw.response_headers,
-    )
     langfuse_output = {
         "output_path": str(output_path),
         "image_bytes": len(raw.image_bytes),
@@ -255,6 +307,7 @@ async def finalise_image_success(
         usage=usage,
         provider_request_id=raw.provider_request_id,
         actual_provider_model=raw.actual_provider_model,
+        response_metadata=raw_response.get("codex_runtime"),
     )
 
 
@@ -269,6 +322,8 @@ async def finalise_image_cancelled(
 ) -> None:
     from novel_to_comic.ai import client as ai_client
 
+    evidence = getattr(error, "metadata", {})
+    usage = _subscription_usage(ctx, model, evidence) if ctx.metadata.get("funding") == "codex_subscription" else None
     await ai_client._finalize_event_shielded(
         event_id=ctx.event_id,
         status="cancelled",
@@ -276,10 +331,12 @@ async def finalise_image_cancelled(
         model_alias=model,
         latency_ms=int((time.perf_counter() - ctx.started) * 1000),
         error=error,
+        usage=usage,
+        response_data=_subscription_response(usage, evidence) if usage is not None else None,
         error_response=error_response,
         config=config,
         operation=ctx.operation,
-        metadata=ctx.metadata,
+        metadata={**ctx.metadata, "codex_runtime": evidence} if evidence else ctx.metadata,
         estimated_cost_usd=ctx.estimated_cost_usd,
         langfuse_input=ctx.langfuse_input,
         started_at=ctx.started_at,
@@ -332,8 +389,9 @@ async def finalise_image_failure(
 ) -> None:
     from novel_to_comic.ai import client as ai_client
 
-    usage = None
-    if config.ai_bill_failed_requests == "estimate_all" and error_response is not None:
+    evidence = getattr(error, "metadata", {})
+    usage = _subscription_usage(ctx, model, evidence) if ctx.metadata.get("funding") == "codex_subscription" else None
+    if usage is None and config.ai_bill_failed_requests == "estimate_all" and error_response is not None:
         usage = UsageRecord(
             call_id=ctx.event_id,
             provider="litellm",
@@ -348,11 +406,12 @@ async def finalise_image_failure(
         model_alias=model,
         latency_ms=int((time.perf_counter() - ctx.started) * 1000),
         usage=usage,
+        response_data=_subscription_response(usage, evidence) if usage is not None and usage.funding == "codex_subscription" else None,
         error=error,
         error_response=error_response,
         config=config,
         operation=ctx.operation,
-        metadata=ctx.metadata,
+        metadata={**ctx.metadata, "codex_runtime": evidence} if evidence else ctx.metadata,
         estimated_cost_usd=ctx.estimated_cost_usd,
         langfuse_input=ctx.langfuse_input,
         started_at=ctx.started_at,

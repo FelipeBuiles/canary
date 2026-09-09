@@ -9,6 +9,14 @@ Given the complete text of a novel, output a single JSON object matching the sch
   "author": "string — author name, or 'Unknown' if not stated",
   "total_scenes": integer — total count of scenes in the scenes array,
   "style_notes": "string or null — any genre-specific visual notes",
+  "character_participation": [
+    {
+      "character_id": "char_001",
+      "scene_id": "scene_001",
+      "classification": "direct_action | staged_recollection | background_only",
+      "source_quote": "A verbatim source passage supporting this classification in this scene."
+    }
+  ],
 
   "characters": [
     {
@@ -140,15 +148,18 @@ Given the complete text of a novel, output a single JSON object matching the sch
 === EXTRACTION RULES ===
 
 CHARACTERS
-- Include any named character who appears in 2+ scenes.
+- Include any named character who physically participates in 2+ scenes, not merely someone named in them.
 - Also include every named on-screen speaking character whose testimony,
   explanation, decision, or reaction is important to understanding the story,
   even when that character appears in only one scene. A comic cannot assign
   dialogue balloons or stable visual identity to a missing speaker.
-- Include only characters who can be visually shown in panels.
-- Do NOT create Character entries for off-screen voices, unseen speakers, people only heard from another room, or people mentioned but never physically shown. Preserve their dialogue/events in scene summaries instead.
-- Do NOT add voice-only or off-screen speakers to scenes[].character_ids.
-- A concrete embodied event that is reported, remembered, or presented through a diary, letter, testimony, dream, or flashback IS visually depictable. If the comic can show the named character physically undergoing that event, include the character in that scene's character_ids. "Off-screen" means the source provides only a disembodied voice or mention with no depictable physical event; it does not mean "described retrospectively." For example, a doctor reporting a named patient's sustained fever and delirium can become a sickbed scene containing the patient.
+- Include only characters actually staged by the source, not anyone an adaptation could imagine showing.
+- For every candidate character, supply character_participation evidence for each scene in whose roster they occur. Use exactly one classification per character/scene pair and a nonempty VERBATIM source passage. This is extraction-only evidence, not physical identity.
+- direct_action: the source stages the character physically acting, speaking, or undergoing an event in the scene. Important one-scene embodied actors and speakers qualify.
+- staged_recollection: the source narrates an embodied sequence in a memory, diary, dream, testimony, or flashback, with the character physically acting or undergoing the event. Retrospective tense alone is not grounds for exclusion. A narrated sickbed sequence or a diary's staged voyage qualifies even when framed by a present-day speaker.
+- background_only: mentions, relationship exposition, biographical summaries, off-screen voices, unseen speakers, and people represented only in background photographs or described social-media images. A reported trip or relationship fact is not an embodied flashback just because it could be illustrated. Do not invent an absent person's appearance, action, or scene to justify eligibility.
+- Exclude background-only people from Character entries and scenes[].character_ids; preserve relevant facts/dialogue in summaries. If a candidate Character is returned for classification, mark its evidence background_only so the extraction boundary can remove it and its references. A person staged elsewhere still must not enter the roster of a scene that only mentions them.
+- Every scenes[].character_ids entry requires direct_action or staged_recollection evidence in that scene. Keep distinct embodied flashbacks in their own source-ordered scenes; never promote a background photo or relationship exposition into a new staged scene.
 - visual_anchor = Danbooru-style comma-separated PHYSICAL IDENTITY tags ONLY. No prose, sentences, emotion, expression, mood, pose, or action. Include the character's typical recognizable anatomy, physical traits, usual clothing, and usual accessories. Exclude both transient affect ("anxious expression", "terrified", "smiling", "wild-eyed") and situational/changed state ("wet", "injured", "shivering", "covered in blood", "exhausted", "silver hands"). Any sustained, story-significant changed condition belongs in appearance_states + appearance_timeline, even when temporary or reversible; it is not limited to permanent body changes.
 - baseline_affect owns any stable demeanor supported by the source, expressed at low intensity: e.g. "guarded and watchful", "habitually stern", "quietly uneasy". It is NOT part of visual_anchor. Do not record beat-level reactions here; screenplay/panel expression direction owns those. Prefer null when the source establishes no stable demeanor.
 - Ground every visual_anchor tag in textual evidence from the source. Do NOT invent specific clothing items, facial features, or accessories that are not supported by the text.
@@ -160,11 +171,12 @@ CHARACTERS
   WRONG: "1woman, adult female, tall, short black hair, grey eyes, shivering, thin torn clothes, lips blue from cold" (situational/changed state — belongs in appearance_states)
   RIGHT: "1woman, adult female, tall, short black hair, grey eyes, jagged scar on cheek, olive skin, athletic build, dark tactical jacket, red arm patch"
 - default_outfit = supplementary clothing details the anchor tags may not fully capture. e.g. "cargo pants, combat boots, dog tags around neck"
-- Use age-appropriate count/gender tags:
-  - Adult male characters MUST start with "1man, adult male" — NEVER "1boy".
-  - Adult female characters MUST start with "1woman, adult female" — NEVER "1girl".
-  - Child male characters use "1boy, child".
-  - Child female characters use "1girl, child".
+- Use age-appropriate count/gender tags for HUMAN characters only:
+  - Adult human male characters MUST start with "1man, adult male" — NEVER "1boy".
+  - Adult human female characters MUST start with "1woman, adult female" — NEVER "1girl".
+  - Human child male characters use "1boy, child".
+  - Human child female characters use "1girl, child".
+- Animals and nonhuman creatures retain their source-supported species, anatomy, and appropriate count tags (for example "1cat"). Age or gender never licenses replacing nonhuman anatomy with a human identity.
 - distinguishing_features: PERMANENT, state-invariant identity details true for the WHOLE story (scars present throughout, hair, marks). NEVER a feature the character acquires or loses partway through (severed hands, prosthetics, a wound, aging) — those are appearance_states, not identity. A tag like "maimed arms" here would brand her maimed in every panel, including before the injury. The base visual_anchor and distinguishing_features must describe the earliest depictable pre-change look in the character's lived chronology. If the source first mentions a later appearance and then reveals the earlier look in a diary or flashback, the earlier look is still the base. Do not put the later look in the base visual_anchor.
 
 LOCATIONS
@@ -260,7 +272,7 @@ TRANSIENT OBJECTS (scene-scoped, one-time)
 - Do NOT promote a transient object to a Prop just because it's vivid — Props require multi-scene recurrence.
 
 COMPLETENESS — CRITICAL
-- You MUST extract EVERY named character who appears in 2+ scenes. Do not skip minor but recurring characters.
+- You MUST extract EVERY named character who physically participates in 2+ scenes, not background-only mentions.
 - You MUST also extract every named on-screen speaking character who carries
   story-critical testimony or explanation, even if they appear in only one
   scene.

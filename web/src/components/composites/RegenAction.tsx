@@ -16,6 +16,8 @@ interface RegenActionProps {
   disabled?: boolean;
   error?: string | null;
   lastInstruction?: string | null;
+  instruction?: string;
+  onInstructionChange?: (instruction: string) => void;
   onRegenerate: () => void;
   onRegenerateWithInstruction?: (instruction: string) => void;
 }
@@ -38,11 +40,15 @@ export function RegenAction({
   disabled = false,
   error,
   lastInstruction,
+  instruction: controlledInstruction,
+  onInstructionChange,
   onRegenerate,
   onRegenerateWithInstruction,
 }: RegenActionProps) {
   const { t } = useI18n();
-  const [instruction, setInstruction] = useState("");
+  const [localInstruction, setLocalInstruction] = useState("");
+  const instruction = controlledInstruction ?? localInstruction;
+  const setInstruction = onInstructionChange ?? setLocalInstruction;
   const [instructionError, setInstructionError] = useState<string | null>(null);
   const [confirmMode, setConfirmMode] = useState<ConfirmMode>(null);
   const instructionId = useId();
@@ -65,7 +71,6 @@ export function RegenAction({
       const trimmed = instruction.trim();
       if (!trimmed || !onRegenerateWithInstruction) return;
       onRegenerateWithInstruction(trimmed);
-      setInstruction("");
     } else if (confirmMode === "same") {
       onRegenerate();
     }

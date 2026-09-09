@@ -1,4 +1,4 @@
-"""Minimal isolated parser for ``canary.provider-wire/2`` manifests.
+"""Minimal isolated parser for ``canary.provider-wire/3`` manifests.
 
 This module deliberately imports no application package.  It validates the
 portable envelope used by custom LiteLLM handlers; semantic compilation stays
@@ -13,8 +13,77 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-DISCRIMINATOR = "canary.provider-wire/2"
-SCHEMA_VERSION = 2
+DISCRIMINATOR = "canary.provider-wire/3"
+SCHEMA_VERSION = 3
+
+
+def _validate_manifest(manifest: dict[str, Any]) -> None:
+    string_fields = (
+        "expected_route", "provider_key", "configured_provider_model",
+        "compiled_request_sha256", "execution_fingerprint",
+    )
+    fields = {
+        "discriminator", "schema_version", "requested_alias", *string_fields,
+        "prompt_parts", "references", "width", "height", "structured_aspect",
+        "controls", "edit_parent_indices",
+    }
+    if set(manifest) != fields:
+        raise ValueError("invalid ProviderWireRequest fields")
+    if any(not isinstance(manifest[key], str) or not manifest[key] for key in string_fields):
+        raise ValueError("invalid ProviderWireRequest string fields")
+    for key in ("requested_alias", "structured_aspect"):
+        if manifest[key] is not None and not isinstance(manifest[key], str):
+            raise ValueError(f"invalid ProviderWireRequest {key}")
+    for key in ("width", "height"):
+        if type(manifest[key]) is not int or manifest[key] <= 0:
+            raise ValueError(f"invalid ProviderWireRequest {key}")
+    prompts = manifest["prompt_parts"]
+    if not isinstance(prompts, list) or not prompts or any(not isinstance(p, str) for p in prompts):
+        raise ValueError("invalid ProviderWireRequest prompt parts")
+    controls = manifest["controls"]
+    if not isinstance(controls, list) or any(
+        not isinstance(pair, list) or len(pair) != 2 or not isinstance(pair[0], str)
+        for pair in controls
+    ):
+        raise ValueError("invalid ProviderWireRequest controls")
+    refs = manifest["references"]
+    if not isinstance(refs, list):
+        raise ValueError("invalid ProviderWireRequest references")
+    ref_strings = (
+        "source_path", "content_sha256", "role", "role_label", "instruction",
+        "provider_binding", "authority_scope",
+    )
+    ref_fields = {
+        "index", *ref_strings, "entity_id", "appearance_state_id",
+        "preserve_facets", "ignore_facets",
+    }
+    for index, ref in enumerate(refs):
+        if not isinstance(ref, dict) or set(ref) != ref_fields:
+            raise ValueError("invalid ProviderWireRequest reference fields")
+        if type(ref["index"]) is not int or ref["index"] != index or ref["provider_binding"] != str(index):
+            raise ValueError("invalid ProviderWireRequest reference order")
+        if any(not isinstance(ref[key], str) for key in ref_strings):
+            raise ValueError("invalid ProviderWireRequest reference strings")
+        for key in ("entity_id", "appearance_state_id"):
+            if ref[key] is not None and not isinstance(ref[key], str):
+                raise ValueError(f"invalid ProviderWireRequest reference {key}")
+        for key in ("preserve_facets", "ignore_facets"):
+            if not isinstance(ref[key], list) or any(not isinstance(f, str) for f in ref[key]):
+                raise ValueError(f"invalid ProviderWireRequest reference {key}")
+    parents = manifest["edit_parent_indices"]
+    if not isinstance(parents, list) or any(
+        type(index) is not int or index < 0 or index >= len(refs) or refs[index]["role"] == "style"
+        for index in parents
+    ):
+        raise ValueError("edit parents must identify supplied non-style references")
+    if len(set(parents)) != len(parents):
+        raise ValueError("duplicate ProviderWireRequest edit parents")
+    digests = [
+        manifest["compiled_request_sha256"], manifest["execution_fingerprint"],
+        *(ref["content_sha256"] for ref in refs),
+    ]
+    if any(len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest) for digest in digests):
+        raise ValueError("invalid ProviderWireRequest digest")
 
 
 def parse_provider_wire(payload: str) -> dict[str, Any]:
@@ -22,12 +91,13 @@ def parse_provider_wire(payload: str) -> dict[str, Any]:
         manifest = json.loads(payload)
     except (TypeError, json.JSONDecodeError) as exc:
         raise ValueError("invalid ProviderWireRequest JSON") from exc
+    if not isinstance(manifest, dict):
+        raise ValueError("invalid ProviderWireRequest object")
     if manifest.get("discriminator") != DISCRIMINATOR:
         raise ValueError("not a ProviderWireRequest")
-    if manifest.get("schema_version") != SCHEMA_VERSION:
+    if type(manifest.get("schema_version")) is not int or manifest["schema_version"] != SCHEMA_VERSION:
         raise ValueError("unsupported ProviderWireRequest schema")
-    if not isinstance(manifest.get("provider_key"), str) or not manifest["provider_key"]:
-        raise ValueError("ProviderWireRequest provider key missing")
+    _validate_manifest(manifest)
     supplied = manifest.get("execution_fingerprint")
     # Fingerprint projection must not mutate the parsed request that the
     # adapter subsequently consumes (references are nested dictionaries).

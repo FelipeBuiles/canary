@@ -26,6 +26,8 @@ from novel_to_comic.cast_instructions import (
 from ..auth import get_current_user
 from ..credited_job import enqueue_credited_job
 from ..credits import UnifiedCostResolver
+from ..codex_admission import image_operations
+from novel_to_comic.codex_dev import CodexRoutingError
 from ..db import get_db
 from ..deps import get_project, project_key
 from ..generation_jobs import (
@@ -118,6 +120,7 @@ def _enqueue_cast_asset_regen(
         debit_description=debit_description,
         semaphore=generation_semaphore_for_config(request.app, config),
         estimate_credits=asset_estimate["estimate_credits"],
+        operations=image_operations(config),
     )
     return {
         "status": "queued",
@@ -152,14 +155,18 @@ async def asset_regen_estimate(
     breakdown = UnifiedCostResolver.estimate_asset_regen_cost(
         config, project_dir, regen_kind, resolver_asset_id
     )
+    try:
+        instruction_estimate = UnifiedCostResolver.estimate_instructed_regen_cost(
+            config, breakdown, "cast"
+        )
+    except CodexRoutingError as exc:
+        instruction_estimate = {"supported": False, "error": str(exc)}
     return {
         "asset_type": asset_type,
         "asset_id": asset_id,
         "state_id": state_id,
         **breakdown,
-        "instruction_estimate": UnifiedCostResolver.estimate_instructed_regen_cost(
-            config, breakdown, "cast"
-        ),
+        "instruction_estimate": instruction_estimate,
     }
 
 

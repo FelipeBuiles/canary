@@ -21,8 +21,8 @@ from novel_to_comic.image_geometry import (
     aspect_for_dimensions,
 )
 
-PROVIDER_WIRE_SCHEMA_VERSION = 2
-PROVIDER_WIRE_DISCRIMINATOR = "canary.provider-wire/2"
+PROVIDER_WIRE_SCHEMA_VERSION = 3
+PROVIDER_WIRE_DISCRIMINATOR = "canary.provider-wire/3"
 
 # Slice 12 completes the non-panel migration. Keep this as an explicit empty
 # ledger so architecture tests fail loudly if a raw caller is reintroduced.
@@ -64,6 +64,7 @@ class ProviderWireRequest:
     controls: tuple[tuple[str, Any], ...]
     compiled_request_sha256: str
     execution_fingerprint: str
+    edit_parent_indices: tuple[int, ...] = ()
     def _fingerprint_projection(self) -> dict[str, Any]:
         data = asdict(self)
         data.pop("execution_fingerprint", None)
@@ -95,6 +96,7 @@ class ProviderWireRequest:
                 raise ProviderWireError(f"unsupported provider wire schema: {raw.get('schema_version')}")
             raw["prompt_parts"] = tuple(raw["prompt_parts"])
             raw["controls"] = tuple((str(k), v) for k, v in raw["controls"])
+            raw["edit_parent_indices"] = tuple(raw["edit_parent_indices"])
             raw["references"] = tuple(
                 ProviderWireReference(
                     **{
@@ -117,8 +119,21 @@ def _role_label(role: str, label: str | None) -> str:
     return f"{role}:{label}" if label else role
 
 
-def _wire_prompt(compiled: CompiledGenerationRequest) -> str:
+def _wire_prompt(compiled: CompiledGenerationRequest, edit_parent_indices: tuple[int, ...]) -> str:
     prompt = compiled.final_prompt
+    if edit_parent_indices:
+        parents = ", ".join(str(index) for index in edit_parent_indices)
+        prompt += (
+            f"\n\nImage operation: edit supplied parent image indices [{parents}] (zero-based). "
+            "Preserve only their compatible identity and composition; canonical anchors, active states, "
+            "and explicit changes outrank conflicting parent pixels. Other references retain their assigned roles."
+        )
+    else:
+        prompt += (
+            "\n\nImage operation: create a new image from the specification. "
+            "Supplied references are scoped evidence, not edit parents. Rendering-only references "
+            "do not supply scene layout, subject identity, or anatomy."
+        )
     if compiled.expected_route is ImageRoute.REVE:
         for instruction in compiled.reference_instructions:
             prompt = prompt.replace(
@@ -127,7 +142,9 @@ def _wire_prompt(compiled: CompiledGenerationRequest) -> str:
     return prompt
 
 
-def compile_provider_wire_request(compiled: CompiledGenerationRequest) -> ProviderWireRequest:
+def compile_provider_wire_request(
+    compiled: CompiledGenerationRequest, *, edit_parent_indices: tuple[int, ...] = (),
+) -> ProviderWireRequest:
     """Compile exact provider syntax from a finalized compiled request."""
     if len(compiled.reference_plan.selected) != len(compiled.reference_instructions):
         raise ProviderWireError("selected references and instructions are not one-to-one")
@@ -150,6 +167,8 @@ def compile_provider_wire_request(compiled: CompiledGenerationRequest) -> Provid
             zip(compiled.reference_plan.selected, compiled.reference_instructions, strict=True)
         )
     )
+    if any(index < 0 or index >= len(refs) or refs[index].role == "style" for index in edit_parent_indices):
+        raise ProviderWireError("edit parents must identify supplied non-style references")
     width, height = compiled.effective_dimensions
     structured_aspect = None
     if compiled.expected_route is ImageRoute.REVE:
@@ -174,6 +193,24 @@ def compile_provider_wire_request(compiled: CompiledGenerationRequest) -> Provid
             "1:4": 0.25,
         }
         structured_aspect = min(modes, key=lambda key: abs(modes[key] - ratio))
+    controls = tuple(sorted(compiled.controls.active_controls().items()))
+    if compiled.provider_key == "codex-dev":
+        from novel_to_comic.ai.codex_runtime import image_execution_controls
+        from novel_to_comic.codex_dev import route_for
+
+        route = route_for("image", compiled.requested_alias or "")
+        if (
+            route is None
+            or compiled.expected_route is not ImageRoute.CODEX_BUILTIN
+            or compiled.configured_provider_model != route.image_model
+            or controls
+            or len(refs) > 5
+        ):
+            raise ProviderWireError("compiled Codex image route/profile mismatch")
+        controls = tuple(sorted((
+            ("reasoning_model", route.reasoning_model),
+            *image_execution_controls(),
+        )))
     request = ProviderWireRequest(
         discriminator=PROVIDER_WIRE_DISCRIMINATOR,
         schema_version=PROVIDER_WIRE_SCHEMA_VERSION,
@@ -181,14 +218,15 @@ def compile_provider_wire_request(compiled: CompiledGenerationRequest) -> Provid
         expected_route=compiled.expected_route.value,
         provider_key=compiled.provider_key,
         configured_provider_model=compiled.configured_provider_model,
-        prompt_parts=(_wire_prompt(compiled),),
+        prompt_parts=(_wire_prompt(compiled, edit_parent_indices),),
         references=refs,
         width=width,
         height=height,
         structured_aspect=structured_aspect,
-        controls=tuple(sorted(compiled.controls.active_controls().items())),
+        controls=controls,
         compiled_request_sha256=compiled.compiled_request_sha256,
         execution_fingerprint="",
+        edit_parent_indices=edit_parent_indices,
     )
     return replace(request, execution_fingerprint=request.recompute_execution_fingerprint())
 

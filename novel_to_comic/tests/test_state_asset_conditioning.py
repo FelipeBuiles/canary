@@ -643,6 +643,7 @@ def test_state_wire_carries_canonical_reference_and_hashes(tmp_path: Path, monke
     assert "SENTINEL Mara" in wire.prompt_parts[0]
     # Canonical identity is first (lowest index / strongest positional weight).
     assert refs[0].role == "subject"
+    assert wire.edit_parent_indices == (0,)
     assert refs[0].authority_scope == "identity_only"
     assert "anatomy" in refs[0].ignore_facets
     assert wire.compiled_request_sha256
@@ -711,6 +712,7 @@ def test_state_only_wire_has_no_canonical_reference(tmp_path: Path, monkeypatch)
 
     wire = captured["wire"]
     assert wire.references == ()
+    assert wire.edit_parent_indices == ()
     assert "SENTINEL winged serpent" in wire.prompt_parts[0]
 
 

@@ -11,6 +11,7 @@ from novel_to_comic import artifacts
 from novel_to_comic.config import Config
 from novel_to_comic.models.story_bible import Character, Location, Scene, StoryBible
 from novel_to_comic.stages.s2_style import (
+    STYLE_BRIEF_VERSION,
     STYLE_VALIDATION_ACTION,
     STYLE_VALIDATION_COMPOSITION,
     PORTFOLIO_ROLES,
@@ -369,6 +370,8 @@ def test_exact_style_proof_estimate_compiles_dimensions_reference_and_brief_cost
     brief_path = artifacts.style_sample_brief_path(tmp_path)
     brief_path.parent.mkdir(parents=True, exist_ok=True)
     brief_path.write_text(json.dumps({
+        "version": STYLE_BRIEF_VERSION,
+        "kind": "style_sample_brief",
         "source_sha256": _style_sample_brief_source_key(config, bible),
         "brief": BRIEF,
     }))
@@ -495,3 +498,87 @@ def test_validation_request_uses_dynamic_structured_action_without_contradiction
     assert request.compiled.final_prompt.count(_bible().characters[0].visual_anchor) == 1
     assert "no lettering or borders" not in request.compiled.final_prompt.lower()
     assert "The night held its breath." in request.compiled.final_prompt
+
+
+def _mixed_bible() -> StoryBible:
+    bible = _bible("Ari")
+    animal = bible.characters[0].model_copy(update={
+        "id": "char_002", "name": "Button",
+        "visual_anchor": "1cat, tortoiseshell persian cat, flat face, fluffy fur",
+        "age_range": "adult", "gender": "female",
+    })
+    unrelated = bible.characters[0].model_copy(update={
+        "id": "char_003", "name": "Elsewhere", "visual_anchor": "1creature, stone wings",
+    })
+    bible.characters.extend([animal, unrelated])
+    bible.scenes[0].character_ids = ["char_001", "char_002"]
+    bible.scenes[0].summary = "Ari waits beside Button near a tree."
+    return bible
+
+
+@pytest.mark.parametrize("generated", [False, True])
+def test_mixed_scene_roster_is_protected_in_generated_and_fallback_proofs(tmp_path, generated):
+    from novel_to_comic.style_briefing import style_sample_fallback_brief
+
+    bible = _mixed_bible()
+    prose = "Ari waits beside the tree while Button turns toward the light, then both settle into a quiet pause."
+    mock = AsyncMock(return_value=ApiResult(value=prose, usage=None))
+    with patch("novel_to_comic.clients.text.generate_text", new=mock):
+        brief = asyncio.run(ensure_style_sample_brief(
+            Config(style_sample_brief_enabled=generated), bible, tmp_path,
+        ))
+    request = build_style_sample_request(
+        Config(), bible, brief or style_sample_fallback_brief(bible), candidate_id="mixed",
+    )
+    prompt = request.compiled.final_prompt
+    for character in bible.characters[:2]:
+        assert character.visual_anchor in prompt
+    assert bible.characters[2].visual_anchor not in prompt
+    assert "exactly 2 distinct listed character" in prompt
+    assert "Button" in (brief or style_sample_fallback_brief(bible))
+    source = _style_sample_brief_source(bible)
+    assert bible.characters[1].visual_anchor in source
+    assert bible.characters[2].visual_anchor not in source
+    assert "Elsewhere" not in source
+
+
+def test_style_brief_cache_tracks_selected_animal_identity_and_roster(tmp_path):
+    bible = _mixed_bible()
+    mock = AsyncMock(return_value=ApiResult(value=BRIEF, usage=None))
+    with patch("novel_to_comic.clients.text.generate_text", new=mock):
+        asyncio.run(ensure_style_sample_brief(Config(), bible, tmp_path))
+        bible.characters[2].visual_anchor = "1creature, copper wings"
+        asyncio.run(ensure_style_sample_brief(Config(), bible, tmp_path))
+        assert mock.await_count == 1
+        bible.characters[1].visual_anchor += ", white paws"
+        asyncio.run(ensure_style_sample_brief(Config(), bible, tmp_path))
+        assert mock.await_count == 2
+        bible.scenes[0].character_ids = ["char_002"]
+        asyncio.run(ensure_style_sample_brief(Config(), bible, tmp_path))
+        assert mock.await_count == 3
+        path = artifacts.style_sample_brief_path(tmp_path)
+        cache = json.loads(path.read_text())
+        cache["version"] = 4
+        path.write_text(json.dumps(cache))
+        asyncio.run(ensure_style_sample_brief(Config(), bible, tmp_path))
+        assert mock.await_count == 4
+
+
+def test_overfull_scene_does_not_leak_unanchored_subjects_into_fallback():
+    from novel_to_comic.style_briefing import style_sample_fallback_brief
+
+    bible = _mixed_bible()
+    for index in (4, 5):
+        bible.characters.append(bible.characters[0].model_copy(update={
+            "id": f"char_00{index}", "name": f"Other{index}",
+        }))
+    bible.scenes[0].character_ids = [character.id for character in bible.characters]
+    bible.scenes[0].summary = "Button and Elsewhere greet Other4 and Other5."
+    brief = style_sample_fallback_brief(bible)
+    source = _style_sample_brief_source(bible)
+    request = build_style_sample_request(Config(), bible, brief, candidate_id="bounded")
+    assert "exactly 1 distinct listed character" in request.compiled.final_prompt
+    for name in ("Button", "Elsewhere", "Other4", "Other5"):
+        assert name not in brief
+        assert name not in source
+        assert name not in request.compiled.final_prompt

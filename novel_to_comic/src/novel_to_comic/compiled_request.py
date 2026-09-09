@@ -677,6 +677,7 @@ def _build_sections(
     shape: GenerationShape | None,
     native_aspect: str | None,
     asset_kind: AssetKind,
+    dimensions_are_intent: bool = False,
 ) -> tuple[tuple[CompiledPromptSection, ...], str]:
     """Assemble prompt sections in one stable order and the final prompt.
 
@@ -853,7 +854,10 @@ def _build_sections(
 
     # ── 7. Generation geometry ───────────────────────────────────────────
     width, height = dimensions
-    geo_lines = [f"Output dimensions: {width}x{height}"]
+    geo_lines = [
+        (f"Requested composition dimensions (intent, not an enforced output size): {width}x{height}"
+         if dimensions_are_intent else f"Output dimensions: {width}x{height}")
+    ]
     if shape:
         geo_lines.append(f"Output shape: {shape}")
     if native_aspect:
@@ -908,6 +912,12 @@ def compile_generation_request(
     """
     # Validate active-state authority before building anything.
     _validate_active_state_authority(prompt, reference_plan)
+    if reference_plan.expected_route != route_profile.route:
+        raise CompiledRequestError("reference plan route differs from selected image profile")
+    if len(reference_plan.selected) > route_profile.max_references:
+        raise CompiledRequestError("required references exceed selected image profile limit")
+    if any(asset.role not in route_profile.supported_roles for asset in reference_plan.selected):
+        raise CompiledRequestError("required reference role is unsupported by selected image profile")
 
     controls = controls or GenerationControls()
     # Slice 06: reject phantom controls the route does not support.
@@ -924,6 +934,7 @@ def compile_generation_request(
     sections, final_prompt = _build_sections(
         prompt, selected_style_text, reference_instructions, controls,
         dimensions, shape, native_aspect, asset_kind,
+        dimensions_are_intent=route_profile.provider_key == "codex-dev",
     )
 
     # Slice 06: section-aware budget. Protected sections (anchors, reference

@@ -15,6 +15,8 @@ from novel_to_comic import artifacts
 from novel_to_comic.ai import ai_request_context
 from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.config import Config, mock_mode_active, save_config
+from novel_to_comic.codex_dev import CodexRoutingError, classify_operations
+from ..codex_admission import image_operations, prompt_image_operations, style_sample_operations
 from novel_to_comic.image_models import image_model_profile_for_config
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.asset_generation import asset_matches_request
@@ -125,6 +127,9 @@ def _suggest_batch_credit_estimate(
     has_style_reference: bool = False,
     reference_size: tuple[int, int] | None = None,
 ) -> dict:
+    funding = classify_operations(prompt_image_operations(config))
+    if funding == "codex_subscription":
+        return dict(credit_estimate_for_provider_cost(0.0, "style", reserve=True, funding=funding))
     if mock_mode_active(config):
         return dict(credit_estimate_for_provider_cost(0.0, "style", reserve=True))
     cost_usd = estimate_style_batch_cost_usd(
@@ -141,8 +146,12 @@ def _style_sample_credit_estimate(
     reserve: bool = False,
     has_style_reference: bool = False,
     exact_cost_usd: float | None = None,
+    validation: bool = False,
 ) -> dict:
     """Keep one-sample preflight and generation credit checks in lockstep."""
+    funding = classify_operations(style_sample_operations(config, validation=validation))
+    if funding == "codex_subscription":
+        return dict(credit_estimate_for_provider_cost(0.0, "style", reserve=reserve, funding=funding))
     if mock_mode_active(config):
         return dict(credit_estimate_for_provider_cost(0.0, "style", reserve=reserve))
     if exact_cost_usd is None:
@@ -167,44 +176,48 @@ def _direction_credit_estimates(
     candidate_id: str = "direction_estimate",
     reference_size: tuple[int, int] | None = None,
 ) -> dict:
-    if mock_mode_active(config):
-        zero = dict(credit_estimate_for_provider_cost(0.0, "style", reserve=True))
-        return {
-            "faithful": zero,
-            "neighbors": dict(zero),
-            "faithful_with_neighbors": dict(zero),
-        }
+    def quote(operations, cost, *, zero_cost_estimate=1):
+        try:
+            funding = classify_operations(operations)
+        except CodexRoutingError as exc:
+            return {"supported": False, "error": str(exc)}
+        return dict(credit_estimate_for_provider_cost(
+            0.0 if funding == "codex_subscription" or mock_mode_active(config) else cost(),
+            "style", reserve=True,
+            zero_cost_estimate=0 if mock_mode_active(config) else zero_cost_estimate,
+            funding=funding,
+        ))
+
     reference_count = 1 if has_style_reference and _supports_style_reference(config) else 0
     bible = _get_bible(project_dir)
-    faithful_cost = (
-        estimate_style_proof_cost_usd(
-            config, project_dir, bible, template or config.style_template, candidate_id,
-            reference_size=(reference_size or (1024, 1024)) if reference_count else None,
+
+    def faithful_cost():
+        return (
+            estimate_style_proof_cost_usd(
+                config, project_dir, bible, template or config.style_template, candidate_id,
+                reference_size=(reference_size or (1024, 1024)) if reference_count else None,
+            )
+            if bible is not None
+            else estimate_image_cost(
+                config.effective_image_model(), 1,
+                quality=getattr(config, "image_quality", None),
+                ref_count=reference_count,
+                ref_image_sizes=[reference_size or (1024, 1024)] if reference_count else None,
+            )
         )
-        if bible is not None
-        else estimate_image_cost(
-            config.effective_image_model(), 1,
-            quality=getattr(config, "image_quality", None),
-            ref_count=reference_count,
-            ref_image_sizes=[reference_size or (1024, 1024)] if reference_count else None,
+
+    def neighbor_cost():
+        return estimate_style_batch_cost_usd(
+            config, project_dir, 4, has_style_reference=bool(reference_count),
+            reference_size=reference_size,
         )
-    )
-    neighbor_cost = estimate_style_batch_cost_usd(
-        config, project_dir, 4,
-        has_style_reference=bool(reference_count),
-        reference_size=reference_size,
-    )
+
     return {
-        "faithful": dict(credit_estimate_for_provider_cost(
-            faithful_cost, "style", reserve=True, zero_cost_estimate=1,
-        )),
-        "neighbors": dict(credit_estimate_for_provider_cost(
-            neighbor_cost, "style", reserve=True,
-        )),
-        "faithful_with_neighbors": dict(credit_estimate_for_provider_cost(
-            faithful_cost + neighbor_cost, "style", reserve=True,
-            zero_cost_estimate=1,
-        )),
+        "faithful": quote(style_sample_operations(config), faithful_cost),
+        "neighbors": quote(prompt_image_operations(config), neighbor_cost, zero_cost_estimate=0),
+        "faithful_with_neighbors": quote(
+            prompt_image_operations(config), lambda: faithful_cost() + neighbor_cost(),
+        ),
     }
 
 
@@ -443,6 +456,8 @@ async def create_style_direction(
 ):
     """Persist an author direction and queue one faithful story-specific proof."""
     project_dir, config, state = project
+    operations = prompt_image_operations(config) if with_neighbors else style_sample_operations(config)
+    classify_operations(operations)
     pkey = project_key(user_id, project_id)
     _assert_no_pipeline_task(request, pkey)
     _assert_no_style_task(request, pkey)
@@ -585,6 +600,7 @@ async def create_style_direction(
             work=_runner, user_id=user_id, project_id=project_id,
             project_dir=project_dir, stage="style",
             debit_description="Style direction", reservation_credits=required,
+            operations=operations,
             existing_hold=(reservation_id, job_id), on_terminal=_terminal,
             semaphore=generation_semaphore_for_config(request.app, config),
         )
@@ -621,6 +637,8 @@ async def suggest_styles(
     user_id: str = Depends(get_current_user),
 ):
     project_dir, config, state = project
+    operations = prompt_image_operations(config)
+    classify_operations(operations)
     pkey = project_key(user_id, project_id)
 
     _assert_no_pipeline_task(request, pkey)
@@ -787,6 +805,7 @@ async def suggest_styles(
             kind="style_suggest", label="Style suggestions",
             payload={"direction_id": direction_id}, work=_job,
             debit_description="Style suggestions", reservation_credits=required,
+            operations=operations,
             existing_hold=(reservation_id, job_id), on_terminal=_terminal,
             semaphore=generation_semaphore_for_config(request.app, config),
         )
@@ -844,6 +863,8 @@ async def generate_style_samples(
     if not bible:
         raise HTTPException(404, "Story bible not found — run extract first.")
 
+    operations = style_sample_operations(config)
+    classify_operations(operations)
     jobs = []
     prune_finished_generation_jobs(request.app)
     for idx in indices:
@@ -893,6 +914,7 @@ async def generate_style_samples(
             project_dir=project_dir, stage="style",
             debit_description=f"Style sample {idx}",
             reservation_credits=estimate["reserved_credits"] or estimate["estimate_credits"],
+            operations=operations,
             semaphore=generation_semaphore_for_config(request.app, sample_config),
         )
         jobs.append(generation_job_payload(request.app, job))
@@ -913,6 +935,8 @@ async def generate_style_validation(
 ):
     """Queue an optional second proof that auditions action and environment."""
     project_dir, config, _state = project
+    operations = image_operations(config)
+    classify_operations(operations)
     pkey = project_key(user_id, project_id)
     _assert_no_pipeline_task(request, pkey)
     _assert_no_style_task(request, pkey)
@@ -957,6 +981,7 @@ async def generate_style_validation(
         reserve=True,
         has_style_reference=style_reference is not None,
         exact_cost_usd=exact_cost,
+        validation=True,
     )
     brief = style_validation_brief(bible)
     output_path = artifacts.style_validation_path(project_dir, suggestion_id)
@@ -982,6 +1007,7 @@ async def generate_style_validation(
         project_id=project_id, project_dir=project_dir, stage="style",
         debit_description="Style validation",
         reservation_credits=estimate["reserved_credits"] or estimate["estimate_credits"],
+        operations=operations,
         semaphore=generation_semaphore_for_config(request.app, sample_config),
     )
     return {

@@ -45,6 +45,7 @@ class ImageRoute(str, Enum):
     SEEDREAM = "seedream"
     REVE = "reve"
     GPT_IMAGE_2 = "gpt_image_2"
+    CODEX_BUILTIN = "codex_builtin"
     UNKNOWN = "unknown"
 
 
@@ -352,6 +353,18 @@ def image_model_profile(model: str) -> ImageModelProfile:
     :func:`describe_image_model`. The profile is derived from the resolved
     route, so aliases and literal provider model strings resolve consistently.
     """
+    from novel_to_comic.codex_dev import route_for
+
+    if route_for("image", model) is not None:
+        return ImageModelProfile(
+            route=ImageRoute.CODEX_BUILTIN,
+            max_references=5,
+            supported_roles=frozenset(_ALL_REFERENCE_ROLES),
+            prompt_char_limit=None,
+            native_aspect_modes=(),
+            supported_controls=frozenset(),
+            provider_key="codex-dev",
+        )
     description = describe_image_model(model)
     return _profile_for_route(
         description.route,

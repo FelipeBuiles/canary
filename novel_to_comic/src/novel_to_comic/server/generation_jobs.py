@@ -176,13 +176,20 @@ def find_active_generation_job(
     kind: str,
     payload: dict[str, Any] | None = None,
 ) -> GenerationJob | None:
+    # Author words are durable evidence, not a second asset identity. Plain and
+    # instructed requests for the same asset must share one active-work slot.
+    def identity(value: dict[str, Any]) -> dict[str, Any]:
+        if kind in {"character_ref_regen", "location_plate_regen", "prop_ref_regen"}:
+            return {key: item for key, item in value.items() if key != "instruction"}
+        return value
+
     jobs = app.state.generation_jobs if app is not None else _global_jobs
     for job in jobs.values():
         if (
             job.project_name == project_name
             and job.kind == kind
             and job.status in ("queued", "running")
-            and (payload is None or job.payload == payload)
+            and (payload is None or identity(job.payload) == identity(payload))
         ):
             return job
     return None
@@ -279,6 +286,13 @@ async def generation_worker(app: FastAPI) -> None:
             if job.phase == "analysis":
                 job.classification = "analysis_error"
                 job.user_message = "Artwork saved; text checks incomplete. Recover the text check without redrawing."
+                job.recoverable = True
+            from novel_to_comic.cast_instructions import PromptInstructionError
+
+            if isinstance(exc, PromptInstructionError):
+                # This bounded rewrite rejection is safe author-facing feedback,
+                # not an image-provider failure to replace with generic prose.
+                job.user_message = str(exc)
                 job.recoverable = True
             logger.error(
                 "[bold red]Job failed[/] project=[white]%s[/] kind=[cyan]%s[/] "

@@ -30,6 +30,16 @@ By default, files under `docs/proposals/` and `docs/superpowers/` are
 specific status when a document is intentionally promoted, superseded, or
 retained as current reference.
 
+## Current contracts and capability evidence
+
+- [Stage contracts](reference/stage-contracts.md): source-owned stage authority,
+  user gates, correction jobs, recovery, and generated-output compatibility.
+- [Agent context](reference/agent-context.md): concise workflow and code navigation.
+- [Codex development capability report](reference/codex-dev-capabilities.md):
+  implemented local adapter configuration, restricted execution/funding contracts,
+  and scoped live evidence, including experimental complete-page Draw. This is
+  not a production deployment or model-quality guarantee.
+
 ## Active future work
 
 Only active, accepted, or genuinely pending design work should remain under

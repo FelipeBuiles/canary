@@ -32,6 +32,7 @@ from novel_to_comic.ai.finalisation import (
     finalise_image_success,
 )
 from novel_to_comic.config import Config, mock_mode_active
+from novel_to_comic.codex_dev import CodexRoutingError, assert_request_funding, route_for
 from novel_to_comic.provider_wire import ProviderWireRequest
 from novel_to_comic.usage import (
     ApiResult,
@@ -828,6 +829,7 @@ def _insert_event(
                 "feature": feature,
                 "operation": operation,
                 "status": "started",
+                "funding": metadata_json.get("funding", "api"),
                 "model_alias": model_alias,
                 "request_id": ctx.request_id,
                 "params_json": params_json,
@@ -864,13 +866,23 @@ def _finalize_event(
     started_at: datetime.datetime | None = None,
     langfuse_scheduler: Any = None,
 ) -> None:
+    funding = usage.funding if usage is not None else (metadata or {}).get("funding", "api")
+    if funding == "codex_subscription" and usage is None:
+        usage = UsageRecord(
+            provider="codex", model=model_alias, call_id=event_id,
+            provider_model=(metadata or {}).get("codex_reasoning_model") if operation == "text" else None,
+            operation=operation, cost_usd=None, cost_source="codex_subscription",
+            funding="codex_subscription",
+        )
     provider_model = str(
         (response_data or {}).get("model")
         or (usage.provider_model if usage else None)
         or model_alias
     )
+    if funding == "codex_subscription" and operation == "image":
+        provider_model = usage.provider_model if usage else None
     cost = calculate_cost_breakdown(usage) if usage is not None else None
-    cost_usd = cost.cost_usd if cost is not None else None
+    cost_usd = usage.cost_usd if funding == "codex_subscription" else (cost.cost_usd if cost is not None else None)
     billable = bool(
         usage
         and usage_has_billable_activity(usage)
@@ -917,6 +929,7 @@ def _finalize_event(
         "finished_at": datetime.datetime.now(datetime.UTC).isoformat(),
         "status": status,
         "billable": billable,
+        "funding": funding,
         "billing_policy": config.ai_bill_failed_requests if config else None,
         "provider": usage.provider if usage else _provider_from_model(provider_model),
         "provider_model": provider_model,
@@ -937,6 +950,8 @@ def _finalize_event(
         "error_message": str(error)[:1000] if error else None,
         "error_json": _error_json(error, error_response),
     }
+    if metadata is not None:
+        update["metadata_json"] = metadata
     drift_pct = _pricing_estimate_drift_pct(
         operation=operation,
         estimated_cost_usd=estimated_cost_usd,
@@ -963,7 +978,7 @@ def _finalize_event(
     except Exception as exc:
         event_persisted = False
         logger.warning("ai_usage_events update failed for %s: %s", event_id, exc)
-    if event_persisted and billable and usage is not None:
+    if event_persisted and usage is not None and (billable or funding == "codex_subscription"):
         _settle_event_usage(usage, feature=feature, status=status)
     if status != "cancelled" and metadata is not None:
         try:
@@ -1443,6 +1458,24 @@ async def generate_structured_object(
     ) from last_exc
 
 
+def _codex_text_usage(
+    event_id: str, model: str, reasoning_model: str, tokens: dict[str, Any],
+) -> UsageRecord:
+    return UsageRecord(
+        provider="codex", model=model, provider_model=reasoning_model,
+        call_id=event_id, operation="text",
+        input_tokens=int(tokens.get("prompt_tokens") or tokens.get("input_tokens") or 0),
+        output_tokens=int(tokens.get("completion_tokens") or tokens.get("output_tokens") or 0),
+        cost_usd=None, cost_source="codex_subscription", funding="codex_subscription",
+    )
+
+
+def _codex_error_usage(
+    event_id: str, model: str, reasoning_model: str, error: BaseException,
+) -> UsageRecord:
+    return _codex_text_usage(event_id, model, reasoning_model, getattr(error, "metadata", {}) or {})
+
+
 async def _chat_completion(
     *,
     config: Config,
@@ -1456,9 +1489,22 @@ async def _chat_completion(
     json_schema: dict[str, Any] | None = None,
     image_attachments: tuple[tuple[bytes, str], ...] = (),
 ) -> dict[str, Any]:
+    route = route_for("text", model)
+    assert_request_funding("text", model, require_admission=current_ai_request_context().job_id is not None)
+    if config.mock_mode and (route is not None or not mock_mode_active(config)):
+        raise CodexRoutingError("Mock projects cannot execute live Codex requests")
     event_id = str(uuid.uuid4())
     operation = "text"
     metadata = _metadata(feature, operation, model, event_id)
+    if route is not None:
+        metadata.update({
+            "funding": "codex_subscription",
+            "codex_reasoning_model": route.reasoning_model,
+            "unsupported_controls": {
+                "temperature": temperature,
+                "max_output_tokens": max_output_tokens,
+            },
+        })
     response_format: dict[str, Any] | None
     if json_schema:
         schema_name = re.sub(r"[^a-zA-Z0-9_-]", "_", feature)[:64]
@@ -1481,7 +1527,7 @@ async def _chat_completion(
     # estimation, request summaries, and Langfuse logging stay comparable with
     # text-only calls; only the wire message becomes multimodal.
     message_content: str | list[dict[str, Any]] = user_content
-    if image_attachments:
+    if image_attachments and route is None:
         message_content = [{"type": "text", "text": user_content}]
         for image_bytes, media_type in image_attachments:
             encoded = base64.b64encode(image_bytes).decode()
@@ -1499,22 +1545,23 @@ async def _chat_completion(
         ],
         "metadata": metadata,
     }
-    if model not in _TEMPERATURE_DEPRECATED_ALIASES:
+    if route is None and model not in _TEMPERATURE_DEPRECATED_ALIASES:
         payload["temperature"] = temperature
     if response_format is not None:
         payload["response_format"] = response_format
-    if max_output_tokens is not None:
+    if route is None and max_output_tokens is not None:
         payload["max_completion_tokens"] = max_output_tokens
     # Stream so the read timeout is per-chunk: long adapt repairs exceed the
     # read budget as a single blocking response. include_usage puts the usage
     # block on a final chunk, which streaming otherwise omits.
-    streaming = _stream_text_enabled()
+    streaming = route is None and _stream_text_enabled()
     if streaming:
         payload["stream"] = True
         payload["stream_options"] = {"include_usage": True}
 
     estimated_cost_usd = (
-        estimate_text_cost(model, effective_system + "\n" + user_content) or None
+        (estimate_text_cost(model, effective_system + "\n" + user_content) or None)
+        if route is None else None
     )
     # Everything the terminal handlers reference must exist before the first
     # cancellable await: offloading the insert to a thread means cancellation
@@ -1573,7 +1620,25 @@ async def _chat_completion(
             event_id,
         )
         try:
-            if streaming:
+            if route is not None:
+                from novel_to_comic.ai.codex_runtime import run_text
+
+                result = await run_text(
+                    model=route.reasoning_model,
+                    system_prompt=effective_system,
+                    user_content=user_content,
+                    json_schema=json_schema,
+                    image_attachments=image_attachments,
+                )
+                metadata["codex_runtime"] = result.metadata
+                data = {
+                    "model": result.model,
+                    "choices": [{"message": {"content": result.text}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": result.input_tokens, "completion_tokens": result.output_tokens},
+                }
+                if result.model != route.reasoning_model:
+                    raise CodexRoutingError("Codex returned a different reasoning model than requested")
+            elif streaming:
                 data, response = await _stream_with_retry(
                     f"{_base_url(config)}{endpoint}",
                     headers=_headers(config, event_id),
@@ -1611,7 +1676,7 @@ async def _chat_completion(
                 model=model,
                 endpoint=endpoint,
             ) from exc
-        if not streaming:
+        if route is None and not streaming:
             data = response.json()
         refusal = _refusal_reason(data)
         if refusal:
@@ -1635,9 +1700,13 @@ async def _chat_completion(
             if completion_tokens is not None:
                 detail += f", completion_tokens={completion_tokens}"
             raise ValueError(f"Empty response from LiteLLM ({model}; {detail})")
-        usage = _extract_usage(data, event_id, model, operation, response.headers)
+        usage = (
+            _codex_text_usage(event_id, model, route.reasoning_model, data.get("usage") or {})
+            if route is not None else _extract_usage(data, event_id, model, operation, response.headers)
+        )
         if (
-            not usage.input_tokens
+            route is None
+            and not usage.input_tokens
             and not usage.output_tokens
             and usage.cost_source != "mock"
         ):
@@ -1650,6 +1719,8 @@ async def _chat_completion(
                 call_id=event_id,
             )
     except asyncio.CancelledError as exc:
+        if route is not None:
+            metadata["codex_runtime"] = getattr(exc, "metadata", {})
         # Shielded: the task must not return before billing persistence
         # completes, even if a second cancellation arrives mid-write. The
         # success write lives outside this catcher, so a late cancel can
@@ -1661,6 +1732,7 @@ async def _chat_completion(
             model_alias=model,
             latency_ms=int((time.perf_counter() - started) * 1000),
             error=exc,
+            usage=_codex_error_usage(event_id, model, route.reasoning_model, exc) if route else None,
             error_response=response,
             config=config,
             operation=operation,
@@ -1673,7 +1745,10 @@ async def _chat_completion(
     except AIRefusalError as exc:
         # `data` is the collapsed stream body — a streamed response has no
         # buffered content to re-parse here.
-        usage = _extract_usage(data, event_id, model, operation) if data else None
+        usage = (
+            _codex_error_usage(event_id, model, route.reasoning_model, exc)
+            if route else (_extract_usage(data, event_id, model, operation) if data else None)
+        )
         await _finalize_event_shielded(
             event_id=event_id,
             status="refused",
@@ -1693,8 +1768,12 @@ async def _chat_completion(
         )
         raise
     except Exception as exc:
-        usage = None
-        if config.ai_bill_failed_requests == "estimate_all" and response is not None:
+        usage = _codex_error_usage(event_id, model, route.reasoning_model, exc) if route else None
+        if route is not None:
+            metadata["codex_runtime"] = getattr(exc, "metadata", None) or metadata.get("codex_runtime", {})
+            if data.get("usage"):
+                usage = _codex_text_usage(event_id, model, route.reasoning_model, data["usage"])
+        if route is None and config.ai_bill_failed_requests == "estimate_all" and response is not None:
             usage = estimate_text_usage(
                 provider="litellm",
                 model=model,
@@ -1756,7 +1835,6 @@ async def generate_wire_image(
 ) -> ApiResult[Path]:
     """Submit an immutable exact-wire request through the isolated adapter."""
     from novel_to_comic.ai.providers import selector
-    from novel_to_comic.ai.providers.litellm_http import LitellmHttpProvider
     from novel_to_comic.provider_wire import materialize_wire_references
 
     if wire.execution_fingerprint != wire.recompute_execution_fingerprint():
@@ -1768,13 +1846,14 @@ async def generate_wire_image(
         (Path(ref.source_path), data)
         for ref, data in zip(transport_wire.references, blobs, strict=True)
     ]
-    provider = selector.pick(transport_wire.requested_alias or "", config)
-    if isinstance(provider, LitellmHttpProvider):
-        params, _files = provider.prepare_wire_request(transport_wire)
-    else:
-        raise ValueError(
-            f"wire transport is not implemented for adapter {provider.name}"
-        )
+    assert_request_funding(
+        "image", transport_wire.requested_alias or transport_wire.configured_provider_model,
+        require_admission=current_ai_request_context().job_id is not None,
+    )
+    provider = selector.pick(
+        transport_wire.requested_alias or "", config, provider_key=transport_wire.provider_key
+    )
+    params = provider.wire_request_params(transport_wire)
     ctx = await begin_image_call(
         config=config,
         model=transport_wire.requested_alias
@@ -1813,30 +1892,17 @@ async def generate_wire_image(
             error_response=getattr(exc, "response", None),
         )
         raise
-    # The success write runs outside the cancellation catcher: it is shielded,
-    # so a cancel landing mid-write waits it out, then propagates without a
-    # second terminal write overwriting the succeeded status.
-    try:
-        return await finalise_image_success(
-            ctx=ctx,
-            config=config,
-            model=transport_wire.requested_alias
-            or transport_wire.configured_provider_model,
-            feature=feature,
-            output_path=output_path,
-            raw=raw,
-        )
-    except Exception as exc:
-        await finalise_image_failure(
-            ctx=ctx,
-            config=config,
-            model=transport_wire.requested_alias
-            or transport_wire.configured_provider_model,
-            feature=feature,
-            error=exc,
-            error_response=getattr(exc, "response", None),
-        )
-        raise
+    # Finalization owns output-write failures and their already-generated usage.
+    # Do not catch and finalize again: that would erase the provider evidence.
+    return await finalise_image_success(
+        ctx=ctx,
+        config=config,
+        model=transport_wire.requested_alias
+        or transport_wire.configured_provider_model,
+        feature=feature,
+        output_path=output_path,
+        raw=raw,
+    )
 
 
 def _diagnose_empty_image_response(data: dict[str, Any]) -> str:

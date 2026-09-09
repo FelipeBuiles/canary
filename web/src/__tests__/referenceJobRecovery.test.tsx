@@ -52,3 +52,15 @@ it("keeps alternate appearance jobs separate from base references", async () => 
   await waitFor(() => expect(state.result.current.activeJob?.id).toBe("state-job"));
   expect(base.result.current.activeJob).toBeNull();
 });
+
+it("recovers a failed appearance correction draft without leaking it onto the base reference", async () => {
+  const instruction = "Restore the canonical silhouette in this appearance.";
+  const reason = "The requested change contradicts this appearance's anchor.";
+  server.jobs = [{ id: "correction", project_name: "project", kind: "character_ref_regen", label: "Appearance", payload: { char_id: "entity:injured", instruction }, status: "failed", queue_position: null, queued_at: "2026-09-07T10:00:00Z", started_at: null, finished_at: "2026-09-07T10:01:00Z", error: reason, user_message: reason }];
+  const base = observe("char_id");
+  const state = observe("char_id", "injured");
+  await waitFor(() => expect(state.result.current.regenError).toBe(reason));
+  expect(state.result.current.instructionDraft).toBe(instruction);
+  expect(base.result.current.regenError).toBeNull();
+  expect(base.result.current.instructionDraft).toBe("");
+});

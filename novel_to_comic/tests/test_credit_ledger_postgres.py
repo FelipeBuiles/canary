@@ -110,6 +110,7 @@ def test_different_cast_jobs_compete_for_one_balance(ledger, tmp_path):
                 project_dir=tmp_path, stage="cast", kind="character_ref_regen",
                 label=asset, payload={"char_id": asset}, work=work,
                 debit_description="cast", estimate_credits=5,
+                operations=(("image", "image-quality"),),
             )[0]
         except HTTPException as exc:
             return exc.status_code
@@ -169,3 +170,74 @@ def test_foreign_live_and_expired_reservations(ledger):
     assert db.rpc("check_credit_reservation_lease", {"p_reservation_id": started, "p_owner": expired_owner}).execute().data is False
     with pytest.raises(RuntimeError, match="reconciliation"):
         reserve(live_owner)
+
+
+def test_subscription_failure_settles_zero_and_replays_without_losing_evidence(ledger):
+    db, user = ledger
+    job = str(uuid.uuid4())
+    call = str(uuid.uuid4())
+    db.query(
+        "insert into public.ai_usage_events "
+        "(id, user_id, feature, operation, status, model_alias, funding) values "
+        f"('{call}', '{user}', 'test.subscription', 'text', 'failed', "
+        "'plan-balanced', 'codex_subscription');"
+    )
+    usage = UsageRecord(
+        call_id=call, provider="openai", model="plan-balanced", operation="text",
+        input_tokens=100, funding="codex_subscription",
+    )
+    db.lose_response = True
+    credits.debit_model_usage(db, user, None, usage, description="failed", job_id=job)
+    credits.debit_model_usage(
+        db, user, None, usage, description="replayed", job_id=str(uuid.uuid4()),
+    )
+    result = json.loads(db.query(
+        "select row_to_json(t) from (select amount_credits, cost_usd, funding, "
+        f"usage_status, job_id from public.credit_ledger where usage_call_id='{call}') t;"
+    ))
+    assert result == {
+        "amount_credits": 0, "cost_usd": None, "funding": "codex_subscription",
+        "usage_status": "failed", "job_id": job,
+    }
+    assert db.query(f"select balance_credits from public.user_credits where user_id='{user}';") == "5"
+    assert db.query(
+        f"select count(*) from public.ops_usage_reconciliation where usage_call_id='{call}';"
+    ) == "0"
+
+
+def test_sql_subscription_dollars_and_billable_flag_cannot_charge_or_poison_api_rounding(ledger):
+    db, user = ledger
+    job = str(uuid.uuid4())
+    params = {
+        "p_user_id": user, "p_project_id": None, "p_job_id": job,
+        "p_stage": "extract", "p_description": "contradictory evidence",
+        "p_usage_call_id": str(uuid.uuid4()), "p_provider": "openai",
+        "p_model": "plan-balanced", "p_provider_model": None, "p_operation": "text",
+        "p_input_tokens": 100, "p_output_tokens": 100, "p_image_count": 0,
+        "p_cost_usd": 100, "p_cost_source": "provider_reported_cost",
+        "p_pricing_snapshot": None, "p_credits_per_usd": 100, "p_markup": 1,
+        "p_billable": True, "p_funding": "codex_subscription",
+    }
+    assert db.rpc("settle_model_usage_credits", params).execute().data == 0
+    params.update(p_usage_call_id=str(uuid.uuid4()), p_funding="api", p_cost_usd=0.001)
+    assert db.rpc("settle_model_usage_credits", params).execute().data == 1
+    params.update(p_usage_call_id=str(uuid.uuid4()))
+    assert db.rpc("settle_model_usage_credits", params).execute().data == 0
+    assert db.query(f"select sum(amount_credits) from public.credit_ledger where job_id='{job}';") == "-1"
+
+
+@pytest.mark.parametrize("provider_model", [None, "observed-image-model"])
+def test_subscription_image_ledger_preserves_observed_model_identity(ledger, provider_model):
+    db, user = ledger
+    usage = UsageRecord(
+        provider="codex", model="image-quality", provider_model=provider_model,
+        operation="image", image_count=1, funding="codex_subscription",
+    )
+    credits.debit_model_usage(db, user, None, usage, description="subscription image")
+    result = json.loads(db.query(
+        "select row_to_json(t) from (select model, provider_model, amount_credits "
+        f"from public.credit_ledger where usage_call_id='{usage.call_id}') t;"
+    ))
+    assert result == {
+        "model": "image-quality", "provider_model": provider_model, "amount_credits": 0,
+    }

@@ -6,7 +6,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -37,6 +37,7 @@ class UsageRecord(BaseModel, frozen=True):
     image_count: int = 0
     cost_usd: float | None = None
     cost_source: str | None = None
+    funding: Literal["api", "codex_subscription"] = "api"
 
 
 @dataclass
@@ -53,6 +54,7 @@ class ApiResult(Generic[T]):
     provider_request_id: str | None = None
     actual_provider_model: str | None = None
     additional_usage: tuple[UsageRecord, ...] = ()
+    response_metadata: dict[str, Any] | None = None
 
 
 def calculate_cost_breakdown(record: UsageRecord) -> CostBreakdown:
@@ -66,6 +68,7 @@ def calculate_cost_breakdown(record: UsageRecord) -> CostBreakdown:
         image_count=record.image_count,
         provider_cost_usd=record.cost_usd,
         provider_cost_source=record.cost_source,
+        funding=record.funding,
     )
 
 
@@ -75,7 +78,9 @@ def calculate_cost(record: UsageRecord) -> float:
 
 
 def usage_has_billable_activity(record: UsageRecord) -> bool:
-    return record.input_tokens > 0 or record.output_tokens > 0 or record.image_count > 0
+    return record.funding == "api" and (
+        record.input_tokens > 0 or record.output_tokens > 0 or record.image_count > 0
+    )
 
 
 def estimate_token_count(value: str | bytes | int) -> int:

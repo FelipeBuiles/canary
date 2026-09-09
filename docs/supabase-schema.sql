@@ -54,6 +54,8 @@ create table if not exists public.ai_usage_events (
   status                text        not null
                                       check (status in ('started', 'succeeded', 'failed', 'refused', 'cancelled')),
   billable              boolean     not null default false,
+  funding               text        not null default 'api'
+                                      check (funding in ('api', 'codex_subscription')),
   billing_policy        text,
   model_alias           text        not null,
   provider              text,
@@ -146,6 +148,9 @@ alter table public.credit_ledger
   add column if not exists cost_usd numeric(12, 6),
   add column if not exists cost_source text,
   add column if not exists pricing_snapshot text,
+  add column if not exists funding text not null default 'api'
+    check (funding in ('api', 'codex_subscription')),
+  add column if not exists usage_status text,
   add column if not exists job_id uuid,
   add column if not exists reservation_owner uuid,
   add column if not exists reservation_expires_at timestamptz,
@@ -306,6 +311,8 @@ end;
 $$;
 
 alter table public.ai_usage_events
+  add column if not exists funding text not null default 'api'
+    check (funding in ('api', 'codex_subscription')),
   add column if not exists provider_cost_usd numeric(12, 6),
   add column if not exists estimated_cost_usd numeric(12, 6),
   add column if not exists pricing_snapshot text;
@@ -479,6 +486,12 @@ $$;
 -- are rounded once across the job's cumulative provider cost. The advisory
 -- lock prevents concurrent panel calls from each observing the same subtotal.
 
+-- Clean cutover: remove the API-only overload rather than leaving an unsafe RPC.
+drop function if exists public.settle_model_usage_credits(
+  uuid, uuid, uuid, text, text, text, text, text, text, text, integer, integer,
+  integer, numeric, text, text, numeric, numeric, boolean
+);
+
 create or replace function public.settle_model_usage_credits(
   p_user_id             uuid,
   p_project_id          uuid,
@@ -498,7 +511,8 @@ create or replace function public.settle_model_usage_credits(
   p_pricing_snapshot    text,
   p_credits_per_usd     numeric,
   p_markup              numeric,
-  p_billable            boolean
+  p_billable            boolean,
+  p_funding             text
 )
 returns integer
 language plpgsql
@@ -512,6 +526,9 @@ declare
   v_target_debit integer := 0;
   v_increment integer := 0;
 begin
+  if p_funding is null or p_funding not in ('api', 'codex_subscription') then
+    raise exception 'Unknown usage funding';
+  end if;
   perform pg_advisory_xact_lock(hashtextextended(p_user_id::text, 0));
   perform pg_advisory_xact_lock(hashtextextended(p_usage_call_id, 1));
 
@@ -530,6 +547,9 @@ begin
     return abs(v_existing_amount);
   end if;
 
+  -- Subscription evidence is balance-neutral even with contradictory USD or
+  -- billable input. It must not enter the cumulative API rounding calculation.
+  if p_funding = 'api' then
   select
     coalesce(sum(cost_usd), 0),
     coalesce(sum(abs(amount_credits)), 0)::integer
@@ -538,7 +558,8 @@ begin
   where user_id = p_user_id
     and job_id = p_job_id
     and status = 'settled'
-    and usage_call_id is not null;
+    and usage_call_id is not null
+    and funding = 'api';
 
   v_target_debit := ceil(
     (v_prior_cost + greatest(coalesce(p_cost_usd, 0), 0))
@@ -549,17 +570,20 @@ begin
     v_target_debit := 1;
   end if;
   v_increment := greatest(0, v_target_debit - v_prior_debit);
+  end if;
 
   insert into public.credit_ledger (
     user_id, project_id, amount_credits, status, stage, description,
     usage_call_id, provider, model, provider_model, operation, input_tokens,
-    output_tokens, image_count, cost_usd, cost_source, pricing_snapshot, job_id
+    output_tokens, image_count, cost_usd, cost_source, pricing_snapshot, job_id,
+    funding, usage_status
   ) values (
     p_user_id, p_project_id, -v_increment, 'settled', p_stage, p_description,
     p_usage_call_id, p_provider, p_model, p_provider_model, p_operation,
     coalesce(p_input_tokens, 0), coalesce(p_output_tokens, 0),
     coalesce(p_image_count, 0), p_cost_usd, p_cost_source,
-    p_pricing_snapshot, p_job_id
+    p_pricing_snapshot, p_job_id, p_funding,
+    (select status from public.ai_usage_events where id::text = p_usage_call_id)
   );
 
   return v_increment;
@@ -638,14 +662,17 @@ select
   coalesce(sum(input_tokens), 0)::bigint as input_tokens,
   coalesce(sum(output_tokens), 0)::bigint as output_tokens,
   coalesce(sum(image_count), 0)::bigint as image_count,
-  coalesce(sum(cost_usd), 0)::numeric(14, 6) as actual_cost_usd,
+  (case when funding = 'codex_subscription' then sum(cost_usd)
+    else coalesce(sum(cost_usd), 0) end)::numeric(14, 6) as actual_cost_usd,
   coalesce(sum(estimated_cost_usd), 0)::numeric(14, 6) as estimated_cost_usd,
   percentile_cont(0.5) within group (order by latency_ms)
     filter (where latency_ms is not null) as latency_p50_ms,
   percentile_cont(0.95) within group (order by latency_ms)
-    filter (where latency_ms is not null) as latency_p95_ms
+    filter (where latency_ms is not null) as latency_p95_ms,
+  funding,
+  count(*) filter (where cost_usd is null)::bigint as unknown_cost_count
 from public.ai_usage_events
-group by 1, 2, 3, 4, 5, 6, 7, 8;
+group by 1, 2, 3, 4, 5, 6, 7, 8, funding;
 
 create or replace view public.ops_usage_reconciliation
 with (security_invoker = true) as
@@ -661,11 +688,11 @@ select
   a.cost_usd as provider_cost_usd,
   l.amount_credits,
   case
-    when a.id is not null and a.billable and l.id is null
+    when a.id is not null and a.billable and a.funding = 'api' and l.id is null
       then 'billable_ai_event_without_debit'
     when a.id is null and l.id is not null
       then 'debit_without_ai_event'
-    when a.status != 'succeeded' and l.id is not null
+    when a.status != 'succeeded' and l.amount_credits < 0
       then 'failed_ai_event_debited'
   end as issue
 from public.ai_usage_events a
@@ -673,9 +700,9 @@ full outer join public.credit_ledger l
   on l.usage_call_id = a.id::text
   and l.status = 'settled'
 where
-  (a.id is not null and a.billable and l.id is null)
+  (a.id is not null and a.billable and a.funding = 'api' and l.id is null)
   or (a.id is null and l.usage_call_id is not null)
-  or (a.status != 'succeeded' and l.id is not null);
+  or (a.status != 'succeeded' and l.amount_credits < 0);
 
 create or replace view public.ops_unit_economics_daily
 with (security_invoker = true) as
@@ -686,7 +713,7 @@ with days as (
 ), spend as (
   select
     date_trunc('day', created_at) as day,
-    coalesce(sum(cost_usd) filter (where billable), 0) as provider_cost_usd
+    coalesce(sum(cost_usd) filter (where billable and funding = 'api'), 0) as provider_cost_usd
   from public.ai_usage_events
   group by 1
 ), ledger as (
@@ -818,11 +845,11 @@ grant execute on function public.renew_credit_reservation_leases(uuid, integer),
 
 revoke all on function public.settle_model_usage_credits(
   uuid, uuid, uuid, text, text, text, text, text, text, text, integer, integer,
-  integer, numeric, text, text, numeric, numeric, boolean
+  integer, numeric, text, text, numeric, numeric, boolean, text
 ) from public, anon, authenticated;
 grant execute on function public.settle_model_usage_credits(
   uuid, uuid, uuid, text, text, text, text, text, text, text, integer, integer,
-  integer, numeric, text, text, numeric, numeric, boolean
+  integer, numeric, text, text, numeric, numeric, boolean, text
 ) to service_role;
 
 revoke all on function public.prepare_credit_refund(text, text, text)

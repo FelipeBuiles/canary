@@ -263,7 +263,7 @@ export interface CharacterRelationship {
 
 /** One distinct look an entity takes on mid-story (e.g. silver hands). When
  * visually_significant, the cast stage generates its own ref under
- * refs/<id>/states/<state_id>/ (characters) or plates/<state_id>.png (locations). */
+ * refs/<id>/states/<state_id>/ (characters) or plates/<id>/states/<state_id>.png (locations). */
 export interface AppearanceState {
   id: string;
   label: string;
@@ -359,28 +359,19 @@ export interface StoryDecision {
 }
 
 export interface InstructedRefRegenResponse {
-  status: string;
-  instruction_status: "accepted";
-  patch_summary: string;
-  addendum: string;
+  status: "queued";
   job: GenerationJob;
   char_id: string;
 }
 
 export interface InstructedPlateRegenResponse {
-  status: string;
-  instruction_status: "accepted";
-  patch_summary: string;
-  addendum: string;
+  status: "queued";
   job: GenerationJob;
   loc_id: string;
 }
 
 export interface InstructedPropRegenResponse {
-  status: string;
-  instruction_status: "accepted";
-  patch_summary: string;
-  addendum: string;
+  status: "queued";
   job: GenerationJob;
   prop_id: string;
 }

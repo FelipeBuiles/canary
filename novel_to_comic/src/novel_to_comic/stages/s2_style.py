@@ -33,6 +33,7 @@ from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.style_briefing import (
     normalize_prose_brief,
     style_sample_fallback_brief,
+    style_sample_selection,
 )
 from novel_to_comic.style_contract import (
     DEFAULT_LETTERING_STANDARD,
@@ -50,11 +51,11 @@ LLM_REQUEST_COUNT = 8  # ask for more than we need so dedup still yields >= 5
 SAMPLE_CONCURRENCY = 2
 _GENERATION_MAX_ATTEMPTS = 2
 SUGGESTION_SCHEMA_VERSION = 4
-STYLE_BRIEF_VERSION = 4
+STYLE_BRIEF_VERSION = 5
 PORTFOLIO_ROLES = (
     "story_fit_primary", "story_fit_secondary", "adjacent", "contrast", "wildcard",
 )
-STYLE_VALIDATION_ACTION = "A decisive full-body action with readable silhouette and hand gesture."
+STYLE_VALIDATION_ACTION = "A decisive full-body action with readable silhouette appropriate to the subject's species and anatomy."
 STYLE_VALIDATION_COMPOSITION = (
     "One complete portrait comic-page proof with three panels: environment setup, "
     "full-body action, and expressive reaction detail, all using the same declared "
@@ -435,26 +436,26 @@ async def generate_suggestions(
 # Style-sample brief
 # ---------------------------------------------------------------------------
 #
-# The proof images for every candidate style share one subject/setting brief
-# so styles are compared on identical content. An LLM picks the most
-# style-revealing character/location pairing from the story bible and writes
-# it as flowing prose, cached on disk per project; when the pass is disabled
-# or fails, build_style_sample_prompt falls back to a deterministic body.
+# Every candidate shares the same bounded scene roster and setting. The LLM
+# writes staging prose for that fixed selection; the deterministic brief and
+# request compiler consume the same selection when the brief pass is disabled
+# or unavailable. The versioned cache fingerprints that selected evidence.
 
 STYLE_SAMPLE_BRIEF_SYSTEM_PROMPT = (
     "You write the subject brief for a complete-page style proof used to judge candidate "
     "art and production styles for a comic adaptation of a novel. You receive the story's "
     "curated characters, locations, and early scene evidence.\n"
     "\n"
-    "Use the first listed character and first listed location (already curated as the "
-    "proof subjects): a face and figure that show how people render, and an environment "
-    "with depth and material variety. Use the first scene that contains both as quiet "
-    "story context when one is supplied. Do not quote source prose as lettering. Let each "
-    "candidate art direction own the palette, contrast, and value structure.\n"
+    "The supplied roster is the complete, bounded selection for this proof. Show every "
+    "listed subject and no additional characters, animals, creatures, or crowds. "
+    "Scene evidence is context only: mentions of anyone outside the roster are not "
+    "permission to depict them. Preserve each subject's species and anatomy. "
+    "Do not quote source prose as lettering. Let each candidate art direction own "
+    "the palette, contrast, and value structure.\n"
     "\n"
     "Then write that moment as a single flowing brief of 60-120 words, the way a "
     "film director describes the shared visual content of one three-panel proof page:\n"
-    "- Name the character and location, then describe action and staging only. The "
+    "- Name every selected subject and the location, then describe action and staging only. The "
     "compiler supplies full physical anchors separately; do not repeat or redesign them.\n"
     "- Use an environment setup, a three-quarter or full-length character view, and one "
     "expressive detail. Keep them in one coherent place and moment sequence.\n"
@@ -471,35 +472,21 @@ STYLE_SAMPLE_BRIEF_SYSTEM_PROMPT = (
 
 
 def _style_sample_brief_source(story_bible: StoryBible) -> str:
-    """Compact character/location roster the brief LLM picks its subject from."""
+    """Project only the selected scene and its complete protected subject roster."""
+    selection = style_sample_selection(story_bible)
     lines = [f'Story: "{story_bible.title}" by {story_bible.author}']
-    if story_bible.style_notes:
-        lines.append(f"Story notes: {story_bible.style_notes}")
-    if story_bible.characters:
-        lines.append("Characters:")
-        for char in story_bible.characters[:6]:
-            traits = ", ".join(t for t in (char.age_range, char.gender) if t)
-            suffix = f" ({traits})" if traits else ""
-            lines.append(f"- {char.name}{suffix}: {char.visual_anchor or char.name}")
-    if story_bible.locations:
-        lines.append("Locations:")
-        for loc in story_bible.locations[:6]:
-            mood = f" (mood: {loc.mood})" if loc.mood else ""
-            lines.append(f"- {loc.name}{mood}: {loc.visual_anchor or loc.name}")
-    if story_bible.scenes:
-        lines.append("Early scene evidence:")
-        for scene in story_bible.scenes[:6]:
-            anchor = (
-                f' Source anchor: "{scene.source_start_quote}"'
-                if scene.source_start_quote
-                else ""
-            )
-            lines.append(
-                f"- {scene.id} ({scene.scene_type}/{scene.narrative_beat}): "
-                f"location={scene.location_id or 'unknown'}; "
-                f"characters={','.join(scene.character_ids) or 'none'}; "
-                f"{scene.summary}.{anchor}"
-            )
+    lines.append(f"Complete proof roster ({len(selection.characters)} subjects):")
+    for character in selection.characters:
+        lines.append(f"- {character.id}: {character.name}: {character.visual_anchor}")
+    if selection.location:
+        location = selection.location
+        lines.append(f"Location: {location.id}: {location.name}: {location.visual_anchor}")
+    if selection.scene:
+        scene = selection.scene
+        lines.append(
+            f"Selected scene {scene.id}: {scene.summary}\n"
+            f'Source anchor: "{scene.source_start_quote}"'
+        )
     return "\n".join(lines)
 
 
@@ -559,7 +546,11 @@ async def ensure_style_sample_brief(
             data = json.loads(path.read_text())
         except Exception:
             data = {}
-        if data.get("source_sha256") == source_key and (data.get("brief") or "").strip():
+        if (
+            data.get("version") == STYLE_BRIEF_VERSION
+            and data.get("source_sha256") == source_key
+            and normalize_prose_brief(data.get("brief") or "")
+        ):
             return data["brief"]
     brief = await generate_style_sample_brief(config, story_bible)
     if not brief:
@@ -637,8 +628,8 @@ def build_style_sample_request(
 
     width, height = style_proof_dimensions()
     selected_style = page_style_template(config.style_template)
-    character = bible.characters[0] if bible.characters else None
-    location = bible.locations[0] if bible.locations else None
+    selection = style_sample_selection(bible)
+    location = selection.location
     anchors = tuple(filter(None, (
         # Character identity is owned once by PromptSubject below.
         PromptAnchor(
@@ -646,14 +637,15 @@ def build_style_sample_request(
             text=location.visual_anchor,
         ) if location else None,
     )))
-    subjects = (
-        (PromptSubject(
+    subjects = tuple(
+        PromptSubject(
             character_id=character.id, name=character.name,
             identity=character.visual_anchor,
             baseline_affect=character.baseline_affect,
-            action=subject_action or "A quiet characteristic action appropriate to the proof scene.",
-            position="Three-quarter or full-length focal figure.",
-        ),) if character else ()
+            action=subject_action or "A quiet characteristic action appropriate to the proof scene and this subject's anatomy.",
+            position="Three-quarter or full-length view, preserving this subject's anatomy.",
+        )
+        for character in selection.characters
     )
     input_data = AbstractStyleProofInput(
         asset_identity=f"style_sample:{candidate_id}",
@@ -668,6 +660,8 @@ def build_style_sample_request(
             ),
             setting=None,
             constraints=(
+                "Depict exactly the listed subjects and no additional people, animals, "
+                "creatures, or crowds, even if background context mentions them. "
                 "This is a production-design proof, not wordless concept art. Include exactly "
                 'these three lettering specimens once each: narration “The night held its '
                 'breath.”, dialogue “We keep moving.”, and SFX “KRAK”. Apply the declared '
@@ -755,22 +749,16 @@ def style_direction_image(project_dir: Path, direction: dict | None) -> Path | N
 
 def style_validation_brief(bible: StoryBible) -> str:
     """Deterministic second-proof brief emphasizing action and environment."""
-    character = bible.characters[0] if bible.characters else None
-    location = bible.locations[0] if bible.locations else None
-    scene = next(
-        (candidate for candidate in bible.scenes
-         if candidate.scene_type == "action"
-         and (not character or character.id in candidate.character_ids)
-         and (not location or candidate.location_id == location.id)),
-        bible.scenes[0] if bible.scenes else None,
-    )
-    action = scene.summary if scene else "A dynamic physical beat with clear spatial staging."
+    selection = style_sample_selection(bible)
+    names = ", ".join(character.name for character in selection.characters)
+    location = selection.location.name if selection.location else "the story environment"
     return (
-        f"{character.name if character else 'The protagonist'} moves decisively through "
-        f"{location.name if location else 'the story environment'} during this beat: {action} "
-        "Show a readable full-body action silhouette, expressive face and hands, layered "
-        "environment depth, and distinct foreground and background materials across "
-        "setup, action, and reaction panels with the declared production lettering and framing."
+        f"Show only the selected subjects ({names or 'none'}) in {location}. "
+        "Stage a decisive physical micro-beat with clear spatial relationships, using "
+        "each subject's own anatomy and preserving their species. Show readable "
+        "full-body silhouettes, expressive details, layered environment depth, and "
+        "distinct foreground and background materials across setup, action, and reaction "
+        "panels with the declared production lettering and framing."
     )
 
 
@@ -959,7 +947,12 @@ def _style_sample_estimate(config: Config, project_dir: Path, bible: StoryBible,
     if brief_path.exists():
         try:
             cached = json.loads(brief_path.read_text())
-            brief = cached.get("brief") if isinstance(cached, dict) else None
+            if (
+                isinstance(cached, dict)
+                and cached.get("version") == STYLE_BRIEF_VERSION
+                and cached.get("source_sha256") == _style_sample_brief_source_key(config, bible)
+            ):
+                brief = cached.get("brief")
         except (OSError, ValueError):
             brief = None
     width, height = style_proof_dimensions()
@@ -1012,6 +1005,7 @@ def estimate_style_proof_cost_usd(
             cached = json.loads(brief_path.read_text())
             if (
                 isinstance(cached, dict)
+                and cached.get("version") == STYLE_BRIEF_VERSION
                 and cached.get("source_sha256") == _style_sample_brief_source_key(config, bible)
             ):
                 brief = (cached.get("brief") or "").strip() or None

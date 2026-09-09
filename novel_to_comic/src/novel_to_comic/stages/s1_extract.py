@@ -8,6 +8,9 @@ narrative arcs.
 import json
 import re
 from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from rich.console import Console
 
@@ -25,7 +28,7 @@ from novel_to_comic.source_extraction import (
 )
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.target_artifacts import TargetArtifacts
-from novel_to_comic.text_utils import has_offscreen_marker
+from novel_to_comic.text_utils import clean, has_offscreen_marker
 from novel_to_comic.usage import ApiResult, estimate_text_cost, estimate_token_count
 
 console = Console()
@@ -34,6 +37,20 @@ PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "extraction.txt"
 EXTRACT_MAX_OUTPUT_TOKENS = 65536
 ESTIMATED_STORY_BIBLE_MIN_OUTPUT_TOKENS = 12000
 ESTIMATED_STORY_BIBLE_MAX_OUTPUT_TOKENS = 24000
+
+class _CharacterParticipation(BaseModel):
+    """Source evidence consumed only at the extraction boundary."""
+
+    model_config = ConfigDict(extra="forbid")
+    character_id: str
+    scene_id: str
+    classification: Literal["direct_action", "staged_recollection", "background_only"]
+    source_quote: str = Field(min_length=1)
+
+
+class _ExtractionParticipation(BaseModel):
+    character_participation: list[_CharacterParticipation]
+
 
 
 def estimate_story_bible_output_chars(novel_text: str | bytes | int) -> int:
@@ -111,7 +128,7 @@ def _normalize_character_anchor_tags(characters: list[dict]) -> list[dict]:
 
         gender = str(character.get("gender", "")).lower()
         tags = [tag.strip() for tag in anchor.split(",")]
-        if not tags:
+        if not tags or tags[0].lower() not in {"1man", "1woman", "1boy", "1girl", "1other"}:
             continue
 
         is_androgynous = any(word in gender for word in ("androgyn", "non-binary", "nonbinary"))
@@ -162,14 +179,13 @@ def _is_offscreen_character(character: dict) -> bool:
     return has_offscreen_marker(f"{text} {features_text}")
 
 
-def _remove_offscreen_characters(result: dict) -> dict:
-    """Drop voice-only characters until the pipeline models off-screen speakers."""
+def _remove_offscreen_characters(result: dict, excluded_ids: set[str] | None = None) -> dict:
+    """Drop excluded visual subjects and clean their roster/relationship references."""
     characters = result.get("characters")
     if not isinstance(characters, list):
         return result
 
-    # TODO: Add first-class off-screen speaker support instead of dropping them.
-    removed_ids = {
+    removed_ids = (excluded_ids or set()) | {
         character.get("id")
         for character in characters
         if isinstance(character, dict) and _is_offscreen_character(character)
@@ -214,8 +230,52 @@ def _normalize_result(result: dict) -> dict:
     return result
 
 
-def _parse_extraction(raw: object) -> StoryBible:
+def _parse_extraction(raw: object, novel_text: str) -> StoryBible:
     result = raw[0] if isinstance(raw, list) else raw
+    participation = _ExtractionParticipation.model_validate(result).character_participation
+    # Work on a separate payload so schema-correction feedback retains the evidence.
+    result = json.loads(json.dumps(result))
+    characters = {character["id"] for character in result.get("characters", [])}
+    scenes = {scene["id"]: scene for scene in result.get("scenes", [])}
+    classified: set[tuple[str, str]] = set()
+    visible: set[tuple[str, str]] = set()
+    normalized_source = clean(novel_text)
+    for evidence in participation:
+        pair = (evidence.character_id, evidence.scene_id)
+        if evidence.character_id not in characters or evidence.scene_id not in scenes:
+            raise ValueError("Participation evidence must reference existing characters and scenes")
+        if pair in classified:
+            raise ValueError(f"Duplicate participation evidence: {pair}")
+        normalized_quote = clean(evidence.source_quote)
+        if not normalized_quote or normalized_quote not in normalized_source:
+            raise ValueError(
+                f"Participation quote must occur verbatim in the source "
+                f"(ignoring whitespace): {pair}"
+            )
+        classified.add(pair)
+        if evidence.classification != "background_only":
+            visible.add(pair)
+    for scene in scenes.values():
+        for character_id in scene["character_ids"]:
+            if (character_id, scene["id"]) not in classified:
+                raise ValueError(f"Missing participation evidence: {character_id} / {scene['id']}")
+        scene["character_ids"] = [
+            character_id for character_id in scene["character_ids"]
+            if (character_id, scene["id"]) in visible
+        ]
+    for character_id, scene_id in visible:
+        if character_id not in scenes[scene_id]["character_ids"]:
+            raise ValueError(f"Staged participant missing from scene roster: {character_id} / {scene_id}")
+    if characters - {character_id for character_id, _ in classified}:
+        raise ValueError("Every candidate character requires participation evidence")
+    excluded = characters - {character_id for character_id, _ in visible}
+    result = _remove_offscreen_characters(result, excluded)
+    for character in result["characters"]:
+        character["first_appearance_scene"] = next(
+            scene["id"] for scene in scenes.values()
+            if character["id"] in scene["character_ids"]
+        )
+    result.pop("character_participation", None)
     return StoryBible.model_validate(_normalize_result(result))
 
 
@@ -228,7 +288,7 @@ async def _extract_with_retry(
     """Call the extraction model, normalize, validate, and retry on schema errors."""
 
     def parse(raw: object) -> StoryBible:
-        bible = _parse_extraction(raw)
+        bible = _parse_extraction(raw, novel_text)
         aligned = bible.model_copy(deep=True)
         unresolved = align_scene_anchors(aligned, novel_text)
         if unresolved:
@@ -242,7 +302,6 @@ async def _extract_with_retry(
 
     def correction(raw: object, error: Exception) -> str:
         result = raw[0] if isinstance(raw, list) else raw
-        result = _normalize_result(result)
         # Feed the errors back so the model can fix just the broken fields
         return (
             f"Your previous response had schema validation errors. "

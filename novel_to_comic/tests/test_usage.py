@@ -217,3 +217,31 @@ def test_unresolved_settlement_retains_authorization():
             debit_model_usage(db, "user", None, usage, description="small call", job_id="job")
         credits.release_reservation(db, "hold")
     db.table.assert_not_called()
+
+
+def test_subscription_usage_bypasses_tariffs_and_minimum_without_inventing_spend():
+    from novel_to_comic.server.credits import usage_to_credit_debit
+    from novel_to_comic.usage import usage_has_billable_activity
+
+    usage = UsageRecord(
+        provider="openai", model="gpt-image-2", operation="image",
+        input_tokens=1000, output_tokens=2000, image_count=1,
+        funding="codex_subscription",
+    )
+    assert usage.cost_usd is None
+    assert calculate_cost_breakdown(usage).source == "codex_subscription"
+    assert usage_to_credit_debit(usage) == (0, 0.0)
+    assert not usage_has_billable_activity(usage)
+    # Even contradictory provider dollars cannot cross the funding boundary.
+    assert usage_to_credit_debit(usage.model_copy(update={"cost_usd": 100.0})) == (0, 0.0)
+    assert calculate_cost(usage.model_copy(update={"funding": "api"})) == approx(0.065)
+
+
+def test_api_zero_dollars_with_activity_retains_minimum():
+    from novel_to_comic.server.credits import usage_to_credit_debit
+
+    usage = UsageRecord(
+        provider="openai", model="plan-balanced", operation="text",
+        input_tokens=1, cost_usd=0,
+    )
+    assert usage_to_credit_debit(usage) == (1, 0.0)
