@@ -289,7 +289,30 @@ async def _lifespan(app: FastAPI):
 
 
 def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
+    from novel_to_comic.codex_dev import (
+        CodexRoutingError, enabled, is_loopback, validate_startup,
+    )
+
+    validate_startup()
     app = FastAPI(title="Scenewright", lifespan=_lifespan)
+
+    @app.exception_handler(CodexRoutingError)
+    async def codex_routing_error_handler(request, exc: CodexRoutingError):
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    if enabled():
+        @app.middleware("http")
+        async def codex_loopback_only(request, call_next):
+            if (
+                request.client is None
+                or not is_loopback(request.client.host)
+                or not is_loopback(request.url.hostname or "")
+                or any(name in request.headers for name in (
+                    "forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto"
+                ))
+            ):
+                return JSONResponse(status_code=403, content={"detail": "Codex development requires a direct loopback request"})
+            return await call_next(request)
 
     @app.exception_handler(ArtifactMissing)
     async def artifact_missing_exception_handler(request, exc: ArtifactMissing):
@@ -414,6 +437,9 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
             content={
                 "status": "ok" if ok else "error",
                 "pipeline_contract": "eight-stage-v2",
+                "model_mode": (
+                    "codex" if enabled() else "mock" if "mock_models" in checks else "api"
+                ),
                 "checks": checks,
             },
         )

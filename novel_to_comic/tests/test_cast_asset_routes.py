@@ -14,7 +14,7 @@ import json
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -104,12 +104,30 @@ def _project(tmp_path: Path) -> Path:
     return project_dir
 
 
-def _app() -> MagicMock:
-    app = MagicMock()
-    app.state.generation_jobs = {}
-    app.state.generation_job_sequence = 0
-    app.state.generation_queue = asyncio.Queue()
-    return app
+def _app():
+    return SimpleNamespace(state=SimpleNamespace(
+        generation_jobs={},
+        generation_queue=asyncio.Queue(),
+        generation_job_timeout_seconds=5,
+        user_generation_semaphores={},
+        light_generation_semaphores={},
+        generation_semaphore=asyncio.Semaphore(1),
+        admission=None,
+    ))
+
+
+@pytest.fixture
+def image_work(monkeypatch):
+    from novel_to_comic.stages import s3_cast
+
+    images = {}
+    for name in (
+        "regenerate_character_ref", "regenerate_character_state_ref",
+        "regenerate_location_plate", "regenerate_prop_ref",
+    ):
+        images[name] = AsyncMock(return_value=ApiResult(value=None))
+        monkeypatch.setattr(s3_cast, name, images[name])
+    return images
 
 
 def _rewrite(addendum: str = "Singe the left sleeve and darken the cuff.") -> ApiResult:
@@ -121,8 +139,9 @@ def _rewrite(addendum: str = "Singe the left sleeve and darken the cuff.") -> Ap
     )
 
 
-def _apply(project_dir: Path, app, **kwargs):
+def _apply(project_dir: Path, app, *, run_job=True, **kwargs):
     db = MagicMock()
+    app.billing_db = db
 
     def rpc(name, params):
         if name == "reserve_stage_credits":
@@ -147,8 +166,20 @@ def _apply(project_dir: Path, app, **kwargs):
         instruction="Singe her left sleeve.",
         app=app,
     )
+    async def submit():
+        result = await apply_asset_instruction(**{**defaults, **kwargs})
+        if run_job:
+            from novel_to_comic.server.generation_jobs import generation_worker
+
+            worker = asyncio.create_task(generation_worker(app))
+            await app.state.generation_queue.join()
+            worker.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await worker
+        return result
+
     with patch("novel_to_comic.server.credited_job.get_db", return_value=db):
-        return asyncio.run(apply_asset_instruction(**{**defaults, **kwargs}))
+        return asyncio.run(submit())
 
 
 # --- Routing ---------------------------------------------------------------
@@ -222,36 +253,146 @@ def test_an_accepted_addendum_is_normalized():
 # --- Instructed regeneration ----------------------------------------------
 
 
-def test_an_instruction_is_recorded_before_the_regeneration_is_queued(tmp_path: Path):
-    # The regen job reads the active addendum off this log. Queueing first would
-    # let the job start against the unedited asset.
+def test_rewrite_is_queued_and_accepted_direction_precedes_image_work(tmp_path: Path, image_work):
     project_dir = _project(tmp_path)
     app = _app()
-    seen_addendum: list[str] = []
+    seen_addendum = []
 
-    def _capture(*_args, **kwargs):
+    async def capture(*args):
         path = artifacts.character_ref_instructions_path(project_dir, "char_001")
         seen_addendum.append(artifacts.read_active_addendum(path))
-        return MagicMock(id="job1", payload=kwargs.get("payload"))
+        return ApiResult(value=None)
 
+    image_work["regenerate_character_ref"].side_effect = capture
     with patch(
-        "novel_to_comic.clients.text.generate_json",
-        return_value=_rewrite(),
-    ), patch(
-        "novel_to_comic.server.credits.debit_model_usage"
-    ), patch(
-        "novel_to_comic.server.credited_job.enqueue_generation_job",
-        side_effect=_capture,
-    ):
-        result = _apply(project_dir, app)
+        "novel_to_comic.clients.text.generate_json", return_value=_rewrite()
+    ) as rewrite, patch("novel_to_comic.server.credits.debit_model_usage"):
+        result = _apply(project_dir, app, run_job=False)
+        rewrite.assert_not_called()
+        assert not artifacts.character_ref_instructions_path(project_dir, "char_001").exists()
+        with patch("novel_to_comic.server.credited_job.get_db", return_value=app.billing_db):
+            asyncio.run(app.state.generation_jobs[result["job"]["id"]].runner())
 
     assert result["status"] == "queued"
-    assert result["addendum"] == "Singe the left sleeve and darken the cuff."
     assert result["char_id"] == "char_001"
+    assert "addendum" not in result
+    assert "instruction_status" not in result
     assert seen_addendum == ["Singe the left sleeve and darken the cuff."]
 
+@pytest.mark.parametrize(
+    ("asset_type", "asset_id", "state_id", "payload_key"),
+    [
+        ("character", "char_001", None, "char_id"),
+        ("character", "char_001", "burned", "char_id"),
+        ("location", "loc_001", None, "loc_id"),
+        ("location", "loc_001", "ruined", "loc_id"),
+        ("prop", "prop_001", None, "prop_id"),
+    ],
+)
+def test_blocked_rewrite_is_durable_recoverable_and_releases_credit(
+    tmp_path, image_work, asset_type, asset_id, state_id, payload_key,
+):
+    import sqlite3
 
-def test_the_instruction_log_keeps_the_authors_words_and_the_rewrite(tmp_path: Path):
+    from novel_to_comic.server.generation_jobs import recovered_generation_jobs
+
+    project_dir = _project(tmp_path)
+    app = _app()
+    journal_path = tmp_path / "jobs.sqlite3"
+    app.state.admission = SimpleNamespace(journal=lambda: sqlite3.connect(journal_path))
+    reason = "This would replace the canonical identity; request its faithful depiction instead."
+    with patch(
+        "novel_to_comic.clients.text.generate_json",
+        return_value=ApiResult(value={"status": "blocked", "message": reason}, usage=_rewrite().usage),
+    ), patch("novel_to_comic.server.credits.debit_model_usage") as debit:
+        result = _apply(
+            project_dir, app, asset_type=asset_type, asset_id=asset_id, state_id=state_id,
+            instruction="Change the canonical identity.",
+        )
+    job = app.state.generation_jobs[result["job"]["id"]]
+    assert result["job"]["status"] == "queued"
+    assert job.status == "failed"
+    assert job.user_message == reason
+    assert job.recoverable is True
+    assert job.payload[payload_key] == (f"{asset_id}:{state_id}" if state_id else asset_id)
+    assert job.payload["instruction"] == "Change the canonical identity."
+    assert not list(project_dir.rglob("*instructions*"))
+    for image in image_work.values():
+        image.assert_not_awaited()
+    debit.assert_called_once()
+    releases = [call for call in app.billing_db.rpc.call_args_list if call.args[0] == "release_credit_reservation"]
+    assert len(releases) == 1
+    app.state.generation_jobs.clear()
+    recovered = recovered_generation_jobs(app, "u1:p1")
+    assert recovered[0]["status"] == "failed"
+    assert recovered[0]["user_message"] == reason
+    assert recovered[0]["recoverable"] is True
+
+
+def test_canonical_anatomy_restoration_reaches_image_without_mutating_anchor(tmp_path, image_work):
+    project_dir = _project(tmp_path)
+    bible = artifacts.read_story_bible(project_dir)
+    anchor = "1male creature, rat-like humanoid, beard"
+    bible.characters[0].visual_anchor = anchor
+    artifacts.write_story_bible(project_dir, bible)
+    app = _app()
+    direction = "Restore the rat-like humanoid anatomy and beard described by the canonical anchor."
+    with patch(
+        "novel_to_comic.clients.text.generate_json", return_value=_rewrite(direction)
+    ), patch("novel_to_comic.server.credits.debit_model_usage"):
+        result = _apply(project_dir, app, instruction="Restore his source anatomy rather than the human depiction.")
+    assert app.state.generation_jobs[result["job"]["id"]].status == "complete"
+    image_work["regenerate_character_ref"].assert_awaited_once()
+    assert artifacts.read_story_bible(project_dir).characters[0].visual_anchor == anchor
+    assert artifacts.read_active_addendum(
+        artifacts.character_ref_instructions_path(project_dir, "char_001")
+    ) == direction
+
+
+def test_queued_correction_cancellation_releases_hold_once_without_rewrite(tmp_path, image_work):
+    project_dir = _project(tmp_path)
+    app = _app()
+    with patch("novel_to_comic.clients.text.generate_json") as rewrite:
+        result = _apply(project_dir, app, run_job=False)
+        job = app.state.generation_jobs[result["job"]["id"]]
+        job.on_cancel()
+        job.on_cancel()
+    rewrite.assert_not_called()
+    releases = [call for call in app.billing_db.rpc.call_args_list if call.args[0] == "release_credit_reservation"]
+    assert len(releases) == 1
+    for image in image_work.values():
+        image.assert_not_awaited()
+def test_running_rewrite_cancellation_releases_hold_and_never_submits_image(tmp_path, image_work):
+    project_dir = _project(tmp_path)
+    app = _app()
+
+    async def scenario():
+        entered = asyncio.Event()
+
+        async def rewrite(**kwargs):
+            entered.set()
+            await asyncio.Event().wait()
+
+        with patch("novel_to_comic.clients.text.generate_json", side_effect=rewrite):
+            job = next(iter(app.state.generation_jobs.values()))
+            task = asyncio.create_task(job.runner())
+            await entered.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    _apply(project_dir, app, run_job=False)
+    asyncio.run(scenario())
+    releases = [call for call in app.billing_db.rpc.call_args_list if call.args[0] == "release_credit_reservation"]
+    assert len(releases) == 1
+    for image in image_work.values():
+        image.assert_not_awaited()
+
+
+
+
+
+def test_the_instruction_log_keeps_the_authors_words_and_the_rewrite(tmp_path: Path, image_work):
     project_dir = _project(tmp_path)
     app = _app()
     with patch(
@@ -268,7 +409,7 @@ def test_the_instruction_log_keeps_the_authors_words_and_the_rewrite(tmp_path: P
     assert entries[0]["patch"]["addendum"] == "Singe the left sleeve and darken the cuff."
 
 
-def test_a_prior_addendum_is_offered_to_the_rewrite(tmp_path: Path):
+def test_a_prior_addendum_is_offered_to_the_rewrite(tmp_path: Path, image_work):
     # Successive edits must compound rather than silently replace each other.
     project_dir = _project(tmp_path)
     app = _app()
@@ -292,7 +433,7 @@ def test_a_prior_addendum_is_offered_to_the_rewrite(tmp_path: Path):
     assert "Muddy the hem." in captured["user_content"]
 
 
-def test_a_state_edit_describes_the_state_not_the_base_character(tmp_path: Path):
+def test_a_state_edit_describes_the_state_not_the_base_character(tmp_path: Path, image_work):
     project_dir = _project(tmp_path)
     app = _app()
     captured: dict = {}
@@ -337,7 +478,7 @@ def test_an_unknown_asset_is_rejected_before_any_model_call(tmp_path: Path):
     generate.assert_not_called()
 
 
-def test_props_and_locations_route_to_their_own_asset(tmp_path: Path):
+def test_props_and_locations_route_to_their_own_asset(tmp_path: Path, image_work):
     project_dir = _project(tmp_path)
     app = _app()
     with patch(
@@ -346,7 +487,7 @@ def test_props_and_locations_route_to_their_own_asset(tmp_path: Path):
         "novel_to_comic.server.credits.debit_model_usage"
     ):
         prop = _apply(project_dir, app, asset_type="prop", asset_id="prop_001")
-        location = _apply(project_dir, app, asset_type="location", asset_id="loc_001")
+        location = _apply(project_dir, _app(), asset_type="location", asset_id="loc_001")
 
     assert prop["prop_id"] == "prop_001"
     assert location["loc_id"] == "loc_001"
@@ -362,9 +503,19 @@ def test_a_second_edit_is_refused_while_one_is_still_running(tmp_path: Path):
     ), patch(
         "novel_to_comic.server.credits.debit_model_usage"
     ):
-        _apply(project_dir, app)
+        first = _apply(project_dir, app, run_job=False)
+        first_db = app.billing_db
         with pytest.raises(HTTPException) as exc_info:
-            _apply(project_dir, app)
+            _apply(project_dir, app, instruction="Use a different sleeve color.")
+        assert not app.billing_db.rpc.called
+        assert len(app.state.generation_jobs) == 1
+        from novel_to_comic.server.generation_jobs import find_active_generation_job
+
+        assert find_active_generation_job(
+            app, "u1:p1", "character_ref_regen", {"char_id": "char_001"}
+        ).id == first["job"]["id"]
+        reserves = [call for call in first_db.rpc.call_args_list if call.args[0] == "reserve_stage_credits"]
+        assert len(reserves) == 1
     assert exc_info.value.status_code == 409
 
 

@@ -332,6 +332,7 @@ export function useRegenLocationState() {
 
 export function useRegenRefWithInstruction() {
   return useMutation({
+    mutationKey: ["reference-instruction", "char_id"],
     mutationFn: ({
       project,
       charId,
@@ -353,6 +354,7 @@ export function useRegenPlate() {
 
 export function useRegenPlateWithInstruction() {
   return useMutation({
+    mutationKey: ["reference-instruction", "loc_id"],
     mutationFn: ({
       project,
       locId,
@@ -374,6 +376,7 @@ export function useRegenProp() {
 
 export function useRegenPropWithInstruction() {
   return useMutation({
+    mutationKey: ["reference-instruction", "prop_id"],
     mutationFn: ({
       project,
       propId,

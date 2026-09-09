@@ -29,6 +29,7 @@ class CostBreakdown:
     model_alias: str
     provider_model: str
     pricing_snapshot: str
+    funding: str = "api"
 
 
 class PricingResolver:
@@ -148,7 +149,21 @@ class PricingResolver:
         provider_model: str | None = None,
         provider_cost_usd: float | None = None,
         provider_cost_source: str | None = None,
+        funding: str = "api",
     ) -> CostBreakdown:
+        if funding == "codex_subscription":
+            # Monetary liability, not an observation of provider spend or quota.
+            # Do not resolve an API alias/tariff for subscription execution.
+            return CostBreakdown(
+                cost_usd=0.0,
+                source="codex_subscription",
+                model_alias=model_alias,
+                provider_model=provider_model or model_alias,
+                pricing_snapshot="codex_subscription",
+                funding=funding,
+            )
+        if funding != "api":
+            raise ValueError(f"Unknown usage funding: {funding}")
         resolved_model = self.resolve_model(model_alias, provider_model)
         if provider_cost_usd is not None:
             return CostBreakdown(

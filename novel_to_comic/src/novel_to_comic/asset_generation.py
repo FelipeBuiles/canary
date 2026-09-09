@@ -14,6 +14,7 @@ from novel_to_comic.compiled_request import (
     compile_generation_request,
 )
 from novel_to_comic.config import Config
+from novel_to_comic.codex_dev import route_for
 from novel_to_comic.frozen_requests import (
     execute_frozen_request,
     submit_frozen_request,
@@ -54,6 +55,7 @@ class AssetGenerationInput:
     selected_style_source_hash: str | None = None
     asset_kind: AssetKind = "style_sample"
     lineage: dict[str, Any] | None = None
+    edit_parent_indices: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,6 +192,7 @@ def compile_non_panel_request(
 ) -> NonPanelRequest:
     profile = image_model_profile_for_config(config)
     model = config.effective_image_model()
+    codex_route = route_for("image", model)
     controls = GenerationControls(
         quality=config.image_quality if profile.supports_control("quality") else None,
     )
@@ -199,7 +202,9 @@ def compile_non_panel_request(
         reference_plan=plan,
         route_profile=profile,
         requested_alias=model,
-        configured_provider_model=describe_image_model(model).provider_model,
+        configured_provider_model=(
+            codex_route.image_model if codex_route else describe_image_model(model).provider_model
+        ),
         selected_style_text=input_data.selected_style_text,
         selected_style_source_hash=input_data.selected_style_source_hash,
         controls=controls,
@@ -210,7 +215,7 @@ def compile_non_panel_request(
         input=input_data,
         reference_plan=plan,
         compiled=compiled,
-        wire=compile_provider_wire_request(compiled),
+        wire=compile_provider_wire_request(compiled, edit_parent_indices=input_data.edit_parent_indices),
     )
 
 
@@ -222,7 +227,7 @@ def estimate_non_panel_request(
     prepared: bool = False,
 ) -> NonPanelEstimate:
     request = compile_non_panel_request(config, input_data, reference_plan=reference_plan)
-    cost = estimate_image_cost(
+    cost = 0.0 if request.wire.provider_key == "codex-dev" else estimate_image_cost(
         config.effective_image_model(), 1,
         quality=getattr(config, "image_quality", None),
         ref_count=request.reference_plan.ref_count,
@@ -325,7 +330,7 @@ def persist_non_panel_provenance(
         actual_width=width,
         actual_height=height,
         actual_provider_model=(result.actual_provider_model if result and result.actual_provider_model
-                               else usage.provider_model if usage else None),
+                               else usage.provider_model if usage and request.wire.provider_key != "codex-dev" else None),
         provider_request_id=result.provider_request_id if result else None,
         cost_usd=usage.cost_usd if usage else None,
         failure=(
@@ -333,6 +338,8 @@ def persist_non_panel_provenance(
         ),
         project_dir=project_dir,
         lineage=request.input.lineage,
+        funding=usage.funding if usage else ("codex_subscription" if request.wire.provider_key == "codex-dev" else "api"),
+        response_metadata=result.response_metadata if result else None,
     )
     payload = _meta_payload(request, provenance, error=error)
     if error is not None:
@@ -377,6 +384,7 @@ async def submit_non_panel_request(
     if not project_name or user_id is None:
         raise ValueError("queued non-panel submission requires project_name and user_id")
     from novel_to_comic.server.credited_job import enqueue_frozen_generation_job
+    from novel_to_comic.server.codex_admission import image_operations
 
     async def _complete(result: ApiResult[Any], frozen: Any) -> None:
         persist_non_panel_provenance(
@@ -398,6 +406,7 @@ async def submit_non_panel_request(
         idempotency_key=idempotency_key, feature=feature, semaphore=semaphore,
         estimate_credits=estimate_credits, on_complete=_complete, on_failure=_failure,
         request_context=compiled_request_context(request.compiled),
+        operations=image_operations(config),
     )
     return NonPanelSubmission(
         job.payload["frozen_request_id"], request.wire.execution_fingerprint,

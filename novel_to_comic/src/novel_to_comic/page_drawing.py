@@ -1,4 +1,4 @@
-"""Complete-page Draw compilation, Vertex submission, and persistence."""
+"""Complete-page Draw compilation, profile-bound submission, and persistence."""
 
 from __future__ import annotations
 
@@ -79,8 +79,8 @@ class CompiledPageGeneration:
 
 
 @dataclass(frozen=True, slots=True)
-class PreparedVertexPageRequest:
-    """The exact immutable object handed to the Vertex transport."""
+class PreparedCompletePageRequest:
+    """The exact immutable complete-page request handed to a selected adapter."""
 
     request_sha256: str
     model: str
@@ -99,8 +99,14 @@ class PreparedVertexPageRequest:
 class CompletePageTransport(Protocol):
     async def generate(
         self,
-        request: PreparedVertexPageRequest,
+        request: PreparedCompletePageRequest,
     ) -> CompletePageProviderResult: ...
+
+
+class CompletePageAdapter(Protocol):
+    def prepare(self, compiled: CompiledPageGeneration) -> PreparedCompletePageRequest: ...
+
+    async def generate(self, prepared: PreparedCompletePageRequest) -> CompletePageProviderResult: ...
 
 
 def production_page_capability_profile() -> PageCapabilityProfile:
@@ -123,13 +129,64 @@ def production_page_capability_profile() -> PageCapabilityProfile:
     )
 
 
+_CODEX_PAGE_PROFILE_PREFIX = "codex-dev-complete-page-v1-"
+
+
+def current_page_capability_profile() -> PageCapabilityProfile:
+    """Select only from original-process complete-page routing authority."""
+    from novel_to_comic.ai import codex_runtime
+    from novel_to_comic.codex_dev import route_for
+
+    route = route_for("complete_page", COMPLETE_PAGE_GATEWAY_MODEL)
+    if route is None:
+        return production_page_capability_profile()
+    if route.image_model != "gpt-image-2":
+        raise ValueError("Unsupported Codex complete-page image selector")
+    binding = json.dumps(
+        [route.reasoning_model, sorted(codex_runtime.image_execution_controls())],
+        separators=(",", ":"), ensure_ascii=False,
+    )
+    return PageCapabilityProfile(
+        id=_CODEX_PAGE_PROFILE_PREFIX + hashlib.sha256(binding.encode()).hexdigest(),
+        provider="codex-dev",
+        model=route.image_model,
+        max_image_references=5,
+        reference_ordering="ordered",
+        editing_modes=("instructed", "region_targeted"),
+        output_width=COMPLETE_PAGE_OUTPUT_WIDTH,
+        output_height=COMPLETE_PAGE_OUTPUT_HEIGHT,
+        max_prompt_characters=COMPLETE_PAGE_MAX_PROMPT_CHARACTERS,
+        retry_semantics="bounded_submission",
+        max_attempts=1,
+        price_per_page_usd=Decimal("0"),
+        price_per_reference_usd=Decimal("0"),
+    )
+
+
+def page_profile_uses_native_dimensions(profile: PageCapabilityProfile) -> bool:
+    """Recognize retained native editions without requiring their runtime active."""
+    return (
+        profile.provider == "codex-dev"
+        and profile.model == "gpt-image-2"
+        and re.fullmatch(re.escape(_CODEX_PAGE_PROFILE_PREFIX) + r"[0-9a-f]{64}", profile.id) is not None
+    )
+
+
+def complete_page_adapter(config: Config) -> CompletePageAdapter:
+    if page_profile_uses_native_dimensions(current_page_capability_profile()):
+        from novel_to_comic.codex_complete_page import CodexCompletePageAdapter
+
+        return CodexCompletePageAdapter(config)
+    return VertexCompletePageAdapter(GoogleVertexCompletePageTransport(config))
+
+
 def select_book_edition(
     *,
     edition_id: str,
     profile: PageCapabilityProfile,
     existing: BookEdition | None = None,
 ) -> BookEdition:
-    """Select the sole production profile, or verify an existing fixed edition."""
+    """Select the process-bound profile without changing an existing edition."""
 
     if (
         existing is not None
@@ -139,19 +196,10 @@ def select_book_edition(
         )
     ):
         raise ValueError("one model and capability profile are fixed for the edition")
-    if (
-        profile.provider != COMPLETE_PAGE_PROVIDER
-        or profile.model != COMPLETE_PAGE_MODEL
-        or not profile.complete_page_generation
-        or not profile.exact_visible_lettering
-        or profile.reference_ordering != "ordered"
-        or profile.retry_semantics != "bounded_submission"
-        or profile.max_image_references < 1
-        or profile.output_width <= 0
-        or profile.output_height <= 0
-    ):
+    if profile != current_page_capability_profile():
         raise ValueError(
-            "provider/model does not satisfy complete-page production capability"
+            "provider/model does not satisfy the current complete-page capability profile; "
+            "existing editions cannot change profiles"
         )
     selected = BookEdition(
         revision=existing.revision if existing is not None else 1,
@@ -167,11 +215,11 @@ def ensure_current_page_edition(
     artifacts: TargetArtifacts,
     edition: BookEdition,
 ) -> BookEdition:
-    """Reject incompatible editions; model changes require an explicit redraw."""
-    if edition.capability_profile != production_page_capability_profile():
+    """Reject incompatible editions without rewriting their fixed selection."""
+    if edition.capability_profile != current_page_capability_profile():
         raise ValueError(
-            "This edition uses a different page profile. Start a new edition by "
-            "rerunning Draw; existing pages will not be mixed with another model."
+            "This edition uses a different page profile. Existing editions cannot "
+            "change profiles; existing pages will not be mixed with another model."
         )
     return edition
 
@@ -467,6 +515,8 @@ def compile_page_generation_request(
             raise ValueError("edit source bytes do not match correction lineage")
     authorities = _selected_authorities(page, inventory)
     max_references = selected_edition.capability_profile.max_image_references
+    if page_profile_uses_native_dimensions(selected_edition.capability_profile) and correction is not None:
+        max_references -= 1  # The parent is an input image, never an authority replacement.
     if len(authorities) > max_references:
         raise ValueError(
             f"Page {page.page_number} requires {len(authorities)} approved references, "
@@ -592,16 +642,84 @@ def prepare_page_correction(
     return PreparedPageCorrection(correction=correction, compiled=compiled, context=context)
 
 
-def correction_credit_estimate(compiled: CompiledPageGeneration, *, reserve: bool):
+def correction_credit_estimate(compiled: CompiledPageGeneration, *, config: Config, reserve: bool):
     """Credit estimate for one compiled correction, including its text check."""
     from novel_to_comic.server.credits import credit_estimate_for_provider_cost
+    from novel_to_comic.codex_dev import classify_operations
+    from novel_to_comic.server.codex_admission import draw_operations
+
+    funding = classify_operations(draw_operations(config))
 
     return credit_estimate_for_provider_cost(
         float(compiled.request.estimated_cost_usd) + float(PAGE_OCR_ESTIMATED_COST_USD),
         "draw",
         reserve=reserve,
         zero_cost_estimate=0,
+        funding=funding,
     )
+
+
+def _validate_compiled_page(
+    compiled: CompiledPageGeneration, profile: PageCapabilityProfile,
+) -> None:
+    request = compiled.request
+    if profile != current_page_capability_profile():
+        raise ValueError("Complete-page profile changed; existing requests cannot be rerouted")
+    if (
+        request.profile_id != profile.id
+        or request.profile_sha256 != profile.content_sha256
+        or request.provider != profile.provider
+        or request.model != profile.model
+        or (request.output_width, request.output_height) != (profile.output_width, profile.output_height)
+        or request.output_media_type != profile.output_media_type
+        or request.retry.attempt > profile.max_attempts
+        or len(request.prompt) > profile.max_prompt_characters
+        or request.estimated_cost_usd != profile.price_per_page_usd + profile.price_per_reference_usd * len(request.references)
+    ):
+        raise ValueError("Frozen complete-page request does not match the selected profile")
+    total = len(request.references)
+    if page_profile_uses_native_dimensions(profile) and request.correction is not None:
+        total += 1
+    if total > profile.max_image_references:
+        raise ValueError("Complete-page image inputs exceed profile capacity; references cannot be dropped")
+    if request.correction is not None and request.correction.mode not in profile.editing_modes:
+        raise ValueError("Correction mode is unsupported by the selected profile")
+    if len(request.references) != len(compiled.reference_bytes):
+        raise ValueError("reference metadata and uploaded bytes must be one-to-one")
+    for reference, data in zip(request.references, compiled.reference_bytes, strict=True):
+        if hashlib.sha256(data).hexdigest() != reference.content_sha256:
+            raise ValueError(f"selected reference {reference.order} bytes changed after compilation")
+    if request.correction is None:
+        if compiled.edit_source_bytes is not None:
+            raise ValueError("initial generation cannot submit an edit source")
+    elif compiled.edit_source_bytes is None or (
+        hashlib.sha256(compiled.edit_source_bytes).hexdigest() != request.correction.parent_render_image_sha256
+    ):
+        raise ValueError("complete-page edit source changed after compilation")
+
+
+def _prepare_complete_page(
+    compiled: CompiledPageGeneration, profile: PageCapabilityProfile,
+) -> PreparedCompletePageRequest:
+    _validate_compiled_page(compiled, profile)
+    request = compiled.request
+    return PreparedCompletePageRequest(
+        request_sha256=request.request_sha256, model=request.model, prompt=request.prompt,
+        references=request.references, reference_bytes=compiled.reference_bytes,
+        edit_source_bytes=compiled.edit_source_bytes,
+        width=request.output_width, height=request.output_height,
+        media_type=request.output_media_type, idempotency_key=request.request_sha256,
+        estimated_cost_usd=request.estimated_cost_usd, frozen_request_json=request.model_dump_json(),
+    )
+
+
+def _validate_prepared_page(
+    prepared: PreparedCompletePageRequest, profile: PageCapabilityProfile,
+) -> None:
+    request = FrozenPageGenerationRequest.model_validate_json(prepared.frozen_request_json)
+    compiled = CompiledPageGeneration(request, prepared.reference_bytes, prepared.edit_source_bytes)
+    if prepared != _prepare_complete_page(compiled, profile):
+        raise ValueError("Prepared complete-page request differs from its frozen semantic request")
 
 
 class VertexCompletePageAdapter:
@@ -610,54 +728,21 @@ class VertexCompletePageAdapter:
     def __init__(self, transport: CompletePageTransport) -> None:
         self._transport = transport
 
-    def prepare(self, compiled: CompiledPageGeneration) -> PreparedVertexPageRequest:
+    def prepare(self, compiled: CompiledPageGeneration) -> PreparedCompletePageRequest:
         request = compiled.request
         if request.provider != COMPLETE_PAGE_PROVIDER or request.model != COMPLETE_PAGE_MODEL:
             raise ValueError("complete-page request is not bound to the production Vertex profile")
-        if len(request.references) != len(compiled.reference_bytes):
-            raise ValueError("reference metadata and uploaded bytes must be one-to-one")
-        for reference, data in zip(
-            request.references,
-            compiled.reference_bytes,
-            strict=True,
-        ):
-            if hashlib.sha256(data).hexdigest() != reference.content_sha256:
-                raise ValueError(
-                    f"selected reference {reference.order} bytes changed after compilation"
-                )
-        if request.correction is None and compiled.edit_source_bytes is not None:
-            raise ValueError("initial generation cannot submit an edit source")
-        if request.correction is not None:
-            if compiled.edit_source_bytes is None:
-                raise ValueError("complete-page correction is missing its edit source")
-            if (
-                hashlib.sha256(compiled.edit_source_bytes).hexdigest()
-                != request.correction.parent_render_image_sha256
-            ):
-                raise ValueError("complete-page edit source changed after compilation")
-        return PreparedVertexPageRequest(
-            request_sha256=request.request_sha256,
-            model=request.model,
-            prompt=request.prompt,
-            references=request.references,
-            reference_bytes=compiled.reference_bytes,
-            edit_source_bytes=compiled.edit_source_bytes,
-            width=request.output_width,
-            height=request.output_height,
-            media_type=request.output_media_type,
-            idempotency_key=request.request_sha256,
-            estimated_cost_usd=request.estimated_cost_usd,
-            frozen_request_json=request.model_dump_json(),
-        )
+        return _prepare_complete_page(compiled, production_page_capability_profile())
 
     async def generate(
         self,
-        prepared: PreparedVertexPageRequest,
+        prepared: PreparedCompletePageRequest,
     ) -> CompletePageProviderResult:
+        _validate_prepared_page(prepared, production_page_capability_profile())
         result = await self._transport.generate(prepared)
         actual_model = result.actual_provider_model
         for prefix in ("vertex_ai/", "vertex-multimodal/"):
-            if actual_model.startswith(prefix):
+            if actual_model is not None and actual_model.startswith(prefix):
                 actual_model = actual_model.removeprefix(prefix)
                 break
         mismatches: list[str] = []
@@ -695,7 +780,7 @@ class GoogleVertexCompletePageTransport:
 
     async def generate(
         self,
-        request: PreparedVertexPageRequest,
+        request: PreparedCompletePageRequest,
     ) -> CompletePageProviderResult:
         from PIL import Image
         from novel_to_comic.ai import client as ai_client
@@ -705,6 +790,7 @@ class GoogleVertexCompletePageTransport:
             finalise_image_failure,
         )
 
+        _validate_prepared_page(request, production_page_capability_profile())
         files = []
         ref_reads: list[tuple[Path, bytes | None]] = []
         if request.edit_source_bytes is not None:
@@ -910,7 +996,7 @@ class GoogleVertexCompletePageTransport:
 async def draw_complete_page(
     compiled: CompiledPageGeneration,
     *,
-    adapter: VertexCompletePageAdapter,
+    adapter: CompletePageAdapter,
     artifacts: TargetArtifacts,
     page: ComicPage,
     ocr: "OCRAdapter | None" = None,
@@ -920,6 +1006,8 @@ async def draw_complete_page(
     defer_completion: bool = False,
 ) -> PageGenerationProvenance:
     """Persist and execute exactly one complete-page request."""
+
+    _validate_compiled_page(compiled, current_page_capability_profile())
 
     correction = compiled.request.correction
     if correction is None and parent_render_revision is not None:
@@ -1000,12 +1088,17 @@ async def draw_complete_page(
         provider=compiled.request.provider,
         model=compiled.request.model,
         latency_ms=provider_result.latency_ms,
-        cost_usd=Decimal(str(calculate_cost(provider_result.usage))),
+        cost_usd=(
+            None if provider_result.usage.funding == "codex_subscription"
+            and provider_result.usage.cost_usd is None
+            else Decimal(str(calculate_cost(provider_result.usage)))
+        ),
     )
     provenance = PageGenerationProvenance(
         render=render,
         usage=provider_result.usage,
         provider_request_id=provider_result.provider_request_id,
+        response_metadata=provider_result.response_metadata,
     )
     artifacts.persist_generated_page(provenance, provider_result.image_bytes)
     if ocr is not None:
@@ -1119,7 +1212,7 @@ async def correct_complete_page(
     compiled: CompiledPageGeneration,
     *,
     issue: PageIssue | None,
-    adapter: VertexCompletePageAdapter,
+    adapter: CompletePageAdapter,
     artifacts: TargetArtifacts,
     page: ComicPage,
     ocr: "OCRAdapter | None" = None,
@@ -1188,8 +1281,9 @@ def enqueue_complete_page_draw(
     user_id: str,
     project_id: str | None,
     project_dir: Path,
+    config: Config,
     compiled: CompiledPageGeneration,
-    adapter: VertexCompletePageAdapter,
+    adapter: CompletePageAdapter,
     artifacts: TargetArtifacts,
     page: ComicPage,
     ocr: "OCRAdapter | None" = None,
@@ -1206,6 +1300,11 @@ def enqueue_complete_page_draw(
     adapter.prepare(compiled)
     from novel_to_comic.server.credited_job import enqueue_reserved_generation_job
     from novel_to_comic.server.credits import credit_estimate_for_provider_cost
+    from novel_to_comic.codex_dev import classify_operations
+    from novel_to_comic.server.codex_admission import draw_operations
+
+    operations = draw_operations(config, ocr=ocr is not None)
+    funding = classify_operations(operations)
 
     estimate = credit_estimate_for_provider_cost(
         float(compiled.request.estimated_cost_usd)
@@ -1213,6 +1312,7 @@ def enqueue_complete_page_draw(
         "draw",
         reserve=True,
         zero_cost_estimate=0,
+        funding=funding,
     )
 
     async def _draw() -> ApiResult[PageGenerationProvenance]:
@@ -1293,8 +1393,9 @@ def enqueue_complete_page_draw(
             value=provenance,
             usage=provenance.usage,
             provider_request_id=provenance.provider_request_id,
-            actual_provider_model=provenance.render.model,
+            actual_provider_model=provenance.usage.provider_model,
             additional_usage=_analysis_usage(artifacts, provenance),
+            response_metadata=provenance.response_metadata,
         )
 
     async def _work() -> ApiResult[PageGenerationProvenance]:
@@ -1328,5 +1429,6 @@ def enqueue_complete_page_draw(
         work=_work,
         debit_description=f"Complete page {compiled.request.page_number}",
         reservation_credits=estimate["reserved_credits"] or 0,
+        operations=operations,
         on_settled=_settled,
     )

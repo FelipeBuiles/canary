@@ -92,7 +92,7 @@ function ReferenceViews({ projectName, charId, timestamp }: { projectName: strin
 /**
  * Per-state appearance refs (silver hands, stumps, collapsed building, …).
  * Each visually-significant state gets its own generated ref under
- * refs/<id>/states/<state>/ (characters) or plates/<state>.png (locations).
+ * refs/<id>/states/<state>/ (characters) or plates/<id>/states/<state>.png (locations).
  * States whose ref hasn't been generated yet (or failed) show a PENDING chip
  * rather than vanishing, so the gap is visible.
  */
@@ -122,11 +122,11 @@ export function StateRefRow({
   const thumbUrl = (stateId: string) =>
     kind === "character"
       ? `${base}/refs/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}/portrait.png?v=${encodeURIComponent(refreshToken ?? "current")}`
-      : `${base}/plates/${encodeURIComponent(stateId)}.png?v=${encodeURIComponent(refreshToken ?? "current")}`;
+      : `${base}/plates/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}.png?v=${encodeURIComponent(refreshToken ?? "current")}`;
   const fullUrl = (stateId: string) =>
     kind === "character"
       ? `${base}/refs/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}/sheet.png?v=${encodeURIComponent(refreshToken ?? "current")}`
-      : `${base}/plates/${encodeURIComponent(stateId)}.png?v=${encodeURIComponent(refreshToken ?? "current")}`;
+      : `${base}/plates/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}.png?v=${encodeURIComponent(refreshToken ?? "current")}`;
 
   const tileWidth = kind === "character" ? "w-[64px]" : "w-[104px]";
   const imgAspect = kind === "character" ? "aspect-[64/84]" : "aspect-[16/9]";
@@ -394,11 +394,9 @@ function CharacterCastCard({
 }) {
   const refUrl = `/api/projects/${encodeURIComponent(projectName)}/files/refs/${encodeURIComponent(character.id)}/sheet.png`;
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, regenError, setRegenError } =
+  const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, isSubmitting, instructionDraft, regenError, setRegenError } =
     useReferenceJob(projectName, "char_id", character.id);
-  const [instruction, setInstruction] = useState("");
-  const [instructionError, setInstructionError] = useState<string | null>(null);
-  const [lastAddendum, setLastAddendum] = useState<string | null>(null);
+  const [instruction, setInstruction] = useState<string | null>(null);
   const regenRef = useRegenRef();
   const regenRefInstructed = useRegenRefWithInstruction();
   const { data: regenEstimate } = useAssetRegenEstimate(projectName, "character", character.id, undefined, isModalOpen);
@@ -440,21 +438,16 @@ function CharacterCastCard({
     );
   };
 
-  const submitInstruction = (nextInstruction = instruction) => {
+  const submitInstruction = (nextInstruction: string) => {
     const trimmed = nextInstruction.trim();
-    if (!trimmed) {
-      setInstructionError("Add a short visual instruction first.");
-      return;
-    }
-    setInstructionError(null);
+    if (!trimmed) return;
+    setInstruction(trimmed);
     setRegenError(null);
     regenRefInstructed.mutate(
       { project: projectName, charId: character.id, instruction: trimmed },
       {
         onSuccess: (data) => {
           setActiveJob(data.job);
-          setLastAddendum(data.addendum);
-          setInstruction("");
         },
         onError: (err) => {
           if (
@@ -465,19 +458,19 @@ function CharacterCastCard({
           ) {
             return;
           }
-          setInstructionError(err.message);
+          setRegenError(err.message);
         },
       },
     );
   };
 
-  const isInstructionBusy = regenRefInstructed.isPending;
+  const isInstructionBusy = regenRefInstructed.isPending || isSubmitting;
 
   const { t } = useI18n();
   const { hasImage, probe } = useLiveStageAsset(refUrl, timestamp, stageRegenerating);
   // A card hides its asset only while that asset is genuinely absent or
   // while this card's own regeneration is in flight.
-  const isGenerating = (stageRegenerating && !hasImage) || regenRef.isPending || !!activeJob;
+  const isGenerating = (stageRegenerating && !hasImage) || regenRef.isPending || isInstructionBusy || !!activeJob;
   const isQueued = activeJob?.status === "queued" || (activeJob && activeJob.queue_position);
 
   return (
@@ -535,6 +528,7 @@ function CharacterCastCard({
         <div className="font-display text-[1.35rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
           {character.name}
         </div>
+        <p className="mt-3 break-words text-sm leading-6 text-ink-black">{character.visual_anchor}</p>
         <div className="mt-2 font-body text-[0.92rem] font-semibold text-ink-black/55">
           {character.age_range} &middot; {character.gender}
         </div>
@@ -553,7 +547,9 @@ function CharacterCastCard({
         />
         {regenError && (
           <div role="alert" className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-sm leading-relaxed text-bristol">
+            <strong className="block">{t("REGENERATION FAILED")}</strong>
             {regenError}
+            <span className="mt-1 block">{t("The current reference has not been replaced. Review your change and try again.")}</span>
           </div>
         )}
       </EntityCard>
@@ -567,6 +563,10 @@ function CharacterCastCard({
         title={character.name.toUpperCase()}
         sidebar={(
           <div className="space-y-5">
+            <section aria-label={t("VISUAL ANCHOR")}>
+              <h3 className="font-meta text-xs text-ink-muted">{t("VISUAL ANCHOR")}</h3>
+              <p className="mt-1 break-words text-sm leading-6 text-ink-black">{character.visual_anchor}</p>
+            </section>
             <RegenAction
               assetLabel={character.name}
               cost={regenEstimate}
@@ -574,8 +574,9 @@ function CharacterCastCard({
               hasImage={!imgFailed}
               busy={isGenerating || isInstructionBusy}
               busyLabel={isQueued ? t("QUEUED") : t("DRAWING…")}
-              error={regenError ?? instructionError}
-              lastInstruction={lastAddendum}
+              error={regenError}
+              instruction={instruction ?? instructionDraft}
+              onInstructionChange={setInstruction}
               onRegenerate={startRegen}
               onRegenerateWithInstruction={submitInstruction}
             />
@@ -595,10 +596,6 @@ function CharacterCastCard({
               charId={character.id}
               states={character.appearance_states}
             />
-            <div>
-              <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">HOW THEY'LL LOOK</div>
-              <p className="text-[0.82rem] leading-6 text-ink-black">{character.visual_anchor}</p>
-            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">AGE</div>
@@ -668,7 +665,7 @@ function LocationStateTile({
   const { data: regenEstimate } = useAssetRegenEstimate(projectName, "location", locId, state.id);
 
 
-  const imageUrl = `/api/projects/${encodeURIComponent(projectName)}/files/plates/${encodeURIComponent(state.id)}.png?t=${timestamp}`;
+  const imageUrl = `/api/projects/${encodeURIComponent(projectName)}/files/plates/${encodeURIComponent(locId)}/states/${encodeURIComponent(state.id)}.png?t=${timestamp}`;
   const busy = regenState.isPending || !!activeJob;
   const isQueued = activeJob?.status === "queued" || (activeJob && activeJob.queue_position);
 
@@ -780,11 +777,9 @@ function LocationPlateCard({
 }) {
   const plateUrl = `/api/projects/${encodeURIComponent(projectName)}/files/plates/${encodeURIComponent(location.id)}.png`;
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, regenError, setRegenError: setLocalRegenError } =
+  const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, isSubmitting, instructionDraft, regenError, setRegenError: setLocalRegenError } =
     useReferenceJob(projectName, "loc_id", location.id);
-  const [instruction, setInstruction] = useState("");
-  const [instructionError, setInstructionError] = useState<string | null>(null);
-  const [lastAddendum, setLastAddendum] = useState<string | null>(null);
+  const [instruction, setInstruction] = useState<string | null>(null);
   const regenPlate = useRegenPlate();
   const regenPlateInstructed = useRegenPlateWithInstruction();
   const { data: regenEstimate } = useAssetRegenEstimate(projectName, "location", location.id, undefined, isModalOpen);
@@ -826,21 +821,16 @@ function LocationPlateCard({
     );
   };
 
-  const submitInstruction = (nextInstruction = instruction) => {
+  const submitInstruction = (nextInstruction: string) => {
     const trimmed = nextInstruction.trim();
-    if (!trimmed) {
-      setInstructionError("Add a short visual instruction first.");
-      return;
-    }
-    setInstructionError(null);
+    if (!trimmed) return;
+    setInstruction(trimmed);
     setLocalRegenError(null);
     regenPlateInstructed.mutate(
       { project: projectName, locId: location.id, instruction: trimmed },
       {
         onSuccess: (data) => {
           setActiveJob(data.job);
-          setLastAddendum(data.addendum);
-          setInstruction("");
         },
         onError: (err) => {
           if (
@@ -851,19 +841,19 @@ function LocationPlateCard({
           ) {
             return;
           }
-          setInstructionError(err.message);
+          setLocalRegenError(err.message);
         },
       },
     );
   };
 
-  const isInstructionBusy = regenPlateInstructed.isPending;
+  const isInstructionBusy = regenPlateInstructed.isPending || isSubmitting;
 
   const { t } = useI18n();
   const { hasImage, probe } = useLiveStageAsset(plateUrl, timestamp, stageRegenerating);
   // A card hides its asset only while that asset is genuinely absent or
   // while this card's own regeneration is in flight.
-  const isGenerating = (stageRegenerating && !hasImage) || regenPlate.isPending || !!activeJob;
+  const isGenerating = (stageRegenerating && !hasImage) || regenPlate.isPending || isInstructionBusy || !!activeJob;
   const isQueued = activeJob?.status === "queued" || (activeJob && activeJob.queue_position);
 
   return (
@@ -934,7 +924,9 @@ function LocationPlateCard({
         />
         {regenError && (
           <div role="alert" className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-sm leading-relaxed text-bristol">
+            <strong className="block">{t("REGENERATION FAILED")}</strong>
             {regenError}
+            <span className="mt-1 block">{t("The current reference has not been replaced. Review your change and try again.")}</span>
           </div>
         )}
       </EntityCard>
@@ -955,8 +947,9 @@ function LocationPlateCard({
               hasImage={!imgFailed}
               busy={isGenerating || isInstructionBusy}
               busyLabel={isQueued ? t("QUEUED") : t("DRAWING…")}
-              error={regenError ?? instructionError}
-              lastInstruction={lastAddendum}
+              error={regenError}
+              instruction={instruction ?? instructionDraft}
+              onInstructionChange={setInstruction}
               onRegenerate={startRegen}
               onRegenerateWithInstruction={submitInstruction}
             />
@@ -1005,11 +998,9 @@ function PropRefCard({
 }) {
   const refUrl = `/api/projects/${encodeURIComponent(projectName)}/files/refs/props/${encodeURIComponent(prop.id)}/ref.png`;
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, regenError, setRegenError: setLocalRegenError } =
+  const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, isSubmitting, instructionDraft, regenError, setRegenError: setLocalRegenError } =
     useReferenceJob(projectName, "prop_id", prop.id);
-  const [instruction, setInstruction] = useState("");
-  const [instructionError, setInstructionError] = useState<string | null>(null);
-  const [lastAddendum, setLastAddendum] = useState<string | null>(null);
+  const [instruction, setInstruction] = useState<string | null>(null);
   const regenProp = useRegenProp();
   const regenPropInstructed = useRegenPropWithInstruction();
   const { data: regenEstimate } = useAssetRegenEstimate(projectName, "prop", prop.id, undefined, isModalOpen);
@@ -1051,21 +1042,16 @@ function PropRefCard({
     );
   };
 
-  const submitInstruction = (nextInstruction = instruction) => {
+  const submitInstruction = (nextInstruction: string) => {
     const trimmed = nextInstruction.trim();
-    if (!trimmed) {
-      setInstructionError("Add a short visual instruction first.");
-      return;
-    }
-    setInstructionError(null);
+    if (!trimmed) return;
+    setInstruction(trimmed);
     setLocalRegenError(null);
     regenPropInstructed.mutate(
       { project: projectName, propId: prop.id, instruction: trimmed },
       {
         onSuccess: (data) => {
           setActiveJob(data.job);
-          setLastAddendum(data.addendum);
-          setInstruction("");
         },
         onError: (err) => {
           if (
@@ -1076,19 +1062,19 @@ function PropRefCard({
           ) {
             return;
           }
-          setInstructionError(err.message);
+          setLocalRegenError(err.message);
         },
       },
     );
   };
 
-  const isInstructionBusy = regenPropInstructed.isPending;
+  const isInstructionBusy = regenPropInstructed.isPending || isSubmitting;
 
   const { t } = useI18n();
   const { hasImage, probe } = useLiveStageAsset(refUrl, timestamp, stageRegenerating);
   // A card hides its asset only while that asset is genuinely absent or
   // while this card's own regeneration is in flight.
-  const isGenerating = (stageRegenerating && !hasImage) || regenProp.isPending || !!activeJob;
+  const isGenerating = (stageRegenerating && !hasImage) || regenProp.isPending || isInstructionBusy || !!activeJob;
   const isQueued = activeJob?.status === "queued" || (activeJob && activeJob.queue_position);
 
   return (
@@ -1153,7 +1139,9 @@ function PropRefCard({
         )}
         {regenError && (
           <div role="alert" className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-sm leading-relaxed text-bristol">
+            <strong className="block">{t("REGENERATION FAILED")}</strong>
             {regenError}
+            <span className="mt-1 block">{t("The current reference has not been replaced. Review your change and try again.")}</span>
           </div>
         )}
       </EntityCard>
@@ -1174,8 +1162,9 @@ function PropRefCard({
               hasImage={!imgFailed}
               busy={isGenerating || isInstructionBusy}
               busyLabel={isQueued ? t("QUEUED") : t("DRAWING…")}
-              error={regenError ?? instructionError}
-              lastInstruction={lastAddendum}
+              error={regenError}
+              instruction={instruction ?? instructionDraft}
+              onInstructionChange={setInstruction}
               onRegenerate={startRegen}
               onRegenerateWithInstruction={submitInstruction}
             />

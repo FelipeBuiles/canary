@@ -146,9 +146,10 @@ class ReveLLM(CustomLLM):
         wire_payload = optional_params.get("canary_wire_request")
         if not wire_payload:
             raise ValueError("Reve image requests require canary_wire_request")
-        from litellm_handlers.provider_wire import parse_provider_wire
+        from litellm_handlers.provider_wire import parse_provider_wire, verify_wire_images
 
         wire_manifest = parse_provider_wire(wire_payload)
+        verify_wire_images(wire_manifest, [])
         aspect_ratio = wire_manifest.get("structured_aspect") or "1:1"
 
         # The normal v2 create endpoint is the compatibility path for plain

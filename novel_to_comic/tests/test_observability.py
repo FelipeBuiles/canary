@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from novel_to_comic.config import Config
 from novel_to_comic.server import metrics
 from novel_to_comic.server.app import create_app
 from novel_to_comic.server.routers import pipeline
@@ -163,7 +164,7 @@ def test_stage_that_handles_its_exception_is_recorded_as_failed(tmp_path):
         asyncio.run(
             pipeline._run_stage_with_credits(
                 "extract",
-                object(),
+                Config(),
                 tmp_path,
                 state,
                 asyncio.Queue(),

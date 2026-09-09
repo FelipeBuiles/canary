@@ -1,11 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutationState, useQueryClient } from "@tanstack/react-query";
 import { useGenerationJobs } from "../api/queries";
 import type { GenerationJob } from "../types/api";
 
 export function useReferenceJob(project: string, identity: "char_id" | "loc_id" | "prop_id", entityId: string, stateId?: string) {
   const qc = useQueryClient();
   const { data } = useGenerationJobs(project, [], true);
+  const scopedId = stateId ? `${entityId}:${stateId}` : entityId;
+  const submissions = useMutationState({
+    filters: { mutationKey: ["reference-instruction", identity] },
+    select: (mutation) => {
+      const variables = mutation.state.variables as { project: string; charId?: string; locId?: string; propId?: string; instruction: string } | undefined;
+      const id = identity === "char_id" ? variables?.charId : identity === "loc_id" ? variables?.locId : variables?.propId;
+      return variables?.project === project && id === scopedId
+        ? { ...mutation.state, instruction: variables.instruction }
+        : null;
+    },
+  });
+  const submission = submissions.filter((item) => item !== null).at(-1);
   const [submitted, setSubmitted] = useState<GenerationJob | null>(null);
   const [localError, setLocalError] = useState<{ terminalId: string | null; message: string | null } | null>(null);
   const [timestamp, setTimestamp] = useState(() => Date.now());
@@ -24,19 +36,31 @@ export function useReferenceJob(project: string, identity: "char_id" | "loc_id" 
     if (job.payload[identity] !== (stateId ? `${entityId}:${stateId}` : entityId)) continue;
     if (!latest || Date.parse(job.queued_at) >= Date.parse(latest.queued_at)) latest = job;
   }
+  const admittedJob = (submission?.data as { job?: GenerationJob } | undefined)?.job;
+  if (admittedJob && (!latest || Date.parse(admittedJob.queued_at) > Date.parse(latest.queued_at))) latest = admittedJob;
+  const isSubmitting = submission?.status === "pending";
+  const submissionIsLatest = !!submission && (!latest || submission.submittedAt >= Date.parse(latest.queued_at));
+  const submittedInstruction = submissionIsLatest ? submission.instruction : latest?.payload.instruction;
+  const instructionDraft = typeof submittedInstruction === "string" ? submittedInstruction : "";
+  const submissionError = submissionIsLatest && submission.status === "error" ? submission.error?.message : null;
   const activeJob = latest?.status === "queued" || latest?.status === "running" ? latest : null;
   const terminalId = latest && !activeJob ? latest.id : null;
   const terminalError = latest?.status === "failed" ? latest.user_message ?? latest.error ?? "Regeneration failed" : null;
   const refreshToken = `${timestamp}-${terminalId ?? ""}`;
   const imageIdentity = JSON.stringify([scope, refreshToken]);
   const imgFailed = failedImage === imageIdentity;
-  const regenError = localError?.terminalId === terminalId ? localError.message : terminalError;
+  const regenError = isSubmitting ? null : submissionError ?? (localError?.terminalId === terminalId ? localError.message : terminalError);
   const setImgFailed = useCallback((failed: boolean) => {
     setFailedImage(failed ? imageIdentity : null);
-  }, [imageIdentity]);
+  }, [imageIdentity, setFailedImage]);
   const setRegenError = useCallback((message: string | null) => {
     setLocalError({ terminalId, message });
-  }, [terminalId]);
+  }, [terminalId, setLocalError]);
+
+  const admittedJobId = admittedJob?.id;
+  useEffect(() => {
+    if (admittedJobId) void qc.invalidateQueries({ queryKey: ["project", project, "generation-jobs"] });
+  }, [admittedJobId, project, qc]);
 
   useEffect(() => {
     if (!terminalId || observed.current === terminalId) return;
@@ -51,7 +75,7 @@ export function useReferenceJob(project: string, identity: "char_id" | "loc_id" 
     setSubmitted(job);
     setLocalError(null);
     void qc.invalidateQueries({ queryKey: ["project", project, "generation-jobs"] });
-  }, [project, qc]);
+  }, [project, qc, setSubmitted, setLocalError]);
 
-  return { activeJob, setActiveJob, regenError, setRegenError, timestamp: refreshToken, setTimestamp, imgFailed, setImgFailed };
+  return { activeJob, setActiveJob, isSubmitting, instructionDraft, regenError, setRegenError, timestamp: refreshToken, setTimestamp, imgFailed, setImgFailed };
 }

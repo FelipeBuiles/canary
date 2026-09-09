@@ -11,6 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from novel_to_comic.config import Config
 from novel_to_comic.models.adaptation import LetteringItem
 from novel_to_comic.models.draw import (
     OCRExtraction,
@@ -111,7 +112,7 @@ def recovery(tmp_path, monkeypatch):
     monkeypatch.setattr(pages.GatewayPageOCRAdapter, "extract", extract)
     app = FastAPI()
     app.include_router(pages.router, prefix="/projects/{project_id}")
-    project = (tmp_path, SimpleNamespace(), None)
+    project = (tmp_path, Config(), None)
     app.dependency_overrides[pages.get_project] = lambda: project
     app.dependency_overrides[pages.get_current_user] = lambda: "user-1"
     with TestClient(app) as client:
@@ -238,7 +239,7 @@ def test_cache_written_while_waiting_for_page_lock_prevents_credit_reservation(r
         lock = credited_job.page_operation_lock(project_dir, 1)
         async with lock:
             task = asyncio.create_task(pages.analyze_page(
-                1, "project-1", (project_dir, SimpleNamespace(), None), "user-1",
+                1, "project-1", (project_dir, Config(), None), "user-1",
                 allow_paid=False,
             ))
             await asyncio.sleep(0)

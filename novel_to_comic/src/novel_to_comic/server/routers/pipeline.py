@@ -30,6 +30,7 @@ from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 
 from ..auth import get_current_user
 from ..credited_job import CreditReservationDenied, run_credited_stage
+from ..codex_admission import admit_stage_action
 from ..credits import (
     CreditEstimate,
     UnifiedCostResolver,
@@ -159,6 +160,7 @@ async def _run_stage_with_credits(
     queue_draw_pages: bool = False,
     **_unused_kwargs,
 ) -> None:
+    admit_stage_action(config, stage)
     started = time.perf_counter()
     capture_server_event(
         "stage_started",
@@ -323,6 +325,11 @@ async def estimate_stage_cost(
     if stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}. Valid: {STAGE_NAMES}")
     project_dir, config, state = project
+    funding = admit_stage_action(config, stage)
+    if stage == "draw":
+        from .pages import estimate_remaining_page_generation
+
+        return {"stage": stage, **estimate_remaining_page_generation(project)}
     chain = [stage, *STAGE_AUTO_CHAIN.get(stage, ())]
     parts = [
         UnifiedCostResolver.estimate_stage_cost(
@@ -342,6 +349,7 @@ async def estimate_stage_cost(
             ),
             reservation_multiplier=parts[0]["reservation_multiplier"],
             confidence=parts[0]["confidence"],
+            funding=funding,
         ),
     }
 
@@ -360,6 +368,16 @@ async def _start_stage(
         raise HTTPException(400, "stage parameter is required")
     if stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}. Valid: {STAGE_NAMES}")
+    admit_stage_action(config, stage)
+    if stage == "draw":
+        from .pages import prepare_undrawn_pages
+
+        try:
+            prepare_undrawn_pages(
+                project_dir=project_dir, config=config, rerun=rerun,
+            )
+        except (ArtifactMissing, ValueError) as exc:
+            raise HTTPException(409, str(exc)) from exc
     pkey = project_key(user_id, project_id)
     if project_busy(request.app, pkey):
         raise HTTPException(409, "Wait for all project jobs to finish before running a stage.")
@@ -535,6 +553,18 @@ async def approve(
                     "issue_ids": summary.blocking_issue_ids,
                 },
             )
+    should_start_adapt = (
+        state.stages["adapt"].status == StageStatus.PENDING
+        and (
+            stage == "cast"
+            or (
+                stage == "brief"
+                and state.stages["cast"].status == StageStatus.COMPLETE
+            )
+        )
+    )
+    if should_start_adapt:
+        admit_stage_action(config, "adapt")
     try:
         if stage == "brief":
             target = TargetArtifacts(project_dir)
@@ -555,16 +585,6 @@ async def approve(
         properties={"stage": stage},
     )
     response = {"status": "approved", "stage": stage}
-    should_start_adapt = (
-        state.stages["adapt"].status == StageStatus.PENDING
-        and (
-            stage == "cast"
-            or (
-                stage == "brief"
-                and state.stages["cast"].status == StageStatus.COMPLETE
-            )
-        )
-    )
     if should_start_adapt:
         pkey = project_key(user_id, project_id)
         running = request.app.state.running_tasks.get(pkey)

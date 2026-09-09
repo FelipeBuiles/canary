@@ -48,11 +48,14 @@ def summarize_provider_usage(
     unknown = 0
     failed = 0
     cost_sources: dict[str, int] = {}
+    funding_counts: dict[str, int] = {}
     for event in events:
         event_id = str(event["id"])
         if event_id in seen:
             continue
         seen.add(event_id)
+        funding = str(event.get("funding") or "api")
+        funding_counts[funding] = funding_counts.get(funding, 0) + 1
         link = links.get(event_id, {})
         feature = str(event.get("feature") or "")
         metadata = event.get("metadata_json") or {}
@@ -80,9 +83,11 @@ def summarize_provider_usage(
                 "failed_call_count": 0,
                 "unknown_cost_count": 0,
                 "known_cost_usd": Decimal("0"),
+                "funding_counts": {},
             },
         )
         group["call_count"] += 1
+        group["funding_counts"][funding] = group["funding_counts"].get(funding, 0) + 1
         if event.get("status") in {"failed", "cancelled"}:
             failed += 1
             group["failed_call_count"] += 1
@@ -100,6 +105,7 @@ def summarize_provider_usage(
     return {
         "source": "provider_usage_events",
         "cost_sources": cost_sources,
+        "funding_counts": funding_counts,
         "known_cost_usd": float(total),
         "call_count": len(seen),
         "failed_call_count": failed,

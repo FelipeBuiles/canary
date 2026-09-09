@@ -70,3 +70,17 @@ def test_usage_report_keeps_costs_when_artifact_linkage_is_unavailable(tmp_path)
     assert result['known_cost_usd'] == 0.14
     assert result['complete'] is False
     assert result['artifact_link_error']
+
+
+def test_subscription_unknown_cost_remains_unknown_in_funding_summary():
+    event = {
+        "id": "subscription", "stage": "extract", "status": "failed",
+        "funding": "codex_subscription", "cost_usd": None,
+        "cost_source": "codex_subscription",
+    }
+    result = summarize_provider_usage([event, event], {})
+    assert result["funding_counts"] == {"codex_subscription": 1}
+    assert result["unknown_cost_count"] == 1
+    assert result["failed_call_count"] == 1
+    assert result["complete"] is False
+    assert result["groups"][0]["funding_counts"] == {"codex_subscription": 1}

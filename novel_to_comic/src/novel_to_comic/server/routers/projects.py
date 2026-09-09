@@ -66,6 +66,8 @@ from ..credits import (
     credit_estimate_for_provider_cost,
     provider_usd_to_credits,
 )
+from novel_to_comic.codex_dev import classify_operations
+from ..codex_admission import image_operations
 from ..db import get_db
 from ..deps import get_project, get_project_dir, get_projects_dir, project_key
 from ..ratelimit import cost_limit, create_limit, limiter
@@ -275,7 +277,12 @@ def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
 
 
 
+
+
 def _project_cover_credit_estimate(config: Config) -> dict:
+    funding = classify_operations(image_operations(config))
+    if funding == "codex_subscription":
+        return dict(credit_estimate_for_provider_cost(0.0, "cast", reserve=False, funding=funding))
     if mock_mode_active(config):
         return dict(credit_estimate_for_provider_cost(0.0, "cast", reserve=False))
     return dict(credit_estimate_for_provider_cost(
@@ -770,6 +777,7 @@ async def generate_cover(
         project_dir=project_dir,
         stage="cover",
         estimate_credits=cover_estimate["estimate_credits"],
+        operations=image_operations(config),
         debit_description="Model call: project cover",
         user_id=user_id,
         semaphore=generation_semaphore_for_config(request.app, config),

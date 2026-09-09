@@ -7,6 +7,7 @@ covers the v2 create fallback used for ordinary generation/edit requests.
 import asyncio
 import base64
 import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -23,7 +24,7 @@ from litellm_handlers.reve_provider import (  # noqa: E402
 _PNG_B64 = base64.b64encode(b"\x89PNG\r\n\x1a\nfakepng").decode("ascii")
 
 
-def _compiled(tmp_path, *, model, count):
+def _compiled(tmp_path, *, model, count, role="style"):
     from novel_to_comic.compiled_request import compile_generation_request
     from novel_to_comic.generation_input import GenerationPromptInput
     from novel_to_comic.image_models import image_model_profile
@@ -41,7 +42,7 @@ def _compiled(tmp_path, *, model, count):
         selected.append(
             ReferenceAsset(
                 path=path,
-                role="style",
+                role=role,
                 entity_id=None,
                 appearance_state_id=None,
                 authority_scope=AuthorityScope.CONTEXTUAL,
@@ -127,13 +128,15 @@ def test_create_uses_v2_prompt_aspect_and_fit_postprocessing(monkeypatch, tmp_pa
     assert "height" not in payload
 
 
-def test_edit_uses_v2_raw_references_and_frame_markers(monkeypatch, tmp_path):
+@pytest.mark.parametrize("edit_parent_indices", [(), (0,)])
+def test_edit_uses_v2_raw_references_and_frame_markers(monkeypatch, tmp_path, edit_parent_indices):
     from novel_to_comic.image_models import GATEWAY_IMAGE_REVE
     from novel_to_comic.provider_wire import compile_provider_wire_request
 
     captured = _capture_post(monkeypatch)
     wire = compile_provider_wire_request(
-        _compiled(tmp_path, model=GATEWAY_IMAGE_REVE, count=2)
+        _compiled(tmp_path, model=GATEWAY_IMAGE_REVE, count=2, role="subject"),
+        edit_parent_indices=edit_parent_indices,
     )
     files = [
         (str(ref.source_path), Path(ref.source_path).read_bytes())
@@ -156,6 +159,9 @@ def test_edit_uses_v2_raw_references_and_frame_markers(monkeypatch, tmp_path):
         base64.b64encode(Path(ref.source_path).read_bytes()).decode("ascii")
         for ref in wire.references
     ]
+    assert payload["prompt"] == wire.prompt_parts[0]
+    assert payload["aspect_ratio"] == wire.structured_aspect
+    assert payload["postprocessing"] == [{"process": "fit_image", "max_dim": 2048}]
     assert "<frame>0</frame>" in payload["prompt"]
     assert "<frame>1</frame>" in payload["prompt"]
     assert "width" not in payload
@@ -180,3 +186,99 @@ def test_content_violation_raises(monkeypatch, tmp_path):
             optional_params={"canary_wire_request": wire.to_json()},
             logging_obj=None,
         ))
+
+
+@pytest.mark.parametrize("model", ["image-reve", "image-balanced"])
+def test_core_wire_crosses_gateway_with_exact_parent_references(tmp_path, model):
+    from litellm_handlers.provider_wire import (
+        exact_vertex_contents,
+        parse_provider_wire,
+        verify_wire_images,
+    )
+    from novel_to_comic.provider_wire import compile_provider_wire_request
+
+    wire = compile_provider_wire_request(
+        _compiled(tmp_path, model=model, count=2, role="subject"),
+        edit_parent_indices=(1,),
+    )
+    manifest = parse_provider_wire(wire.to_json())
+    images = [Path(ref.source_path).read_bytes() for ref in wire.references]
+    verify_wire_images(manifest, images)
+    assert manifest["edit_parent_indices"] == [1]
+    assert exact_vertex_contents(manifest, images) == [
+        images[0], wire.references[0].instruction,
+        images[1], wire.references[1].instruction,
+        *wire.prompt_parts,
+    ]
+    with pytest.raises(ValueError, match="digest mismatch"):
+        verify_wire_images(manifest, images[::-1])
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("discriminator", "canary.provider-wire/2"),
+        ("schema_version", 2),
+        ("schema_version", 3.0),
+        ("edit_parent_indices", None),
+        ("edit_parent_indices", [True]),
+        ("edit_parent_indices", ["0"]),
+        ("edit_parent_indices", [-1]),
+        ("edit_parent_indices", [1]),
+        ("edit_parent_indices", [0, 0]),
+        ("compiled_request_sha256", "not-a-digest"),
+        ("width", 0),
+        ("references", {}),
+    ],
+)
+def test_gateway_rejects_invalid_schema_even_with_recomputed_hash(tmp_path, field, value):
+    from litellm_handlers.provider_wire import parse_provider_wire
+    from novel_to_comic.provider_wire import compile_provider_wire_request
+
+    wire = compile_provider_wire_request(
+        _compiled(tmp_path, model="image-reve", count=1, role="subject")
+    )
+    manifest = json.loads(wire.to_json())
+    manifest[field] = value
+    projection = {key: value for key, value in manifest.items() if key != "execution_fingerprint"}
+    if isinstance(projection["references"], list):
+        projection["references"] = [
+            {key: value for key, value in ref.items() if key != "source_path"}
+            for ref in projection["references"]
+        ]
+    manifest["execution_fingerprint"] = hashlib.sha256(
+        json.dumps(projection, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+    with pytest.raises(ValueError):
+        parse_provider_wire(json.dumps(manifest))
+
+
+def test_gateway_requires_explicit_parents_and_binds_them_to_hash(tmp_path):
+    from litellm_handlers.provider_wire import parse_provider_wire
+    from novel_to_comic.provider_wire import compile_provider_wire_request
+
+    wire = compile_provider_wire_request(
+        _compiled(tmp_path, model="image-reve", count=1, role="subject")
+    )
+    manifest = json.loads(wire.to_json())
+    del manifest["edit_parent_indices"]
+    with pytest.raises(ValueError, match="fields"):
+        parse_provider_wire(json.dumps(manifest))
+    manifest["edit_parent_indices"] = [0]
+    with pytest.raises(ValueError, match="fingerprint mismatch"):
+        parse_provider_wire(json.dumps(manifest))
+
+
+def test_gateway_rejects_style_reference_as_edit_parent(tmp_path):
+    from dataclasses import replace
+
+    from litellm_handlers.provider_wire import parse_provider_wire
+    from novel_to_comic.provider_wire import compile_provider_wire_request
+
+    wire = compile_provider_wire_request(
+        _compiled(tmp_path, model="image-reve", count=1)
+    )
+    invalid = replace(wire, edit_parent_indices=(0,))
+    invalid = replace(invalid, execution_fingerprint=invalid.recompute_execution_fingerprint())
+    with pytest.raises(ValueError, match="non-style"):
+        parse_provider_wire(invalid.to_json())

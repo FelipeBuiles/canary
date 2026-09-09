@@ -157,7 +157,10 @@ class RefStrategy:
 
     @classmethod
     def for_config(cls, config: Config) -> RefStrategy:
-        return cls(config.effective_image_model())
+        from novel_to_comic.codex_dev import route_for
+
+        model = config.effective_image_model()
+        return cls("codex-builtin" if route_for("image", model) is not None else model)
 
     @property
     def _gpt_image_2(self) -> bool:

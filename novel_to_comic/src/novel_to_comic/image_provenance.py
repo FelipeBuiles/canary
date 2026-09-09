@@ -80,6 +80,8 @@ def common_image_provenance(
     failure: dict[str, Any] | None = None,
     project_dir: Path | None = None,
     lineage: dict[str, Any] | None = None,
+    response_metadata: dict[str, Any] | None = None,
+    funding: str = "api",
 ) -> dict[str, Any]:
     selected = [
         _reference_record(asset, index, project_dir)
@@ -117,6 +119,8 @@ def common_image_provenance(
         "provider_key": getattr(wire, "provider_key", None),
         "configured_provider_model": getattr(wire, "configured_provider_model", None),
         "actual_provider_model": actual_provider_model,
+        "actual_provider_model_status": "observed" if actual_provider_model else "UNKNOWN",
+        "dimension_control": "prompt_intent" if getattr(wire, "provider_key", None) == "codex-dev" else "provider_parameters",
         "requested_dimensions": {
             "width": getattr(wire, "width", None),
             "height": getattr(wire, "height", None),
@@ -124,10 +128,12 @@ def common_image_provenance(
         "effective_dimensions": {
             "width": getattr(wire, "width", None),
             "height": getattr(wire, "height", None),
-        },
+        } if getattr(wire, "provider_key", None) != "codex-dev" else None,
         "actual_dimensions": {"width": actual_width, "height": actual_height},
         "controls": dict(getattr(wire, "controls", ())),
         "provider_request_id": provider_request_id,
+        "funding": funding,
+        "response_metadata": response_metadata,
         "latency_ms": latency_ms,
         "cost_usd": cost_usd,
         "failure": (

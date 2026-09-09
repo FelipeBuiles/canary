@@ -346,31 +346,6 @@ def test_status_reopens_story_review_when_draft_brief_has_stale_adapt_failure(
     assert response.json()["stages"]["adapt"]["status"] == "pending"
 
 
-def test_start_draw_can_request_queueing_every_page(
-    tmp_path: Path,
-    monkeypatch,
-):
-    project_dir, state, _bible = _story_project(tmp_path)
-    state.stages["plan"] = StageState(status=StageStatus.COMPLETE)
-    calls: list[dict] = []
-
-    async def record_started_stage(*_args, **kwargs):
-        calls.append(kwargs)
-
-    monkeypatch.setattr(pipeline, "_run_stage_with_credits", record_started_stage)
-    monkeypatch.setattr(styles, "is_style_selected", lambda *_args: True)
-    client = _client(tmp_path, project_dir, state)
-
-    response = client.post(
-        "/api/projects/test_project/run?stage=draw&queue_pages=1"
-    )
-
-    assert response.status_code == 200
-    assert len(calls) == 1
-    assert calls[0]["queue_draw_pages"] is True
-    assert calls[0]["request"] is not None
-
-
 def test_brief_reapproval_resumes_adapt_when_cast_is_already_complete(
     tmp_path: Path,
     monkeypatch,

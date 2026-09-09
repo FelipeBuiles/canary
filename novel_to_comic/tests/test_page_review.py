@@ -29,6 +29,7 @@ from novel_to_comic.page_drawing import (
     VertexCompletePageAdapter,
     compile_page_generation_request,
     correct_complete_page,
+    production_page_capability_profile,
 )
 from novel_to_comic.page_review import (
     accept_editorial_page_issue,
@@ -484,19 +485,7 @@ def test_page_issues_are_reviewed_by_exception_and_copy_changes_route_to_adapt(
 
 
 def _profile() -> PageCapabilityProfile:
-    return PageCapabilityProfile(
-        id="profile",
-        provider="vertex-multimodal",
-        model="gemini-3-pro-image",
-        max_image_references=4,
-        reference_ordering="ordered",
-        editing_modes=["instructed", "region_targeted"],
-        output_width=1696,
-        output_height=2528,
-        max_prompt_characters=32_000,
-        retry_semantics="bounded_submission",
-        price_per_page_usd="0.134",
-    )
+    return production_page_capability_profile()
 
 
 def test_region_target_creates_a_complete_page_correction_request_only() -> None:

@@ -1,13 +1,17 @@
 """Release-blocking security and readiness contracts."""
 
 import asyncio
+import json
 from pathlib import Path
+from types import MappingProxyType
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from novel_to_comic import codex_dev
+from novel_to_comic.config import load_config
 from novel_to_comic.server import app as app_module
 from novel_to_comic.server import deployment_status as deployment_status_module
 from novel_to_comic.server import sentry as sentry_module
@@ -335,6 +339,73 @@ def test_readiness_endpoint_uses_http_200_on_success(tmp_path: Path):
 
     assert response.status_code == 200
     assert b'"pipeline_contract":"eight-stage-v2"' in response.body
+
+
+@pytest.mark.parametrize(
+    ("codex_enabled", "mock_enabled", "expected_mode", "expected_dependency"),
+    [
+        ("0", "false", "api", "litellm"),
+        ("0", "true", "mock", "mock_models"),
+        ("1", "false", "codex", "litellm"),
+    ],
+)
+def test_readiness_reports_process_model_mode(
+    tmp_path: Path, monkeypatch, codex_enabled, mock_enabled,
+    expected_mode, expected_dependency,
+):
+    process = dict.fromkeys(codex_dev._PROCESS)
+    process.update(CANARY_CODEX_DEV_ENABLED=codex_enabled, CANARY_ENV="development")
+    monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType(process))
+    monkeypatch.setattr(codex_dev, "_SETTINGS_ERROR", None)
+    monkeypatch.setenv("CANARY_ENV", "development")
+    monkeypatch.setenv("CANARY_MOCK_GENERATIONS_ENABLED", mock_enabled)
+    monkeypatch.setenv("CANARY_MOCK_MODEL_BASE_URL", "http://mock.test:4010")
+    monkeypatch.setenv("LITELLM_BASE_URL", "http://gateway.test:4000")
+    monkeypatch.setenv("LITELLM_API_KEY", "test-key")
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
+    app = app_module.create_app(tmp_path, dev=True)
+    endpoint = next(
+        route.endpoint for route in app.routes if route.path == "/api/health/ready"
+    )
+
+    with patch("httpx.Client.get", return_value=MagicMock()):
+        response = endpoint()
+
+    assert response.status_code == 200
+    assert json.loads(response.body) == {
+        "status": "ok",
+        "pipeline_contract": "eight-stage-v2",
+        "model_mode": expected_mode,
+        "checks": {"supabase": "skipped", expected_dependency: "ok"},
+    }
+
+
+def test_readiness_ignores_dotenv_and_project_codex_opt_in(tmp_path: Path, monkeypatch):
+    process = dict.fromkeys(codex_dev._PROCESS)
+    monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType(process))
+    # Register restoration before load_config mutates the live environment.
+    monkeypatch.delenv("CANARY_CODEX_DEV_ENABLED", raising=False)
+    monkeypatch.setenv("CANARY_ENV", "development")
+    monkeypatch.setenv("CANARY_MOCK_GENERATIONS_ENABLED", "false")
+    (tmp_path / ".env").write_text("CANARY_CODEX_DEV_ENABLED=1\n")
+    (tmp_path / "config.yaml").write_text(
+        "dev_mode: true\nplan_model: codex-dev/gpt-5.6-terra\n"
+    )
+    load_config(tmp_path)
+    app = app_module.create_app(tmp_path, dev=True)
+    endpoint = next(
+        route.endpoint for route in app.routes if route.path == "/api/health/ready"
+    )
+
+    with patch.object(
+        app_module, "_readiness_result",
+        return_value=(True, {"supabase": "skipped", "litellm": "skipped"}),
+    ):
+        response = endpoint()
+
+    assert json.loads(response.body)["model_mode"] == "api"
+
 
 def test_public_version_endpoint_reports_build_identity(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("CANARY_VERSION", "abc123")

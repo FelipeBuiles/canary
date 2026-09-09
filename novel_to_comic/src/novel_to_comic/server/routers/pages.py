@@ -16,8 +16,9 @@ from novel_to_comic.models.draw import (
     RetryProvenance,
 )
 from novel_to_comic.page_drawing import (
-    GoogleVertexCompletePageTransport,
-    VertexCompletePageAdapter,
+    complete_page_adapter,
+    current_page_capability_profile,
+    select_book_edition,
     analyze_complete_page,
     compile_page_generation_request,
     correction_credit_estimate,
@@ -43,6 +44,8 @@ from novel_to_comic.state import StageStatus, complete_stage, load_state, save_s
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
 
 from ..auth import get_current_user
+from novel_to_comic.codex_dev import classify_operations
+from ..codex_admission import draw_operations, page_check_operations
 from ..deps import get_project, get_project_dir, project_key
 from ..generation_jobs import generation_job_payload
 
@@ -268,6 +271,38 @@ def _draw_success_callback(
     return callback
 
 
+
+
+def prepare_undrawn_pages(*, project_dir, config, rerun: bool = False):
+    """Preflight every selected page without writing an edition or placing holds."""
+    classify_operations(draw_operations(config))
+    target = TargetArtifacts(project_dir)
+    edition = (
+        ensure_current_page_edition(target, target.read_book_edition())
+        if target.book_edition_path.exists()
+        else select_book_edition(
+            edition_id="book-edition-001", profile=current_page_capability_profile(),
+        )
+    )
+    inventory = approved_visual_inventory(project_dir)
+    reference_files = approved_reference_files(project_dir)
+    adapter = complete_page_adapter(config)
+    prepared = []
+    for selected in target.read_plan().pages:
+        page_number = selected.page_number
+        if target.provenance_revisions(page_number) and not rerun:
+            continue
+        page = target.read_page(page_number)
+        compiled = compile_page_generation_request(
+            page, edition, inventory, reference_files,
+            retry=_generation_retry(target, page_number),
+            style_template=config.style_template,
+        )
+        adapter.prepare(compiled)
+        prepared.append((page_number, page, compiled))
+    return target, adapter, prepared
+
+
 def enqueue_all_undrawn_pages(
     request: Request,
     *,
@@ -278,38 +313,16 @@ def enqueue_all_undrawn_pages(
     rerun: bool = False,
 ):
     """Queue missing pages, or explicit replacement revisions without deletion."""
-
-    target = TargetArtifacts(project_dir)
-    plan = target.read_plan()
-    edition = ensure_current_page_edition(
-        target,
-        target.read_book_edition(),
+    target, adapter, prepared = prepare_undrawn_pages(
+        project_dir=project_dir, config=config, rerun=rerun,
     )
-    inventory = approved_visual_inventory(project_dir)
-    reference_files = approved_reference_files(project_dir)
-    adapter = VertexCompletePageAdapter(GoogleVertexCompletePageTransport(config))
+    # Estimation can select an ephemeral first edition; submission requires
+    # Draw initialization to have durably pinned it first.
+    ensure_current_page_edition(target, target.read_book_edition())
+    # No reservation or publication occurs until the entire batch is prepared.
     pkey = project_key(user_id, project_id)
     queue = request.app.state.event_queues.get(pkey)
-    prepared = []
     jobs = []
-
-    for selected in plan.pages:
-        page_number = selected.page_number
-        if target.provenance_revisions(page_number) and not rerun:
-            continue
-        page = target.read_page(page_number)
-        compiled = compile_page_generation_request(
-            page,
-            edition,
-            inventory,
-            reference_files,
-            retry=_generation_retry(target, page_number),
-            style_template=config.style_template,
-        )
-        # Validate the whole batch before reserving credits or queueing its
-        # first page, so a later unsupported page cannot leave a partial batch.
-        adapter.prepare(compiled)
-        prepared.append((page_number, page, compiled))
 
     for page_number, page, compiled in prepared:
         if queue is not None:
@@ -322,6 +335,7 @@ def enqueue_all_undrawn_pages(
             user_id=user_id,
             project_id=project_id,
             project_dir=project_dir,
+            config=config,
             compiled=compiled,
             adapter=adapter,
             artifacts=target,
@@ -513,30 +527,20 @@ def get_page_render_preview(
 def estimate_remaining_page_generation(project=Depends(get_project)):
     """Quote only undrawn pages, rounding each independent credit hold."""
     from novel_to_comic.config import PAGE_OCR_ESTIMATED_COST_USD
-    from novel_to_comic.page_drawing import _selected_authorities, production_page_capability_profile
     from ..credits import credit_estimate_for_provider_cost
 
     project_dir, _config, _state = project
-    target = TargetArtifacts(project_dir)
-    estimate = credit_estimate_for_provider_cost(0, "draw", reserve=True)
+    funding = classify_operations(draw_operations(_config))
+    estimate = credit_estimate_for_provider_cost(0, "draw", reserve=True, funding=funding)
     try:
-        profile = (
-            ensure_current_page_edition(target, target.read_book_edition()).capability_profile
-            if target.book_edition_path.exists()
-            else production_page_capability_profile()
+        _target, _adapter, prepared = prepare_undrawn_pages(
+            project_dir=project_dir, config=_config,
         )
-        inventory = approved_visual_inventory(project_dir)
-        for selected in target.read_plan().pages:
-            if target.provenance_revisions(selected.page_number):
-                continue
-            references = _selected_authorities(target.read_page(selected.page_number), inventory)
-            if len(references) > profile.max_image_references:
-                raise ValueError(
-                    f"Page {selected.page_number} requires too many identity references. Replan it before drawing."
-                )
-            page_cost = float(profile.price_per_page_usd + profile.price_per_reference_usd * len(references))
+        for _page_number, _page, compiled in prepared:
+            page_cost = float(compiled.request.estimated_cost_usd)
             part = credit_estimate_for_provider_cost(
                 page_cost + float(PAGE_OCR_ESTIMATED_COST_USD), "draw", reserve=True,
+                funding=funding,
             )
             estimate["estimate_credits"] += part["estimate_credits"]
             estimate["reserved_credits"] += part["reserved_credits"]
@@ -549,6 +553,7 @@ def _prepare_initial_generation(
     project, page_number: int, depiction: Literal["canonical", "less_graphic"],
 ):
     project_dir, config, _state = project
+    classify_operations(draw_operations(config))
     target = TargetArtifacts(project_dir)
     resumable = target.resumable_generation_request(page_number)
     if target.provenance_revisions(page_number) and (
@@ -570,6 +575,7 @@ def _prepare_initial_generation(
             depiction=depiction,
             style_template=config.style_template,
         )
+        complete_page_adapter(config).prepare(compiled)
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
     return target, page, compiled
@@ -583,7 +589,7 @@ def estimate_page_generation(
 ):
     """Compile the same request as Draw without submitting or reserving credits."""
     _target, _page, compiled = _prepare_initial_generation(project, page_number, depiction)
-    return dict(correction_credit_estimate(compiled, reserve=True))
+    return dict(correction_credit_estimate(compiled, config=project[1], reserve=True))
 
 
 @router.get("/pages/{page_number}/analyze/estimate")
@@ -601,10 +607,12 @@ def estimate_page_analysis(page_number: int, project=Depends(get_project)):
             raise HTTPException(409, "Page render is unavailable")
     except ArtifactMissing as exc:
         raise HTTPException(409, str(exc)) from exc
+    requires_call = _analysis_recovery(target, page_number)["requires_paid_call"]
+    funding = classify_operations(page_check_operations(project[1]) if requires_call else ())
     return dict(credit_estimate_for_provider_cost(
-        float(PAGE_OCR_ESTIMATED_COST_USD)
-        if _analysis_recovery(target, page_number)["requires_paid_call"] else 0.0,
+        float(PAGE_OCR_ESTIMATED_COST_USD) if requires_call else 0.0,
         "draw", reserve=True,
+        funding=funding,
     ))
 
 
@@ -623,7 +631,7 @@ def generate_page(
         page_number,
         generation.depiction if generation is not None else "canonical",
     )
-    adapter = VertexCompletePageAdapter(GoogleVertexCompletePageTransport(config))
+    adapter = complete_page_adapter(config)
     pkey = project_key(user_id, project_id)
     queue = request.app.state.event_queues.get(pkey)
     if queue is not None:
@@ -636,6 +644,7 @@ def generate_page(
         user_id=user_id,
         project_id=project_id,
         project_dir=project_dir,
+        config=config,
         compiled=compiled,
         adapter=adapter,
         artifacts=target,
@@ -669,8 +678,10 @@ def estimate_missing_page_checks(project=Depends(get_project)):
         for selected in target.read_plan().pages
     ]
     paid = sum(item["requires_paid_call"] for item in pages)
+    funding = classify_operations(page_check_operations(project[1]) if paid else ())
     estimate = dict(credit_estimate_for_provider_cost(
         float(PAGE_OCR_ESTIMATED_COST_USD), "draw", reserve=True,
+        funding=funding,
     ))
     for key in ("estimate_credits", "reserved_credits"):
         if estimate.get(key) is not None:
@@ -684,6 +695,16 @@ async def recover_missing_page_checks(
     project=Depends(get_project), user_id: str = Depends(get_current_user),
 ):
     target = TargetArtifacts(project[0])
+    if body.allow_paid:
+        for selected in target.read_plan().pages:
+            active = _latest_provenance(target, selected.page_number)
+            if (
+                active is not None
+                and body.renders.get(selected.page_number) == active.render.image_sha256
+                and _analysis_recovery(target, selected.page_number)["requires_paid_call"]
+            ):
+                classify_operations(page_check_operations(project[1]))
+                break
     results = []
     for selected in target.read_plan().pages:
         number = selected.page_number
@@ -763,6 +784,7 @@ async def analyze_page(
             user_id=user_id, project_id=project_id, project_dir=project_dir,
             page_number=page_number, estimated_cost_usd=float(PAGE_OCR_ESTIMATED_COST_USD),
             cached_work=cached_work,
+            operations=page_check_operations(config),
             work=lambda: analyze_complete_page(
                 page=page, render=active.render, image=image,
                 ocr=GatewayPageOCRAdapter(config, page_number=page_number), artifacts=target,
@@ -955,7 +977,7 @@ def _prepare_explicit_correction(
             )
             for change in body.changes
         ))
-        return prepare_page_correction(
+        prepared = prepare_page_correction(
             page=page,
             edition=edition,
             inventory=approved_visual_inventory(target.project_dir),
@@ -970,6 +992,8 @@ def _prepare_explicit_correction(
             artifacts=target,
             style_template=config.style_template,
         )
+        complete_page_adapter(config).prepare(prepared.compiled)
+        return prepared
     except StaleCorrectionError as exc:
         raise HTTPException(409, str(exc)) from exc
     except InvalidCorrectionError as exc:
@@ -990,7 +1014,7 @@ def _prepare_explicit_correction(
         raise HTTPException(status, message) from exc
 
 
-def _correction_preview_payload(*, target: TargetArtifacts, page_number: int, prepared) -> dict:
+def _correction_preview_payload(*, target: TargetArtifacts, page_number: int, prepared, config) -> dict:
     correction = prepared.correction
     compiled = prepared.compiled
     context = prepared.context
@@ -1081,7 +1105,7 @@ def _correction_preview_payload(*, target: TargetArtifacts, page_number: int, pr
         "prompt_characters": len(compiled.request.prompt),
         "request_sha256": compiled.request.request_sha256,
         "warnings": warnings,
-        "estimate": dict(correction_credit_estimate(compiled, reserve=True)),
+        "estimate": dict(correction_credit_estimate(compiled, config=config, reserve=True)),
     }
 @router.post("/pages/{page_number}/corrections/preview")
 def preview_page_correction(
@@ -1091,11 +1115,12 @@ def preview_page_correction(
 ):
     """Validate, compile, and estimate one correction set without spending."""
     project_dir, config, _state = project
+    classify_operations(draw_operations(config))
     target = TargetArtifacts(project_dir)
     prepared = _prepare_explicit_correction(
         target=target, page_number=page_number, body=body, config=config,
     )
-    return _correction_preview_payload(target=target, page_number=page_number, prepared=prepared)
+    return _correction_preview_payload(target=target, page_number=page_number, prepared=prepared, config=config)
 
 
 @router.post("/pages/{page_number}/corrections")
@@ -1109,6 +1134,7 @@ def submit_page_correction(
 ):
     """Enqueue one full-page job for the edited changes and author note."""
     project_dir, config, _state = project
+    classify_operations(draw_operations(config))
     target = TargetArtifacts(project_dir)
     prepared = _prepare_explicit_correction(
         target=target, page_number=page_number, body=body, config=config,
@@ -1145,7 +1171,7 @@ def submit_page_correction(
             if exc.status_code != 404:
                 raise
             primary_issue = None
-    adapter = VertexCompletePageAdapter(GoogleVertexCompletePageTransport(config))
+    adapter = complete_page_adapter(config)
     queue = request.app.state.event_queues.get(pkey)
     if queue is not None:
         queue.put_nowait(
@@ -1157,6 +1183,7 @@ def submit_page_correction(
         user_id=user_id,
         project_id=project_id,
         project_dir=project_dir,
+        config=config,
         compiled=compiled,
         adapter=adapter,
         artifacts=target,
@@ -1191,7 +1218,7 @@ def project_provider_usage(
     try:
         for start in range(0, 100_000, 1000):
             batch = (get_db().table("ai_usage_events")
-                     .select("id,stage,feature,status,cost_usd,cost_source,metadata_json")
+                     .select("id,stage,feature,status,cost_usd,cost_source,funding,metadata_json")
                      .eq("user_id", user_id).eq("project_id", project_id)
                      .order("id").range(start, start + 999).execute().data or [])
             events.extend(batch)
@@ -1220,9 +1247,26 @@ def project_provider_usage(
 def visual_review_estimate(page_number: int, project=Depends(get_project)):
     from novel_to_comic.config import PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD
     from ..credits import credit_estimate_for_provider_cost
-    if _latest_provenance(TargetArtifacts(project[0]), page_number) is None:
+    project_dir, config, _state = project
+    target = TargetArtifacts(project_dir)
+    if _latest_provenance(target, page_number) is None:
         raise HTTPException(409, "Page has no render to review")
-    return credit_estimate_for_provider_cost(float(PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD), 'draw', reserve=True)
+    try:
+        compiled = compile_page_generation_request(
+            target.read_page(page_number),
+            ensure_current_page_edition(target, target.read_book_edition()),
+            approved_visual_inventory(project_dir),
+            approved_reference_files(project_dir),
+            retry=RetryProvenance(attempt=1),
+            style_template=config.style_template,
+        )
+        complete_page_adapter(config).prepare(compiled)
+    except (ArtifactMissing, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return credit_estimate_for_provider_cost(
+        float(PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD), 'draw', reserve=True,
+        funding=classify_operations(page_check_operations(project[1])),
+    )
 
 @router.post("/pages/{page_number}/visual-review")
 async def visual_review_page(page_number: int, project_id: str,
@@ -1240,12 +1284,14 @@ async def visual_review_page(page_number: int, project_id: str,
     try:
         page = target.read_page(page_number)
         compiled = compile_page_generation_request(
-            page, target.read_book_edition(), approved_visual_inventory(project_dir),
+            page, ensure_current_page_edition(target, target.read_book_edition()), approved_visual_inventory(project_dir),
             approved_reference_files(project_dir), retry=RetryProvenance(attempt=1), style_template=config.style_template,
         )
+        complete_page_adapter(config).prepare(compiled)
         result = await run_credited_page_check(
             user_id=user_id, project_id=project_id, project_dir=project_dir, page_number=page_number,
             estimated_cost_usd=float(PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD),
+            operations=page_check_operations(config),
             work=lambda: review_page_visuals(config=config, page=page, render=active.render,
                 image=target.read_render(page_number, active.render.revision), compiled=compiled, artifacts=target,
                 producing_request=_producing_request(target, active.render)),
@@ -1288,10 +1334,11 @@ def read_saved_visual_review(page_number: int, project=Depends(get_project)):
         page = target.read_page(page_number)
         image = target.read_render(page_number, active.render.revision)
         compiled = compile_page_generation_request(
-            page, target.read_book_edition(), approved_visual_inventory(project_dir),
+            page, ensure_current_page_edition(target, target.read_book_edition()), approved_visual_inventory(project_dir),
             approved_reference_files(project_dir), retry=RetryProvenance(attempt=1),
             style_template=config.style_template,
         )
+        complete_page_adapter(config).prepare(compiled)
         try:
             report = validated_saved_visual_review(
                 page=page, render=active.render, image=image, compiled=compiled,

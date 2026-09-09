@@ -75,3 +75,17 @@ def test_released_zero_usage_run_is_failed_but_unreserved_zero_row_is_complete()
 
     assert runs[0]["status"] == "failed"
     assert runs[0]["returned_credits"] == 10
+
+
+def test_subscription_failure_has_history_without_claiming_a_charge():
+    row = {
+        **_row("subscription-call", amount=0, job_id="subscription-job"),
+        "funding": "codex_subscription",
+        "cost_usd": None,
+        "usage_status": "failed",
+    }
+    run = _group_history_runs([row])[0]
+    assert run["status"] == "failed"
+    assert run["actual_credits"] == 0
+    assert run["funding"] == ["codex_subscription"]
+    assert run["rows"][0]["cost_usd"] is None

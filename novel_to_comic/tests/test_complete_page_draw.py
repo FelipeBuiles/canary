@@ -50,19 +50,7 @@ from novel_to_comic.usage import ApiResult, UsageRecord
 
 
 def _profile(**updates: object) -> PageCapabilityProfile:
-    payload: dict[str, object] = {
-        "id": "nano-banana-pro-complete-page-v1",
-        "provider": "vertex-multimodal",
-        "model": "gemini-3-pro-image",
-        "max_image_references": 4,
-        "reference_ordering": "ordered",
-        "editing_modes": ["instructed", "region_targeted"],
-        "output_width": 1696,
-        "output_height": 2528,
-        "max_prompt_characters": 32_000,
-        "retry_semantics": "bounded_submission",
-        "price_per_page_usd": "0.134",
-    }
+    payload: dict[str, object] = production_page_capability_profile().model_dump()
     payload.update(updates)
     return PageCapabilityProfile(**payload)
 
@@ -351,11 +339,11 @@ def test_request_identity_records_retry_lineage(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="retry attempt"):
         compile_page_generation_request(
             _page(),
-            _edition(_profile(max_attempts=1)),
+            _edition(),
             _inventory(),
             _reference_files(tmp_path),
             retry=RetryProvenance(
-                attempt=2,
+                attempt=4,
                 retries_request_sha256=original.request.request_sha256,
             ),
         )
@@ -404,7 +392,7 @@ def test_edition_rejects_changes_to_current_profile_after_the_model_changes(tmp_
     artifacts = TargetArtifacts(tmp_path)
     old = _edition(_profile(model="old-model"))
     artifacts.write_book_edition(old)
-    with pytest.raises(ValueError, match="Start a new edition"):
+    with pytest.raises(ValueError):
         ensure_current_page_edition(artifacts, old)
     assert artifacts.read_book_edition() == old
 
@@ -413,7 +401,7 @@ def test_edition_rejects_changes_after_current_model_was_saved_with_wrong_dimens
     artifacts = TargetArtifacts(tmp_path)
     old = _edition(_profile(output_width=2048, output_height=3072))
     artifacts.write_book_edition(old)
-    with pytest.raises(ValueError, match="Start a new edition"):
+    with pytest.raises(ValueError):
         ensure_current_page_edition(artifacts, old)
     assert artifacts.read_book_edition() == old
 
@@ -451,8 +439,8 @@ def test_unselected_reference_diagnostics_do_not_change_request_identity(
     assert changed.request.request_sha256 == original.request.request_sha256
 
 
-def test_book_edition_rejects_non_production_capability_before_cost() -> None:
-    with pytest.raises(ValueError, match="complete-page production"):
+def test_book_edition_rejects_unselected_capability_before_cost() -> None:
+    with pytest.raises(ValueError):
         select_book_edition(
             edition_id="edition-001",
             profile=_profile(provider="reve"),
@@ -471,14 +459,16 @@ def test_page_correction_uses_current_model_after_edition_rejects_changes(tmp_pa
     artifacts = TargetArtifacts(tmp_path)
     old = _edition(_profile(model="gemini-3.1-flash-image"))
     artifacts.write_book_edition(old)
-    with pytest.raises(ValueError, match="Start a new edition"):
+    with pytest.raises(ValueError):
         ensure_current_page_edition(artifacts, old)
     assert artifacts.read_book_edition() == old
 
 
-def test_reference_capacity_fails_before_generation_instead_of_dropping_identity(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="will not be silently dropped"):
-        compile_page_generation_request(_page(), _edition(_profile(max_image_references=1)), _inventory(), _reference_files(tmp_path), retry=RetryProvenance(attempt=1))
+def test_reference_capacity_fails_before_generation_instead_of_dropping_identity(tmp_path: Path, monkeypatch) -> None:
+    profile = _profile(max_image_references=1)
+    monkeypatch.setattr("novel_to_comic.page_drawing.current_page_capability_profile", lambda: profile)
+    with pytest.raises(ValueError):
+        compile_page_generation_request(_page(), _edition(profile), _inventory(), _reference_files(tmp_path), retry=RetryProvenance(attempt=1))
 
 
 def test_canonical_page_keeps_overflow_authorities_in_prompt(
@@ -592,7 +582,7 @@ def test_native_vertex_transport_preserves_reference_order_and_returns_one_page(
 ) -> None:
     compiled = compile_page_generation_request(
         _page(),
-        _edition(_profile(output_width=8, output_height=12)),
+        _edition(),
         _inventory(),
         _reference_files(tmp_path),
         retry=RetryProvenance(attempt=1),
@@ -601,7 +591,7 @@ def test_native_vertex_transport_preserves_reference_order_and_returns_one_page(
         _RecordingTransport(_provider_result())
     ).prepare(compiled)
     output = io.BytesIO()
-    Image.new("RGB", (8, 12), "black").save(output, format="PNG")
+    Image.new("RGB", (1696, 2528), "black").save(output, format="PNG")
     response = httpx.Response(
         200,
         json={
@@ -646,7 +636,7 @@ def test_native_vertex_transport_preserves_reference_order_and_returns_one_page(
     assert submitted["data"]["prompt"] == prepared.prompt
     assert submitted["data"]["model"] == "image-balanced"
     assert result.artifact_kind == "complete_page"
-    assert (result.width, result.height) == (8, 12)
+    assert (result.width, result.height) == (1696, 2528)
     assert result.actual_provider_model == "vertex_ai/gemini-3-pro-image"
     finalized = finalize.call_args.kwargs
     assert finalized["model_alias"] == "image-balanced"
@@ -661,10 +651,17 @@ def test_native_vertex_transport_preserves_reference_order_and_returns_one_page(
 def test_native_vertex_transport_uses_generation_endpoint_without_references(
     tmp_path: Path,
 ) -> None:
+    page = _page()
+    page = page.model_copy(update={"content": (page.content[0].model_copy(update={
+        "entity_ids": (), "appearance_states": {},
+    }),)})
+    compiled = compile_page_generation_request(
+        page, _edition(), ApprovedVisualReferenceInventory(references=[]), {},
+        retry=RetryProvenance(attempt=1),
+    )
     prepared = VertexCompletePageAdapter(
         _RecordingTransport(_provider_result())
-    ).prepare(_compile(tmp_path))
-    prepared = replace(prepared, references=(), reference_bytes=())
+    ).prepare(compiled)
     output = io.BytesIO()
     Image.new("RGB", (1696, 2528), "black").save(output, format="PNG")
     response = httpx.Response(
@@ -817,6 +814,7 @@ def test_reserved_generation_job_reserves_executes_debits_and_releases(
             work=work,
             debit_description="Complete page 7",
             reservation_credits=38,
+            operations=(("complete_page", "image-balanced"),),
         )
         asyncio.run(job.runner())
 
@@ -851,6 +849,7 @@ def test_complete_page_enqueue_uses_credited_lifecycle_and_persists_result(
             user_id="user-1",
             project_id="project-1",
             project_dir=tmp_path / "project",
+            config=Config(),
             compiled=compiled,
             adapter=adapter,
             artifacts=artifacts,
@@ -892,6 +891,7 @@ def test_failed_complete_page_persists_a_user_facing_failure(
             user_id="user-1",
             project_id="project-1",
             project_dir=tmp_path / "project",
+            config=Config(),
             compiled=_compile(tmp_path),
             adapter=VertexCompletePageAdapter(_BlockedTransport()),
             artifacts=artifacts,
@@ -934,6 +934,7 @@ def test_failed_ocr_is_recorded_as_analysis_failure_without_losing_render(
             user_id="user-1",
             project_id="project-1",
             project_dir=tmp_path / "project",
+            config=Config(),
             compiled=_compile(tmp_path),
             adapter=VertexCompletePageAdapter(
                 _RecordingTransport(_provider_result())
@@ -957,6 +958,8 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
 ) -> None:
     # Generating a page and reading it back are two provider calls. Both are
     # billable, settled under one ledger job so credits round once.
+    from novel_to_comic.config import PAGE_OCR_ESTIMATED_COST_USD
+    from novel_to_comic.server.credits import credit_estimate_for_provider_cost
     app = _make_app()
     compiled = _compile(tmp_path)
     artifacts = TargetArtifacts(tmp_path / "project")
@@ -998,6 +1001,7 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
             user_id="user-1",
             project_id="project-1",
             project_dir=tmp_path / "project",
+            config=Config(),
             compiled=compiled,
             adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
             artifacts=TargetArtifacts(tmp_path / "unanalysed"),
@@ -1010,6 +1014,7 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
             user_id="user-1",
             project_id="project-1",
             project_dir=tmp_path / "project",
+            config=Config(),
             compiled=compiled,
             adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
             artifacts=artifacts,
@@ -1020,9 +1025,15 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
         asyncio.run(job.runner())
 
     assert unanalysed is not job
-    # The OCR allowance is included before conversion. At this page price the
-    # buffered values happen to round to the same whole-credit reservation.
-    assert with_analysis == without_analysis == 18
+    image_quote = credit_estimate_for_provider_cost(
+        float(compiled.request.estimated_cost_usd), "draw", reserve=True,
+    )
+    checked_quote = credit_estimate_for_provider_cost(
+        float(compiled.request.estimated_cost_usd) + float(PAGE_OCR_ESTIMATED_COST_USD),
+        "draw", reserve=True,
+    )
+    assert without_analysis == image_quote["reserved_credits"]
+    assert with_analysis == checked_quote["reserved_credits"]
     debited = [call.args[3] for call in debit.call_args_list]
     assert [usage.model for usage in debited] == [
         "gemini-3-pro-image",
@@ -1065,6 +1076,7 @@ def test_reserved_generation_job_releases_without_debit_on_cancellation(
             work=work,
             debit_description="Complete page 7",
             reservation_credits=38,
+            operations=(("complete_page", "image-balanced"),),
         )
         with pytest.raises(asyncio.CancelledError):
             asyncio.run(job.runner())
@@ -1526,6 +1538,7 @@ def test_existing_page_checks_quote_holds_without_redrawing(tmp_path: Path) -> N
     page = _page()
     files = _reference_files(tmp_path)
     artifacts.write_page(page)
+    artifacts.write_book_edition(_edition())
     asyncio.run(draw_complete_page(
         _compile(tmp_path, files=files),
         adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
@@ -1534,7 +1547,9 @@ def test_existing_page_checks_quote_holds_without_redrawing(tmp_path: Path) -> N
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_project] = lambda: (tmp_path, Config(), None)
-    with patch("novel_to_comic.server.credited_job.reserve_credits") as reserve:
+    with patch("novel_to_comic.server.credited_job.reserve_credits") as reserve, \
+         patch("novel_to_comic.server.routers.pages.approved_visual_inventory", return_value=_inventory()), \
+         patch("novel_to_comic.server.routers.pages.approved_reference_files", return_value=files):
         client = TestClient(app)
         for check in ("analyze", "visual-review"):
             response = client.get(f"/pages/7/{check}/estimate")

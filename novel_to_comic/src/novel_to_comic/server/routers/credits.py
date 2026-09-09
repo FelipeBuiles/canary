@@ -16,7 +16,8 @@ router = APIRouter()
 
 _HISTORY_SELECT = (
     "id, amount_credits, status, stage, description, created_at, project_id, job_id, "
-    "provider, model, provider_model, operation, input_tokens, output_tokens, image_count, cost_usd"
+    "provider, model, provider_model, operation, input_tokens, output_tokens, image_count, "
+    "cost_usd, cost_source, funding, usage_status"
 )
 _LEDGER_PAGE_SIZE = 1000
 
@@ -78,6 +79,12 @@ def _group_history_runs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         returned = max(0, estimate - actual) if released else 0
         if reservation and not released:
             status = "in_flight"
+        elif any(
+            row.get("funding") == "codex_subscription"
+            and row.get("usage_status") in {"failed", "cancelled", "refused"}
+            for row in settled
+        ):
+            status = "failed"
         elif reservation and not actual and not added:
             status = "failed"
         else:
@@ -96,6 +103,7 @@ def _group_history_runs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "returned_credits": returned,
                 "credits_added": added,
                 "status": status,
+                "funding": sorted({row.get("funding") or "api" for row in settled}),
                 "rows": ordered,
             }
         )

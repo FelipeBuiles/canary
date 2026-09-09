@@ -10,8 +10,12 @@ FRONTEND_URL="${CANARY_FRONTEND_URL:-http://127.0.0.1:5173}"
 MOCK_URL="${CANARY_MOCK_MODEL_BASE_URL:-http://127.0.0.1:4010}"
 LITELLM_URL="${LITELLM_BASE_URL:-http://127.0.0.1:4000}"
 DEFAULT_FIXTURE="$REPO_ROOT/projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/the-call-of-cthulhu"
+BACKEND_PYTHON="$REPO_ROOT/novel_to_comic/.venv/bin/python"
+DEFAULT_CODEX_TEXT_ROUTES='{"extract-fast":"gpt-5.6-terra","extract-balanced":"gpt-5.6-terra","extract-quality":"gpt-5.6-terra","adapt-fast":"gpt-5.6-terra","adapt-balanced":"gpt-5.6-terra","adapt-quality":"gpt-5.6-terra","plan-fast":"gpt-5.6-terra","plan-balanced":"gpt-5.6-terra","plan-quality":"gpt-5.6-terra","prompt-fast":"gpt-5.6-terra","prompt-balanced":"gpt-5.6-terra","prompt-quality":"gpt-5.6-terra","ocr-fast":"gpt-5.6-terra","ocr-balanced":"gpt-5.6-terra","ocr-quality":"gpt-5.6-terra"}'
+DEFAULT_CODEX_IMAGE_ROUTES='["image-fast","image-balanced","image-quality"]'
 
-MODE="live"
+MODE="codex"
+EXPLICIT_MODE=""
 CHECK_ONLY=false
 OBSERVABILITY=false
 START_DOCKER=true
@@ -22,11 +26,13 @@ usage() {
   cat <<'EOF'
 Usage: ./scripts/dev.sh [options]
 
-Start the backend and Vite client, reusing services that are already healthy.
-In live mode the launcher also starts LiteLLM and its Postgres dependency with
-Docker Compose when needed.
+Start the backend and Vite client, reusing only compatible healthy services.
+Codex (default) and API modes also start LiteLLM and its Postgres dependency
+with Docker Compose when needed. Startup never generates or probes Codex auth.
 
 Options:
+  --codex                Use local Codex subscription routes (default; SDK required)
+  --api                  Use normal live paid API routing
   --mock                 Use the zero-cost local model replay service
   --fixture DIR          Completed project used by mock replay
   --observability        Also start/check the optional Langfuse stack
@@ -36,16 +42,28 @@ Options:
 
 Examples:
   ./scripts/dev.sh
+  ./scripts/dev.sh --api
   ./scripts/dev.sh --mock
   ./scripts/dev.sh --mock --fixture projects/my-completed-project
   ./scripts/dev.sh --check --observability
+
+Mode flags are mutually exclusive. Stop an incompatible existing backend manually;
+the launcher never restarts it. Flags do not re-route saved artifacts. Experimental
+Codex Draw supports new editions only, five total image inputs and native output
+dimensions. See docs/reference/codex-dev-capabilities.md for setup and limits.
 EOF
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --mock)
-      MODE="mock"
+    --codex|--api|--mock)
+      requested_mode="${1#--}"
+      if [ -n "$EXPLICIT_MODE" ] && [ "$EXPLICIT_MODE" != "$requested_mode" ]; then
+        echo "[dev] mode flags --codex, --api and --mock are mutually exclusive" >&2
+        exit 2
+      fi
+      MODE="$requested_mode"
+      EXPLICIT_MODE="$requested_mode"
       shift
       ;;
     --fixture)
@@ -98,21 +116,45 @@ http_responds() {
   curl --silent --show-error --max-time 3 "$1" >/dev/null 2>&1
 }
 
-backend_contract_current() {
-  printf '%s' "$1" | grep -Eq '"pipeline_contract"[[:space:]]*:[[:space:]]*"eight-stage-v2"'
+codex_sdk_installed() {
+  [ -x "$BACKEND_PYTHON" ] || return 1
+  "$BACKEND_PYTHON" -I -B -c '
+import importlib.metadata
+import sys
+try:
+    installed = all(
+        importlib.metadata.version(package) == "0.147.0"
+        for package in ("openai-codex", "openai-codex-cli-bin")
+    )
+except importlib.metadata.PackageNotFoundError:
+    installed = False
+sys.exit(0 if installed else 1)
+' >/dev/null 2>&1
 }
 
 backend_healthy_for_mode() {
   local payload
   payload="$(curl --silent --show-error --fail --max-time 3 \
     "$BACKEND_URL/api/health/ready" 2>/dev/null)" || return 1
-  if [ "$MODE" = "mock" ]; then
-    printf '%s' "$payload" | grep -q '"mock_models"' &&
-      backend_contract_current "$payload"
-  else
-    printf '%s' "$payload" | grep -q '"litellm"' &&
-      backend_contract_current "$payload"
-  fi
+  [ -x "$BACKEND_PYTHON" ] || return 1
+  printf '%s' "$payload" | "$BACKEND_PYTHON" -I -B -c '
+import json
+import sys
+try:
+    payload = json.load(sys.stdin)
+    mode = sys.argv[1]
+    dependency = "mock_models" if mode == "mock" else "litellm"
+    compatible = (
+        isinstance(payload, dict)
+        and payload.get("model_mode") == mode
+        and payload.get("pipeline_contract") == "eight-stage-v2"
+        and isinstance(payload.get("checks"), dict)
+        and dependency in payload["checks"]
+    )
+except (ValueError, TypeError):
+    compatible = False
+sys.exit(0 if compatible else 1)
+' "$MODE"
 }
 
 wait_for_http() {
@@ -180,11 +222,31 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM
 
 echo "[dev] Scenewright development stack ($MODE mode)"
+if [ "$MODE" = "codex" ]; then
+  echo "[dev] selected routes use Codex allowance; experimental Draw: new editions, max 5 inputs, native dimensions"
+elif [ "$MODE" = "api" ]; then
+  echo "[dev] normal live paid API routing; Codex is disabled"
+fi
 echo
 
 required_failed=false
 
-if [ "$MODE" = "live" ]; then
+if [ "$MODE" = "codex" ]; then
+  if codex_sdk_installed; then
+    ok "Codex SDK and bundled runtime (0.147.0; local metadata only)"
+  else
+    failed "Codex mode requires the optional SDK and bundled runtime pinned to 0.147.0"
+    echo "[dev] Install explicitly from the repository root (the launcher never installs it):" >&2
+    echo "[dev] uv pip install --python novel_to_comic/.venv/bin/python -r scripts/requirements-codex-dev.txt" >&2
+    echo "[dev] Or select --api for normal paid API routing, or --mock for replay." >&2
+    if [ "$CHECK_ONLY" = false ]; then
+      exit 1
+    fi
+    required_failed=true
+  fi
+fi
+
+if [ "$MODE" != "mock" ]; then
   if docker_available; then
     ok "Docker daemon"
     if ! report_compose_service "litellm-db"; then required_failed=true; fi
@@ -250,22 +312,28 @@ fi
 if backend_healthy_for_mode; then
   ok "Backend ($BACKEND_URL)"
 elif http_responds "$BACKEND_URL/api/health/ready"; then
-  failed "Backend ($BACKEND_URL) is already running but is incompatible (stale pipeline contract or wrong mode)"
-  echo "[dev] This launcher stops nothing automatically: stop the process on port 8000, then rerun in the right mode." >&2
+  failed "Backend ($BACKEND_URL) is already running but incompatible with $MODE mode (model_mode, pipeline contract or dependencies)"
+  echo "[dev] This launcher stops nothing automatically: stop that backend manually, then rerun with --$MODE." >&2
   required_failed=true
 elif [ "$CHECK_ONLY" = false ] && [ "$required_failed" = false ]; then
   starting "backend at $BACKEND_URL"
   (
     cd "$REPO_ROOT/novel_to_comic"
+    export CANARY_LOCAL_DIAGNOSTICS=true
+    export CANARY_CODEX_DEV_ENABLED=0
+    export CANARY_MOCK_GENERATIONS_ENABLED=false
     if [ "$MODE" = "mock" ]; then
-      exec env CANARY_MOCK_GENERATIONS_ENABLED=true \
-        CANARY_MOCK_MODEL_BASE_URL="$MOCK_URL" \
-        CANARY_LOCAL_DIAGNOSTICS=true \
-        uv run pipeline serve --dev --projects-dir "$REPO_ROOT/projects"
-    else
-      exec env CANARY_LOCAL_DIAGNOSTICS=true \
-        uv run pipeline serve --dev --projects-dir "$REPO_ROOT/projects"
+      export CANARY_MOCK_GENERATIONS_ENABLED=true
+      export CANARY_MOCK_MODEL_BASE_URL="$MOCK_URL"
+    elif [ "$MODE" = "codex" ]; then
+      export CANARY_CODEX_DEV_ENABLED=1
+      export CANARY_ENV="${CANARY_ENV-development}"
+      export CANARY_CODEX_DEV_TEXT_ROUTES="${CANARY_CODEX_DEV_TEXT_ROUTES-$DEFAULT_CODEX_TEXT_ROUTES}"
+      export CANARY_CODEX_DEV_IMAGE_ROUTES="${CANARY_CODEX_DEV_IMAGE_ROUTES-$DEFAULT_CODEX_IMAGE_ROUTES}"
+      export CANARY_CODEX_DEV_IMAGE_REASONING_MODEL="${CANARY_CODEX_DEV_IMAGE_REASONING_MODEL-gpt-5.5}"
+      exec uv run --no-sync pipeline serve --dev --projects-dir "$REPO_ROOT/projects"
     fi
+    exec uv run pipeline serve --dev --projects-dir "$REPO_ROOT/projects"
   ) &
   backend_pid=$!
   CHILD_PIDS+=("$backend_pid")
@@ -295,11 +363,7 @@ echo
 if [ "$required_failed" = true ]; then
   failed "development stack is not ready"
   if [ "$CHECK_ONLY" = true ]; then
-    if [ "$MODE" = "mock" ]; then
-      echo "[dev] Run ./scripts/dev.sh --mock to start missing services." >&2
-    else
-      echo "[dev] Run ./scripts/dev.sh to start missing services." >&2
-    fi
+    echo "[dev] Stop any incompatible backend manually; run ./scripts/dev.sh --$MODE to start missing services." >&2
   fi
   exit 1
 fi

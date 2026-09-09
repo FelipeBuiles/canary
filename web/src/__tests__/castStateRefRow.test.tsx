@@ -60,3 +60,22 @@ describe.each([
     expect(screen.getByText("REBUILDING").parentElement?.className).toContain(aspectClass);
   });
 });
+
+it("keeps two locations with the same state id independent in thumbnail and full-size views", () => {
+  render(<I18nProvider>{["loc_1", "loc_2"].map((entityId) => (
+    <StateRefRow key={entityId} projectName="demo" entityId={entityId} kind="location"
+      states={[alternateAppearance]} stageRegenerating={false} refreshToken="current" />
+  ))}</I18nProvider>);
+  const thumbnails = screen.getAllByAltText("After the fire reference");
+  expect(thumbnails.map((image) => image.getAttribute("src"))).toEqual([
+    "/api/projects/demo/files/plates/loc_1/states/after_fire.png?v=current",
+    "/api/projects/demo/files/plates/loc_2/states/after_fire.png?v=current",
+  ]);
+  thumbnails.forEach((thumbnail, index) => {
+    fireEvent.click(thumbnail);
+    expect(screen.getByAltText("After the fire").getAttribute("src")).toBe(
+      `/api/projects/demo/files/plates/loc_${index + 1}/states/after_fire.png?v=current`,
+    );
+    fireEvent.keyDown(document, { key: "Escape" });
+  });
+});

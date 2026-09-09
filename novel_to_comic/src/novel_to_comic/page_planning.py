@@ -56,6 +56,15 @@ class PlanInvariantError(ValueError):
         self.validation = validation
 
 
+class _AppearanceStateBinding(BaseModel):
+    """One entity-scoped appearance citation in the private LLM draft."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    entity_id: str = Field(min_length=1)
+    state_id: str = Field(min_length=1)
+
+
 class _PageContentDraft(BaseModel):
     """Plan allocates lettering by ID; the wording itself is never restated.
 
@@ -83,7 +92,18 @@ class _PageContentDraft(BaseModel):
     continuity_intent: str = ""
     lettering_ids: tuple[str, ...] = ()
     entity_ids: tuple[str, ...] = ()
-    appearance_states: dict[str, str] = Field(default_factory=dict)
+    appearance_states: tuple[_AppearanceStateBinding, ...] = ()
+
+    @model_validator(mode="after")
+    def _validate_appearance_state_bindings(self) -> "_PageContentDraft":
+        seen: set[str] = set()
+        for binding in self.appearance_states:
+            if binding.entity_id in seen:
+                raise ValueError(
+                    "appearance state bindings must have unique entity IDs"
+                )
+            seen.add(binding.entity_id)
+        return self
 
 
 class _PageDraft(BaseModel):
@@ -380,8 +400,12 @@ _SEMANTIC_PAGE_CONTRACT = (
     "re-enact a completed entrance. Do not invent positions, possessions, or transitions "
     "where the source is silent; leave unestablished composition to Draw. Never use "
     "previous generated pixels as continuity authority. "
-    "appearance_states maps visible entity IDs to approved entity-scoped state IDs; "
-    "omit base appearances. Explicit Adapt appearance changes own activation timing "
+    "appearance_states is an ordered list of bindings, each with entity_id and "
+    'state_id, for example [{"entity_id":"character_1","state_id":"injured"}]. '
+    "Bind each visible entity at most once to its approved entity-scoped state ID; "
+    "different entities may share the same state ID. Omit base appearances from "
+    "the list and use [] when no explicit bindings are needed. "
+    "Explicit Adapt appearance changes own activation timing "
     "and persist until changed. visual_intent and continuity_intent must agree with "
     "that state, including time of day: do not introduce dusk before its activation. "
     "Keep approved anchors and continuity guards verbatim and respect their action "
@@ -1510,7 +1534,9 @@ def _derived_state_citations(
     """
 
     entity_ids = list(content.entity_ids)
-    states = dict(content.appearance_states)
+    states = {
+        binding.entity_id: binding.state_id for binding in content.appearance_states
+    }
     unapproved: list[tuple[str, str, str]] = []
     for beat_id in content.beat_ids:
         beat = beat_by_id.get(beat_id)
