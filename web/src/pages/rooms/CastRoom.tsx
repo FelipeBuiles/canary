@@ -1,3 +1,5 @@
+import { ArrowUpRight, Search, Users, MapPin, Box } from "lucide-react";
+import { FieldLabel, TextField } from "../../components/ui/Field";
 import { useReferenceJob } from "../../hooks/useReferenceJob";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -53,6 +55,7 @@ const REF_VIEWS = [
  * portrait for close shots and the full-body crop for other shots.
  */
 function ReferenceViews({ projectName, charId, timestamp }: { projectName: string; charId: string; timestamp: string | number }) {
+  const { t } = useI18n();
   const [failed, setFailed] = useState<Record<string, boolean>>({});
 
   const visiblePoses = REF_VIEWS.filter(({ pose }) => !failed[pose]);
@@ -60,8 +63,9 @@ function ReferenceViews({ projectName, charId, timestamp }: { projectName: strin
 
   return (
     <div>
-      <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1.5">
-        REFERENCE VIEWS · SELECTED AUTOMATICALLY BY SHOT
+      <div className="font-meta text-xs tracking-[0.12em] text-ink-muted mb-3">
+        {t("REFERENCE VIEWS")}
+        <span className="mt-1 block font-body text-sm tracking-normal text-ink-muted">{t("Selected automatically to suit each shot.")}</span>
       </div>
       <div className="flex flex-wrap gap-2">
         {visiblePoses.map(({ pose, label }) => {
@@ -69,17 +73,17 @@ function ReferenceViews({ projectName, charId, timestamp }: { projectName: strin
           return (
             <div
               key={pose}
-              title={`${label} reference`}
-              className="relative w-[72px] overflow-hidden border-[2px] border-ink-black/15"
+              title={`${t(label)} ${t("reference")}`}
+              className="relative w-[104px] max-w-full overflow-hidden border border-ink-black/15"
             >
               <img
                 src={src}
-                alt={`${label} reference`}
+                alt={`${t(label)} ${t("reference")}`}
                 className="aspect-[1/2] w-full object-cover"
                 onError={() => setFailed((f) => ({ ...f, [pose]: true }))}
               />
-              <span className="block bg-ink-black/5 px-1 py-0.5 text-center font-meta text-[0.42rem] tracking-[0.1em] text-ink-black/70">
-                {label}
+              <span className="block bg-ink-black/5 px-2 py-2 text-center font-meta text-xs tracking-normal text-ink-muted">
+                {t(label)}
               </span>
             </div>
           );
@@ -128,19 +132,19 @@ export function StateRefRow({
       ? `${base}/refs/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}/sheet.png?v=${encodeURIComponent(refreshToken ?? "current")}`
       : `${base}/plates/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}.png?v=${encodeURIComponent(refreshToken ?? "current")}`;
 
-  const tileWidth = kind === "character" ? "w-[64px]" : "w-[104px]";
+  const tileWidth = kind === "character" ? "w-[104px] max-w-full" : "w-[156px] max-w-full";
   const imgAspect = kind === "character" ? "aspect-[64/84]" : "aspect-[16/9]";
 
   return (
     <div className="mt-4">
-      <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1.5">
+      <div className="font-meta text-xs tracking-[0.12em] text-ink-muted mb-3">
         {t("APPEARANCE STATES")}
       </div>
       <div className="flex flex-wrap gap-2">
         {significant.map((s) => {
           const src = thumbUrl(s.id);
           const frameClass = `${imgAspect} w-full bg-surface-container`;
-          const labelClass = "block truncate bg-ink-black/5 px-1 py-0.5 font-meta text-[0.42rem] tracking-[0.1em] text-ink-black/70";
+          const labelClass = "block break-words bg-ink-black/5 px-2 py-2 text-left font-body text-sm leading-snug text-ink-black";
 
           // A state tile is only unknown while its own file is absent. Each
           // poll changes the URL, so `failed` re-tests rather than latching.
@@ -155,7 +159,7 @@ export function StateRefRow({
               className={`${tileWidth} overflow-hidden border-[2px] ${stageRegenerating ? "border-ink-black/20" : "border-dashed border-ink-black/20"}`}
             >
               <div className={`${frameClass} flex items-center justify-center px-1 text-center`}>
-                <span className="font-meta text-[0.42rem] tracking-[0.14em] text-hero-red">
+                <span className="font-meta text-xs tracking-normal text-hero-red">
                   {stageRegenerating ? t("REBUILDING") : t("PENDING")}
                 </span>
               </div>
@@ -166,13 +170,14 @@ export function StateRefRow({
               key={s.id}
               type="button"
               title={`${s.label} — ${t("click for full size")}`}
+              aria-label={`${t("Open image")} · ${s.label}`}
               onClick={() => setViewer({ src: fullUrl(s.id), title: s.label })}
-              className={`${tileWidth} overflow-hidden border-[2px] border-ink-black/15 transition-colors hover:border-ink-black/50`}
+              className={`${tileWidth} overflow-hidden border-[2px] border-ink-black/15 transition-colors hover:border-ink-black/50 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red`}
             >
               <div className={frameClass}>
                 <img
                   src={src}
-                  alt={`${s.label} reference`}
+                  alt={`${s.label} ${t("reference")}`}
                   loading="lazy"
                   className="h-full w-full object-cover"
                   onError={() => setFailed((f) => ({ ...f, [src]: true }))}
@@ -225,15 +230,16 @@ function RefVersionHistory({
 
   return (
     <div className="mt-1.5">
-      <div className="font-meta text-[0.46rem] tracking-[0.14em] text-ink-black/45">
+      <div className="font-meta text-xs tracking-[0.1em] text-ink-muted">
         {heading ?? t("PREVIOUS")} ({archived.length})
       </div>
-      <div className="mt-1 flex flex-wrap gap-1">
+      <div className="mt-2 flex flex-wrap gap-2">
         {archived.map((v) => (
           <button
             key={`${v.version}-${v.image_path}`}
             type="button"
             title={t("Restore") + ` v${v.version}`}
+            aria-label={t("Restore") + ` v${v.version}`}
             disabled={restore.isPending}
             onClick={() =>
               restore.mutate(
@@ -241,9 +247,10 @@ function RefVersionHistory({
                 { onSuccess: () => onRestored?.() },
               )
             }
-            className="relative h-9 w-9 overflow-hidden border-[1.5px] border-ink-black/20 transition-colors hover:border-ink-black disabled:opacity-50"
+            className="relative w-14 overflow-hidden border border-ink-black/20 transition-colors hover:border-ink-black focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red disabled:opacity-50"
           >
-            <img src={fileUrl(v.image_path)} alt={`v${v.version}`} className="h-full w-full object-cover" />
+            <img src={fileUrl(v.image_path)} alt="" className="aspect-square w-full object-cover" />
+            <span className="block bg-bristol px-1 py-1 font-meta text-xs text-ink-muted">v{v.version}</span>
           </button>
         ))}
       {restore.error && <p role="alert" className="mt-2 font-body text-sm text-hero-red">{restore.error.message}</p>}
@@ -296,7 +303,7 @@ function StateRefTile({
   const isQueued = activeJob?.status === "queued" || (activeJob && activeJob.queue_position);
 
   return (
-    <div className="w-[84px]">
+    <div className="w-[140px] max-w-full">
       <div className="relative aspect-[64/84] w-full overflow-hidden border-[2px] border-ink-black/15 bg-surface-container">
         {busy ? (
           <FlowingDotsPlaceholder
@@ -307,25 +314,26 @@ function StateRefTile({
           />
         ) : imgFailed ? (
           <div className="flex h-full w-full items-center justify-center px-1 text-center">
-            <span className="font-meta text-[0.46rem] leading-tight tracking-[0.12em] text-hero-red">{t("NOT GENERATED")}</span>
+            <span className="font-meta text-xs leading-snug tracking-normal text-hero-red">{t("NOT GENERATED")}</span>
           </div>
         ) : (
           <img
             src={thumbUrl}
-            alt={`${state.label} reference`}
+            alt={`${state.label} ${t("reference")}`}
             className="h-full w-full object-cover"
             onError={() => setImgFailed(true)}
           />
         )}
       </div>
-      <div className="mt-1 break-words font-meta text-xs tracking-normal text-ink-muted" title={state.label}>
+      <div className="mt-2 break-words font-body text-sm leading-snug text-ink-black" title={state.label}>
         {state.label}
       </div>
       <button
         type="button"
         onClick={() => setConfirmRegen(true)}
+        aria-label={`${imgFailed ? t("GENERATE") : t("REGENERATE")} · ${state.label}`}
         disabled={busy || !regenEstimate}
-        className="mt-1 min-h-11 w-full border-[1.5px] border-ink-black/25 bg-bristol px-1 py-2 font-meta text-xs tracking-normal text-ink-muted transition-colors hover:border-ink-black hover:text-ink-black disabled:opacity-50"
+        className="mt-1 min-h-11 w-full border-[1.5px] border-ink-black/25 bg-bristol px-1 py-2 font-meta text-xs tracking-normal text-ink-muted transition-colors hover:border-ink-black hover:text-ink-black focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red disabled:opacity-50"
       >
         {busy ? queuedLabel(activeJob) : imgFailed ? t("GENERATE") : t("REGENERATE")}
       </button>
@@ -371,7 +379,7 @@ function AppearanceStatesPanel({
   if (significant.length === 0) return null;
   return (
     <div>
-      <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1.5">
+      <div className="font-meta text-xs tracking-[0.12em] text-ink-muted mb-3">
         {t("ALTERNATE APPEARANCES")}
       </div>
       <div className="flex flex-wrap gap-3">
@@ -477,7 +485,7 @@ function CharacterCastCard({
     <>
       <EntityCard
         padding="tight"
-        className="group/cast-card"
+        className="group/cast-card h-full"
         media={
           <button
             type="button"
@@ -489,27 +497,28 @@ function CharacterCastCard({
             {probe}
             {isGenerating ? (
               <FlowingDotsPlaceholder
-                aspect="4 / 5"
+                aspect="1 / 1"
                 className="h-full"
                 label={isQueued ? t("QUEUED") : t("DRAWING…")}
                 caption={activeJob ? t("GENERATING NEW REF") : t("REBUILDING CAST REF")}
               />
             ) : imgFailed && !hasImage ? (
-              <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-2 bg-surface-container">
-                <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">{t("NO REF IMAGE")}</div>
-                <div className="font-meta text-[0.5rem] tracking-[0.14em] text-hero-red">{t("OPEN TO GENERATE")}</div>
+              <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-surface-container">
+                <div className="font-meta text-xs font-bold tracking-[0.08em] text-ink-muted">{t("NO REF IMAGE")}</div>
+                <div className="font-meta text-xs tracking-[0.06em] text-hero-red">{t("OPEN TO GENERATE")}</div>
               </div>
             ) : (
               <>
                 <LazyImage
+                  preserveAspectBox
                   src={`${refUrl}?t=${timestamp}`}
                   alt={character.name}
                   loading="lazy"
                   width={320}
-                  height={400}
-                  aspect="4/5"
-                  containerClassName="aspect-[4/5] w-full"
-                  className="object-cover transition-opacity group-hover/cast-card:opacity-90"
+                  height={320}
+                  aspect="1/1"
+                  containerClassName="aspect-square w-full"
+                  className="object-contain transition-opacity group-hover/cast-card:opacity-90"
                   onError={() => setImgFailed(true)}
                 />
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
@@ -525,12 +534,12 @@ function CharacterCastCard({
           </button>
         }
       >
-        <div className="font-display text-[1.35rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
+        <h3 className="font-display text-2xl font-black leading-tight tracking-[-0.03em] text-ink-black">
           {character.name}
-        </div>
-        <p className="mt-3 break-words text-sm leading-6 text-ink-black">{character.visual_anchor}</p>
-        <div className="mt-2 font-body text-[0.92rem] font-semibold text-ink-black/55">
-          {character.age_range} &middot; {character.gender}
+        </h3>
+        <details className="mt-4 bg-surface-container px-3"><summary className="min-h-11 cursor-pointer py-3 font-meta text-xs font-bold">{t("Visual details")}</summary><p className="pb-4 break-words text-sm leading-6 text-ink-black">{character.visual_anchor}</p></details>
+        <div className="mt-3 font-body text-sm text-ink-muted">
+          {[character.age_range, character.gender].filter(Boolean).join(" · ")}
         </div>
         <div className="mt-4 flex flex-wrap gap-1.5">
           {character.distinguishing_features.slice(0, 3).map((f) => (
@@ -545,6 +554,7 @@ function CharacterCastCard({
           stageRegenerating={stageRegenerating}
           refreshToken={timestamp.toString()}
         />
+        <div className="mt-auto pt-5"><Button variant="outline" size="sm" className="w-full" disabled={isGenerating} onClick={() => setIsModalOpen(true)} aria-label={`${t("Review & adjust")} · ${character.name}`}><ArrowUpRight size={16} aria-hidden="true" />{t("Review & adjust")}</Button></div>
         {regenError && (
           <div role="alert" className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-sm leading-relaxed text-bristol">
             <strong className="block">{t("REGENERATION FAILED")}</strong>
@@ -685,7 +695,7 @@ function LocationStateTile({
   };
 
   return (
-    <div className="w-[132px] max-w-full">
+    <div className="w-[208px] max-w-full">
       <div className="relative aspect-[16/9] w-full overflow-hidden border-[2px] border-ink-black/15 bg-surface-container">
         {busy ? (
           <FlowingDotsPlaceholder
@@ -696,25 +706,26 @@ function LocationStateTile({
           />
         ) : imgFailed ? (
           <div className="flex h-full w-full items-center justify-center px-2 text-center">
-            <span className="font-meta text-[0.46rem] leading-tight tracking-[0.12em] text-hero-red">{t("NOT GENERATED")}</span>
+            <span className="font-meta text-xs leading-snug tracking-normal text-hero-red">{t("NOT GENERATED")}</span>
           </div>
         ) : (
           <img
             src={imageUrl}
-            alt={`${state.label} location reference`}
+            alt={`${state.label} ${t("location reference")}`}
             className="h-full w-full object-cover"
             onError={() => setImgFailed(true)}
           />
         )}
       </div>
-      <div className="mt-1 break-words font-meta text-xs tracking-normal text-ink-muted" title={state.label}>
+      <div className="mt-2 break-words font-body text-sm leading-snug text-ink-black" title={state.label}>
         {state.label}
       </div>
       <button
         type="button"
         onClick={() => setConfirmRegen(true)}
+        aria-label={`${imgFailed ? t("GENERATE") : t("REGENERATE")} · ${state.label}`}
         disabled={busy || !regenEstimate}
-        className="mt-1 min-h-11 w-full border-[1.5px] border-ink-black/25 bg-bristol px-2 py-2 font-meta text-xs tracking-normal text-ink-muted transition-colors hover:border-ink-black hover:text-ink-black disabled:opacity-50"
+        className="mt-1 min-h-11 w-full border-[1.5px] border-ink-black/25 bg-bristol px-2 py-2 font-meta text-xs tracking-normal text-ink-muted transition-colors hover:border-ink-black hover:text-ink-black focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red disabled:opacity-50"
       >
         {busy ? queuedLabel(activeJob) : imgFailed ? t("GENERATE") : t("REGENERATE")}
       </button>
@@ -749,7 +760,7 @@ function LocationAppearanceStatesPanel({
   if (significant.length === 0) return null;
   return (
     <div>
-      <div className="mb-1.5 font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">
+      <div className="mb-3 font-meta text-xs tracking-[0.12em] text-ink-muted">
         {t("ALTERNATE APPEARANCES")}
       </div>
       <div className="flex flex-wrap gap-3">
@@ -860,7 +871,7 @@ function LocationPlateCard({
     <>
       <EntityCard
         padding="tight"
-        className="group/cast-card"
+        className="group/cast-card h-full"
         media={
           <button
             type="button"
@@ -879,12 +890,13 @@ function LocationPlateCard({
               />
             ) : imgFailed && !hasImage ? (
               <div className="flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 bg-surface-container">
-                <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">{t("NO PLATE IMAGE")}</div>
-                <div className="font-meta text-[0.5rem] tracking-[0.14em] text-hero-red">{t("OPEN TO GENERATE")}</div>
+                <div className="font-meta text-xs font-bold tracking-[0.08em] text-ink-muted">{t("NO PLATE IMAGE")}</div>
+                <div className="font-meta text-xs tracking-[0.06em] text-hero-red">{t("OPEN TO GENERATE")}</div>
               </div>
             ) : (
               <>
                 <LazyImage
+                  preserveAspectBox
                   src={`${plateUrl}?t=${timestamp}`}
                   alt={location.name}
                   loading="lazy"
@@ -892,7 +904,7 @@ function LocationPlateCard({
                   height={270}
                   aspect="16/9"
                   containerClassName="aspect-[16/9] w-full"
-                  className="object-cover transition-opacity group-hover/cast-card:opacity-90"
+                  className="object-contain transition-opacity group-hover/cast-card:opacity-90"
                   onError={() => setImgFailed(true)}
                 />
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
@@ -905,9 +917,9 @@ function LocationPlateCard({
           </button>
         }
       >
-        <div className="font-display text-[1.35rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
+        <h3 className="font-display text-2xl font-black leading-tight tracking-[-0.03em] text-ink-black">
           {location.name}
-        </div>
+        </h3>
         <div className="mt-4 flex flex-wrap gap-1.5">
           {location.time_of_day && (
             <Tag>{location.time_of_day}</Tag>
@@ -922,6 +934,8 @@ function LocationPlateCard({
           stageRegenerating={stageRegenerating}
           refreshToken={timestamp.toString()}
         />
+        <details className="mt-4 bg-surface-container px-3"><summary className="min-h-11 cursor-pointer py-3 font-meta text-xs font-bold">{t("Visual details")}</summary><p className="pb-4 break-words text-sm leading-6 text-ink-black">{location.visual_anchor}</p></details>
+        <div className="mt-auto pt-5"><Button variant="outline" size="sm" className="w-full" disabled={isGenerating} onClick={() => setIsModalOpen(true)} aria-label={`${t("Review & adjust")} · ${location.name}`}><ArrowUpRight size={16} aria-hidden="true" />{t("Review & adjust")}</Button></div>
         {regenError && (
           <div role="alert" className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-sm leading-relaxed text-bristol">
             <strong className="block">{t("REGENERATION FAILED")}</strong>
@@ -1081,7 +1095,7 @@ function PropRefCard({
     <>
       <EntityCard
         padding="tight"
-        className="group/cast-card"
+        className="group/cast-card h-full"
         media={
           <button
             type="button"
@@ -1100,12 +1114,13 @@ function PropRefCard({
               />
             ) : imgFailed && !hasImage ? (
               <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-surface-container">
-                <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40">{t("NO REF IMAGE")}</div>
-                <div className="font-meta text-[0.5rem] tracking-[0.14em] text-hero-red">{t("OPEN TO GENERATE")}</div>
+                <div className="font-meta text-xs font-bold tracking-[0.08em] text-ink-muted">{t("NO REF IMAGE")}</div>
+                <div className="font-meta text-xs tracking-[0.06em] text-hero-red">{t("OPEN TO GENERATE")}</div>
               </div>
             ) : (
               <>
                 <LazyImage
+                  preserveAspectBox
                   src={`${refUrl}?t=${timestamp}`}
                   alt={prop.name}
                   loading="lazy"
@@ -1113,7 +1128,7 @@ function PropRefCard({
                   height={400}
                   aspect="1/1"
                   containerClassName="aspect-square w-full"
-                  className="object-cover transition-opacity group-hover/cast-card:opacity-90"
+                  className="object-contain transition-opacity group-hover/cast-card:opacity-90"
                   onError={() => setImgFailed(true)}
                 />
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
@@ -1129,14 +1144,16 @@ function PropRefCard({
           </button>
         }
       >
-        <div className="font-display text-[1.35rem] font-bold uppercase leading-none tracking-[-0.04em] text-ink-black">
+        <h3 className="font-display text-2xl font-black leading-tight tracking-[-0.03em] text-ink-black">
           {prop.name}
-        </div>
+        </h3>
         {prop.first_appearance_scene && (
           <div className="mt-2 font-body text-[0.92rem] font-semibold text-ink-black/55">
             First seen: {prop.first_appearance_scene}
           </div>
         )}
+        <details className="mt-4 bg-surface-container px-3"><summary className="min-h-11 cursor-pointer py-3 font-meta text-xs font-bold">{t("Visual details")}</summary><p className="pb-4 break-words text-sm leading-6 text-ink-black">{prop.visual_anchor}</p></details>
+        <div className="mt-auto pt-5"><Button variant="outline" size="sm" className="w-full" disabled={isGenerating} onClick={() => setIsModalOpen(true)} aria-label={`${t("Review & adjust")} · ${prop.name}`}><ArrowUpRight size={16} aria-hidden="true" />{t("Review & adjust")}</Button></div>
         {regenError && (
           <div role="alert" className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-sm leading-relaxed text-bristol">
             <strong className="block">{t("REGENERATION FAILED")}</strong>
@@ -1194,6 +1211,7 @@ function PropRefCard({
 
 export function CastRoom() {
   const { t } = useI18n();
+  const [search, setSearch] = useState("");
   const [confirmCast, setConfirmCast] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const { id } = useParams<{ id: string }>();
@@ -1285,6 +1303,12 @@ export function CastRoom() {
     );
   }
 
+  const matches = (entity: { name: string }) => entity.name.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase());
+  const matchingCharacters = bible.characters.filter(matches).length;
+  const matchingLocations = bible.locations.filter(matches).length;
+  const matchingProps = bible.props.filter(matches).length;
+  const matchCount = matchingCharacters + matchingLocations + matchingProps;
+
   return (
     <RoomShell project={id}>
       <RoomHeader
@@ -1292,6 +1316,30 @@ export function CastRoom() {
         title="CONFIRM CHARACTERS & PLACES"
         lead="These approved references guide every complete page. Open only the people or places that need a fix."
       />
+
+      <section className="bg-ink-black p-6 text-pulp-paper shadow-paper md:p-8">
+        <div className="grid gap-6 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] md:items-end">
+          <div>
+            <h2 className="font-display text-3xl font-black uppercase leading-tight tracking-[-0.03em] md:text-4xl">{t("Meet your cast")}</h2>
+            <p className="mt-3 max-w-[60ch] font-body text-sm leading-7 text-pulp-paper/85">{t("The faces, places and objects that make your story recognizable. Open a reference to inspect it, adjust its direction or explore another version.")}</p>
+            <p className="mt-4 font-meta text-xs text-narrator-gold">{bible.title}</p>
+          </div>
+          <nav aria-label={t("Browse cast references")} className="flex flex-wrap gap-x-5 gap-y-2">
+            <a href="#cast-characters" onClick={() => setSearch("")} className="inline-flex min-h-11 items-center gap-2 font-meta text-xs text-pulp-paper underline decoration-narrator-gold underline-offset-8"><Users size={16} aria-hidden="true" />{bible.characters.length} {t("Characters")}</a>
+            <a href="#cast-places" onClick={() => setSearch("")} className="inline-flex min-h-11 items-center gap-2 font-meta text-xs text-pulp-paper underline decoration-narrator-gold underline-offset-8"><MapPin size={16} aria-hidden="true" />{bible.locations.length} {t("Places")}</a>
+            {bible.props.length > 0 && <a href="#cast-props" onClick={() => setSearch("")} className="inline-flex min-h-11 items-center gap-2 font-meta text-xs text-pulp-paper underline decoration-narrator-gold underline-offset-8"><Box size={16} aria-hidden="true" />{bible.props.length} {t("Props")}</a>}
+          </nav>
+        </div>
+      </section>
+
+      <div className="flex flex-wrap items-end justify-between gap-4 bg-surface-container p-4">
+        <div className="w-full sm:max-w-md">
+          <FieldLabel htmlFor="cast-search">{t("Find a reference")}</FieldLabel>
+          <div className="relative"><Search size={17} aria-hidden="true" className="pointer-events-none absolute left-3 top-3.5 text-ink-muted" /><TextField id="cast-search" type="search" className="pl-10" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search characters, places or props")} /></div>
+        </div>
+        {search.trim() ? <div className="flex items-center gap-3"><p role="status" className="font-body text-sm text-ink-muted">{t("{count} references found").replace("{count}", String(matchCount))}</p><Button variant="outline" size="xs" onClick={() => setSearch("")}>{t("Clear search")}</Button></div> : <p className="max-w-sm font-body text-xs leading-6 text-ink-muted">{t("Review & adjust opens the image and its creative controls.")}</p>}
+      </div>
+      {search.trim() && matchCount === 0 && <p className="py-8 font-body text-sm text-ink-muted">{t("No matching references. Try another name or clear your search.")}</p>}
 
       {isStageStuck && (
         <StaleStageNotice
@@ -1306,7 +1354,7 @@ export function CastRoom() {
       )}
 
       <section className="space-y-10">
-        <div>
+        <div id="cast-characters" tabIndex={-1} hidden={!!search.trim() && matchingCharacters === 0}>
           <SectionHeader
             variant="underline"
             title="CHARACTER REFS"
@@ -1314,17 +1362,18 @@ export function CastRoom() {
           />
           <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
             {bible.characters.map((char) => (
+              <div key={char.id} hidden={!matches(char)} className="min-w-0">
               <CharacterCastCard
-                key={char.id}
                 character={char}
                 projectName={id}
                 stageRegenerating={stageRegenerating}
               />
+              </div>
             ))}
           </div>
         </div>
 
-        <div>
+        <div id="cast-places" tabIndex={-1} hidden={!!search.trim() && matchingLocations === 0}>
           <SectionHeader
             variant="underline"
             title="LOCATION PLATES"
@@ -1332,27 +1381,29 @@ export function CastRoom() {
           />
           <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
             {bible.locations.map((loc) => (
+              <div key={loc.id} hidden={!matches(loc)} className="min-w-0">
               <LocationPlateCard
-                key={loc.id}
                 location={loc}
                 projectName={id}
                 stageRegenerating={stageRegenerating}
               />
+              </div>
             ))}
           </div>
         </div>
 
         {bible.props.length > 0 && (
-          <div>
+          <div id="cast-props" tabIndex={-1} hidden={!!search.trim() && matchingProps === 0}>
             <SectionHeader variant="underline" title="PROP REFS" />
             <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {bible.props.map((prop) => (
+                <div key={prop.id} hidden={!matches(prop)} className="min-w-0">
                 <PropRefCard
-                  key={prop.id}
                   prop={prop}
                   projectName={id}
                   stageRegenerating={stageRegenerating}
                 />
+                </div>
               ))}
             </div>
           </div>

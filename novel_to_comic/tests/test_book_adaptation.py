@@ -30,6 +30,7 @@ from novel_to_comic.book_adaptation import (
     normalize_treatment,
     partition_requirements_by_shard,
     produce_book_adaptation,
+    recoverable_adaptation_candidate,
     validate_book_adaptation,
 )
 from novel_to_comic.models.appearance import (
@@ -1229,13 +1230,16 @@ def test_canonicalization_realizes_ledgered_dialogue_and_protected_wording() -> 
         {"source_disposition_not_realized", "protected_language_missing"}
     )
     dialogue = canonical.beats[0].lettering[0]
-    assert dialogue.kind == "dialogue"
+    assert dialogue.kind == "caption"
+    assert dialogue.delivery == "quoted_text"
+    assert canonical.ledger[0].disposition == "caption"
     assert dialogue.source_unit_ids == ("source_000186",)
     assert dialogue.text == ("Ph’nglui mglw’nafh Cthulhu R’lyeh wgah’nagl fhtagn.")
     caption = canonical.beats[1].lettering[0]
     assert caption.kind == "caption"
     assert caption.source_unit_ids == ("source_000255",)
     assert caption.text == protected
+    assert caption.delivery == "quoted_text"
     assert canonical.ledger[1].disposition == "caption"
 
 
@@ -2398,6 +2402,27 @@ def test_a_failed_adaptation_preserves_the_last_candidate(
             )
         )
 
+    resumed_features: list[str] = []
+
+    async def still_invalid(**request):
+        resumed_features.append(request["feature"])
+        return ApiResult(value=broken, usage=None)
+
+    for _ in range(2):
+        with pytest.raises(AdaptationInvariantError):
+            asyncio.run(produce_book_adaptation(
+                _source_document(), _story_bible(), brief,
+                artifacts=artifacts,
+                ctx=StageRuntime("adapt", PipelineState(
+                    project_name="adapt-test", novel_path="novel.txt",
+                    created_at=datetime.now(timezone.utc),
+                ), tmp_path),
+                model="gpt-4o-mini", generate=still_invalid,
+            ))
+    # Each explicit retry gets one fresh repair, without repaying the initial
+    # treatment, blueprint, or lettering even when repair output is unchanged.
+    assert resumed_features == ["adapt.book", "adapt.book"]
+
     candidate = artifacts.read_failed_adaptation_candidate()
     assert candidate.beats[0].story_functions == ("reveal",)
     assert not artifacts.adaptation_path.exists()
@@ -2951,3 +2976,98 @@ def test_a_treatment_in_the_wrong_containers_costs_no_extra_model_call(
     assert len(calls) == 3
     assert produced.treatment.causal_spine == (expected.treatment.causal_spine[0],)
     assert produced.treatment.motifs == ("door: The door recurs.",)
+
+
+def _protected_title_candidate() -> tuple[SourceDocument, AdaptationBrief, BookAdaptation, StoryBible]:
+    source = _source_document()
+    text = "Dungeon Crawler Carl"
+    first_text = text + " by Matt Dinniman. I saw the door open. "
+    source = SourceDocument.model_validate({
+        **source.model_dump(), "source_sha256": "",
+        "text": first_text + source.units[1].text,
+        "units": [
+            {**source.units[0].model_dump(), "text": first_text, "end_offset": len(first_text)},
+            {**source.units[1].model_dump(), "start_offset": len(first_text),
+             "end_offset": len(first_text) + len(source.units[1].text)},
+        ],
+    })
+    brief = AdaptationBrief.model_validate({
+        **_approved_brief().model_dump(), "protected_language": (text,), "content_sha256": "",
+    })
+    candidate = _with_lettering_text(text)
+    first = candidate.beats[0]
+    item = first.lettering[0].model_copy(update={"delivery": None})
+    candidate = candidate.model_copy(update={"beats": (first.model_copy(update={"lettering": (item, *first.lettering[1:])}),)})
+    bible = _story_bible().model_copy(update={"title": text})
+    candidate = BookAdaptation.model_validate({
+        **candidate.model_dump(), "content_sha256": "",
+        "source_sha256": source.source_sha256, "brief_sha256": brief.content_sha256,
+    })
+    return source, brief, candidate, bible
+
+
+def test_protected_title_recovers_missing_delivery_without_changing_wording() -> None:
+    source, brief, candidate, bible = _protected_title_candidate()
+    before = validate_book_adaptation(source, brief, candidate, story_bible=bible)
+    assert {failure.code for failure in before.invariant_failures} >= {
+        "invalid_lettering_speaker", "trailing_clipped_display_text",
+    }
+    recovered = _canonicalize_candidate_requirements(candidate, source, brief)
+    after = validate_book_adaptation(source, brief, recovered, story_bible=bible)
+    assert not after.invariant_failures
+    assert recovered.beats[0].lettering[0].text == "Dungeon Crawler Carl"
+    assert recovered.beats[0].lettering[0].delivery == "quoted_text"
+
+
+@pytest.mark.parametrize("defect", ["prose", "wrong_title", "missing_provenance"])
+def test_title_exception_does_not_allow_clipped_prose_or_unproven_titles(defect: str) -> None:
+    source, brief, candidate, bible = _protected_title_candidate()
+    candidate = _canonicalize_candidate_requirements(candidate, source, brief)
+    if defect == "prose":
+        bible = bible.model_copy(update={"title": "I saw the door open"})
+        candidate = _with_lettering_text("I saw the door open")
+    elif defect == "wrong_title":
+        bible = bible.model_copy(update={"title": "Another Book"})
+    else:
+        item = candidate.beats[0].lettering[0].model_copy(update={"source_unit_ids": ()})
+        beat = candidate.beats[0].model_copy(update={"lettering": (item,)})
+        candidate = candidate.model_copy(update={"beats": (beat,)})
+    result = validate_book_adaptation(source, brief, candidate, story_bible=bible)
+    assert "trailing_clipped_display_text" in {failure.code for failure in result.invariant_failures}
+
+
+def test_saved_protected_title_resumes_without_a_provider_call(tmp_path: Path) -> None:
+    source, brief, candidate, bible = _protected_title_candidate()
+    artifacts = TargetArtifacts(tmp_path)
+    artifacts.write_failed_adaptation_candidate(candidate)
+
+    async def forbidden_generate(**request):
+        pytest.fail("Recovering a source-backed title must not call a provider")
+
+    produced = asyncio.run(produce_book_adaptation(
+        source, bible, brief, artifacts=artifacts,
+        ctx=StageRuntime("adapt", PipelineState(
+            project_name="title-recovery", novel_path="novel.txt",
+            created_at=datetime.now(timezone.utc),
+        ), tmp_path),
+        model="gpt-4o-mini", generate=forbidden_generate,
+    ))
+    assert produced == artifacts.read_adaptation()
+    assert not artifacts.failed_adaptation_candidate_path.exists()
+    assert not artifacts.read_validation("adapt").invariant_failures
+
+
+@pytest.mark.parametrize("change", ["source", "brief", "instruction"])
+def test_saved_candidate_recovery_requires_unchanged_authority(tmp_path: Path, change: str) -> None:
+    source, brief, candidate, bible = _protected_title_candidate()
+    artifacts = TargetArtifacts(tmp_path)
+    artifacts.write_failed_adaptation_candidate(candidate)
+    if change == "source":
+        source = source.model_copy(update={"source_sha256": "a" * 64})
+    if change == "brief":
+        brief = brief.model_copy(update={"revision": brief.revision + 1})
+    assert recoverable_adaptation_candidate(
+        source, bible, brief, artifacts=artifacts,
+        story_instruction="Change the ending" if change == "instruction" else "",
+    ) is None
+    assert artifacts.failed_adaptation_candidate_path.exists()

@@ -88,7 +88,9 @@ function StageDocket({
   state,
   tone,
   children,
+  failureTitle,
 }: {
+  failureTitle?: string;
   stage: StageName;
   state: string;
   tone: "muted" | "running" | "failed";
@@ -100,7 +102,7 @@ function StageDocket({
   const plateClass = tone === "running"
     ? "bg-narrator-gold text-ink-black"
     : tone === "failed"
-      ? "bg-hero-red text-bristol"
+      ? "bg-surface-container text-ink-black"
       : "bg-ink-black text-bristol";
 
   return (
@@ -115,20 +117,20 @@ function StageDocket({
           </div>
         </div>
 
-        <div className="p-6 sm:p-8">
-          <div className="font-meta text-xs font-bold uppercase tracking-[0.08em] text-hero-red">
+        <div className="min-w-0 p-6 sm:p-8">
+          {tone !== "failed" && <div className="font-meta text-xs font-bold uppercase tracking-[0.08em] text-hero-red">
             {t(state)}
-          </div>
+          </div>}
           <h2 className="mt-2 font-display text-[2rem] font-black uppercase leading-[0.92] tracking-[-0.035em] text-ink-black">
-            {t(meta.title)}
+            {failureTitle ?? t(meta.title)}
           </h2>
           <p className="mt-4 max-w-[58ch] font-body text-[0.9rem] font-semibold leading-7 text-ink-muted">
             {t(meta.description)}
           </p>
           {children}
-          <p className="mt-5 font-body text-sm font-semibold leading-6 text-ink-black">
+          {tone !== "failed" && <p className="mt-5 font-body text-sm font-semibold leading-6 text-ink-black">
             {t(meta.nextDecision)}
-          </p>
+          </p>}
         </div>
       </article>
     </div>
@@ -162,7 +164,7 @@ function StageStartAction({
   const actionLabel = rerun
     ? t("Restart this step")
     : retry
-      ? t("Retry stage")
+      ? stage === "adapt" ? t("Resume adaptation") : t("Retry stage")
       : stage === "extract" ? t("Start Story analysis") : t("Start this step");
   const unavailable = isPending || !estimate.data || estimate.isError || estimate.isFetching;
 
@@ -218,7 +220,9 @@ function StageStartAction({
           title={actionLabel}
           body={stage === "extract"
             ? t("Analyze your manuscript and prepare a story brief. You will review it before choosing a style or drawing pages.")
-            : t(STAGE_META[stage].description)}
+            : retry && stage === "adapt"
+              ? t("Resume using saved work where possible, then check the script again before page planning continues.")
+              : t(STAGE_META[stage].description)}
           cost={estimate.data}
           confirmLabel={actionLabel}
           busy={unavailable}
@@ -358,22 +362,33 @@ interface StageFailedProps {
 
 function StageFailed({ project, stage, rerun, error, errorDetail }: StageFailedProps) {
   const { t } = useI18n();
+  const validationFailure = /invariant|validation/i.test(error ?? "");
+  const summary = stage === "adapt" && validationFailure
+    ? t("The comic script needs a few corrections before page planning can continue.")
+    : t("This step stopped before it could finish. You can try it again below.");
+  const hasDetails = Boolean(error || errorDetail);
   return (
-    <StageDocket stage={stage} state="PRESS STOPPED" tone="failed">
-      <p className="mt-5 font-body text-[0.86rem] font-semibold leading-6 text-ink-muted">
-        {error || t("This stage didn't complete. Try running it again.")}
-      </p>
-      {errorDetail && (
-        <details className="mt-4 border-[2px] border-ink-black/15 bg-surface-container p-3">
-          <summary className="cursor-pointer font-meta text-[0.62rem] font-bold tracking-[0.08em]">
-            {t("TECHNICAL DETAILS")}
+    <StageDocket stage={stage} state="PRESS STOPPED" tone="failed" failureTitle={stage === "adapt" ? t("Adaptation paused") : t(STAGE_META[stage].title)}>
+      <div role="status" className="mt-5 font-body text-base leading-7 text-ink-black">
+        <p>{summary}</p>
+        <p className="mt-3 text-sm leading-6 text-ink-muted">
+          {stage === "adapt" && !rerun
+            ? t("Resume using saved work where possible. Review the estimate before continuing.")
+            : t("Review the estimate, then try again. If it stops again, open the technical details to help investigate.")}
+        </p>
+      </div>
+      <StageStartAction project={project} stage={stage} retry rerun={rerun} />
+      {hasDetails && (
+        <details className="mt-6 bg-surface-container px-4 pb-1">
+          <summary className="min-h-11 cursor-pointer py-3 font-meta text-sm font-semibold">
+            {t("Technical details")}
           </summary>
-          <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap font-mono text-[0.7rem] leading-5 text-ink-black/80">
+          {error && <p className="mb-3 font-body text-sm leading-6 text-ink-muted [overflow-wrap:anywhere]">{error}</p>}
+          {errorDetail && <pre className="mb-3 max-h-64 overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-xs leading-5 text-ink-muted" tabIndex={0}>
             {errorDetail}
-          </pre>
+          </pre>}
         </details>
       )}
-      <StageStartAction project={project} stage={stage} retry rerun={rerun} />
     </StageDocket>
   );
 }
@@ -381,7 +396,7 @@ function StageFailed({ project, stage, rerun, error, errorDetail }: StageFailedP
 function StageLoadError({ stage, message }: { stage: StageName; message: string }) {
   const { t } = useI18n();
   return (
-    <StageDocket stage={stage} state="COULD NOT LOAD" tone="failed">
+    <StageDocket stage={stage} state="COULD NOT LOAD" tone="failed" failureTitle={t("COULD NOT LOAD")}>
       <p className="mt-5 font-body text-[0.86rem] font-semibold leading-6 text-ink-muted">
         {t("This step could not be loaded. Your saved work has not been changed.")}
       </p>
@@ -389,7 +404,7 @@ function StageLoadError({ stage, message }: { stage: StageName; message: string 
         <summary className="cursor-pointer font-meta text-[0.62rem] font-bold tracking-[0.08em]">
           {t("ERROR DETAILS")}
         </summary>
-        <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap font-mono text-[0.7rem] leading-5 text-ink-black/80">
+        <pre className="mt-3 max-h-72 overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-[0.7rem] leading-5 text-ink-black/80">
           {message}
         </pre>
       </details>

@@ -7,6 +7,7 @@ import json
 import re
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any, Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -561,7 +562,29 @@ def _materialize_protected_lettering(
 ) -> BookAdaptation:
     """Realize protected wording and ledgered speech as canonical lettering."""
 
-    beats = list(candidate.beats)
+    # Earlier canonicalization inserted protected captions without delivery.
+    # Recover only exact, source-backed quotations; never guess dialogue owners.
+    protected = set(brief.protected_language)
+    source_by_id = {unit.id: unit for unit in source.units}
+    beats = [
+        beat.model_copy(update={"lettering": tuple(
+            item.model_copy(update={"delivery": "quoted_text"})
+            if item.kind == "caption"
+            and item.delivery is None
+            and item.speaker is None
+            and item.speaker_entity_id is None
+            and item.text in protected
+            and any(
+                source_id in source_by_id
+                and _protected_language_key(item.text)
+                in _protected_language_key(source_by_id[source_id].text)
+                for source_id in item.source_unit_ids
+            )
+            else item
+            for item in beat.lettering
+        )})
+        for beat in candidate.beats
+    ]
     ledger = list(candidate.ledger)
     existing_keys = {
         _protected_language_key(item.text) for beat in beats for item in beat.lettering
@@ -611,7 +634,10 @@ def _materialize_protected_lettering(
         ):
             entry = entry.model_copy(update={"disposition": "caption", "reason": None})
             ledger[ledger_index] = entry
-        kind = kind_by_disposition.get(entry.disposition) if entry else None
+        kind = "caption" if entry and entry.disposition in kind_by_disposition else None
+        if kind and entry.disposition != "caption":
+            entry = entry.model_copy(update={"disposition": "caption", "reason": None})
+            ledger[ledger_index] = entry
         destination = (
             entry.adapted_beat_ids[0] if entry and entry.adapted_beat_ids else None
         )
@@ -627,6 +653,7 @@ def _materialize_protected_lettering(
             id=f"lettering_{next_lettering_number:04d}",
             kind=kind,
             text=phrase,
+            delivery="quoted_text" if kind == "caption" else None,
             source_unit_ids=(source_unit.id,),
         )
         next_lettering_number += 1
@@ -642,7 +669,7 @@ def _materialize_protected_lettering(
         for item in beat.lettering
         for source_unit_id in item.source_unit_ids
     }
-    for entry in ledger:
+    for ledger_index, entry in enumerate(ledger):
         kind = kind_by_disposition.get(entry.disposition)
         if (
             kind not in {"dialogue", "thought"}
@@ -669,7 +696,8 @@ def _materialize_protected_lettering(
             additions.append(
                 LetteringItem(
                     id=f"lettering_{next_lettering_number:04d}",
-                    kind=kind,
+                    kind="caption",
+                    delivery="quoted_text",
                     text=wording,
                     source_unit_ids=(entry.source_unit_id,),
                 )
@@ -678,7 +706,8 @@ def _materialize_protected_lettering(
         beats[beat_index] = beat.model_copy(
             update={"lettering": (*beat.lettering, *additions)}
         )
-        realized_dispositions.add((entry.source_unit_id, kind))
+        ledger[ledger_index] = entry.model_copy(update={"disposition": "caption", "reason": None})
+        realized_dispositions.add((entry.source_unit_id, "caption"))
 
     return BookAdaptation.model_validate(
         {
@@ -2260,6 +2289,36 @@ def _splice_draft_repair(
     )
 
 
+def recoverable_adaptation_candidate(
+    source: SourceDocument,
+    story_bible: StoryBible,
+    brief: AdaptationBrief,
+    *,
+    artifacts: TargetArtifacts,
+    story_instruction: str = "",
+) -> BookAdaptation | None:
+    """Revalidate a saved draft without generation or artifact mutations."""
+    if story_instruction.strip() or not artifacts.failed_adaptation_candidate_path.exists():
+        return None
+    candidate = artifacts.read_failed_adaptation_candidate()
+    # Do not canonicalize a stale draft into the current approved contract.
+    if (
+        candidate.source_sha256 != source.source_sha256
+        or candidate.brief_revision != brief.revision
+        or candidate.brief_sha256 != brief.content_sha256
+    ):
+        return None
+    candidate = _canonicalize_candidate_requirements(candidate, source, brief)
+    validation = validate_book_adaptation(source, brief, candidate, story_bible=story_bible)
+    if validation.invariant_failures:
+        return None
+    return BookAdaptation.model_validate({
+        **candidate.model_dump(mode="json"),
+        "content_sha256": "",
+        "editorial_issues": validation.editorial_issues,
+    })
+
+
 async def produce_book_adaptation(
     source: SourceDocument,
     story_bible: StoryBible,
@@ -2280,37 +2339,29 @@ async def produce_book_adaptation(
     # changed instruction never reuses a stale paid response.
     instruction_suffix = story_instruction_section(story_instruction, stage="adapt")
     require_approved_brief(brief)
-    if artifacts.failed_adaptation_candidate_path.exists():
-        recovered_candidate = _canonicalize_candidate_requirements(
-            artifacts.read_failed_adaptation_candidate(),
-            source,
-            brief,
-        )
+    recovered_candidate = recoverable_adaptation_candidate(
+        source, story_bible, brief, artifacts=artifacts,
+        story_instruction=story_instruction,
+    )
+    if recovered_candidate is not None:
         recovered_validation = validate_book_adaptation(
-            source,
-            brief,
-            recovered_candidate,
-            story_bible=story_bible,
+            source, brief, recovered_candidate, story_bible=story_bible,
         )
-        if not recovered_validation.invariant_failures:
-            adaptation = BookAdaptation.model_validate(
-                {
-                    **recovered_candidate.model_dump(mode="json"),
-                    "content_sha256": "",
-                    "editorial_issues": recovered_validation.editorial_issues,
-                }
-            )
-            with ctx.execute(total=1, estimated_cost_usd=0):
-                _persist_validation(
-                    artifacts,
-                    recovered_validation,
-                    attempts=1,
-                )
-                artifacts.write_adaptation(adaptation)
-                artifacts.clear_failed_adaptation_candidate()
-                ctx.record_item_done()
-                ctx.progress(1, 1)
-            return adaptation
+        with ctx.execute(total=1, estimated_cost_usd=0):
+            _persist_validation(artifacts, recovered_validation, attempts=1)
+            artifacts.write_adaptation(recovered_candidate)
+            artifacts.clear_failed_adaptation_candidate()
+            ctx.record_item_done()
+            ctx.progress(1, 1)
+        return recovered_candidate
+
+    # An explicit resume gets a fresh bounded repair attempt even if a prior
+    # repair returned the same invalid draft. Initial paid shards stay reusable.
+    repair_namespace = (
+        f"repairs/resume_{uuid4().hex}"
+        if artifacts.failed_adaptation_candidate_path.exists()
+        else "repairs"
+    )
 
     treatment_prompt = build_narrative_treatment_prompt(
         source,
@@ -2582,7 +2633,7 @@ async def produce_book_adaptation(
                 ),
                 checkpoint_names=[
                     (
-                        f"repairs/round_{validation_attempt:02d}_"
+                        f"{repair_namespace}/round_{validation_attempt:02d}_"
                         f"shard_{shard_index + 1:03d}"
                     )
                     for shard_index in affected
@@ -3056,7 +3107,20 @@ def validate_book_adaptation(
                     evidence=[f"Incomplete display text: {text!r}"],
                 )
             )
-        if not _has_terminal_display_punctuation(text):
+        # A source-backed book title is complete display copy without a full
+        # stop. Keep the clipping check for prose and all other captions.
+        is_book_title = (
+            story_bible is not None
+            and item.kind == "caption"
+            and item.delivery == "quoted_text"
+            and text == story_bible.title
+            and text in brief.protected_language
+            and any(
+                unit.id in item.source_unit_ids and text in unit.text
+                for unit in source.units
+            )
+        )
+        if not _has_terminal_display_punctuation(text) and not is_book_title:
             failures.append(
                 InvariantFailure(
                     id=f"adapt_failure_trailing_clipped_display_text_{item.id}",

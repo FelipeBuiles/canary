@@ -242,6 +242,38 @@ describe("RevisionDraft across render targets", () => {
     expect(screen.getByDisplayValue("overall guidance")).toBeTruthy();
   });
 
+  it("restores pending wording only for the same render and copies it unselected on request", () => {
+    const pending = "Keep the hands in view without changing the face";
+    const first = renderDraft({ parentRenderRevision: 1 });
+    fireEvent.click(screen.getByRole("button", { name: /make changes/i }));
+    fireEvent.change(screen.getByLabelText(/What would you like to change/), {
+      target: { value: pending },
+    });
+    first.unmount();
+
+    const reopened = renderDraft({ parentRenderRevision: 1 });
+    fireEvent.click(screen.getByRole("button", { name: /make changes/i }));
+    expect(screen.getByLabelText(/What would you like to change/)).toHaveProperty("value", pending);
+    reopened.unmount();
+
+    const next = renderDraft({ parentRenderRevision: 2 });
+    expect(screen.getByRole("alert")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /make changes/i }));
+    expect(screen.getByLabelText(/What would you like to change/)).toHaveProperty("value", "");
+    expect(screen.queryByDisplayValue(pending)).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /include fix/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /copy wording/i }));
+
+    expect(screen.getByRole("checkbox", { name: `Include fix: ${pending}` })).toHaveProperty("checked", false);
+    const copied = loadRevisionDraft(PROJECT, PAGE, target(2, 2));
+    expect(copied?.changes).toHaveLength(1);
+    expect(copied?.changes[0]?.instruction).toBe(pending);
+    expect(copied?.changes[0]?.selected).toBe(false);
+    expect(copied?.changes[0]?.annotations).toHaveLength(0);
+    expect(next.container.querySelectorAll('[id^="mark-note-"]')).toHaveLength(0);
+  });
+
   it("lets the author compare real revisions without changing the correction draft", () => {
     renderDraft({ parentRenderRevision: 2, compareRevision: 1, issues: [FACE_ISSUE] });
     fireEvent.click(screen.getByRole("button", { name: /make changes/i }));
@@ -294,13 +326,13 @@ describe("RevisionDraft across render targets", () => {
     fireEvent.change(screen.getByPlaceholderText(/describe a fix in your own words/i), {
       target: { value: "Check the cape edge" },
     });
-    fireEvent.click(screen.getByRole("button", { name: /add manual request/i }));
+    fireEvent.click(screen.getByRole("button", { name: /add request/i }));
     const faceBox = screen.getByRole("checkbox", { name: /include fix: restore the approved face/i });
     fireEvent.click(faceBox);
     expect((faceBox as HTMLInputElement).checked).toBe(false);
 
     // Explicit preview makes the left-out findings actionable.
-    fireEvent.click(screen.getByRole("button", { name: /preview cost/i }));
+    fireEvent.click(screen.getByRole("button", { name: /review changes/i }));
     fireEvent.click(screen.getByRole("button", { name: /select all open/i }));
 
     // Every fix ends up selected; the missing suggestion joins the draft.

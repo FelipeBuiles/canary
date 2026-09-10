@@ -10,7 +10,6 @@ import {
 import {
   ApprovalBar,
   ConfirmModal,
-  EntityCard,
   RoomHeader,
   RoomShell,
   SectionHeader,
@@ -18,13 +17,11 @@ import {
 } from "../../components/composites";
 import { Button } from "../../components/ui/Button";
 import { FieldLabel, TextAreaField, TextField } from "../../components/ui/Field";
-import { Surface } from "../../components/ui/Surface";
+import { BriefSection } from "../../components/composites/BriefSection";
+import { StoryExplorer } from "../../components/composites/StoryExplorer";
+import { ArrowDownRight, BookOpen, Pencil } from "lucide-react";
 import { useI18n } from "../../i18n";
 import type { AdaptationBrief, StoryDecision } from "../../types/api";
-
-function lines(value: string[]): string {
-  return value.join("\n");
-}
 
 function splitLines(value: string): string[] {
   return value.split("\n");
@@ -255,25 +252,16 @@ function StoryEditor({ id, data, brief, stageStatus }: {
         lead={t("Review what Scenewright found and set the promises that every page must keep.")}
       />
 
-      <Surface border="soft" shadow="none" padding="md">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <div className="font-meta text-[0.62rem] font-bold tracking-[0.1em] text-ink-muted">
-              {t("SOURCE MANUSCRIPT")}
-            </div>
-            <h2 className="mt-2 font-display text-[2rem] font-black uppercase leading-none tracking-[-0.035em]">
-              {data.story_bible.title}
-            </h2>
-            <p className="mt-2 font-body text-sm font-semibold text-ink-muted">
-              {t("BY")} {data.story_bible.author}
-            </p>
-          </div>
-          <p className="max-w-[34rem] text-pretty font-body text-sm leading-6 text-ink-black/70">
-            {data.story_bible.total_scenes} {t("scenes")} · {data.story_bible.characters.length} {t("characters")} ·{" "}
-            {data.story_bible.locations.length} {t("places")}
-          </p>
+      <section className="relative overflow-hidden bg-ink-black p-6 text-pulp-paper shadow-paper md:p-10" aria-label={t("SOURCE MANUSCRIPT")}>
+        <div className="flex items-center gap-3 font-meta text-xs tracking-[0.1em] text-narrator-gold">
+          <BookOpen size={20} aria-hidden="true" /> {t("SOURCE MANUSCRIPT")}
         </div>
-      </Surface>
+        <h2 className="mt-6 max-w-[20ch] break-words font-display text-4xl font-black uppercase leading-[1.02] tracking-[-0.035em] sm:text-5xl xl:text-6xl">{data.story_bible.title}</h2>
+        <div className="mt-7 flex flex-wrap items-end justify-between gap-6">
+          <p className="font-body text-sm">{t("BY")} {data.story_bible.author}</p>
+          <a href="#story-source" className="inline-flex min-h-11 items-center gap-3 font-meta text-xs leading-6 text-pulp-paper underline decoration-narrator-gold underline-offset-8 hover:text-narrator-gold" aria-label={t("Explore extracted story")}>{data.story_bible.total_scenes} {t("scenes")} · {data.story_bible.characters.length} {t("characters")} · {data.story_bible.locations.length} {t("places")}<ArrowDownRight size={18} aria-hidden="true" /></a>
+        </div>
+      </section>
       {earlierDrafts.length > 0 && (
         <section className="space-y-4" aria-label={t("Earlier unsaved drafts")}>
           <p className="font-body text-sm text-ink-muted">{t("An earlier draft was preserved. Review or copy it below; it has not been applied to the current brief.")}</p>
@@ -319,174 +307,49 @@ function StoryEditor({ id, data, brief, stageStatus }: {
         <SectionHeader
           variant="underline"
           title={t("ADAPTATION BRIEF")}
-          description={t("This is the approved editorial contract for the whole book. One item per line.")}
+          description={t("Make this story yours. Review the direction below, then edit anything you want your comic to keep.")}
         />
-        <p role="status" className="font-meta text-sm text-ink-muted">
-          {busy ? t("Saving brief…") : dirty ? restored ? t("Restored unsaved draft") : t("Unsaved changes") : t("All changes saved")}
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-4 bg-surface-container p-4">
+          <div className="flex items-center gap-3"><Pencil size={18} aria-hidden="true" /><p className="font-body text-sm">{t("Every section below is editable.")}</p></div>
+          <div className="flex flex-wrap items-center gap-4">
+            <p role="status" className="font-meta text-xs text-ink-muted">
+              {busy ? t("Saving brief…") : dirty ? restored ? t("Restored unsaved draft") : t("Unsaved changes") : t("All changes saved")}
+            </p>
+            <Button type="submit" size="sm" variant="outline" disabled={busy || !dirty || invalidRange || conflict}>{t("SAVE BRIEF")}</Button>
+          </div>
+        </div>
         {saveError && <p role="alert" className="font-body text-sm text-hero-red">{saveError}</p>}
         {storageError && <p role="alert" className="font-body text-sm text-hero-red">{t("Draft recovery is unavailable in this browser. Save before leaving.")}</p>}
         {conflict && <p role="alert" className="font-body text-sm text-hero-red">{t("This brief changed elsewhere. Your draft is preserved; reload to review the latest revision before saving.")}</p>}
         {invalidRange && <p role="alert" className="font-body text-sm text-hero-red">{t("Choose a minimum of at least 1 page and a maximum no smaller than the minimum.")}</p>}
         <fieldset disabled={busy} className="space-y-8">
           <legend className="sr-only">{t("ADAPTATION BRIEF")}</legend>
-        <div className="grid gap-5 lg:grid-cols-2">
-          <div>
-            <FieldLabel htmlFor="minimum-pages">{t("Minimum pages")}</FieldLabel>
-            <TextField id="minimum-pages" type="number" min={1} value={draft.target_page_min} onChange={(event) => change("target_page_min", Number(event.target.value))} />
-          </div>
-          <div>
-            <FieldLabel htmlFor="maximum-pages">{t("Maximum pages")}</FieldLabel>
-            <TextField id="maximum-pages" type="number" min={draft.target_page_min} value={draft.target_page_max} onChange={(event) => change("target_page_max", Number(event.target.value))} />
+        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
+          <BriefSection id="story-promises" title={t("STORY PROMISES")} value={draft.story_promises} onChange={(value) => change("story_promises", splitLines(value))} featured />
+          <div className="space-y-6">
+            <BriefSection id="tone" title={t("TONE")} value={draft.tone} onChange={(value) => change("tone", value)} />
+            <div className="bg-surface-container p-5">
+              <h3 className="font-display text-xl font-black uppercase">{t("Target length")}</h3>
+              <p className="mb-5 mt-2 font-body text-sm text-ink-muted">{t("Give your story room to breathe.")}</p>
+              <div className="grid grid-cols-2 gap-4">
+                <div><FieldLabel htmlFor="minimum-pages">{t("Minimum pages")}</FieldLabel><TextField id="minimum-pages" type="number" min={1} value={draft.target_page_min} onChange={(event) => change("target_page_min", Number(event.target.value))} /></div>
+                <div><FieldLabel htmlFor="maximum-pages">{t("Maximum pages")}</FieldLabel><TextField id="maximum-pages" type="number" min={draft.target_page_min} value={draft.target_page_max} onChange={(event) => change("target_page_max", Number(event.target.value))} /></div>
+              </div>
+            </div>
           </div>
         </div>
-
-        <div className="grid gap-5 lg:grid-cols-2">
-          <EntityCard>
-            <FieldLabel htmlFor="story-promises">{t("STORY PROMISES")}</FieldLabel>
-            <TextAreaField
-              id="story-promises"
-              value={lines(draft.story_promises)}
-              onChange={(event) => change("story_promises", splitLines(event.target.value))}
-            />
-          </EntityCard>
-          <EntityCard>
-            <FieldLabel htmlFor="essential-events">{t("ESSENTIAL EVENTS")}</FieldLabel>
-            <TextAreaField
-              id="essential-events"
-              value={lines(draft.essential_events)}
-              onChange={(event) => change("essential_events", splitLines(event.target.value))}
-            />
-            <FieldLabel htmlFor="character-turns" className="mt-5 block">{t("CHARACTER TURNS")}</FieldLabel>
-            <TextAreaField
-              id="character-turns"
-              value={lines(draft.character_turns)}
-              onChange={(event) => change("character_turns", splitLines(event.target.value))}
-            />
-          </EntityCard>
-          <EntityCard>
-            <FieldLabel htmlFor="tone">{t("TONE")}</FieldLabel>
-            <TextAreaField
-              id="tone"
-              value={draft.tone}
-              onChange={(event) => change("tone", event.target.value)}
-            />
-            <FieldLabel htmlFor="emphasis" className="mt-5 block">{t("DESIRED EMPHASIS")}</FieldLabel>
-            <TextAreaField
-              id="emphasis"
-              value={lines(draft.desired_emphasis)}
-              onChange={(event) => change("desired_emphasis", splitLines(event.target.value))}
-            />
-          </EntityCard>
+        <div className="grid items-start gap-6 lg:grid-cols-2">
+          {(["themes", "desired_emphasis", "essential_events", "character_turns"] as const).map((key) => <BriefSection key={key} id={key.replaceAll("_", "-")} title={t(BRIEF_FIELD_LABELS[key]!)} value={draft[key]} onChange={(value) => change(key, splitLines(value))} />)}
         </div>
-        <details>
+        <details className="bg-surface-container p-5">
           <summary className="min-h-11 cursor-pointer py-3 font-meta text-sm font-bold">{t("More editorial details")}</summary>
-          <div className="grid gap-5 lg:grid-cols-2">
-          <EntityCard>
-            <FieldLabel htmlFor="themes">{t("THEMES")}</FieldLabel>
-            <TextAreaField
-              id="themes"
-              value={lines(draft.themes)}
-              onChange={(event) => change("themes", splitLines(event.target.value))}
-            />
-          </EntityCard>
-          <EntityCard>
-            <FieldLabel htmlFor="point-of-view">{t("POINT OF VIEW")}</FieldLabel>
-            <TextAreaField
-              id="point-of-view"
-              value={draft.point_of_view}
-              onChange={(event) => change("point_of_view", event.target.value)}
-            />
-            <FieldLabel htmlFor="narrator-treatment" className="mt-5 block">
-              {t("NARRATOR TREATMENT")}
-            </FieldLabel>
-            <TextAreaField
-              id="narrator-treatment"
-              value={draft.narrator_treatment}
-              onChange={(event) => change("narrator_treatment", event.target.value)}
-            />
-          </EntityCard>
-          <EntityCard>
-            <FieldLabel htmlFor="motifs">{t("MOTIFS")}</FieldLabel>
-            <TextAreaField
-              id="motifs"
-              value={lines(draft.motifs)}
-              onChange={(event) => change("motifs", splitLines(event.target.value))}
-            />
-            <FieldLabel htmlFor="protected-language" className="mt-5 block">{t("PROTECTED LANGUAGE")}</FieldLabel>
-            <TextAreaField
-              id="protected-language"
-              value={lines(draft.protected_language)}
-              onChange={(event) => change("protected_language", splitLines(event.target.value))}
-            />
-          </EntityCard>
-          <EntityCard>
-            <FieldLabel htmlFor="ambiguities">{t("AMBIGUITIES TO PRESERVE")}</FieldLabel>
-            <TextAreaField
-              id="ambiguities"
-              value={lines(draft.ambiguities)}
-              onChange={(event) => change("ambiguities", splitLines(event.target.value))}
-            />
-          </EntityCard>
-        </div>
-
+          <div className="mt-4 grid items-start gap-5 lg:grid-cols-2">
+            {(["point_of_view", "narrator_treatment", "motifs", "protected_language", "ambiguities"] as const).map((key) => <BriefSection key={key} id={key.replaceAll("_", "-")} title={t(BRIEF_FIELD_LABELS[key]!)} value={draft[key]} onChange={(value) => change(key, Array.isArray(draft[key]) ? splitLines(value) : value)} />)}
+          </div>
         </details>
-        <Button type="submit" variant="outline" disabled={busy || !dirty || invalidRange || conflict}>
-          {t("SAVE BRIEF")}
-        </Button>
         </fieldset>
       </form>
-      <details>
-        <summary className="min-h-11 cursor-pointer py-3 font-meta text-sm font-bold">{t("Review extracted characters, places & story order")}</summary>
-        <div className="space-y-8 pt-4">
-      <section>
-        <SectionHeader
-          variant="underline"
-          title={t("CHARACTERS & PLACES")}
-          description={t("The visual facts Scenewright carries into the Look and every complete page.")}
-        />
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {data.story_bible.characters.map((character) => (
-            <EntityCard key={character.id} padding="cozy">
-              <h3 className="font-display text-xl font-black uppercase">{character.name}</h3>
-              <p className="mt-2 font-body text-sm leading-6 text-ink-black/70">
-                {character.visual_anchor}
-              </p>
-            </EntityCard>
-          ))}
-          {data.story_bible.locations.map((location) => (
-            <EntityCard key={location.id} padding="cozy">
-              <h3 className="font-display text-xl font-black uppercase">{location.name}</h3>
-              <p className="mt-2 font-body text-sm leading-6 text-ink-black/70">
-                {location.visual_anchor}
-              </p>
-            </EntityCard>
-          ))}
-        </div>
-      </section>
-
-      <section>
-        <SectionHeader
-          variant="underline"
-          title={t("STORY ORDER")}
-          description={t("A readable outline of the source before it becomes a page plan.")}
-        />
-        <ol className="grid gap-3 lg:grid-cols-2">
-          {data.story_bible.scenes.map((scene, index) => (
-            <li key={scene.id}>
-              <Surface border="soft" shadow="none" padding="md">
-                <p className="font-meta text-[0.62rem] font-bold tracking-[0.1em] text-hero-red">
-                  {t("SCENE")} {String(index + 1).padStart(2, "0")}
-                </p>
-                <h3 className="mt-2 font-display text-lg font-black uppercase">{scene.title}</h3>
-                <p className="mt-2 font-body text-sm leading-6 text-ink-black/70">{scene.summary}</p>
-              </Surface>
-            </li>
-          ))}
-        </ol>
-      </section>
-        </div>
-      </details>
+      <StoryExplorer story={data.story_bible} />
 
       <ApprovalBar
         next={t("Choose the visual direction for every complete page")}

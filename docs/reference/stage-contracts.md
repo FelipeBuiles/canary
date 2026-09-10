@@ -237,6 +237,17 @@ Adaptation/Plan stays read-only.
 
 ## Recovery and costs
 
+Adapt resumes by revalidating its saved failed candidate against the unchanged
+source and approved brief. Source-backed protected quotations receive explicit
+quoted-caption delivery; exact protected book titles do not require terminal
+punctuation. A valid recovered candidate is persisted without a model call.
+Changed source/brief identities or a new story instruction prevent this reuse.
+If validation still fails, an explicit resume reuses initial generation
+checkpoints but gives the existing bounded repair pass a fresh checkpoint
+namespace, so a cached failed repair cannot trap every subsequent retry.
+The Pages error screen offers Resume adaptation with the existing estimate and
+confirmation, plain-language checks, and collapsed technical evidence.
+
 Paid project actions require `Idempotency-Key` (nonblank, at most 200 characters).
 The persistent request journal keys replay by verified account, HTTP method/path,
 and action key; the fingerprint covers query and canonical body (multipart file

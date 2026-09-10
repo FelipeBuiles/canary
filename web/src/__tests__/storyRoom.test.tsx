@@ -14,7 +14,7 @@ const storyDecision = {
     total_scenes: 1,
     characters: [{ id: "char_1", name: "Elena", visual_anchor: "Silver-streaked dark hair" }],
     locations: [{ id: "loc_1", name: "The Archive", visual_anchor: "Salt-stained stone stacks" }],
-    scenes: [{ id: "scene_1", chapter: 1, title: "The Locked Shelf", summary: "Elena finds the forbidden ledger." }],
+    scenes: [{ id: "scene_1", chapter: 1, title: "The Locked Shelf", character_ids: ["char_1"], location_id: "loc_1", summary: "Elena finds the forbidden ledger." }],
     narrative_arcs: [],
     style_notes: null,
     props: [],
@@ -80,6 +80,11 @@ function renderRoom() {
   );
 }
 
+function editStoryPromises() {
+  fireEvent.click(screen.getByRole("button", { name: "Edit STORY PROMISES" }));
+  return screen.getByLabelText("STORY PROMISES") as HTMLTextAreaElement;
+}
+
 describe("StoryRoom", () => {
   beforeEach(() => {
     sessionStorage.clear();
@@ -99,12 +104,48 @@ describe("StoryRoom", () => {
     expect(screen.getByRole("heading", { name: "CONFIRM THE STORY & BRIEF" })).toBeTruthy();
     expect(screen.getByText("The Last Incantation")).toBeTruthy();
     expect(screen.getByText("The investigation closes its causal loop")).toBeTruthy();
-    fireEvent.click(screen.getByText("Review extracted characters, places & story order"));
-    expect(screen.getByRole("heading", { name: "CHARACTERS & PLACES" })).toBeTruthy();
-    expect(screen.getByText("Silver-streaked dark hair")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "STORY ORDER" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Inside your story" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^Scenes\s*1$/ }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByText("Elena finds the forbidden ledger.")).toBeTruthy();
+    expect(screen.getByText("Elena")).toBeTruthy();
+    expect(screen.getByText("The Archive")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Characters\s*1$/ }));
+    expect(screen.getByText("Silver-streaked dark hair")).toBeTruthy();
+    expect(screen.queryByText("Elena finds the forbidden ledger.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^Places\s*1$/ }));
+    expect(screen.getByText("Salt-stained stone stacks")).toBeTruthy();
     expect(screen.queryByText("a".repeat(64))).toBeNull();
+  });
+
+  it("opens a focused editor, previews the changes, and saves them explicitly", () => {
+    renderRoom();
+    expect(screen.queryByRole("textbox", { name: "STORY PROMISES" })).toBeNull();
+    const promises = editStoryPromises();
+    expect(document.activeElement).toBe(promises);
+    fireEvent.change(promises, { target: { value: "A new promise\nA second promise" } });
+    fireEvent.click(screen.getByRole("button", { name: "Done editing STORY PROMISES" }));
+    expect(screen.queryByRole("textbox", { name: "STORY PROMISES" })).toBeNull();
+    expect(screen.getByText("A new promise")).toBeTruthy();
+    expect(screen.getByText("A second promise")).toBeTruthy();
+    expect(updateBrief).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "SAVE BRIEF" }));
+    expect(updateBrief).toHaveBeenCalledWith({
+      project: "demo",
+      expectedRevision: 3,
+      changes: expect.objectContaining({ story_promises: ["A new promise", "A second promise"] }),
+    }, expect.any(Object));
+  });
+
+  it("returns focus to Edit on Escape and keeps the visible draft", () => {
+    renderRoom();
+    const promises = editStoryPromises();
+    fireEvent.change(promises, { target: { value: "Keep this draft" } });
+    fireEvent.keyDown(promises, { key: "Escape" });
+    expect(screen.queryByRole("textbox", { name: "STORY PROMISES" })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Edit STORY PROMISES" }));
+    expect(screen.getByText("Keep this draft")).toBeTruthy();
+    expect(editStoryPromises().value).toBe("Keep this draft");
+    expect(updateBrief).not.toHaveBeenCalled();
   });
 
   it("saves an edited target page range against the current Brief revision", () => {
@@ -137,7 +178,7 @@ describe("StoryRoom", () => {
 
   it("keeps blank lines while editing and saves the visible draft before approval", () => {
     renderRoom();
-    const promises = screen.getByLabelText("STORY PROMISES") as HTMLTextAreaElement;
+    const promises = editStoryPromises();
     fireEvent.change(promises, { target: { value: "A promise\n\nA second promise\n" } });
     expect(promises.value).toBe("A promise\n\nA second promise\n");
     fireEvent.click(screen.getByRole("button", { name: "SAVE & APPROVE BRIEF — CONTINUE" }));
@@ -151,7 +192,7 @@ describe("StoryRoom", () => {
 
   it("preserves an edited draft after a failed save and never approves it", () => {
     renderRoom();
-    fireEvent.change(screen.getByLabelText("STORY PROMISES"), { target: { value: "Do not lose this\n" } });
+    fireEvent.change(editStoryPromises(), { target: { value: "Do not lose this\n" } });
     fireEvent.click(screen.getByRole("button", { name: "SAVE & APPROVE BRIEF — CONTINUE" }));
     act(() => updateBrief.mock.calls[0][1].onError(new Error("Revision conflict")));
     expect(screen.getByRole("alert").textContent).toContain("Revision conflict");
@@ -160,16 +201,16 @@ describe("StoryRoom", () => {
     cleanup();
     renderRoom();
     expect(screen.getByText("Restored unsaved draft")).toBeTruthy();
-    expect((screen.getByLabelText("STORY PROMISES") as HTMLTextAreaElement).value).toBe("Do not lose this\n");
+    expect(editStoryPromises().value).toBe("Do not lose this\n");
   });
 
   it("keeps a prior revision's raw draft accessible after reload without applying it to the newer brief", () => {
     renderRoom();
-    fireEvent.change(screen.getByLabelText("STORY PROMISES"), { target: { value: "Old revision draft\n\nKeep this ending\n" } });
+    fireEvent.change(editStoryPromises(), { target: { value: "Old revision draft\n\nKeep this ending\n" } });
     cleanup();
     storyState = { ...storyState, data: { ...storyDecision, brief: { ...storyDecision.brief, revision: 4 } } };
     renderRoom();
-    expect((screen.getByLabelText("STORY PROMISES") as HTMLTextAreaElement).value).toBe(storyDecision.brief.story_promises[0]);
+    expect(editStoryPromises().value).toBe(storyDecision.brief.story_promises[0]);
     expect(screen.queryByText("Restored unsaved draft")).toBeNull();
     fireEvent.click(screen.getByText("Unsaved draft from revision 3"));
     const preserved = screen.getByLabelText("Unsaved draft from revision 3") as HTMLTextAreaElement;
@@ -220,9 +261,9 @@ describe("StoryRoom stage fallback precedence", () => {
     };
     renderStoryAt("/project/demo/story");
 
-    expect(screen.getByText("PRESS STOPPED")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Preparing your story brief" })).toBeTruthy();
     expect(screen.getByText("Brief run failed")).toBeTruthy();
-    expect(screen.getByText("TECHNICAL DETAILS")).toBeTruthy();
+    expect(screen.getByText("Technical details").closest("details")?.open).toBe(false);
     expect(screen.getByText("traceback: boom")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Retry stage" })).toBeTruthy();
     expect(screen.queryByText("PROOF UNAVAILABLE")).toBeNull();

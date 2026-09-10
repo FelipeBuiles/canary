@@ -5,6 +5,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { Button } from "../../components/ui/Button";
 import { BrandMark } from "../../components/BrandMark";
 import { cn } from "../../lib/cn";
+import { useI18n } from "../../i18n";
 
 type AuthMode = "signin" | "signup";
 
@@ -23,7 +24,7 @@ function Field({
       </span>
       <input
         {...inputProps}
-        className="mt-2 h-12 w-full border-b-[2px] border-ink-black/30 bg-surface-container px-4 font-body text-base text-ink-black outline-none transition-colors placeholder:text-ink-soft focus:border-hero-red"
+        className="mt-2 h-12 w-full border-b-[2px] border-ink-black/30 bg-surface-container px-4 font-body text-base text-ink-black outline-none transition-colors placeholder:text-ink-soft focus:border-hero-red focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red disabled:opacity-60"
       />
     </label>
   );
@@ -31,6 +32,7 @@ function Field({
 
 export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
   const { session, loading } = useAuth();
+  const { t } = useI18n();
   const navigate = useNavigate();
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [studioName, setStudioName] = useState("");
@@ -46,50 +48,49 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (submitting || loading) return;
     setError(null);
     setMessage(null);
     setSubmitting(true);
-
-    if (mode === "signup") {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: { data: { studio_name: studioName } },
-      });
-      setSubmitting(false);
-      if (error) {
-        setError(error.message);
-        return;
+    try {
+      if (mode === "signup") {
+        const { error } = await supabase.auth.signUp({
+          email: email.trim(), password,
+          options: { data: { studio_name: studioName } },
+        });
+        if (error) throw error;
+        setMessage(t("Check {email} for the confirmation link.").replace("{email}", email.trim()));
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+        if (error) throw error;
+        navigate("/", { replace: true });
       }
-      setMessage(`Check ${email} for the confirmation link.`);
-      return;
-    }
-
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setSubmitting(false);
-    if (error) {
-      setError(error.message);
-    } else {
-      navigate("/", { replace: true });
+    } catch (error) {
+      setError(error instanceof Error ? error.message : t("We couldn't complete that request. Please try again."));
+    } finally {
+      setSubmitting(false);
     }
   }
 
   async function handleForgotPassword() {
+    if (submitting || loading) return;
     setError(null);
     setMessage(null);
-    if (!email) {
-      setError("Enter your email above, then tap “Forgot password?” again.");
+    if (!email.trim()) {
+      setError(t("Enter your email above, then tap “Forgot password?” again."));
       return;
     }
     setSubmitting(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`,
-    });
-    setSubmitting(false);
-    if (error) {
-      setError(error.message);
-    } else {
-      setMessage(`Check ${email} for a password-reset link.`);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (error) throw error;
+      setMessage(t("Check {email} for a password-reset link.").replace("{email}", email.trim()));
+    } catch (error) {
+      setError(error instanceof Error ? error.message : t("We couldn't send the reset link. Please try again."));
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -142,13 +143,14 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
                     key={value}
                     type="button"
                     aria-pressed={mode === value}
+                    disabled={submitting || loading}
                     onClick={() => {
                       setMode(value);
                       setError(null);
                       setMessage(null);
                     }}
                     className={cn(
-                      "min-h-12 px-2 font-meta text-xs font-bold uppercase tracking-[0.1em] transition-colors",
+                      "min-h-12 px-2 font-meta text-xs font-bold uppercase tracking-[0.1em] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-4 focus-visible:outline-ink-black disabled:opacity-60",
                       mode === value
                         ? "bg-hero-red text-bristol"
                         : "bg-bristol text-ink-black/55 hover:text-ink-black",
@@ -159,10 +161,15 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
                 ))}
               </div>
 
-              <form onSubmit={handleSubmit} className="space-y-5 px-7 py-8">
+              <form aria-label={t(mode === "signup" ? "Create account" : "Sign in")} onSubmit={handleSubmit} className="space-y-5 px-5 py-7 sm:px-7 sm:py-8">
+                <div>
+                  <h2 className="font-display text-2xl font-black tracking-tight">{t(mode === "signup" ? "Create your studio" : "Welcome back")}</h2>
+                  <p className="mt-2 font-body text-sm leading-6 text-ink-muted">{t(mode === "signup" ? "Give your stories a place to take shape." : "Sign in to pick up where you left off.")}</p>
+                </div>
                 {mode === "signup" && (
                   <Field
-                    label="Studio Name"
+                    label={t("Studio Name")}
+                    disabled={submitting || loading}
                     value={studioName}
                     onChange={(event) => setStudioName(event.target.value)}
                     autoComplete="organization"
@@ -172,7 +179,8 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
                 )}
 
                 <Field
-                  label="Email"
+                  label={t("Email")}
+                  disabled={submitting || loading}
                   type="email"
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
@@ -182,7 +190,8 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
                 />
 
                 <Field
-                  label="Password"
+                  label={t("Password")}
+                  disabled={submitting || loading}
                   type="password"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
@@ -192,25 +201,25 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
                 />
 
                 {error && (
-                  <p role="alert" className="border-[2px] border-hero-red bg-chip-red/50 px-3 py-2 font-body text-sm font-semibold text-hero-red">
+                  <p role="alert" className="bg-chip-red/50 px-3 py-2 font-body text-sm font-semibold text-hero-red">
                     {error}
                   </p>
                 )}
                 {message && (
-                  <p role="status" className="border-[2px] border-ink-black bg-chip-gold px-3 py-2 font-body text-sm font-semibold text-ink-black">
+                  <p role="status" className="bg-chip-gold px-3 py-2 font-body text-sm font-semibold text-ink-black">
                     {message}
                   </p>
                 )}
 
-                <Button type="submit" size="md" fullWidth disabled={submitting} className="mt-2">
-                  {submitting ? "WORKING…" : mode === "signup" ? "CREATE ACCOUNT" : "SIGN IN"}
+                <Button type="submit" size="md" fullWidth disabled={submitting || loading} className="mt-2">
+                  {t(submitting ? "WORKING…" : mode === "signup" ? "CREATE ACCOUNT" : "SIGN IN")}
                 </Button>
 
                 {mode === "signin" ? (
                   <button
                     type="button"
                     onClick={handleForgotPassword}
-                    disabled={submitting}
+                    disabled={submitting || loading}
                     className="mx-auto block min-h-11 px-3 pt-1 font-body text-sm font-semibold text-ink-muted transition-colors hover:text-ink-black disabled:opacity-50"
                   >
                     Forgot password?

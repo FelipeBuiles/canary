@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   useGenerationJobs,
@@ -9,8 +9,6 @@ import {
   useSuggestStylesEstimate,
   useStyleSampleEstimate,
   useGenerateStyleValidation,
-  useSetActiveStyle,
-  useImageGenerationMeta,
   useProjectConfig,
   useStoryBible,
   useProjectStatus,
@@ -19,16 +17,16 @@ import {
   useProjectCoverEstimate,
   useProjects,
 } from "../../api/queries";
+import { Check, ArrowDownRight, Columns2, X } from "lucide-react";
+import { StyleProofCard } from "../../components/style/StyleProofCard";
 import { Button } from "../../components/ui/Button";
-import { GenerationDetailsModal } from "../../components/ui/GenerationDetailsModal";
 import { LazyImage } from "../../components/ui/LazyImage";
 import { StateBlock } from "../../components/ui/StateBlock";
 import { Surface } from "../../components/ui/Surface";
-import { ApprovalBar, EntityCard, RoomHeader, ConfirmDrawer, RerunStageAction, RoomShell, SectionHeader } from "../../components/composites";
+import { ApprovalBar, RoomHeader, ConfirmDrawer, RerunStageAction, RoomShell } from "../../components/composites";
 import { useApproveStage, useStageEstimate } from "../../api/queries";
 import { useRunAction } from "../../hooks/useRunAction";
 import { useI18n } from "../../i18n";
-import { FlowingDotsPlaceholder } from "../../components/ui/FlowingDotsPlaceholder";
 import { StyleDirectionComposer, type StyleDirectionMode } from "../../components/style/StyleDirectionComposer";
 import {
   useStyleGenStore,
@@ -40,15 +38,6 @@ import { usePipelineStore } from "../../store/pipeline";
 import type { StyleSuggestion } from "../../api/styles";
 import type { CostEstimate, StoryBible } from "../../types/api";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
-
-const ROLE_LABELS: Record<string, string> = {
-  story_fit_primary: "BEST FIT",
-  story_fit_secondary: "STRONG FIT",
-  adjacent: "ADJACENT",
-  contrast: "CONTRAST",
-  wildcard: "WILDCARD",
-  faithful: "YOUR DIRECTION",
-};
 
 function buildFallbackStyleSamplePrompt(suggestion: StyleSuggestion, storyBible: StoryBible | undefined): string {
   const charDesc =
@@ -78,278 +67,6 @@ function multiplyEstimate(estimate: CostEstimate | undefined, count: number): Co
       ? null
       : estimate.reserved_credits * count,
   };
-}
-
-function StyleCard({
-  suggestion,
-  projectName,
-  isGenerating,
-  generationDisabled,
-  selectionDisabled,
-  queueState,
-  fallbackPrompt,
-  fallbackParameters,
-  isCompared,
-  onToggleCompare,
-  validationBusy,
-  onValidate,
-  onRefresh,
-}: {
-  suggestion: StyleSuggestion;
-  projectName: string;
-  isGenerating: boolean;
-  generationDisabled: boolean;
-  selectionDisabled: boolean;
-  queueState: "queued" | "running" | null;
-  fallbackPrompt: string;
-  fallbackParameters: Record<string, unknown>;
-  isCompared: boolean;
-  onToggleCompare: () => void;
-  validationBusy: boolean;
-  onValidate: () => void;
-  onRefresh: () => void;
-}) {
-  const { t } = useI18n();
-  const sampleUrl = `/api/projects/${encodeURIComponent(projectName)}/files/samples/style_${suggestion.index}.png`;
-  const [imgFailed, setImgFailed] = useState(!suggestion.has_sample);
-  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
-  const [selectionError, setSelectionError] = useState<string | null>(null);
-  const [selectionConfirmed, setSelectionConfirmed] = useState(false);
-  const [timestamp, setTimestamp] = useState(() => Date.now());
-  const wasGenerating = useRef(isGenerating);
-  const setActive = useSetActiveStyle();
-  const { data: meta, isLoading: isMetaLoading } = useImageGenerationMeta(
-    projectName,
-    `samples/style_${suggestion.index}.png`,
-    isDetailsOpen,
-    timestamp,
-  );
-
-  useEffect(() => {
-    if (!suggestion.has_sample) return;
-    const timer = window.setTimeout(() => setImgFailed(false), 0);
-    return () => window.clearTimeout(timer);
-  }, [suggestion.has_sample]);
-
-  useEffect(() => {
-    const wasGeneratingValue = wasGenerating.current;
-    wasGenerating.current = isGenerating;
-    if (!wasGeneratingValue || isGenerating) return;
-    const timer = window.setTimeout(() => {
-      setImgFailed(false);
-      setTimestamp(Date.now());
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [isGenerating]);
-
-  const showLoading = isGenerating || (!suggestion.has_sample && generationDisabled);
-  const sampleRetryAvailable = !suggestion.has_sample && !isGenerating && !generationDisabled;
-  const isActive = suggestion.is_active;
-  const canSelect = !isActive && !isGenerating && !selectionDisabled && !setActive.isPending;
-
-  // The card itself is the selection — no per-card select buttons.
-  const handleCardClick = () => {
-    if (!canSelect) return;
-    setSelectionError(null);
-    setActive.mutate(
-      { project: projectName, id: suggestion.id },
-      {
-        onSuccess: () => setSelectionConfirmed(true),
-        onError: (error) => setSelectionError(error.message),
-      },
-    );
-  };
-
-  return (
-    <>
-      <EntityCard
-        active={isActive}
-        className={`min-h-[520px] ${isActive ? "!border-ink-black" : ""}`}
-        media={
-          <div className="relative bg-surface-container">
-            {showLoading ? (
-              <FlowingDotsPlaceholder
-                aspect="4 / 5"
-                className="h-full w-full"
-                label={queueState === "queued" ? t("QUEUED") : t("GENERATING SAMPLES…")}
-              />
-            ) : imgFailed ? (
-              <div className="flex aspect-[4/5] w-full flex-col items-center justify-center">
-                <div className="font-meta text-[0.58rem] font-bold tracking-[0.1em] text-ink-muted">
-                  {suggestion.has_sample ? t("NO STYLE SUGGESTIONS YET") : t("SAMPLE PROOF FAILED")}
-                </div>
-              </div>
-            ) : (
-              <LazyImage
-                src={`${sampleUrl}?t=${timestamp}`}
-                alt={suggestion.label}
-                loading="lazy"
-                width={320}
-                height={400}
-                aspect="4 / 5"
-                containerClassName="w-full"
-                className="object-contain object-center"
-                onError={() => setImgFailed(true)}
-              />
-            )}
-
-            {isActive && (
-              <div onAnimationEnd={() => setSelectionConfirmed(false)} className={`${selectionConfirmed ? "animate-register-stamp " : ""}absolute left-0 top-0 bg-narrator-gold px-3 py-1.5 font-meta text-xs font-bold text-ink-black shadow-ink-sm`}>
-                ✓ {t("YOUR STYLE")}
-              </div>
-            )}
-
-            <div className="absolute right-3 top-3 flex gap-1.5">
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); setIsDetailsOpen(true); }}
-                aria-label={`${t("View proof and direction")} · ${suggestion.label}`}
-                className="flex min-h-11 items-center justify-center border-[2px] border-bristol bg-ink-black px-3 font-meta text-[0.68rem] font-bold tracking-[0.08em] text-bristol transition-colors hover:bg-hero-red"
-              >
-                {t("VIEW PROOF")}
-              </button>
-            </div>
-          </div>
-        }
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="font-display text-[1.55rem] font-black leading-none tracking-[-0.03em] text-ink-black">
-          {suggestion.label}
-          </div>
-          <span className="shrink-0 bg-pulp-paper px-2 py-1 font-meta text-[0.62rem] font-bold tracking-[0.08em] text-ink-black/65">
-            {t(ROLE_LABELS[suggestion.role ?? ""] ?? "DIRECTION")}
-          </span>
-        </div>
-        <p className="mt-3 font-body text-[0.92rem] font-semibold leading-relaxed text-ink-black/72">
-          {suggestion.template}
-        </p>
-
-        <dl className="mt-5 grid gap-3 border-t-[2px] border-ink-black/10 pt-4 sm:grid-cols-2">
-          <div>
-            <dt className="font-meta text-[0.65rem] font-bold tracking-[0.08em] text-ink-black/50">{t("PALETTE")}</dt>
-            <dd className="mt-1 text-[0.78rem] leading-5 text-ink-black/72">{suggestion.palette || t("Set by the direction")}</dd>
-          </div>
-          <div>
-            <dt className="font-meta text-[0.65rem] font-bold tracking-[0.08em] text-ink-black/50">{t("LINE & FINISH")}</dt>
-            <dd className="mt-1 text-[0.78rem] leading-5 text-ink-black/72">{suggestion.line_rendering || suggestion.medium}</dd>
-          </div>
-        </dl>
-
-        {suggestion.story_fit && (
-          <div className="mt-4 bg-surface-container px-3 py-3">
-            <div className="font-meta text-[0.65rem] font-bold tracking-[0.08em] text-ink-black/55">{t("WHY IT FITS")}</div>
-            <p className="mt-1 text-[0.8rem] leading-5 text-ink-black/75">{suggestion.story_fit}</p>
-          </div>
-        )}
-
-        {suggestion.has_validation && suggestion.validation_url && (
-          <div className="mt-4 border-t-[2px] border-ink-black/10 pt-4">
-            <div className="font-meta text-[0.65rem] font-bold tracking-[0.08em] text-ink-black/55">{t("ACTION AUDITION")}</div>
-            <LazyImage
-              src={suggestion.validation_url}
-              alt={`${suggestion.label} · ${t("ACTION AUDITION")}`}
-              loading="lazy"
-              width={320}
-              height={400}
-              aspect="4 / 5"
-              containerClassName="mt-2 w-full"
-              className="object-cover object-center"
-            />
-          </div>
-        )}
-
-        {suggestion.sample_stale && (
-          <div className="mt-4 flex items-center justify-between gap-3 bg-pulp-paper px-3 py-2.5">
-            <span className="font-meta text-[0.62rem] font-bold tracking-[0.08em] text-ink-black/65">
-              {t("REFRESH AVAILABLE")}
-            </span>
-            <Button
-              variant="outline"
-              size="xs"
-              disabled={generationDisabled || isGenerating}
-              onClick={onRefresh}
-            >
-              {t("REFRESH PROOF")}
-            </Button>
-          </div>
-        )}
-
-        {sampleRetryAvailable && (
-          <div className="mt-4 flex items-center justify-between gap-3 border-[2px] border-hero-red/35 bg-hero-red/10 px-3 py-2.5">
-            <span className="font-meta text-[0.62rem] font-bold tracking-[0.08em] text-hero-red">
-              {t("SAMPLE PROOF FAILED")}
-            </span>
-            <Button
-              variant="outline"
-              size="xs"
-              disabled={generationDisabled || isGenerating}
-              onClick={onRefresh}
-            >
-              {t("TRY SAMPLE AGAIN")}
-            </Button>
-          </div>
-        )}
-
-        <div className="mt-auto grid grid-cols-1 gap-2 pt-5 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-          <Button
-            variant={isActive ? "secondary" : "primary"}
-            size="sm"
-            disabled={!canSelect}
-            onClick={handleCardClick}
-            aria-pressed={isActive}
-          >
-            {isActive ? `✓ ${t("YOUR STYLE")}` : t("SELECT THIS STYLE")}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onToggleCompare}
-            aria-pressed={isCompared}
-          >
-            {isCompared ? t("COMPARING") : t("COMPARE")}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={validationBusy || generationDisabled}
-            onClick={onValidate}
-            className="w-full sm:col-span-2"
-          >
-            {validationBusy
-              ? t("TESTING IN ACTION…")
-              : suggestion.has_validation
-                ? t("RETEST IN ACTION")
-                : t("TEST IN ACTION")}
-          </Button>
-        </div>
-        {selectionError && (
-          <div className="mt-2 font-meta text-[0.55rem] font-bold tracking-[0.06em] text-hero-red">
-            {selectionError}
-          </div>
-        )}
-      </EntityCard>
-      <GenerationDetailsModal
-        isOpen={isDetailsOpen}
-        onClose={() => setIsDetailsOpen(false)}
-        title={suggestion.label}
-        imageUrl={`${sampleUrl}?t=${timestamp}`}
-        metadata={meta}
-        prompt={fallbackPrompt}
-        parameters={fallbackParameters}
-        isFallback={!meta}
-        isLoading={isMetaLoading}
-        imageAvailable={!imgFailed}
-        overview={(
-          <div className="space-y-5">
-            <div>
-              <div className="font-meta text-[0.54rem] tracking-[0.16em] text-ink-black/45">{t("VISUAL DIRECTION")}</div>
-              <p className="mt-1 text-[0.8rem] leading-6 text-ink-black/75">{suggestion.template}</p>
-            </div>
-          </div>
-        )}
-      />
-    </>
-  );
 }
 
 export function StyleRoom() {
@@ -595,9 +312,10 @@ export function StyleRoom() {
 
   function toggleCompare(idToToggle: string) {
     setCompareIds((current) => {
-      if (current.includes(idToToggle)) return current.filter((id) => id !== idToToggle);
-      if (current.length >= 3) return [...current.slice(1), idToToggle];
-      return [...current, idToToggle];
+      const available = current.filter((id) => suggestions.some((suggestion) => suggestion.id === id));
+      if (available.includes(idToToggle)) return available.filter((id) => id !== idToToggle);
+      if (available.length >= 3) return available;
+      return [...available, idToToggle];
     });
   }
 
@@ -613,6 +331,7 @@ export function StyleRoom() {
   const actionComparisonAvailable = comparedSuggestions.length >= 2
     && comparedSuggestions.every((style) => style.has_validation && style.validation_url);
   const comparingAction = comparisonView === "action" && actionComparisonAvailable;
+  const activeSuggestion = suggestions.find((suggestion) => suggestion.is_active);
   const staleSuggestions = suggestions.filter((suggestion) => suggestion.sample_stale);
   const refreshEstimate = multiplyEstimate(sampleEstimate, pendingRefresh.length);
 
@@ -730,6 +449,18 @@ export function StyleRoom() {
         </Surface>
       ) : (
         <>
+          <section className="grid gap-6 bg-ink-black p-6 text-pulp-paper shadow-paper md:grid-cols-[minmax(0,1fr)_minmax(0,0.55fr)] md:p-8">
+            <div>
+              <h2 className="font-display text-3xl font-black uppercase leading-tight tracking-[-0.03em] md:text-4xl">{t("STYLE PROOFS")}</h2>
+              <p className="mt-3 max-w-[60ch] font-body text-sm leading-7 text-pulp-paper/85">{t("One story, different visual directions. Explore the artwork, compare your favorites, then choose the look your comic will carry.")}</p>
+              {storyBible?.title && <p className="mt-4 font-meta text-xs text-narrator-gold">{storyBible.title}</p>}
+            </div>
+            <div className="flex flex-col justify-center bg-pulp-paper/10 p-5">
+              <div className="flex items-center gap-2 font-meta text-xs font-bold text-narrator-gold">{activeSuggestion && <Check size={16} aria-hidden="true" />}{t(activeSuggestion ? "YOUR STYLE" : "YOUR CHOICE")}</div>
+              <p className="mt-3 break-words font-display text-xl font-bold leading-tight">{activeSuggestion?.label ?? t("Which world feels like your story?")}</p>
+              <p className="mt-2 font-body text-xs leading-6 text-pulp-paper/85">{t(activeSuggestion ? "Selected for your comic. You can still explore the other proofs." : "Use Select this style beneath your favorite proof.")}</p>
+            </div>
+          </section>
           {showDirectionComposer && (
             <div className="mt-6">
               <StyleDirectionComposer
@@ -748,17 +479,17 @@ export function StyleRoom() {
           )}
 
           {comparedSuggestions.length >= 2 && (
-            <section className="mt-8 bg-ink-black p-4 text-bristol md:p-6">
-              <div className="flex items-center justify-between gap-4">
+            <section id="style-comparison" tabIndex={-1} aria-label={t("COMPARE PROOFS")} className="scroll-mt-6 bg-ink-black p-4 text-bristol md:p-6">
+              <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
-                  <h2 className="font-meta text-sm font-bold text-narrator-gold">{t("COMPARE PROOFS")}</h2>
+                  <h2 className="font-display text-2xl font-black text-narrator-gold">{t("COMPARE PROOFS")}</h2>
                   <p className="mt-1 text-sm leading-6 text-bristol/80">{t("Equal-size proofs make palette, finish, and story fit easier to judge.")}</p>
                 </div>
                 <Button variant="onInk" size="xs" onClick={() => setCompareIds([])}>{t("CLEAR")}</Button>
               </div>
               <div role="group" aria-label={t("Comparison images")} className="mt-4 flex flex-wrap gap-3">
-                <Button variant="outline" size="sm" aria-pressed={!comparingAction} onClick={() => setComparisonView("proof")}>{t("STORY PROOFS")}</Button>
-                <Button variant="outline" size="sm" aria-pressed={comparingAction} disabled={!actionComparisonAvailable} onClick={() => setComparisonView("action")}>{t("ACTION AUDITIONS")}</Button>
+                <Button variant={!comparingAction ? "secondary" : "outline"} size="sm" aria-pressed={!comparingAction} onClick={() => setComparisonView("proof")}>{t("STORY PROOFS")}</Button>
+                <Button variant={comparingAction ? "secondary" : "outline"} size="sm" aria-pressed={comparingAction} disabled={!actionComparisonAvailable} onClick={() => setComparisonView("action")}>{t("ACTION AUDITIONS")}</Button>
               </div>
               {!actionComparisonAvailable && <p className="mt-2 text-sm text-bristol/80">{t("Action comparison becomes available when each compared direction has a completed action audition.")}</p>}
               <div className={`mt-4 grid gap-4 md:grid-cols-2 ${comparedSuggestions.length === 3 ? "xl:grid-cols-3" : ""}`}>
@@ -786,15 +517,20 @@ export function StyleRoom() {
             </section>
           )}
 
-          <section className="mt-10">
-            <SectionHeader
-              variant="underline"
-              title={t("STYLE PROOFS")}
-              description={t("Every direction uses the same story-specific audition. Select up to three to compare; choosing one never moves the cards.")}
-            />
+          <section aria-label={t("STYLE PROOFS")}>
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-4 bg-surface-container p-4">
+              <div className="min-w-0">
+                <p className="flex items-center gap-2 font-meta text-xs font-bold"><Columns2 size={17} aria-hidden="true" />{t("Compare your favorites")}</p>
+                <p role="status" className="mt-2 font-body text-xs leading-6 text-ink-muted">{t(comparedSuggestions.length === 0 ? "Choose up to three proofs to see them side by side." : comparedSuggestions.length === 1 ? "One proof added. Choose another to start comparing." : comparedSuggestions.length === 3 ? "Three proofs added. Remove one to compare another." : "Two proofs ready to compare. You can add one more.")}</p>
+              </div>
+              {comparedSuggestions.length >= 2 && <a href="#style-comparison" className="inline-flex min-h-11 items-center gap-2 font-meta text-xs font-bold text-hero-red underline underline-offset-4">{t("View comparison")}<ArrowDownRight size={17} aria-hidden="true" /></a>}
+              {comparedSuggestions.length > 0 && <div className="flex w-full flex-wrap gap-2">
+                {comparedSuggestions.map((suggestion) => <Button key={suggestion.id} variant="outline" size="xs" onClick={() => toggleCompare(suggestion.id)} aria-label={`${t("Remove from comparison")} · ${suggestion.label}`}><span className="text-left">{suggestion.label}</span><X size={14} className="shrink-0" aria-hidden="true" /></Button>)}
+              </div>}
+            </div>
             <div className="grid gap-6 lg:grid-cols-2">
               {suggestions.map((suggestion) => (
-                  <StyleCard
+                  <StyleProofCard
                     key={suggestion.id}
                     suggestion={suggestion}
                     projectName={id}
@@ -811,6 +547,7 @@ export function StyleRoom() {
                       style_template: suggestion.template,
                     }}
                     isCompared={compareIds.includes(suggestion.id)}
+                    compareDisabled={comparedSuggestions.length >= 3 && !compareIds.includes(suggestion.id)}
                     onToggleCompare={() => toggleCompare(suggestion.id)}
                     validationBusy={suggestion.id in validationJobs}
                     onValidate={() => setPendingValidation(suggestion)}
@@ -822,7 +559,7 @@ export function StyleRoom() {
 
           {suggestions.length > 0 && suggestions.every((suggestion) => suggestion.has_sample) && (
             <p className="mt-4 font-meta text-[0.68rem] font-bold tracking-[0.08em] text-ink-black/60">
-              ✓ {t("EVERY COMPLETED PROOF USES THE SAME STORY-SPECIFIC AUDITION")}
+              {t("EVERY COMPLETED PROOF USES THE SAME STORY-SPECIFIC AUDITION")}
             </p>
           )}
 
@@ -834,7 +571,7 @@ export function StyleRoom() {
           ? needsCover
             ? t("Scenewright casts your characters and places, and draws your project cover")
             : t("Scenewright casts your characters and places in this style")
-          : t("Pick a style — click the card that fits your story")}
+          : t("Pick your favorite proof with Select this style")}
         estimateCredits={continueEstimateCredits}
         primaryLabel={styleNeedsApproval || !styleSelected ? t("LOOKS RIGHT — CONTINUE →") : t("GO TO CAST →")}
         onPrimary={handleContinueToCast}

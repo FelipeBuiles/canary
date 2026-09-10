@@ -493,8 +493,8 @@ def compile_page_generation_request(
         profile=edition.capability_profile,
         existing=edition,
     )
-    if retry.attempt > selected_edition.capability_profile.max_attempts:
-        raise ValueError("retry attempt exceeds the edition capability profile")
+    # RetryProvenance counts author-requested generations, not automatic
+    # submissions within one operation. Each draw invokes the provider once.
     if correction is None and edit_source_bytes is not None:
         raise ValueError("initial generation cannot have an edit source")
     if correction is not None:
@@ -672,7 +672,6 @@ def _validate_compiled_page(
         or request.model != profile.model
         or (request.output_width, request.output_height) != (profile.output_width, profile.output_height)
         or request.output_media_type != profile.output_media_type
-        or request.retry.attempt > profile.max_attempts
         or len(request.prompt) > profile.max_prompt_characters
         or request.estimated_cost_usd != profile.price_per_page_usd + profile.price_per_reference_usd * len(request.references)
     ):

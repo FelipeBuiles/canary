@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useProjectConfig, useProjectStatus, useUpdateProjectConfig, useDeleteProject } from "../api/queries";
 import { SettingsLayout, SettingsRow } from "../components/ui/SettingsLayout";
-import { ConfirmModal, RoomHeader } from "../components/composites";
-import { Card } from "../components/ui/Card";
+import { ConfirmModal, SectionHeader } from "../components/composites";
+import { Surface } from "../components/ui/Surface";
 import { SelectField, SwitchField } from "../components/ui/Field";
 import { Button } from "../components/ui/Button";
 import { LANGUAGES, useI18n } from "../i18n";
@@ -21,8 +21,8 @@ const QUALITY_PRESET_OPTIONS: Array<{ value: string; label: string; desc: string
 
 const TABS = [
   { id: "language", label: "Language" },
-  { id: "dev", label: "Dev Content" },
   { id: "models", label: "Generation" },
+  { id: "dev", label: "Advanced" },
   { id: "delete", label: "Delete Project" },
 ];
 
@@ -55,16 +55,10 @@ export function ProjectSettingsPage() {
 
   return (
     <>
-      <RoomHeader
-        kicker="SETTINGS"
-        title="Project Settings"
-        lead="Project pipeline configuration and preferences."
-      />
       <SettingsLayout
         kicker={`PROJECT SETTINGS // ${projectTitle.toUpperCase()}`}
-        title="Settings"
-        subtitle="Project pipeline configuration and preferences."
-        hero={false}
+        title="Project settings"
+        subtitle={projectTitle}
         tabs={TABS}
         activeTab={activeTab}
         onTabChange={setActiveTab}
@@ -77,8 +71,9 @@ export function ProjectSettingsPage() {
             {updateConfig.isSuccess && <p role="status" className="text-sm">{t("Settings saved.")}</p>}
           </div>
         )}
-        {activeTab === "language" && (
-          <Card>
+        {activeTab === "language" && (<div>
+          <SectionHeader title="Language" description="Choose the language you work in and the language your comic speaks." />
+          <Surface border="soft" shadow="none">
             <SettingsRow label={t("UI LANGUAGE")} hint={t("Controls the studio interface language. Stored locally.")}>
               <SelectField
                 aria-label={t("UI LANGUAGE")}
@@ -95,7 +90,7 @@ export function ProjectSettingsPage() {
 
             <SettingsRow
               label={t("OUTPUT LANGUAGE")}
-              hint={t("Controls generated dialogue, narration, style suggestions, and prompt artifacts for this project.")}
+              hint={t("The language used for this project’s generated story and dialogue.")}
             >
               <SelectField
                 aria-label={t("OUTPUT LANGUAGE")}
@@ -110,11 +105,12 @@ export function ProjectSettingsPage() {
                 ))}
               </SelectField>
             </SettingsRow>
-          </Card>
+          </Surface></div>
         )}
 
-        {activeTab === "dev" && (
-          <Card>
+        {activeTab === "dev" && (<div>
+          <SectionHeader title="Advanced" description="Development tools and smaller test runs." />
+          <Surface border="soft" shadow="none">
             <SettingsRow
               label={t("SHOW DEV CONTENT")}
               hint={t("Shows raw file paths, model names, SHA hashes, and generation parameters for debugging.")}
@@ -137,11 +133,12 @@ export function ProjectSettingsPage() {
                 label={t("DEV / DEMO MODE")}
               />
             </SettingsRow>
-          </Card>
+          </Surface></div>
         )}
 
-        {activeTab === "models" && (
-          <Card>
+        {activeTab === "models" && (<div>
+          <SectionHeader title="Generation" description="Choose the balance of speed, detail, and cost for this project." />
+          <Surface border="soft" shadow="none">
             <SettingsRow
               label={t("GENERATION QUALITY")}
               hint={t("Controls speed, fidelity, and cost across the whole pipeline. DEV mode forces Fast.")}
@@ -149,7 +146,7 @@ export function ProjectSettingsPage() {
               <SelectField
                 aria-label={t("GENERATION QUALITY")}
                 name="quality_preset"
-                value={config?.quality_preset ?? "balanced"}
+                value={config?.dev_mode ? "fast" : config?.quality_preset ?? "balanced"}
                 onChange={(e) => {
                   patch({ quality_preset: e.target.value as QualityPreset });
                 }}
@@ -157,15 +154,16 @@ export function ProjectSettingsPage() {
                 className="max-w-sm bg-bristol font-body text-base"
               >
                 {QUALITY_PRESET_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label} — {option.desc}</option>
+                  <option key={option.value} value={option.value}>{t(option.label)}</option>
                 ))}
               </SelectField>
+              <p className="mt-3 font-body text-sm leading-6 text-ink-muted">{t(QUALITY_PRESET_OPTIONS.find((option) => option.value === (config?.dev_mode ? "fast" : config?.quality_preset ?? "balanced"))?.desc ?? "")}</p>
             </SettingsRow>
-          </Card>
+          </Surface></div>
         )}
 
         {activeTab === "delete" && (
-          <Card className="px-5" tone="bristol">
+          <Surface padding="lg" border="soft" shadow="none">
             <div className="py-4">
               <div className="font-display text-[1.1rem] leading-tight tracking-[-0.02em] uppercase">
                 Delete this project
@@ -186,7 +184,7 @@ export function ProjectSettingsPage() {
                 </Button>
               </div>
             </div>
-          </Card>
+          </Surface>
         )}
       </SettingsLayout>
 

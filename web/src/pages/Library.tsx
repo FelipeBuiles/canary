@@ -92,7 +92,7 @@ function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
         aria-modal="true"
         aria-label={t("NEW PRODUCTION")}
         tabIndex={-1}
-        className="w-full max-w-[720px]"
+        className="max-h-[calc(100dvh-2rem)] w-full max-w-[720px] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <UploadStep
@@ -114,6 +114,10 @@ export function Library() {
   const generateCover = useGenerateProjectCover();
   const deleteProject = useDeleteProject();
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const visibleProjects = projects?.filter((project) =>
+    `${project.project_name} ${project.author ?? ""}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
+  );
   const [incompatibleProject, setIncompatibleProject] = useState<ProjectSummary | null>(null);
   const isEmpty = (projects?.length ?? 0) === 0;
 
@@ -142,10 +146,7 @@ export function Library() {
       )}
       {isEmpty ? <FirstIssueInvitation onStart={() => setNewProjectOpen(true)} /> : <section className="relative grid overflow-hidden border-[3px] border-ink-black bg-ink-black text-bristol shadow-paper lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="relative z-10 px-6 py-9 sm:px-9 sm:py-11 lg:px-12">
-          <div className="inline-flex bg-hero-red px-3 py-1.5 font-meta text-[0.58rem] font-bold tracking-[0.14em] text-bristol uppercase">
-            {t("STUDIO // ACTIVE PRODUCTIONS")}
-          </div>
-          <h1 className="mt-5 max-w-[11ch] font-display text-[3.25rem] font-black uppercase leading-[0.88] tracking-[-0.035em] text-bristol sm:text-[4rem]">
+          <h1 className="max-w-[11ch] font-display text-[3.25rem] font-black uppercase leading-[0.88] tracking-[-0.035em] text-bristol sm:text-[4rem]">
             {t("LIBRARY")}
           </h1>
           <p className="mt-6 max-w-[42rem] font-body text-[1rem] font-semibold leading-7 text-bristol/75">
@@ -159,28 +160,10 @@ export function Library() {
           </div>
         </div>
 
-        <div className="relative hidden place-items-center overflow-hidden bg-pulp-paper px-8 py-9 lg:grid">
-          <div aria-hidden="true" className="absolute inset-y-8 left-8 right-0 bg-[radial-gradient(circle_at_1px_1px,rgba(27,28,21,0.2)_1.5px,transparent_1.7px)] [background-size:16px_16px]" />
-          <div className="relative w-full -rotate-1 border-[3px] border-ink-black bg-pulp-paper p-5 text-ink-black shadow-[8px_8px_0_0_rgba(27,28,21,0.35)]">
-            <div className="flex items-center justify-between border-b-[2px] border-ink-black pb-3 font-meta text-[0.56rem] font-bold tracking-[0.1em]">
-              <span>{t("PRESS ROUTE")}</span>
-              <span>{String(projects?.length ?? 0).padStart(2, "0")}</span>
-            </div>
-            <ol className="mt-4 space-y-2">
-              {STATIONS.map((station) => (
-                <li key={station.key} className="flex items-center gap-3 bg-surface-container px-3 py-2.5">
-                  <span className="flex h-7 w-7 items-center justify-center bg-ink-black font-meta text-[0.54rem] font-bold text-bristol">
-                    {station.number}
-                  </span>
-                  <span
-                    aria-hidden="true"
-                    data-station-label={t(station.label)}
-                    className="font-body text-[0.78rem] font-bold before:content-[attr(data-station-label)]"
-                  />
-                </li>
-              ))}
-            </ol>
-          </div>
+        <div className="flex flex-row items-center gap-3 border-t-2 border-bristol/20 px-6 py-5 sm:px-9 lg:flex-col lg:items-start lg:justify-center lg:gap-0 lg:border-l-2 lg:border-t-0 lg:py-7">
+          <p className="font-display text-3xl font-black leading-none text-narrator-gold lg:text-6xl">{projects?.length}</p>
+          <p className="text-base text-bristol/75 lg:mt-2">{t("Stories in your studio")}</p>
+          <p className="mt-5 hidden border-t border-bristol/20 pt-5 text-sm leading-6 text-bristol/75 lg:block">{t("Every story has its own place. Open a production to continue shaping your book.")}</p>
         </div>
       </section>}
 
@@ -193,8 +176,18 @@ export function Library() {
           />
         )}
         {!isEmpty && (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(270px,1fr))] gap-7">
-            {projects?.map((project) => (
+          <>
+          <div className="mb-7 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <label className="block w-full sm:max-w-md">
+              <span className="mb-2 block text-sm font-semibold">{t("Find a production")}</span>
+              <input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search by title or author")}
+                className="min-h-12 w-full border-2 border-ink-black/30 bg-bristol px-4 text-base outline-none focus:border-ink-black focus:ring-2 focus:ring-narrator-gold" />
+            </label>
+            <p role="status" className="text-sm text-ink-muted">{visibleProjects?.length} / {projects?.length} {t("productions")}</p>
+          </div>
+          {visibleProjects?.length === 0 && <StateBlock title={t("No matching productions")} description={t("Try another title or author.")} action={<Button variant="outline" onClick={() => setSearch("")}>{t("Clear search")}</Button>} />}
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,270px),1fr))] gap-7">
+            {visibleProjects?.map((project) => (
               <ProjectCard
                 key={project.id}
                 project={project}
@@ -220,6 +213,7 @@ export function Library() {
               />
             ))}
           </div>
+          </>
         )}
       </section>
 

@@ -1,3 +1,5 @@
+import { ArrowUpRight, BookOpen, Layers, ChevronLeft as ReviewChevronLeft, ChevronRight as ReviewChevronRight, X as ReviewClose } from "lucide-react";
+import { PageThumbnail } from "../../components/pages/PageThumbnail";
 import { accountIdentity } from "../../lib/accountEpoch";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -18,7 +20,7 @@ import {
   useStyles,
 } from "../../api/queries";
 import { pageRenderPreviewUrl } from "../../api/pages";
-import { InspectDrawer } from "../../components/InspectDrawer";
+import { ReadingWorkspace } from "../../components/pages/ReadingWorkspace";
 import {
   ApprovalBar,
   EntityCard,
@@ -120,28 +122,33 @@ function PageSpendConsent({
 function BlockingFailureList({ validation }: { validation?: StageValidation }) {
   const { t } = useI18n();
   if (!validation || validation.invariant_failures.length === 0) return null;
+  const explanations: Record<string, string> = {
+    invalid_lettering_speaker: "Some dialogue or captions are missing who speaks them or how they should appear.",
+    trailing_clipped_display_text: "Some text may end too abruptly. It needs another check before it can appear on a page.",
+    upstream_adaptation_granularity: "The story needs more visual moments to fill the planned pages.",
+  };
   return (
-    <section aria-label={t("WHAT MUST BE FIXED")}>
+    <section aria-label={t("What needs another check")} className="mx-auto w-full max-w-[760px] px-2 pb-8 sm:px-6">
       <SectionHeader
-        variant="underline"
-        title={t("WHAT MUST BE FIXED")}
-        description={t("These contract failures block the book and cannot be accepted.")}
+        title={t("What needs another check")}
+        description={t("These checks protect your finished pages. Try the recovery action above to address them.")}
       />
-      <div className="grid gap-3">
+      <ul className="space-y-5">
         {validation.invariant_failures.map((failure) => (
-          <Surface key={failure.id} tone="red" border="hard" shadow="paper-sm" padding="md">
-            <p className="font-body text-sm font-bold leading-6">{failure.message}</p>
-            <p className="mt-2 font-body text-xs leading-5 text-ink-black/70">
-              {failure.evidence.join(" · ")}
+          <li key={failure.id} className="font-body text-ink-black [overflow-wrap:anywhere]">
+            <p className="text-base font-semibold leading-7">
+              {t(explanations[failure.code] ?? "Part of the script or page plan needs another check before work can continue.")}
             </p>
-          </Surface>
+            <details className="mt-1">
+              <summary className="min-h-11 cursor-pointer py-3 font-meta text-sm text-ink-muted">{t("Check details")}</summary>
+              <div className="space-y-2 bg-surface-container p-4 text-sm leading-6">
+                <p>{failure.message}</p>
+                {failure.evidence.map((evidence, index) => <p key={index}>{evidence}</p>)}
+              </div>
+            </details>
+          </li>
         ))}
-      </div>
-      {validation.recommendations.length > 0 && (
-        <p className="mt-3 font-body text-sm leading-6">
-          {validation.recommendations.join(" ")}
-        </p>
-      )}
+      </ul>
     </section>
   );
 }
@@ -290,38 +297,43 @@ function PageReview({
       role="dialog"
       aria-modal="true"
       aria-label={`${t("Page")} ${item.page.page_number} ${t("review")}`}
-      className="fixed inset-0 z-[120] flex justify-center bg-ink-black/75 p-3 md:p-8"
+      className="fixed inset-0 z-[120] flex justify-center bg-ink-black/75 p-0 sm:p-3 md:p-6"
       onClick={onClose}
     >
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="flex max-h-full w-full max-w-6xl flex-col border-[3px] border-ink-black bg-pulp-paper shadow-ink focus-visible:outline-none"
+        className="flex max-h-full w-full max-w-6xl flex-col bg-pulp-paper shadow-ink focus-visible:outline-none sm:border-[3px] sm:border-ink-black"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="shrink-0 border-b-[3px] border-ink-black bg-bristol">
-          <header className="flex items-center justify-between gap-4 px-4 py-3">
-            <div>
-              <h2 className="font-display text-xl font-black uppercase">
+        <div className="shrink-0 bg-bristol">
+          <header className="flex items-start justify-between gap-3 px-4 pb-4 pt-5 sm:px-6 sm:pt-6">
+            <div className="min-w-0">
+              <h2 className="font-display text-2xl font-black uppercase leading-none tracking-[-0.03em] sm:text-3xl">
                 {t("Page")} {item.page.page_number}
               </h2>
-              <p className="font-meta text-xs font-bold text-ink-muted">
-                {t("Page revision")} {comicPageRevision}
-                {editSourceRevision != null && ` · ${t("Render revision")} ${editSourceRevision}`}
+              <p className="mt-2 max-w-[22rem] font-meta text-[10px] leading-relaxed text-ink-muted sm:text-xs">
+                {t("Revision")} {editSourceRevision ?? comicPageRevision}
               </p>
             </div>
-            <Button variant="outline" size="xs" onClick={onClose} aria-label={t("Close page review")}>
-              {t("CLOSE")}
-            </Button>
+            <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+              <nav aria-label={t("Review navigation")} className="flex gap-1">
+                <button type="button" className="flex size-11 items-center justify-center bg-pulp-paper text-ink-black transition-colors hover:bg-ink-black hover:text-bristol disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-pulp-paper disabled:hover:text-ink-black" aria-label={t("PREVIOUS PAGE")} title={t("PREVIOUS PAGE")} disabled={previousPage == null} onClick={() => previousPage != null && onNavigate(previousPage)}>
+                  <ReviewChevronLeft size={20} aria-hidden="true" />
+                </button>
+                <button type="button" className="flex size-11 items-center justify-center bg-pulp-paper text-ink-black transition-colors hover:bg-ink-black hover:text-bristol disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-pulp-paper disabled:hover:text-ink-black" aria-label={t("NEXT PAGE")} title={t("NEXT PAGE")} disabled={nextPage == null} onClick={() => nextPage != null && onNavigate(nextPage)}>
+                  <ReviewChevronRight size={20} aria-hidden="true" />
+                </button>
+              </nav>
+              <button type="button" className="flex size-11 items-center justify-center text-ink-muted transition-colors hover:bg-pulp-paper hover:text-ink-black" onClick={onClose} aria-label={t("Close page review")} title={t("CLOSE")}>
+                <ReviewClose size={20} aria-hidden="true" />
+              </button>
+            </div>
           </header>
-          <nav aria-label={t("Review navigation")} className="flex flex-wrap gap-2 px-4 pb-3">
-            <Button variant="outline" size="sm" disabled={previousPage == null} onClick={() => previousPage != null && onNavigate(previousPage)}>{t("PREVIOUS PAGE")}</Button>
-            <Button variant="outline" size="sm" disabled={nextPage == null} onClick={() => nextPage != null && onNavigate(nextPage)}>{t("NEXT PAGE")}</Button>
-            <Button variant="outline" size="sm" disabled={nextUnresolved == null} onClick={() => nextUnresolved != null && onNavigate(nextUnresolved)}>{t("NEXT UNRESOLVED")}</Button>
-          </nav>
-          <RoomTabs
+          <div className="flex flex-wrap items-center justify-between gap-x-4 bg-surface-container px-4 sm:px-6">
+            <RoomTabs
             ariaLabel={`${t("Page")} ${item.page.page_number} ${t("sections")}`}
-            className="border-t border-ink-black/15 px-4 pb-3 pt-3"
+            className="min-w-0 max-w-full gap-1 py-2 [&>button]:border-0 [&>button]:px-3 [&>button]:tracking-normal sm:[&>button]:px-4"
             tabs={[
               {
                 key: "page",
@@ -343,6 +355,10 @@ function PageReview({
               },
             ]}
           />
+            {nextUnresolved != null && <button type="button" className="mb-2 flex min-h-11 items-center gap-2 font-meta text-[11px] font-bold tracking-[0.04em] text-ink-black underline decoration-ink-black/30 underline-offset-4 transition-colors hover:text-hero-red disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-ink-black sm:mb-0" disabled={nextUnresolved == null} onClick={() => nextUnresolved != null && onNavigate(nextUnresolved)}>
+              {t("NEXT UNRESOLVED")} <ReviewChevronRight size={16} aria-hidden="true" />
+            </button>}
+          </div>
         </div>
         <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto">
           <div className="space-y-7 p-4 lg:p-6">
@@ -456,7 +472,7 @@ export function PagesRoom() {
       if (value == null) next.delete(key);
       else next.set(key, value);
     }
-    setSearchParams(next, { replace: true });
+    setSearchParams(next, { replace: !("reading" in changes) });
     setRevealedPage(null);
     try {
       const saved = new URLSearchParams(next);
@@ -542,6 +558,17 @@ export function PagesRoom() {
     }
   }, [data, filter]);
 
+  if (id && reading) {
+    return <ReadingWorkspace project={id} kind={reading}
+      onKindChange={(kind) => updateContext({ reading: kind })}
+      onClose={() => {
+        updateContext({ reading: null });
+        requestAnimationFrame(() => {
+          document.querySelector<HTMLButtonElement>(`[data-reading-kind="${reading}"]`)?.focus();
+        });
+      }} />;
+  }
+
   if (isLoading && drawStatus !== "pending") {
     return (
       <RoomShell
@@ -587,6 +614,7 @@ export function PagesRoom() {
     const job = latestPageJobs.get(item.page.page_number);
     return job?.status === "failed" || !!pageFailures[item.page.page_number] || !!item.failure;
   }).map((item) => item.page.page_number));
+  const drawnPages = pages.filter((item) => item.active_render);
   const unresolvedPages = pages.filter(needsReview);
   const uncheckedPages = pages.filter((item) => item.active_render && item.analysis_recovery?.status !== "checked");
   const visiblePages = pages.filter((item) => filter === "all"
@@ -710,12 +738,25 @@ export function PagesRoom() {
         title={t("REVIEW COMPLETE PAGES")}
         lead={t("Each thumbnail is one fully lettered page. Corrections always create a complete new revision.")}
       />
-      {status?.style_selected && selectedStyle && (
-        <div className="mb-5 flex items-center gap-3 text-sm">
-          {selectedStyle.has_sample && <img src={`/api/projects/${encodeURIComponent(id)}/files/samples/style_${selectedStyle.index}.png`} alt="" className="h-14 w-11 object-contain" />}
-          <p><span className="font-bold">{t("Visual direction")}: </span>{selectedStyle.label}</p>
+      <section className="grid gap-6 bg-ink-black p-6 text-pulp-paper shadow-paper md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] md:p-8">
+        <div>
+          <h2 className="font-display text-3xl font-black uppercase leading-tight tracking-[-0.03em] md:text-4xl">{t("Your story, page by page")}</h2>
+          <p className="mt-3 max-w-[60ch] font-body text-sm leading-7 text-pulp-paper/85">{t("Read the edition as it comes to life. Open a page for a closer look, review flagged findings, or shape the next revision.")}</p>
+          <div className="mt-5 flex flex-wrap gap-3">
+            {unresolvedPages.length > 0 ? <Button variant="onInk" size="sm" onClick={() => updateContext({ filter: "needs-review", page: String(unresolvedPages[0].page.page_number), review: "checks" })}>{t("REVIEW FLAGGED PAGES")} ({unresolvedPages.length})<ArrowUpRight size={16} aria-hidden="true" /></Button>
+              : drawnPages.length > 0 && <Button variant="onInk" size="sm" onClick={() => updateContext({ page: String(drawnPages[0].page.page_number), review: "page" })}><BookOpen size={16} aria-hidden="true" />{t("Start reading")}</Button>}
+          </div>
         </div>
-      )}
+        <div className="flex flex-col justify-center bg-pulp-paper/10 p-5">
+          <p className="font-meta text-sm font-bold">{t("{drawn} of {total} pages drawn").replace("{drawn}", String(drawnPages.length)).replace("{total}", String(pages.length))}</p>
+          <progress aria-label={t("Drawing progress")} value={drawnPages.length} max={Math.max(1, pages.length)} className="mt-3 h-2 w-full overflow-hidden [&::-webkit-progress-bar]:bg-pulp-paper/20 [&::-webkit-progress-value]:bg-narrator-gold [&::-moz-progress-bar]:bg-narrator-gold" />
+          <p className="mt-3 font-body text-xs leading-6 text-pulp-paper/85">{t("Open completed pages to check the artwork and lettering.")}</p>
+          {status?.style_selected && selectedStyle && <div className="mt-4 flex items-center gap-3">
+            {selectedStyle.has_sample && <img src={`/api/projects/${encodeURIComponent(id)}/files/samples/style_${selectedStyle.index}.png`} alt="" className="h-14 w-11 shrink-0 object-contain" />}
+            <p className="font-body text-xs leading-6"><span className="block font-meta text-narrator-gold">{t("Visual direction")}</span>{selectedStyle.label}</p>
+          </div>}
+        </div>
+      </section>
       {!status?.style_selected && <p role="status" className="mb-4 text-sm">{t("Select a visual direction in Look before drawing pages.")}</p>}
 
       <section aria-label={t("Page gallery")}>
@@ -728,6 +769,7 @@ export function PagesRoom() {
               <Button
                 variant="outline"
                 size="xs"
+                data-reading-kind="adaptation"
                 onClick={() => updateContext({ reading: "adaptation" })}
               >
                 {t("BOOK ADAPTATION")}
@@ -735,6 +777,7 @@ export function PagesRoom() {
               <Button
                 variant="outline"
                 size="xs"
+                data-reading-kind="page-plan"
                 onClick={() => updateContext({ reading: "page-plan" })}
               >
                 {t("PAGE PLAN")}
@@ -743,16 +786,16 @@ export function PagesRoom() {
           )}
         />
         {drawStatus === "pending" && (
-          <Surface tone="ink" padding="md" className="mb-5">
+          <Surface tone="pulp" padding="md" className="mb-5">
             <div className="flex flex-wrap items-end justify-between gap-5">
               <div className="max-w-[62ch]">
-                <h3 className="font-body text-base font-bold text-bristol">
+                <h3 className="font-body text-base font-bold text-ink-black">
                   {t("How do you want to draw this edition?")}
                 </h3>
-                <p className="mt-1 text-sm leading-6 text-bristol/80">
+                <p className="mt-1 text-sm leading-6 text-ink-muted">
                   {t("Queue every page now, or prepare the edition and generate pages one at a time while you review.")}
                 </p>
-                <p className="mt-2 text-sm leading-6 text-bristol/80">{t("One by one prepares the edition without drawing. Each paid draw waits for your cost confirmation.")}</p>
+                <p className="mt-2 text-sm leading-6 text-ink-muted">{t("One by one prepares the edition without drawing. Each paid draw waits for your cost confirmation.")}</p>
               </div>
               <div className="flex flex-wrap gap-3">
                 <Button
@@ -763,7 +806,7 @@ export function PagesRoom() {
                   {t("GO ONE BY ONE")}
                 </Button>
                 <Button
-                  variant="onInk"
+                  variant="primary"
                   onClick={() => requestSpend({ kind: "batch" })}
                   disabled={run.isPending || !status?.style_selected}
                 >
@@ -788,7 +831,7 @@ export function PagesRoom() {
             </div>
           </Surface>
         )}
-        <div role="group" aria-label={t("Filter pages")} className="mb-5 flex flex-wrap gap-2">
+        <div role="group" aria-label={t("Filter pages")} className="mb-6 flex flex-wrap gap-2 bg-surface-container p-3">
           {([
             ["all", t("All"), pages.length],
             ["needs-review", t("Needs review"), unresolvedPages.length],
@@ -801,7 +844,7 @@ export function PagesRoom() {
           ))}
         </div>
         {visiblePages.length === 0 && <p role="status" className="mb-6 text-sm text-ink-muted">{t("No pages in this filter.")}</p>}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-5 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {visiblePages.map((item) => {
             const revision = item.active_render?.render.revision;
             const pageIsDrawing = drawingPages.has(item.page.page_number);
@@ -822,13 +865,23 @@ export function PagesRoom() {
               && !revision
               && pageFailure?.classification !== "provider_blocked";
             return (
-              <EntityCard key={item.page.page_number} padding="cozy">
+              <EntityCard key={item.page.page_number} padding="cozy" className="h-full">
                 <button
                   type="button"
                   onClick={() => updateContext({ page: String(item.page.page_number), review: "page" })}
                   aria-label={`${t("Open page")} ${item.page.page_number}, ${t("revision")} ${revision ?? 0}`}
                   className="block w-full text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red"
                 >
+                  <div className="mb-3 flex items-center justify-between gap-2 flex-wrap">
+                    <span className="font-display text-lg font-black uppercase">{t("Page")} {item.page.page_number}</span>
+                    {item.issues.some((issue) => (issue.status === "open" || issue.status === "revised")) && (
+                      <StatusPill tone={item.issues.some((issue) => issue.status === "revised") ? "gold" : "red"}>
+                        {item.issues.some((issue) => issue.status === "revised")
+                          ? t("REVISED")
+                          : `${item.issues.filter((issue) => issue.status === "open").length} ${t("FLAGGED")}`}
+                      </StatusPill>
+                    )}
+                  </div>
                   <div className="aspect-[2/3] overflow-hidden bg-surface-container">
                     {pageIsDrawing && !revision ? (
                       <FlowingDotsPlaceholder
@@ -839,34 +892,24 @@ export function PagesRoom() {
                         className="h-full border-0"
                       />
                     ) : revision ? (
-                      <img
+                      <PageThumbnail
                         src={pageRenderPreviewUrl(id, item.page.page_number, revision, "thumbnail")}
                         alt={`${t("Complete page thumbnail")} ${item.page.page_number}, ${t("revision")} ${revision}`}
-                        loading="lazy"
-                        decoding="async"
-                        className={`h-full w-full object-contain ${revealedPage === item.page.page_number ? "animate-proof-reveal" : ""}`}
-                        onAnimationEnd={() => setRevealedPage(null)}
+                        reveal={revealedPage === item.page.page_number}
+                        onRevealEnd={() => setRevealedPage(null)}
                       />
                     ) : (
-                      <div className="flex h-full items-center justify-center px-4 text-center font-meta text-xs font-bold text-ink-muted">
-                        {t("READY TO DRAW")}
+                      <div className="flex h-full flex-col items-center justify-center gap-4 px-4 text-center text-ink-muted">
+                        <Layers size={28} aria-hidden="true" />
+                        <span className="font-meta text-xs font-bold">{t("READY TO DRAW")}</span>
+                        <span className="max-w-[22ch] font-body text-xs leading-6">{t("The page plan is ready. Artwork appears here once drawn.")}</span>
                       </div>
                     )}
                   </div>
                   {revision && item.analysis_recovery?.status !== "checked" && (
                     <p className="mt-2 text-sm font-bold text-ink-muted">{t("Artwork saved · Text check incomplete")}</p>
                   )}
-                  <div className="mt-3 flex items-center justify-between gap-2">
-                    <span className="font-display text-lg font-black uppercase">{t("Page")} {item.page.page_number}</span>
-                    {item.issues.some((issue) => (issue.status === "open" || issue.status === "revised")) && (
-                      <StatusPill tone={item.issues.some((issue) => issue.status === "revised") ? "gold" : "red"}>
-                        {item.issues.some((issue) => issue.status === "revised")
-                          ? t("REVISED")
-                          : item.issues.filter((issue) => issue.status === "open").length}
-                      </StatusPill>
-                    )}
-                  </div>
-                  <p className="mt-1 font-meta text-xs text-ink-muted">
+                  <p className="mt-3 font-meta text-xs leading-6 text-ink-muted">
                     {revision ? `${t("Revision")} ${revision}` : t("Not generated")}
                     {pageIsDrawing && revision ? ` · ${t("New revision drawing")}` : ""}
                     {item.issues.some((issue) => isOcrIssue(issue) && (issue.status === "open" || issue.status === "revised"))
@@ -881,6 +924,7 @@ export function PagesRoom() {
                       : ""}
                   </p>
                 </button>
+                {revision && <div className="mt-auto pt-4"><Button variant="outline" size="xs" fullWidth onClick={() => updateContext({ page: String(item.page.page_number), review: "page" })} aria-label={`${t("Review page")} ${item.page.page_number}`}><ArrowUpRight size={15} aria-hidden="true" />{t("Review page")}</Button></div>}
                 {failureCopy && (
                   <Surface
                     tone="pulp"
@@ -988,13 +1032,7 @@ export function PagesRoom() {
           })}
         </div>
       </section>
-      {reading && (
-        <InspectDrawer
-          project={id}
-          kind={reading}
-          onClose={() => updateContext({ reading: null })}
-        />
-      )}
+
 
       {selectedItem && (
         <PageReview
@@ -1038,11 +1076,6 @@ export function PagesRoom() {
         />
       )}
       {approvalError && <p role="alert" className="text-sm text-hero-red">{approvalError}</p>}
-      {unresolvedPages.length > 0 && (
-        <Button variant="outline" onClick={() => updateContext({ filter: "needs-review", page: String(unresolvedPages[0].page.page_number), review: "checks" })}>
-          {t("REVIEW FLAGGED PAGES")} ({unresolvedPages.length})
-        </Button>
-      )}
       {uncheckedPages.length > 0 && (
         <section className="space-y-3">
           <p role="status" className="text-sm font-bold">

@@ -100,7 +100,26 @@ describe("Library first-run (Issue #0)", () => {
     expect(screen.getByLabelText("Current route").textContent).toBe("/project/prepared-source/story");
   });
 
-  it("leaves non-empty libraries untouched", () => {
+  it("finds productions by title or author and recovers from an empty search", async () => {
+    const user = userEvent.setup();
+    projectsResult.data = [
+      { id: "one", name: "one", project_name: "The Open Window", author: "Saki", created_at: "2026-06-01", furthest_stage: "extract", is_running: false, has_cover: false, cover_job: null, total_cost_credits: 0 },
+      { id: "two", name: "two", project_name: "Dracula", author: "Bram Stoker", created_at: "2026-06-01", furthest_stage: "style", is_running: false, has_cover: false, cover_job: null, total_cost_credits: 0 },
+    ];
+    renderLibrary();
+    const search = screen.getByRole("searchbox", { name: "Find a production" });
+    await user.type(search, " SAKI ");
+    expect(screen.getByText("The Open Window")).toBeTruthy();
+    expect(screen.queryByText("Dracula")).toBeNull();
+    await user.clear(search);
+    await user.type(search, "missing");
+    expect(screen.getByText("No matching productions")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(screen.getByText("Dracula")).toBeTruthy();
+    expect(generateCoverMutation.mutate).not.toHaveBeenCalled();
+  });
+
+  it("shows existing productions without generating covers", () => {
     projectsResult.data = [
       {
         id: "demo",

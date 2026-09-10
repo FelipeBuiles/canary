@@ -20,6 +20,14 @@ within its allowed attempts, Canary surfaces the failure. Choosing another
 model creates an explicitly regenerated edition rather than a mixed-provider
 book.
 
+The submission-attempt budget applies within one authorized action, not across
+the page's lifetime. An explicit user retry authorizes a new action with the
+same edition profile and preserves the previous request in its retry lineage.
+The lineage attempt number is an audit counter, not a provider capability
+limit. Draw currently submits once per action and never automatically retries
+an ambiguous image call. A saved unfinished result must be recovered before
+new page input can be submitted.
+
 Panel images may be derived by cropping a completed page for review,
 accessibility, analysis, or issue localization. A crop is evidence about its
 page render; it is not an independently generated asset, a replacement panel,
