@@ -24,7 +24,7 @@ from novel_to_comic.labs.registry import get_entry, load_registry
 
 
 DEFAULT_MODELS = [
-    "gemini-flash-lite-production-fast",
+    "gemini-flash-lite-production",
     "gemini-flash-lite-production-balanced",
     "nano-banana-2-edit",
 ]

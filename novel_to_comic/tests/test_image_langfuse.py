@@ -14,8 +14,8 @@ from novel_to_comic.usage import UsageRecord
 @pytest.mark.parametrize(
     ("model_alias", "provider", "provider_model"),
     [
-        ("image-balanced", "gemini", "vertex_ai/gemini-3-pro-image"),
-        ("image-quality", "openai", "openai/gpt-image-2"),
+        ("image-gemini-pro", "gemini", "vertex_ai/gemini-3-pro-image"),
+        ("image-gpt-2", "openai", "openai/gpt-image-2"),
     ],
 )
 def test_image_langfuse_is_independent_of_usage_database(
@@ -66,8 +66,8 @@ def test_image_langfuse_is_independent_of_usage_database(
 @pytest.mark.parametrize(
     ("model_alias", "provider_model"),
     [
-        ("image-balanced", "vertex_ai/gemini-3-pro-image"),
-        ("image-quality", "openai/gpt-image-2"),
+        ("image-gemini-pro", "vertex_ai/gemini-3-pro-image"),
+        ("image-gpt-2", "openai/gpt-image-2"),
     ],
 )
 def test_image_models_emit_langfuse_trace_and_generation_payloads(
@@ -147,7 +147,7 @@ def test_langfuse_redacts_prompt_content_by_default(monkeypatch):
             metadata={"trace_id": "trace-1", "metadata": {}},
             feature="test.text",
             operation="text",
-            model_alias="plan-balanced",
+            model_alias="gpt-5.6-terra",
             provider_model="openai/gpt-5.4-mini",
             status="succeeded",
             generation_id="event-1",
@@ -186,7 +186,7 @@ def test_langfuse_exports_prompt_content_with_explicit_opt_in(monkeypatch):
             metadata={"trace_id": "trace-1", "metadata": {}},
             feature="test.text",
             operation="text",
-            model_alias="plan-balanced",
+            model_alias="gpt-5.6-terra",
             provider_model="openai/gpt-5.4-mini",
             status="succeeded",
             generation_id="event-1",

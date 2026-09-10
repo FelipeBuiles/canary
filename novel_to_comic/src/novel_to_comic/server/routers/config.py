@@ -15,12 +15,8 @@ _SECRET_FIELDS = {
 
 # Only these fields may be updated via the PATCH endpoint
 _SETTABLE_FIELDS = {
-    "quality_preset",
     "target_language",
     "dev_mode",
-    "image_provider",
-    "image_model",
-    "fallback_image_model",
     "image_quality",
     "image_steps",
     "negative_prompt",
@@ -54,16 +50,17 @@ def update_config(body: dict, project=Depends(get_project)):
         if key in body:
             raise HTTPException(400, f"Cannot set '{key}' via the web UI. Use .env or environment variables.")
 
+    from novel_to_comic.model_catalog import STAGE_FIELDS
+    forbidden = set(STAGE_FIELDS.values()) | {"quality_preset", "image_provider", "fallback_image_model", "dev_model_selections"}
+    if forbidden.intersection(body):
+        raise HTTPException(400, "Use account settings, or select project models when creating a local development project.")
+
     # Apply updates
     for key, value in body.items():
         if key not in _SETTABLE_FIELDS:
             continue
         if key == "target_language" and value not in LANGUAGE_NAMES:
             raise HTTPException(400, "target_language must be one of: en, es, fr")
-        if key == "quality_preset" and value is not None:
-            valid_presets = {"fast", "balanced", "quality"}
-            if value not in valid_presets:
-                raise HTTPException(400, f"quality_preset must be one of: {', '.join(sorted(valid_presets))}, or null")
         setattr(config, key, value)
 
     save_config(config, project_dir)

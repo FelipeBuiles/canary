@@ -16,17 +16,13 @@ export type StageStatus =
   | "failed";
 
 export interface ConfigOverrides {
+  dev_model_selections?: Record<string, string>;
   style_template?: string;
-  image_provider?: "gemini" | "openai" | "openrouter" | "together";
-  image_model?: string;
   target_language?: "en" | "es" | "fr";
   dev_mode?: boolean;
-  quality_preset?: "fast" | "balanced" | "quality" | null;
-  extraction_model?: string;
   dev_image_scale?: number;
   dev_image_steps?: number;
   dev_image_concurrency?: number;
-  fallback_image_model?: string;
   image_width?: number;
   image_height?: number;
   image_steps?: number;

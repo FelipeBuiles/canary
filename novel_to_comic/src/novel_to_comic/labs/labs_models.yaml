@@ -131,79 +131,53 @@ models:
       only.
 
   # ── Production Gemini models (native Vertex multimodal path) ─────────────────
-  - id: gemini-flash-lite-production-fast
-    label: "Gemini 3.1 Flash Lite Image (production fast)"
+  - id: gemini-flash-lite-production
+    label: "Gemini 3.1 Flash Lite Image (production)"
     provider: litellm
-    endpoint: image-fast
+    endpoint: image-gemini-flash-lite
     tier: fast
     multi_ref: true
     max_refs: 8
     approx_cost: 0.034
     notes: >-
-      Production image-fast tier. Gemini 3.1 Flash Lite Image routed through the
+      Gemini 3.1 Flash Lite Image routed through the
       vertex-multimodal custom provider — native Vertex multimodal shape,
       role-labeled reference images.
 
-  - id: gemini-pro-image-production-balanced
-    label: "Gemini 3 Pro Image / Nano Banana Pro (production balanced)"
+  - id: gemini-pro-image-production
+    label: "Gemini 3 Pro Image / Nano Banana Pro (production)"
     provider: litellm
-    endpoint: image-balanced
+    endpoint: image-gemini-pro
     tier: balanced
     multi_ref: true
     max_refs: 8
     approx_cost: 0.134
     notes: >-
-      Production image-balanced tier. Gemini 3 Pro Image (Nano Banana Pro) routed through the
+      Gemini 3 Pro Image (Nano Banana Pro) routed through the
       vertex-multimodal custom provider — native Vertex multimodal shape,
       role-labeled reference images.
 
   - id: seedream-v5-lite-litellm-proxy
     label: "Seedream 5.0 Lite (LiteLLM proxy)"
     provider: litellm
-    endpoint: image-balanced-seedream-test
+    endpoint: image-seedream-v5-lite
     tier: balanced
     multi_ref: true
     max_refs: 10
     approx_cost: 0.035
     notes: >-
-      Seedream routed through the local LiteLLM proxy test alias. Use this to
+      Seedream routed through the local LiteLLM proxy. Use this to
       verify the fal queue routing preserves multi-reference conditioning
-      before promoting image-balanced.
+      for the production API route.
 
-  - id: gpt-image-2-production-quality
-    label: "GPT Image 2 (production quality)"
+  - id: gpt-image-2-production
+    label: "GPT Image 2 (production)"
     provider: litellm
-    endpoint: image-quality
+    endpoint: image-gpt-2
     tier: premium
     multi_ref: true
     max_refs: 4
     approx_cost: 0.032
     notes: >-
-      Production image-quality tier. GPT Image 2 routed through OpenAI's image
+      GPT Image 2 routed through OpenAI's image
       generation and editing endpoints with high-fidelity image inputs.
-
-  - id: reve-proxy
-    label: "Reve (LiteLLM Proxy)"
-    provider: litellm
-    endpoint: image-reve
-    tier: premium
-    multi_ref: true
-    max_refs: 4
-    style_refs: true
-    approx_cost: 0.20
-    notes: >-
-      Reve model routed through the local LiteLLM proxy gateway.
-      Uses custom handler litellm_handlers.reve_provider.
-
-  - id: reve-direct
-    label: "Reve (Direct API Call)"
-    provider: reve
-    endpoint: reve/create
-    tier: premium
-    multi_ref: true
-    max_refs: 4
-    style_refs: true
-    approx_cost: 0.20
-    notes: >-
-      Reve model calling the api.reve.com endpoints directly from the Canary
-      backend, bypassing the LiteLLM proxy.

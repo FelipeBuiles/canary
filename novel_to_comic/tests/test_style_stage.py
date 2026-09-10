@@ -209,6 +209,29 @@ def test_generate_suggestions_completes_an_undersized_pool():
     assert {"photographic", "realistic_illustration"} <= {s["visual_logic"] for s in suggestions}
 
 
+def test_generate_suggestions_retries_when_a_required_role_is_missing():
+    complete = _batch()
+    first = {
+        **complete,
+        "styles": [
+            style for style in complete["styles"]
+            if style["portfolio_role"] != "story_fit_secondary"
+        ],
+    }
+    secondary = complete["styles"][1]
+    second = {**complete, "styles": [secondary]}
+    mock = AsyncMock(side_effect=[
+        ApiResult(value=first, usage=None), ApiResult(value=second, usage=None),
+    ])
+
+    with patch("novel_to_comic.clients.text.generate_json", new=mock):
+        suggestions, _usage = asyncio.run(generate_suggestions(Config(), _bible()))
+
+    assert mock.await_count == 2
+    assert "story_fit_secondary" in mock.await_args_list[1].kwargs["system_prompt"]
+    assert [s["role"] for s in suggestions] == list(PORTFOLIO_ROLES)
+
+
 def test_generate_suggestions_rejects_partial_portfolio():
     mock = AsyncMock(return_value=ApiResult(value=_batch(count=1), usage=None))
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
@@ -258,10 +281,10 @@ def test_ensure_style_sample_brief_cache_key_includes_prompt_model(tmp_path):
     mock = AsyncMock(return_value=ApiResult(value=BRIEF, usage=None))
     with patch("novel_to_comic.clients.text.generate_text", new=mock):
         asyncio.run(ensure_style_sample_brief(
-            Config(prompt_model="prompt-fast"), _bible(), tmp_path,
+            Config(prompt_model="gpt-5.6-luna"), _bible(), tmp_path,
         ))
         asyncio.run(ensure_style_sample_brief(
-            Config(prompt_model="prompt-quality"), _bible(), tmp_path,
+            Config(prompt_model="gpt-5.6-terra"), _bible(), tmp_path,
         ))
     assert mock.await_count == 2
 
@@ -337,7 +360,7 @@ def test_exact_style_proof_estimate_compiles_dimensions_reference_and_brief_cost
     from PIL import Image
 
     bible = _bible()
-    config = Config(image_model="image-balanced")
+    config = Config(image_model="image-gemini-pro")
     artifacts.story_bible_path(tmp_path).write_text(bible.model_dump_json())
     reference = tmp_path / "reference.png"
     Image.new("RGB", (12, 14), "red").save(reference)

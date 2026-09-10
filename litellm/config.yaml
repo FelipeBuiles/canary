@@ -1,163 +1,80 @@
+# Concrete model routes. No automatic model upgrades or provider retries.
 model_list:
-  # ─── Stage 1: full-novel extraction ───────────────────────────────────────
-  - model_name: extract-fast
-    litellm_params:
-      model: vertex_ai/gemini-3.8-flash
-      vertex_project: os.environ/VERTEXAI_PROJECT
-      vertex_location: os.environ/VERTEXAI_LOCATION
-      # Canary adapts public-domain literature (Grimm, Lovecraft, …) whose
-      # canonical content includes violence. Vertex's default filters
-      # (BLOCK_MEDIUM_AND_ABOVE) return empty candidates on such passages,
-      # which surface as "Empty response from LiteLLM" and degrade the
-      # pipeline. Disable filtering for these text models; the gateway is
-      # internal and outputs are reviewed downstream.
-      safety_settings: &vertex_safety_off
-        - category: HARM_CATEGORY_HARASSMENT
-          threshold: "OFF"
-        - category: HARM_CATEGORY_HATE_SPEECH
-          threshold: "OFF"
-        - category: HARM_CATEGORY_SEXUALLY_EXPLICIT
-          threshold: "OFF"
-        - category: HARM_CATEGORY_DANGEROUS_CONTENT
-          threshold: "OFF"
-  - model_name: extract-balanced
-    litellm_params:
-      model: vertex_ai/gemini-3.8-flash
-      vertex_project: os.environ/VERTEXAI_PROJECT
-      vertex_location: os.environ/VERTEXAI_LOCATION
-      safety_settings: *vertex_safety_off
-  - model_name: extract-quality
-    litellm_params:
-      model: vertex_ai/gemini-3.8-flash
-      vertex_project: os.environ/VERTEXAI_PROJECT
-      vertex_location: os.environ/VERTEXAI_LOCATION
-      safety_settings: *vertex_safety_off
-
-  # ─── Stage 3: screenplay / dialogue adaptation ────────────────────────────
-  - model_name: adapt-fast
-    litellm_params:
-      model: anthropic/claude-haiku-4-5
-      api_key: os.environ/ANTHROPIC_API_KEY
-  - model_name: adapt-balanced
-    litellm_params:
-      model: vertex_ai/gemini-3.8-flash
-      vertex_project: os.environ/VERTEXAI_PROJECT
-      vertex_location: os.environ/VERTEXAI_LOCATION
-      safety_settings: *vertex_safety_off
-      reasoning_effort: "low"
-  - model_name: adapt-quality
-    litellm_params:
-      model: anthropic/claude-opus-4-7
-      api_key: os.environ/ANTHROPIC_API_KEY
-
-  # ─── Stage 4: layout / panel planning ─────────────────────────────────────
-  - model_name: plan-fast
-    litellm_params:
-      model: vertex_ai/gemini-3.5-flash-lite
-      vertex_project: os.environ/VERTEXAI_PROJECT
-      vertex_location: os.environ/VERTEXAI_LOCATION
-      safety_settings: *vertex_safety_off
-      reasoning_effort: "disable"
-  - model_name: plan-balanced
-    litellm_params:
-      model: vertex_ai/gemini-3.8-flash
-      vertex_project: os.environ/VERTEXAI_PROJECT
-      vertex_location: os.environ/VERTEXAI_LOCATION
-      safety_settings: *vertex_safety_off
-      reasoning_effort: "low"
-  # Panel planning is structured transformation over already-extracted data;
-  # keep thinking at low effort to limit invisible token spend.
-  - model_name: plan-quality
-    litellm_params:
-      model: vertex_ai/gemini-3.8-flash
-      vertex_project: os.environ/VERTEXAI_PROJECT
-      vertex_location: os.environ/VERTEXAI_LOCATION
-      safety_settings: *vertex_safety_off
-      reasoning_effort: "low"
-
-  # ─── Stage 5: image-prompt assembly (template filling) ────────────────────
-  # Prompt models now serve explicit style suggestions and instructed rewrites;
-  # production panel prompt assembly is deterministic. Use the latest
-  # Flash-Lite route for these bounded, high-volume transformations.
-  - model_name: prompt-fast
-    litellm_params:
-      model: vertex_ai/gemini-3.5-flash-lite
-      vertex_project: os.environ/VERTEXAI_PROJECT
-      vertex_location: os.environ/VERTEXAI_LOCATION
-      safety_settings: *vertex_safety_off
-      reasoning_effort: "disable"
-  - model_name: prompt-balanced
-    litellm_params:
-      model: vertex_ai/gemini-3.5-flash-lite
-      vertex_project: os.environ/VERTEXAI_PROJECT
-      vertex_location: os.environ/VERTEXAI_LOCATION
-      safety_settings: *vertex_safety_off
-      reasoning_effort: "disable"
-  - model_name: prompt-quality
-    litellm_params:
-      model: vertex_ai/gemini-3.5-flash-lite
-      vertex_project: os.environ/VERTEXAI_PROJECT
-      vertex_location: os.environ/VERTEXAI_LOCATION
-      safety_settings: *vertex_safety_off
-      reasoning_effort: "disable"
-
-  # ─── Render analysis: reading a finished page's visible lettering ─────────
-  # Draw's exact-lettering invariant depends on this transcription, so the
-  # alias is deliberately single-tier: every edition reads its pages with the
-  # same model regardless of the project's quality preset.
-  - model_name: ocr-balanced
-    litellm_params:
-      model: vertex_ai/gemini-3.8-flash
-      vertex_project: os.environ/VERTEXAI_PROJECT
-      vertex_location: os.environ/VERTEXAI_LOCATION
-      safety_settings: *vertex_safety_off
-
-  # ─── Image generation ─────────────────────────────────────────────────────
-  - model_name: image-fast
-    litellm_params:
-      # Nano Banana 2 Lite — fastest/cheapest tier; mirrors image-balanced.
-      model: vertex-multimodal/gemini-3.1-flash-lite-image
-      vertex_project: os.environ/VERTEXAI_PROJECT
-      vertex_location: os.environ/VERTEXAI_LOCATION
-  - model_name: image-balanced
-    litellm_params:
-      # Nano Banana Pro (Gemini 3 Pro Image): GA Vertex model with stronger
-      # reasoning, image quality, and text rendering than the Flash route.
-      model: vertex-multimodal/gemini-3-pro-image
-      vertex_project: os.environ/VERTEXAI_PROJECT
-      vertex_location: os.environ/VERTEXAI_LOCATION
-  - model_name: image-balanced-seedream-test
-    litellm_params:
-      model: fal-queue/bytedance/seedream/v5/lite/edit
-      api_key: os.environ/FAL_KEY
-  - model_name: image-reve
-    litellm_params:
-      model: reve/create
-      api_key: os.environ/REVE_API_KEY
-  - model_name: image-quality
-    litellm_params:
-      # GPT Image 2 — OpenAI's highest-quality image generation and editing
-      # route, with high-fidelity image inputs.
-      model: openai/gpt-image-2
-      api_key: os.environ/OPENAI_API_KEY
-
+- model_name: gpt-5.6-terra
+  litellm_params:
+    model: openai/gpt-5.6-terra
+    api_key: os.environ/OPENAI_API_KEY
+    reasoning_effort: low
+- model_name: gpt-5.6-luna
+  litellm_params:
+    model: openai/gpt-5.6-luna
+    api_key: os.environ/OPENAI_API_KEY
+    reasoning_effort: low
+- model_name: gemini-3.8-flash
+  litellm_params:
+    model: vertex_ai/gemini-3.8-flash
+    vertex_project: os.environ/VERTEXAI_PROJECT
+    vertex_location: os.environ/VERTEXAI_LOCATION
+    safety_settings:
+    - category: HARM_CATEGORY_HARASSMENT
+      threshold: 'OFF'
+    - category: HARM_CATEGORY_HATE_SPEECH
+      threshold: 'OFF'
+    - category: HARM_CATEGORY_SEXUALLY_EXPLICIT
+      threshold: 'OFF'
+    - category: HARM_CATEGORY_DANGEROUS_CONTENT
+      threshold: 'OFF'
+    reasoning_effort: low
+- model_name: deepseek-v4.1-flash
+  litellm_params:
+    model: openrouter/deepseek/deepseek-v4.1-flash
+    api_key: os.environ/OPENROUTER_API_KEY
+    reasoning_effort: low
+    extra_body:
+      provider:
+        require_parameters: true
+- model_name: glm-5.3-flash
+  litellm_params:
+    model: openrouter/z-ai/glm-5.3-flash
+    api_key: os.environ/OPENROUTER_API_KEY
+    reasoning_effort: low
+    extra_body:
+      provider:
+        require_parameters: true
+- model_name: image-gemini-flash-lite
+  litellm_params:
+    model: vertex-multimodal/gemini-3.1-flash-lite-image
+    vertex_project: os.environ/VERTEXAI_PROJECT
+    vertex_location: os.environ/VERTEXAI_LOCATION
+- model_name: image-gemini-pro
+  litellm_params:
+    model: vertex-multimodal/gemini-3-pro-image
+    vertex_project: os.environ/VERTEXAI_PROJECT
+    vertex_location: os.environ/VERTEXAI_LOCATION
+- model_name: image-gpt-2
+  litellm_params:
+    model: openai/gpt-image-2
+    api_key: os.environ/OPENAI_API_KEY
+- model_name: image-seedream-v5-lite
+  litellm_params:
+    model: fal-queue/bytedance/seedream/v5/lite/edit
+    api_key: os.environ/FAL_KEY
+- model_name: image-sunburst
+  litellm_params:
+    model: openai/gpt-image-2.5-sunburst
+    api_key: os.environ/OPENAI_API_KEY
+- model_name: image-flare
+  litellm_params:
+    model: openai/gpt-image-2.5-flare
+    api_key: os.environ/OPENAI_API_KEY
 litellm_settings:
-  # Langfuse logging happens directly from the Canary AI client (see
-  # ai/client.py::_log_langfuse_generation). The built-in LiteLLM callback was
-  # removed because it can't reach the image-edit endpoints' prompt/output —
-  # that's where "default-message-value" inputs and missing image cost came
-  # from on traces.
   set_verbose: false
-  # Canary owns bounded retries; gateway retries could repeat a paid image call.
   num_retries: 0
   drop_params: true
   custom_provider_map:
-    - provider: fal-queue
-      custom_handler: litellm_handlers.fal_provider.fal_queue_llm
-    - provider: vertex-multimodal
-      custom_handler: litellm_handlers.vertex_multimodal.vertex_multimodal_llm
-    - provider: reve
-      custom_handler: litellm_handlers.reve_provider.reve_llm
-
+  - provider: fal-queue
+    custom_handler: litellm_handlers.fal_provider.fal_queue_llm
+  - provider: vertex-multimodal
+    custom_handler: litellm_handlers.vertex_multimodal.vertex_multimodal_llm
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

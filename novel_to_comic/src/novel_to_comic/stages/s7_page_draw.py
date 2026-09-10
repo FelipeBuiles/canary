@@ -21,7 +21,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> None:
     target = TargetArtifacts(project_dir)
     plan = target.read_plan()
     existing = (
-        ensure_current_page_edition(target, target.read_book_edition())
+        ensure_current_page_edition(target, target.read_book_edition(), config)
         if target.book_edition_path.exists() else None
     )
     # Complete-page provider work is queued and credited per page through the
@@ -30,7 +30,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> None:
 
     edition = select_book_edition(
         edition_id=existing.id if existing is not None else "book-edition-001",
-        profile=current_page_capability_profile(),
+        profile=current_page_capability_profile(config),
         existing=existing,
     )
     ctx.begin(total=len(plan.pages))
@@ -45,8 +45,8 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     funding = classify_operations(draw_operations(config))
     target = TargetArtifacts(project_dir)
     profile = (
-        ensure_current_page_edition(target, target.read_book_edition()).capability_profile
-        if target.book_edition_path.exists() else current_page_capability_profile()
+        ensure_current_page_edition(target, target.read_book_edition(), config).capability_profile
+        if target.book_edition_path.exists() else current_page_capability_profile(config)
     )
     if not target.plan_path.exists():
         return 0.0

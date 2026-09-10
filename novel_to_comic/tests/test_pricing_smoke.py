@@ -8,21 +8,9 @@ from novel_to_comic.server.routers.billing import CREDIT_PACKAGES
 from novel_to_comic.state import create_initial_state
 
 
-@pytest.mark.parametrize(
-    ("preset", "expected_range"),
-    [
-        ("fast", range(4, 41)),
-        ("balanced", range(6, 61)),
-        # Quality now uses Gemini 3.7 Flash instead of the more expensive
-        # Gemini 3.1 Pro route, so the same project estimates lower.
-        ("quality", range(10, 201)),
-    ],
-)
 def test_extract_estimate_for_typical_project_stays_in_sane_range(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    preset: str,
-    expected_range: range,
 ):
     # Production economics per docs/proposals/pricing-and-margin.md:
     # markup 2.0 (~48% net GM after Stripe), 100 credits per provider USD.
@@ -33,11 +21,11 @@ def test_extract_estimate_for_typical_project_stays_in_sane_range(
     novel_path = tmp_path / "novel.txt"
     novel_path.write_text("word " * (120 * 1024 // 5))
     state = create_initial_state("demo", str(novel_path))
-    config = Config(quality_preset=preset)
+    config = Config(extraction_model="gemini-3.8-flash")
 
     estimate = estimate_stage_credit_breakdown(config, tmp_path, state, "extract")
 
-    assert estimate["estimate_credits"] in expected_range
+    assert estimate["estimate_credits"] in range(6, 61)
 
 
 def test_credit_packages_match_recommended_pricing():

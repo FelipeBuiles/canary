@@ -6,17 +6,20 @@ from dataclasses import dataclass
 from enum import Enum
 
 
-GATEWAY_IMAGE_FAST = "image-fast"
-GATEWAY_IMAGE_BALANCED = "image-balanced"
-GATEWAY_IMAGE_QUALITY = "image-quality"
-GATEWAY_IMAGE_REVE = "image-reve"
-GATEWAY_IMAGE_SEEDREAM_TEST = "image-balanced-seedream-test"
+GATEWAY_IMAGE_FAST = "image-gemini-flash-lite"
+GATEWAY_IMAGE_BALANCED = "image-gemini-pro"
+GATEWAY_IMAGE_QUALITY = "image-gpt-2"
+GATEWAY_IMAGE_SUNBURST = "image-sunburst"
+GATEWAY_IMAGE_FLARE = "image-flare"
+GATEWAY_IMAGE_SEEDREAM_TEST = "image-seedream-v5-lite"
 
 IMAGE_MODEL_ALIASES = (
     GATEWAY_IMAGE_FAST,
     GATEWAY_IMAGE_BALANCED,
     GATEWAY_IMAGE_QUALITY,
-    GATEWAY_IMAGE_REVE,
+    GATEWAY_IMAGE_SUNBURST,
+    GATEWAY_IMAGE_FLARE,
+    GATEWAY_IMAGE_SEEDREAM_TEST,
 )
 
 _GEMINI_FLASH_LITE_MODEL = "vertex-multimodal/gemini-3.1-flash-lite-image"
@@ -24,7 +27,6 @@ _GEMINI_PRO_IMAGE_MODEL = "vertex-multimodal/gemini-3-pro-image"
 _GPT_IMAGE_2_MODEL = "openai/gpt-image-2"
 _SEEDREAM_V5_LITE_MODEL = "fal-queue/bytedance/seedream/v5/lite/edit"
 _SEEDREAM_V5_PRO_MODEL = "fal-queue/bytedance/seedream/v5/pro/edit"
-_REVE_CREATE_MODEL = "reve/create"
 
 # Provider keys are intentionally open-ended strings rather than a closed enum.
 # The model catalog can describe providers that are not active in the current
@@ -33,7 +35,6 @@ _REVE_CREATE_MODEL = "reve/create"
 IMAGE_PROVIDER_OPENAI = "openai"
 IMAGE_PROVIDER_VERTEX_MULTIMODAL = "vertex-multimodal"
 IMAGE_PROVIDER_FAL_QUEUE = "fal-queue"
-IMAGE_PROVIDER_REVE = "reve"
 IMAGE_PROVIDER_UNKNOWN = "unknown"
 
 
@@ -43,7 +44,6 @@ class ImageRoute(str, Enum):
     GEMINI_FLASH_LITE = "gemini_flash_lite"
     GEMINI_PRO_IMAGE = "gemini_pro_image"
     SEEDREAM = "seedream"
-    REVE = "reve"
     GPT_IMAGE_2 = "gpt_image_2"
     CODEX_BUILTIN = "codex_builtin"
     UNKNOWN = "unknown"
@@ -62,30 +62,34 @@ class ImageModelDescription:
 _ALIAS_DESCRIPTIONS: dict[str, ImageModelDescription] = {
     GATEWAY_IMAGE_FAST: ImageModelDescription(
         route=ImageRoute.GEMINI_FLASH_LITE,
-        display_name="Fast — Gemini 3.1 Flash Lite Image",
+        display_name="Gemini 3.1 Flash Lite Image",
         provider_model=_GEMINI_FLASH_LITE_MODEL,
         provider_key=IMAGE_PROVIDER_VERTEX_MULTIMODAL,
     ),
     GATEWAY_IMAGE_BALANCED: ImageModelDescription(
         route=ImageRoute.GEMINI_PRO_IMAGE,
-        display_name="Balanced — Gemini 3 Pro Image (Nano Banana Pro)",
+        display_name="Gemini 3 Pro Image (Nano Banana Pro)",
         provider_model=_GEMINI_PRO_IMAGE_MODEL,
         provider_key=IMAGE_PROVIDER_VERTEX_MULTIMODAL,
     ),
     GATEWAY_IMAGE_QUALITY: ImageModelDescription(
         route=ImageRoute.GPT_IMAGE_2,
-        display_name="Quality — GPT Image 2",
+        display_name="GPT Image 2",
         provider_model=_GPT_IMAGE_2_MODEL,
         provider_key=IMAGE_PROVIDER_OPENAI,
     ),
-    GATEWAY_IMAGE_REVE: ImageModelDescription(
-        route=ImageRoute.REVE,
-        display_name="Reve",
-        provider_model=_REVE_CREATE_MODEL,
-        provider_key=IMAGE_PROVIDER_REVE,
+    GATEWAY_IMAGE_SUNBURST: ImageModelDescription(
+        route=ImageRoute.GPT_IMAGE_2,
+        display_name="GPT Image 2.5 Sunburst",
+        provider_model="openai/gpt-image-2.5-sunburst",
+        provider_key=IMAGE_PROVIDER_OPENAI,
     ),
-    # Labs-only gateway alias. It is intentionally not part of the production
-    # alias inventory exposed by ``image_model_aliases()``.
+    GATEWAY_IMAGE_FLARE: ImageModelDescription(
+        route=ImageRoute.GPT_IMAGE_2,
+        display_name="GPT Image 2.5 Flare",
+        provider_model="openai/gpt-image-2.5-flare",
+        provider_key=IMAGE_PROVIDER_OPENAI,
+    ),
     GATEWAY_IMAGE_SEEDREAM_TEST: ImageModelDescription(
         route=ImageRoute.SEEDREAM,
         display_name="Seedream 5.0 Lite",
@@ -100,19 +104,12 @@ def describe_image_model(model: str) -> ImageModelDescription:
     normalized = (model or "").strip().lower()
     if normalized in _ALIAS_DESCRIPTIONS:
         return _ALIAS_DESCRIPTIONS[normalized]
-    if normalized in {"gpt-image-2", "openai/gpt-image-2"}:
+    if normalized.removeprefix("openai/") in {"gpt-image-2", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst-2026-09-08", "gpt-image-2.5-flare-2026-09-08"}:
         return ImageModelDescription(
             route=ImageRoute.GPT_IMAGE_2,
-            display_name="GPT Image 2",
+            display_name=normalized.removeprefix("openai/").replace("gpt-image-", "GPT Image "),
             provider_model=normalized,
             provider_key=IMAGE_PROVIDER_OPENAI,
-        )
-    if normalized.startswith("reve/"):
-        return ImageModelDescription(
-            route=ImageRoute.REVE,
-            display_name="Reve",
-            provider_model=normalized,
-            provider_key=IMAGE_PROVIDER_REVE,
         )
     if normalized == _GEMINI_FLASH_LITE_MODEL:
         return ImageModelDescription(
@@ -183,15 +180,12 @@ _ALL_CONTROLS: tuple[str, ...] = (
 
 #: Verified prompt-character limits per route.
 #
-# - REVE: the v2 ``prompt`` field is capped at 4000 chars. The compiler budgets
-#   against this so protected material never enters a provider-side slice.
 # - GEMINI_FLASH_LITE / GPT_IMAGE_2: the OpenAI-compatible ``prompt`` field has
 #   no hard provider cap below the model context window, but a generous budget
 #   keeps prompts focused. ``None`` means no compiler-applied character budget
 #   (the route has no provider-side prefix slice that threatens protected
 #   content).
 _PROMPT_CHAR_LIMITS: dict[ImageRoute, int | None] = {
-    ImageRoute.REVE: 4000,
     ImageRoute.GEMINI_FLASH_LITE: None,
     ImageRoute.GEMINI_PRO_IMAGE: None,
     ImageRoute.SEEDREAM: None,
@@ -203,10 +197,6 @@ _PROMPT_CHAR_LIMITS: dict[ImageRoute, int | None] = {
 #: structurally rather than as prose. Empty tuple means the route has no
 #: dedicated aspect parameter (it derives aspect from width/height only).
 _NATIVE_ASPECTS: dict[ImageRoute, tuple[str, ...]] = {
-    ImageRoute.REVE: (
-        "4:1", "3:1", "21:9", "2:1", "17:9", "16:9", "3:2", "4:3",
-        "5:4", "1:1", "4:5", "3:4", "2:3", "9:16", "1:2", "1:3", "1:4",
-    ),
     ImageRoute.GEMINI_FLASH_LITE: (),
     ImageRoute.GEMINI_PRO_IMAGE: (),
     ImageRoute.SEEDREAM: (),
@@ -222,7 +212,6 @@ _NATIVE_ASPECTS: dict[ImageRoute, tuple[str, ...]] = {
 #   route forwards these today, so they are unsupported (phantom) until a route
 #   is verified to send them.
 _SUPPORTED_CONTROLS: dict[ImageRoute, frozenset[str]] = {
-    ImageRoute.REVE: frozenset(),
     ImageRoute.GEMINI_FLASH_LITE: frozenset({"quality"}),
     ImageRoute.GEMINI_PRO_IMAGE: frozenset({"quality"}),
     ImageRoute.SEEDREAM: frozenset({"quality"}),
@@ -303,15 +292,8 @@ class ImageModelProfile:
         )
 
 
-# Hard product reference caps per route. Reve v2 accepts at most 8 reference
-# images, but Canary keeps its production selector at four to reduce
-# conditioning noise; the Gemini Flash Lite route accepts many more
-# (the contents-list has headroom),
-# and GPT Image 2 processes every supplied image at high fidelity, so Canary
-# keeps a conservative four-reference budget. Context-specific selectors may
-# further narrow roles (for example, panel generation keeps style text-only).
+# Product reference caps; GPT Image 2.5 uses its documented 16-image limit.
 _ROUTE_REFERENCE_CAPS: dict[ImageRoute, int] = {
-    ImageRoute.REVE: 4,
     ImageRoute.GEMINI_FLASH_LITE: 10,
     ImageRoute.GEMINI_PRO_IMAGE: 10,
     ImageRoute.SEEDREAM: 10,
@@ -324,7 +306,6 @@ _ROUTE_PROVIDER_KEYS: dict[ImageRoute, str] = {
     ImageRoute.GEMINI_FLASH_LITE: IMAGE_PROVIDER_VERTEX_MULTIMODAL,
     ImageRoute.GEMINI_PRO_IMAGE: IMAGE_PROVIDER_VERTEX_MULTIMODAL,
     ImageRoute.SEEDREAM: IMAGE_PROVIDER_FAL_QUEUE,
-    ImageRoute.REVE: IMAGE_PROVIDER_REVE,
     ImageRoute.GPT_IMAGE_2: IMAGE_PROVIDER_OPENAI,
     ImageRoute.UNKNOWN: IMAGE_PROVIDER_UNKNOWN,
 }
@@ -366,6 +347,9 @@ def image_model_profile(model: str) -> ImageModelProfile:
             provider_key="codex-dev",
         )
     description = describe_image_model(model)
+    if "gpt-image-2.5-" in description.provider_model:
+        from dataclasses import replace
+        return replace(_profile_for_route(description.route), max_references=16)
     return _profile_for_route(
         description.route,
         provider_key=description.provider_key,

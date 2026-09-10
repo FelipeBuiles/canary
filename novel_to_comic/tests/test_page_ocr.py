@@ -205,7 +205,7 @@ def test_adapter_sends_the_page_image_and_no_canonical_wording(
         class _Result:
             usage = UsageRecord(
                 provider="gemini",
-                model="ocr-balanced",
+                model="gemini-3.8-flash",
                 operation="text",
                 input_tokens=1200,
                 output_tokens=80,
@@ -229,7 +229,7 @@ def test_adapter_sends_the_page_image_and_no_canonical_wording(
     assert [item.text for item in read.value.lettering] == ["It was the same face."]
     # The analysis pass is billable, so its usage has to come back with it.
     assert read.usage is not None
-    assert read.usage.model == "ocr-balanced"
+    assert read.usage.model == "gemini-3.8-flash"
     assert captured["image_attachments"] == ((b"page-bytes", "image/png"),)
     assert captured["feature"] == "draw.page_ocr"
     assert captured["temperature"] == 0.0
@@ -246,7 +246,7 @@ def test_invalid_envelope_retains_full_provider_response_before_parsing(tmp_path
     artifacts = TargetArtifacts(tmp_path)
     payload = {"text": [{"text": "Provider words", "box": {"x": 0, "y": 0, "width": 0.5, "height": 0.1}}]}
     raw_text = json.dumps(payload)
-    usage = UsageRecord(provider="gemini", model="ocr-balanced", operation="text")
+    usage = UsageRecord(provider="gemini", model="gemini-3.8-flash", operation="text")
 
     async def provider(**kwargs):
         # The complete root contract is actually sent to the provider.
@@ -282,7 +282,7 @@ def test_retained_response_revalidates_without_provider_or_canonical_substitutio
         request_sha256=render.request_sha256, response=None,
         raw_response=json.dumps({"lettering": [{"text": "Actually seen, not canonical",
             "box": {"x": 0, "y": 0, "width": 0.5, "height": 0.1}}], "panels": []}),
-        usage=UsageRecord(provider="gemini", model="ocr-balanced", operation="text"),
+        usage=UsageRecord(provider="gemini", model="gemini-3.8-flash", operation="text"),
     ))
     async def forbidden(**kwargs):
         raise AssertionError("cached recovery must never call a provider")

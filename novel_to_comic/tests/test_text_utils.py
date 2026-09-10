@@ -76,10 +76,10 @@ class TestCleanExceptionMessage:
         response = httpx.Response(
             status_code=500,
             request=request,
-            json={"error": {"message": "REVE_API_KEY is not set"}}
+            json={"error": {"message": "FAL_KEY is not set"}}
         )
         exc = httpx.HTTPStatusError("500 Internal Server Error", request=request, response=response)
-        assert clean_exception_message(exc) == "HTTPStatusError: 500 Internal Server Error - REVE_API_KEY is not set"
+        assert clean_exception_message(exc) == "HTTPStatusError: 500 Internal Server Error - FAL_KEY is not set"
 
     def test_httpx_status_error_json_detail(self):
         import httpx

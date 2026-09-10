@@ -109,11 +109,14 @@ function StageDocket({
     <div className="flex min-h-[50vh] items-center justify-center px-2 py-8 sm:px-6">
       <article className="grid w-full max-w-[760px] overflow-hidden border-[3px] border-ink-black bg-bristol shadow-paper md:grid-cols-[150px_minmax(0,1fr)]">
         <div className={`relative flex min-h-32 flex-col items-center justify-center px-5 py-6 text-center md:min-h-full ${plateClass}`}>
-          <div className="font-display text-[2.5rem] font-black leading-none tracking-[-0.03em]">
+          <div className="font-meta text-[0.54rem] font-bold uppercase leading-none tracking-[0.14em] opacity-70">
+            {t("Station")}
+          </div>
+          <div className="mt-1.5 font-display text-[2.5rem] font-black leading-none tracking-[-0.03em]">
             {station.number}
           </div>
-          <div className="mt-3 font-meta text-xs font-bold uppercase tracking-[0.08em]">
-            {t("Station")} · {t(station.label)}
+          <div className="mt-2 font-meta text-xs font-bold uppercase leading-none tracking-[0.08em]">
+            {t(station.label)}
           </div>
         </div>
 

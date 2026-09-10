@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from pytest import approx
 
 from novel_to_comic import usage as usage_module
-from novel_to_comic.config import _QUALITY_PRESETS
+from novel_to_comic.model_catalog import models
 from novel_to_comic.model_costs import PricingResolver
 from novel_to_comic.server.credits import debit_model_usage, provider_usd_to_credits
 from novel_to_comic.usage import (
@@ -64,15 +64,15 @@ def test_token_priced_image_alias_estimates_via_quality_token_table():
 
 def test_balanced_image_alias_estimates_nano_banana_pro_cost():
     # Image-balanced -> Nano Banana Pro at the 1K/2K tier: $0.134/image.
-    assert estimate_image_cost("image-balanced", 2) == approx(0.268)
+    assert estimate_image_cost("image-gemini-pro", 2) == approx(0.268)
 
 
 def test_fast_image_alias_estimates_reference_input_images():
-    # image-fast -> nano banana 2 lite (gemini-3.1-flash-lite-image): $0.0336/image.
-    assert estimate_image_cost("image-fast", 1, ref_count=0) == 0.0336
-    assert estimate_image_cost("image-fast", 1, ref_count=4) == approx(0.03472)
+    # image-gemini-flash-lite -> nano banana 2 lite (gemini-3.1-flash-lite-image): $0.0336/image.
+    assert estimate_image_cost("image-gemini-flash-lite", 1, ref_count=0) == 0.0336
+    assert estimate_image_cost("image-gemini-flash-lite", 1, ref_count=4) == approx(0.03472)
     assert (
-        provider_usd_to_credits(estimate_image_cost("image-fast", 1, ref_count=4)) == 4
+        provider_usd_to_credits(estimate_image_cost("image-gemini-flash-lite", 1, ref_count=4)) == 4
     )
 
 
@@ -94,7 +94,7 @@ def test_per_megapixel_image_pricing_rounds_output_and_references():
 def test_provider_reported_cost_wins_over_cached_pricing():
     usage = UsageRecord(
         provider="openai",
-        model="plan-balanced",
+        model="gpt-5.6-terra",
         provider_model="openai/gpt-5.4-mini",
         operation="text",
         input_tokens=1000,
@@ -133,18 +133,18 @@ def test_model_output_token_limit_resolves_alias_and_uses_fallback(tmp_path):
     overrides = tmp_path / "overrides.yaml"
     cost_map.write_text('{"provider/model": {"max_output_tokens": 65536}}')
     overrides.write_text(
-        "aliases:\n  adapt-balanced: provider/model\nmodel_overrides: {}\n"
+        "aliases:\n  gpt-5.6-terra: provider/model\nmodel_overrides: {}\n"
     )
     resolver = PricingResolver(
         cost_map_path=cost_map,
         overrides_path=overrides,
     )
 
-    assert resolver.model_output_token_limit("adapt-balanced") == 65_536
+    assert resolver.model_output_token_limit("gpt-5.6-terra") == 65_536
     assert resolver.model_output_token_limit("unknown", fallback=32_768) == 32_768
 
 
-def test_audit_pricing_checks_all_quality_preset_aliases(monkeypatch):
+def test_audit_pricing_checks_all_selectable_models(monkeypatch):
     class _Resolver:
         def __init__(self):
             self.seen: list[str] = []
@@ -158,9 +158,7 @@ def test_audit_pricing_checks_all_quality_preset_aliases(monkeypatch):
 
     assert audit_pricing() == []
 
-    expected_aliases = {
-        alias for preset in _QUALITY_PRESETS.values() for alias in preset.values()
-    }
+    expected_aliases = {model["id"] for model in models() if model["funding"] == "api"}
     assert expected_aliases.issubset(set(resolver.seen))
 
 
@@ -195,7 +193,7 @@ def test_committed_settlement_response_loss_preserves_incremental_zero():
             return self
 
     db = Db()
-    usage = UsageRecord(provider="openai", model="plan-balanced", operation="text", input_tokens=1)
+    usage = UsageRecord(provider="openai", model="gpt-5.6-terra", operation="text", input_tokens=1)
     with patch("novel_to_comic.server.credits.usage_to_credit_debit", return_value=(1, 0.001)):
         debit_model_usage(db, "user", None, usage, description="small call", job_id="job")
     assert db.amount == 0
@@ -209,7 +207,7 @@ def test_unresolved_settlement_retains_authorization():
 
     db = MagicMock()
     db.rpc.return_value.execute.side_effect = TimeoutError("outcome unknown")
-    usage = UsageRecord(provider="openai", model="plan-balanced", operation="text", input_tokens=1)
+    usage = UsageRecord(provider="openai", model="gpt-5.6-terra", operation="text", input_tokens=1)
     with patch.dict(credits._reservation_jobs, {"hold": "job"}), \
          patch.object(credits, "_unsettled_jobs", set()), \
          patch.object(credits, "usage_to_credit_debit", return_value=(1, 0.001)):
@@ -241,7 +239,7 @@ def test_api_zero_dollars_with_activity_retains_minimum():
     from novel_to_comic.server.credits import usage_to_credit_debit
 
     usage = UsageRecord(
-        provider="openai", model="plan-balanced", operation="text",
+        provider="openai", model="gpt-5.6-terra", operation="text",
         input_tokens=1, cost_usd=0,
     )
     assert usage_to_credit_debit(usage) == (1, 0.0)

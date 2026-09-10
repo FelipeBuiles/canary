@@ -436,8 +436,8 @@ export const ANALYTICS_SERIES: SeriesPoint[] = [
 ];
 
 export const MODEL_SPEND = [
-  { model: "Gemini 3 Pro Image", alias: "image-balanced", calls: 842, spend: 184.4, share: 54, tone: "red" as const },
-  { model: "GPT Image 2", alias: "image-quality", calls: 268, spend: 96.2, share: 28, tone: "gold" as const },
+  { model: "Gemini 3 Pro Image", alias: "image-gemini-pro", calls: 842, spend: 184.4, share: 54, tone: "red" as const },
+  { model: "GPT Image 2", alias: "image-gpt-2", calls: 268, spend: 96.2, share: 28, tone: "gold" as const },
   { model: "Gemini 2.5 Flash", alias: "text-balanced", calls: 1194, spend: 41.6, share: 12, tone: "blue" as const },
   { model: "Claude Sonnet", alias: "text-quality", calls: 136, spend: 19.8, share: 6, tone: "sage" as const },
 ];

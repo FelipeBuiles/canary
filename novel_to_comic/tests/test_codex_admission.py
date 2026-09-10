@@ -133,8 +133,8 @@ def test_adapt_autochain_refuses_before_start_and_approval_mutation(tmp_path, mo
     from novel_to_comic.server.routers import pipeline
     from novel_to_comic.state import StageStatus, create_initial_state
 
-    config = Config()
-    select_routes(text=(config.effective_adapt_model(), "adapt-quality"))
+    config = Config(plan_model="gpt-5.6-luna")
+    select_routes(text=(config.effective_adapt_model(),))
     state = create_initial_state("project", "novel.txt")
     state.stages["cast"].status = StageStatus.AWAITING_REVIEW
     project = (tmp_path, config, state)
@@ -149,28 +149,26 @@ def test_adapt_autochain_refuses_before_start_and_approval_mutation(tmp_path, mo
     assert state.stages["cast"].status == StageStatus.AWAITING_REVIEW
 
 
-def test_automatic_quality_escalation_cannot_switch_reasoning_model(select_routes):
-    config = Config()
-    select_routes(text={
-        config.effective_adapt_model(): "gpt-5.6-terra",
-        "adapt-quality": "gpt-5.5",
-        config.effective_plan_model(): "gpt-5.6-terra",
-    })
-    with pytest.raises(codex_dev.CodexRoutingError):
-        action_operations(config, "adapt")
+def test_adapt_admission_uses_only_explicit_adapt_and_plan_models(select_routes):
+    config = Config(plan_model="gpt-5.6-luna")
+    select_routes(text=(config.effective_adapt_model(), config.effective_plan_model()))
+    assert action_operations(config, "adapt") == (
+        ("text", config.effective_adapt_model()),
+        ("text", config.effective_plan_model()),
+    )
 
 
 def test_dev_draw_requires_both_complete_page_and_ocr_selection(select_routes):
     config = Config()
-    select_routes(images=("image-balanced",), text=(config.effective_page_ocr_model(),))
+    select_routes(images=("image-gemini-pro",), text=(config.effective_page_ocr_model(),))
     assert codex_dev.classify_operations(draw_operations(config)) == "codex_subscription"
-    select_routes(images=("image-balanced",))
+    select_routes(images=("image-gemini-pro",))
     with pytest.raises(codex_dev.CodexRoutingError):
         codex_dev.classify_operations(draw_operations(config))
     select_routes(text=(config.effective_page_ocr_model(),))
     with pytest.raises(codex_dev.CodexRoutingError):
         codex_dev.classify_operations(draw_operations(config))
-    select_routes(images=("image-quality",))
+    select_routes(images=("image-gpt-2",))
     assert codex_dev.classify_operations(draw_operations(config)) == "api"
 
 

@@ -9,6 +9,7 @@ from novel_to_comic.config import Config, load_config
 from novel_to_comic.state import PipelineState, load_state
 
 from .auth import get_current_user
+from .account_models import account_config
 from .db import get_db, reset_db
 
 
@@ -51,6 +52,10 @@ def get_project(
 ) -> tuple[Path, Config, PipelineState]:
     d = get_project_dir(project_id, request, user_id)
     config, _ = load_config(d)
+    try:
+        config = account_config(config, request.app.state.projects_dir, user_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     state = load_state(d)
     return d, config, state
 

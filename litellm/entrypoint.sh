@@ -12,7 +12,7 @@
 #      boot, restart it instead of leaving a healthy-looking web app with a
 #      permanently dead image gateway.
 #
-# Provider keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, REVE_API_KEY,
+# Provider keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY,
 # FAL_KEY, VERTEXAI_PROJECT, etc.) and LITELLM_MASTER_KEY/LITELLM_SALT_KEY must
 # be set as Fly secrets on canary-web. They flow into the proxy's environment.
 

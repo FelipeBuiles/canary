@@ -191,7 +191,7 @@ async def test_generation_completion_acknowledgement_waits_for_all_settlements(t
         app, project_name="account:book", user_id="account", project_id="book",
         project_dir=tmp_path, stage="draw", kind="draw", label="Page",
         payload={}, work=work, debit_description="Page", reservation_credits=2,
-        operations=(("complete_page", "image-balanced"),),
+        operations=(("complete_page", "image-gemini-pro"),),
         on_settled=lambda result: events.append("complete"),
         on_terminal=lambda: events.append("terminal"),
     )

@@ -9,18 +9,16 @@ import yaml
 from novel_to_comic.config import (
     Config,
     GEMINI_IMAGE_CONCURRENCY_DEFAULT,
-    GATEWAY_EXTRACT_BALANCED,
+    GATEWAY_GEMINI_FLASH,
     GATEWAY_IMAGE_BALANCED,
     GATEWAY_IMAGE_FAST,
     GATEWAY_IMAGE_QUALITY,
-    GATEWAY_PLAN_BALANCED,
-    GATEWAY_PROMPT_BALANCED,
-    GATEWAY_ADAPT_BALANCED,
+    GATEWAY_TERRA,
+    GATEWAY_LUNA,
     config_for_image_model_alias,
     image_model_aliases,
     LANGUAGE_NAMES,
     is_gpt_image_2,
-    is_reve_model,
     is_seedream_model,
     validate_image_model_alias,
     save_config,
@@ -72,12 +70,12 @@ class TestConfigDefaults:
 
     def test_gateway_aliases_are_default_models(self):
         cfg = Config()
-        assert cfg.extraction_model == GATEWAY_EXTRACT_BALANCED
-        assert cfg.adapt_model == GATEWAY_ADAPT_BALANCED
-        assert cfg.plan_model == GATEWAY_PLAN_BALANCED
-        assert cfg.prompt_model == GATEWAY_PROMPT_BALANCED
-        assert cfg.image_model == GATEWAY_IMAGE_QUALITY
-        assert cfg.fallback_image_model == GATEWAY_IMAGE_FAST
+        assert cfg.extraction_model == GATEWAY_GEMINI_FLASH
+        assert cfg.adapt_model == GATEWAY_TERRA
+        assert cfg.plan_model == GATEWAY_TERRA
+        assert cfg.prompt_model == GATEWAY_LUNA
+        assert cfg.image_model == GATEWAY_IMAGE_BALANCED
+        assert cfg.draw_model == GATEWAY_IMAGE_BALANCED
 
     def test_litellm_defaults_are_populated(self):
         cfg = Config()
@@ -91,40 +89,18 @@ class TestEffectiveImageModel:
         cfg = Config(dev_mode=False, image_model="gpt-image-1")
         assert cfg.effective_image_model() == "gpt-image-1"
 
-    def test_uses_fallback_when_dev_mode_and_default_image_model(self):
-        cfg = Config(dev_mode=True)
-        assert cfg.effective_image_model() == GATEWAY_IMAGE_FAST
+    def test_dev_mode_does_not_change_selected_model(self):
+        cfg = Config(dev_mode=True, image_model="image-sunburst")
+        assert cfg.effective_image_model() == "image-sunburst"
 
-    def test_uses_fallback_for_legacy_balanced_default_in_dev_mode(self):
-        cfg = Config(dev_mode=True, image_model=GATEWAY_IMAGE_BALANCED)
-        assert cfg.effective_image_model() == GATEWAY_IMAGE_FAST
-
-    def test_uses_configured_model_when_dev_mode_and_custom_model(self):
-        cfg = Config(dev_mode=True, image_model="gpt-image-1")
-        assert cfg.effective_image_model() == "gpt-image-1"
-
-    def test_fallback_respects_explicit_override(self):
-        cfg = Config(
-            dev_mode=True,
-            image_model=GATEWAY_IMAGE_BALANCED,
-            fallback_image_model="my-custom-model",
-        )
-        assert cfg.effective_image_model() == "my-custom-model"
 
 
 class TestImageModelAliases:
     def test_exposes_production_gateway_aliases(self):
-        from novel_to_comic.config import GATEWAY_IMAGE_REVE
-
-        assert image_model_aliases() == (
-            GATEWAY_IMAGE_FAST,
-            GATEWAY_IMAGE_BALANCED,
-            GATEWAY_IMAGE_QUALITY,
-            GATEWAY_IMAGE_REVE,
-        )
+        assert set(image_model_aliases()) == {"image-gemini-pro", "image-gemini-flash-lite", "image-gpt-2", "image-sunburst", "image-flare", "image-seedream-v5-lite"}
 
     def test_validates_supported_alias(self):
-        assert validate_image_model_alias(" image-quality ") == GATEWAY_IMAGE_QUALITY
+        assert validate_image_model_alias(" image-gpt-2 ") == GATEWAY_IMAGE_QUALITY
 
     def test_blank_alias_means_project_default(self):
         assert validate_image_model_alias("") is None
@@ -146,31 +122,6 @@ class TestImageModelAliases:
         assert copied.image_model == GATEWAY_IMAGE_QUALITY
         assert cfg.image_model == GATEWAY_IMAGE_FAST
 
-    def test_explicit_balanced_alias_bypasses_dev_mode_fallback(self):
-        cfg = Config(dev_mode=True, image_model=GATEWAY_IMAGE_BALANCED)
-        copied = config_for_image_model_alias(cfg, GATEWAY_IMAGE_BALANCED)
-
-        assert copied.effective_image_model() == GATEWAY_IMAGE_BALANCED
-        assert cfg.effective_image_model() == GATEWAY_IMAGE_FAST
-
-    @pytest.mark.parametrize("alias", image_model_aliases())
-    @pytest.mark.parametrize("quality_preset", [None, "fast", "balanced", "quality"])
-    @pytest.mark.parametrize("dev_mode", [False, True])
-    def test_one_shot_alias_wins_over_presets_and_dev_mode(
-        self,
-        alias: str,
-        quality_preset: str | None,
-        dev_mode: bool,
-    ):
-        cfg = Config(quality_preset=quality_preset, dev_mode=dev_mode)
-        original_data = cfg.model_dump()
-        original_effective_model = cfg.effective_image_model()
-
-        copied = config_for_image_model_alias(cfg, alias)
-
-        assert copied.effective_image_model() == alias
-        assert cfg.model_dump() == original_data
-        assert cfg.effective_image_model() == original_effective_model
 
 
 class TestUsesGeminiImageProvider:
@@ -179,7 +130,7 @@ class TestUsesGeminiImageProvider:
         assert cfg.uses_gemini_image_provider() is True
 
     def test_openai_returns_false(self):
-        cfg = Config(image_provider="openai")
+        cfg = Config(image_provider="openai", image_model="image-sunburst")
         assert cfg.uses_gemini_image_provider() is False
 
 
@@ -194,83 +145,11 @@ class TestGptImage2Alias:
         assert is_gpt_image_2("openai/gpt-image-2") is True
 
     def test_aliases_match_repository_litellm_config(self):
-        gateway_config = Path(__file__).resolve().parents[2] / "litellm" / "config.yaml"
-        data = yaml.safe_load(gateway_config.read_text())
-        image_models = {
-            item["model_name"]: item["litellm_params"]["model"]
-            for item in data["model_list"]
-            if str(item.get("model_name", "")).startswith("image-")
-        }
+        root = Path(__file__).resolve().parents[2]
+        gateway = yaml.safe_load((root / "litellm/config.yaml").read_text())
+        routes = {entry["model_name"] for entry in gateway["model_list"]}
+        assert set(image_model_aliases()) <= routes
 
-        assert is_gpt_image_2("image-quality") is (
-            image_models["image-quality"] == "openai/gpt-image-2"
-        )
-        assert is_gpt_image_2("image-balanced") is (
-            image_models["image-balanced"] == "openai/gpt-image-2"
-        )
-
-
-def test_gemini_text_aliases_use_latest_flash_tiers():
-    gateway_config = Path(__file__).resolve().parents[2] / "litellm" / "config.yaml"
-    data = yaml.safe_load(gateway_config.read_text())
-    models = {
-        item["model_name"]: item["litellm_params"]["model"]
-        for item in data["model_list"]
-        if str(item.get("model_name", "")).startswith(("extract-", "plan-", "prompt-"))
-    }
-
-    assert models["extract-fast"] == "vertex_ai/gemini-3.8-flash"
-    assert models["extract-balanced"] == "vertex_ai/gemini-3.8-flash"
-    assert models["extract-quality"] == "vertex_ai/gemini-3.8-flash"
-    assert models["plan-fast"] == "vertex_ai/gemini-3.5-flash-lite"
-    assert models["plan-balanced"] == "vertex_ai/gemini-3.8-flash"
-    assert models["plan-quality"] == "vertex_ai/gemini-3.8-flash"
-    assert {
-        model for alias, model in models.items() if alias.startswith("prompt-")
-    } == {"vertex_ai/gemini-3.5-flash-lite"}
-
-    text_params = {
-        item["model_name"]: item["litellm_params"]
-        for item in data["model_list"]
-        if str(item.get("model_name", "")).startswith(("plan-", "prompt-"))
-    }
-    assert {
-        alias: params.get("reasoning_effort") for alias, params in text_params.items()
-    } == {
-        "plan-fast": "disable",
-        "plan-balanced": "low",
-        "plan-quality": "low",
-        "prompt-fast": "disable",
-        "prompt-balanced": "disable",
-        "prompt-quality": "disable",
-    }
-
-
-def test_balanced_adapt_uses_low_thinking_gemini_flash():
-    gateway_config = Path(__file__).resolve().parents[2] / "litellm" / "config.yaml"
-    data = yaml.safe_load(gateway_config.read_text())
-    params = next(
-        item["litellm_params"]
-        for item in data["model_list"]
-        if item["model_name"] == "adapt-balanced"
-    )
-
-    assert params["model"] == "vertex_ai/gemini-3.8-flash"
-    assert params["reasoning_effort"] == "low"
-
-
-class TestReveModelAlias:
-    def test_quality_alias_is_not_reve_model(self):
-        # image-quality routes to GPT Image 2, not Reve.
-        assert is_reve_model(GATEWAY_IMAGE_QUALITY) is False
-
-    def test_reve_alias_is_reve_model(self):
-        assert is_reve_model("image-reve") is True
-        assert is_reve_model("reve/create") is True
-        assert is_reve_model("reve/remix") is True
-
-    def test_balanced_alias_is_not_reve_model(self):
-        assert is_reve_model(GATEWAY_IMAGE_BALANCED) is False
 
 
 class TestSeedreamModelAlias:
@@ -346,11 +225,11 @@ class TestEffectiveImageConcurrency:
         assert cfg.effective_image_concurrency() == 8
 
     def test_non_google_returns_max_concurrent_requests(self):
-        cfg = Config(dev_mode=False, max_concurrent_requests=5, image_provider="openai")
+        cfg = Config(dev_mode=False, max_concurrent_requests=5, image_provider="openai", image_model="image-sunburst")
         assert cfg.effective_image_concurrency() == 5
 
     def test_minimum_1(self):
-        cfg = Config(dev_mode=False, max_concurrent_requests=0, image_provider="openai")
+        cfg = Config(dev_mode=False, max_concurrent_requests=0, image_provider="openai", image_model="image-sunburst")
         assert cfg.effective_image_concurrency() == 1
         cfg = Config(dev_mode=False, image_concurrency=0)
         assert cfg.effective_image_concurrency() == 1
@@ -417,7 +296,8 @@ class TestSaveConfig:
             content = path.read_text()
             assert "fr" in content
             assert "dev_mode: true" in content
-            assert 'image_model: "image-quality"' in content
+            assert "image_model:" not in content
+            assert "quality_preset:" not in content
             loaded, _ = load_config(Path(tmpdir))
             assert loaded.target_language == "fr"
 

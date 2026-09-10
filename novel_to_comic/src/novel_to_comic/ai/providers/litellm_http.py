@@ -19,7 +19,6 @@ from novel_to_comic.image_geometry import aspect_for_dimensions, generation_shap
 from novel_to_comic.image_models import (
     IMAGE_PROVIDER_FAL_QUEUE,
     IMAGE_PROVIDER_OPENAI,
-    IMAGE_PROVIDER_REVE,
     IMAGE_PROVIDER_VERTEX_MULTIMODAL,
 )
 from novel_to_comic.provider_wire import (
@@ -150,6 +149,12 @@ def serialize_wire_request(
 
 def _serialize_openai_image(wire: ProviderWireRequest) -> dict[str, Any]:
     """Serialize the OpenAI Images API envelope."""
+    if "gpt-image-2.5-" in wire.configured_provider_model:
+        quality = dict(wire.controls).get("quality", "auto")
+        if quality not in {"auto", "low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("Unsupported GPT Image 2.5 quality")
+        if not _valid_gpt_image_2_size(wire.width, wire.height):
+            raise ValueError("Invalid GPT Image 2.5 dimensions; choose valid dimensions before generating")
     return {
         "model": wire.requested_alias,
         "prompt": wire.prompt_parts[0],
@@ -191,7 +196,6 @@ _PROVIDER_SERIALIZERS: dict[str, Callable[[ProviderWireRequest], dict[str, Any]]
     IMAGE_PROVIDER_OPENAI: _serialize_openai_image,
     IMAGE_PROVIDER_VERTEX_MULTIMODAL: _serialize_canary_wire,
     IMAGE_PROVIDER_FAL_QUEUE: _serialize_canary_wire,
-    IMAGE_PROVIDER_REVE: _serialize_canary_wire,
 }
 
 

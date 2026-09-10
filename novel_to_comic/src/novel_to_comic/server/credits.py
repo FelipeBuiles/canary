@@ -501,6 +501,9 @@ def debit_model_usage(
     without rounding every tiny request up independently. Ambiguous responses
     are reconciled by retrying the immutable, idempotent database operation.
     """
+    if calculate_cost_breakdown(usage).source == "unknown_provider_usage":
+        retain_ambiguous_job(job_id)
+        raise RuntimeError("Provider image usage is incomplete; reconcile billing without regenerating the saved image")
     credits, cost_usd = usage_to_credit_debit(usage)
     try:
         cost = calculate_cost_breakdown(usage)

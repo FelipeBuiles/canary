@@ -23,7 +23,7 @@ def routed(monkeypatch):
     for module in (codex_dev, asset_generation, provider_module):
         monkeypatch.setattr(module, "route_for", lambda kind, model: route)
     monkeypatch.setattr(provider_module, "assert_request_funding", lambda *args: None)
-    return Config(image_model="image-quality")
+    return Config(image_model="image-gpt-2")
 
 
 def _png(color):
@@ -52,6 +52,31 @@ def _request(config, refs=()):
         )),
         reference_plan=reference_plan_for_assets(config, list(refs)),
     )
+
+
+@pytest.mark.parametrize("reasoner", ["gpt-5.5", "gpt-5.6-luna"])
+def test_account_image_selection_reaches_exact_codex_reasoner(monkeypatch, reasoner):
+    from types import MappingProxyType
+
+    process = dict.fromkeys(codex_dev._PROCESS)
+    process.update(CANARY_CODEX_DEV_ENABLED="1", CANARY_ENV="development")
+    monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType(process))
+    monkeypatch.setattr(codex_dev, "_SETTINGS_ERROR", None)
+    monkeypatch.setattr(codex_dev, "_TEXT", {})
+    monkeypatch.setattr(codex_dev, "_IMAGES", frozenset())
+    config = Config(image_model=f"codex-dev/image/{reasoner}")
+    request = _request(config)
+    assert validate_codex_wire(request.wire) == reasoner
+
+    async def generate(**kwargs):
+        assert kwargs["reasoning_model"] == reasoner
+        return codex_runtime.CodexImageResult(_png("blue"), 10, 20, {})
+
+    monkeypatch.setattr(codex_runtime, "run_image", generate)
+    result = asyncio.run(CodexDevImageProvider().generate_wire(
+        wire=request.wire, config=config, event_id="event", metadata={},
+    ))
+    assert result.image_bytes == _png("blue")
 
 
 def test_codex_round_trip_binds_prompt_references_and_execution(routed, tmp_path):
@@ -172,7 +197,7 @@ def test_output_finalization_persists_completed_runtime_evidence(routed, tmp_pat
 
     async def finalize():
         return await finalisation.finalise_image_success(
-            ctx=ctx, config=routed, model="image-quality", feature="test",
+            ctx=ctx, config=routed, model="image-gpt-2", feature="test",
             output_path=output_path,
             raw=ProviderRawResult(image_bytes=image_bytes, raw_response={
                 "usage": {"prompt_tokens": 10, "completion_tokens": 20},
@@ -217,7 +242,7 @@ def test_indeterminate_image_failure_persists_runtime_evidence(routed, persisted
         started_at=datetime.datetime.now(datetime.UTC), langfuse_input={},
     )
     finalize = finalisation.finalise_image_failure if outcome == "failed" else finalisation.finalise_image_cancelled
-    asyncio.run(finalize(ctx=ctx, config=routed, model="image-quality", feature="test", error=error))
+    asyncio.run(finalize(ctx=ctx, config=routed, model="image-gpt-2", feature="test", error=error))
     event = persisted_events["event"]
     assert event["status"] == outcome
     assert event["metadata_json"]["codex_runtime"] == evidence
@@ -253,7 +278,7 @@ def test_cancelled_image_checkpoint_counts_only_validated_completed_artifact(rou
         started_at=datetime.datetime.now(datetime.UTC), langfuse_input={},
     )
     asyncio.run(finalisation.finalise_image_cancelled(
-        ctx=ctx, config=routed, model="image-quality", feature="test", error=error,
+        ctx=ctx, config=routed, model="image-gpt-2", feature="test", error=error,
     ))
     event = persisted_events["event"]
     assert event["metadata_json"]["codex_runtime"]["completed_result_metadata"] == completed

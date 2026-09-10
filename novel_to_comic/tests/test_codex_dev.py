@@ -31,8 +31,8 @@ def test_original_process_snapshot_cannot_be_enabled_by_dotenv(monkeypatch):
     routes = _isolated_settings(monkeypatch)
     monkeypatch.setenv("CANARY_CODEX_DEV_ENABLED", "1")
     monkeypatch.setenv("CANARY_ENV", "development")
-    monkeypatch.setenv("CANARY_CODEX_DEV_TEXT_ROUTES", '{"plan-balanced":"gpt-5.6-terra"}')
-    assert routes.route_for("text", "plan-balanced") is None
+    monkeypatch.setenv("CANARY_CODEX_DEV_TEXT_ROUTES", '{"gpt-5.6-terra":"gpt-5.6-terra"}')
+    assert routes.route_for("text", "gpt-5.6-terra") is None
     with pytest.raises(routes.CodexRoutingError):
         routes.route_for("text", "codex-dev/gpt-5.6-terra")
 
@@ -41,38 +41,38 @@ def test_original_process_snapshot_cannot_be_enabled_by_dotenv(monkeypatch):
 def test_hosted_activation_is_rejected_even_after_environment_changes(monkeypatch, veto):
     routes = _isolated_settings(monkeypatch, **{
         "CANARY_CODEX_DEV_ENABLED": "1", "CANARY_ENV": "development",
-        "CANARY_CODEX_DEV_TEXT_ROUTES": '{"plan-balanced":"gpt-5.6-terra"}', **veto,
+        "CANARY_CODEX_DEV_TEXT_ROUTES": '{"gpt-5.6-terra":"gpt-5.6-terra"}', **veto,
     })
     monkeypatch.setenv("CANARY_ENV", "development")
     monkeypatch.delenv("FLY_APP_NAME", raising=False)
     with pytest.raises(routes.CodexRoutingError):
-        routes.route_for("text", "plan-balanced")
+        routes.route_for("text", "gpt-5.6-terra")
 
 
 def test_classification_separates_complete_page_from_mixed_jobs_and_escalation(monkeypatch):
     routes = _isolated_settings(
         monkeypatch, CANARY_CODEX_DEV_ENABLED="1", CANARY_ENV="development",
-        CANARY_CODEX_DEV_TEXT_ROUTES=json.dumps({"adapt-balanced": "gpt-5.6-terra", "adapt-quality": "gpt-5.4"}),
-        CANARY_CODEX_DEV_IMAGE_ROUTES='["image-balanced"]',
+        CANARY_CODEX_DEV_TEXT_ROUTES=json.dumps({"gpt-5.6-terra": "gpt-5.6-terra", "gpt-5.6-luna": "gpt-5.4"}),
+        CANARY_CODEX_DEV_IMAGE_ROUTES='["image-gemini-pro"]',
     )
     assert routes.classify_operations(()) == "api"
-    assert routes.classify_operations((("text", "adapt-balanced"),)) == "codex_subscription"
-    assert routes.classify_operations((("complete_page", "image-balanced"),)) == "codex_subscription"
+    assert routes.classify_operations((("text", "gpt-5.6-terra"),)) == "codex_subscription"
+    assert routes.classify_operations((("complete_page", "image-gemini-pro"),)) == "codex_subscription"
     for operations in (
-        (("text", "adapt-balanced"), ("text", "plan-balanced")),
-        (("complete_page", "image-balanced"), ("text", "ocr-balanced")),
+        (("text", "gpt-5.6-terra"), ("text", "deepseek-v4.1-flash")),
+        (("complete_page", "image-gemini-pro"), ("text", "gemini-3.8-flash")),
     ):
         with pytest.raises(routes.CodexRoutingError):
             routes.classify_operations(operations)
     with pytest.raises(routes.CodexRoutingError):
-        routes.require_same_text_target("adapt-balanced", "adapt-quality")
+        routes.require_same_text_target("gpt-5.6-terra", "gpt-5.6-luna")
     with pytest.raises(routes.CodexRoutingError):
         routes.validate_startup("0.0.0.0")
     with routes.funding_scope("api"):
         with pytest.raises(routes.CodexRoutingError):
-            routes.assert_request_funding("text", "adapt-balanced")
+            routes.assert_request_funding("text", "gpt-5.6-terra")
     with pytest.raises(routes.CodexRoutingError):
-        routes.assert_request_funding("text", "adapt-balanced", require_admission=True)
+        routes.assert_request_funding("text", "gpt-5.6-terra", require_admission=True)
 
 
 @pytest.fixture
@@ -82,7 +82,7 @@ def selected_client(monkeypatch):
         "ENV": None, "FLY_APP_NAME": None, "FLY_MACHINE_ID": None,
         "RENDER": None, "RAILWAY_ENVIRONMENT": None, "K_SERVICE": None, "VERCEL": None,
     }))
-    monkeypatch.setattr(codex_dev, "_TEXT", {"plan-balanced": "gpt-5.6-terra"})
+    monkeypatch.setattr(codex_dev, "_TEXT", {"gpt-5.6-terra": "gpt-5.6-terra"})
     monkeypatch.setattr(codex_dev, "_SETTINGS_ERROR", None)
     events = []
     monkeypatch.setattr(client, "_insert_event", lambda **kw: events.append(("insert", kw)))
@@ -99,7 +99,8 @@ def _runtime(monkeypatch, run):
     monkeypatch.setitem(sys.modules, "novel_to_comic.ai.codex_runtime", SimpleNamespace(run_text=run))
 
 
-def test_selected_json_sink_precedes_parse_and_preserves_vision(monkeypatch, selected_client):
+@pytest.mark.parametrize("selection,target", [("gpt-5.6-terra", "gpt-5.6-terra"), ("codex-dev/text/gpt-5.6-luna", "gpt-5.6-luna")])
+def test_selected_json_sink_precedes_parse_and_preserves_vision(monkeypatch, selected_client, selection, target):
     calls = []
     async def run(**kwargs):
         calls.append(kwargs)
@@ -108,7 +109,7 @@ def test_selected_json_sink_precedes_parse_and_preserves_vision(monkeypatch, sel
     retained = []
     with pytest.raises(ValueError):
         asyncio.run(client.generate_structured_object(
-            config=Config(), model="plan-balanced", system_prompt="Read JSON", user_content="Read",
+            config=Config(), model=selection, system_prompt="Read JSON", user_content="Read",
             image_attachments=((b"pixels", "image/png"),), json_schema={"type": "object"},
             response_sink=retained.append, retry_invalid_json=False,
         ))
@@ -117,7 +118,8 @@ def test_selected_json_sink_precedes_parse_and_preserves_vision(monkeypatch, sel
     assert retained[0].value == "broken JSON"
     assert retained[0].usage.funding == "codex_subscription"
     assert retained[0].usage.cost_usd is None
-    assert retained[0].usage.provider_model == "gpt-5.6-terra"
+    assert calls[0]["model"] == target
+    assert retained[0].usage.provider_model == target
     assert selected_client[-1][1]["status"] == "succeeded"
 
 
@@ -129,7 +131,7 @@ def test_runtime_failure_and_cancel_retain_subscription_evidence(monkeypatch, se
         raise error
     _runtime(monkeypatch, run)
     with pytest.raises(type(error)):
-        asyncio.run(client.generate_text(config=Config(), model="plan-balanced", system_prompt="s", user_content="u"))
+        asyncio.run(client.generate_text(config=Config(), model="gpt-5.6-terra", system_prompt="s", user_content="u"))
     terminal = selected_client[-1][1]
     assert terminal["status"] == ("cancelled" if cancel else "failed")
     assert terminal["usage"].input_tokens == 9
@@ -143,9 +145,9 @@ def test_declared_job_and_mock_cannot_bypass_authority(monkeypatch, selected_cli
     _runtime(monkeypatch, run)
     with ai_request_context(job_id="declared-job"):
         with pytest.raises(codex_dev.CodexRoutingError):
-            asyncio.run(client.generate_text(config=Config(), model="plan-balanced", system_prompt="s", user_content="u"))
+            asyncio.run(client.generate_text(config=Config(), model="gpt-5.6-terra", system_prompt="s", user_content="u"))
     with pytest.raises(codex_dev.CodexRoutingError):
-        asyncio.run(client.generate_text(config=Config(mock_mode=True), model="plan-balanced", system_prompt="s", user_content="u"))
+        asyncio.run(client.generate_text(config=Config(mock_mode=True), model="gpt-5.6-terra", system_prompt="s", user_content="u"))
     assert selected_client == []
 
 
@@ -157,7 +159,7 @@ def test_selected_repairs_keep_exact_target_and_sink_failure_never_retries(monke
         return SimpleNamespace(text=next(replies), model=kwargs["model"], input_tokens=3, output_tokens=2, metadata={})
     _runtime(monkeypatch, run)
     result = asyncio.run(client.generate_structured_object(
-        config=Config(), model="plan-balanced", system_prompt="JSON", user_content="u",
+        config=Config(), model="gpt-5.6-terra", system_prompt="JSON", user_content="u",
     ))
     assert result.value == {"ok": True}
     assert calls == ["gpt-5.6-terra", "gpt-5.6-terra"]
@@ -168,7 +170,7 @@ def test_selected_repairs_keep_exact_target_and_sink_failure_never_retries(monke
         raise OSError("response storage failed")
     with pytest.raises(OSError):
         asyncio.run(client.generate_structured_object(
-            config=Config(), model="plan-balanced", system_prompt="JSON", user_content="u",
+            config=Config(), model="gpt-5.6-terra", system_prompt="JSON", user_content="u",
             response_sink=sink,
         ))
     assert calls == ["gpt-5.6-terra"]
@@ -222,9 +224,9 @@ def test_wire_output_write_failure_finalizes_once_with_generated_usage(monkeypat
     from novel_to_comic.ai.providers.base import ProviderRawResult
     from novel_to_comic import provider_wire
 
-    monkeypatch.setattr(codex_dev, "_IMAGES", frozenset({"image-quality"}))
+    monkeypatch.setattr(codex_dev, "_IMAGES", frozenset({"image-gpt-2"}))
     wire = SimpleNamespace(
-        requested_alias="image-quality", configured_provider_model="gpt-image-2",
+        requested_alias="image-gpt-2", configured_provider_model="gpt-image-2",
         provider_key="codex-dev", execution_fingerprint="frozen",
         recompute_execution_fingerprint=lambda: "frozen",
         references=(), prompt_parts=("draw",),

@@ -18,7 +18,7 @@ def test_checkpoint_resume_and_input_invalidation(tmp_path):
             raise RuntimeError("provider interrupted")
         return ApiResult(value={"pages": [kwargs["prompt"]]})
 
-    def run(model="plan-fast", **kwargs):
+    def run(model="gpt-5.6-luna", **kwargs):
         generator = checkpointed_generator(
             generate, artifacts=TargetArtifacts(tmp_path), stage="plan", model=model
         )
@@ -32,7 +32,7 @@ def test_checkpoint_resume_and_input_invalidation(tmp_path):
     assert len(calls) == 2  # A new wrapper/process resumes the completed batch.
     run(**{**request, "system": "new rules"})
     run(**{**request, "schema": {"type": "array"}})
-    run(model="plan-quality", **request)
+    run(model="gpt-5.6-terra", **request)
     assert len(calls) == 5
 
 
@@ -44,7 +44,7 @@ def test_corrupt_checkpoint_is_regenerated(tmp_path):
         return ApiResult(value={"ok": True})
 
     generator = checkpointed_generator(
-        generate, artifacts=TargetArtifacts(tmp_path), stage="plan", model="plan-fast"
+        generate, artifacts=TargetArtifacts(tmp_path), stage="plan", model="gpt-5.6-luna"
     )
     asyncio.run(generator(prompt="page"))
     next((tmp_path / ".checkpoints").rglob("*.json")).write_text("broken")

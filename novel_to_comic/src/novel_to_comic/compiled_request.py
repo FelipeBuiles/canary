@@ -42,7 +42,7 @@ What the compiler does NOT do
 -----------------------------
 
 - No file discovery, LLM call, persistence, or provider call.
-- No provider-specific serialization (Reve ``<frame>N</frame>``, signed URLs,
+- No provider-specific serialization (provider reference tags, signed URLs,
   upload ids). Slice 07 serializes the stored semantic sections.
 - No ``actual_provider_model`` field — observed execution identity belongs to
   result provenance after transport.
@@ -211,7 +211,7 @@ def compile_reference_instruction(
     """Compile one semantic instruction for one selected reference.
 
     The instruction is provider-independent: it uses a positional
-    ``Reference {index}`` marker, never a Reve ``<frame>N</frame>`` tag. Slice 07
+    ``Reference {index}`` marker, never a provider-specific reference tag. Slice 07
     serializes the marker into the provider wire format.
 
     Instruction text by authority scope and role:

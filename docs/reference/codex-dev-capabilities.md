@@ -28,10 +28,10 @@ copy credentials or supply API keys to this adapter.
 From the repository root, start the local stack with:
 
 ```sh
-./scripts/dev.sh          # Same as --codex: selected routes use Codex allowance
-./scripts/dev.sh --api    # Escape hatch: normal live paid API routing
+./scripts/dev.sh          # Normal live paid API routing (default)
+./scripts/dev.sh --codex  # Explicit process-configured Codex diagnostic routes
 ./scripts/dev.sh --mock   # Zero-cost local fixture replay
-./scripts/dev.sh --check  # Read-only health and installed-SDK metadata check
+./scripts/dev.sh --check  # Read-only API stack health check
 ```
 
 The three mode flags are mutually exclusive. Codex startup requires both pinned
@@ -41,25 +41,29 @@ unselected API routes still exist. `--no-docker` prevents automatic Docker start
 `--help` and `--check` do not start services or install dependencies.
 
 The launcher authorizes Codex **only in the backend child process**, before imports,
-and defaults `CANARY_ENV` to `development` only when unset. Explicit nondevelopment
+and defaults `CANARY_ENV` to `development` only when unset in all launcher modes. Explicit nondevelopment
 values remain intact and fail the existing runtime guards. API and mock children
 explicitly disable Codex; API and Codex children explicitly disable mock generation.
 `--dev` uses the separate Vite frontend; it is not the authorization switch.
 
-Default text routes cover `extract`, `adapt`, `plan`, `prompt` and `ocr` at all three
-`fast`, `balanced` and `quality` presets, targeting the exact `gpt-5.6-terra` selector.
-This includes `adapt-quality` at the **same exact** target as `adapt-balanced`,
-because planned quality escalation participates in whole-job admission. Default
-image routes are `image-fast`, `image-balanced` and `image-quality`; image reasoning
-uses `gpt-5.5`. Neither reasoning selector identifies the image backend.
-There is no automatic model substitution. **Experimental Codex Draw is enabled**
-for a first edition when `image-balanced` and its OCR route are selected together.
+In `--codex` mode, choose exact Codex models through **Account → Models (dev)**.
+These account-wide selections need no route maps; see
+[account model settings](account-model-settings.md) for the allowlist, API/Codex
+funding groups, and image-tool distinction.
+
+The launcher does not create legacy route maps. Explicit Codex diagnostic routing uses
+`CANARY_CODEX_DEV_TEXT_ROUTES` and/or `CANARY_CODEX_DEV_IMAGE_ROUTES`; their defaults
+are empty. Image reasoning defaults to `gpt-5.5`, which does not identify the
+image backend. The model settings panel rejects API selections shadowed by an
+explicit Codex route: restart the launcher with `--api` to use those API choices.
+Experimental Codex Draw requires its image route and OCR route to be selected
+together for a new edition.
 
 To override routing, set `CANARY_CODEX_DEV_TEXT_ROUTES` (a JSON alias-to-model map),
 `CANARY_CODEX_DEV_IMAGE_ROUTES` (a JSON alias list), or
 `CANARY_CODEX_DEV_IMAGE_REASONING_MODEL` in the launching environment. Explicit
 values replace the corresponding defaults, not merge with them. Match **every
-alias used by the intended action**, including adapt escalation; partial selection
+alias used by the intended action**, including auto-chained stages; partial selection
 can reject mixed jobs. Project `config.yaml`, project `.env`, browser input and
 `Config.dev_mode` cannot authorize routing.
 

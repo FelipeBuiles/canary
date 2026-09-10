@@ -489,7 +489,8 @@ async def create_project(
         except JSONDecodeError:
             raise HTTPException(400, "Invalid JSON in config_overrides") from None
     try:
-        config = Config(**overrides)
+        from ..account_models import creation_config
+        config = creation_config(overrides, projects_dir, user_id)
     except Exception as exc:
         raise HTTPException(400, "Invalid project configuration.") from exc
 
@@ -913,7 +914,8 @@ async def import_short_story(
         except JSONDecodeError:
             raise HTTPException(400, "Invalid JSON in config_overrides") from None
     try:
-        config = Config(**overrides)
+        from ..account_models import creation_config
+        config = creation_config(overrides, projects_dir, user_id)
     except Exception as exc:
         raise HTTPException(400, "Invalid project configuration.") from exc
 

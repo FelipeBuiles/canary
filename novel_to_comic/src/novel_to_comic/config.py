@@ -1,25 +1,22 @@
 """Pipeline configuration loaded from config.yaml + .env."""
 
-import logging
 import os
+import json
 from pathlib import Path
 from typing import Literal, Optional
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, PrivateAttr
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from novel_to_comic.image_models import (
     GATEWAY_IMAGE_BALANCED,
     GATEWAY_IMAGE_FAST,
     GATEWAY_IMAGE_QUALITY,
-    GATEWAY_IMAGE_REVE as GATEWAY_IMAGE_REVE,
     IMAGE_MODEL_ALIASES,
     ImageRoute,
     describe_image_model,
 )
-
-_logger = logging.getLogger(__name__)
 
 
 LANGUAGE_NAMES: dict[str, str] = {
@@ -28,32 +25,19 @@ LANGUAGE_NAMES: dict[str, str] = {
     "fr": "French",
 }
 
-QualityPreset = Literal["fast", "balanced", "quality"]
 FailedRequestBillingPolicy = Literal["provider_usage_only", "never", "estimate_all"]
 
-# Gateway aliases — one per (intent, preset) pair. Defined in litellm/config.yaml.
-GATEWAY_EXTRACT_FAST = "extract-fast"
-GATEWAY_EXTRACT_BALANCED = "extract-balanced"
-GATEWAY_EXTRACT_QUALITY = "extract-quality"
-GATEWAY_ADAPT_FAST = "adapt-fast"
-GATEWAY_ADAPT_BALANCED = "adapt-balanced"
-GATEWAY_ADAPT_QUALITY = "adapt-quality"
-GATEWAY_PLAN_FAST = "plan-fast"
-GATEWAY_PLAN_BALANCED = "plan-balanced"
-GATEWAY_PLAN_QUALITY = "plan-quality"
-GATEWAY_PROMPT_FAST = "prompt-fast"
-GATEWAY_PROMPT_BALANCED = "prompt-balanced"
-GATEWAY_PROMPT_QUALITY = "prompt-quality"
+# Concrete gateway model IDs; no implicit quality tiers or model escalation.
+GATEWAY_TERRA = "gpt-5.6-terra"
+GATEWAY_LUNA = "gpt-5.6-luna"
+GATEWAY_GEMINI_FLASH = "gemini-3.8-flash"
+GATEWAY_DEEPSEEK_FLASH = "deepseek-v4.1-flash"
+
 # Compatibility inventories derived from the route-description seam.
 GPT_IMAGE_2_ALIASES: frozenset[str] = frozenset(
     alias
     for alias in IMAGE_MODEL_ALIASES
     if describe_image_model(alias).route is ImageRoute.GPT_IMAGE_2
-)
-REVE_ALIASES: frozenset[str] = frozenset(
-    alias
-    for alias in IMAGE_MODEL_ALIASES
-    if describe_image_model(alias).route is ImageRoute.REVE
 )
 SEEDREAM_ALIASES: frozenset[str] = frozenset(
     alias
@@ -85,7 +69,7 @@ COMPLETE_PAGE_REFERENCE_COST_USD = "0.00112"
 
 # Ticket 05 render analysis. Reading a rendered page's visible lettering is a
 # vision-model task, kept in configuration so Draw never names a model inline.
-GATEWAY_PAGE_OCR = "ocr-balanced"
+GATEWAY_PAGE_OCR = GATEWAY_GEMINI_FLASH
 
 # Reservation allowance for reading one page back. Analysis is a second billable
 # provider call, so a page's credit hold has to cover it; the settled debit
@@ -93,16 +77,14 @@ GATEWAY_PAGE_OCR = "ocr-balanced"
 PAGE_OCR_ESTIMATED_COST_USD = "0.004"
 # Optional page + approved-reference comparison allowance.
 PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD = "0.02"
+# Conservative reservation allowances, not measured provider prices.
+GPT25_PAGE_ESTIMATED_COST_USD = "0.25"
+GPT25_REFERENCE_ESTIMATED_COST_USD = "0.01"
 
 
 def is_gpt_image_2(model: str) -> bool:
     """True if `model` is classified as the GPT Image 2 route."""
     return describe_image_model(model).route is ImageRoute.GPT_IMAGE_2
-
-
-def is_reve_model(model: str) -> bool:
-    """True if `model` is classified as a Reve route."""
-    return describe_image_model(model).route is ImageRoute.REVE
 
 
 def is_seedream_model(model: str) -> bool:
@@ -136,38 +118,6 @@ def config_for_image_model_alias(config: "Config", alias: str | None) -> "Config
     copied._one_shot_image_model_alias = normalized
     return copied
 
-
-_QUALITY_PRESETS: dict[QualityPreset, dict[str, str]] = {
-    "fast": {
-        "extract": GATEWAY_EXTRACT_FAST,
-        "adapt": GATEWAY_ADAPT_FAST,
-        "plan": GATEWAY_PLAN_FAST,
-        "prompt": GATEWAY_PROMPT_FAST,
-        "image": GATEWAY_IMAGE_FAST,
-    },
-    "balanced": {
-        "extract": GATEWAY_EXTRACT_BALANCED,
-        "adapt": GATEWAY_ADAPT_BALANCED,
-        "plan": GATEWAY_PLAN_BALANCED,
-        "prompt": GATEWAY_PROMPT_BALANCED,
-        "image": GATEWAY_IMAGE_BALANCED,
-    },
-    "quality": {
-        "extract": GATEWAY_EXTRACT_QUALITY,
-        "adapt": GATEWAY_ADAPT_QUALITY,
-        "plan": GATEWAY_PLAN_QUALITY,
-        "prompt": GATEWAY_PROMPT_QUALITY,
-        "image": GATEWAY_IMAGE_QUALITY,
-    },
-}
-
-_QUALITY_PRESET_FIELDS: dict[str, str] = {
-    "extract": "extraction_model",
-    "adapt": "adapt_model",
-    "plan": "plan_model",
-    "prompt": "prompt_model",
-    "image": "image_model",
-}
 
 # Env var name → Config field name
 _ENV_KEYS: dict[str, str] = {
@@ -215,27 +165,27 @@ class Config(BaseModel):
     google_cloud_project: str = ""
     google_cloud_location: str = "global"
 
-    # Model choices. Runtime AI calls use intent+preset gateway aliases.
-    # Per-stage fields default to the "balanced" alias; quality_preset overrides them.
-    extraction_model: str = GATEWAY_EXTRACT_BALANCED
-    adapt_model: str = GATEWAY_ADAPT_BALANCED
-    plan_model: str = GATEWAY_PLAN_BALANCED
-    prompt_model: str = GATEWAY_PROMPT_BALANCED
+    # Explicit local-development project choices override account defaults in the server.
+    dev_model_selections: dict[str, str] = Field(default_factory=dict)
+
+    # Model choices are overlaid from authenticated account preferences by the server.
+    extraction_model: str = GATEWAY_GEMINI_FLASH
+    brief_model: str = GATEWAY_LUNA
+    adapt_model: str = GATEWAY_TERRA
+    plan_model: str = GATEWAY_TERRA
+    prompt_model: str = GATEWAY_LUNA
     page_ocr_model: str = GATEWAY_PAGE_OCR
-    image_provider: Literal["gemini", "openai", "openrouter", "together", "reve"] = "gemini"
-    image_model: str = GATEWAY_IMAGE_QUALITY
-    fallback_image_model: str = GATEWAY_IMAGE_FAST
+    visual_review_model: str = GATEWAY_PAGE_OCR
+    image_provider: Literal["gemini", "openai", "openrouter", "together"] = "gemini"
+    image_model: str = GATEWAY_IMAGE_BALANCED
+    draw_model: str = GATEWAY_IMAGE_BALANCED
 
     # Output language for generated book text and visual assets.
     target_language: str = "en"
 
-    # Dev/demo mode — lowers image generation resolution/steps and prefers the
-    # faster Gemini Flash image model when the default production model is used.
+    # Dev/demo mode lowers image generation resolution/steps where supported.
     dev_mode: bool = False
 
-    # Quality preset: "fast" | "balanced" | "quality" | None
-    # When set, overrides all four text model fields. dev_mode forces "fast".
-    quality_preset: QualityPreset | None = None
     dev_image_scale: float = 0.5
     dev_image_steps: int = 8
     dev_image_concurrency: int = 5
@@ -296,62 +246,28 @@ class Config(BaseModel):
     cost_limit_usd: Optional[float] = None
 
     def effective_image_model(self) -> str:
-        if self._one_shot_image_model_alias is not None:
-            return self._one_shot_image_model_alias
-        # In dev_mode an explicit user override wins. Only fall back to
-        # fallback_image_model when image_model is still at its default. Treat
-        # the previous balanced default as a legacy default too, so existing
-        # project configs retain their dev-mode behavior after this default
-        # changes to the quality route.
-        if self.dev_mode:
-            if self.image_model in {
-                Config.model_fields["image_model"].default,
-                GATEWAY_IMAGE_BALANCED,
-            }:
-                return self.fallback_image_model or GATEWAY_IMAGE_FAST
-            return self.image_model
-        return self._effective_stage_model("image")
-
-    def _effective_stage_model(self, stage: str) -> str:
-        """Resolve the effective gateway alias for a pipeline stage.
-
-        Priority: dev_mode -> "fast" preset, else quality_preset if set, else raw field.
-        """
-        if self.dev_mode:
-            return _QUALITY_PRESETS["fast"][stage]
-        if self.quality_preset is not None:
-            preset_model = _QUALITY_PRESETS[self.quality_preset][stage]
-            field_name = _QUALITY_PRESET_FIELDS[stage]
-            raw_model = getattr(self, field_name)
-            field_default = Config.model_fields[field_name].default
-            if raw_model != field_default and raw_model != preset_model:
-                _logger.warning(
-                    "quality_preset=%r overrides explicitly configured %s=%r (using %r instead)",
-                    self.quality_preset, field_name, raw_model, preset_model,
-                )
-            return preset_model
-        return getattr(self, _QUALITY_PRESET_FIELDS[stage])
+        return self._one_shot_image_model_alias or self.image_model
 
     def effective_extraction_model(self) -> str:
-        return self._effective_stage_model("extract")
+        return self.extraction_model
+
+    def effective_brief_model(self) -> str:
+        return self.brief_model
 
     def effective_adapt_model(self) -> str:
-        return self._effective_stage_model("adapt")
+        return self.adapt_model
 
     def effective_plan_model(self) -> str:
-        return self._effective_stage_model("plan")
+        return self.plan_model
 
     def effective_prompt_model(self) -> str:
-        return self._effective_stage_model("prompt")
+        return self.prompt_model
 
     def effective_page_ocr_model(self) -> str:
-        """Render analysis is fidelity checking, not creative work.
-
-        It is deliberately outside the quality presets: a book generated with
-        the quality preset must not read its own pages with a different, more
-        forgiving model than a book generated with the fast preset.
-        """
         return self.page_ocr_model
+
+    def effective_visual_review_model(self) -> str:
+        return self.visual_review_model
 
     def uses_gemini_image_provider(self) -> bool:
         return self.image_provider == "gemini"
@@ -439,6 +355,13 @@ def load_config(project_dir: Path) -> tuple["Config", Path | None]:
         with open(config_path) as f:
             data = yaml.safe_load(f) or {}
 
+    for key in (
+        "quality_preset", "extraction_model", "brief_model", "adapt_model", "plan_model",
+        "prompt_model", "page_ocr_model", "visual_review_model", "image_model", "draw_model",
+        "fallback_image_model", "image_provider",
+    ):
+        data.pop(key, None)
+
     # Overlay env vars.  Explicit shell exports beat .env.
     for env_name, field_name in _ENV_KEYS.items():
         val = os.environ.get(env_name, "").strip()
@@ -478,41 +401,16 @@ google_cloud_location: "{config.google_cloud_location}"
 # ---------------------------------------------------------------------------
 # Model choices
 # ---------------------------------------------------------------------------
-# Quality preset: fast | balanced | quality | null
-# When set, overrides all four text model fields below.
-# dev_mode forces "fast" regardless of this setting.
-# Set to null (or omit) to use individual model fields.
-quality_preset: {"null" if config.quality_preset is None else f'"{config.quality_preset}"'}
-
-# Stage 1 – full-novel extraction
-extraction_model: "{config.extraction_model}"
-
-# Book-level adaptation model
-adapt_model: "{config.adapt_model}"
-
-# Global page-planning model
-plan_model: "{config.plan_model}"
-
-# Cast asset prompt model
-prompt_model: "{config.prompt_model}"
-
-# Image generation provider/model. Runtime AI calls use gateway aliases.
-# image_provider: gemini | openai | openrouter | together
-image_provider: "{config.image_provider}"
-image_model: "{config.image_model}"
-
-# Dev-mode fallback used when image_model is the default gateway primary alias.
-# Leave blank to keep the configured image_model in dev_mode.
-fallback_image_model: "{config.fallback_image_model}"
+# Account defaults apply except for explicit local-development project choices.
+# These choices are inert outside the original local-development process gate.
+dev_model_selections: {json.dumps(config.dev_model_selections)}
 
 # Generated text language: en | es | fr
 target_language: "{config.language_code()}"
 
 # Dev/demo mode trades image fidelity for iteration speed.
-# When enabled, generated images use scaled-down dimensions, fewer diffusion
-# steps where supported, and the fast Gemini Flash Lite alias instead of the
-# balanced alias
-# unless a custom image_model is explicitly configured.
+# When enabled, generated images use scaled-down dimensions and fewer
+# diffusion steps where supported. Model choices are controlled separately.
 dev_mode: {str(config.dev_mode).lower()}
 mock_mode: {str(config.mock_mode).lower()}  # requires operator env gate; not shown in UI
 dev_image_scale: {config.dev_image_scale}

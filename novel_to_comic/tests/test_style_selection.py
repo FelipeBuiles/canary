@@ -75,7 +75,7 @@ def test_unselected_style_does_not_clear_failures(tmp_path):
 
 
 def test_style_reference_capability_matches_configured_route():
-    assert _supports_style_reference(Config(image_model="image-balanced")) is True
+    assert _supports_style_reference(Config(image_model="image-gemini-pro")) is True
     assert _supports_style_reference(Config(image_model="gpt-image-2")) is True
 
 

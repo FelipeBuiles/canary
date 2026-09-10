@@ -83,7 +83,7 @@ describe("UploadStep keyboard flow", () => {
     await user.click(screen.getByRole("button", { name: "CONTINUE" }));
     expect((screen.getByLabelText("PROJECT NAME") as HTMLInputElement).value).toBe("The Open Window");
     await user.click(screen.getByRole("button", { name: "CREATE PROJECT" }));
-    expect(submit).toHaveBeenCalledWith("the-open-window", "The Open Window", { target_language: "en", quality_preset: "balanced", dev_mode: false });
+    expect(submit).toHaveBeenCalledWith("the-open-window", "The Open Window", { target_language: "en" });
   });
 
   it("distinguishes loading, catalog failure, and an empty catalog while upload remains available", async () => {
@@ -113,10 +113,10 @@ describe("UploadStep keyboard flow", () => {
     const file = new File(["compressed document bytes"], "My manuscript.pdf", { type: "application/pdf" });
     await user.upload(container.querySelector<HTMLInputElement>('input[type="file"]')!, file);
     await user.click(screen.getByRole("button", { name: "CONTINUE" }));
-    expect(screen.getByLabelText("Rough whole-book estimate").textContent).toContain("Available after the source is prepared");
-    await user.click(screen.getByRole("button", { name: "GENERATION QUALITY" }));
-    await user.click(screen.getByRole("option", { name: "High quality" }));
+    expect(screen.queryByText("Rough whole-book estimate")).toBeNull();
+    expect(screen.queryByRole("button", { name: "GENERATION QUALITY" })).toBeNull();
+    expect(screen.getByText(/Review a live credit estimate/)).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "CREATE PROJECT" }));
-    expect(submit).toHaveBeenCalledWith(file, "My manuscript", { target_language: "en", quality_preset: "quality", dev_mode: false });
+    expect(submit).toHaveBeenCalledWith(file, "My manuscript", { target_language: "en" });
   });
 });

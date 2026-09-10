@@ -32,9 +32,6 @@ def _build_provider(name: str) -> LabsProvider:
         return TogetherProvider()
     if name == "litellm":
         return LitellmProvider()
-    if name == "reve":
-        from .providers.reve import ReveProvider
-        return ReveProvider()
     raise ValueError(f"Unknown provider: {name}")
 
 
@@ -120,7 +117,7 @@ async def _run_cell(
 
     experimental_wire = None
     experimental_plan = None
-    if entry.provider in {"litellm", "reve"}:
+    if entry.provider == "litellm":
         from novel_to_comic.generation_input import GenerationPromptInput
         from novel_to_comic.image_references import AuthorityScope, ReferenceAsset
         from novel_to_comic.asset_generation import (
@@ -143,7 +140,7 @@ async def _run_cell(
                 content_sha256=content_sha256, lineage_parent_sha256=None,
                 label=f"reference {index}",
             ))
-        wire_alias = "image-reve" if entry.provider == "reve" else entry.endpoint
+        wire_alias = entry.endpoint
         wire_config = _config_for_model(wire_alias)
         experimental_input = AssetGenerationInput(
             asset_kind="labs_image",

@@ -27,7 +27,7 @@ def _wire(source: Path) -> ProviderWireRequest:
     wire = ProviderWireRequest(
         discriminator=PROVIDER_WIRE_DISCRIMINATOR,
         schema_version=PROVIDER_WIRE_SCHEMA_VERSION,
-        requested_alias="image-balanced",
+        requested_alias="image-gemini-pro",
         expected_route="gemini_pro_image",
         provider_key="vertex-multimodal",
         configured_provider_model="vertex-multimodal/gemini-3-pro-image",

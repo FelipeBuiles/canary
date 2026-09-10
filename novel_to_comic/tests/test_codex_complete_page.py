@@ -28,7 +28,7 @@ def dev_routes(monkeypatch):
     process.update(CANARY_CODEX_DEV_ENABLED="1", CANARY_ENV="development")
     monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType(process))
     monkeypatch.setattr(codex_dev, "_SETTINGS_ERROR", None)
-    monkeypatch.setattr(codex_dev, "_IMAGES", frozenset({"image-balanced"}))
+    monkeypatch.setattr(codex_dev, "_IMAGES", frozenset({"image-gemini-pro"}))
     monkeypatch.setattr(codex_dev, "_IMAGE_REASONING", "gpt-5.5")
     monkeypatch.setattr(codex_dev, "_TEXT", MappingProxyType({
         Config().effective_page_ocr_model(): "gpt-5.6-terra",
@@ -61,10 +61,10 @@ def _authorities(tmp_path, count):
     return page, ApprovedVisualReferenceInventory(references=refs), files
 
 
-def _compiled(page, inventory, files, **kwargs):
+def _compiled(page, inventory, files, config=None, **kwargs):
     return page_drawing.compile_page_generation_request(
         page, page_drawing.select_book_edition(
-            edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(),
+            edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(config),
         ), inventory, files, retry=RetryProvenance(attempt=1), **kwargs,
     )
 
@@ -222,7 +222,8 @@ def test_batch_subscription_quote_is_zero_and_subscription_even_when_empty(tmp_p
     assert not artifacts.book_edition_path.exists()
 
 
-def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(tmp_path, monkeypatch, dev_routes):
+@pytest.mark.parametrize("reasoner", [None, "gpt-5.5", "gpt-5.6-terra"])
+def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(tmp_path, monkeypatch, dev_routes, reasoner):
     import time
     from novel_to_comic.ai import client, finalisation
     from novel_to_comic.server import credited_job
@@ -230,8 +231,9 @@ def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(
     from novel_to_comic.usage import ApiResult
 
     page, inventory, files = _authorities(tmp_path, 2)
-    compiled = _compiled(page, inventory, files)
-    adapter = page_drawing.complete_page_adapter(Config())
+    config = Config(draw_model=f"codex-dev/image/{reasoner}") if reasoner else Config()
+    compiled = _compiled(page, inventory, files, config=config)
+    adapter = page_drawing.complete_page_adapter(config)
     output = io.BytesIO()
     Image.new("RGB", (83, 117), "navy").save(output, format="PNG")
     native = output.getvalue()
@@ -278,7 +280,7 @@ def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(
         project_dir=artifacts.project_dir, stage="draw", kind="complete_page_draw",
         label="Page 7", payload={"request_sha256": compiled.request.request_sha256},
         work=work, debit_description="Draw page", reservation_credits=99,
-        operations=draw_operations(Config()),
+        operations=draw_operations(config),
     )
     asyncio.run(job.runner())
     assert created
@@ -290,6 +292,7 @@ def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(
     assert payload["p_cost_usd"] is None
     assert payload["p_provider_model"] is None
     assert payload["p_usage_call_id"] == "native-call"
+    assert runtime.call_args.kwargs["reasoning_model"] == (reasoner or "gpt-5.5")
     assert runtime.await_count == 1
     assert runtime.call_args.kwargs["prompt"] == compiled.request.prompt
     assert runtime.call_args.kwargs["references"] == tuple(
@@ -300,6 +303,7 @@ def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(
     assert (provenance.render.width, provenance.render.height) == (83, 117)
     assert provenance.render.model == "gpt-image-2"
     assert provenance.render.cost_usd is None
+    assert provenance.usage.model == config.draw_model
     assert provenance.usage.provider_model is None
     assert provenance.usage.cost_usd is None
     assert provenance.usage.funding == "codex_subscription"
@@ -421,3 +425,23 @@ def test_failed_codex_correction_can_be_explicitly_retried(tmp_path, dev_routes)
     assert prepared.edit_source_bytes == parent
     assert prepared.references == original.request.references
     assert retried.request.profile_sha256 == original.request.profile_sha256
+
+
+def test_explicit_codex_draw_selection_cannot_reroute_frozen_request(tmp_path, dev_routes):
+    first = Config(draw_model="codex-dev/image/gpt-5.5")
+    second = Config(draw_model="codex-dev/image/gpt-5.6-terra")
+    page, inventory, files = _authorities(tmp_path, 1)
+    compiled = _compiled(page, inventory, files, config=first)
+    first_adapter = page_drawing.complete_page_adapter(first)
+    prepared = first_adapter.prepare(compiled)
+    second_adapter = page_drawing.complete_page_adapter(second)
+    assert page_drawing.current_page_capability_profile(first).id != page_drawing.current_page_capability_profile(second).id
+    with pytest.raises(ValueError):
+        second_adapter.prepare(compiled)
+    with pytest.raises(ValueError):
+        asyncio.run(second_adapter.generate(prepared))
+    edition = page_drawing.select_book_edition(
+        edition_id="fixed", profile=page_drawing.current_page_capability_profile(first),
+    )
+    with pytest.raises(ValueError, match="different page profile"):
+        page_drawing.ensure_current_page_edition(TargetArtifacts(tmp_path), edition, second)

@@ -74,7 +74,7 @@ paid actions; copying artwork alone is not a recovery backup.
    - Database connection string (for schema bootstrap).
 4. **A Stripe account** (test mode first, live at launch).
 5. **Provider API keys** for whatever models you route through LiteLLM
-   (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `REVE_API_KEY`,
+   (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`,
    `FAL_KEY`, etc.). Only set the ones you actually use. These live as fly
    secrets on `canary-web` now (they used to be on `litellm-gw`).
 6. **A GCP service account JSON** for Vertex (only if you use Vertex models).
@@ -111,7 +111,6 @@ CANARY_BACKOFFICE_ORIGINS=http://localhost:5173  # only when a local desk connec
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 GEMINI_API_KEY=AIza...
-REVE_API_KEY=...
 FAL_KEY=...
 OPENROUTER_API_KEY=sk-or-...      # only if you use OpenRouter
 TOGETHER_API_KEY=...              # only if you use Together
@@ -545,7 +544,7 @@ One consolidated set, since the proxy and web app share a container:
 
 - **Proxy layer:** `LITELLM_MASTER_KEY`, `LITELLM_SALT_KEY`, plus the provider
   keys you actually use (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-  `GEMINI_API_KEY`, `REVE_API_KEY`, `FAL_KEY`, optionally
+  `GEMINI_API_KEY`, `FAL_KEY`, optionally
   `OPENROUTER_API_KEY` / `TOGETHER_API_KEY`), `VERTEXAI_PROJECT`,
   `GCP_CREDENTIALS_B64`. Both processes inherit the container environment, but
   only the loopback proxy uses these keys for provider requests.

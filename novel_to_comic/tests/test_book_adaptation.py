@@ -1978,7 +1978,7 @@ def test_producer_canonicalizes_approved_requirement_metadata(
                 ),
                 tmp_path,
             ),
-            model="adapt-balanced",
+            model="gpt-5.6-terra",
             generate=generate,
         )
     )
@@ -2035,7 +2035,7 @@ def test_retry_recovers_a_paid_candidate_without_another_model_call(
                 ),
                 tmp_path,
             ),
-            model="adapt-balanced",
+            model="gpt-5.6-terra",
             generate=generate,
         )
     )
@@ -2235,7 +2235,7 @@ def test_adaptation_shards_use_model_output_budget_and_fit_cthulhu_in_three() ->
         ],
     )
 
-    shards = _adaptation_shards(source, model="adapt-balanced")
+    shards = _adaptation_shards(source, model="gpt-5.6-terra")
 
     assert [len(shard) for shard in shards] == [180, 180, 98]
     assert max(map(len, shards)) <= 180
@@ -2312,7 +2312,7 @@ def test_a_blocked_adaptation_gets_one_repair_pass_with_its_failures(
     assert len(calls) == 4
     # Structural omissions are repaired before the expensive prose pass.
     assert "missing owned requirement IDs" in calls[2]["user_content"]
-    assert calls[2]["quality_tier"] == "quality"
+    assert "quality_tier" not in calls[2]
     assert calls[3]["feature"] == "adapt.lettering"
     assert artifacts.read_validation("adapt").attempts == 1
 

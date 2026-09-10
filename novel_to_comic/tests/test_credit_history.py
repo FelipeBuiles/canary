@@ -23,7 +23,7 @@ def _row(
         "project_id": "project-1",
         "job_id": job_id,
         "provider": "gemini",
-        "model": "image-balanced",
+        "model": "image-gemini-pro",
         "provider_model": "gemini-3-pro-image",
         "operation": "image",
         "input_tokens": 0,
