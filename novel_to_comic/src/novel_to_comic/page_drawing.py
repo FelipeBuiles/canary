@@ -862,6 +862,20 @@ class GoogleVertexCompletePageTransport:
         headers = ai_client._headers(self._config, ctx.event_id)
         url = f"{ai_client._base_url(self._config)}{endpoint}"
         response = None
+        payload = None
+
+        def retain_incomplete_response() -> None:
+            # An accepted response is not proof of a settled usable result.
+            # Preserve known refusal semantics; retain every other incomplete
+            # successful response for explicit reconciliation.
+            try:
+                refused = isinstance(payload, dict) and ai_client._is_refusal(payload)
+            except (AttributeError, TypeError, IndexError):
+                refused = False  # Malformed refusal fields are not known refusal.
+            if response is not None and response.status_code < 400 and not refused:
+                from novel_to_comic.server.credits import retain_ambiguous_job
+                retain_ambiguous_job(ai_client.current_ai_request_context().job_id)
+
         try:
             if files:
                 response = await ai_client._post_with_retry(
@@ -923,6 +937,7 @@ class GoogleVertexCompletePageTransport:
             }
             response_data["model"] = actual_provider_model
         except asyncio.CancelledError as exc:
+            retain_incomplete_response()
             await finalise_image_cancelled(
                 ctx=ctx,
                 config=self._config,
@@ -933,6 +948,7 @@ class GoogleVertexCompletePageTransport:
             )
             raise
         except BaseException as exc:
+            retain_incomplete_response()
             await finalise_image_failure(
                 ctx=ctx,
                 config=self._config,

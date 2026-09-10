@@ -40,6 +40,16 @@ class Admission:
         self.active_requests = 0
         self.locks: dict[str, asyncio.Lock] = {}
         self.gate = asyncio.Lock()
+        with self.journal() as db:
+            db.execute("CREATE TABLE IF NOT EXISTS operational_intent (id INTEGER PRIMARY KEY CHECK(id=1), draining INTEGER NOT NULL)")
+            row = db.execute("SELECT draining FROM operational_intent WHERE id=1").fetchone()
+            self.draining = bool(row and row[0])
+
+    def set_draining(self, draining: bool) -> None:
+        """Explicit operator intent survives crashes; shutdown alone isn't intent."""
+        with self.journal() as db:
+            db.execute("INSERT OR REPLACE INTO operational_intent VALUES(1,?)", (int(draining),))
+        self.draining = draining
 
     @contextmanager
     def journal(self):
@@ -121,6 +131,11 @@ async def admission_middleware(request, call_next):
                     return Response(row[2], status_code=row[1], media_type="application/json", headers={"Idempotency-Replayed": "true"})
             if admission.draining:
                 raise HTTPException(503, {"code": "server_draining", "message": "Generation is paused for deployment."})
+            from .credits import reservation_leases_healthy
+            if hasattr(request.app.state, "credit_leases_ready") and (
+                not request.app.state.credit_leases_ready or not reservation_leases_healthy()
+            ):
+                raise HTTPException(503, {"code": "credits_unavailable", "message": "Credit authorization is temporarily unavailable. Try again when service is ready."})
             pkey = project_key(account, project_id)
             if not _TARGETED.fullmatch(suffix) and project_busy(request.app, pkey):
                 raise HTTPException(409, "Wait for all project jobs to finish before changing this project.")

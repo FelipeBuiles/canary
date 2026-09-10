@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import Callable
@@ -71,6 +72,7 @@ class LitellmHttpProvider:
                         key: str(value) for key, value in params.items() if value is not None
                     }},
                     files=files,
+                    retry_ambiguous=False,
                 )
             else:
                 response = await ai_client._post_with_retry(
@@ -78,6 +80,7 @@ class LitellmHttpProvider:
                     json={"prompt": prompt, "metadata": metadata, **{
                         key: value for key, value in params.items() if value is not None
                     }},
+                    retry_ambiguous=False,
                 )
             if response.status_code >= 400:
                 response.raise_for_status()
@@ -85,16 +88,24 @@ class LitellmHttpProvider:
             _raise_safe_wire_phase_error("gateway_request", exc)
         try:
             data = response.json()
+            if not isinstance(data, dict):
+                raise ValueError("image response must be an object")
+            refused = ai_client._is_refusal(data)
         except Exception as exc:
+            _retain_ambiguous_hold()
             _raise_safe_wire_phase_error("response_json", exc)
-        if ai_client._is_refusal(data):
+        if refused:
             raise AIRefusalError(
                 "AI image request was refused by gateway/provider",
                 response_data=data, response_headers=response.headers, response=response,
             )
         try:
             image_bytes = await ai_client._decode_image_response(data)
+        except asyncio.CancelledError:
+            _retain_ambiguous_hold()
+            raise
         except Exception as exc:
+            _retain_ambiguous_hold()
             _raise_safe_decode_error(data, exc)
         return ProviderRawResult(
             image_bytes=image_bytes,
@@ -105,6 +116,13 @@ class LitellmHttpProvider:
             actual_provider_model=(data.get("model") if isinstance(data.get("model"), str) else None),
         )
 
+
+
+def _retain_ambiguous_hold() -> None:
+    # A successful HTTP submission without a usable result still may be paid.
+    from novel_to_comic.ai.context import current_ai_request_context
+    from novel_to_comic.server.credits import retain_ambiguous_job
+    retain_ambiguous_job(current_ai_request_context().job_id)
 
 
 def serialize_wire_request(
@@ -217,6 +235,8 @@ def _raise_safe_decode_error(data: dict[str, Any], exc: BaseException) -> None:
 
 
 def _raise_safe_wire_phase_error(phase: str, exc: BaseException) -> None:
+    if isinstance(exc, AITransportError) and exc.phase == "ambiguous_submission":
+        raise exc
     descriptor = {"phase": phase, **_safe_decode_error_descriptor(exc)}
     if phase == "gateway_request":
         if isinstance(exc, httpx.ReadError):

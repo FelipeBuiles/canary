@@ -245,15 +245,24 @@ async def _post_with_retry(
                 response = await _http.post(url, headers=headers, data=data)
             else:
                 response = await _http.post(url, headers=headers, json=json)
-            if response.status_code not in _RETRYABLE_STATUS_CODES:
+            if not retry_ambiguous and response.status_code >= 500:
+                from novel_to_comic.server.credits import retain_ambiguous_job
+                retain_ambiguous_job(current_ai_request_context().job_id)
                 return response
-            if not retry_ambiguous and response.status_code != 429:
+            if response.status_code not in _RETRYABLE_STATUS_CODES:
                 return response
             rate_limited = response.status_code == 429
             retry_after = _retry_after_seconds(response)
             pacer.record_retryable_status(response)
+        except asyncio.CancelledError:
+            if not retry_ambiguous:
+                from novel_to_comic.server.credits import retain_ambiguous_job
+                retain_ambiguous_job(current_ai_request_context().job_id)
+            raise
         except _TRANSPORT_ERRORS as exc:
             if not retry_ambiguous and not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
+                from novel_to_comic.server.credits import retain_ambiguous_job
+                retain_ambiguous_job(current_ai_request_context().job_id)
                 raise AITransportError(
                     "Page submission outcome is unknown; it was not automatically repeated. "
                     "Check the provider result before requesting another paid generation.",
@@ -261,6 +270,15 @@ async def _post_with_retry(
                 ) from exc
             pacer.record_exception(exc)
             slow_timeout = isinstance(exc, _SLOW_TIMEOUT_ERRORS)
+        except httpx.RequestError as exc:
+            if not retry_ambiguous:
+                from novel_to_comic.server.credits import retain_ambiguous_job
+                retain_ambiguous_job(current_ai_request_context().job_id)
+                raise AITransportError(
+                    "Image submission outcome is unknown; inspect provider evidence before retrying.",
+                    phase="ambiguous_submission",
+                ) from exc
+            raise
         await pacer.pause_or_raise(
             rate_limited=rate_limited,
             retry_after=retry_after,
@@ -794,6 +812,8 @@ def _error_json(
             payload["body"] = None
     if exc is not None:
         payload["exception"] = type(exc).__name__
+        if getattr(exc, "phase", None) == "ambiguous_submission":
+            payload["phase"] = "ambiguous_submission"
     return payload
 
 

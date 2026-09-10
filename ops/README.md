@@ -1,5 +1,13 @@
 # Canary operations assets
 
+## Crash recovery and external incidents
+
+Use [the recovery runbook](../docs/ops/crash-recovery.md) to activate bounded
+Machine recovery and the external `scripts/monitor_operations.py` incident queue.
+The monitor needs independent hosting and durable storage; notification delivery
+is disabled until an HTTPS webhook is explicitly configured. The repository
+configuration and local fault tests do not establish deployed recovery or delivery.
+
 ## Fly Grafana
 
 After deploying the `[[metrics]]` configuration in `fly.toml`, open the Fly

@@ -103,3 +103,53 @@ def test_unknown_provider_key_fails_closed():
                 provider_model="future/model",
             )
         )
+
+
+@pytest.mark.parametrize("failure", ["decode", "cancel", "json", "shape", "refusal"])
+def test_accepted_wire_result_retains_hold_unless_known_refusal(monkeypatch, failure):
+    import asyncio
+    import httpx
+    from unittest.mock import AsyncMock, MagicMock
+    from novel_to_comic.ai import client
+    from novel_to_comic.ai.context import ai_request_context
+    from novel_to_comic.ai.providers.litellm_http import LitellmHttpProvider
+    from novel_to_comic.config import Config
+    from novel_to_comic.server import credits
+
+    monkeypatch.setattr(credits, "_unsettled_jobs", set())
+    monkeypatch.setattr(credits, "_reservation_jobs", {"hold": "job"})
+    wire = _wire(alias="image-quality", route=ImageRoute.GPT_IMAGE_2,
+                 provider_key="openai", provider_model="openai/gpt-image-2")
+    response = httpx.Response(200, content=b"bad" if failure == "json" else b"{}")
+    if failure == "shape":
+        response = httpx.Response(200, json=[])
+    post = AsyncMock(return_value=response)
+    monkeypatch.setattr(client, "_post_with_retry", post)
+    monkeypatch.setattr(client, "_is_refusal", lambda _: failure == "refusal")
+    decode = AsyncMock(side_effect=asyncio.CancelledError() if failure == "cancel" else ValueError("decode failed"))
+    monkeypatch.setattr(client, "_decode_image_response", decode)
+    async def run():
+        with ai_request_context(job_id="job"):
+            with pytest.raises((ValueError, asyncio.CancelledError, client.AIRefusalError)):
+                await LitellmHttpProvider().generate_wire(wire=wire, config=Config(), event_id="event", metadata={})
+    asyncio.run(run())
+    assert post.await_count == 1
+    assert post.call_args.kwargs["retry_ambiguous"] is False
+    db = MagicMock()
+    credits.release_reservation(db, "hold")
+    if failure == "refusal":
+        assert "job" not in credits._unsettled_jobs
+        db.rpc.assert_called_once()
+    else:
+        assert "job" in credits._unsettled_jobs
+        db.rpc.assert_not_called()
+
+
+def test_wire_wrapper_preserves_ambiguous_transport_phase():
+    from novel_to_comic.ai.errors import AITransportError
+    from novel_to_comic.ai.providers.litellm_http import _raise_safe_wire_phase_error
+    error = AITransportError("Outcome unknown", phase="ambiguous_submission")
+    with pytest.raises(AITransportError) as captured:
+        _raise_safe_wire_phase_error("gateway_request", error)
+    assert captured.value is error
+    assert captured.value.phase == "ambiguous_submission"
