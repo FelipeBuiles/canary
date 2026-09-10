@@ -1,8 +1,10 @@
 # Scenewright — pre-launch readiness execution plan
 
 **Date:** 2026-07-30
-**Status:** Current; adapted from the deleted pre-offer plan and readiness
-specs for the full-page pipeline.
+**Status:** Superseded September 9, 2026 by the
+[self-service launch strategy](../../proposals/self-service-launch.md).
+Retained as historical sequencing and evidence requirements; operator-led
+onboarding and old page-count hypotheses are not the current launch motion.
 **Decision target:** a small paid, operator-assisted design-partner pilot,
 followed by a measured public launch if the evidence supports it.
 

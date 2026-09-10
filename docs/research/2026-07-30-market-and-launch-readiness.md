@@ -1,6 +1,12 @@
 # Scenewright — market and pre-launch readiness reassessment
 
 **Date:** 2026-07-30
+**Status:** Historical assessment. The September 9
+[self-service launch strategy](../proposals/self-service-launch.md),
+[readiness refresh](../proposals/launch-readiness.md), and
+[commercial refresh](../proposals/branding-and-marketing.md) replace this
+report's launch decision, market snapshot, and operator-assisted sales motion.
+All statements below describe the July assessment, not today's deployed state.
 **Product:** Scenewright (Canary is the internal codename)
 **Assessment scope:** the full-page and lettering refactor, the recovered
 pre-offer/readiness material, the current application and tests, checked-in

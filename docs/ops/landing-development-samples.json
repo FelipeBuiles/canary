@@ -1,0 +1,33 @@
+{
+  "project": "dcc1. 2",
+  "selected_at": "2026-09-09",
+  "status": "Provisional development examples selected by user; revisit before public campaign. No customer, production-model, or quality guarantee. English text; strong language.",
+  "source_work": "Dungeon Crawler Carl",
+  "assets": [
+    {
+      "file": "web/public/marketing/dcc1-2-page-003.webp",
+      "source": "projects/947150d4-7d2f-4726-a018-5539f933ea56/dcc1-2/draw/pages/page_003/render_001.reader.webp",
+      "page": 3,
+      "revision": 1,
+      "model": "gpt-image-2",
+      "provider": "codex-dev",
+      "original_image_sha256": "e2732dea14ceaa3d9eaffd039563af11d034ff61cfed57395c87b47684249207",
+      "webp_sha256": "173a1be3f0f8fd33f2d57f1cbeb132fe45fa1a4821dcde32b4e6ca495c8dc4be",
+      "width": 1024,
+      "height": 1536
+    },
+    {
+      "file": "web/public/marketing/dcc1-2-page-004.webp",
+      "source": "projects/947150d4-7d2f-4726-a018-5539f933ea56/dcc1-2/draw/pages/page_004/render_001.reader.webp",
+      "page": 4,
+      "revision": 1,
+      "model": "gpt-image-2",
+      "provider": "codex-dev",
+      "original_image_sha256": "3ae88d7b3d44619b8117eacbda7927e7ed12d68cda903bd57e438378b163636b",
+      "webp_sha256": "9fc8bd7d137aabeca90d5094163c9198f997851e48722db0bdca3592957a0419",
+      "width": 1024,
+      "height": 1536
+    }
+  ],
+  "publication_gate": "Local preview only until public-use permission for Dungeon Crawler Carl is documented or these pages are replaced with owned/licensed source. Not yet approved for public campaign."
+}

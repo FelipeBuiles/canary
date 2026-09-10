@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "release_sha": "",
+  "severe_incident_open": null,
+  "gates": {
+    "release": {"status": "unverified", "evidence": ""},
+    "billing_isolation": {"status": "unverified", "evidence": ""},
+    "recovery_restore": {"status": "unverified", "evidence": ""},
+    "monitoring_support": {"status": "unverified", "evidence": ""},
+    "rights_name": {"status": "unverified", "evidence": ""},
+    "proof": {"status": "unverified", "evidence": ""},
+    "attribution": {"status": "unverified", "evidence": ""}
+  },
+  "cohort": {
+    "seven_day_window_closed": false,
+    "costs_reconciled": false,
+    "paid_starters": null,
+    "exported_authors": null,
+    "assisted_authors": null,
+    "support_minutes": null,
+    "consumed_credit_revenue_usd": null,
+    "provider_cost_usd": null,
+    "payment_fees_usd": null,
+    "consumed_credit_refunds_usd": null,
+    "variable_infrastructure_usd": null,
+    "support_cost_usd": null
+  }
+}

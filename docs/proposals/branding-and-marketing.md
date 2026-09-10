@@ -1,536 +1,230 @@
-# Canary — Product Naming & Marketing Strategy
+# Scenewright — Proof-Led, Self-Service Launch Positioning
 
-> **Architecture warning (2026-07-25):** retain this document for audience,
-> naming, trust, and positioning research only. References to a nine-stage
-> pipeline, per-panel generation/revision, or deterministic lettering are
-> superseded by the full-page architecture in ADRs 0003-0015 (`docs/adr/`).
+> **Status: Proposed launch positioning; implemented capabilities and external
+> claims are identified separately below.** Refreshed 2026-09-09. Replaces the
+> July naming/marketing research as the active proposal. This does not certify
+> production readiness, name clearance, user demand, or legal rights.
 
-> **Current launch source (2026-07-30):** use
-> [the market and launch-readiness reassessment](../research/2026-07-30-market-and-launch-readiness.md)
-> for current product claims, market facts, offer decisions, and launch gates.
-> This proposal remains the longer strategic research record; competitor,
-> naming, pricing, and acquisition facts below need revalidation before reuse.
+## The strategic change
 
-> Deep research (competitive landscape + market demand + naming/domain/trademark
-> clearance) and a full go-to-market plan for the lean / pre-revenue tier. Dated
-> 2026-07-02.
->
-> **Scope decisions locked up front (from clarifying questions):**
-> - **Name direction:** fresh new product name — "Canary" is treated as a
->   codename, not the launch brand.
-> - **Primary customer:** indie / self-published authors (KDP, Wattpad, Royal
->   Road, Webnovel). Other segments are secondary.
-> - **Budget tier:** lean / pre-revenue (under ~$2k/mo). Channel mix is
->   community-led growth, not paid acquisition.
+Help an indie fantasy author turn a short piece of their own story into a
+comic excerpt they want to show readers. Let the author choose the story's
+intent, visual direction and cast, then review the pages and export. The
+product must complete that journey without the founder directing production,
+fixing ordinary failures, or explaining billing in a call.
 
-## Validation update — 2026-07-10
+**Proposed positioning:** “Your story deserves to be seen.” Follow immediately
+with the concrete explanation: “Turn a scene from your novel into a comic you
+direct. Choose the look, review the pages, and export with one-time credits.”
 
-This document remains useful for its **audience, human-direction, source-
-fidelity, pay-as-you-go, and trust strategy**, but it is no longer reliable as
-a current competitive or naming-clearance snapshot. Treat it as roughly
-**6/10 current**: the strategic direction is strong; several market facts and
-launch hypotheses below have already moved.
+The first target is **AI-open indie fantasy authors with an existing scene or
+chapter and a reason to show it to readers**. Fantasy is a testable focus, not
+a claim that other genres cannot work or that these authors already pay us.
+Test a newsletter excerpt, launch teaser, or reader bonus as use cases; do not
+promise that a comic will increase book sales. The alternative is postponing
+visual adaptation or assembling a result across writing/image/layout tools.
 
-### Still valid and supported by the product
+“Hands-off” describes operating effort. It does not remove the author's
+creative approval points or authorize silent paid retries. The business gets
+more automated when ordinary users can succeed and recover through the
+product, with exceptions visible to the operator.
 
-- Lead with the outcome: a graphic-novel edition of an author's existing book.
-- Position Scenewright as an instrument the author directs, not a black-box
-  replacement for the author.
-- Whole-manuscript ingestion, four creative checkpoints, reference-guided
-  continuity, complete-page correction, visible lettering, and PDF/CBZ export
-  are implemented product truths.
-- The rights posture is real but must stay precise: the author retains the
-  manuscript; Scenewright makes no ownership claim over generated output;
-  copyrightability of purely generated material remains case-specific.
-- One-off credit packs, pre-run estimates, and non-expiring credits are
-  implemented. There is no subscription.
+## Current product baseline and claim boundaries
 
-### Material corrections to the original research
+The code-backed workflow has eight stages, extract → brief → style → cast →
+adapt → plan → draw → finish, grouped as Story, Look, Pages and Book. Creative
+checkpoints are brief, style, cast and draw. See
+[stage contracts](../reference/stage-contracts.md) and
+[agent context](../reference/agent-context.md).
 
-1. **Name clearance is unresolved and now higher risk.** Exact federal knockout
-   searches remain encouraging, but an active, phonetically identical product,
-   [SceneWrite](https://www.scenewrite.app/features/), launched in the adjacent
-   AI storytelling/storyboarding category. Pause major brand spend until a
-   practitioner reviews federal, state, common-law, domain, and international
-   confusion risk. Domain availability in §1.4 was point-in-time; the primary
-   `.ink` domain was registered on 2026-07-02.
-2. **The competitive wedge narrowed.** [ComicInk](https://www.comicink.ai/) now
-   offers whole-book PDF ingestion, recurring cast/world references, printable
-   export, ownership language, no-expiry credits, and a creator storefront.
-   Whole-book ingestion, consistency, export, rights, and pay-as-you-go are now
-   category expectations, not unique claims. Scenewright's strongest current
-   difference is the depth and visibility of author control: inspectable
-   checkpoints, source-faithful adaptation, focused complete-page correction,
-   lettering, and explicit per-step cost.
-3. **Pricing references are stale.** ComicInk currently advertises roughly 30
-   pages for $9.99 and 240 for $54.99; LlamaGen's current plans start at $18/mo.
-   The `$10 / 8-page` and `$80–200 / book` suggestions below should not guide
-   launch copy. `pricing-and-margin.md` supersedes the internal model, but a
-   fixed per-book marketing promise still requires real production usage data.
-4. **Author sentiment is bifurcated, not uniformly hostile.** A 2025
-   [BookBub survey](https://insights.bookbub.com/how-authors-are-thinking-about-ai-survey/)
-   found substantial use and substantial rejection of generative AI.
-   The attainable audience is AI-open but protective of authorship, consent,
-   privacy, and disclosure. Keep AI out of the headline if useful, but disclose
-   the AI-assisted workflow clearly on the page rather than hiding it in a tiny
-   footer.
-5. **Several GTM claims remain experiments.** The “top 20%” buyer profile,
-   “80% from community,” free-Chapter-1 flywheel, influencer conversion, and
-   mandatory watermark are hypotheses without product or cohort evidence.
-   Test them. Facebook, Instagram, author newsletters/podcasts, design partners,
-   and high-intent search deserve weight alongside Reddit.
-
-### Application audit at this review
-
-The product applies the internal strategy well: Scenewright naming and visual
-identity, four author gates, reference-guided generation, review-by-exception,
-page finishing, cautious rights terms, credit estimates, and no-expiry packages
-are live. The major gap was acquisition: there was no public homepage, public
-workflow explanation, proof reel, pricing story, case study, or responsible-use
-explanation. This review adds the public homepage and corrects the unsupported
-“500 free credits” signup claim. Still missing are a verified trial/grant,
-authorized author case studies, a measured complete-page continuity proof, and
-the proposed authorship log. The current launch report defines the smaller
-pilot gate and replaces the old panel benchmark.
-
-Homepage claims should stay within what the product can prove:
-
-- “Turn your novel into a graphic novel you direct.”
-- “Choose the look. Approve the cast. Review and revise complete pages.”
-- “AI-assisted visual adaptation, directed by you.”
-- “Export PDF and CBZ.”
-- “Your manuscript stays yours. We claim no ownership over generated output.”
-
-Avoid “perfect consistency,” “copyright-safe,” “publish-ready,” “full novel in
-minutes,” fixed savings, fixed per-book cost, or compatibility with a
-human-authored seal until each is independently substantiated.
-
-## TL;DR
-
-**Recommended name: `Scenewright`** — a real dictionary word
-(*"a designer and maker of theatrical scenery"*, Merriam-Webster) that reads as
-human craft, not AI toy, in the most AI-hostile creator market that exists.
-
-- **Primary domain:** `scenewright.ink` — ✅ **FREE** (~$3 first year, ~$25/yr
-  renewal). `.ink` is thematically perfect (publishing/comics/print heritage).
-- **Backup domains:** `scenewright.co` (FREE), `getscenewright.com` (FREE).
-- **Cost to secure the brand on day one:** ~$35–45.
-- **Tagline:** *"Your novel, scene by scene."*
-
-The research surfaced one non-obvious constraint that reshapes the whole brief:
-**indie authors are among the most AI-hostile creator audiences that exist**
-(Authors Guild class-actions vs. OpenAI/Anthropic, a "human-written seal"
-movement, KDP mandatory AI disclosure, a Copyright Office that denies protection
-to purely AI-generated images). Every competitor that names itself like an AI
-tool (`ComicAI`, `LlamaGen`, `AI Comic Factory`) hands this audience a reason to
-bounce. So the name and positioning must read as **author tool + craft**, sitting
-on the shelf next to Scrivener / Atticus / Vellum — not next to a generator.
-
-The marketing strategy is **community-led growth built on the pipeline itself as
-content**, a **free Chapter-1-artifact flywheel** for virality, and positioning
-as **author-owned IP / human-directed craft** — the one thing every funded
-competitor gets wrong.
-
-> ⚠️ **One thing to verify before spending on brand assets:** USPTO trademark
-> clearance. Web search returned no software product, company, or live
-> registration for "Scenewright" — only dictionary definitions and unrelated
-> noise. Encouraging but **not a legal clearance.** See §1.6.
-
----
-
-## 1. Naming
-
-### 1.1 The strategic constraint
-
-Indie authors are one of the most AI-hostile creator communities that exists:
-
-- **Authors Guild v. OpenAI** (filed Sept 2023, ongoing) — class action by
-  George R.R. Martin, John Grisham, Jodi Picoult, David Baldacci + 13 others.
-- **Anthropic class action** — Authors Guild urging members to register titles;
-  potential statutory damages $750–$150,000 per title.
-- **Grassroots "human-written" seal movement** on covers as a marketing
-  differentiator.
-- **KDP mandatory AI disclosure** (Sept 2023) for AI-generated text, images,
-  and translations.
-- **U.S. Copyright Office** denies protection to purely AI-generated images
-  (*Zarya of the Dawn*, *Thaler v. Perlmutter*, Part 2 Copyrightability Report
-  2024).
-
-A name that screams "AI" (`ComicAI`, `NovelGPT`, `LlamaGen`) is self-defeating
-for this exact audience. The name must read as **author tool + craft**, not AI
-toy.
-
-### 1.2 The naming axis that won: "-wright" (maker/craftsman)
-
-Like **playwright, shipwright, wheelwright** — the `-wright` suffix means
-craftsman/maker. It signals human craft, not machine output, and natively evokes
-the script/theater world that a novel-to-comic pipeline lives in.
-
-`Scenewright` lands on three levels:
-
-| Axis | Why it works |
-|---|---|
-| **Etymology** | Real dictionary word (Merriam-Webster): *"a designer and maker of theatrical scenery."* The `-wright` suffix means craftsman/maker — human craft, not machine output. |
-| **Semantics** | The product literally builds scenes: novel → scenes → panels. "Scene" is the exact unit of both prose and comics. Describes what the tool *does* without leaning on "comic" (AI-art backlash) or "AI" (author backlash). |
-| **IP/copyright posture** | "Wright" implies authored work. Subtly supports the positioning that the *author* is the creator and the tool is the instrument — the framing needed for the copyright/human-authorship story (§4). |
-
-### 1.3 Rejected strong alternatives
-
-| Candidate | Verdict | Why rejected |
+| Customer-facing claim | Evidence | Boundary |
 |---|---|---|
-| **Storywright** | Killed on clearance | **Live collision:** `storywright.io` is an active TTRPG software product; `.com/.co/.studio/.press` all taken. Better semantics, fatal clearance. |
-| **Panelwright** | Kept as #2 | `panelwright.ink` FREE. Clean and on-theme, but "panel" tilts comic-industry; "scene" is broader and more literary. |
-| **Illuminovel** | Strong #3 | `illuminovel.ink` + `.co` both FREE. Gorgeous (illuminated manuscripts = the original text-with-pictures) but harder to say/spell, less obviously "maker" coded. |
-| **Anything "Comic"/"AI"/"GPT"/"Gen"** | Disqualified | Triggers AI-art backlash (comic audience) and author backlash simultaneously. |
+| Bring your manuscript | Existing project upload/import flow and [UploadStep.tsx](../../web/src/components/wizard/UploadStep.tsx) | Starting with an excerpt is an onboarding recommendation; no measured universal page or runtime promise |
+| Choose the look and approve the cast | Style selection, references and explicit checkpoints | Reference conditioning supports continuity; it does not prove perfect consistency |
+| Review and revise complete pages | Draw, page issues, correction revisions and Finish contracts | Correction can cost credits; generating a revision alone does not verify a visual concern |
+| Export PDF and CBZ | Finish/export implementation | Export success is not a printer/distributor acceptance or publication-quality guarantee |
+| One-time credits; no subscription | [billing.py](../../novel_to_comic/src/novel_to_comic/server/routers/billing.py) and [TermsPage.tsx](../../web/src/pages/legal/TermsPage.tsx) | Packs begin at $12; no fixed pages-per-pack claim. See [pricing-and-margin.md](pricing-and-margin.md) |
+| You retain your manuscript; we claim no ownership over generated output | Current Terms page | Do not substitute “copyright-safe,” exclusive rights, guaranteed copyrightability, or an unimplemented training/privacy promise |
+| AI-assisted, directed by you | Actual workflow | State the AI role plainly near the workflow/proof, not only in a tiny footer |
 
-### 1.4 Domain availability (verified live 2026-07-02)
+No customer count, revenue result, testimonial, unassisted completion rate,
+production reliability percentage, or measured cost per accepted page was
+established by this review. Blank proof categories should stay blank until
+there is evidence.
 
-| Domain | Status | Notes |
+## Proof register: what is available now
+
+At the start of this refresh the repository included four public marketing assets:
+
+| Asset | What it can illustrate | What it cannot prove |
 |---|---|---|
-| **`scenewright.ink`** | ✅ **FREE** | **Primary.** `.ink` thematically perfect (publishing/comics/print heritage). |
-| **`scenewright.co`** | ✅ FREE | Strong backup; `.co` reads as company/startup. |
-| `getscenewright.com` | ✅ FREE | Defensive fallback if a `.com` is wanted cheaply. |
-| `scenewright.com` | ❌ Taken | IONOS-registered, non-resolving (likely parked/buyable at a premium — not worth it at launch). |
-| `scenewright.app` / `.ai` | ❌ Taken | Defensive but not essential. |
+| [cthulhu-page.webp](../../web/public/marketing/cthulhu-page.webp) | An existing three-panel illustrated, lettered example, labeled in the library as *The Call of Cthulhu* by H. P. Lovecraft | Current-production provenance, generation time/cost, passing OCR, cross-page continuity, customer success, or an unassisted source-to-export journey |
+| [anya-reference.webp](../../web/public/marketing/anya-reference.webp) | Example character reference imagery | The same character remaining faithful across a book |
+| [rurik-reference.webp](../../web/public/marketing/rurik-reference.webp) | A second example character reference | A customer-approved cast or a measured fantasy cohort |
+| [tavern-reference.webp](../../web/public/marketing/tavern-reference.webp) | Example location reference imagery | A location consistently realized in finished pages |
 
-### 1.5 Cost to secure the brand
+The Cthulhu page was added in commit `5a932e2` on 2026-09-07. No matching
+source-to-render manifest, usage record, or current-profile revision chain was
+located for the public asset. Its polished appearance is useful illustration,
+not a substitute for provenance. The checked-in mock-replay documentation also
+references Cthulhu fixtures; that does not establish this image's generation
+mode. Do not present replay evidence as a real paid production.
 
-| Item | Cost |
-|---|---|
-| `scenewright.ink` (Namecheap, yr 1 promo) | ~$2.98 + $0.18 ICANN = **~$3.16** |
-| `scenewright.ink` renewal (Porkbun, yr 2+) | ~$25/yr |
-| `scenewright.co` (defensive) | ~$20–30/yr |
-| `getscenewright.com` (defensive) | ~$10/yr |
-| **Total year 1** | **~$35–45** |
+**Editorial judgment after visual inspection:** the Cthulhu page's third
+caption reproduces racialized language from the source. It is a poor opening
+impression for a broadly welcoming author product. Prefer neutral existing
+reference imagery or an explicitly labeled first-panel detail until a better
+full-page sample exists. Do not silently alter a caption and present the result
+as unchanged product output. Any detail crop must be labeled as a detail, not
+as a complete page or a continuity test.
 
-`.ink` pricing reference: Namecheap ~$2.98 first-year promo, ~$25+ renewal;
-Porkbun transparent renewal (no teaser-spike). Compare at
-[tld-list.com/tld/ink](https://tld-list.com/tld/ink).
+Do not label source text “public domain everywhere.” Before promoting a new
+sample, record the precise source edition, territory/rights basis, reference
+permissions, and authorization to publish. This is an evidence requirement,
+not a new customer legal promise.
 
-### 1.6 ⚠️ Trademark caveat (could not fully clear)
+### Immediate proof: the latest development project
 
-USPTO TESS/TSDR is session/POST-based and was rate-limited from the research
-environment. Web search returned **no software product, company, or live
-registration** for "Scenewright" — only dictionary definitions and unrelated
-malware-analysis noise. Encouraging but **not a legal clearance.**
+**User direction, 2026-09-09:** use a few assets from the latest `dcc1. 2`
+project, which adapts *Dungeon Crawler Carl*. Local use of these artifacts for
+this review is authorized; public promotion rights have not been established.
+Keep the landing proof provisional, and confirm publication permission or
+replace the examples before an external campaign. The current development
+workflow uses `gpt-image-2` through a
+Codex development adapter restriction. These can be shown now as authentic
+**development examples**, once their exact source files and publication basis
+are recorded. Preserve the output and label any crop or presentation edit.
+They do not establish the deployed production profile, paid provider cost,
+production latency or production completion rate.
 
-Before committing to logo/design spend:
+The user's intended future move to `gpt-image-2.5` is a roadmap direction.
+Expected quality improvement is a hypothesis; do not market it as an available
+model or a demonstrated result. Record actual model/profile and funding per
+sample rather than updating old samples' attribution to the future model.
+See [self-service launch strategy](self-service-launch.md) and
+[test campaign](first-scene-campaign.md) for the current delivery plan.
 
-1. Run the exact string at [tmsearch.uspto.gov](https://tmsearch.uspto.gov/)
-   filtered to **Live** / **Class 9** (software) + **Class 42** (SaaS).
-2. Check [WIPO Global Brand Database](https://www3.wipo.int/branddb/en/) for
-   international coverage.
-3. Budget ~$500–800 for a formal trademark clearance opinion from a practitioner
-   if certainty is wanted before brand-asset spend.
+### The next measured proof asset: an inspectable mini edition
 
----
+Make the next flagship demonstration a **small, consecutive sequence**, not
+a collage of the best isolated generations. Use an owned original fantasy
+excerpt or a source with recorded permission. Include the source excerpt,
+approved character references, complete pages, one honestly documented
+correction, and the downloadable export.
 
-## 2. Competitive landscape
+A proof manifest should record source/permissions, release SHA, fixed profile,
+run date, page/revision identities, provider funding, number of attempts,
+measured credits/cost scope, and which checks/human reviews occurred. Keep
+private metadata internal; expose a readable account of the result and any
+editing on the public page. Three to five consecutive pages is a proposed
+proof scope, not the customer pack entitlement.
 
-### 2.1 The real competitive set
+A useful caption is “Example adaptation · AI-assisted · [source/author] ·
+[run date] · [scope and edits].” Add time or credits only once measured, with
+all retries included. Add a customer quote only with their exact approved
+wording and consent to publish. Never invent social proof to fill a layout.
 
-**Direct competitor (closest):** **ComicInk.ai** — does PDF-book → multi-issue
-comic series, credit pricing, claims <$10 per 8-page issue, credits never
-expire. Clearest feature analog to this 9-stage pipeline (book → bible → cast →
-panels → pages → export). HN "Show HN" reception: "not perfect, but
-substantially better than raw text-to-image." *Watch them first.*
+## Updated market evidence
 
-**Mature / funded:** **Dashtoon** — $18M raised ($5M seed Matrix/Stellaris 2023
-+ $13M Series A Peak XV, Aug 2025). Strongest assembly + consistency + reader-app
-distribution. *But* adapts novels via humans (DashAuthors), not pure AI, and
-carries contract/ethics baggage:
-- [Writer Beware "Contract Critique: Dashtoon"](https://writerbeware.blog/2024/05/10/contract-critique-dashtoon/)
-- r/Wattpad low-payout complaints ("$48 for 2025")
-- Reader-app reviews call the AI art "creepy and off-putting"
+**Official sources accessed 2026-09-09.** These are vendor statements, not
+independent product benchmarks. This focused comparison replaces the older
+market-size tables, alleged universal author hostility, competitor funding
+numbers, forum anecdotes, and unsupported willingness-to-pay estimates.
+Those were not necessary to choose the first experiment and were not
+revalidated.
 
-**Owns the keyword:** **LlamaGen** — markets "novel to comic" but is page-level,
-not whole-book. Pro $9.99 / Max $19.99.
-
-**Long-script (not prose):** **Drawstory.ai** — strongest on long *script* input
-(≤100 pages); requires the author to script first. A friction point this product
-removes by taking raw prose.
-
-**Chapter-by-chapter:** **Jenova.ai** — consistency positioning, claims 200+ page
-consistency, ~$20/mo.
-
-**The real competitor nobody names:** **DIY** — ChatGPT + Midjourney for
-~$30–50/mo. The bar is *materially better consistency/convenience*, not "exists
-vs. doesn't exist."
-
-**Tier-2 single-panel / short-prompt tools** (not long-form competitors, but
-price anchors): AI Comic Factory (free HF demo), Perchance (truly free,
-unlimited), Anifusion, ComicsMaker ($10–$120), Comistitch ($9.99–$39.99,
-credits roll over), ArcStory, Adobe Firefly, Canva Magic Media.
-
-### 2.2 Where the entire category is weak (the wedge)
-
-1. **Character & location consistency** — the #1 universal complaint across
-   r/aicomicmakers, r/StableDiffusion, r/ComicWriting. Characters "change
-   appearance panel-to-panel."
-2. **Long-form prose ingestion** — almost no tool ingests a whole book; users
-   paste excerpts page-by-page.
-3. **Export & finishing** — most generate panels but don't compose a publishable
-   PDF/CBZ. (This product's Stage 9 does.)
-4. **Contract/IP terms** — publishing platforms take aggressive licensing;
-   authors distrust them.
-
-### 2.3 Pricing band that has emerged
-
-| Tier | Price | Examples |
+| Competitor | Verified public statement | Implication / uncertainty |
 |---|---|---|
-| Entry paid | ~$10–11/mo | LlamaGen Pro, Comistitch Starter, Dashtoon Standard, ComicAI |
-| Mid | ~$19–30/mo | Jenova, Drawstory, Comistitch Pro, Dashtoon Pro |
-| Top | ~$40–120/mo | Comistitch Elite, ComicsMaker Pro/Mega |
-| **Breakaway model** | **pay-per-credit, no subscription, credits never expire** | **ComicInk** (~$10 / 8-page issue) — resonates with authors who hate recurring fees |
-| Free floor | $0 | Perchance (unlimited), AI Comic Factory (HF demo) |
+| ComicInk | Dedicated pricing page says Plus is required to create, at $19.99/month with 4,500 monthly credits; one-off packs top up the plan, starting $9.99/1,500 credits. It describes 50 credits per comic page. [Pricing](https://www.comicink.ai/pricing) | The July assumption that its paid offer is purely one-off is stale. Its homepage still describes free entry and $9.99 packs without consistently disclosing the prerequisite: do not build an attack ad from this inconsistency |
+| ComicInk | Markets recurring character/world references, multi-issue stories, and PDF/image exports. [Product page](https://www.comicink.ai/) | Continuity and export are category expectations, not safe exclusive advantages. Performance was not independently tested |
+| LlamaGen | Pricing displays Standard at $18/month, alongside an annual offer billed $172.80; lists multi-page layouts, AI lettering and custom characters. [Pricing](https://llamagen.ai/pricing) | The old $9.99 subscription anchor is stale. Annual discounts and top-up packs must not be confused with monthly plan prices; credits are not comparable across products |
+| SceneWrite | Adjacent storytelling app advertises storyboarding, persistent characters/worlds, conversational editing and AI video workflows. [Features](https://www.scenewrite.app/features/) | Similar spelling/sound remains a brand-confusion question. This product page is not a trademark search or clearance opinion |
 
----
+**Response strategy:** say what our product lets the author do, show the
+actual work, and make the spending decision understandable. Our no-subscription
+purchase flow is a truthful benefit to state on its own. Do not claim that no
+competitor supports it, that only we preserve rights, or that we outperform
+another tool without a like-for-like reviewed experiment.
 
-## 3. Market & demand (the honest picture)
+A prospect's “Why not use a generic image tool?” objection should lead to a
+source-to-page demonstration: approved story decisions, cast references,
+lettering, corrections and an export in one workspace. If that cannot be shown
+clearly, the differentiation is not yet proved.
 
-### 3.1 Market size & growth
+## Naming posture
 
-- **~3.5M self-published titles in 2025** (+38.7% YoY); total U.S. book output
-  topped 4M (+32.5%). Trad-pub rose only 6.6%.
-  ([Publishers Weekly](https://www.publishersweekly.com/pw/by-topic/industry-news/publisher-news/article/99943-book-output-topped-4-million-in-2025.html))
-- **Graphic novel sales +9.2% in 2025**, up >100% since 2019.
-  ([Comics Beat](https://www.comicsbeat.com/graphic-novel-sales-rose-9-2-in-2025/))
-- North American comics/GN market ~$1.94B (2024).
-  ([Publishers Weekly](https://www.publishersweekly.com/pw/newsbrief/index.html?record=5455))
-- **Webtoon IPO'd June 2024**, ~170M MAUs / 150 countries; FY2024 revenue +5.1%.
-  ([Webtoon IR](https://ir.webtoon.com/news-releases/news-release-details/webtoon-entertainment-inc-reports-fourth-quarter-and-full-year/))
-- ⚠️ Webtoon "market size" CAGRs (27–28%) floating around are self-interested
-  vendor estimates — treat skeptically. The measured signal (Webtoon's own
-  revenue + MAUs) is the trustworthy part.
+Use **Scenewright** consistently in the current product and tests; keep
+**Canary** for repository/internal references. The earlier domain availability
+and registrar price tables are withdrawn. The app already uses Scenewright
+and links under `scenewright.ink`; that alone is not proof of registrant
+ownership or clearance.
 
-**Caveat:** the 3.5M figure includes low-effort/AI-assisted/non-book titles. The
-count of *serious* indie novelists is materially smaller — low hundreds of
-thousands. Treat 3.5M as a ceiling, not the buyer base.
+Do not restart a naming exercise as a substitute for product validation.
+Record a deliberate name decision before substantial irreversible brand
+spend, accounting for the adjacent SceneWrite product. No legal clearance was
+performed in this refresh, and no earlier “FREE domain” statement should be
+reused. The substantive rationale worth retaining from July is the name's
+craft-oriented tone; it does not establish rights or customer preference.
 
-### 3.2 The wedge is an order of magnitude
+## Landing page and acquisition direction
 
-Traditional artist cost vs. indie production budget:
+The page should answer five practical questions in order:
 
-| Cost benchmark | Range | Source |
-|---|---|---|
-| Comic artist per page | $50–$400+ (full art) | [Creator Resource](https://www.creatorresource.com/page-rate-finder-comic-book-publishers/), [Drawphics 2026](https://drawphics.com/how-to-hire-a-comic-book-artist-2026/) |
-| **120-page graphic novel at pro rates** | **$6,000–$12,000+** | math |
-| Indie author's *entire* production budget | ~$3,000–$6,000 | [Reedsy](https://reedsy.com/blog/guide/how-to-self-publish-a-book/cost-to-self-publish/) |
-| Custom illustrated **cover** (single) | $450–$3,000 | [Book Cover Hub 2026](https://bookcoverhub.com/blog/book-cover-design-cost/) |
+1. **What can I make?** A short comic adaptation of my own story, beginning
+   with an excerpt. Lead with the result and an honest visual example.
+2. **Does it look good enough to try?** Let visitors inspect existing examples
+   at useful size, with accurate labels; add the consecutive mini edition
+   once verified. Avoid burying all output behind account creation.
+3. **What do I control?** Explain Story → Look → Pages → Book in plain language.
+   Make the AI role and author approvals visible.
+4. **What will I spend?** Show actual credit packages or a clear link to them,
+   no subscription, variable usage and pre-step estimates. Do not imply a
+   signup grant, free generation or guaranteed full issue for Starter.
+5. **What happens if I get stuck?** Explain saved progress, review/correction
+   and the real support route, without promising instant human intervention
+   or an unimplemented automatic remedy.
 
-Authors already pay $450–$3,000 for a *single illustrated cover*. A full-graphic-
-novel tool enters a spend category authors understand and budget for.
+Use a direct start action plus a secondary “see an example” action. Account
+creation should lead to a focused excerpt/sample path rather than a blank
+workspace. “First issue” is a useful aspiration but should not imply an
+implemented fixed-size bundle. Keep full-book capability available after
+first value; it need not be the first purchase commitment.
 
-### 3.3 Demand signals (real but diffuse)
+### Proposed repeatable acquisition loop
 
-- Active Reddit threads asking for exactly this workflow: r/writing
-  ("Novel to graphic novel"), r/ComicBookCollabs ("Planning to start a comic"),
-  r/ComicWriting ("How to adapt prose to comic"), r/WritingWithAI ("Which AI
-  tools for comic book/graphic novel writing?").
-- Sentiment in those threads is consistent: it's expensive (must pay an artist),
-  adapting prose loses internal monologue, people are actively hunting for
-  cheaper/AI-assisted paths. This is **bottom-of-funnel demand** — people
-  already searching for the workflow — but diffuse and price-sensitive.
+Publish useful, high-intent content around adapting an existing scene and
+show the result. Send relevant traffic to the matching proof and excerpt
+start path. Measure completed paid exports and contribution, improve the
+largest drop-off, then repeat. This can become a repeatable product funnel;
+it does not depend on months of founder community participation or free
+whole-book adaptations for influencers.
 
-### 3.4 Willingness to pay & author income reality
+A bounded paid-search/message test can be appropriate **after delivery and
+billing gates pass**. The old blanket ban on cold paid acquisition was an
+unsupported channel assumption. Likewise, “80% of users from community” and
+“authors resent every subscription” were assertions, not measured findings.
+Use the [campaign plan](first-scene-campaign.md) for a spending ceiling, creative variants,
+tracking, and stop rules; drafting it is not authorization to spend or send.
 
-- **Median active self-pub author: ~$12,000–$15,000/yr.** ~50% earn under
-  $1,000/yr. Income is extremely skewed; top 10% earn $50K+.
-- **Author-tool pricing norms:**
-  - *One-time purchase* for infrastructure: Scrivener ~$49–60, Atticus $147,
-    Vellum $249.99.
-  - *Subscription* for AI content tools: Sudowrite $10–59/mo, NovelCrafter
-    $4–20/mo + BYOK, NovelAI $15/mo.
-- **Implication:** a graphic-novel generator is closer to an AI content tool
-  (subscription + usage credits is expected, because generation has real compute
-  cost) than to Scrivener/Atticus. Authors are conditioned to $15–60/mo for AI
-  writing tools; a premium above that is defensible only if output quality is
-  dramatically higher than DIY (ChatGPT + Midjourney).
+A customer-controlled share/export flow can later earn discovery from readers.
+Sharing must be opt-in, with clear publication permissions. Do not impose an
+unimplemented mandatory watermark or auto-publish private manuscripts.
+Opt-in lifecycle messages should help a user return to the actual next step;
+marketing consent, delivery limits and unsubscribe behavior must exist before
+switching them on. No outreach is sent by this proposal.
 
-### 3.5 The realistic buyer is narrow
+## Retired launch ideas and remaining evidence
 
-The real buyer is the **~top 20% of serious, prolific, multi-book indie authors
-earning $12K+/yr** — not the millions of one-book hobbyists earning ~$0. A
-mass-market subscription priced for the bottom 50% will under-monetize; a
-premium one-time/credit product aimed at serious authors is more aligned with
-where the money actually is.
+Retire the free full-Chapter-1 flywheel, unpaid influencer full-book service,
+“AI only in the footer,” perpetual community posting as the acquisition engine,
+fixed commissioned-art savings, blanket all-output copyright promises, and
+“full novel in minutes.” They either increase operating burden, misrepresent
+the workflow, or lack supporting evidence.
 
----
-
-## 4. Positioning (the make-or-break decision)
-
-Given the audience's AI hostility, positioning is *the* strategy, not a side
-task. Build everything around a single framing:
-
-> **"The author owns the work. Scenewright is the instrument."**
-
-Four non-negotiable product/marketing commitments:
-
-1. **Human-in-the-loop, always.** Every stage is inspectable and editable (the
-   9-stage design already does this — *lead with it*). Pitch is "AI accelerates;
-   you direct," never "AI does it for you."
-2. **Author retains all IP.** No claim on input or output. Make IP terms the most
-   prominent thing on the pricing page. (Dashtoon's biggest weakness — the
-   clearest contrast.)
-3. **Document human authorship.** The Copyright Office denies protection to
-   *purely* AI-generated images but protects human-arranged/edited works
-   ([USCO Part 2 report](https://www.copyright.gov/ai/Copyright-and-Artificial-Intelligence-Part-2-Copyrightability-Report.pdf)).
-   Lean into the edit/approve/arrange workflow. Position the export as
-   *human-authored, AI-illustrated* — and say so. Future feature: an exported
-   "authorship log" (which panels the author edited/approved) as a
-   copyright-supporting artifact.
-4. **No "AI comic" language anywhere.** The category term is poison with this
-   audience. Sell **"a graphic-novel edition of your book"** or **"visual
-   adaptation."** The word "AI" appears in a small "how it works / responsible
-   use" footer, not in headlines.
-
----
-
-## 5. Marketing strategy (lean / pre-revenue tier)
-
-Budget: **under ~$2k/mo.** Community-led growth, not paid acquisition — both
-because the budget can't afford paid and because this audience is reached through
-trust, not impressions.
-
-### Phase 0 — Foundation (weeks 1–4, ~$0–200)
-
-- [ ] Secure `scenewright.ink` + `.co` + `getscenewright.com` (~$35).
-- [ ] Trademark clearance (§1.6).
-- [ ] One-page site with email waitlist. Copy lead: *"Turn your novel into a
-      graphic novel. You keep the rights."*
-- [ ] Set up r/SelfPublish, r/writing, r/KDP, r/ComicBookCollabs, r/WritingWithAI
-      accounts (genuine participation, not link-dropping).
-
-### Phase 1 — Community seeding (months 1–3, ~$0–500/mo)
-
-80% of early users come from here.
-
-- [ ] **Show-don't-tell on Reddit/X.** Take a *public-domain* novel (Pride &
-      Prejudice, Dracula — IP-clean) and post the adaptation process
-      stage-by-stage. The 9-stage pipeline is *innately* shareable content:
-      "here's how the AI storyboarded Chapter 1" threads. **The pipeline is the
-      marketing.**
-- [ ] **Author YouTuber / BookTok seeding.** Identify 10–15 mid-tier
-      creator-authors (5–50K subs) covering self-pub craft. Offer free full
-      adaptation of one of *their* novels in exchange for an honest process
-      video. Booktube audiences convert well and trust creator endorsement far
-      more than ads. Cost: compute + time, ~$0 cash.
-- [ ] **Target the pain queries with content/SEO.** People are already searching
-      these exact phrases: *"turn my novel into a comic,"* *"novel to graphic
-      novel,"* *"how to make a comic from my book."* Write the definitive guides
-      (low-competition long-tail). Capture that intent.
-- [ ] **Be present where the decision happens:** KBoards/Writer's Cafe,
-      r/Wattpad, Royal Road forums, the 20Booksto50K Facebook group. Answer
-      questions; never lead with the product.
-
-### Phase 2 — Free-tier flywheel (months 2–4, ~$300–800/mo compute)
-
-- [ ] **Free tier = Chapter 1, fully adapted, with a "Made with Scenewright"
-      watermark + credit on the export.** The single most important growth lever:
-      authors share their own adaptation to their own audience, each share
-      carrying the brand. The free artifact is the acquisition channel.
-- [ ] **Pay-per-credit pricing, no subscription, credits never expire**
-      (matching ComicInk's resonant model + author-tool norms). Authors resent
-      recurring fees for one-off production tasks; "buy 200 credits, use them
-      whenever" fits how they actually work (intensive bursts between books).
-- [ ] **Suggested entry:** ~$10 for a one-issue (8-page) sample; full-book
-      adaptation in the $80–200 range — dramatically under the $6K–$12K
-      traditional cost, dramatically over the ~$0 marginal cost of DIY.
-
-### Phase 3 — Proof & scale (months 4–6, ~$1–2k/mo)
-
-- [ ] **Case studies are the only thing that closes this audience.** Sponsor
-      3–5 prolific authors to adapt a full book and publish a transparent "what
-      it cost, what it earned, what I'd do differently" writeup. No ad beats a
-      peer's revenue data.
-- [ ] **Consistency is the headline feature.** It's the universal complaint.
-      Build one demo reel showing the same character across 50 panels and put it
-      above the fold. Nothing else matters if this isn't visibly solved.
-- [ ] Light retargeting + newsletter to the waitlist. Still no cold paid — the
-      ROI isn't there yet for an AI-skeptical niche at lean budgets.
-
-### What NOT to do (at this tier)
-
-- ❌ No cold Meta/Google paid ads (wrong audience fit, lean budget, anti-AI
-  sentiment makes ad creative a minefield).
-- ❌ No broad PR / TechCrunch launch (attracts the wrong audience — tire-kickers
-  and AI-art Twitter backlash — not buyers).
-- ❌ No "AI" in any headline or hero image.
-
----
-
-## 6. Risks to monitor
-
-| Risk | Severity | Mitigation |
-|---|---|---|
-| Author anti-AI sentiment | **High** | §4 positioning; never lead with "AI"; human-in-loop as product DNA. |
-| Copyright Office denies protection to AI images | **High / structural** | Lean into human-authorship documentation; counsel users honestly; this is a *reason* to buy a tool that records creative direction, not a reason to avoid one. |
-| KDP mandatory AI disclosure | Medium | Not a ban; disclosure is to Amazon, not always surfaced to readers. Monitor for tightening. |
-| Dashtoon out-spends | Medium | They out-fund but carry contract/ethics baggage and use humans, not pure-AI — wedge is *author ownership + price*, not features. |
-| ComicInk feature-overlap | Medium | They're indie-sized too. Win on author-specific positioning (they read generic "AI comic maker"; this reads "your novel, scene by scene"). |
-
----
-
-## 7. Bottom line
-
-**Name: `Scenewright`** at **`scenewright.ink`** (~$3 first year, ~$25/yr
-renewal). Real dictionary word meaning "maker of scenes," reads as human craft in
-an AI-hostile market, semantically matches the novel→scene→panel pipeline, and is
-domain-clear on the thematically perfect `.ink` TLD. Two free backup domains
-(`.co`, `getscenewright.com`) secure the brand for ~$35 total.
-
-Marketing is **community-led growth built on the pipeline itself as content**, a
-**free Chapter-1-artifact flywheel** for virality, and **positioning as
-author-owned IP / human-directed craft** — the one thing every funded competitor
-gets wrong and this AI-hostile audience needs to hear. Budget fits the lean tier
-(~$0–2k/mo); paid acquisition waits until there are case studies with real
-author revenue.
-
-**Before brand-asset spend:** complete the USPTO trademark clearance (§1.6).
-
----
-
-## Sources
-
-**Competitive:**
-- [ComicPad — Best AI Comic Generators 2026](https://www.comicpad.app/best-ai-comic-generators)
-- [ComicInk.ai](https://www.comicink.ai/) / [book-to-comic blog](https://www.comicink.ai/blog/convert-book-to-comic-series) / [pricing](https://www.comicink.ai/pricing)
-- [Writer Beware — Contract Critique: Dashtoon](https://writerbeware.blog/2024/05/10/contract-critique-dashtoon/)
-- [TechFundingNews — Dashtoon $5M](https://techfundingnews.com/dashtoon-raises-5m-to-deploy-generative-ai-for-comic-creation/)
-- [r/Wattpad — Dashtoon outreach & payouts](https://www.reddit.com/r/Wattpad/comments/1h5rpo4/dashtoon_reached_out_to_me_offering_to_adapt_my/)
-- [LlamaGen pricing](https://llamagen.ai/pricing) / [novel-to-comic tool](https://llamagen.ai/tools/novel-to-comic)
-- [Drawstory.ai](https://www.drawstory.ai/) / [graphic-novel page](https://www.drawstory.ai/graphic-novel)
-- [Jenova Comic Creator](https://www.jenova.ai/en/a/comic-creator)
-- [AI Comic Factory — HF Space](https://huggingface.co/spaces/jbilcke-hf/ai-comic-factory)
-- [Perchance AI Comic Generator](https://perchance.org/ai-comic-generator)
-- [r/aicomicmakers — why AI comics are hated](https://www.reddit.com/r/aicomicmakers/comments/1q9azzc/why_are_ai_characterscomics_so_hated/)
-- [r/ComicWriting — consistency blocker](https://www.reddit.com/r/ComicWriting/comments/15pig0h/)
-
-**Market:**
-- [Publishers Weekly — Book Output Topped Four Million in 2025](https://www.publishersweekly.com/pw/by-topic/industry-news/publisher-news/article/99943-book-output-topped-4-million-in-2025.html)
-- [Comics Beat — Graphic novel sales rose 9.2% in 2025](https://www.comicsbeat.com/graphic-novel-sales-rose-9-2-in-2025/)
-- [Publishers Weekly — comics/graphic novels ~$1.94B in 2024](https://www.publishersweekly.com/pw/newsbrief/index.html?record=5455)
-- [Webtoon IR — FY2024 results](https://ir.webtoon.com/news-releases/news-release-details/webtoon-entertainment-inc-reports-fourth-quarter-and-full-year/)
-- [Reedsy — Cost to self-publish 2026](https://reedsy.com/blog/guide/how-to-self-publish-a-book/cost-to-self-publish/)
-- [Creator Resource — page-rate finder](https://www.creatorresource.com/page-rate-finder-comic-book-publishers/)
-- [Drawphics — How to Hire a Comic Book Artist 2026](https://drawphics.com/how-to-hire-a-comic-book-artist-2026/)
-- [Book Cover Hub — cover design cost 2026](https://bookcoverhub.com/blog/book-cover-design-cost/)
-- [Wifitalents — self-publishing industry statistics](https://wifitalents.com/self-publishing-industry-statistics/)
-
-**Legal / sentiment:**
-- [USCO Part 2 Copyrightability Report (PDF)](https://www.copyright.gov/ai/Copyright-and-Artificial-Intelligence-Part-2-Copyrightability-Report.pdf)
-- [USCO AI hub](https://www.copyright.gov/ai/)
-- [PatentNext — Zarya of the Dawn registration](https://www.patentnext.com/2023/04/u-s-copyright-office-partially-allows-registration-of-work-having-ai-generated-images-zarya-of-the-dawn/)
-- [Brown Rudnick — Thaler / AI work ineligible for copyright](https://briefings.brownrudnick.com/post/102i8q0/copyright-office-rules-that-ai-generated-work-is-ineligible-for-copyright-lack-o)
-- [Authors Guild — class action v. OpenAI](https://authorsguild.org/news/ag-and-authors-file-class-action-suit-against-openai/)
-- [Authors Guild — Amazon AI disclosure policy](https://authorsguild.org/news/amazons-new-disclosure-policy-for-ai-generated-book-content-is-a-welcome-first-step/)
-- [Inkfluence AI — KDP AI disclosure policy 2026](https://www.inkfluenceai.com/blog/amazon-kdp-ai-disclosure-policy-2026)
-
-**Domains:**
-- [Namecheap .ink](https://www.namecheap.com/domains/registration/gtld/ink/)
-- [Porkbun Domain Pricing](https://porkbun.com/products/domains)
-- [TLD-list .ink comparison](https://tld-list.com/tld/ink)
-
-**Trademark:**
-- [USPTO Trademark Search (TESS)](https://tmsearch.uspto.gov/)
-- [WIPO Global Brand Database](https://www3.wipo.int/branddb/en/)
+Retain the author-control position, precise rights language, flexible credit
+purchases and proof from the author's actual story. Validate the narrow
+fantasy/excerpt audience with real unaided use and payment. Repository evidence
+supports product capabilities; public vendor pages support only the market
+snapshot. Neither proves that Scenewright has achieved customer demand or
+production reliability. The next decisive evidence is a real first paid
+export completed without founder rescue.

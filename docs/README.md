@@ -42,6 +42,14 @@ retained as current reference.
 
 ## Active future work
 
+- [Self-service launch strategy](proposals/self-service-launch.md): September 9
+  commercial direction, independent-use gates and automation priorities.
+- [First-scene campaign kit](proposals/first-scene-campaign.md): prepared copy,
+  measurement and bounded spend proposal; not an activated campaign.
+- [Launch readiness](proposals/launch-readiness.md) and
+  [pricing](proposals/pricing-and-margin.md): current implementation evidence
+  and unresolved production/commercial checks.
+
 Only active, accepted, or genuinely pending design work should remain under
 `docs/superpowers/`:
 
