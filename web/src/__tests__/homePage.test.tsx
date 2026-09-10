@@ -41,14 +41,34 @@ describe("Scenewright homepage", () => {
     expect(
       screen.getByRole("heading", {
         level: 1,
-        name: "Turn your novel into a graphic novel you direct.",
+        name: "Your story. Its first comic scene.",
       }),
     ).toBeTruthy();
 
-    const sampleLink = screen.getByRole("link", { name: /Start with a sample story/ });
+    const sampleLink = screen.getAllByRole("link", { name: /Create my first scene/ })[0];
     expect(sampleLink.getAttribute("href")).toBe("/signup");
     expect(screen.getByText(/AI-assisted visual adaptation/)).toBeTruthy();
     expect(screen.queryByText(/500 free credits/i)).toBeNull();
+  });
+
+  it("makes provisional development pages readable without claiming customer or production proof", () => {
+    renderHomePage();
+
+    expect(screen.getByText(/Not customer work; results vary/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Read a development sample" }).getAttribute("href")).toBe("#continuity");
+    expect(screen.getAllByRole("link", { name: "Read page 3 at full size" })[0].getAttribute("href")).toBe("/marketing/dcc1-2-page-003.webp");
+    expect(screen.getByText(/Automated checks do not guarantee visual quality/)).toBeTruthy();
+    expect(screen.getByText(/not a fixed number of pages/)).toBeTruthy();
+  });
+
+  it("localizes the new entry point and sample links in French", () => {
+    renderHomePage();
+    fireEvent.click(screen.getByRole("button", { name: "FR" }));
+
+    expect(screen.getByRole("heading", { level: 1, name: "Votre récit. Sa première scène de BD." })).toBeTruthy();
+    expect(screen.getAllByRole("link", { name: /Créer ma première scène/ })[0].getAttribute("href")).toBe("/signup");
+    expect(screen.getAllByRole("link", { name: "Lire la page 4 en taille réelle" })[0].getAttribute("href")).toBe("/marketing/dcc1-2-page-004.webp");
+    expect(screen.getByRole("link", { name: "Aller au contenu" })).toBeTruthy();
   });
 
   it("links rights language to the public terms and states the copyright caveat", () => {
@@ -69,7 +89,7 @@ describe("Scenewright homepage", () => {
     expect(
       screen.getByRole("heading", {
         level: 1,
-        name: "Convierte tu novela en una novela gráfica que tú diriges.",
+        name: "Tu historia. Su primera escena de cómic.",
       }),
     ).toBeTruthy();
     expect(document.documentElement.lang).toBe("es");

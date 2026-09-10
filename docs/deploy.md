@@ -1,24 +1,19 @@
 # Canary — Fly.io Deploy Runbook
 
-> A from-scratch, copy-pasteable guide to deploying Canary on a **fresh** Fly.io
-> account. Distilled from real deploy sessions — every gotcha below was hit in
-> practice, not theorized. Companion to `docs/proposals/launch-readiness.md`
-> (the *why*) and `docs/proposals/deployment-platform-review.md` (the *what else
-> we considered*). Read this one top to bottom before the first deploy.
->
-> **Updated 2026-07-05:** collapsed the previous two-app split (`canary-web` +
-> `litellm-gw`) into a single Fly app. The LiteLLM proxy now runs as a loopback
-> subprocess inside the web container — provider keys are isolated to that
-> process and never exposed publicly, but they live on one machine instead of
-> two. Trims ~$10-15/mo idle compute and halves the deploy surface.
->
-> **Dated 2026-07-04.** Verify against current Fly/Supabase/Stripe dashboards
-> before launch — UI labels drift.
->
-> **Reliability upgrade requirements, 2026-09-07:** apply the reviewed canonical
-> SQL before starting the new application, preserve `/projects`, and drain before
-> normal releases. These instructions do not record a production migration or
-> deployment; SQL verification was confined to an isolated database.
+**Status: Current repository runbook, September 9, 2026.** Verify current
+provider/dashboard details before executing. This refresh did not inspect or
+change production state. Use [launch readiness](proposals/launch-readiness.md)
+for launch acceptance and [the platform decision](proposals/deployment-platform-review.md)
+for architecture rationale.
+
+The July 4–5 deployment sessions explain the one-app design and historical
+failure examples below; they do not establish current account state, pricing,
+volume capacity, or a completed production migration.
+
+**Reliability upgrade requirement:** apply reviewed canonical SQL before the
+new application starts, preserve `/projects`, and drain before normal releases.
+Previously recorded SQL verification was isolated; attach production results
+to a release evidence record before calling the upgrade deployed.
 
 ## Architecture (one machine, two processes)
 
@@ -50,7 +45,9 @@ entrypoint (`litellm/entrypoint.sh`) starts the proxy in the background, waits
 for `/health/liveliness`, then supervises both processes. If LiteLLM exits after
 boot, the entrypoint restarts it with a bounded restart budget instead of
 leaving a healthy-looking web app with a dead image gateway. Provider API keys
-live in `canary-web`'s fly secrets; only the proxy process reads them.
+live in `canary-web`'s Fly secrets. Both child processes inherit the environment;
+the proxy's loopback binding provides network isolation, not process-level
+secret isolation.
 
 Keep **one uvicorn application worker on one Fly Machine**. Generation queue
 workers are concurrent tasks within that application, not additional app
@@ -64,11 +61,10 @@ paid actions; copying artwork alone is not a recovery backup.
 
 ## Prerequisites (before you touch Fly)
 
-1. **A payment method on the Fly account.** The free trial caps each machine
-   at **5 minutes** of runtime, then SIGINTs it — the container will boot-loop
-   on a 5-min cycle forever and never reach ready. Add the card at
-   **fly.io/app/billing** before the first deploy. Floor cost is ~$15–25/mo
-   for the one machine idle (4GB VM); provider usage is on top.
+1. **A funded Fly account with the required compute/storage allowance.**
+   Confirm current billing and trial limits in the dashboard before deploying.
+   Budget from the actual 4 GB Machine, storage, transfer, and backup quote;
+   July idle-compute estimates are not a current monthly cost promise.
 2. **Fly CLI installed + authenticated**: `brew install flyctl && fly auth login`.
 3. **A Supabase project** (prod). From its dashboard grab:
    - Project URL (`https://<project>.supabase.co`).
@@ -218,6 +214,12 @@ the machine must be started explicitly:
 fly machine start -a canary-web
 ```
 
+This deliberate-stop policy also means a web-process/container crash is not
+self-healing. LiteLLM has a bounded child restart budget, but exhausting it
+stops the container. For a hands-off public launch, first implement and exercise
+bounded Machine recovery with explicit maintenance state, alerts, and journal
+preservation. Do not automatically retry paid generation when restarting.
+
 If the Machine was created before the `[[restart]]` block was added, apply the
 policy directly once (the next deploy will keep it in sync):
 
@@ -291,12 +293,29 @@ and production-image jobs pass for the exact SHA; it then:
 
 1. Authenticates `POST /api/ops/drain`, then waits for deployment status to show
    both `draining: true` and `safe_to_deploy: true`.
-2. Deploys the exact tested SHA with immutable release metadata.
-3. Verifies `/api/version`, liveness, readiness, and security headers.
+2. Rebuilds the exact tested source SHA with production frontend arguments and
+   release metadata. This is not deployment of the CI smoke-test image digest.
+3. Verifies `/api/version`, liveness, the production readiness contract, and
+   required security-header presence. Signed-in behavior and policy values
+   still need their release exercises.
 
 The workflow deliberately has no production database credential and cannot
 apply schema changes. If a release requires a database change, complete the
 reviewed manual operation in Step 1 before dispatching the deployment.
+
+**Release cancellation protection:** each manual dispatch has a unique
+workflow concurrency group and disables automatic cancellation; ordinary
+push/PR runs still cancel superseded CI on the same ref. The existing
+`production-deploy` job group runs one deployment at a time and uses
+`queue: max` so later dispatches do not replace an earlier pending deploy.
+GitHub caps this queue at 100 pending jobs; additional requests are cancelled.
+These semantics follow [GitHub's concurrency documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#concurrency).
+
+This protects against superseding runs, not deliberate operator cancellation,
+job timeouts, or runner failure. Those can leave the old process drained or a
+new process already running: inspect actual release/activity state before
+explicitly resuming or rolling back. Queued releases still require valid
+maintenance and schema conditions when they reach deployment.
 
 Configure a GitHub environment named `production`, limit it to the `main`
 branch, and add these environment secrets:
@@ -376,7 +395,9 @@ In the Stripe **dashboard** (test mode first):
 1. Developers → Webhooks → **Add endpoint**.
 2. URL: `https://<canary-web-public-url>/api/billing/webhook` (the route is
    `POST /webhook` on the `billing` router at prefix `/api/billing`).
-3. Events: `checkout.session.completed`, `payment_intent.succeeded`.
+3. Event: `checkout.session.completed` (the event handled by the current
+   billing router). Credits require `payment_status = paid` and a payment intent;
+   an unhandled `payment_intent.succeeded` event does not grant credits.
 4. Copy the signing secret (`whsec_...`) into `canary-web.env` as
    `STRIPE_WEBHOOK_SECRET` and re-import:
    `fly secrets set -a canary-web STRIPE_WEBHOOK_SECRET=whsec_...`.
@@ -387,9 +408,9 @@ The handler verifies signatures and is idempotent on
 ## Step 4 — volume backups (do not skip)
 
 Fly volumes are single-region. Scheduled snapshots protect against a damaged
-volume, but are not an off-provider backup. The current volume has automatic
-snapshots enabled with five-day retention. Confirm that state and increase the
-retention before inviting testers:
+volume, but are not an off-provider backup. Earlier sessions recorded automatic
+snapshots and five-day retention; inspect the actual volume and record today's
+schedule, retention, and most recent successful snapshot before changing them:
 
 ```bash
 fly volumes show <volume-id>
@@ -400,9 +421,11 @@ fly volumes update <volume-id> --scheduled-snapshots=true --snapshot-retention 1
 Perform one restore drill before launch; a snapshot that has never been restored
 is not yet a proven recovery path.
 
-The `canary_projects` volume is currently provisioned at 10 GB. Monitor
-`fly_volume_used_pct` and extend it before it reaches 80%; Fly volumes can grow
-but cannot shrink.
+An earlier runbook recorded a 10 GB `canary_projects` volume; confirm actual
+capacity and use now. Monitor disk utilization and alert before the agreed
+headroom threshold (80% is an initial operational target). Verify the current
+platform procedure before extending it. Back up the journals and recovery
+records as well as artwork; finalized-export R2 delivery is not that backup.
 
 ## Optional — Cloudflare R2 delivery for finalized exports
 
@@ -476,18 +499,19 @@ the secret with `fly secrets unset SENTRY_DSN -a canary-web`.
 
 `Out of memory: Killed process (litellm) total-vm:~926MB` → the machine couldn't
 fit both the proxy's then-resident baseline (~870 MB) and Playwright/Chromium
-plus uvicorn. The co-located production machine now pins `memory = '4gb'` so
-the image gateway has headroom during cast/draw and compose/export. Keep
-alerting on `fly_instance_exit_oom`; the compose stage can add a Chromium
-process that peaks near 500 MB.
-
-If you see OOMs mid-generation specifically, Playwright is the likeliest
-culprit, not litellm.
+plus uvicorn. The checked-in co-located Machine pins `memory = '4gb'`.
+The historical ~500 MB composition-process observation was from the retired
+panel pipeline; it is not a current Finish memory measurement. Alert on OOM
+exits and measure current peak memory during Cast, complete-page Draw, and
+Finish/export before changing worker concurrency. Diagnose the process that
+actually exited rather than assuming the old composition path is responsible.
 
 ### Boot-loop: `Trial machine stopping ... 5m0s`
 
-Account has no payment method. Trial tier kills every machine at 5 min. Add a
-card at fly.io/app/billing, then `fly machine restart -a canary-web`.
+This happened during the July trial deployment. Check the account's current
+funding/trial restriction and the Machine event log; resolve the stated
+restriction before explicitly restarting. Do not assume current trial terms
+from that historical observation.
 
 ### `Forbidden use of secret API key in browser`
 
@@ -512,9 +536,11 @@ record, then deploy.
 
 ### Deploy error: `failed to get VM ... no route to host`
 
-Transient Fly control-plane networking blip (Fly's API lost contact with the
-machine it just provisioned). Not a code or config problem. Just `fly deploy`
-again; usually succeeds on retry.
+This was observed during a historical Fly provisioning attempt. Inspect the
+Machine/release state first: the deployment may have partially completed.
+Re-establish drain on the running process before retrying a normal release,
+preserve the volume, and record the outcome. An error alone does not prove the
+old release is still running or that it is safe to deploy again.
 
 ---
 

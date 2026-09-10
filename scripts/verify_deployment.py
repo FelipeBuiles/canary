@@ -18,6 +18,7 @@ REQUIRED_SECURITY_HEADERS = {
     "x-content-type-options",
 }
 DEPLOYMENT_VERIFIER_USER_AGENT = "Canary-deployment-verifier/1.0"
+EXPECTED_PIPELINE_CONTRACT = "eight-stage-v2"
 
 
 def _get_json(origin: str, path: str) -> tuple[dict[str, Any], Any]:
@@ -58,6 +59,22 @@ def main() -> int:
         evidence["readiness"] = readiness
         if readiness.get("status") != "ok":
             failures.append("/api/health/ready did not report ok")
+        if readiness.get("pipeline_contract") != EXPECTED_PIPELINE_CONTRACT:
+            failures.append(
+                "production pipeline contract mismatch: "
+                f"expected {EXPECTED_PIPELINE_CONTRACT}"
+            )
+        if readiness.get("model_mode") != "api":
+            failures.append("production readiness must report API model mode")
+        checks = readiness.get("checks")
+        if not isinstance(checks, dict):
+            failures.append("production readiness dependency checks are missing or malformed")
+        else:
+            for dependency in ("supabase", "litellm"):
+                if checks.get(dependency) != "ok":
+                    failures.append(
+                        f"production readiness must report {dependency} as ok"
+                    )
 
         _, headers = _get_json(origin, "/api/health")
         header_names = {name.lower() for name in headers}

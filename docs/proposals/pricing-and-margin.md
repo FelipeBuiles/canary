@@ -1,345 +1,203 @@
-# Scenewright — Credit Pricing & Margin Recommendation
+# Scenewright — Credit Pricing and Sustainable Self-Service
 
-> **Current-pipeline economics only (2026-07-25):** the credit conversion,
-> reservation, and package decisions remain implemented, but book-cost and
-> margin calculations below assume panel-by-panel generation. Recompute them
-> from measured complete-page costs before the full-page pipeline launches.
-> Do not use the panel-count model to price the accepted target architecture.
+> **Status: Proposed commercial policy, with code-backed pricing facts.**
+> Refreshed 2026-09-09. This replaces the July panel-based book-cost model.
+> Package amounts are implemented; production configuration, measured margin,
+> and any pages-per-pack promise require separate evidence. No runtime price
+> or customer terms are changed by this document.
 
-> **Launch decision (2026-07-30):** the package prices and ledger mechanics are
-> code-backed, but the coverage, typical-book, and margin claims below remain
-> provisional until a provider-backed complete-page run is measured. Use
-> [the market and launch-readiness reassessment](../research/2026-07-30-market-and-launch-readiness.md)
-> for the required measurement fields and go/no-go gates.
+## Decision
 
-> Resolves Launch-Readiness **P1 #9** (unit economics) and **Open Questions #1 &
-> #3**. Picks concrete values for the three production env vars that currently
-> ship at zero-margin / unconfigured defaults. Dated 2026-07-03.
->
-> Method: cost-model built from the actual pricing table
-> (`litellm_pricing_overrides.yaml`) and the actual models wired per stage
-> (`litellm/config.yaml`), cross-checked against competitor pricing and
-> AI-SaaS margin benchmarks. This is a *pricing* exercise — the ledger
-> mechanics (`pg_advisory_xact_lock`, the `user_credits` computed view,
-> atomic reservation/release) are out of scope and untouched.
+Keep the existing one-time credit packages for the first self-service launch.
+Sell the ability to turn a short excerpt into a reviewed comic, then expand
+when the author likes the result. Do not sell “a full book for $25,” claim a
+package covers a particular number of pages, or assume a first purchase will
+finish an excerpt until current complete-page runs substantiate it.
 
-## TL;DR — the three values
+The launch offer should reduce commitment through scope and visible proof,
+not through an unbounded free chapter or founder-operated production service.
+A small successful output that a customer can make unaided is more useful
+commercial evidence than a cheap nominal page price.
 
-| Env var | Current | **Recommended** | Effect |
-|---|---|---|---|
-| `PULP_MODEL_COST_MARKUP` | `1.0` (0% margin) | **`2.0`** | 2× provider cost → **~48% net gross margin** after Stripe. A typical book lands at **~$25**. |
-| `PULP_CREDITS_PER_PROVIDER_USD` | `100` | **`100`** (keep) | Clean 1 credit = $0.01 of pre-markup provider spend. Don't touch — it's a unit-conversion constant, not a pricing knob. |
-| `AI_BILL_FAILED_REQUESTS` | `provider_usage_only` | **`provider_usage_only`** (keep) | User pays for calls the provider actually metered (incl. safety refusals with usage); operator eats hard 5xx/timeout failures. Industry-standard, ~3% book-cost leak. |
+## What the implementation actually does
 
-**Recommended Stripe packages** (markup baked in via the credit conversion,
-not per-package — so margin is uniform across tiers):
+| Setting or behavior | Checked-in evidence | Consequence |
+|---|---|---|
+| Credit conversion | `ceil(provider USD × credits per provider USD × markup)` in [credits.py](../../novel_to_comic/src/novel_to_comic/server/credits.py) | Conversion applies to usage debits; credit-pack purchase price is separate |
+| Conversion factor | `PULP_CREDITS_PER_PROVIDER_USD=100` in [.env.example](../../.env.example); runtime default 100 | At 2× markup, $1 of metered provider cost converts to 200 credits before per-call rounding |
+| Markup | Example environment specifies `PULP_MODEL_COST_MARKUP=2.0`; runtime fallback is **1.0** | Never infer live 2× markup from the package table; record effective deployed value |
+| Reservation cushion | Default `PULP_RESERVATION_BUFFER=1.25` in credits.py | Temporary hold, not an extra final charge |
+| Failed requests | `provider_usage_only` in example environment; billing behavior in [ai/client.py](../../novel_to_comic/src/novel_to_comic/ai/client.py) and [ai/finalisation.py](../../novel_to_comic/src/novel_to_comic/ai/finalisation.py) | Failure billing depends on the usage evidence reaching finalisation; it is not a universal guarantee that providers charge nothing on timeouts |
+| Non-production funding | Mock and Codex-subscription usage bypass public credit debit in credits.py | Local free runs cannot establish production paid-run economics |
+| Unknown pricing | [usage.py](../../novel_to_comic/src/novel_to_comic/usage.py) can return zero for unknown pricing; credits.py applies a one-credit floor to billable activity | Zero recorded provider cost is not proof of free inference; unresolved cost rows must be excluded from margin claims and investigated |
+| Purchase contract | [billing.py](../../novel_to_comic/src/novel_to_comic/server/routers/billing.py); [TermsPage.tsx](../../web/src/pages/legal/TermsPage.tsx) | One-time packages, no expiry under current terms; do not invent a refund guarantee or free grant |
 
-| Package | Price | Credits | Covers | Implied GM |
-|---|---|---|---|---|
-| Starter | $12 | 1,200 | ≈½ a book / a long preview | 47% |
-| **Standard** | **$30** | **3,000** | **1 full book + regen headroom** | 48% |
-| Creator | $70 | 7,500 | ≈3 books (≈7% bulk bonus) | 45% |
-| Studio | $150 | 18,000 | ≈7 books (≈20% bulk bonus) | 38% |
+**Current packages (USD):**
 
-A typical 60k-word novel costs the user **~$25** (Standard package + ~half a
-Creator, or one Creator with change). That's 2× the cheapest competitor
-(LlamaGen $9.99/mo) but a fraction of a commissioned graphic novel ($6k–12k),
-and it buys the consistency + whole-book ingestion + PDF/CBZ export that the
-DIY/cheap tier can't deliver.
+| Package | Price | Credits | Credits per dollar |
+|---|---:|---:|---:|
+| Starter | $12 | 1,200 | 100.00 |
+| Standard | $30 | 3,000 | 100.00 |
+| Creator | $70 | 7,500 | 107.14 |
+| Studio | $150 | 18,000 | 120.00 |
 
----
+These prices buy credits, not books or guaranteed page quantities. No evidence
+was found that Standard is “most popular.” Keep its label descriptive.
 
-## (a) Representative per-book provider cost
+Customer copy can say: **“Credit packs start at $12. No subscription. See the
+estimated credits before each paid step. Total use depends on your story,
+quality choices and revisions.”** Show estimates as `~N credits`, distinguish
+holds from settled charges, and let the author inspect remaining balance.
 
-Model built from `litellm_pricing_overrides.yaml` rates (verification dates
-in-file) × the models `litellm/config.yaml` actually routes to at the
-**balanced** preset (the shipped default). **60,000-word novel → 60 scenes →
-250 panels.**
+## Correct package economics
 
-| Stage | Model | Volume | Provider USD |
-|---|---|---|---|
-| 1 extract | gemini-3.5-flash | 83k in / 75k out tok | $0.80 |
-| 2 style | flash-lite brief + 8× flash-lite-image | 4 briefs + 8 imgs | $0.28 |
-| 3 cast | flash-lite-image | 18 asset imgs (1.5 refs ea) | $0.61 |
-| 4 adapt | claude-sonnet-4-6 | 72k in / 48k out tok | $0.94 |
-| 5 plan | gemini-3.5-flash | 90k in / 60k out tok | $0.68 |
-| 6 storyboard | gemini-3.5-flash | 72k in / 54k out tok | $0.59 |
-| 7 direct | flash-lite (prompt assembly) | 150k in / 100k out tok | $0.19 |
-| **8 draw** | **gemini-3.1-flash-lite-image** | **250 imgs × 3 refs** | **$8.61** |
-| 9 compose | Playwright/Chromium | no AI | $0.00 |
-| | | **Total (balanced)** | **$12.70** |
+Credit conversion and credit purchasing are different units. A credit is not
+universally one cent of provider spend. At the example 2× markup, 200 credits
+represent approximately $1 of rated provider spend. Starter sells those 200
+credits for $2; Studio sells them for about $1.67. Per-call ceiling rounding and
+minimum debits can affect this calculation.
 
-**Cost distribution:**
+The table below is a **theoretical full-redemption scenario** at conversion
+100 and markup 2.0. It assumes all credits are consumed on correctly rated
+billable usage and no uncharged provider liability. These are approximate contribution
+illustrations before payment fees and other costs, not measured gross margins.
+They ignore per-call rounding; actual rated provider spend can be lower.
 
-- **Image generation is 68% of book cost** (draw alone is $8.61; cast+style
-  samples add another $0.88). Text stages combined are $3.20 (25%).
-- Compose (Stage 9) is genuinely free — it's a Playwright render, no model
-  calls.
-- Switching to the **quality** preset (Reve @ $0.04/img, no per-ref charge)
-  raises draw to $10.00 and the book to **~$14.09** (+11%). The default stays
-  balanced.
-  - *Stale as of 2026-07-14:* the quality preset now routes to Gemini 3 Pro
-    Image (Nano Banana 2 Pro) at ~$0.134/img (+ ~$0.00112/ref), after Reve v2
-    repriced to ~$0.20/img. Redo this margin row before relying on it.
+| Package | Revenue | Approximate rated provider spend at full redemption | Revenue less rated provider spend | Fraction of revenue remaining |
+|---|---:|---:|---:|---:|
+| Starter | $12.00 | $6.00 | $6.00 | 50.0% |
+| Standard | $30.00 | $15.00 | $15.00 | 50.0% |
+| Creator | $70.00 | $37.50 | $32.50 | 46.4% |
+| Studio | $150.00 | $90.00 | $60.00 | 40.0% |
 
-**Where the markup applies:** `provider_usd_to_credits()` in
-`server/credits.py:43` is the *single* conversion point —
-`credits = cost_usd × credits_per_provider_usd × markup`, ceiling-rounded.
-Every stage debit, every panel regen, and every estimate flows through it.
-There is no second markup layer, so margin is applied exactly once and
-uniformly across all stages.
+Use actual payment processor fees, currency conversion, taxes handled by the
+business, refunds, and disputes from the account and settlement records.
+The old universal `2.9% + $0.30` assumption was not verified for this merchant.
+Include hosting/storage, uncharged failed calls, and support effort before
+deciding how much acquisition spend is affordable. Include the provider cost
+of granted-credit work once, with zero credit-sale revenue for the grant;
+do not also subtract the grant's face value as a second delivery expense.
 
-**Sanity check on the panel count:** 250 panels/book = ~4 panels/scene across
-60 scenes. The `max_panels_per_scene` default is 8; real books average lower
-because many scenes (dialogue, transition) need fewer panels. 250 is the
-right central estimate; ±50 panels swings the book cost by ±$1.72 (±14%),
-which the credit model absorbs without margin distortion.
+At the **1.0 runtime fallback**, provider spend at full redemption would be
+$12, $30, $75, and $180 respectively, before rounding. Starter and Standard
+have no provider margin before fees; Creator and Studio are already negative.
+Effective production configuration is therefore a revenue gate, not a setup
+footnote. Do not change it blindly for existing customers: verify the intended
+commercial setting, deploy deliberately, and retain the evidence.
 
----
+The old document incorrectly described bulk-tier margins as uniform and
+claimed conversion-factor changes merely rescale the currency. Changing the
+factor while holding package credits/prices fixed changes how much compute
+customers can buy. Treat any factor or markup change as a pricing decision.
 
-## (b) Recommended `PULP_MODEL_COST_MARKUP` = **2.0**
+## Replace the panel model with measured complete-page cost
 
-### The decision
+The active stages are extract → brief → style → cast → adapt → plan → draw →
+finish. Draw generates a complete lettered page revision, and validation and
+correction can consume additional calls. Finish is not the old free browser
+composition stage. A 250-panel count is not a usable denominator.
 
-| Markup | Pre-Stripe GM | Book price (user pays) | Net after Stripe |
-|---|---|---|---|
-| 1.0 (current) | 0% | $12.70 | **−5.6% (loss after Stripe fees)** |
-| 1.5 | 33% | $19.04 | 30% |
-| **2.0 (recommended)** | **50%** | **$25.39** | **48%** |
-| 2.5 | 60% | $31.74 | 58% |
-| 3.0 | 67% | $38.09 | 65% |
+The checked-in complete-page profile in
+[config.py](../../novel_to_comic/src/novel_to_comic/config.py) currently records
+`nano-banana-pro-complete-page-v1`, provider `vertex-multimodal`, model
+`gemini-3-pro-image`, up to eight references, and estimator constants of
+$0.134 base plus $0.00112 per reference. It also has $0.004 OCR and $0.02
+optional visual-review allowances. These are **configuration estimates**, not
+fresh provider quotes or observed accepted-page costs. Model routing remains
+in [litellm/config.yaml](../../litellm/config.yaml); do not copy provider names
+into the customer offer or silently change a frozen edition's profile.
 
-**Pick 2.0.** It lands the product at ~$25/book — competitive with the
-emerged AI-comic pricing band ($10–30/mo equivalents; ComicInk ~$10/issue and
-this product produces a ~30-issue-equivalent graphic novel for 2.5× that),
-delivers a defensible ~48% net gross margin, and stays well under the
-"AI-skeptical author bounces" ceiling.
+A useful per-production equation is:
 
-### Why 2.0 and not higher
-
-- **AI-SaaS margin benchmarks:** traditional SaaS runs 75–85% GM; AI-native
-  SaaS with meaningful inference COGS runs 50–65% early, improving to 70%+
-  at scale (KeyBanc/Bessemer/OpenView/Meritech bands). A launch-tier product
-  targeting ~48% net is at the *healthy* end of the early-AI-SaaS range, not
-  the thin "wrapper" end.
-- **The audience is price-sensitive *and* AI-hostile.** The branding research
-  (`branding-and-marketing.md` §3.4) is explicit: median active self-pub
-  author earns ~$12–15k/yr; ~50% earn under $1k. They are conditioned to
-  $15–60/mo for AI writing tools. A $25 one-book price reads as "serious tool
-  I can budget for"; a $38–50 book (markup 3.0+) reads as "AI company
-  gouging" — the exact framing the positioning works to avoid.
-- **The whole value proposition is undercutting commissioned art** ($6k–12k
-  for a 120-page graphic novel). At $25 the pitch is *"2,000× cheaper than
-  hiring an artist, ~the cost of one printed trade paperback."* That's the
-  marketing copy. At $50 it's still cheap vs. a commission but loses the
-  clean rhetorical contrast.
-
-### Why 2.0 and not lower
-
-- **Stripe fees eat low markups alive.** At 1.0× you sell at a *loss*
-  (−5.6%) because the 2.9% + $0.30 fee has no margin to absorb it. At 1.5×
-  you're at 30% — below the "healthy AI-SaaS" floor, with no buffer for the
-  failed-request leak (see §c), support/refund costs, or provider price
-  spikes.
-- **The failure mode of pricing too low is asymmetric and bad.** You eat
-  provider cost spikes, failed-run retries, model deprecations, and the
-  ~3%/book failed-request leak with no headroom. Raising prices later
-  triggers "they got greedy" backlash; lowering them reads as a sale. Start
-  at a defensible margin.
-
-### Uniform vs per-stage markup
-
-The code applies **one** multiplier globally. Worth a per-stage split? **No.**
-
-- Image gen is 68% of cost *and* the stage where the margin matters most —
-  but a split would mean text stages at, say, 1.5× and images at 2.5×, which
-  complicates the mental model (credits would no longer be a clean function
-  of provider spend) and the estimates users see pre-run.
-- The simplicity of "1 credit = $0.01 provider spend × 2" is a feature: it
-  keeps the reservation/estimate math transparent and the audit trail in
-  `credit_ledger` self-consistent. A per-stage split is a Phase-2
-  optimization only if image-cost share grows further or a specific stage's
-  margin profile diverges badly.
-
----
-
-## (c) Recommended failed-request policy = **`provider_usage_only`** (keep current)
-
-### The three options, and what each leaks
-
-The risk vector is **image-gen retries**: a single bad panel triggers 2–5
-retry attempts, each a real provider charge. Quantified against the cost
-model (assuming 8% of panels retry, avg 1.5 attempts each → **30 extra image
-calls/book = $1.03 leaked provider spend**, ~8% of book cost):
-
-| Policy | Who eats failed-attempt cost | Recovery | Operator leak/book |
-|---|---|---|---|
-| `never` | Operator eats **all** failed attempts | $0.00 | **$1.03 (8.1% of cost)** |
-| **`provider_usage_only`** ✅ | Operator eats hard 5xx/timeout; user pays refusals-with-usage | $0.62 | **$0.41 (3.3% of cost)** |
-| `estimate_all` | User pays **every** attempt (synthesized usage) | $1.03 | $0.00 |
-
-### Why keep `provider_usage_only`
-
-1. **It matches industry norms.** OpenAI, Stability, and Vertex all bill for
-   successfully-metered calls (including safety refusals that consumed
-   inference) but do *not* bill for hard server failures / timeouts. The
-   policy name is literal: "bill the user only when the provider reported
-   usage." Authors coming from any other AI tool will find this expected.
-2. **The leak is bounded and cheap.** At 3.3% of book cost (~$0.41), the
-   operator leak is a rounding error against the ~$11.66 gross profit per
-   book at markup 2.0. Not worth the UX cost of charging for every blip.
-3. **`estimate_all` is the wrong trade for this audience.** Charging a user
-   for a panel that errored on *our* side (gateway hiccup, Reve 5xx, a
-   malformed-response retry) is the kind of thing that becomes a
-   /r/SelfPublish complaint thread. The ~$0.41/book saved is not worth the
-   trust cost with an AI-skeptical audience that the entire positioning is
-   built around not alienating.
-4. **`never` is needlessly generous.** Safety refusals (content the provider
-   wouldn't draw) and partial-success retries *did* consume provider compute;
-   passing that to the user is fair and expected.
-
-### The one thing to monitor post-launch
-
-The 8% retry rate is an assumption. If real-world image-gen retry rates run
-higher (Reve quota issues, Vertex cold-start failures), the
-`provider_usage_only` leak grows linearly. The launch-readiness soak test
-(Phase 2) should measure actual retry rate from `ai_usage_events` and
-revisit only if the leak exceeds ~8% of book cost. The
-`estimated_cost_usd`-vs-`cost_usd` drift column already captured per-event
-makes this directly observable.
-
----
-
-## (d) Recommended package pricing
-
-### `PULP_CREDITS_PER_PROVIDER_USD` = **100** (keep)
-
-This is a **unit-conversion constant**, not a pricing knob. 100 credits =
-$1 of pre-markup provider spend = 1 credit = $0.01. With markup at 2.0, a
-user effectively gets 50 credits per $1 of provider compute they consume.
-Changing this number just re-scales the credit currency without changing
-economics; the only reason to touch it would be a future desire for
-sub-cent granularity, which rounding already handles. **Leave it.**
-
-### Stripe packages
-
-The current `CREDIT_PACKAGES` (`billing.py:17`) prices 1k/2.75k/6k credits
-at $10/$25/$50 — but at the *current* zero margin those prices equal cost.
-At markup 2.0 the same packages need re-pricing so a typical book is
-buyable in one transaction with regen headroom.
-
-A balanced book is **2,539 credits** at markup 2.0; a quality book is
-**2,817**. Packages must cover a full book plus the retry/iteration buffer
-users will burn reworking panels. Four tiers:
-
-| Package | Price | Credits | cr/$ | Covers | Net GM |
-|---|---|---|---|---|---|
-| **Starter** | $12 | 1,200 | 100 | ½ book / a long preview | 47% |
-| **Standard** *(most popular)* | $30 | 3,000 | 100 | 1 full book + ~20% regen headroom | 48% |
-| **Creator** | $70 | 7,500 | 107 | ~3 books (7% bulk bonus) | 45% |
-| **Studio** | $150 | 18,000 | 120 | ~7 books (20% bulk bonus) | 38% |
-
-**Design notes:**
-
-- **Standard is the anchor** — $30 buys one complete book with room to
-  rework ~50 panels. This is the package a first-time buyer lands on, and
-  $30 sits exactly in the emerged mid-tier band ($19–30/mo equivalents,
-  per branding §2.3).
-- **Bulk tiers discount via more credits per dollar, not lower per-credit
-  pricing** — same mental model as ComicInk's "credits never expire." The
-  GM drops slightly on bulk (48% → 38%) because Stripe's fixed $0.30
-  amortizes less, but absolute gross profit per package rises ($14 → $57).
-  This is the right trade for a pay-per-credit, no-subscription product.
-- **$12 Starter exists for the free-tier-to-paid conversion** — the
-  branding plan's Chapter-1 free artifact flywheel produces a user who has
-  seen ⅛ of a book and wants the rest. $12 to finish what they started is
-  the lowest-friction upgrade; it covers ~½ a book so they need Standard
-  next. (Consider making this a "finish your preview" one-click upsell.)
-- **No subscription tier.** The branding research is unambiguous: authors
-  resent recurring fees for one-off production tasks. Pay-per-credit +
-  never-expire is the resonant model. Stick to it.
-
-### Stripe fee headroom
-
-At all tiers, markup 2.0 absorbs Stripe's 2.9% + $0.30 with margin to spare.
-The worst case is the $12 Starter (fixed fee is 2.5% of price): net GM 47%.
-No package drops below 38% net even at the deepest bulk discount.
-
----
-
-## Sensitivity table — provider prices +25%
-
-Because `provider_usd_to_credits()` computes credits *at call time* from the
-live pricing table, **provider price changes auto-pass-through to the user.**
-Margin % is structurally protected; only the absolute $ gross and the
-per-book price move. At markup 2.0:
-
-| Scenario | Book cost | Credits charged | User pays | Net rev (post-Stripe) | Gross $ | GM% |
-|---|---|---|---|---|---|---|
-| baseline | $12.70 | 2,539 | $25.39 | $24.36 | $11.66 | **47.9%** |
-| provider +10% | $13.97 | 2,793 | $27.93 | $26.82 | $12.86 | 47.9% |
-| **provider +25%** | **$15.87** | **3,174** | **$31.74** | **$30.52** | **$14.65** | **48.0%** |
-| provider +50% | $19.04 | 3,809 | $38.09 | $36.68 | $17.64 | 48.1% |
-
-**The margin % is effectively flat** across the range (rounding noise from
-Stripe's fixed fee). This is the key structural insight: **cost volatility
-is not a launch risk.** The two real risks are (1) the failed-request leak
-(bounded, ~3% — see §c) and (2) pricing psychology (the $25→$38 drift if
-providers raise prices 50% would need a positioning check, but providers
-have been *cutting* image prices, not raising them).
-
-The flip side: if providers *cut* prices (the historical trend — flash-lite-
-image is already ~half the flash-image price), users automatically pay less
-per book and the operator's absolute margin compresses, but the % holds. A
-future lever is to *lower* markup if volume scales, passing some efficiency
-gain to users as a goodwill/positioning move — but that's a Phase-2 decision
-once real volume data exists.
-
----
-
-## Implementation checklist
-
-Production env changes (all in `fly secrets`, per `launch-readiness.md`'s
-prod env-var checklist):
-
-```bash
-fly secrets set \
-  PULP_MODEL_COST_MARKUP=2.0 \
-  PULP_CREDITS_PER_PROVIDER_USD=100 \
-  AI_BILL_FAILED_REQUESTS=provider_usage_only
+```
+provider liability = source/brief work + style/cast references
+                   + adaptation/planning + every page-render attempt
+                   + OCR/visual analysis + corrections/finishing
+                   + charged failures and unresolved submissions
 ```
 
-Code change — re-price `CREDIT_PACKAGES` in
-`novel_to_comic/src/novel_to_comic/server/routers/billing.py:17`:
+Track **accepted exported pages** separately from generated attempts. Report
+both first-pass acceptance and all-in cost to the first export. One cheap
+render that needs three revisions is not one cheap finished page.
 
-```python
-CREDIT_PACKAGES: dict[str, dict] = {
-    "starter":  {"label": "1,200 credits",  "price_cents": 1200,  "credits": 1200},
-    "standard": {"label": "3,000 credits",  "price_cents": 3000,  "credits": 3000},
-    "creator":  {"label": "7,500 credits",  "price_cents": 7000,  "credits": 7500},
-    "studio":   {"label": "18,000 credits", "price_cents": 15000, "credits": 18000},
-}
-```
+For each real run, retain:
 
-(Package IDs change from `"10"/"25"/"50"` to named tiers — a breaking change
-to the `/api/billing/checkout` `package` param, acceptable per the "no legacy
-shims" rule. Update the frontend buy-credits flow in the same change.)
+- release SHA, configuration/price-table version, funding mode and frozen
+  edition profile;
+- source length, genre, target scope, accepted pages, reference count, and
+  changes in appearance state;
+- each provider event, usage provenance/confidence, request identity, attempt,
+  charge, refusal, ambiguous submission, and unknown-cost row;
+- initial and subsequent estimates, temporary holds, final credit debits,
+  purchased/granted credits, and operator adjustments;
+- first-pass lettering and visual review, correction count, final exported
+  artifact, elapsed time, and active customer/operator minutes;
+- processor settlement, refunds and support incidents at customer/cohort
+  scope, reconciled without exposing manuscript content in analytics.
 
-**No changes to:** the credit ledger, `provider_usd_to_credits`,
-`reservation_buffer` (1.25× hold is healthy and released on completion), or
-any stage code. This is configuration + one package-table edit.
+Never automatically resubmit an ambiguous paid image request merely to make a
+run finish. Unknown provider liability remains an operating exception until
+reconciled. Price-table drift, model changes and higher revision rates can all
+make cost volatility a launch risk despite a nominal markup.
 
-## Open follow-ups (not blocking launch)
+## Commercial gates for the excerpt offer
 
-1. **Measure real retry rate** during the Phase-2 soak test. If the 8%
-   retry-rate assumption is wrong by >2×, revisit the failed-request policy
-   (the only decision sensitive to it).
-2. **Build the margin/provider-spend view** (P2 #12 in launch-readiness).
-   `ai_usage_events` records per-call cost; `credit_ledger` records charges.
-   A view joining them gives live gross-margin monitoring — the soak test
-   hand-rolls this; formalize it once there's volume.
-3. **Revisit markup if volume scales.** If Scenewright hits meaningful
-   volume (hundreds of books/mo), a lower markup (1.5–1.8×) passing
-   efficiency gains to users becomes a positioning win — "we got cheaper as
-   we grew." Not now; the launch priority is sustainable margin, not
-   growth-pricing.
+These are proposed management thresholds, not existing results:
+
+1. Measure at least ten independent, rights-cleared short-excerpt productions
+   on the intended production profile, including dialogue, multiple recurring
+   characters, and an appearance-state change. Retain failures as well as
+   successes; this small sample is discovery evidence, not a stable p95.
+2. Publish an observed range only with source scope, sample size, date,
+   revision allowance, and profile. Do not translate a provider estimate into
+   guaranteed pages per $12 pack.
+3. The first paid cohort must show positive contribution after actual provider
+   liabilities (including granted-credit work), processor fees, refunds, storage
+   and support. Report
+   operator time even when the founder does not pay themself a salary.
+4. Before increasing acquisition spend, require a conservative path to at
+   least 30% contribution after variable delivery/support costs, with no
+   unresolved billing liabilities. This is a proposed operating target, not a
+   claim that today's packages achieve it.
+5. Use realized contribution from consumed credits in the first cohort to cap
+   acquisition spend.
+   Do not justify CAC with assumed repeat purchases or unused-credit breakage.
+   Non-expiring prepaid balances represent future delivery obligations.
+
+If a first useful excerpt routinely consumes more than Starter, fix the scope
+or make the required budget clear before purchase. Do not create a trap where
+“start for $12” silently means “pay again to get anything usable.” A future
+fixed-price excerpt bundle is worth testing only after its scope, worst-case
+cost allowance, and completion/refund behavior are designed and implemented.
+
+The latest development project's `gpt-image-2` examples are useful visual
+proof under the user's current development adapter setup, but must not enter
+API-funded production cost statistics as zero-cost paid runs. The intended
+future `gpt-image-2.5` move needs its own supported profile, measurement and
+release validation; better quality or margins are not assumed.
+
+## Acquisition implications
+
+Follow the [self-service launch strategy](self-service-launch.md) and
+[bounded campaign plan](first-scene-campaign.md). Use the existing gallery and
+explanation as the zero-spend demonstration.
+A metered personal sample grant is a future experiment requiring a per-user
+limit, total budget cap, abuse controls and a real measured conversion lift;
+a free full chapter is not the default. A customer's successful export is the
+activation event. An upgrade or second project is repeat-use evidence, not a
+prerequisite for calling the first paid cohort a success.
+
+Keep external pricing comparisons in the dated
+[branding refresh](branding-and-marketing.md). Competitor credits and page
+claims are not comparable units of accepted, reviewed output. The current
+commercial advantage we can state about ourselves is simple purchasing with
+no subscription, not a speculative “thousands of times cheaper” claim.
+
+## Superseded assumptions
+
+The July recommendations to implement these same packages have been carried
+out. Their supporting `60k words → 60 scenes → 250 panels`, `$12.70 provider
+cost`, `~$25/full book`, `Standard covers a book`, `~48% net margin`, `3% failure
+leak`, and fixed commissioned-art savings claims are withdrawn. No measured
+replacement was located in this review. The old arithmetic is available in
+Git history; it should not remain a pricing source beside current contracts.

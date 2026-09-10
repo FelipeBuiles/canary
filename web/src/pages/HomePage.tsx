@@ -5,6 +5,7 @@ import { LANDING_COPY, type LandingCopy, type LandingFaq, type LandingStep } fro
 import "./HomePage.css";
 
 const MARKETING_IMAGES = {
+  pages: ["/marketing/dcc1-2-page-003.webp", "/marketing/dcc1-2-page-004.webp"],
   anya: "/marketing/anya-reference.webp",
   rurik: "/marketing/rurik-reference.webp",
   tavern: "/marketing/tavern-reference.webp",
@@ -42,7 +43,7 @@ function HeroFolio({ copy }: { copy: LandingCopy["hero"] }) {
     <figure className="landing-folio" aria-label={copy.visualAlt}>
       <div className="landing-manuscript" aria-hidden="true">
         <div className="landing-manuscript__label">{copy.manuscriptLabel}</div>
-        <div className="landing-manuscript__title">CHAPTER VII</div>
+        <div className="landing-manuscript__title">{copy.chapterLabel}</div>
         <div className="landing-manuscript__lines">
           <span />
           <span />
@@ -58,7 +59,7 @@ function HeroFolio({ copy }: { copy: LandingCopy["hero"] }) {
       <div className="landing-comic-sheet">
         <div className="landing-comic-sheet__topline">
           <span>{copy.sampleLabel}</span>
-          <span>SCENE 07</span>
+          <span>{copy.sceneLabel}</span>
         </div>
         <div className="landing-comic-grid">
           <div className="landing-comic-panel landing-comic-panel--place">
@@ -136,11 +137,11 @@ export function HomePage() {
   return (
     <div className="landing-page">
       <a className="landing-skip-link" href="#landing-main">
-        Skip to content
+        {copy.nav.skip}
       </a>
 
       <header className="landing-header">
-        <Link className="landing-brand" to="/" aria-label="Scenewright home">
+        <Link className="landing-brand" to="/" aria-label={copy.nav.home}>
           <BrandMark className="landing-brand__mark" variant="micro" />
           <span>
             <strong>Scenewright</strong>
@@ -148,7 +149,7 @@ export function HomePage() {
           </span>
         </Link>
 
-        <nav className="landing-header__nav" aria-label="Primary navigation">
+        <nav className="landing-header__nav" aria-label={copy.nav.navigation}>
           <a href="#process">{copy.nav.process}</a>
           <a href="#continuity">{copy.nav.continuity}</a>
           <a href="#rights">{copy.nav.rights}</a>
@@ -181,7 +182,7 @@ export function HomePage() {
                 <span>{copy.hero.primaryCta}</span>
                 <span aria-hidden="true">↗</span>
               </Link>
-              <a className="landing-text-link landing-text-link--light" href="#process">
+              <a className="landing-text-link landing-text-link--light" href="#continuity">
                 {copy.hero.secondaryCta}
                 <span aria-hidden="true">↓</span>
               </a>
@@ -198,6 +199,36 @@ export function HomePage() {
           <p>{copy.premise.body}</p>
         </section>
 
+        <section className="landing-continuity" id="continuity" aria-labelledby="landing-continuity-title">
+          <div className="landing-continuity__intro">
+            <p className="landing-continuity__promise">{copy.continuity.promise}</p>
+            <h2 id="landing-continuity-title">{copy.continuity.title}</h2>
+            <p>{copy.continuity.body}</p>
+          </div>
+
+          <div className="landing-page-samples">
+            {MARKETING_IMAGES.pages.map((src, index) => (
+              <figure key={src}>
+                <a href={src} target="_blank" rel="noopener noreferrer" aria-label={copy.continuity.inspectLinks[index]}>
+                  <img src={src} alt={copy.continuity.alts[index]} width="1024" height="1536" loading="lazy" decoding="async" />
+                </a>
+                <figcaption>
+                  <span>{copy.continuity.captions[index]}</span>
+                  <a href={src} target="_blank" rel="noopener noreferrer">{copy.continuity.inspectLinks[index]}</a>
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+          <p className="landing-page-samples__note">{copy.continuity.sample}</p>
+          <div className="landing-reference-inspection">
+            <div>
+              <h3>{copy.continuity.inspectTitle}</h3>
+              <p>{copy.continuity.inspectBody}</p>
+            </div>
+            <Link className="landing-cta" to="/signup">{copy.hero.primaryCta}</Link>
+          </div>
+        </section>
+
         <section className="landing-process" id="process" aria-labelledby="landing-process-title">
           <div className="landing-section-heading">
             <h2 id="landing-process-title">{copy.process.title}</h2>
@@ -208,63 +239,6 @@ export function HomePage() {
               <ProcessStep key={step.number} step={step} />
             ))}
           </ol>
-        </section>
-
-        <section className="landing-continuity" id="continuity" aria-labelledby="landing-continuity-title">
-          <div className="landing-continuity__intro">
-            <p className="landing-continuity__promise">{copy.continuity.promise}</p>
-            <h2 id="landing-continuity-title">{copy.continuity.title}</h2>
-            <p>{copy.continuity.body}</p>
-          </div>
-
-          <div className="landing-reference-set">
-            <figure className="landing-reference landing-reference--anya">
-              <img
-                src={MARKETING_IMAGES.anya}
-                alt={copy.continuity.alts[0]}
-                width="1200"
-                height="1200"
-                loading="lazy"
-                decoding="async"
-              />
-              <figcaption>{copy.continuity.captions[0]}</figcaption>
-            </figure>
-            <figure className="landing-reference landing-reference--place">
-              <img
-                src={MARKETING_IMAGES.tavern}
-                alt={copy.continuity.alts[1]}
-                width="1200"
-                height="1200"
-                loading="lazy"
-                decoding="async"
-              />
-              <figcaption>{copy.continuity.captions[1]}</figcaption>
-            </figure>
-            <figure className="landing-reference landing-reference--rurik">
-              <img
-                src={MARKETING_IMAGES.rurik}
-                alt={copy.continuity.alts[2]}
-                width="1200"
-                height="1200"
-                loading="lazy"
-                decoding="async"
-              />
-              <figcaption>{copy.continuity.captions[2]}</figcaption>
-            </figure>
-            <p className="landing-reference-set__note">{copy.continuity.sample}</p>
-          </div>
-
-          <ul className="landing-continuity-details">
-            {copy.continuity.details.map((detail) => (
-              <li key={detail.title}>
-                <span aria-hidden="true" />
-                <div>
-                  <h3>{detail.title}</h3>
-                  <p>{detail.body}</p>
-                </div>
-              </li>
-            ))}
-          </ul>
         </section>
 
         <section className="landing-direction" id="rights" aria-labelledby="landing-direction-title">

@@ -18,9 +18,8 @@ logger = logging.getLogger("pulp.billing")
 
 # Pricing set per docs/proposals/pricing-and-margin.md (PULP_MODEL_COST_MARKUP=2.0,
 # PULP_CREDITS_PER_PROVIDER_USD=100). Bulk tiers discount via more credits per
-# dollar, not lower per-credit pricing — same "credits never expire" model the
-# indie-author audience expects. A typical 60k-word book is ~2,540 credits, so
-# Standard covers one full book + regen headroom.
+# dollar. Credit packs do not guarantee a page count or a complete book;
+# coverage depends on measured complete-page production and correction costs.
 CREDIT_PACKAGES: dict[str, dict] = {
     "starter": {"label": "1,200 credits", "price_cents": 1200, "credits": 1200},
     "standard": {"label": "3,000 credits", "price_cents": 3000, "credits": 3000},

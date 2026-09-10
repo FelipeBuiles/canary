@@ -1,5 +1,11 @@
 # Launch-readiness audit — 2026-07-30
 
+**Status: Historical.** The September 9
+[self-service launch strategy](../proposals/self-service-launch.md) and
+[readiness refresh](../proposals/launch-readiness.md) replace this assessment.
+Historical counts and missing-feature findings below are not current
+production observations.
+
 ## Scope and verdict
 
 This is a repository-only audit of branch `render-full-pages` at `716485c`, its
@@ -148,4 +154,3 @@ customer no longer receives.
    value, acceptable support burden and contribution margin, permissioned proof,
    resolved name risk, and a completed live billing/operations checklist before
    broad promotion or live-mode acquisition.
-

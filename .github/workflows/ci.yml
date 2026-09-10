@@ -11,10 +11,12 @@ on:
     branches: [main]
   workflow_dispatch: # manual trigger for prod release validation
 
-# Cancel superseded runs on the same ref — keeps the queue cheap on a busy branch.
+# Ordinary CI cancels superseded runs on the same ref. Each manual release has
+# its own workflow group so neither pushes nor later dispatches can cancel it;
+# the production-deploy job group below serializes actual deployments.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   backend:
@@ -153,6 +155,9 @@ jobs:
     concurrency:
       group: production-deploy
       cancel-in-progress: false
+      # Keep queued manual releases instead of replacing the previous pending
+      # deploy when a third dispatch finishes validation. One deploy runs at once.
+      queue: max
     permissions:
       contents: read
     env:

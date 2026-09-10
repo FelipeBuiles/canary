@@ -1,275 +1,158 @@
-# Scenewright — Launch Readiness
+# Scenewright — Launch readiness
 
-> **Current source (2026-07-30):** read
-> [the market and launch-readiness reassessment](../research/2026-07-30-market-and-launch-readiness.md)
-> first. This file remains the operational checklist, but its dated
-> deployment snapshot, test counts, and panel-era assumptions are historical.
-> Public launch is currently a no-go; a paid pilot waits for the reassessment's
-> P0 evidence package.
->
-> Historical snapshot, originally updated 2026-07-13. This document is the launch gate;
-> [the deploy runbook](../deploy.md) is the operational procedure and
-> [the pricing proposal](pricing-and-margin.md) is the current-pipeline
-> unit-economics decision. Full-page economics must be revalidated before that
-> architecture launches.
+**Status: Current repository assessment, September 9, 2026.** Production state
+was not inspected for this refresh. Passing local tests or finding a control in
+code does not establish that the deployed release, database, alerts, or backups
+have it. The July 13 snapshot and
+[July 30 reassessment](../research/2026-07-30-market-and-launch-readiness.md)
+are historical evidence, not today's release verdict.
 
-## Verdict
+## Decision
 
-**The four code-level launch blockers are fixed in the current working tree.**
-They were:
+Build toward a **bounded self-service paid launch**: the customer makes the
+creative decisions; software handles routine progress, payment accounting,
+recovery guidance, and release checks. Operator intervention should be an
+exception measured as a product defect or an explicit billing/support case.
+A permanently operator-assisted pilot would conceal the work this strategy
+needs to eliminate.
 
-1. `public.user_credits` may bypass RLS because it is a normal owner-executed
-   Postgres view granted to `authenticated`.
-2. `/api/health/ready` returns HTTP 200 even when Supabase or LiteLLM is down,
-   so Fly continues routing traffic to an unhealthy machine.
-3. The unauthenticated Stripe webhook is exempt from the request-body limit and
-   buffers the complete payload in memory.
-4. Stripe credits every `checkout.session.completed` event without verifying
-   that `payment_status == "paid"`.
+**Repository controls are substantially stronger than the July checklist.
+Public paid acquisition is not yet justified by the evidence reviewed here.**
+The remaining gate is a dated production evidence package and measured customer
+completion, not another blanket rewrite or an infrastructure migration. Keep
+paid traffic off until the gates below pass. A private proof exercise can
+establish those gates; live purchases and provider spend need their own release
+and budget authorization.
 
-Do not invite external testers yet: the changes are uncommitted/unpushed, the
-Supabase schema change has not been applied to the production project, and the
-Fly app still has no deployed machine. A **private deployed smoke test** is the
-next step after a green CI run for the exact release revision. An **invite-only
-soft launch** additionally requires production configuration, monitoring,
-backups, two-user authorization tests, and a complete paid end-to-end run.
+## What changed since July
 
-## Current evidence
-
-### Repository
-
-- Backend lint is green; the full backend suite passes: **1,052 passed, 9
-  skipped** on 2026-07-13.
-- Frontend ESLint is green, **287 web tests pass** on Node 22.22.3, and the
-  production web build succeeds.
-- `main` is currently 13 commits ahead of `origin/main`, and there are additional
-  uncommitted compose-editor changes. The latest remote CI success is for
-  `787f042`, not the current local revision.
-- CI runs Ruff, pytest, a high-severity production dependency audit, frontend
-  ESLint, Vitest, the frontend build, and a production Docker build. Deployment
-  remains manual; this is **CI, not CD**.
-- The npm production dependency audit reports **0 vulnerabilities** after
-  updating React Router and `ws` to patched lockfile versions.
-
-### Fly.io account
-
-Observed on 2026-07-13:
-
-- `canary-web` exists, but has **no deployed image, machine, or health check**.
-- Eleven secrets are staged and undeployed. They do not include Sentry or every
-  optional provider key. Pricing/margin policy is now explicit non-secret Fly
-  configuration.
-- `canary_projects` exists in `iad`, encrypted, at **1 GB**. Scheduled daily
-  snapshots are active with five-day retention. A 1 GB volume is too small for
-  more than minimal testing and should be expanded before an invited launch.
-
-This means the repository contains deployment artifacts, but there is not yet a
-real environment to call launch-ready.
-
-## Architecture now
-
-The old two-Fly-app plan is retired. Production is one Fly app and one 4 GB
-machine:
-
-```text
-canary-web container
-├── uvicorn / FastAPI       0.0.0.0:8000 (public through Fly TLS)
-├── LiteLLM subprocess     127.0.0.1:4000 (loopback only)
-└── /projects              encrypted Fly volume
-```
-
-`litellm/entrypoint.sh` boots LiteLLM, waits for liveliness, and then starts
-uvicorn. The gateway is not publicly exposed, but both processes inherit the
-container environment; provider keys are **not process-isolated** from the web
-process. One worker and one machine remain mandatory because job queues, SSE
-state, semaphores, and project files are local.
-
-The canonical deployment details are in [docs/deploy.md](../deploy.md). Do not
-reintroduce `fly.litellm.toml`, `Dockerfile.litellm`, or sibling-app instructions.
-
-## Controls already implemented
-
-| Area | Status | Evidence / residual risk |
+| July assertion | Current repository truth | Evidence |
 |---|---|---|
-| Auth | Implemented | Supabase JWT signature, expiry, and production audience checks; HttpOnly, Secure, SameSite=Lax session cookie. |
-| Project authorization | Code fixed; deployment validation pending | Backend project resolution scopes queries by authenticated user. `user_credits` now uses caller-context RLS; apply the schema and run the two-user test below. |
-| Credits ledger | Implemented | Atomic reservations, release-on-failure/startup recovery, database uniqueness for payment IDs. |
-| Billing packages | Implemented | Starter/Standard/Creator/Studio packages match the pricing proposal; Fly config pins markup `2.0`. |
-| Upload/project caps | Implemented | Novel upload defaults to 10 MB; project cap defaults to 25. Expanded EPUB/PDF resource use remains unbounded. |
-| Rate limiting | Implemented with residual risk | Creation, run, regeneration, import, cover, and export paths are limited. Limits are per-IP and process-local; there is no per-user expensive-job concurrency limit. |
-| Sentry | Code-ready only | Backend/frontend integrations exist and scrub auth data. No deployed DSN or alert is proven. |
-| Readiness | Fixed | Dependency failure returns HTTP 503; missing/partial production configuration fails closed. |
-| Legal pages | Implemented; operations pending | Terms, Privacy, AUP, signup assent, and Stripe consent support exist. `legal@` monitoring and deletion/export procedures are not proven. |
-| Labs | Closed by default | `CANARY_LABS_ENABLED` defaults false. The short-story endpoints remain on the always-mounted projects router. |
-| CI | Implemented | Test/lint/build/Docker gate exists. There is no automatic deployment job. |
+| CI exists, deployment is entirely manual | A manual `CI` dispatch on `main` gates deployment on backend/web/Docker jobs, drains admission, deploys the same source SHA, and verifies public release contracts. Database changes remain manual. | `.github/workflows/ci.yml`, `scripts/check_deploy_safe.py`, `scripts/verify_deployment.py` |
+| Missing browser security headers | Production middleware sets CSP, HSTS, content-type, referrer, and permissions policies. Tests cover success/error responses; confirm the public proxy preserves them. | `server/security_headers.py`, `tests/test_launch_safety.py` |
+| EPUB/PDF expansion and remote imports are unbounded | Shared upload, page/document, extracted-character, archive-expansion, remote-download, and elapsed-time budgets exist. The elapsed-time check is cooperative, not a hard parser process deadline. | `input_limits.py`, `server/routers/projects.py`, `tests/test_input_limits.py` |
+| No per-user generation ceiling | Active generation has a process-local user semaphore (default one); queued jobs requeue fairly and pipeline work shares the semaphore. This is not a distributed admission system. | `server/generation_jobs.py`, `server/routers/pipeline.py` |
+| A restart loses all job evidence; release all reservations | Persistent action/job journals and Draw recovery records retain evidence. Interrupted work is shown as recoverable, never automatically requeued. Only expired, never-started owned holds reclaim automatically; started/ambiguous work requires reconciliation. | `server/admission.py`, `server/credited_job.py`, `server/credits.py`, [stage contracts](../reference/stage-contracts.md) |
+| Readiness controls Fly routing | Fly routes on process-local `/api/health`. `/api/health/ready` separately checks dependencies and fails closed with HTTP 503 in production. | `fly.toml`, `server/app.py` |
+| No deployed machine / 1 GB volume / branch ahead by 13 commits | Those were July 13 observations. No current account, volume, branch-release relationship, or production migration was verified here. | Obtain fresh deployment evidence; do not repeat historical state as current. |
 
-## P0 — fixed in the working tree; release validation pending
+Python paths in this document are relative to
+`novel_to_comic/src/novel_to_comic/`; test paths are relative to
+`novel_to_comic/`.
 
-### 1. Make the credit-balance view honor RLS
+The older four security/billing fixes remain implemented: caller-context
+`user_credits` RLS in the canonical SQL, readiness HTTP status handling,
+bounded raw Stripe webhook bodies, and paid-only/idempotent credit inserts.
+They still require production exercises. Code support for refunds, support
+runbooks, legal pages, and Sentry also exists; an exercise and an alert reaching
+a real operator remain different evidence.
 
-Previously, `docs/supabase-schema.sql` created `public.user_credits` as a normal
-view and granted it to every authenticated user. On PostgreSQL, a normal view
-normally uses the view owner's privileges, which can bypass RLS on
-`credit_ledger`.
+## Gate 1 — money, accounts, and recovery
 
-**Fixed:** the canonical schema recreates the view with
-`security_invoker=true`. Apply it to the deployed Supabase project. Then test
-with two real Supabase
-users that each can read only their own balance and cannot read the other user's
-projects, ledger entries, usage events, or balance. Test the Supabase REST API
-directly, not only the FastAPI routes.
+For one exact release SHA, record these results in a copy of the
+[release evidence template](../ops/release-evidence-template.md):
 
-### 2. Make readiness fail closed
+- [ ] Exact-SHA CI succeeds; deployed `/api/version` matches; rollback image and
+      compatible database state are recorded. Preserve the `/projects` volume
+      including `.request-journal.sqlite3` and Draw recovery records.
+- [ ] Canonical Supabase schema is applied and verified. Two independent real
+      users cannot read each other's projects, balances, ledger, or usage via
+      either application routes or direct Supabase REST access.
+- [ ] Signup, confirmation, login/logout, reset emails, production redirects,
+      SMTP delivery, and abuse controls work on the public domain.
+- [ ] Stripe test Checkout → signed webhook → one credit grant → displayed
+      balance works, including duplicate delivery, unpaid rejection, and the
+      operator refund/reconciliation path. Record the selected live/test mode.
+- [ ] Estimates, holds, renewal, provider usage, settled credits, and released
+      credits reconcile for a complete project. Unknown usage is not zero cost.
+- [ ] In an isolated, authorized recovery exercise, interruption preserves the
+      original action and saved artwork, refresh shows the durable job outcome,
+      and recovery cannot silently duplicate a paid image submission. Prove
+      cached OCR recovery separately from explicit paid OCR-only recovery.
+- [ ] Restore a backup into an isolated environment; recover journals, source,
+      references, complete pages, and PDF/CBZ exports. Confirm isolation and
+      record recovery time and the actual recoverable point in time.
 
-Previously, `GET /api/health/ready` returned a JSON error with HTTP 200, so
-Fly's HTTP check considered the machine healthy. It also reported missing
-dependencies as `skipped`, including in production.
+Neither `/reset-stale`, lease expiry, nor a new image revision proves an
+interrupted provider action was free. OCR proves lettering checks only; visual
+issues need visual review. Do not reopen traffic after a failed deploy merely
+because a status-only idle observation looks safe: establish authenticated drain
+before idle and explicitly decide when to resume.
 
-**Fixed:** dependency failure now returns HTTP 503. In production, missing or
-partial Supabase and LiteLLM configuration also returns 503. Tests cover the
-status contract. Confirm the Fly health check becomes healthy only when both
-dependencies report `ok`.
+## Gate 2 — a customer can finish without a concierge
 
-### 3. Bound the Stripe webhook body
+Use the real eight-stage path:
+`extract → brief → style → cast → adapt → plan → draw → finish`.
+The customer still approves Brief, chooses Style, approves Cast, and continues
+from Draw. Hands-off operation does not mean silently accepting creative
+choices or authorizing new paid work.
 
-`/api/billing/webhook` is public by design and verifies Stripe signatures.
-Previously, signature verification happened only after `request.body()`
-buffered the entire body, and the route was exempt from the global 2 MB cap.
+- [ ] A new account can understand the offer, purchase the published pack,
+      upload a rights-cleared source, see the next estimate, and start analysis
+      without a founder call or manual credit grant.
+- [ ] First-run guidance, empty states, error messages, expired sessions,
+      insufficient balance, explicit Resume after top-up, browser refresh,
+      navigation, and narrow mobile layout all work on the deployed release.
+- [ ] Finish a bounded source through complete-page Draw and PDF/CBZ export.
+      Inspect visible lettering, recurring identities, style, and source
+      fidelity. Record corrective attempts and rejected outputs as well as the
+      selected showcase. A successful download request is not proof that a
+      browser finished downloading or that the book is publish-ready.
+- [ ] The same path succeeds for independent authors without the operator
+      rewriting prompts, repairing files, advancing checkpoints, or manually
+      settling ordinary jobs. Record every intervention and fix recurring ones.
+- [ ] Published examples are real outputs with source rights, generation/model
+      provenance, explicit development/customer labels, and permission to show
+      customer material. Do not substitute style references for finished-page
+      evidence or fabricate testimonials.
 
-**Fixed:** the route enforces a 256 KiB default cap for declared and chunked
-bodies while preserving the exact raw signature bytes. The global body cap also
-applies. Oversized and byte-preservation tests are present.
+## Gate 3 — unattended operation and bounded acquisition
 
-### 4. Credit only paid Stripe sessions
+These are **proposed acceptance criteria**, not implemented automation or
+measured service levels. Set the initial traffic/spend cap from measured
+capacity, full-project economics, and the launch campaign decision before
+turning on acquisition.
 
-Previously, `_handle_checkout_completed` trusted the event type and metadata
-without inspecting `payment_status`. Signature verification proves that Stripe
-sent the event; it does not prove that funds were collected.
+| Priority | Work that removes recurring operator labor | Acceptance evidence |
+|---|---|---|
+| P0 | Recover from a web/container crash while preserving deliberate maintenance stops | The current Fly `restart = never`, disabled autostart, and single Machine mean web/container failure needs an operator. Design and exercise bounded restart supervision with explicit maintenance state; do not blindly enable restarts or auto-retry paid jobs. LiteLLM child restart already has a bounded budget. |
+| P0 | Actionable monitoring and reconciliation queue | Test alerts for unavailability/deep readiness, exhausted proxy restart budget, stale started holds, ambiguous settlements, queue age, repeated failures, and volume pressure. Show the exact job/action and safe next step; no manuscript text in notifications. Route only meaningful exceptions to the operator. |
+| P0 | Exercise protected release orchestration | Manual dispatch now uses a unique workflow group with cancellation disabled; ordinary CI still cancels superseded runs. Production deployments remain serialized and queued (up to 100 pending). Exercise failure/timeout and rollback/explicit resume; local configuration is not a completed production drill. |
+| P1 | Extend automated post-deploy evidence | The verifier now rejects wrong/missing pipeline contracts, non-API model modes, and missing/skipped/failing Supabase or LiteLLM checks. Still add expected security-policy values and a provider-free signed-in path; header presence and public readiness alone are not complete production acceptance. |
+| P1 | Recurring backup verification | Scheduled snapshots plus an independent backup and periodic isolated restore with dated evidence. Export CDN delivery alone does not preserve journals or private source artifacts. |
+| P1 | Self-service support and lifecycle guidance | Contextual safe recovery and a support case containing release/job identifiers; progress/completion notifications only with appropriate consent. Account deletion, exceptional refunds, and ambiguous paid outcomes retain explicit operator ownership. |
+| P1 | Measurable conversion and stop rules | Attribute campaign → signup → purchase → first complete page → export → repeat use. Join actual provider costs, credit revenue, refunds, and operator minutes. Pause acquisition on account isolation, billing, data-loss incidents, or the campaign's agreed quality/margin/support thresholds. |
 
-**Fixed:** unpaid or missing-payment-intent sessions are ignored. Paid inserts
-use atomic `ON CONFLICT DO NOTHING` semantics keyed by payment intent, so
-concurrent duplicate deliveries cannot double-credit or return a uniqueness
-error. Paid, unpaid, missing-status, missing-intent, and duplicate paths are
-covered.
+The existing event allowlist still contains legacy `panel_*` names and has no
+campaign/cohort attribution. Stage, checkout, purchase, and export milestones
+exist, but do not yet form an acquisition measurement system. Best-effort
+product events also cannot serve as the financial ledger.
 
-### 5. Produce a green release revision
+## Scope and go/no-go
 
-Push the intended release revision and require all CI jobs to pass for that SHA.
-Local lint, backend tests, frontend tests, and the production build are now
-green; CI includes frontend lint. Do not deploy the current dirty working tree.
+Stay on the existing single-Machine architecture for a bounded launch, with
+measured queue limits and storage headroom. Distributed workers and object
+storage are scaling work triggered by evidence, not prerequisites for learning
+whether customers pay. Stage contracts, durable receipts, selected-style gating,
+exact canonical lettering, and explicit paid recovery remain non-negotiable.
 
-## P1 — finish before invite-only soft launch
+**Private proof:** proceed within approved accounts, source rights, and spend.
+**Bounded self-service paid launch:** proceed after Gates 1–2 and all P0
+operational criteria have dated evidence, the pricing/campaign plan establishes
+measured caps, and support/rights/name decisions are recorded.
+**Increase acquisition:** only after repeated unaided completion, acceptable
+contribution margin and support burden, and the P1 automation needed for that
+traffic level are demonstrated. Do not substitute a one-off founder-assisted
+success for the self-service result.
 
-### Production configuration
+## Local validation for this refresh
 
-- Fly config now pins `PULP_MODEL_COST_MARKUP=2.0`,
-  `PULP_CREDITS_PER_PROVIDER_USD=100`, and
-  `AI_BILL_FAILED_REQUESTS=provider_usage_only`.
-- Fly config now pins `CANARY_ALLOWED_HOSTS` and `SCENEWRIGHT_APP_URL` for the
-  Fly hostname. Update both when the custom domain is introduced.
-- Stripe return URLs now use `SCENEWRIGHT_APP_URL`, require HTTPS in production,
-  and never reflect an arbitrary request `Origin`.
-- Provision real backend/frontend Sentry DSNs, verify a scrubbed test event, and
-  create an error alert. Invalid Sentry configuration now logs and disables
-  Sentry without preventing boot.
-- OTel is explicitly disabled in Fly config until the production image installs
-  the optional dependency and a real export is verified.
-- The Docker frontend stage now uses `npm ci`, matching CI and the lockfile.
-- Keep Labs off. Decide whether the public short-story catalog/import belongs in
-  the launch product; if retained, cap downloaded bytes and decompressed text.
-- Expand the 1 GB volume before real projects. Keep automatic snapshots enabled,
-  increase retention if required, and perform one restore drill. Snapshots are
-  not a substitute for an off-provider backup of exports or project data.
-
-### Billing and auth operations
-
-- Use Stripe test mode first. Verify Checkout → signed webhook → exactly-once
-  ledger credit → visible balance, including a duplicate webhook replay.
-- Configure the production Supabase Site URL and redirect allowlist, including
-  `/reset-password`. Enable email confirmation, custom SMTP, auth abuse controls,
-  and CAPTCHA/bot protection appropriate to public signup.
-- Set `SCENEWRIGHT_TERMS_URL` and publish the same URL in Stripe so checkout
-  consent is actually collected.
-- Make `legal@scenewright.ink` and the support address real and monitored. Write
-  minimal runbooks for abuse/DMCA handling, account deletion, data export, and
-  snapshot retention after deletion. The legal templates should be reviewed by
-  counsel before a broad public launch.
-
-### Abuse and browser hardening
-
-- Add a decompressed-size/page/text/time budget for EPUB/PDF extraction; a 10 MB
-  compressed upload can still expand into a resource-exhaustion payload.
-- Verify Fly's forwarded-client-IP behavior cannot be spoofed to bypass SlowAPI.
-  Monitor per-user concurrent generation and add a ceiling if one tester can
-  monopolize workers or accidentally drain their balance.
-- Add a production security-header policy: CSP, HSTS, `X-Content-Type-Options`,
-  `Referrer-Policy`, and a deliberate frame-ancestors policy.
-
-## Deployed acceptance test
-
-Use a separate Supabase project and Stripe test mode for the first deployment.
-Do not switch to live purchases until this checklist passes.
-
-- [ ] Release SHA is pushed and every CI job is green.
-- [ ] Docker image boots on the 4 GB Fly machine and remains healthy beyond the
-      one-minute grace period.
-- [ ] `/api/health/ready` returns 200 only when Supabase and LiteLLM both report
-      `ok`; dependency failure returns 503. No check is `skipped` in production.
-- [ ] Signup, confirmation, login, logout, forgot-password, and reset-password
-      work on the deployed domain.
-- [ ] Two-user direct-Supabase authorization test passes.
-- [ ] Upload a representative EPUB/PDF and complete all eight backend stages,
-      including complete-page lettering/issue review, correction, and Finish
-      PDF/CBZ export.
-- [ ] Verify estimates, reservations, final debits, refunds/releases, and displayed
-      `~N credits` agree for a complete project.
-- [ ] Stripe test purchase credits the ledger exactly once; duplicate webhook
-      delivery is harmless; unpaid/invalid/oversized events do not credit.
-- [ ] Kill the machine mid-draw; confirm stale reservations release and the user
-      can recover through `/reset-stale` without being charged for lost work.
-- [ ] Sentry receives a scrubbed test error and an alert reaches the operator.
-- [ ] Restore the volume from a snapshot and open/export a recovered project.
-- [ ] Test narrow mobile, desktop, refresh/deep links, browser back/forward,
-      expired sessions, insufficient credits, provider refusal, timeout, quota,
-      partial draw failure, and retry flows.
-- [ ] Smoke-test English, Spanish, and French. If translation coverage is not
-      complete, explicitly launch the soft test as English-only.
-
-## Product-quality gate
-
-The July image-request hardening materially improves prompt/reference ordering,
-provider transport, provenance, and failure states. The current full-page
-contract tests are encouraging, but deployed complete-page visual acceptance,
-lettering/OCR coverage, correction behavior, and recurring-character/location
-coverage remain incomplete.
-
-For a soft launch, either finish those targeted visual evaluations or record an
-explicit waiver and recruit testers with the expectation that consistency is
-the primary research question. Do not market full-book visual consistency as a
-settled claim until real deployed runs support it.
-
-## Accepted soft-launch constraints
-
-These are not blockers for a small invite-only test if they are documented and
-monitored:
-
-- One Fly machine, one uvicorn worker, process-local queue/SSE/rate limits.
-- In-flight generation is lost on restart; reservations are released and work is
-  manually recoverable.
-- Project storage is local to one Fly volume; horizontal scaling waits for an
-  external queue and object storage.
-- Manual deployment. Automatic CD is optional; a green CI gate and a repeatable
-  manual deploy are sufficient at this scale.
-- Provider safety filters plus the report channel, without a separate input
-  moderation stage.
-
-## Go / no-go rule
-
-- **Private deployed smoke test:** go after the four P0 code defects are fixed
-  and the release revision is green.
-- **Invite-only soft launch:** go after every P1 operational item relevant to the
-  selected scope and the deployed acceptance test pass.
-- **Public signup / live Stripe:** no-go until email abuse controls, legal/support
-  operations, browser security headers, extraction limits, monitoring, and
-  backup recovery are proven.
-sup
+September 9, 2026: the targeted launch safety, deployment verifier, input-limit,
+admission, credited-job, project-limit, and entrypoint suites passed **82 tests**.
+The verifier now rejects non-production readiness that the previous top-level
+`ok` check accepted. Workflow concurrency was also updated to protect manual
+releases from superseding runs; the expression and queue behavior were checked
+against official GitHub documentation and the workflow parsed locally. Documentation reliability and targeted Ruff checks passed.
+These are local contract checks; no deployment, paid generation, payment, production
+schema migration, or production recovery exercise was performed for this audit.
+Full release CI and the deployed evidence above remain required.

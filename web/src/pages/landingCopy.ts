@@ -14,6 +14,9 @@ export interface LandingFaq {
 
 export interface LandingCopy {
   nav: {
+    skip: string;
+    home: string;
+    navigation: string;
     process: string;
     continuity: string;
     rights: string;
@@ -34,6 +37,8 @@ export interface LandingCopy {
     manuscriptLabel: string;
     visualLabels: [string, string, string];
     visualAlt: string;
+    chapterLabel: string;
+    sceneLabel: string;
   };
   premise: {
     title: string;
@@ -52,6 +57,9 @@ export interface LandingCopy {
     captions: [string, string, string];
     details: Array<{ title: string; body: string }>;
     alts: [string, string, string];
+    inspectTitle: string;
+    inspectBody: string;
+    inspectLinks: [string, string, string];
   };
   direction: {
     title: string;
@@ -93,33 +101,38 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
   en: {
     nav: {
       process: "How it works",
-      continuity: "Continuity",
+      continuity: "Read a scene",
       rights: "Your rights",
       faq: "Questions",
       signIn: "Sign in",
-      cta: "Create your studio",
+      cta: "Start small",
       language: "Language",
+      skip: "Skip to content",
+      home: "Scenewright home",
+      navigation: "Primary navigation",
     },
     hero: {
-      label: "A graphic-novel studio for novelists",
-      title: "Turn your novel into a graphic novel you direct.",
-      body: "Upload a finished manuscript. Shape the adaptation, cast, and visual style, review complete comic pages by exception, then export the verified book as PDF or CBZ.",
-      primaryCta: "Start with a sample story",
-      secondaryCta: "See the four decisions",
+      label: "An AI-assisted comic studio for indie authors",
+      title: "Your story. Its first comic scene.",
+      body: "Give readers a new way into your world. Start with a short excerpt, direct the look and cast, then review and export your comic as PDF or CBZ. Expand when the result feels like your story.",
+      primaryCta: "Create my first scene",
+      secondaryCta: "Read a development sample",
       formats: "AI-assisted visual adaptation · EPUB, PDF or TXT in · PDF or CBZ out",
-      sampleLabel: "Development sample",
-      sampleCaption: "Approved cast and world references",
+      sampleLabel: "Development reference art",
+      sampleCaption: "Reference-art composition · not a finished comic page",
       manuscriptLabel: "The manuscript",
-      visualLabels: ["Approved cast", "Place reference", "Visual direction"],
+      visualLabels: ["Character reference", "Place reference", "Character reference"],
       visualAlt: "Development sample showing two illustrated character references and a recurring tavern location.",
+      chapterLabel: "YOUR EXCERPT",
+      sceneLabel: "CAST & WORLD",
     },
     premise: {
-      title: "A whole-book workflow, not a one-prompt trick.",
-      body: "Your manuscript stays the source of truth from the first story beat to the last page.",
+      title: "Start with a scene worth seeing.",
+      body: "Choose a short excerpt with a clear setting, a small cast and a turning point. Upload it as its own EPUB, PDF or TXT file—or try a sample story in the studio.",
     },
     process: {
-      title: "Four decisions between manuscript and finished book.",
-      body: "Scenewright runs the production line. You keep the creative gates.",
+      title: "You direct. The studio handles production.",
+      body: "Approve the story brief, style and cast. The adaptation and page plan run between your creative checkpoints.",
       steps: [
         {
           number: "01",
@@ -136,23 +149,23 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
         {
           number: "03",
           label: "Pages",
-          title: "Fix by exception",
+          title: "Review the pages",
           body: "The adaptation and page plan run in the background. Review complete page revisions and correct only what misses.",
         },
         {
           number: "04",
           label: "Book",
           title: "Finish the edition",
-          body: "Run final preflight, resolve any returned corrections, then export the verified edition as PDF or CBZ.",
+          body: "Review the art and lettering, resolve any required corrections, then export your edition as PDF or CBZ. Automated checks do not guarantee visual quality.",
         },
       ],
     },
     continuity: {
-      title: "Keep the cast. Keep the world. Keep the thread.",
-      body: "Approved character references, location plates, and book-level continuity guide every complete page. Every new page starts with more than a standalone prompt.",
-      promise: "Built for long-form continuity",
-      sample: "Development reference set · not customer work",
-      captions: ["Character reference", "Recurring location", "Character reference"],
+      title: "Read a scene, page by page.",
+      body: "Two consecutive pages from a working development project. Follow Carl and Donut from the apartment to the snowy street. Open either page to read the lettering at full size.",
+      promise: "From a real development run",
+      sample: "Provisional development output · dcc1. 2 · pages 3–4 · English text, strong language. Not customer work; results vary.",
+      captions: ["Page 03 · The escape", "Page 04 · The pursuit", ""],
       details: [
         {
           title: "Character references",
@@ -167,11 +180,10 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
           body: "Book-level story state helps each complete page stay consistent with the pages around it.",
         },
       ],
-      alts: [
-        "Illustrated development portrait of Anya in a dark coat.",
-        "Illustrated development plate of a lantern-lit timber tavern.",
-        "Illustrated development portrait of Rurik in a fur cloak.",
-      ],
+      alts: ["Development comic page 3: Carl watches Donut leap through an apartment window into a snowy tree. English narration and dialogue.", "Development comic page 4: Carl goes outside in the snow to retrieve Donut. English narration and dialogue.", ""],
+      inspectTitle: "A story you can actually read.",
+      inspectBody: "Panels, narration and dialogue arrive together. These pages show the current development workflow, including its imperfections. You review the story, art and lettering before deciding what to keep or correct.",
+      inspectLinks: ["Read page 3 at full size", "Read page 4 at full size", ""],
     },
     direction: {
       title: "The tool takes the workload. You keep the creative decisions.",
@@ -179,24 +191,24 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       youLabel: "You direct",
       youItems: ["The story and source text", "The look and cast", "What gets corrected", "The final issue decisions"],
       toolLabel: "Scenewright drafts",
-      toolItems: ["The story bible and brief", "The adaptation and page plan", "Complete comic pages", "Verified PDF and CBZ editions"],
+      toolItems: ["The story bible and brief", "The adaptation and page plan", "Complete comic pages", "PDF and CBZ exports"],
       disclosure: "Scenewright uses third-party generative models to assist with adaptation and illustration. Your manuscript stays yours, and we claim no ownership over generated output. Purely generated imagery may have limited copyright protection.",
       termsLink: "Read the full rights and copyright terms",
     },
     trust: {
       title: "Pay for the production, not another subscription.",
       body: "Buy credits when you are ready. Every paid step shows an estimate before it runs.",
-      items: ["No subscription", "Credits never expire", "Packs start at $12", "Estimate before paid steps"],
+      items: ["No subscription", "Credits never expire", "Packs start at US$12", "Estimate before paid steps"],
       cta: "Create your studio",
-      note: "Actual credit use varies with manuscript length, visual quality and revisions.",
+      note: "Credits cover production, not a fixed number of pages. Length, quality and revisions affect the total.",
     },
     faq: {
-      title: "Before you hand over the manuscript.",
+      title: "Before your first scene.",
       body: "The practical answers, without the fine-print fog.",
       items: [
         {
-          question: "Can I upload a full novel?",
-          answer: "Yes. Scenewright accepts EPUB, PDF and TXT manuscripts, adapts the story, and plans the complete book page by page.",
+          question: "What should I start with?",
+          answer: "Start with a short excerpt saved as its own EPUB, PDF or TXT file, or use a sample story in the studio. Full manuscripts are supported, but a smaller first project helps you assess the result and credit use before expanding.",
         },
         {
           question: "Can I change what it makes?",
@@ -216,14 +228,14 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
         },
         {
           question: "How much will my book cost?",
-          answer: "There is no subscription. Credit packs start at $12, credits never expire, and Scenewright estimates each paid step before it runs. Total use depends on length, quality and revisions.",
+          answer: "There is no subscription. Credit packs start at US$12, credits never expire, and Scenewright estimates each paid step before it runs. Total use depends on length, quality and revisions.",
         },
       ],
     },
     final: {
-      title: "Your story is already written. Direct the edition readers can see.",
-      body: "Start with a sample story inside the studio, or bring your own manuscript when you are ready.",
-      cta: "Create my studio",
+      title: "Give your readers a scene to step into.",
+      body: "Bring one short excerpt, or explore a sample story. Find your visual direction before committing to a longer adaptation.",
+      cta: "Create my first scene",
       signIn: "I already have an account",
     },
     footer: {
@@ -236,33 +248,38 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
   es: {
     nav: {
       process: "Cómo funciona",
-      continuity: "Continuidad",
+      continuity: "Lee una escena",
       rights: "Tus derechos",
       faq: "Preguntas",
       signIn: "Iniciar sesión",
-      cta: "Crea tu estudio",
+      cta: "Empieza poco a poco",
       language: "Idioma",
+      skip: "Saltar al contenido",
+      home: "Inicio de Scenewright",
+      navigation: "Navegación principal",
     },
     hero: {
-      label: "Un estudio de novela gráfica para novelistas",
-      title: "Convierte tu novela en una novela gráfica que tú diriges.",
-      body: "Sube un manuscrito terminado. Define la adaptación, el reparto y el estilo visual, revisa páginas completas por excepción y exporta el libro verificado en PDF o CBZ.",
-      primaryCta: "Empieza con un cuento de muestra",
-      secondaryCta: "Conoce las cuatro decisiones",
+      label: "Un estudio de cómic con IA para autores independientes",
+      title: "Tu historia. Su primera escena de cómic.",
+      body: "Dale a tus lectores otra forma de entrar en tu mundo. Empieza con un fragmento breve, dirige el estilo y el reparto, y revisa y exporta tu cómic en PDF o CBZ. Amplía cuando el resultado refleje tu historia.",
+      primaryCta: "Crear mi primera escena",
+      secondaryCta: "Lee una muestra de desarrollo",
       formats: "Adaptación visual asistida por IA · EPUB, PDF o TXT de entrada · PDF o CBZ de salida",
-      sampleLabel: "Muestra de desarrollo",
-      sampleCaption: "Reparto y mundo de referencia aprobados",
+      sampleLabel: "Arte de referencia de desarrollo",
+      sampleCaption: "Composición de referencias · no es una página de cómic terminada",
       manuscriptLabel: "El manuscrito",
-      visualLabels: ["Reparto aprobado", "Lugar de referencia", "Dirección visual"],
+      visualLabels: ["Referencia de personaje", "Lugar de referencia", "Referencia de personaje"],
       visualAlt: "Muestra de desarrollo con dos personajes ilustrados y una taberna recurrente como referencia.",
+      chapterLabel: "TU FRAGMENTO",
+      sceneLabel: "REPARTO Y MUNDO",
     },
     premise: {
-      title: "Un flujo para todo el libro, no un truco de un solo prompt.",
-      body: "Tu manuscrito sigue siendo la fuente de verdad desde el primer giro hasta la última página.",
+      title: "Empieza con una escena que merezca verse.",
+      body: "Elige un fragmento breve con un lugar claro, pocos personajes y un giro narrativo. Súbelo como archivo EPUB, PDF o TXT independiente, o prueba un cuento de muestra en el estudio.",
     },
     process: {
-      title: "Cuatro decisiones entre el manuscrito y el libro terminado.",
-      body: "Scenewright mueve la producción. Tú conservas las decisiones creativas.",
+      title: "Tú diriges. El estudio se encarga de producir.",
+      body: "Aprueba el enfoque narrativo, el estilo y el reparto. La adaptación y el plan de páginas avanzan entre tus revisiones creativas.",
       steps: [
         {
           number: "01",
@@ -279,23 +296,23 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
         {
           number: "03",
           label: "Páginas",
-          title: "Corrige por excepción",
+          title: "Revisa las páginas",
           body: "La adaptación y el plan de páginas avanzan en segundo plano. Revisa páginas completas y corrige solo lo que falla.",
         },
         {
           number: "04",
           label: "Libro",
           title: "Termina la edición",
-          body: "Ejecuta la verificación final, resuelve las correcciones devueltas y exporta la edición en PDF o CBZ.",
+          body: "Revisa el arte y los textos, resuelve las correcciones necesarias y exporta en PDF o CBZ. Los controles automáticos no garantizan la calidad visual.",
         },
       ],
     },
     continuity: {
-      title: "Conserva el reparto. Conserva el mundo. Conserva el hilo.",
-      body: "Las referencias de personajes y lugares aprobadas, junto con la continuidad del libro, guían cada página completa. Cada página parte de mucho más que un prompt aislado.",
-      promise: "Pensado para la continuidad de largo formato",
-      sample: "Referencias de desarrollo · no es trabajo de un cliente",
-      captions: ["Referencia de personaje", "Lugar recurrente", "Referencia de personaje"],
+      title: "Lee una escena, página a página.",
+      body: "Dos páginas consecutivas de un proyecto de desarrollo. Sigue a Carl y Donut desde el apartamento hasta la calle nevada. Abre cualquiera de las páginas para leer los textos a tamaño completo.",
+      promise: "De una ejecución real de desarrollo",
+      sample: "Resultado provisional de desarrollo · dcc1. 2 · páginas 3–4 · Texto en inglés, lenguaje fuerte. No es trabajo de un cliente; los resultados varían.",
+      captions: ["Página 03 · La fuga", "Página 04 · La búsqueda", ""],
       details: [
         {
           title: "Referencias de personajes",
@@ -310,11 +327,10 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
           body: "El estado narrativo del libro mantiene cada página coherente con las que la rodean.",
         },
       ],
-      alts: [
-        "Retrato ilustrado de desarrollo de Anya con abrigo oscuro.",
-        "Referencia ilustrada de una taberna de madera iluminada con faroles.",
-        "Retrato ilustrado de desarrollo de Rurik con capa de piel.",
-      ],
+      alts: ["Página 3 de cómic de desarrollo: Carl observa cómo Donut salta por la ventana del apartamento hacia un árbol nevado. Textos en inglés.", "Página 4 de cómic de desarrollo: Carl sale a la nieve para recuperar a Donut. Textos en inglés.", ""],
+      inspectTitle: "Una historia que puedes leer.",
+      inspectBody: "Las viñetas, la narración y los diálogos llegan juntos. Estas páginas muestran el flujo de desarrollo actual, incluidas sus imperfecciones. Tú revisas la historia, el arte y los textos antes de decidir qué conservar o corregir.",
+      inspectLinks: ["Leer la página 3 a tamaño completo", "Leer la página 4 a tamaño completo", ""],
     },
     direction: {
       title: "La herramienta asume la carga. Tú conservas las decisiones creativas.",
@@ -322,7 +338,7 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       youLabel: "Tú diriges",
       youItems: ["La historia y el texto original", "El estilo y el reparto", "Qué se corrige", "Las decisiones finales sobre incidencias"],
       toolLabel: "Scenewright prepara",
-      toolItems: ["La biblia y el enfoque", "La adaptación y el plan de páginas", "Páginas completas de cómic", "Ediciones PDF y CBZ verificadas"],
+      toolItems: ["La biblia y el enfoque", "La adaptación y el plan de páginas", "Páginas completas de cómic", "Exportaciones PDF y CBZ"],
       disclosure: "Scenewright usa modelos generativos de terceros para ayudar con la adaptación y la ilustración. Tu manuscrito sigue siendo tuyo y no reclamamos propiedad sobre el resultado generado. Las imágenes puramente generadas pueden tener protección de autor limitada.",
       termsLink: "Lee todos los términos sobre derechos y autoría",
     },
@@ -331,15 +347,15 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       body: "Compra créditos cuando estés listo. Cada paso de pago muestra una estimación antes de ejecutarse.",
       items: ["Sin suscripción", "Los créditos no vencen", "Paquetes desde 12 USD", "Estimación antes de pagar"],
       cta: "Crea tu estudio",
-      note: "El uso real depende de la extensión, la calidad visual y las revisiones.",
+      note: "Los créditos cubren la producción, no un número fijo de páginas. La extensión, la calidad y las revisiones afectan al total.",
     },
     faq: {
-      title: "Antes de entregar el manuscrito.",
+      title: "Antes de tu primera escena.",
       body: "Respuestas prácticas, sin niebla de letra pequeña.",
       items: [
         {
-          question: "¿Puedo subir una novela completa?",
-          answer: "Sí. Scenewright acepta manuscritos EPUB, PDF y TXT, adapta la historia y planifica el libro página a página.",
+          question: "¿Con qué debería empezar?",
+          answer: "Empieza con un fragmento breve guardado como archivo EPUB, PDF o TXT independiente, o usa un cuento de muestra del estudio. También se admiten manuscritos completos, pero un primer proyecto pequeño te ayuda a evaluar el resultado y el consumo de créditos antes de ampliar.",
         },
         {
           question: "¿Puedo cambiar lo que produce?",
@@ -364,9 +380,9 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       ],
     },
     final: {
-      title: "Tu historia ya está escrita. Dirige la edición que los lectores podrán ver.",
-      body: "Empieza con un cuento de muestra dentro del estudio o trae tu manuscrito cuando estés listo.",
-      cta: "Crear mi estudio",
+      title: "Invita a tus lectores a entrar en una escena.",
+      body: "Trae un fragmento breve o explora un cuento de muestra. Encuentra tu dirección visual antes de comprometerte con una adaptación más larga.",
+      cta: "Crear mi primera escena",
       signIn: "Ya tengo una cuenta",
     },
     footer: {
@@ -379,33 +395,38 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
   fr: {
     nav: {
       process: "Fonctionnement",
-      continuity: "Continuité",
+      continuity: "Lire une scène",
       rights: "Vos droits",
       faq: "Questions",
       signIn: "Se connecter",
-      cta: "Créer votre studio",
+      cta: "Commencer petit",
       language: "Langue",
+      skip: "Aller au contenu",
+      home: "Accueil Scenewright",
+      navigation: "Navigation principale",
     },
     hero: {
-      label: "Un studio de roman graphique pour les romanciers",
-      title: "Transformez votre roman en roman graphique, sous votre direction.",
-      body: "Importez un manuscrit achevé. Façonnez l’adaptation, les personnages et le style, révisez les pages complètes par exception, puis exportez le livre vérifié en PDF ou CBZ.",
-      primaryCta: "Commencer avec un récit exemple",
-      secondaryCta: "Voir les quatre décisions",
+      label: "Un studio de BD avec IA pour les auteurs indépendants",
+      title: "Votre récit. Sa première scène de BD.",
+      body: "Offrez à vos lecteurs une nouvelle entrée dans votre univers. Partez d’un court extrait, dirigez le style et les personnages, puis révisez et exportez votre BD en PDF ou CBZ. Développez-la quand le résultat reflète votre récit.",
+      primaryCta: "Créer ma première scène",
+      secondaryCta: "Lire un exemple de développement",
       formats: "Adaptation visuelle assistée par IA · EPUB, PDF ou TXT en entrée · PDF ou CBZ en sortie",
-      sampleLabel: "Exemple de développement",
-      sampleCaption: "Personnages et univers de référence approuvés",
+      sampleLabel: "Images de référence de développement",
+      sampleCaption: "Composition de références · pas une page de BD terminée",
       manuscriptLabel: "Le manuscrit",
-      visualLabels: ["Personnages approuvés", "Lieu de référence", "Direction visuelle"],
+      visualLabels: ["Référence de personnage", "Lieu de référence", "Référence de personnage"],
       visualAlt: "Exemple de développement montrant deux personnages illustrés et une taverne récurrente comme référence.",
+      chapterLabel: "VOTRE EXTRAIT",
+      sceneLabel: "PERSONNAGES ET UNIVERS",
     },
     premise: {
-      title: "Un flux pour le livre entier, pas un tour de passe-passe en un prompt.",
-      body: "Votre manuscrit reste la source de vérité, du premier temps fort à la dernière page.",
+      title: "Commencez par une scène qui mérite d’être vue.",
+      body: "Choisissez un court extrait avec un lieu précis, peu de personnages et un tournant narratif. Importez-le dans un fichier EPUB, PDF ou TXT distinct, ou essayez un récit exemple dans le studio.",
     },
     process: {
-      title: "Quatre décisions entre le manuscrit et le livre terminé.",
-      body: "Scenewright fait avancer la production. Vous gardez les choix créatifs.",
+      title: "Vous dirigez. Le studio assure la production.",
+      body: "Approuvez le brief narratif, le style et les personnages. L’adaptation et le plan des pages avancent entre vos validations créatives.",
       steps: [
         {
           number: "01",
@@ -422,23 +443,23 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
         {
           number: "03",
           label: "Pages",
-          title: "Corrigez par exception",
+          title: "Révisez les pages",
           body: "L’adaptation et le plan des pages avancent en arrière-plan. Révisez les pages complètes et corrigez seulement ce qui manque.",
         },
         {
           number: "04",
           label: "Livre",
           title: "Finalisez l’édition",
-          body: "Lancez le contrôle final, résolvez les corrections renvoyées, puis exportez l’édition en PDF ou CBZ.",
+          body: "Vérifiez les images et les textes, résolvez les corrections nécessaires, puis exportez en PDF ou CBZ. Les contrôles automatiques ne garantissent pas la qualité visuelle.",
         },
       ],
     },
     continuity: {
-      title: "Gardez les personnages. Gardez l’univers. Gardez le fil.",
-      body: "Les références approuvées des personnages et des lieux, ainsi que la continuité du livre, guident chaque page complète. Chaque page part de bien plus qu’un prompt isolé.",
-      promise: "Pensé pour la continuité au long cours",
-      sample: "Références de développement · pas un projet client",
-      captions: ["Référence de personnage", "Lieu récurrent", "Référence de personnage"],
+      title: "Lisez une scène, page après page.",
+      body: "Deux pages consécutives d’un projet de développement. Suivez Carl et Donut de l’appartement à la rue enneigée. Ouvrez chaque page pour lire les textes en taille réelle.",
+      promise: "Issu d’une vraie génération de développement",
+      sample: "Résultat provisoire de développement · dcc1. 2 · pages 3–4 · Textes en anglais, langage grossier. Pas un projet client ; les résultats varient.",
+      captions: ["Page 03 · La fuite", "Page 04 · La poursuite", ""],
       details: [
         {
           title: "Références des personnages",
@@ -453,11 +474,10 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
           body: "L’état narratif du livre maintient chaque page cohérente avec celles qui l’entourent.",
         },
       ],
-      alts: [
-        "Portrait illustré de développement d’Anya dans un manteau sombre.",
-        "Planche illustrée d’une taverne en bois éclairée par des lanternes.",
-        "Portrait illustré de développement de Rurik dans une cape de fourrure.",
-      ],
+      alts: ["Page 3 de BD de développement : Carl regarde Donut sauter par la fenêtre vers un arbre enneigé. Textes en anglais.", "Page 4 de BD de développement : Carl sort dans la neige pour récupérer Donut. Textes en anglais.", ""],
+      inspectTitle: "Un récit que vous pouvez lire.",
+      inspectBody: "Les cases, la narration et les dialogues arrivent ensemble. Ces pages montrent le flux de développement actuel, avec ses imperfections. Vous vérifiez le récit, les images et les textes avant de décider quoi conserver ou corriger.",
+      inspectLinks: ["Lire la page 3 en taille réelle", "Lire la page 4 en taille réelle", ""],
     },
     direction: {
       title: "L’outil prend en charge le travail. Vous gardez les choix créatifs.",
@@ -465,7 +485,7 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       youLabel: "Vous dirigez",
       youItems: ["Le récit et le texte source", "Le style et les personnages", "Ce qui doit être corrigé", "Les décisions finales sur les problèmes"],
       toolLabel: "Scenewright prépare",
-      toolItems: ["La bible narrative et le brief", "L’adaptation et le plan des pages", "Les pages complètes de la BD", "Les éditions PDF et CBZ vérifiées"],
+      toolItems: ["La bible narrative et le brief", "L’adaptation et le plan des pages", "Les pages complètes de la BD", "Les exports PDF et CBZ"],
       disclosure: "Scenewright utilise des modèles génératifs tiers pour aider à l’adaptation et à l’illustration. Votre manuscrit reste à vous et nous ne revendiquons aucun droit de propriété sur les sorties générées. Une image purement générée peut bénéficier d’une protection limitée.",
       termsLink: "Lire les conditions complètes sur les droits et le copyright",
     },
@@ -474,15 +494,15 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       body: "Achetez des crédits quand vous êtes prêt. Chaque étape payante affiche une estimation avant de démarrer.",
       items: ["Sans abonnement", "Les crédits n’expirent jamais", "Packs dès 12 $ US", "Estimation avant paiement"],
       cta: "Créer votre studio",
-      note: "La consommation réelle varie selon la longueur, la qualité visuelle et les révisions.",
+      note: "Les crédits couvrent la production, pas un nombre fixe de pages. La longueur, la qualité et les révisions influencent le total.",
     },
     faq: {
-      title: "Avant de confier le manuscrit.",
+      title: "Avant votre première scène.",
       body: "Les réponses pratiques, sans brouillard juridique.",
       items: [
         {
-          question: "Puis-je importer un roman entier ?",
-          answer: "Oui. Scenewright accepte les manuscrits EPUB, PDF et TXT, adapte le récit et planifie le livre page par page.",
+          question: "Par quoi commencer ?",
+          answer: "Commencez par un court extrait enregistré dans un fichier EPUB, PDF ou TXT distinct, ou utilisez un récit exemple du studio. Les manuscrits complets sont aussi acceptés, mais un premier projet court permet d’évaluer le résultat et la consommation de crédits avant de poursuivre.",
         },
         {
           question: "Puis-je modifier le résultat ?",
@@ -507,9 +527,9 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       ],
     },
     final: {
-      title: "Votre histoire est déjà écrite. Dirigez l’édition que les lecteurs pourront voir.",
-      body: "Commencez avec un récit exemple dans le studio, ou apportez votre manuscrit quand vous êtes prêt.",
-      cta: "Créer mon studio",
+      title: "Invitez vos lecteurs à entrer dans une scène.",
+      body: "Apportez un court extrait ou explorez un récit exemple. Trouvez votre direction visuelle avant de vous engager dans une adaptation plus longue.",
+      cta: "Créer ma première scène",
       signIn: "J’ai déjà un compte",
     },
     footer: {

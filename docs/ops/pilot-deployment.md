@@ -1,17 +1,44 @@
 # Customer-facing deployment
 
-Status: Current
+**Status: Current repository procedure, September 9, 2026.** The filename is
+retained for existing links; the target is a bounded self-service release.
+These steps are a procedure, not evidence that production has passed them.
 
-1. If the release includes a database change, review and apply it manually
-   using `docs/deploy.md`; confirm a current backup and record the result.
-2. Announce the maintenance window and stop new generation intake.
-3. Push the exact release SHA to `main`.
-4. Manually run the `CI` workflow against `main`. The dispatch confirms the
-   maintenance window is active.
-5. Wait for the backend, frontend, and Docker jobs to pass. CI then starts the
-   `Deploy production` job for that same SHA.
-6. CI checks that generation is idle, records the rollback release, deploys,
-   and verifies the public release contracts. CI has no production database
-   credential and never applies schema changes.
-7. Copy `release-evidence-template.md` and attach the CI job summary.
-8. Run a signed-in smoke test, record the result, and reopen work.
+1. Prepare the exact release SHA and read [the deploy runbook](../deploy.md).
+   If a database change is required, review compatibility/rollback, confirm a
+   backup, and apply the canonical SQL before the new binary starts. Preserve
+   `/projects`, including request/job journals and Draw recovery records.
+2. Establish the maintenance window and any external access restriction needed
+   during verification. A new process starts undrained. For an old binary
+   without drain, follow the runbook's controlled first-cutover procedure;
+   there is no idle-only fallback.
+3. Push the intended SHA to `main`; manually dispatch `CI` on that SHA. Each
+   dispatch has a unique workflow concurrency group and cannot be automatically
+   cancelled by a later dispatch or push. Actual deployments remain serialized;
+   up to 100 pending deployment jobs queue without replacing an older request.
+   Check maintenance/schema conditions again when a queued release becomes active.
+4. Backend, frontend, and Docker jobs must pass before `Deploy production`.
+   That job authenticates `POST /api/ops/drain`, then waits for both
+   `draining: true` and `safe_to_deploy: true`. Timeout or error does not
+   authorize deployment; timeout leaves admission drained.
+5. CI records the rollback release, rebuilds/deploys the tested source SHA with
+   production arguments, and verifies public release contracts. It has no
+   production database credential. The deployed build is not the identical
+   digest used by the CI image smoke test.
+6. Attach the CI summary and verifier output to a copy of
+   [the release evidence template](release-evidence-template.md). Record
+   deployed SHA, build timestamp, readiness, rollback image, and schema evidence.
+7. Complete the signed-in smoke test and relevant
+   [launch gates](../proposals/launch-readiness.md), including a confirmed
+   production API model mode and explicit dependency checks. Public liveness
+   alone does not prove purchase, recovery, generation, or export works.
+8. Remove external restrictions only after acceptance. If a release fails or is
+   cancelled, inspect actual Machine/release/activity state; decide explicitly
+   whether to roll back or resume. Never automatically reopen a drained process
+   or replay ambiguous paid submissions.
+
+For unattended operation, the remaining work includes exercising the protected
+release lifecycle, bounded Machine crash recovery that respects maintenance,
+actionable alerts/reconciliation, and recurring backup restoration. The current
+Fly `restart = never` policy intentionally keeps stopped Machines stopped;
+that also requires operator recovery after a web/container crash.
