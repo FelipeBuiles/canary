@@ -315,3 +315,109 @@ def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(
     assert "untrusted" not in provenance.response_metadata
     assert finalized.call_args.kwargs["usage"].provider_model is None
     assert finalized.call_args.kwargs["response_data"]["id"] == provenance.provider_request_id
+
+
+def test_explicit_retry_estimate_after_failed_codex_draw(tmp_path, monkeypatch, dev_routes):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from novel_to_comic.server.deps import get_project
+
+    page, inventory, files = _authorities(tmp_path, 2)
+    original = _compiled(page, inventory, files)
+    artifacts = TargetArtifacts(tmp_path)
+    artifacts.write_page(page)
+    artifacts.write_book_edition(page_drawing.select_book_edition(
+        edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(),
+    ))
+    artifacts.write_request(original.request, request_revision=1)
+    monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
+    app = FastAPI()
+    app.include_router(pages.router)
+    app.dependency_overrides[get_project] = lambda: (tmp_path, Config(), None)
+
+    client = TestClient(app)
+    edition_bytes = artifacts.book_edition_path.read_bytes()
+    prior = original.request
+    for attempt in range(2, 5):
+        response = client.get(f"/pages/{page.page_number}/generate/estimate")
+        assert response.status_code == 200, response.text
+        assert response.json()["funding"] == "codex_subscription"
+        assert artifacts.request_revisions(page.page_number) == tuple(range(1, attempt))
+        _, _, compiled = pages._prepare_initial_generation(
+            (tmp_path, Config(), None), page.page_number, "canonical",
+        )
+        assert compiled.request.retry == RetryProvenance(
+            attempt=attempt, retries_request_sha256=prior.request_sha256,
+        )
+        assert compiled.request.request_sha256 != prior.request_sha256
+        assert compiled.request.edition_sha256 == original.request.edition_sha256
+        assert compiled.request.profile_sha256 == original.request.profile_sha256
+        artifacts.write_request(compiled.request, request_revision=attempt)
+        prior = compiled.request
+    assert artifacts.book_edition_path.read_bytes() == edition_bytes
+
+
+@pytest.mark.parametrize("indeterminate", [False, True])
+def test_codex_draw_failure_submits_once_even_on_explicit_retry(
+    tmp_path, monkeypatch, dev_routes, indeterminate,
+):
+    from novel_to_comic.ai import finalisation
+
+    page, inventory, files = _authorities(tmp_path, 2)
+    original = _compiled(page, inventory, files)
+    artifacts = TargetArtifacts(tmp_path / "project")
+    artifacts.write_request(original.request, request_revision=1)
+    retried = page_drawing.compile_page_generation_request(
+        page, page_drawing.select_book_edition(
+            edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(),
+        ), inventory, files, retry=pages._generation_retry(artifacts, page.page_number),
+    )
+    error = codex_runtime.CodexRuntimeError(
+        "image_tool_failed", {"submitted": True, "indeterminate": indeterminate},
+    )
+    runtime = AsyncMock(side_effect=error)
+    monkeypatch.setattr(codex_runtime, "run_image", runtime)
+    monkeypatch.setattr(finalisation, "begin_image_call", AsyncMock(return_value=SimpleNamespace(event_id="retry-call")))
+    monkeypatch.setattr(finalisation, "finalise_image_failure", AsyncMock())
+
+    with pytest.raises(codex_runtime.CodexRuntimeError):
+        asyncio.run(page_drawing.draw_complete_page(
+            retried, adapter=page_drawing.complete_page_adapter(Config()),
+            artifacts=artifacts, page=page,
+        ))
+    runtime.assert_awaited_once()
+    assert artifacts.request_revisions(page.page_number) == (1, 2)
+    assert artifacts.provenance_revisions(page.page_number) == ()
+
+
+def test_failed_codex_correction_can_be_explicitly_retried(tmp_path, dev_routes):
+    page, inventory, files = _authorities(tmp_path, 2)
+    parent = next(iter(files.values())).path.read_bytes()
+    correction = PageRenderCorrection(
+        issue_ids=("issue-crown",),
+        page_number=page.page_number, comic_page_revision=page.revision,
+        comic_page_sha256=page.content_sha256, parent_render_revision=1,
+        parent_render_image_sha256=hashlib.sha256(parent).hexdigest(),
+        mode="instructed", instruction="Restore the crown; preserve exact lettering.",
+    )
+    original = _compiled(page, inventory, files, correction=correction, edit_source_bytes=parent)
+    artifacts = TargetArtifacts(tmp_path / "project")
+    artifacts.write_request(original.request, request_revision=2)
+    retried = page_drawing.compile_page_generation_request(
+        page, page_drawing.select_book_edition(
+            edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(),
+        ), inventory, files,
+        retry=pages._aggregated_correction_retry(
+            artifacts, page_number=page.page_number, issue_ids=correction.issue_ids,
+        ),
+        correction=correction, edit_source_bytes=parent,
+    )
+    prepared = page_drawing.complete_page_adapter(Config()).prepare(retried)
+    assert retried.request.retry == RetryProvenance(
+        attempt=2, retries_request_sha256=original.request.request_sha256,
+    )
+    assert retried.request.correction == correction
+    assert prepared.edit_source_bytes == parent
+    assert prepared.references == original.request.references
+    assert retried.request.profile_sha256 == original.request.profile_sha256

@@ -160,3 +160,23 @@ describe("Failed stage recovery consent", () => {
     expect(run).toHaveBeenCalledWith("demo", "plan", expect.objectContaining({ rerun: true }));
   });
 });
+
+
+describe("Readable adaptation failures", () => {
+  it("keeps internal errors collapsed and resumes with saved work after consent", () => {
+    render(<I18nProvider><StagePlaceholder project="demo" stage="adapt" status="failed"
+      error="Book adaptation has invariant failures: invalid_lettering_speaker"
+      errorDetail={"Traceback: /a/very/long/path/".repeat(80)}
+    /></I18nProvider>);
+    expect(screen.getByText("The comic script needs a few corrections before page planning can continue.")).toBeTruthy();
+    const details = screen.getByText("Technical details").closest("details");
+    expect(details?.open).toBe(false);
+    expect(details?.textContent).toContain("invalid_lettering_speaker");
+    expect(details?.querySelector("pre")?.className).toContain("[overflow-wrap:anywhere]");
+    expect(screen.queryByText("Page planning follows automatically. You will choose when to start drawing.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Resume adaptation" }));
+    expect(run).not.toHaveBeenCalled();
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Resume adaptation" }));
+    expect(run).toHaveBeenCalledWith("demo", "adapt", expect.objectContaining({ rerun: false }));
+  });
+});

@@ -20,7 +20,7 @@ export interface StationSubstep {
   backendStages: StageName[];
   /** Gated substeps navigate to this project-relative route. */
   route?: string;
-  /** Auto substeps open this read-only inspect drawer. */
+  /** Auto substeps open this read-only document in the Pages station. */
   drawer?: DrawerKind;
 }
 

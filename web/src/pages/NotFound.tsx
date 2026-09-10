@@ -1,4 +1,6 @@
 import { useNavigate } from "react-router-dom";
+import { ArrowLeft } from "lucide-react";
+import { Surface } from "../components/ui/Surface";
 import { Button } from "../components/ui/Button";
 import { useI18n } from "../i18n";
 
@@ -7,18 +9,22 @@ export function NotFound() {
   const { t } = useI18n();
 
   return (
-    <div className="benday-paper flex min-h-[60vh] items-center justify-center px-6 py-16">
-      <div className="w-full max-w-md border-[2px] border-ink-black bg-bristol p-10 text-center shadow-ink">
-        <div className="mx-auto flex aspect-[4/3] w-full max-w-[240px] items-center justify-center border-[2px] border-dashed border-ink-black/20">
-          <span className="font-display text-[2.6rem] font-black tracking-[-0.04em] text-ink-black/15">404</span>
+    <div className="flex min-h-[65vh] items-center justify-center bg-pulp-paper px-5 py-12 sm:py-16">
+      <Surface padding="none" shadow="ink" className="w-full max-w-xl overflow-hidden">
+        <div className="border-b-[2px] border-ink-black bg-narrator-gold px-6 py-5 sm:px-9">
+          <span className="font-meta text-xs font-bold uppercase tracking-widest">{t("Page not found")}</span>
         </div>
-        <h1 className="mt-6 font-display text-[1.55rem] font-black uppercase leading-[1.05] tracking-[-0.04em] text-ink-black">
-          {t("THIS PAGE WAS LEFT ON THE CUTTING ROOM FLOOR")}
-        </h1>
-        <div className="mt-7 flex justify-center">
-          <Button onClick={() => navigate("/")}>{t("BACK TO THE LIBRARY")}</Button>
+        <div className="p-6 sm:p-9">
+          <div aria-hidden="true" className="font-display text-[5rem] font-black leading-none tracking-[-0.06em] text-ink-black sm:text-[6rem]">404</div>
+          <h1 className="mt-5 max-w-[22ch] font-display text-[1.75rem] font-black uppercase leading-[1.05] tracking-[-0.04em] text-ink-black">
+            {t("THIS PAGE WAS LEFT ON THE CUTTING ROOM FLOOR")}
+          </h1>
+          <p className="mt-4 max-w-[45ch] font-body text-base leading-7 text-ink-muted">{t("The link may be out of date, or the address may have a typo. Your library is a good place to start again.")}</p>
+          <div className="mt-7 flex">
+            <Button onClick={() => navigate("/")}><ArrowLeft size={16} aria-hidden="true" />{t("BACK TO THE LIBRARY")}</Button>
+          </div>
         </div>
-      </div>
+      </Surface>
     </div>
   );
 }

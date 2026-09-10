@@ -336,17 +336,19 @@ def test_request_identity_records_retry_lineage(tmp_path: Path) -> None:
     )
     assert retried.request.request_sha256 != original.request.request_sha256
 
-    with pytest.raises(ValueError, match="retry attempt"):
-        compile_page_generation_request(
-            _page(),
-            _edition(),
-            _inventory(),
-            _reference_files(tmp_path),
-            retry=RetryProvenance(
-                attempt=4,
-                retries_request_sha256=original.request.request_sha256,
-            ),
-        )
+    later = compile_page_generation_request(
+        _page(),
+        _edition(),
+        _inventory(),
+        _reference_files(tmp_path),
+        retry=RetryProvenance(
+            attempt=4,
+            retries_request_sha256=retried.request.request_sha256,
+        ),
+    )
+    prepared = VertexCompletePageAdapter(_RecordingTransport(_provider_result())).prepare(later)
+    assert prepared.request_sha256 == later.request.request_sha256
+    assert later.request.retry.attempt > _edition().capability_profile.max_attempts
 
 
 def test_failed_generation_retry_advances_request_lineage(tmp_path: Path) -> None:

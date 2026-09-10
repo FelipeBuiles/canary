@@ -136,6 +136,8 @@ export interface PersistedRevisionDraft {
   comicPageSha256: string;
   changes: PersistedDraftChange[];
   note: string;
+  /** Unreviewed wording in the main request field, scoped to this exact render. */
+  pendingRequest?: string;
   contextSourceUnitIds: string[];
   updatedAt: string;
 }
@@ -172,6 +174,7 @@ export function loadRevisionDraft(
       return null;
     }
     if (typeof parsed.note !== "string") parsed.note = "";
+    if (typeof parsed.pendingRequest !== "string") parsed.pendingRequest = "";
     if (!Array.isArray(parsed.contextSourceUnitIds)) parsed.contextSourceUnitIds = [];
     return parsed;
   } catch {

@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../hooks/useAuth";
 import { Button } from "../../components/ui/Button";
 import { BrandMark } from "../../components/BrandMark";
+import { useI18n } from "../../i18n";
 
 /**
  * Landing page for the Supabase password-recovery flow.
@@ -17,7 +18,11 @@ import { BrandMark } from "../../components/BrandMark";
 export function ResetPasswordPage() {
   const { session, loading } = useAuth();
   const navigate = useNavigate();
+  const { t } = useI18n();
+  const redirectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (redirectTimer.current) clearTimeout(redirectTimer.current); }, []);
   const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -30,19 +35,28 @@ export function ResetPasswordPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (submitting || loading || !session || message) return;
     if (password.length < 6) {
-      setError("Password must be at least 6 characters.");
+      setError(t("Password must be at least 6 characters."));
+      return;
+    }
+    if (password !== confirm) {
+      setError(t("Passwords don't match."));
       return;
     }
     setSubmitting(true);
     setError(null);
-    const { error } = await supabase.auth.updateUser({ password });
-    setSubmitting(false);
-    if (error) {
-      setError(error.message);
-    } else {
-      setMessage("Password updated. Redirecting to sign in…");
-      setTimeout(() => navigate("/login", { replace: true }), 1500);
+    try {
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) throw error;
+      setMessage(t("Password updated. Redirecting to sign in…"));
+      setPassword("");
+      setConfirm("");
+      redirectTimer.current = setTimeout(() => navigate("/login", { replace: true }), 1500);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : t("We couldn't update your password. Please try again."));
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -63,32 +77,36 @@ export function ResetPasswordPage() {
           <div aria-hidden="true" className="absolute inset-0 translate-x-2 translate-y-2 bg-hero-red" />
           <form
             onSubmit={handleSubmit}
-            className="relative w-full space-y-5 border-[3px] border-ink-black bg-bristol p-8 text-ink-black"
+            aria-label={t("Set a new password")}
+            className="relative w-full space-y-5 border-[3px] border-ink-black bg-bristol p-6 text-ink-black sm:p-8"
           >
           <div className="flex flex-col items-center gap-3 pb-2 text-center">
             <BrandMark className="h-12 w-12" variant="primary" />
             <h1 className="font-display text-[1.4rem] font-black uppercase tracking-[-0.02em] text-ink-black">
-              Set a new password
+              {t("Set a new password")}
             </h1>
+            <p className="font-body text-sm leading-6 text-ink-muted">{t("Choose a password you don't use elsewhere.")}</p>
           </div>
 
           {error && (
-            <p role="alert" className="border-[2px] border-hero-red bg-chip-red/50 px-3 py-2 text-center font-body text-[0.85rem] font-semibold text-hero-red">
+            <p role="alert" className="bg-chip-red/50 px-3 py-2 text-center font-body text-[0.85rem] font-semibold text-hero-red">
               {error}
             </p>
           )}
           {message && (
-            <p role="status" className="animate-register-stamp border-[2px] border-archive-sage bg-chip-sage px-3 py-2 text-center font-body text-[0.85rem] font-semibold text-archive-sage">
+            <p role="status" className="bg-chip-sage px-3 py-2 text-center font-body text-[0.85rem] font-semibold text-ink-black">
               {message}
             </p>
           )}
 
           <label className="block">
-            <span className="font-meta text-[0.6rem] font-bold uppercase tracking-[0.2em] text-ink-black/55">
-              New password
+            <span className="font-meta text-xs font-bold uppercase tracking-[0.1em] text-ink-muted">
+              {t("New password")}
             </span>
             <input
               type="password"
+              disabled={submitting || loading || !!message}
+              aria-describedby="reset-password-hint"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="new-password"
@@ -99,8 +117,15 @@ export function ResetPasswordPage() {
             />
           </label>
 
-          <Button type="submit" className="w-full" disabled={submitting}>
-            {submitting ? "WORKING…" : "UPDATE PASSWORD"}
+          <p id="reset-password-hint" className="font-body text-sm text-ink-muted">{t("Minimum 6 characters.")}</p>
+          <label className="block">
+            <span className="font-meta text-xs font-bold uppercase tracking-[0.1em] text-ink-muted">{t("Confirm new password")}</span>
+            <input type="password" autoComplete="new-password" required minLength={6}
+              value={confirm} onChange={(event) => setConfirm(event.target.value)}
+              disabled={submitting || loading || !!message} className="ui-field mt-2 h-12" />
+          </label>
+          <Button type="submit" className="w-full" disabled={submitting || loading || !!message}>
+            {t(submitting ? "WORKING…" : "UPDATE PASSWORD")}
           </Button>
           </form>
         </div>

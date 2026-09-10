@@ -24,6 +24,7 @@ import {
 import { Button } from "../ui/Button";
 import { FieldLabel, TextAreaField } from "../ui/Field";
 import { Surface } from "../ui/Surface";
+import { PageArtwork } from "./PageArtwork";
 import { AnnotationEditor, type EditorAnnotation } from "./AnnotationEditor";
 import { roundPoint } from "./annotationGeometry";
 import type { VisualReviewDraftSeed } from "./VisualReviewPanel";
@@ -225,7 +226,9 @@ export function RevisionDraft({
   const [note, setNote] = useState(
     () => loadRevisionDraft(project, pageNumber, target)?.note ?? "",
   );
-  const [manualInput, setManualInput] = useState("");
+  const [manualInput, setManualInput] = useState(
+    () => loadRevisionDraft(project, pageNumber, target)?.pendingRequest ?? "",
+  );
   const [focusId, setFocusId] = useState<string | null>(null);
   const [previewHash, setPreviewHash] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -262,7 +265,7 @@ export function RevisionDraft({
     scrollIntentRef.current = null;
     if (intent === "edit") {
       scrollLocalIntoView(railRef.current);
-      railRef.current?.querySelector<HTMLButtonElement>("button:not([disabled])")?.focus({ preventScroll: true });
+      railRef.current?.querySelector<HTMLTextAreaElement>("textarea:not([disabled])")?.focus({ preventScroll: true });
     } else if (intent === "mark") {
       scrollLocalIntoView(markTopRef.current);
       markTopRef.current?.querySelector<HTMLButtonElement>('[role="toolbar"] button:not([disabled])')?.focus({ preventScroll: true });
@@ -301,13 +304,14 @@ export function RevisionDraft({
         annotations: change.annotations,
       })),
       note,
+      pendingRequest: manualInput,
       // No manual story-context selection: the backend assembles whole-book
       // context automatically. Stored passage ids from older drafts are
       // never re-submitted silently.
       contextSourceUnitIds: [],
       updatedAt: new Date().toISOString(),
     });
-  }, [project, pageNumber, comicPageRevision, parentRenderRevision, comicPageSha256, changes, note]);
+  }, [project, pageNumber, comicPageRevision, parentRenderRevision, comicPageSha256, changes, note, manualInput]);
 
   useEffect(() => {
     onDraftKeysChange([
@@ -318,10 +322,10 @@ export function RevisionDraft({
 
   const selectedChanges = useMemo(() => changes.filter((change) => change.selected), [changes]);
 
-  function buildBody(): { body: PageCorrectionBody; problems: string[] } {
+  function buildBody(draftChanges = selectedChanges): { body: PageCorrectionBody; problems: string[] } {
     const problems: string[] = [];
     const bodyChanges: PageCorrectionChange[] = [];
-    for (const change of selectedChanges) {
+    for (const change of draftChanges) {
       const instruction = change.instruction.trim();
       if (!instruction) {
         problems.push(t("One selected fix has no instruction yet."));
@@ -364,16 +368,24 @@ export function RevisionDraft({
   // Recomputed every render so the preview-fresh gate can never go stale.
   const bodyHash = JSON.stringify(buildBody().body);
 
-  const previewFresh = preview.data != null && previewHash === bodyHash;
+  const previewFresh = preview.data != null && previewHash === bodyHash && !manualInput.trim();
   const previewResult = previewFresh ? preview.data : undefined;
 
   function runPreview() {
     if (locked) return;
     setSubmitError(null);
-    const { body, problems } = buildBody();
+    const pendingRequest: DraftChange | null = manualInput.trim()
+      ? { id: newChangeId(), instruction: manualInput.trim(), selected: true, annotations: [] }
+      : null;
+    const { body, problems } = buildBody(pendingRequest ? [...selectedChanges, pendingRequest] : selectedChanges);
     if (problems.length > 0) {
       setSubmitError(problems[0] ?? t("The draft is not ready to preview."));
       return;
+    }
+    if (pendingRequest) {
+      setChanges((current) => [...current, pendingRequest]);
+      setFocusId(pendingRequest.id);
+      setManualInput("");
     }
     setPreviewHash(null);
     preview.mutate(
@@ -390,7 +402,7 @@ export function RevisionDraft({
       setSubmitError(problems[0] ?? t("The draft is not ready to submit."));
       return;
     }
-    if (JSON.stringify(body) !== previewHash || !preview.data) {
+    if (manualInput.trim() || JSON.stringify(body) !== previewHash || !preview.data) {
       setSubmitError(t("Preview the exact draft first; the draft changed since the last preview."));
       return;
     }
@@ -442,6 +454,9 @@ export function RevisionDraft({
             // Marks never migrate across renders: geometry belongs to the old image.
             annotations: [],
           }));
+        if (typeof staleDraft.pendingRequest === "string" && staleDraft.pendingRequest.trim()) {
+          rebased.push({ id: newChangeId(), instruction: staleDraft.pendingRequest, selected: false, annotations: [] });
+        }
         const next = [...current, ...rebased];
         const knownIssues = new Set(next.filter((change) => change.issueId).map((change) => change.issueId!));
         for (const change of staleDraft.changes) {
@@ -504,7 +519,7 @@ export function RevisionDraft({
         </Surface>
       )}
 
-      <div className={editing ? "grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.65fr)]" : "space-y-4"}>
+      <div className={editing ? "grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]" : "space-y-4"}>
         <div className="min-w-0 space-y-4">
           {!editing && !submittedJobId && (
             <div ref={makeChangesWrapRef} className="flex justify-end">
@@ -528,14 +543,7 @@ export function RevisionDraft({
             </div>
           ) : (
             <figure ref={artRef} className="flex h-[max(12rem,calc(100dvh-20rem))] justify-center">
-              <img
-                src={canvasSrc}
-                alt={canvasAlt}
-                loading="eager"
-                fetchPriority="high"
-                decoding="async"
-                className="h-full w-auto max-w-full border-[2px] border-ink-black object-contain"
-              />
+              <PageArtwork src={canvasSrc} alt={canvasAlt} />
             </figure>
           )}
           {compareRevision != null && (
@@ -594,12 +602,38 @@ export function RevisionDraft({
         </div>
 
         {editing && (
-        <div ref={railRef} className="min-w-0 space-y-4">
-          <div>
-            <Button size="xs" variant="outline" onClick={hideEditing}>
-              {t("HIDE EDITING")}
+        <div ref={railRef} className="min-w-0 space-y-5 border-t border-ink-black/15 pt-5 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="font-display text-2xl font-black">{t("Request changes")}</h3>
+            <Button size="sm" variant="outline" onClick={hideEditing}>
+              {t("Back to page")}
             </Button>
           </div>
+          <p className="font-body text-sm leading-6 text-ink-muted">
+            {t("Describe what should change. You’ll review the cost before generating a new revision.")}
+          </p>
+          <div>
+            <FieldLabel htmlFor="draft-manual">{t("What would you like to change?")}</FieldLabel>
+            <div className="flex flex-col gap-2">
+              <TextAreaField
+                id="draft-manual"
+                value={manualInput}
+                disabled={locked}
+                placeholder={t("Describe a fix in your own words, e.g. which face, object or panel must change.")}
+                onChange={(event) => setManualInput(event.target.value)}
+              />
+              <Button size="sm" variant="outline" onClick={addManual} disabled={locked || !manualInput.trim()}>
+                {t("Add request")}
+              </Button>
+            </div>
+          </div>
+
+          {changes.length > 0 && (
+            <div className="border-t border-ink-black/15 pt-4">
+              <h4 className="font-meta text-xs font-bold uppercase tracking-wider">{t("Requests to include")}</h4>
+              <p className="mt-1 font-body text-xs leading-5 text-ink-muted">{t("Checked requests will be included. Select any request to edit it.")}</p>
+            </div>
+          )}
           {suggestions.filter((issue) => !changes.some((change) => change.issueId === issue.id)).map((issue) => (
             <div key={issue.id} className="flex flex-wrap items-center justify-between gap-2 border border-dashed border-ink-black/30 px-3 py-2">
               <span className="font-body text-xs">{issue.requested_correction}</span>
@@ -616,15 +650,16 @@ export function RevisionDraft({
 
           {changes.length === 0 ? (
             <p className="font-body text-sm text-ink-muted">
-              {t("No fixes in this draft yet. Add a suggestion above or write a manual request below.")}
+              {t("Your requests will appear here once added.")}
             </p>
           ) : (
             <ol className="space-y-2">
               {changes.map((change) => {
-                const summary = change.instruction.trim().slice(0, 90) || t("Empty request");
+                const summary = change.instruction.trim() || t("Empty request");
                 if (focused?.id !== change.id) {
                   return (
-                    <li key={change.id} className="flex items-center gap-2 border border-ink-black/20 px-2 py-1.5">
+                    <li key={change.id} className="flex items-start gap-2 border border-ink-black/20 px-2 py-2">
+                      <label className="flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center">
                       <input
                         type="checkbox"
                         checked={change.selected}
@@ -635,11 +670,12 @@ export function RevisionDraft({
                         aria-label={`${t("Include fix")}: ${change.instruction.slice(0, 80)}`}
                         className="h-4 w-4 shrink-0 accent-hero-red"
                       />
+                      </label>
                       <button
                         type="button"
                         onClick={() => setFocusId(change.id)}
                         aria-label={`${t("Edit request")}: ${change.instruction.slice(0, 80)}`}
-                        className="min-w-0 flex-1 truncate text-left font-body text-xs leading-5 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-hero-red"
+                        className="min-h-11 min-w-0 flex-1 py-2 text-left font-body text-sm leading-6 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-hero-red"
                       >
                         {summary}
                       </button>
@@ -655,6 +691,7 @@ export function RevisionDraft({
                 <li key={change.id}>
                   <Surface tone={change.selected ? "bristol" : "container"} border="soft" shadow="none" padding="md">
                     <div className="flex items-start gap-3">
+                      <label className="flex min-h-11 min-w-11 shrink-0 cursor-pointer items-center justify-center">
                       <input
                         type="checkbox"
                         checked={change.selected}
@@ -663,29 +700,30 @@ export function RevisionDraft({
                           ? { ...candidate, selected: event.target.checked }
                           : candidate))}
                         aria-label={`${t("Include fix")}: ${change.instruction.slice(0, 80)}`}
-                        className="mt-1 h-4 w-4 shrink-0 accent-hero-red"
+                        className="h-4 w-4 shrink-0 accent-hero-red"
                       />
+                      </label>
                       <div className="min-w-0 flex-1 space-y-2">
                         {change.annotations.length > 0 && (
                           <p className="font-meta text-xs font-bold text-ink-muted">
                             {change.annotations.length} {t(change.annotations.length === 1 ? "mark" : "marks")}
                           </p>
                         )}
-                        <FieldLabel htmlFor={`draft-instruction-${change.id}`} className="sr-only">
-                          {t("Fix instruction")}
+                        <FieldLabel htmlFor={`draft-instruction-${change.id}`}>
+                          {t("Request")}
                         </FieldLabel>
                         <TextAreaField
                           id={`draft-instruction-${change.id}`}
                           value={change.instruction}
                           disabled={locked || !change.selected}
-                          rows={2}
+                          rows={3}
                           onChange={(event) => setChanges((current) => current.map((candidate) => candidate.id === change.id
                             ? { ...candidate, instruction: event.target.value }
                             : candidate))}
                         />
                         <div className="flex flex-wrap gap-2">
                           <Button
-                            size="xs"
+                            size="sm"
                             variant={marking ? undefined : "outline"}
                             disabled={locked}
                             aria-pressed={marking}
@@ -695,7 +733,7 @@ export function RevisionDraft({
                           </Button>
                           {!change.issueId && (
                             <Button
-                              size="xs"
+                              size="sm"
                               variant="outline"
                               disabled={locked}
                               onClick={() => setChanges((current) => current.filter((candidate) => candidate.id !== change.id))}
@@ -713,24 +751,8 @@ export function RevisionDraft({
             </ol>
           )}
 
-          <div>
-            <FieldLabel htmlFor="draft-manual">{t("Manual request")}</FieldLabel>
-            <div className="flex flex-col gap-2">
-              <TextAreaField
-                id="draft-manual"
-                value={manualInput}
-                disabled={locked}
-                placeholder={t("Describe a fix in your own words, e.g. which face, object or panel must change.")}
-                onChange={(event) => setManualInput(event.target.value)}
-              />
-              <Button size="xs" variant="outline" onClick={addManual} disabled={locked || !manualInput.trim()}>
-                {t("ADD MANUAL REQUEST")}
-              </Button>
-            </div>
-          </div>
-
           <details>
-            <summary className="cursor-pointer font-meta text-xs font-bold text-ink-muted">
+            <summary className="cursor-pointer py-3 font-meta text-xs font-bold text-ink-muted">
               {t("Overall note (optional)")}
             </summary>
             <div className="mt-2">
@@ -746,39 +768,30 @@ export function RevisionDraft({
           </details>
 
 
-          <div className="flex flex-wrap items-center gap-2">
-            <Button size="xs" variant="outline" onClick={runPreview} disabled={locked || preview.isPending}>
-              {t(preview.isPending ? "PREVIEWING…" : "PREVIEW COST & CONTEXT")}
-            </Button>
-            <Button
-              size="xs"
-              onClick={runSubmit}
-              disabled={locked || submit.isPending || !previewFresh || submittedJobId != null}
-            >
-              {t(submittedJobId != null ? "CORRECTION QUEUED" : submit.isPending ? "SUBMITTING…" : "SUBMIT ONE CORRECTION")}
-            </Button>
-          </div>
+          {!previewFresh && !submittedJobId && (
+            <div className="space-y-2 border-t border-ink-black/15 pt-4">
+              <Button className="w-full" size="sm" onClick={runPreview} disabled={locked || preview.isPending}>
+                {t(preview.isPending ? "Reviewing…" : "Review changes")}
+              </Button>
+              <p className="font-body text-xs leading-5 text-ink-muted">
+                {t("Review the estimate and included requests before you confirm.")}
+              </p>
+            </div>
+          )}
           {preview.data && !previewFresh && !submittedJobId && (
             <p role="status" className="font-body text-xs font-bold text-hero-red">
-              {t("The draft changed after preview. Preview again before submitting.")}
-            </p>
-          )}
-          {!preview.data && !submittedJobId && (
-            <p className="font-body text-xs text-ink-muted">
-              {t("Submission needs an explicit preview first: cost, assembled context and warnings.")}
+              {t("Your requests changed. Review them again before generating.")}
             </p>
           )}
 
           {previewResult && (
             <Surface tone="container" border="soft" shadow="none" padding="md" aria-live="polite">
-              <p className="font-meta text-xs font-bold text-ink-muted">{t("PREVIEW")}</p>
-              <p className="mt-1 font-body text-sm">
+              <h4 className="font-display text-lg font-bold">{t("Ready to generate")}</h4>
+              <p className="mt-2 font-body text-lg font-bold">
                 {t("Estimated cost:")} ~{previewResult.estimate.estimate_credits} {t("credits")}
-                {` · ${t("reserved")} ${previewResult.estimate.reserved_credits} · ${previewResult.estimate.confidence}`}
               </p>
               <p className="mt-1 font-body text-xs text-ink-muted">
                 {previewResult.changes.length} {t(previewResult.changes.length === 1 ? "selected fix" : "selected fixes")}
-                {` · ${previewManualCount} ${t(previewManualCount === 1 ? "manual request" : "manual requests")}`}
               </p>
               {previewResult.unselected_open_issue_ids.length > 0 && (
                 <div className="mt-2">
@@ -824,6 +837,8 @@ export function RevisionDraft({
               {previewResult.context.truncated && (
                 <p className="mt-2 font-body text-xs font-bold">{t("Context truncated to fit.")}</p>
               )}
+              <details className="mt-4 border-t border-ink-black/15 pt-3">
+                <summary className="cursor-pointer py-2 font-meta text-xs font-bold text-ink-muted">{t("Reference images and instructions")}</summary>
               {previewResult.references.length > 0 && (
                 <div className="mt-2">
                   <p className="font-meta text-xs font-bold text-ink-muted">{t("REFERENCES COMPARED")}</p>
@@ -845,10 +860,10 @@ export function RevisionDraft({
                   </ul>
                 </div>
               )}
-              <details className="mt-2">
-                <summary className="cursor-pointer font-meta text-xs font-bold text-ink-muted">
+              <div className="mt-4">
+                <p className="font-meta text-xs font-bold text-ink-muted">
                   {t("COMPILED INSTRUCTION")} ({previewResult.prompt_characters} {t("characters")}, {previewResult.lettering_count} {t("lettering")})
-                </summary>
+                </p>
                 <p className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap font-body text-xs leading-5">
                   {previewResult.instruction}
                 </p>
@@ -857,12 +872,15 @@ export function RevisionDraft({
                     {t("Technical details")}
                   </summary>
                   <ul className="mt-1 space-y-1 font-mono text-[0.65rem] leading-4 text-ink-muted">
+                    <li>{t("reserved")}: {previewResult.estimate.reserved_credits} · {previewResult.estimate.confidence}</li>
+                    <li>{previewManualCount} {t(previewManualCount === 1 ? "manual request" : "manual requests")}</li>
                     <li>Mode: {previewResult.mode}</li>
                     <li>Selected issues: {previewResult.selected_issue_ids.join(", ") || "—"}</li>
                     <li>Manual change ids: {previewResult.pending_manual_change_ids.join(", ") || "—"}</li>
                     <li>Left-out issues: {previewResult.unselected_open_issue_ids.join(", ") || "—"}</li>
                   </ul>
                 </details>
+              </div>
               </details>
               {previewResult.warnings.length > 0 && (
                 <div className="mt-2">
@@ -874,6 +892,14 @@ export function RevisionDraft({
                   </ul>
                 </div>
               )}
+              <Button
+                className="mt-5 w-full"
+                size="sm"
+                onClick={runSubmit}
+                disabled={locked || submit.isPending || !previewFresh || submittedJobId != null || !!manualInput.trim()}
+              >
+                {t(submit.isPending ? "Generating…" : "Generate revision")}
+              </Button>
             </Surface>
           )}
 

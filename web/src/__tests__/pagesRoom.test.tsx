@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "../i18n";
@@ -83,6 +83,7 @@ vi.mock("../api/queries", () => ({
   }),
   useBookPlan: () => ({
     data: {
+      pages: [{ page_number: 1, revision: 2, content_sha256: "a".repeat(64) }],
       rhythm_summary: "A slow-burn rhythm",
       target_page_min: 1,
       target_page_max: 4,
@@ -217,6 +218,10 @@ vi.mock("../api/pages", async (importOriginal) => ({
 
 import { PagesRoom } from "../pages/rooms/PagesRoom";
 
+function LocationProbe() {
+  return <output aria-label="Current route">{useLocation().search}</output>;
+}
+
 function renderRoom(url = "/project/demo/pages") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(
@@ -224,7 +229,7 @@ function renderRoom(url = "/project/demo/pages") {
     <MemoryRouter initialEntries={[url]}>
       <I18nProvider>
         <Routes>
-          <Route path="/project/:id/pages" element={<PagesRoom />} />
+          <Route path="/project/:id/pages" element={<><PagesRoom /><LocationProbe /></>} />
         </Routes>
       </I18nProvider>
     </MemoryRouter></QueryClientProvider>,
@@ -279,6 +284,53 @@ describe("PagesRoom", () => {
     usePipelineStore.setState(usePipelineStore.getInitialState());
   });
 
+  it("counts saved artwork against all planned pages even when the gallery is filtered", () => {
+    includeUndrawnPage = true;
+    renderRoom("/project/demo/pages?filter=needs-review");
+
+    expect(screen.getByText("1 of 2 pages drawn")).toBeTruthy();
+    const progress = screen.getByRole("progressbar", { name: "Drawing progress" });
+    expect(progress.getAttribute("value")).toBe("1");
+    expect(progress.getAttribute("max")).toBe("2");
+    expect(screen.queryByRole("button", { name: "Open page 2, revision 0" })).toBeNull();
+  });
+
+  it("opens flagged pages directly in Checks without starting paid work", () => {
+    renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: "REVIEW FLAGGED PAGES (1)" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Page 1 review" });
+    expect(within(dialog).getByRole("button", { name: "Checks" }).getAttribute("aria-pressed")).toBe("true");
+    expect(generatePage).not.toHaveBeenCalled();
+    expect(analyzePage).not.toHaveBeenCalled();
+    expect(reviewVisuals).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close page review" }));
+    expect(screen.getByRole("button", { name: "Needs review (1)" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("offers an explicit review action that opens the saved page without generation", () => {
+    renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: "Review page 1" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Page 1 review" });
+    expect(within(dialog).getByRole("button", { name: "Page" }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(dialog).getByAltText("Complete page 1, render revision 2")).toBeTruthy();
+    expect(generatePage).not.toHaveBeenCalled();
+    expect(runPipeline).not.toHaveBeenCalled();
+    expect(analyzePage).not.toHaveBeenCalled();
+  });
+
+  it("offers Start reading when drawn pages have no unresolved findings", () => {
+    pageIssues = [];
+    renderRoom();
+    expect(screen.queryByRole("button", { name: /REVIEW FLAGGED PAGES/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Start reading" }));
+
+    const dialog = screen.getByRole("dialog", { name: "Page 1 review" });
+    expect(within(dialog).getByRole("button", { name: "Page" }).getAttribute("aria-pressed")).toBe("true");
+    expect(generatePage).not.toHaveBeenCalled();
+  });
+
 
   it("offers to retry Adapt when Adapt failed before Plan started", () => {
     stageStatuses = {
@@ -291,12 +343,12 @@ describe("PagesRoom", () => {
     renderRoom();
 
     expect(runPipeline).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Retry stage" }));
+    fireEvent.click(screen.getByRole("button", { name: "Resume adaptation" }));
     const confirmation = screen.getByRole("alertdialog");
     expect(within(confirmation).getByLabelText("about 7 credits")).toBeTruthy();
     expect(within(confirmation).getByLabelText("10 credits")).toBeTruthy();
     expect(runPipeline).not.toHaveBeenCalled();
-    fireEvent.click(within(confirmation).getByRole("button", { name: "Retry stage" }));
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Resume adaptation" }));
     expect(runPipeline).toHaveBeenCalledWith(
       { project: "demo", stage: "adapt", rerun: false, retryFailed: undefined },
       expect.any(Object),
@@ -341,12 +393,12 @@ describe("PagesRoom", () => {
 
     renderRoom();
 
-    fireEvent.click(screen.getByRole("button", { name: "Retry stage" }));
+    fireEvent.click(screen.getByRole("button", { name: "Resume adaptation" }));
     const confirmation = screen.getByRole("alertdialog");
     expect(within(confirmation).getByLabelText("about 7 credits")).toBeTruthy();
     expect(within(confirmation).getByLabelText("10 credits")).toBeTruthy();
     expect(runPipeline).not.toHaveBeenCalled();
-    fireEvent.click(within(confirmation).getByRole("button", { name: "Retry stage" }));
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Resume adaptation" }));
     expect(runPipeline).toHaveBeenCalledWith(
       { project: "demo", stage: "adapt", rerun: false, retryFailed: undefined },
       expect.any(Object),
@@ -374,6 +426,9 @@ describe("PagesRoom", () => {
     renderRoom();
 
     expect(screen.getByText("Adapt must split the story into enough visual beats.")).toBeTruthy();
+    expect(screen.getByText("The story needs more visual moments to fill the planned pages.")).toBeTruthy();
+    expect(screen.getByText("Check details").closest("details")?.open).toBe(false);
+    expect(screen.queryByText("These contract failures block the book and cannot be accepted.")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Restart this step" }));
     const confirmation = screen.getByRole("alertdialog");
     expect(within(confirmation).getByText(/clear all downstream work/i)).toBeTruthy();
@@ -492,22 +547,23 @@ describe("PagesRoom", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
 
     // Editing stays closed until requested: the artwork leads.
-    expect(screen.queryByLabelText(/Manual request/)).toBeNull();
+    expect(screen.queryByLabelText(/What would you like to change/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "MAKE CHANGES" }));
 
     // The open Draw suggestion arrives pre-selected in the draft.
     expect(screen.getByRole("checkbox", { name: /Restore the approved face/ })).toHaveProperty("checked", true);
-    fireEvent.change(screen.getByLabelText(/Manual request/), {
+    fireEvent.change(screen.getByLabelText(/What would you like to change/), {
       target: { value: "Keep the reveal, but restore the approved face." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "ADD MANUAL REQUEST" }));
+    expect(screen.getByRole("button", { name: "Review changes" })).toHaveProperty("disabled", false);
+    expect(previewCorrections).not.toHaveBeenCalled();
 
     // Submission is blocked until an explicit preview runs.
-    fireEvent.click(screen.getByRole("button", { name: "SUBMIT ONE CORRECTION" }));
+    expect(screen.queryByRole("button", { name: "Generate revision" })).toBeNull();
     expect(submitCorrections).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "PREVIEW COST & CONTEXT" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Review changes" })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "PREVIEW COST & CONTEXT" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
     expect(previewCorrections).toHaveBeenCalledWith(
       expect.objectContaining({ project: "demo", pageNumber: 1 }),
       expect.any(Object),
@@ -518,13 +574,57 @@ describe("PagesRoom", () => {
     expect(previewBody.comic_page_sha256).toBe("a".repeat(64));
     expect(previewBody.changes.length).toBe(2);
     expect(previewBody.changes[0].issue_id).toBe("page-issue-1");
-    expect(previewBody.changes[1].instruction).toContain("Keep the reveal");
+    expect(previewBody.changes[1].instruction).toBe("Keep the reveal, but restore the approved face.");
+    expect(screen.getByLabelText(/What would you like to change/)).toHaveProperty("value", "");
+    expect(previewCorrections).toHaveBeenCalledOnce();
 
-    fireEvent.click(screen.getByRole("button", { name: "SUBMIT ONE CORRECTION" }));
+    fireEvent.click(screen.getByRole("button", { name: "Generate revision" }));
     expect(submitCorrections).toHaveBeenCalledWith(
       expect.objectContaining({ project: "demo", pageNumber: 1 }),
       expect.any(Object),
     );
+    expect(screen.getByText("Correction queued. The draft is locked.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Generate revision" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Review changes" })).toBeNull();
+    expect(screen.getByLabelText(/What would you like to change/)).toHaveProperty("disabled", true);
+  });
+
+  it("requires a new review after the requested wording changes", () => {
+    previewCorrections.mockImplementation((_variables, options) => {
+      previewResult = stubPreviewResult();
+      options?.onSuccess?.(previewResult);
+    });
+    renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "MAKE CHANGES" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    expect(screen.getByRole("button", { name: "Generate revision" })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/What would you like to change/), {
+      target: { value: "A request that has not been added yet" },
+    });
+    expect(screen.queryByRole("button", { name: "Generate revision" })).toBeNull();
+    expect(submitCorrections).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    expect(previewCorrections.mock.calls[1][0].body.changes).toHaveLength(2);
+    expect(previewCorrections.mock.calls[1][0].body.changes[1].instruction)
+      .toBe("A request that has not been added yet");
+    expect(screen.getByRole("button", { name: "Generate revision" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Edit request: Restore the approved face/ }));
+    fireEvent.change(screen.getByDisplayValue("Restore the approved face"), {
+      target: { value: "Restore the approved face and keep the lighting" },
+    });
+
+    expect(screen.queryByRole("button", { name: "Generate revision" })).toBeNull();
+    expect(submitCorrections).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    expect(previewCorrections).toHaveBeenCalledTimes(3);
+    expect(previewCorrections.mock.calls[2][0].body.changes).toHaveLength(2);
+    expect(previewCorrections.mock.calls[2][0].body.changes[0].instruction)
+      .toBe("Restore the approved face and keep the lighting");
+    fireEvent.click(screen.getByRole("button", { name: "Generate revision" }));
+    expect(submitCorrections.mock.calls[0][0].body)
+      .toEqual(previewCorrections.mock.calls[2][0].body);
   });
 
   it("shows the reason when a correction cannot be queued", () => {
@@ -539,8 +639,8 @@ describe("PagesRoom", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
     fireEvent.click(screen.getByRole("button", { name: "MAKE CHANGES" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "PREVIEW COST & CONTEXT" }));
-    fireEvent.click(screen.getByRole("button", { name: "SUBMIT ONE CORRECTION" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    fireEvent.click(screen.getByRole("button", { name: "Generate revision" }));
 
     expect(screen.getByRole("alert").textContent).toContain("Saved edition conflict");
     expect(screen.getByRole("checkbox", { name: /Restore the approved face/ })).toHaveProperty("checked", true);
@@ -826,7 +926,7 @@ describe("PagesRoom", () => {
     expect(screen.getByAltText("Complete page 1, render revision 2")).toBeTruthy();
     expect(screen.getByRole("button", { name: "MAKE CHANGES" })).toBeTruthy();
     // Editing stays closed until requested.
-    expect(screen.queryByLabelText(/Manual request/)).toBeNull();
+    expect(screen.queryByLabelText(/What would you like to change/)).toBeNull();
     // Visual and checks views stay out of the default viewport.
     expect(screen.queryByText("VISUAL REVIEW")).toBeNull();
     expect(screen.queryByText("ISSUE HISTORY")).toBeNull();
@@ -837,9 +937,16 @@ describe("PagesRoom", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
     fireEvent.click(screen.getByRole("button", { name: "MAKE CHANGES" }));
-    fireEvent.change(screen.getByLabelText(/Manual request/), {
+    fireEvent.change(screen.getByLabelText(/What would you like to change/), {
       target: { value: "Keep the reveal, but restore the approved face." },
     });
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to page" }));
+    expect(screen.queryByLabelText(/What would you like to change/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "MAKE CHANGES" }));
+    expect(screen.getByLabelText(/What would you like to change/)).toHaveProperty(
+      "value", "Keep the reveal, but restore the approved face.",
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Visual review" }));
     expect(screen.getByRole("button", { name: "Visual review" }).getAttribute("aria-pressed")).toBe("true");
@@ -851,7 +958,7 @@ describe("PagesRoom", () => {
 
     // Unsaved draft state survives tab switches: the draft stays mounted hidden.
     fireEvent.click(screen.getByRole("button", { name: "Page" }));
-    expect(screen.getByLabelText(/Manual request/)).toHaveProperty(
+    expect(screen.getByLabelText(/What would you like to change/)).toHaveProperty(
       "value",
       "Keep the reveal, but restore the approved face.",
     );
@@ -917,51 +1024,47 @@ describe("PagesRoom", () => {
     expect(card.textContent).not.toContain("Needs visual review");
   });
 
-  it("opens the book adaptation reading drawer from the gallery heading", () => {
+  it("opens book adaptation as a full reading workspace and returns to the gallery", () => {
     renderRoom();
-
     fireEvent.click(screen.getByRole("button", { name: "BOOK ADAPTATION" }));
 
-    const drawer = screen.getByRole("dialog", { name: "BOOK ADAPTATION" });
-    expect(drawer).toBeTruthy();
-    expect(screen.getByText("Narrative treatment")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "BOOK ADAPTATION" })).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Open page 1, revision 2" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Narrative treatment" })).toBeTruthy();
     expect(screen.getByText("A quarrel seeds the voyage")).toBeTruthy();
-    expect(screen.getByText("Adapted beats")).toBeTruthy();
     expect(screen.getByText("Mara argues at the market")).toBeTruthy();
-    // No storyboard editing or omission UI lives in the gallery.
     expect(screen.queryByText("EDITORIAL FINDINGS")).toBeNull();
     expect(screen.queryByText("SAVED CHANGES")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Close reading panel" }));
-    expect(screen.queryByRole("dialog", { name: "BOOK ADAPTATION" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Back to pages" }));
+    expect(screen.queryByRole("region", { name: "BOOK ADAPTATION" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Open page 1, revision 2" })).toBeTruthy();
   });
 
-  it("opens the page plan reading drawer from the gallery heading", () => {
-    renderRoom();
-
+  it("switches reading documents in the URL and preserves the gallery filter without generating", () => {
+    renderRoom("/project/demo/pages?filter=needs-review");
+    fireEvent.click(screen.getByRole("button", { name: "BOOK ADAPTATION" }));
+    expect(screen.getByLabelText("Current route").textContent).toContain("reading=adaptation");
     fireEvent.click(screen.getByRole("button", { name: "PAGE PLAN" }));
-
-    const drawer = screen.getByRole("dialog", { name: "PAGE PLAN" });
-    expect(drawer).toBeTruthy();
-    expect(screen.getByText("Book rhythm")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "PAGE PLAN" })).toBeTruthy();
+    expect(screen.getByLabelText("Current route").textContent).toContain("reading=page-plan");
     expect(screen.getByText("A slow-burn rhythm")).toBeTruthy();
-    expect(screen.getByText("Planned pages")).toBeTruthy();
     expect(screen.getByText("One dominant reveal")).toBeTruthy();
     expect(screen.getByText("Hold, then reveal")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Back to pages" }));
+    expect(screen.getByLabelText("Current route").textContent).not.toContain("reading=");
+    expect(screen.getByRole("button", { name: "Needs review (1)" }).getAttribute("aria-pressed")).toBe("true");
+    expect(generatePage).not.toHaveBeenCalled();
+    expect(runPipeline).not.toHaveBeenCalled();
+    expect(submitCorrections).not.toHaveBeenCalled();
   });
 
-  it("opens the reading drawer from a deep link", () => {
-    render(
-      <MemoryRouter initialEntries={["/project/demo/pages?reading=page-plan"]}>
-        <I18nProvider>
-          <Routes>
-            <Route path="/project/:id/pages" element={<PagesRoom />} />
-          </Routes>
-        </I18nProvider>
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByRole("dialog", { name: "PAGE PLAN" })).toBeTruthy();
+  it("opens the full reading workspace from a deep link", () => {
+    renderRoom("/project/demo/pages?reading=page-plan");
+    expect(screen.getByRole("region", { name: "PAGE PLAN" })).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("heading", { name: "PAGE PLAN" })).toBe(document.activeElement);
   });
 
   it("opens a Book finding on the requested page and review view", () => {

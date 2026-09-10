@@ -1,3 +1,4 @@
+import { ArrowUpRight } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
@@ -10,7 +11,8 @@ import { Select } from "../components/ui/Select";
 import { Button } from "../components/ui/Button";
 import { Skeleton } from "../components/ui/Skeleton";
 import { CreditAmount } from "../components/ui/CreditAmount";
-import { SectionHeader } from "../components/composites";
+import { Surface } from "../components/ui/Surface";
+import { EntityCard, SectionHeader } from "../components/composites";
 import { groupRunsByDay, runActivityLabel, type LedgerDayGroup } from "../lib/creditsHistory";
 import { trackProductEvent } from "../api/events";
 
@@ -65,14 +67,14 @@ function childRowLabel(tx: CreditTransaction): string {
 function StatusBadge({ status }: { status: CreditLedgerRun["status"] }) {
   if (status === "in_flight") {
     return (
-      <span className="bg-narrator-gold px-2 py-1 font-meta text-[0.5rem] font-bold tracking-[0.08em] text-ink-black">
+      <span className="bg-narrator-gold px-2 py-1 font-meta text-xs font-bold tracking-[0.08em] text-ink-black">
         IN FLIGHT
       </span>
     );
   }
   if (status === "complete") return null;
   return (
-    <span className="bg-hero-red px-2 py-1 font-meta text-[0.5rem] font-bold tracking-[0.08em] text-bristol">
+    <span className="bg-hero-red px-2 py-1 font-meta text-xs font-bold tracking-[0.08em] text-bristol">
       FAILED
     </span>
   );
@@ -101,7 +103,7 @@ function LedgerRunRow({
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
         aria-controls={detailsId}
-        className="flex w-full flex-wrap items-center gap-3 bg-bristol px-4 py-4 text-left transition-colors hover:bg-pulp-paper sm:flex-nowrap sm:px-5"
+        className="flex w-full flex-wrap items-center gap-3 bg-bristol px-4 py-4 text-left transition-colors hover:bg-pulp-paper focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-hero-red sm:flex-nowrap sm:px-5"
       >
         {/* Chevron */}
         <span className="shrink-0 text-ink-muted">
@@ -115,12 +117,12 @@ function LedgerRunRow({
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
             {projectLabel && (
-              <span className="font-body text-[0.76rem] font-semibold text-ink-muted">
+              <span className="font-body text-sm font-semibold text-ink-muted">
                 {projectLabel}
               </span>
             )}
             {projectLabel && <span aria-hidden="true" className="text-ink-black/25">·</span>}
-            <span className="font-body text-[0.72rem] font-semibold text-ink-muted">
+            <span className="font-body text-sm font-semibold text-ink-muted">
               {formatTime(run.started_at)}
             </span>
             <StatusBadge status={run.status} />
@@ -134,11 +136,11 @@ function LedgerRunRow({
           ) : run.actual_credits > 0 ? (
             <CreditAmount value={run.actual_credits} sign="-" className="text-[0.82rem] font-bold text-ink-black" />
           ) : run.status === "in_flight" ? (
-            <span className="text-[0.72rem] font-bold text-ink-muted">
+            <span className="text-sm font-bold text-ink-muted">
               <CreditAmount value={run.estimate_credits} /> held
             </span>
           ) : (
-            <span className="text-[0.72rem] font-bold text-ink-muted">No charge</span>
+            <span className="text-sm font-bold text-ink-muted">No charge</span>
           )}
         </div>
       </button>
@@ -147,7 +149,7 @@ function LedgerRunRow({
       {expanded && (
         <div id={detailsId} className="bg-surface-container">
           {(run.estimate_credits > 0 || run.returned_credits > 0) && (
-            <div className="flex flex-wrap gap-x-5 gap-y-1 border-t border-ink-black/8 px-5 py-3 pl-14 font-body text-[0.74rem] font-semibold text-ink-muted">
+            <div className="flex flex-wrap gap-x-5 gap-y-1 border-t border-ink-black/8 px-5 py-3 pl-14 font-body text-sm font-semibold text-ink-muted">
               <span>Estimated hold <CreditAmount value={run.estimate_credits} /></span>
               {run.status !== "in_flight" && <span>Final charge <CreditAmount value={run.actual_credits} /></span>}
               {run.returned_credits > 0 && <span>Released <CreditAmount value={run.returned_credits} /></span>}
@@ -161,20 +163,20 @@ function LedgerRunRow({
                 i === settled.length - 1 ? "border-b-0" : "",
               )}
             >
-              <span className="ml-6 font-mono text-[0.6rem] text-ink-muted">
+              <span className="ml-6 font-mono text-xs text-ink-muted">
                 {i < settled.length - 1 ? "├" : "└"}
               </span>
-              <div className="min-w-0 flex-1 font-body text-[0.78rem] text-ink-muted">
+              <div className="min-w-0 flex-1 font-body text-sm text-ink-muted">
                 <div>{childRowLabel(tx)}</div>
                 {showDevContent && (
-                  <div className="mt-0.5 font-mono text-[0.62rem] text-ink-black/45">
+                  <div className="mt-0.5 font-mono text-xs text-ink-black/45">
                     {[tx.provider_model ?? tx.model, tx.input_tokens ? `${tx.input_tokens.toLocaleString()} in` : null, tx.output_tokens ? `${tx.output_tokens.toLocaleString()} out` : null]
                       .filter(Boolean)
                       .join(" · ")}
                   </div>
                 )}
               </div>
-              <div className="shrink-0 font-meta text-[0.72rem] font-bold tabular-nums text-ink-muted">
+              <div className="shrink-0 font-meta text-sm font-bold tabular-nums text-ink-muted">
                 <CreditAmount
                   value={Math.abs(tx.amount_credits)}
                   sign={tx.amount_credits > 0 ? "+" : "-"}
@@ -204,11 +206,11 @@ function DayLedgerSection({
           <h3 id={`ledger-day-${group.key}`} className="font-body text-[1rem] font-bold text-ink-black">
             {formatDay(group.latestAt)}
           </h3>
-          <p className="mt-0.5 font-body text-[0.72rem] font-semibold text-ink-muted">
+          <p className="mt-0.5 font-body text-sm font-semibold text-ink-muted">
             {group.runs.length} {group.runs.length === 1 ? "activity" : "activities"}
           </p>
         </div>
-        <div className="flex w-full flex-wrap justify-start gap-x-4 gap-y-1 font-meta text-[0.68rem] font-bold tabular-nums text-ink-muted sm:w-auto sm:justify-end">
+        <div className="flex w-full flex-wrap justify-start gap-x-4 gap-y-1 font-meta text-xs font-bold tabular-nums text-ink-muted sm:w-auto sm:justify-end">
           {group.actualCredits > 0 && <span><CreditAmount value={group.actualCredits} /> used</span>}
           {group.creditsAdded > 0 && (
             <span className="text-archive-sage"><CreditAmount value={group.creditsAdded} sign="+" /> added</span>
@@ -237,15 +239,17 @@ export function CreditsPage() {
   const qc = useQueryClient();
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
 
-  const { data: balance, isLoading: balanceLoading } = useCreditBalance();
+  const { data: balance, isLoading: balanceLoading, isError: balanceError, refetch: refetchBalance } = useCreditBalance();
   const {
     data: history,
     isLoading: historyLoading,
+    isError: historyError,
+    refetch: refetchHistory,
     fetchNextPage,
     hasNextPage,
     isFetchingNextPage,
   } = useCreditHistory();
-  const { data: packagesData, isLoading: packagesLoading } = useCreditPackages();
+  const { data: packagesData, isLoading: packagesLoading, isError: packagesError, refetch: refetchPackages } = useCreditPackages();
   const { data: pricingRef } = usePricingReference();
   const { data: projects } = useProjects();
   const checkout = useCreateCheckout();
@@ -315,109 +319,83 @@ export function CreditsPage() {
               Payment received -- credits will appear shortly.
             </span>
           </div>
-          <button type="button" onClick={dismissSuccess} className="min-h-11 px-2 font-meta text-[0.58rem] font-bold tracking-[0.08em] text-ink-muted hover:text-ink-black">
+          <button type="button" onClick={dismissSuccess} className="min-h-11 px-2 font-meta text-xs font-bold tracking-[0.08em] text-ink-muted hover:text-ink-black">
             DISMISS
           </button>
         </div>
       )}
 
-      <section className="grid overflow-hidden border-[3px] border-ink-black bg-ink-black shadow-paper md:grid-cols-[minmax(0,1fr)_320px]">
+      <Surface tone="ink" shadow="paper" className="grid overflow-hidden md:grid-cols-[minmax(0,1fr)_320px]">
         <div className="px-6 py-8 text-bristol sm:px-9 sm:py-10">
-          <div className="inline-flex bg-hero-red px-3 py-1.5 font-meta text-[0.58rem] font-bold uppercase tracking-[0.12em] text-bristol">
-            Credits & billing
-          </div>
-          <h1 className="mt-5 font-display text-[3.2rem] font-black uppercase leading-[0.88] tracking-[-0.035em] text-bristol">
-            Credit ledger
+          <h1 className="font-display text-[2.4rem] sm:text-[3.2rem] font-black uppercase leading-[0.88] tracking-[-0.035em] text-bristol">
+            Credits
           </h1>
           <p className="mt-5 max-w-[42rem] font-body text-[0.95rem] font-semibold leading-7 text-bristol/75">
-            Every paid action shows its cost before it runs. A temporary hold covers the work in progress; the ledger settles only the credits actually used.
+            Add credits when you need them, and see where every credit goes.
           </p>
+          <nav aria-label="Credit sections" className="mt-6 flex flex-wrap gap-3 font-body text-sm font-semibold">
+            <a href="#credit-packs" className="inline-flex min-h-11 items-center bg-bristol px-4 text-ink-black hover:bg-narrator-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-bristol">Add credits <ArrowUpRight size={16} aria-hidden="true" className="ml-3" /></a>
+            <a href="#credit-history" className="inline-flex min-h-11 items-center px-3 text-bristol underline underline-offset-4 hover:text-narrator-gold">View history</a>
+          </nav>
         </div>
 
         <div className="relative flex flex-col justify-between bg-narrator-gold px-6 py-8 text-ink-black sm:px-8">
           <div aria-hidden="true" className="absolute right-0 top-0 h-6 w-6 bg-ink-black [clip-path:polygon(100%_0,100%_100%,0_0)]" />
           <div>
-            <div className="font-meta text-[0.58rem] font-bold uppercase tracking-[0.12em] text-ink-muted">Available now</div>
+            <div className="font-meta text-xs font-bold uppercase tracking-[0.12em] text-ink-muted">Available now</div>
             <div className="mt-3 font-display text-[3.3rem] font-black leading-[0.82] tracking-[-0.035em]">
-              {balanceLoading ? "—" : <CreditAmount value={credits} showMark showLabel={false} />}
+              {balanceLoading || balanceError || !balance ? "—" : <CreditAmount value={credits} showMark showLabel={false} />}
             </div>
-            <div className="mt-2 font-meta text-[0.68rem] font-bold uppercase tracking-[0.1em]">Credits</div>
+            <div className="mt-2 font-meta text-xs font-bold uppercase tracking-[0.1em]">Credits</div>
+            {balanceError && <div role="alert" className="mt-3 font-body text-sm"><p>Balance unavailable.</p><button type="button" onClick={() => void refetchBalance()} className="min-h-11 font-semibold underline underline-offset-4">Retry balance</button></div>}
           </div>
           <div className="mt-8 border-t-[2px] border-ink-black pt-4">
-            <div className="flex items-center justify-between font-body text-[0.78rem] font-bold">
+            <div className="flex items-center justify-between font-body text-sm font-bold">
               <span>This month</span>
-              <span><CreditAmount value={totalUsed} showMark showLabel={false} /> used</span>
+              <span>{historyLoading || historyError || !history ? "Unavailable" : <><CreditAmount value={totalUsed} showMark showLabel={false} /> used</>}</span>
             </div>
           </div>
         </div>
-      </section>
+      </Surface>
 
-      <section className="mt-10 border-[2px] border-ink-black bg-surface-container shadow-paper-sm">
-        <div className="bg-narrator-gold px-5 py-3 font-meta text-[0.62rem] font-bold uppercase tracking-[0.1em] text-ink-black">
-          How credits work
-        </div>
-        <ul className="grid gap-x-8 gap-y-3 px-5 py-5 font-body text-[0.88rem] font-semibold leading-6 text-ink-muted md:grid-cols-2 md:px-7">
-          {(pricingRef?.notes ?? [
-            "Estimated credits are projected before an action starts, based on your project's current inputs.",
-            "Reserved credits are a temporary hold made when a paid stage begins — not a final charge.",
-            "Final charges are settled from actual model usage once the stage finishes. Any unused reserved credits are released.",
-            "Deterministic steps like Shot Plan layout and prompt assembly have no credit hold.",
-            "Panel regeneration is charged from model usage after it completes — no separate hold is made.",
-          ]).map((note) => (
-            <li key={note} className="flex gap-3">
-              <span aria-hidden="true" className="mt-2 h-2 w-2 shrink-0 bg-hero-red" />
-              <span>{note}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section className="mt-12">
+      <section tabIndex={-1} id="credit-packs" className="mt-10 scroll-mt-6">
         <SectionHeader variant="underline" title="Add credits" description="One-time packs. No subscription, and your credits do not expire." />
-        <div className="grid gap-6 md:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {packagesLoading
             ? [1, 2, 3].map((i) => <Skeleton key={i} className="h-60" />)
+            : packagesError ? <Surface tone="pulp" shadow="none" padding="md" className="sm:col-span-2 lg:col-span-3" role="alert"><p className="font-body text-sm">Credit packs could not be loaded.</p><Button variant="outline" size="sm" className="mt-3" onClick={() => void refetchPackages()}>Retry credit packs</Button></Surface>
             : (packagesData?.packages ?? []).map((pkg) => {
-                const popular = pkg.credits === 3000;
                 return (
-                  <article
-                    key={pkg.id}
-                    className={cn(
-                      "relative flex min-h-64 flex-col border-[2px] bg-bristol p-6 shadow-paper-sm",
-                      popular ? "-translate-y-1 border-ink-black shadow-ink" : "border-ink-black/18",
-                    )}
-                  >
-                    {popular && (
-                      <div className="absolute right-5 top-0 -translate-y-1/2 bg-hero-red px-4 py-1 font-meta text-[0.55rem] font-bold uppercase tracking-[0.16em] text-bristol">
-                        Most Popular
-                      </div>
-                    )}
-                    <div className="font-meta text-[0.64rem] font-bold uppercase tracking-[0.1em] text-ink-muted">
+                  <EntityCard key={pkg.id} padding="tight" className="min-h-64">
+                    <div className="font-meta text-xs font-bold uppercase tracking-[0.1em] text-ink-muted">
                       {packageName(pkg)}
                     </div>
                     <div className="mt-2 font-display text-[3rem] font-black leading-[0.8] tracking-[-0.04em] text-ink-black">
                       <CreditAmount value={pkg.credits} showMark showLabel={false} />
                     </div>
-                    <div className="mt-1 font-meta text-[0.64rem] font-bold uppercase tracking-[0.1em] text-ink-muted">
+                    <div className="mt-1 font-meta text-xs font-bold uppercase tracking-[0.1em] text-ink-muted">
                       Credits
                     </div>
                     <div className="mt-5 font-body text-[0.9rem] font-bold text-ink-muted">
                       {perThousand(pkg)}
                     </div>
                     <Button
-                      variant={popular ? "primary" : "outline"}
+                      variant="primary"
                       size="sm"
                       fullWidth
                       disabled={checkout.isPending}
                       onClick={() => checkout.mutate({ packageId: pkg.id })}
-                      className="mt-auto"
+                      className="mt-6"
                     >
                       Buy ${(pkg.price_cents / 100).toLocaleString()}
                     </Button>
-                  </article>
+                  </EntityCard>
                 );
               })}
         </div>
+        {!packagesLoading && !packagesError && packagesData?.packages.length === 0 && <p role="status" className="font-body text-sm text-ink-muted">No credit packs are available right now.</p>}
+        {checkout.isError && <p role="alert" className="mt-4 font-body text-sm text-hero-red">Checkout could not be opened. Please choose your pack again to retry.</p>}
+        {cancelledParam && <p role="status" className="mt-4 font-body text-sm text-ink-muted">Checkout was cancelled. You can choose a pack when you're ready.</p>}
         <p className="mt-5 font-body text-[0.86rem] font-semibold text-ink-muted">
           Payments processed securely by Stripe. Credits never expire. Purchases
           are subject to our{" "}
@@ -428,13 +406,31 @@ export function CreditsPage() {
         </p>
       </section>
 
-      <section className="mt-14">
+      <details className="mt-8 border-y border-ink-black/15">
+        <summary className="cursor-pointer px-1 py-4 font-body text-base font-semibold text-ink-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-hero-red">
+          How credits work
+        </summary>
+        <ul className="grid gap-x-8 gap-y-3 px-5 py-5 font-body text-[0.88rem] font-semibold leading-6 text-ink-muted md:grid-cols-2 md:px-7">
+          {(pricingRef?.notes ?? [
+            "Estimated credits are projected before an action starts, based on your project's current inputs.",
+            "Reserved credits are a temporary hold made when a paid stage begins — not a final charge.",
+            "Final charges are settled from actual model usage once the stage finishes. Any unused reserved credits are released.",
+          ]).map((note) => (
+            <li key={note} className="flex gap-3">
+              <span aria-hidden="true" className="mt-2 h-2 w-2 shrink-0 bg-hero-red" />
+              <span>{note}</span>
+            </li>
+          ))}
+        </ul>
+      </details>
+
+      <section tabIndex={-1} id="credit-history" className="mt-10 scroll-mt-6">
         <div className="mb-4 flex flex-col items-stretch justify-between gap-3 border-b-[3px] border-ink-black pb-4 sm:flex-row sm:items-end">
           <div>
             <h2 className="font-display text-[1.9rem] font-black uppercase leading-none tracking-[-0.035em] text-ink-black">
               History
             </h2>
-            <p className="mt-1.5 font-body text-[0.78rem] font-semibold text-ink-muted">
+            <p className="mt-1.5 font-body text-sm font-semibold text-ink-muted">
               Newest first. Open an activity to see how its charge was calculated.
             </p>
           </div>
@@ -452,11 +448,12 @@ export function CreditsPage() {
             />
           )}
         </div>
+        {historyError && <Surface tone="pulp" padding="md" shadow="none" role="alert" className="mb-4"><p className="font-body text-sm">Credit history could not be refreshed. Any activity shown below was loaded earlier.</p><Button variant="outline" size="sm" className="mt-3" onClick={() => void refetchHistory()}>Retry history</Button></Surface>}
         {historyLoading ? (
           <div className="space-y-2">
             {[1, 2, 3].map((i) => <Skeleton key={i} className="h-14" />)}
           </div>
-        ) : dayGroups.length === 0 ? (
+        ) : historyError && dayGroups.length === 0 ? null : dayGroups.length === 0 ? (
           <div className="space-y-3">
             <div className="border-[2px] border-ink-black/12 bg-surface-container px-5 py-8 font-body text-[0.9rem] font-semibold text-ink-muted">
               {projectFilter

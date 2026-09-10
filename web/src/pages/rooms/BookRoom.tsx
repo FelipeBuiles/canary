@@ -1,3 +1,4 @@
+import { BookOpen, ArrowDown } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
@@ -8,11 +9,12 @@ import {
   useProviderUsage,
   useRunFinishPreflight,
 } from "../../api/queries";
-import { downloadExportUrl, pageRenderPreviewUrl } from "../../api/pages";
+import { pageRenderPreviewUrl } from "../../api/pages";
+import { BookExportPanel } from "../../components/book/BookExportPanel";
+import { PageThumbnail } from "../../components/pages/PageThumbnail";
 import { BookReader } from "../../components/BookReader";
 import { PageCheckRecovery } from "../../components/pages/PageCheckRecovery";
 import {
-  ConfirmDrawer,
   RoomHeader,
   RoomShell,
   SectionHeader,
@@ -105,12 +107,11 @@ export function BookRoom() {
   );
   const exportBook = useExport();
   const retryPreflight = useRunFinishPreflight();
-  const { data: completePages } = useCompletePages(id);
+  const { data: completePages, isLoading: pagesLoading } = useCompletePages(id);
   const bookPages = useMemo(() => readerPages(completePages), [completePages]);
   const [readerOpen, setReaderOpen] = useState(false);
   const [exportUrls, setExportUrls] = useState<Partial<Record<"pdf" | "cbz", string>>>({});
   const [newPackage, setNewPackage] = useState<string | null>(null);
-  const [rebuildFormat, setRebuildFormat] = useState<"pdf" | "cbz" | null>(null);
 
   if (!id) return null;
   if (finishStatus === "pending" && !shouldRunPreflight) {
@@ -178,72 +179,29 @@ export function BookRoom() {
       />
 
 
-      {bookPages.length > 0 && (
-        <section aria-label={t("Read your book")}>
-          <Surface padding="lg" border="hard" shadow="paper">
-            <div className="grid items-center gap-6 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] lg:gap-10">
-              <button
-                type="button"
-                onClick={() => setReaderOpen(true)}
-                aria-label={t("Open the book reader")}
-                className="mx-auto block w-full max-w-sm bg-pulp-paper focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
-              >
-                <img
-                  src={pageRenderPreviewUrl(id, bookPages[0].pageNumber, bookPages[0].revision, "reader")}
-                  alt={t("First page of the book")}
-                  className="block max-h-[60vh] w-full object-contain"
-                />
-              </button>
-              <div className="min-w-0">
-                <h2 className="break-words font-display text-3xl font-black leading-tight sm:text-4xl">{title}</h2>
-                <p className="mt-3 font-meta text-sm font-bold">
-                  {bookPages.length} {bookPages.length === 1 ? t("page drawn") : t("pages drawn")}
-                </p>
-                <p className="mt-4 max-w-[52ch] font-body text-sm font-semibold leading-6 text-ink-muted">
-                  {t("Your artwork, uninterrupted. Read single pages or facing spreads, and look closer with fit-width.")}
-                </p>
-                <Button className="mt-5" onClick={() => setReaderOpen(true)}>
-                  {t("Read your book")}
-                </Button>
-                <p className="mt-3 font-body text-xs leading-5 text-ink-muted">{t("Reading does not generate artwork or use credits.")}</p>
-              </div>
-            </div>
-          </Surface>
-        </section>
-      )}
-
-      {packages.length > 0 && !isFetching && !preflightError && !exportBook.isPending && !retryPreflight.isPending && (
-        <Surface padding="md" border="hard" shadow="paper-sm">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <h2 className="font-display text-2xl font-black uppercase">{t("Edition ready")}</h2>
-              <p className="mt-2 break-words font-body text-sm font-bold">{title}</p>
-              <p className="mt-1 font-meta text-sm">
-                {preflight!.pages.length} {preflight!.pages.length === 1 ? t("page") : t("pages")}
-                {" · "}{packages.map((item) => item.format.toUpperCase()).join(" / ")}
-              </p>
-              <p className="mt-2 font-body text-sm text-ink-muted">{t("Your packages are saved and ready to download.")}</p>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              {packages.map((item) => (
-                <a
-                  key={item.format}
-                  href={exportUrls[item.format] ?? downloadExportUrl(id, item.format)}
-                  className="inline-flex min-h-11 items-center border-[2px] border-ink-black bg-bristol px-4 font-meta text-xs font-bold text-ink-black"
-                >
-                  {t("DOWNLOAD")} {item.format.toUpperCase()}
-                </a>
-              ))}
-              {bookPages.length > 0 && <Button variant="outline" onClick={() => setReaderOpen(true)}>{t("Read")}</Button>}
-            </div>
+      <section aria-label={t("Read your book")} className="grid items-center gap-8 bg-ink-black p-6 text-bristol shadow-paper md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)] md:p-9">
+        <div className="min-w-0">
+          <h2 className="break-words font-display text-3xl font-black leading-tight tracking-[-0.03em] md:text-5xl">{title}</h2>
+          <p className="mt-4 font-meta text-sm text-bristol/85">{completePages ? `${bookPages.length} ${bookPages.length === 1 ? t("page drawn") : t("pages drawn")}` : pagesLoading ? t("Loading artwork…") : t("Page previews are unavailable.")}</p>
+          <p className="mt-4 max-w-[52ch] font-body text-base leading-7 text-bristol/85">{t("Take a final read, then bring your edition off the screen.")}</p>
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            {bookPages.length > 0 && <Button variant="onInk" onClick={() => setReaderOpen(true)}><BookOpen size={18} aria-hidden="true" />{t("Read your book")}</Button>}
+            <a href={canExport ? "#book-downloads" : "#edition-checks"} className="inline-flex min-h-11 items-center gap-2 px-3 font-meta text-sm text-bristol underline underline-offset-4 hover:text-narrator-gold">{canExport ? t("Download your edition") : t("Review edition checks")}<ArrowDown size={16} aria-hidden="true" /></a>
           </div>
-          {newPackage && (
-            <p key={newPackage} role="status" onAnimationEnd={() => setNewPackage(null)} className="animate-register-stamp mt-4 inline-block bg-narrator-gold px-3 py-2 font-meta text-sm font-bold">
-              {t("Edition ready")} · {newPackage.split(":")[1].toUpperCase()}
-            </p>
-          )}
-        </Surface>
-      )}
+          <p className="mt-4 font-body text-xs leading-6 text-bristol/75">{t("Reading does not generate artwork or use credits.")}</p>
+        </div>
+        {bookPages.length > 0 && <button type="button" onClick={() => setReaderOpen(true)} aria-label={t("Open the book reader")} className="mx-auto h-80 w-full max-w-[240px] bg-surface-container text-ink-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-narrator-gold md:h-96 md:max-w-[280px]">
+          <PageThumbnail reveal={false} onRevealEnd={() => {}} src={pageRenderPreviewUrl(id, bookPages[0].pageNumber, bookPages[0].revision, "reader")} alt={t("First page of the book")} />
+        </button>}
+      </section>
+
+      <BookExportPanel project={id}
+        packages={canExport && !exportBook.isPending ? packages : []}
+        exportUrls={exportUrls} canExport={canExport} pending={exportBook.isPending}
+        pendingFormat={exportBook.variables?.format} pendingForce={exportBook.variables?.force}
+        error={exportBook.error} onCreate={createExport}
+        unavailableReason={isLoading || isFetching || retryPreflight.isPending ? t("Checking edition…") : preflightError ? t("The book could not be checked.") : undefined} />
+      {newPackage && !isFetching && !preflightError && <p key={newPackage} role="status" onAnimationEnd={() => setNewPackage(null)} className="animate-register-stamp inline-block bg-narrator-gold px-3 py-2 font-meta text-sm font-bold">{t("Edition ready")} · {newPackage.split(":")[1].toUpperCase()}</p>}
 
       {readerOpen && (
         <BookReader
@@ -253,16 +211,16 @@ export function BookRoom() {
         />
       )}
 
-      <section>
+      <section id="edition-checks" tabIndex={-1} className="scroll-mt-6">
         <SectionHeader
           variant="underline"
           title={t("EDITION CHECKS")}
           description={t("File and lettering checks do not verify visual quality. Review artwork in Pages; nothing here changes it.")}
         />
 
-        {isLoading || (isFetching && !preflight) ? (
+        {isLoading || isFetching || retryPreflight.isPending ? (
           <Surface padding="lg" border="soft" shadow="none" role="status" aria-live="polite">
-            <p className="font-meta text-sm font-bold">{t("PREPARING PREFLIGHT…")}</p>
+            <p className="font-meta text-sm font-bold">{t("Checking edition…")}</p>
             <p className="mt-2 max-w-[60ch] font-body text-sm font-semibold leading-6 text-ink-muted">
               {t("Finish is loading the last check and will run again only if this edition changed.")}
             </p>
@@ -342,7 +300,7 @@ export function BookRoom() {
           />
           <div className="space-y-3">
             {finishFindings.map((finding) => (
-              <Surface key={finding.key} tone="red" padding="md" border="hard" shadow="paper-sm">
+              <Surface key={finding.key} tone="pulp" padding="md" border="soft" shadow="none">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="font-meta text-xs font-bold tracking-[0.08em]">
@@ -358,14 +316,14 @@ export function BookRoom() {
                 </div>
                 {finding.evidence.length > 0 && (
                   <details className="mt-2 font-body text-xs leading-5">
-                    <summary className="cursor-pointer">{t("Evidence")}</summary>
+                    <summary className="min-h-11 cursor-pointer py-3">{t("Evidence")}</summary>
                     <p>{finding.evidence.join(" · ")}</p>
                   </details>
                 )}
                 {finding.pageNumber !== null ? (
-                  <Link className="mt-2 inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4" to={reviewUrl(finding.pageNumber, "checks")}>
-                    {t("Open page checks")} · {t("Page")} {finding.pageNumber}
-                  </Link>
+                  <div className="mt-2 flex flex-wrap gap-x-5 gap-y-2">{Array.from(new Set(finding.pageNumbers ?? [finding.pageNumber])).map((pageNumber) => <Link key={pageNumber} className="inline-flex min-h-11 items-center font-meta text-xs font-bold text-hero-red underline underline-offset-4" to={reviewUrl(pageNumber, "checks")}>
+                    {t("Open page checks")} · {t("Page")} {pageNumber}
+                  </Link>)}</div>
                 ) : (
                   <Button className="mt-3" variant="outline" disabled={isFetching || retryPreflight.isPending} onClick={() => retryPreflight.mutate({ project: id })}>
                     {retryPreflight.isPending ? t("Checking edition…") : t("Retry edition checks")}
@@ -429,60 +387,6 @@ export function BookRoom() {
         </section>
       ) : null}
 
-      <section>
-        <SectionHeader
-          variant="underline"
-          title={t("PREPARE A PACKAGE")}
-          description={t("PDF is for reading and printing. CBZ is an image archive for comic-reader apps.")}
-        />
-        {exportBook.error && (
-          <Surface role="alert" tone="gold" padding="md" border="hard" shadow="none" className="mb-4">
-            <p className="font-body text-sm font-bold">{exportBook.error.message}</p>
-          </Surface>
-        )}
-        <div className="flex flex-wrap gap-3">
-          {(["pdf", "cbz"] as const).filter((format) => !packages.some((item) => item.format === format)).map((format) => (
-            <Button
-              key={format}
-              variant={format === "pdf" ? "primary" : "outline"}
-              onClick={() => createExport(format)}
-              disabled={exportBook.isPending || !canExport}
-            >
-              {exportBook.isPending && exportBook.variables?.format === format
-                ? (format === "pdf" ? t("Creating PDF…") : t("Creating CBZ…"))
-                : (format === "pdf" ? t("Create PDF") : t("Create CBZ"))}
-            </Button>
-          ))}
-        </div>
-        <details className="mt-4">
-          <summary className="min-h-11 cursor-pointer py-3 font-meta text-xs font-bold">{t("Rebuild package")}</summary>
-          <p className="max-w-[65ch] font-body text-sm leading-6 text-ink-muted">
-            {t("Missing or damaged download? Rebuild it from your saved pages. This replaces package files, not artwork, and uses no credits.")}
-          </p>
-          <div className="mt-3 flex flex-wrap gap-3">
-            {(["pdf", "cbz"] as const).map((format) => (
-              <Button key={format} variant="outline" disabled={exportBook.isPending || !canExport} onClick={() => setRebuildFormat(format)}>
-                {exportBook.isPending && exportBook.variables?.format === format && exportBook.variables.force
-                  ? (format === "pdf" ? t("Rebuilding PDF…") : t("Rebuilding CBZ…"))
-                  : (format === "pdf" ? t("Rebuild PDF") : t("Rebuild CBZ"))}
-              </Button>
-            ))}
-          </div>
-        </details>
-        <ConfirmDrawer
-          open={rebuildFormat !== null}
-          title={rebuildFormat === "pdf" ? t("Rebuild PDF") : t("Rebuild CBZ")}
-          body={t("Rebuilding replaces existing package files with a fresh copy from your saved pages. Your page artwork and review decisions stay unchanged. No credits are used.")}
-          confirmLabel={rebuildFormat === "pdf" ? t("Rebuild PDF") : t("Rebuild CBZ")}
-          busy={exportBook.isPending || !canExport}
-          onClose={() => setRebuildFormat(null)}
-          onConfirm={() => {
-            if (!rebuildFormat || exportBook.isPending || !canExport) return;
-            createExport(rebuildFormat, true);
-            setRebuildFormat(null);
-          }}
-        />
-      </section>
       {showDevContent && (
         <Surface padding="md" border="soft" shadow="none">
           <h2 className="font-meta font-bold">{t("PROVIDER COSTS")}</h2>
