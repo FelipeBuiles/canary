@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import time
 import uuid as uuid_lib
 from threading import Event, Thread
 from decimal import Decimal, ROUND_CEILING
@@ -45,6 +46,18 @@ _lease_stop = Event()
 _lease_thread: Thread | None = None
 _reservation_jobs: dict[str, str] = {}
 _unsettled_jobs: set[str] = set()
+_lease_last_success: float | None = None
+
+
+def reservation_leases_healthy() -> bool:
+    """Recent success of the existing lease manager, not another lease owner."""
+    return _lease_last_success is not None and time.monotonic() - _lease_last_success < 90
+
+
+def retain_ambiguous_job(job_id: str | None) -> None:
+    """Retain the authoritative hold when submission or settlement is unknown."""
+    if job_id:
+        _unsettled_jobs.add(job_id)
 
 
 def start_reservation_leases(db: Client) -> None:
@@ -76,10 +89,16 @@ def stop_reservation_leases() -> None:
 
 
 def renew_reservation_leases(db: Client) -> None:
-    db.rpc("renew_credit_reservation_leases", {
-        "p_owner": _reservation_owner,
-        "p_lease_seconds": RESERVATION_LEASE_SECONDS,
-    }).execute()
+    global _lease_last_success
+    try:
+        db.rpc("renew_credit_reservation_leases", {
+            "p_owner": _reservation_owner,
+            "p_lease_seconds": RESERVATION_LEASE_SECONDS,
+        }).execute()
+    except Exception:
+        _lease_last_success = None
+        raise
+    _lease_last_success = time.monotonic()
 
 
 def assert_reservation_active(db: Client, reservation_id: str | None) -> None:
@@ -544,5 +563,3 @@ def release_reservation(
         "p_reservation_id": reservation_id, "p_owner": _reservation_owner,
     }).execute()
     _reservation_jobs.pop(reservation_id, None)
-
-

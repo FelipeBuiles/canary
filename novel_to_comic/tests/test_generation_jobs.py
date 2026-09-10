@@ -157,3 +157,16 @@ def test_per_user_generation_semaphore_serializes_same_user(monkeypatch):
     asyncio.run(run())
 
     assert peak == 1
+
+
+def test_transport_ambiguity_survives_page_phase_annotation():
+    from novel_to_comic.ai.errors import AITransportError
+    async def runner():
+        error = AITransportError("response lost", phase="ambiguous_submission")
+        error.page_failure_phase = "generation"
+        raise error
+    job = GenerationJob(id="ambiguous", project_name="project", kind="page_generate",
+                        label="page", payload={}, sequence=1, runner=runner)
+    _run_single_job_worker(job)
+    assert job.phase == "ambiguous_submission"
+    assert generation_job_payload(None, job)["phase"] == "ambiguous_submission"

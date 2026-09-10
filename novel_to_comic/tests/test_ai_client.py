@@ -1418,3 +1418,33 @@ def test_chat_completion_late_cancel_does_not_overwrite_success(
     finalizes = [kwargs for kind, kwargs in _patch_events if kind == "finalize"]
     assert len(finalizes) == 1
     assert finalizes[0]["status"] == "succeeded"
+
+
+@pytest.mark.parametrize("failure", ["timeout", "cancel", "server_error", "protocol", "decoding"])
+def test_ambiguous_paid_submission_retains_credit_hold(monkeypatch, failure):
+    from novel_to_comic.ai.context import ai_request_context
+    from novel_to_comic.server import credits
+    from unittest.mock import MagicMock
+    monkeypatch.setattr(credits, "_unsettled_jobs", set())
+    monkeypatch.setattr(credits, "_reservation_jobs", {"hold": "job"})
+    calls = []
+    def handler(request):
+        calls.append(request)
+        if failure == "cancel": raise asyncio.CancelledError()
+        if failure == "server_error": return httpx.Response(503)
+        if failure == "protocol": raise httpx.RemoteProtocolError("disconnected", request=request)
+        if failure == "decoding": raise httpx.DecodingError("invalid encoding", request=request)
+        raise httpx.ReadTimeout("lost response", request=request)
+    _mock_transport(monkeypatch, handler)
+    async def run():
+        with ai_request_context(job_id="job"):
+            try:
+                await client._post_with_retry("http://gw/v1/images", headers={}, json={}, retry_ambiguous=False)
+            except (client.AITransportError, asyncio.CancelledError):
+                pass
+    asyncio.run(run())
+    db = MagicMock()
+    credits.release_reservation(db, "hold")
+    db.rpc.assert_not_called()
+    assert calls and len(calls) == 1
+    assert "job" in credits._unsettled_jobs

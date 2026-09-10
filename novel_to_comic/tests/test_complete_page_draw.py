@@ -1806,3 +1806,37 @@ def test_less_graphic_intent_survives_correction_and_visual_review(tmp_path):
     assert brief["generation_specification"] == current.request.prompt
     assert corrected.render.parent_revision == original.render.revision
     assert following.compiled.reference_bytes == ()
+
+
+@pytest.mark.parametrize("failure", ["decode", "cancel", "json", "refusal"])
+def test_complete_page_accepted_response_retains_incomplete_hold(tmp_path, monkeypatch, failure):
+    from novel_to_comic.ai.context import ai_request_context
+    from novel_to_comic.server import credits
+    monkeypatch.setattr(credits, "_unsettled_jobs", set())
+    monkeypatch.setattr(credits, "_reservation_jobs", {"hold": "job"})
+    prepared = VertexCompletePageAdapter(_RecordingTransport(_provider_result())).prepare(_compile(tmp_path))
+    response = httpx.Response(200, content=b"bad" if failure == "json" else b"{}",
+                              request=httpx.Request("POST", "http://gateway/v1/images/edits"))
+    post = AsyncMock(return_value=response)
+    decode = AsyncMock(side_effect=asyncio.CancelledError() if failure == "cancel" else ValueError("decode failed"))
+    async def run():
+        with ai_request_context(job_id="job"):
+            with pytest.raises((ValueError, asyncio.CancelledError)):
+                await GoogleVertexCompletePageTransport(Config()).generate(prepared)
+    with (
+        patch("novel_to_comic.ai.client._post_with_retry", post),
+        patch("novel_to_comic.ai.client._decode_image_response", decode),
+        patch("novel_to_comic.ai.client._is_refusal", lambda _: failure == "refusal"),
+        patch("novel_to_comic.ai.finalisation.finalise_image_failure", AsyncMock()),
+        patch("novel_to_comic.ai.finalisation.finalise_image_cancelled", AsyncMock()),
+    ):
+        asyncio.run(run())
+    assert post.await_count == 1
+    db = MagicMock()
+    credits.release_reservation(db, "hold")
+    if failure == "refusal":
+        assert "job" not in credits._unsettled_jobs
+        db.rpc.assert_called_once()
+    else:
+        assert "job" in credits._unsettled_jobs
+        db.rpc.assert_not_called()

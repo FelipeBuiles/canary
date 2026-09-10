@@ -51,7 +51,8 @@ secret isolation.
 
 Keep **one uvicorn application worker on one Fly Machine**. Generation queue
 workers are concurrent tasks within that application, not additional app
-processes. Admission locks, drain state, and activity counts are process-local;
+processes. Admission locks and activity counts are process-local; drain intent is persisted.
+These are still single-process coordination mechanisms;
 horizontal scaling requires a distributed coordinator, not additional Machines
 sharing assumptions about `/projects`. Preserve the mounted volume across
 upgrades: it holds project artifacts, Draw `.pending`/`.unfinished` recovery
@@ -206,32 +207,24 @@ fly logs -a canary-web
 #   Then the machine must stay up past the 1m readiness grace period.
 ```
 
-The app deliberately disables Fly Proxy autostop/autostart and uses a `never`
-restart policy. This means a manual `fly machine stop` remains stopped, while
-the machine must be started explicitly:
+The app disables Fly Proxy autostop/autostart and uses `on-failure` with a
+maximum of three retries. Deliberate SIGTERM stops exit successfully and remain
+stopped; unexpected failures receive bounded recovery backed by persistent
+`/projects/.ops/recovery.json`. Dependency failure retains the web diagnostic
+API and does not trigger endless Machine restarts. Preserve durable drain intent
+and explicitly reopen admission only after readiness checks.
 
-```bash
-fly machine start -a canary-web
-```
+See [crash recovery and actionable exceptions](ops/crash-recovery.md) for
+configuration, crash-loop reset, independent external monitoring, maintenance,
+and local fault injection. Activation must verify the actual Machine policy:
+`fly.toml` is desired configuration, not evidence of the deployed state. Existing
+Machines need the new policy applied through an explicitly authorized release.
+Neither restart nor budget reset may replay interrupted paid work.
 
-This deliberate-stop policy also means a web-process/container crash is not
-self-healing. LiteLLM has a bounded child restart budget, but exhausting it
-stops the container. For a hands-off public launch, first implement and exercise
-bounded Machine recovery with explicit maintenance state, alerts, and journal
-preservation. Do not automatically retry paid generation when restarting.
+If the proxy fails readiness, inspect local dependency status and sanitized logs.
+The entrypoint starts the web diagnostic API after its bounded startup wait;
+readiness remains unavailable until dependencies recover.
 
-If the Machine was created before the `[[restart]]` block was added, apply the
-policy directly once (the next deploy will keep it in sync):
-
-```bash
-fly machines list -a canary-web
-fly machine update <machine-id> --restart no
-```
-
-If the proxy fails to come up, the entrypoint aborts early (it polls
-`/health/liveliness` for ~60s, then bails if the proxy process died). Check
-`fly logs` for the litellm traceback — most commonly a missing provider key
-or a malformed `config.yaml`.
 
 ### Readiness probe contract
 
@@ -265,11 +258,11 @@ verify that `git_sha` matches the exact green CI revision and record the
    new app starts; preserve the existing `/projects` volume and journals.
 4. Deploy with the release build arguments shown above.
 5. Verify `/api/version`, `/api/health`, and `/api/health/ready`, then complete a
-   short signed-in smoke test. A fresh process starts undrained: keep any external
+   short signed-in smoke test. Drain intent survives restart: keep any external
    maintenance access restriction in place until verification is complete.
-6. Remove external maintenance restrictions when ready. If the existing process
-   remains drained after an aborted release, explicitly resume it as shown below
-   only after deciding it is safe to admit work again.
+6. Explicitly resume admission as shown below after readiness and verification,
+   then remove external maintenance restrictions. An aborted release remains
+   drained until an operator decides it is safe to admit work again.
 
 **First cutover from an old binary without `/api/ops/drain`:** the automatic
 guard cannot establish its admission barrier. Schedule a controlled maintenance
@@ -361,8 +354,8 @@ curl -fsS -X POST https://canary-web.fly.dev/api/ops/resume \
 The guard polls every five seconds for up to 30 minutes. Timeout exits nonzero
 and **leaves admission drained**; errors never justify deploying anyway or
 automatically resuming. Inspect status and resolve the cause before choosing
-deploy or explicit resume. Drain state is process-local, not persisted across
-restart and not a distributed lock. A status-only idle observation cannot
+deploy or explicit resume. Drain intent persists in the mounted request journal across
+restart; it is not a distributed lock. Resume is dependency-readiness gated. A status-only idle observation cannot
 replace the authenticated drain-then-idle sequence for normal releases.
 
 ### Use the local operator desk

@@ -5,6 +5,8 @@
 
 app = 'canary-web'
 primary_region = 'iad'
+kill_signal = 'SIGTERM'
+kill_timeout = '30s'
 
 [build]
   dockerfile = 'Dockerfile'
@@ -37,12 +39,12 @@ primary_region = 'iad'
   # booting the app — start it explicitly with `fly machine start -a canary-web`.
   auto_start_machines = false
 
-# A manual `fly machine stop` sends SIGINT to the entrypoint, which exits with
-# status 143. Without an explicit policy Fly can treat that non-zero exit as a
-# crash and start the Machine again. Deliberate stops should stay stopped;
-# restart it explicitly with `fly machine start -a canary-web`.
+# Unexpected container exits recover at most three times in Fly's five-minute
+# window. SIGINT/SIGTERM is a successful exit; autostart remains disabled.
+# /projects/.ops/recovery.json adds durable backoff and a latched crash budget.
 [[restart]]
-  policy = 'never'
+  policy = 'on-failure'
+  retries = 3
 
   [http_service.concurrency]
     type = 'requests'

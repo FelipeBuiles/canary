@@ -7,7 +7,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -244,13 +244,38 @@ async def _lifespan(app: FastAPI):
     from .credits import start_reservation_leases, stop_reservation_leases
     from .db import get_db
 
-    await asyncio.to_thread(start_reservation_leases, get_db())
+    # Dependency readiness must not crash the web process. Keep diagnostics
+    # alive and paid admission closed while the existing lease manager starts.
+    app.state.credit_leases_ready = False
+    app.state.lease_shutdown = False
+
+    def start_leases():
+        start_reservation_leases(get_db())
+        # asyncio cancellation cannot stop a synchronous dependency call.
+        # If it returned after shutdown, do not leave a late lease thread alive.
+        if app.state.lease_shutdown:
+            stop_reservation_leases()
+
+    async def initialize_leases():
+        while True:
+            try:
+                await asyncio.to_thread(start_leases)
+                app.state.credit_leases_ready = True
+                return
+            except Exception:
+                logging.getLogger("canary.operations").warning(
+                    "Credit lease initialization unavailable; admission remains closed"
+                )
+                await asyncio.sleep(30)
+
+    app.state.lease_initialization_task = asyncio.create_task(initialize_leases())
 
     worker_count = max(1, int(os.environ.get("CANARY_GENERATION_WORKERS", "5")))
     app.state.generation_worker_tasks = [
         asyncio.create_task(generation_worker(app)) for _ in range(worker_count)
     ]
     yield
+    app.state.lease_shutdown = True
     app.state.admission.draining = True
     # Deployment control drains before shutdown. Forced shutdown cancels work
     # before closing provider clients, allowing credited runners to settle.
@@ -260,10 +285,12 @@ async def _lifespan(app: FastAPI):
         task.cancel()
     if not app.state.pricing_refresh_task.done():
         app.state.pricing_refresh_task.cancel()
+    app.state.lease_initialization_task.cancel()
     for task in app.state.generation_worker_tasks:
         task.cancel()
     await asyncio.gather(
         app.state.pricing_refresh_task,
+        app.state.lease_initialization_task,
         *app.state.generation_worker_tasks,
         *pipeline_tasks,
         *style_tasks,
@@ -432,6 +459,12 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         # Fly treats every 2xx response as healthy, so dependency failure must
         # change the HTTP status rather than only the JSON payload.
         ok, checks = _readiness_result()
+        from .credits import reservation_leases_healthy
+        if hasattr(app.state, "credit_leases_ready") and (
+            not app.state.credit_leases_ready or not reservation_leases_healthy()
+        ):
+            ok = False
+            checks["credit_leases"] = "unavailable"
         return JSONResponse(
             status_code=200 if ok else 503,
             content={
@@ -462,14 +495,26 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     @app.post("/api/ops/drain", tags=["operations"], dependencies=[Depends(require_ops_token)])
     async def drain():
         async with app.state.admission.gate:
-            app.state.admission.draining = True
+            app.state.admission.set_draining(True)
         return deployment_activity(app)
 
     @app.post("/api/ops/resume", tags=["operations"], dependencies=[Depends(require_ops_token)])
     async def resume():
         async with app.state.admission.gate:
-            app.state.admission.draining = False
+            ok, _ = await asyncio.to_thread(_readiness_result)
+            from .credits import reservation_leases_healthy
+            leases_ready = not hasattr(app.state, "credit_leases_ready") or (
+                app.state.credit_leases_ready and reservation_leases_healthy()
+            )
+            if not ok or not leases_ready:
+                raise HTTPException(503, "Dependencies must be ready before reopening admission")
+            app.state.admission.set_draining(False)
         return deployment_activity(app)
+
+    @app.get("/api/ops/exceptions", tags=["operations"], dependencies=[Depends(require_ops_token)])
+    def operational_exceptions():
+        from .operations import exception_snapshot
+        return exception_snapshot(app)
 
     # Routers
     app.include_router(credits.router, prefix="/api/credits", tags=["credits"])

@@ -282,7 +282,10 @@ async def generation_worker(app: FastAPI) -> None:
                 job.classification = classify_image_failure(exc)
             job.user_message = user_message_for_image_failure(job.classification)
             job.recoverable = job.classification != "configuration_error"
-            job.phase = getattr(exc, "page_failure_phase", None)
+            job.phase = (
+                "ambiguous_submission" if getattr(exc, "phase", None) == "ambiguous_submission"
+                else getattr(exc, "page_failure_phase", None)
+            )
             if job.phase == "analysis":
                 job.classification = "analysis_error"
                 job.user_message = "Artwork saved; text checks incomplete. Recover the text check without redrawing."

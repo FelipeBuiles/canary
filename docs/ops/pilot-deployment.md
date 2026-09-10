@@ -9,7 +9,7 @@ These steps are a procedure, not evidence that production has passed them.
    backup, and apply the canonical SQL before the new binary starts. Preserve
    `/projects`, including request/job journals and Draw recovery records.
 2. Establish the maintenance window and any external access restriction needed
-   during verification. A new process starts undrained. For an old binary
+   during verification. Drain intent persists across process replacement; reopen it explicitly after readiness and release verification. For an old binary
    without drain, follow the runbook's controlled first-cutover procedure;
    there is no idle-only fallback.
 3. Push the intended SHA to `main`; manually dispatch `CI` on that SHA. Each
@@ -37,8 +37,7 @@ These steps are a procedure, not evidence that production has passed them.
    whether to roll back or resume. Never automatically reopen a drained process
    or replay ambiguous paid submissions.
 
-For unattended operation, the remaining work includes exercising the protected
-release lifecycle, bounded Machine crash recovery that respects maintenance,
-actionable alerts/reconciliation, and recurring backup restoration. The current
-Fly `restart = never` policy intentionally keeps stopped Machines stopped;
-that also requires operator recovery after a web/container crash.
+Follow [crash recovery and exceptions](crash-recovery.md) to activate the bounded
+Machine recovery policy and independent external monitor. Keep deliberate stops
+stopped, preserve drain intent, and explicitly verify deployed behavior. Recurring
+backup restoration and protected release lifecycle exercises remain required.

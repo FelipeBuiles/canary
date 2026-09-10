@@ -125,6 +125,7 @@ COPY litellm_handlers/ /app/litellm_handlers/
 # Copy the merged entrypoint (materializes GCP creds → starts litellm → waits
 # for readiness → supervises litellm and the web process together).
 COPY litellm/entrypoint.sh /app/entrypoint.sh
+COPY litellm/recovery.py /app/recovery.py
 RUN chmod +x /app/entrypoint.sh
 
 # Copy built frontend so FastAPI can serve it as static files
