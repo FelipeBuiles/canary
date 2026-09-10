@@ -28,6 +28,8 @@ from novel_to_comic.config import (
     COMPLETE_PAGE_PROVIDER,
     COMPLETE_PAGE_REFERENCE_COST_USD,
     PAGE_OCR_ESTIMATED_COST_USD,
+    GPT25_PAGE_ESTIMATED_COST_USD,
+    GPT25_REFERENCE_ESTIMATED_COST_USD,
     Config,
 )
 from novel_to_comic.models.draw import (
@@ -52,7 +54,7 @@ from novel_to_comic.models.page import (
 )
 from novel_to_comic.style_contract import page_style_template
 from novel_to_comic.target_artifacts import TargetArtifacts
-from novel_to_comic.usage import ApiResult, UsageRecord, calculate_cost
+from novel_to_comic.usage import ApiResult, UsageRecord, calculate_cost, calculate_cost_breakdown
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -129,21 +131,55 @@ def production_page_capability_profile() -> PageCapabilityProfile:
     )
 
 
+def openai_page_capability_profile(model: str) -> PageCapabilityProfile:
+    if model not in {"gpt-image-2.5-sunburst", "gpt-image-2.5-flare"}:
+        raise ValueError("Unsupported complete-page OpenAI model")
+    return PageCapabilityProfile(
+        id=f"{model}-complete-page-high-v1", provider="openai", model=model,
+        max_image_references=16, reference_ordering="ordered",
+        editing_modes=("instructed", "region_targeted"),
+        output_width=1024, output_height=1536, max_prompt_characters=32_000,
+        retry_semantics="bounded_submission", max_attempts=1,
+        price_per_page_usd=Decimal(GPT25_PAGE_ESTIMATED_COST_USD),
+        price_per_reference_usd=Decimal(GPT25_REFERENCE_ESTIMATED_COST_USD),
+    )
+
+
+def _supported_page_profile(profile: PageCapabilityProfile) -> bool:
+    from novel_to_comic.codex_dev import model_has_vision, selectable_models, selector_available
+
+    if profile == current_page_capability_profile() or any(
+        profile == openai_page_capability_profile(model)
+        for model in ("gpt-image-2.5-sunburst", "gpt-image-2.5-flare")
+    ):
+        return True
+    return selector_available() and any(
+        profile == current_page_capability_profile(Config(draw_model=f"codex-dev/image/{model}"))
+        for model in selectable_models() if model_has_vision(model)
+    )
+
+
 _CODEX_PAGE_PROFILE_PREFIX = "codex-dev-complete-page-v1-"
 
 
-def current_page_capability_profile() -> PageCapabilityProfile:
+def current_page_capability_profile(config: Config | None = None) -> PageCapabilityProfile:
     """Select only from original-process complete-page routing authority."""
     from novel_to_comic.ai import codex_runtime
     from novel_to_comic.codex_dev import route_for
 
-    route = route_for("complete_page", COMPLETE_PAGE_GATEWAY_MODEL)
+    selected = getattr(config, "draw_model", COMPLETE_PAGE_GATEWAY_MODEL)
+    if selected in {"image-sunburst", "image-flare"}:
+        return openai_page_capability_profile("gpt-image-2.5-" + selected.removeprefix("image-"))
+    if selected != COMPLETE_PAGE_GATEWAY_MODEL and not selected.startswith("codex-dev/image/"):
+        raise ValueError("Unsupported complete-page model selection")
+    route = route_for("complete_page", selected)
     if route is None:
         return production_page_capability_profile()
     if route.image_model != "gpt-image-2":
         raise ValueError("Unsupported Codex complete-page image selector")
     binding = json.dumps(
-        [route.reasoning_model, sorted(codex_runtime.image_execution_controls())],
+        [route.reasoning_model, sorted(codex_runtime.image_execution_controls())]
+        + ([selected] if selected.startswith("codex-dev/image/") else []),
         separators=(",", ":"), ensure_ascii=False,
     )
     return PageCapabilityProfile(
@@ -173,7 +209,10 @@ def page_profile_uses_native_dimensions(profile: PageCapabilityProfile) -> bool:
 
 
 def complete_page_adapter(config: Config) -> CompletePageAdapter:
-    if page_profile_uses_native_dimensions(current_page_capability_profile()):
+    profile = current_page_capability_profile(config)
+    if profile.provider == "openai":
+        return OpenAICompletePageAdapter(config, profile)
+    if page_profile_uses_native_dimensions(profile):
         from novel_to_comic.codex_complete_page import CodexCompletePageAdapter
 
         return CodexCompletePageAdapter(config)
@@ -196,7 +235,7 @@ def select_book_edition(
         )
     ):
         raise ValueError("one model and capability profile are fixed for the edition")
-    if profile != current_page_capability_profile():
+    if not _supported_page_profile(profile):
         raise ValueError(
             "provider/model does not satisfy the current complete-page capability profile; "
             "existing editions cannot change profiles"
@@ -214,9 +253,10 @@ def select_book_edition(
 def ensure_current_page_edition(
     artifacts: TargetArtifacts,
     edition: BookEdition,
+    config: Config | None = None,
 ) -> BookEdition:
     """Reject incompatible editions without rewriting their fixed selection."""
-    if edition.capability_profile != current_page_capability_profile():
+    if edition.capability_profile != current_page_capability_profile(config):
         raise ValueError(
             "This edition uses a different page profile. Existing editions cannot "
             "change profiles; existing pages will not be mixed with another model."
@@ -515,7 +555,7 @@ def compile_page_generation_request(
             raise ValueError("edit source bytes do not match correction lineage")
     authorities = _selected_authorities(page, inventory)
     max_references = selected_edition.capability_profile.max_image_references
-    if page_profile_uses_native_dimensions(selected_edition.capability_profile) and correction is not None:
+    if (page_profile_uses_native_dimensions(selected_edition.capability_profile) or selected_edition.capability_profile.provider == "openai") and correction is not None:
         max_references -= 1  # The parent is an input image, never an authority replacement.
     if len(authorities) > max_references:
         raise ValueError(
@@ -663,7 +703,7 @@ def _validate_compiled_page(
     compiled: CompiledPageGeneration, profile: PageCapabilityProfile,
 ) -> None:
     request = compiled.request
-    if profile != current_page_capability_profile():
+    if not _supported_page_profile(profile):
         raise ValueError("Complete-page profile changed; existing requests cannot be rerouted")
     if (
         request.profile_id != profile.id
@@ -677,7 +717,7 @@ def _validate_compiled_page(
     ):
         raise ValueError("Frozen complete-page request does not match the selected profile")
     total = len(request.references)
-    if page_profile_uses_native_dimensions(profile) and request.correction is not None:
+    if (page_profile_uses_native_dimensions(profile) or profile.provider == "openai") and request.correction is not None:
         total += 1
     if total > profile.max_image_references:
         raise ValueError("Complete-page image inputs exceed profile capacity; references cannot be dropped")
@@ -776,6 +816,8 @@ class GoogleVertexCompletePageTransport:
 
     def __init__(self, config: Config) -> None:
         self._config = config
+        self._profile = production_page_capability_profile()
+        self._gateway_model = COMPLETE_PAGE_GATEWAY_MODEL
 
     async def generate(
         self,
@@ -789,7 +831,7 @@ class GoogleVertexCompletePageTransport:
             finalise_image_failure,
         )
 
-        _validate_prepared_page(request, production_page_capability_profile())
+        _validate_prepared_page(request, self._profile)
         files = []
         ref_reads: list[tuple[Path, bytes | None]] = []
         if request.edit_source_bytes is not None:
@@ -835,7 +877,7 @@ class GoogleVertexCompletePageTransport:
         request_data = {
             # Route through the configured gateway alias while preserving
             # the actual provider/model in the frozen edition manifest.
-            "model": COMPLETE_PAGE_GATEWAY_MODEL,
+            "model": self._gateway_model,
             "prompt": request.prompt,
             "response_format": "b64_json",
             "canary_complete_page_request": request.frozen_request_json,
@@ -844,17 +886,25 @@ class GoogleVertexCompletePageTransport:
             "canary_requested_aspect": str(request.width / request.height),
             "canary_idempotency_key": request.idempotency_key,
         }
+        if self._profile.provider == "openai":
+            request_data = {
+                "model": self._gateway_model, "prompt": request.prompt,
+                "size": f"{request.width}x{request.height}", "quality": "high",
+                "output_format": "png", "n": 1,
+            }
+            if files:
+                request_data["input_fidelity"] = "high"
         feature = "complete_page_draw"
         ctx = await begin_image_call(
             config=self._config,
-            model=COMPLETE_PAGE_GATEWAY_MODEL,
+            model=self._gateway_model,
             feature=feature,
             prompt=request.prompt,
             params={
-                "model": COMPLETE_PAGE_GATEWAY_MODEL,
+                "model": self._gateway_model,
                 "provider_model": request.model,
                 "size": f"{request.width}x{request.height}",
-                "quality": self._config.image_quality,
+                "quality": "high" if self._profile.provider == "openai" else self._config.image_quality,
                 "artifact_kind": "complete_page",
             },
             ref_reads=ref_reads,
@@ -903,17 +953,19 @@ class GoogleVertexCompletePageTransport:
             image_bytes = await ai_client._decode_image_response(payload)
             with Image.open(io.BytesIO(image_bytes)) as image:
                 if image.format != "PNG":
-                    raise ValueError("Vertex complete-page output must be PNG")
+                    raise ValueError("Complete-page output must be PNG")
                 width, height = image.size
+            if (width, height) != (request.width, request.height):
+                raise ValueError("Complete-page output dimensions do not match frozen profile")
             latency_ms = int((time.perf_counter() - ctx.started) * 1000)
             usage = ai_client._extract_usage(
                 payload,
                 ctx.event_id,
-                COMPLETE_PAGE_GATEWAY_MODEL,
+                self._gateway_model,
                 "image",
                 response.headers,
             )
-            if usage.cost_usd is None:
+            if usage.cost_usd is None and self._profile.provider != "openai":
                 usage = usage.model_copy(
                     update={
                         "cost_usd": float(request.estimated_cost_usd),
@@ -922,14 +974,19 @@ class GoogleVertexCompletePageTransport:
                 )
             response_model = str(payload.get("model") or "")
             actual_provider_model = (
-                f"vertex_ai/{request.model}"
-                if response_model == COMPLETE_PAGE_GATEWAY_MODEL
-                else response_model or f"vertex_ai/{request.model}"
+                f"{'vertex_ai' if self._profile.provider == 'vertex-multimodal' else self._profile.provider}/{request.model}"
+                if response_model == self._gateway_model
+                else response_model or f"{'vertex_ai' if self._profile.provider == 'vertex-multimodal' else self._profile.provider}/{request.model}"
             )
+            if self._profile.provider == "openai" and actual_provider_model.removeprefix("openai/") not in {
+                request.model, request.model + "-2026-09-08",
+            }:
+                raise ValueError("OpenAI response model does not match frozen page profile")
             usage = usage.model_copy(
                 update={
-                    "model": COMPLETE_PAGE_GATEWAY_MODEL,
+                    "model": self._gateway_model,
                     "provider_model": actual_provider_model,
+                    "provider": self._profile.provider,
                 }
             )
             response_data = {
@@ -941,7 +998,7 @@ class GoogleVertexCompletePageTransport:
             await finalise_image_cancelled(
                 ctx=ctx,
                 config=self._config,
-                model=COMPLETE_PAGE_GATEWAY_MODEL,
+                model=self._gateway_model,
                 feature=feature,
                 error=exc,
                 error_response=response,
@@ -952,7 +1009,7 @@ class GoogleVertexCompletePageTransport:
             await finalise_image_failure(
                 ctx=ctx,
                 config=self._config,
-                model=COMPLETE_PAGE_GATEWAY_MODEL,
+                model=self._gateway_model,
                 feature=feature,
                 error=exc,
                 error_response=response,
@@ -967,7 +1024,7 @@ class GoogleVertexCompletePageTransport:
                 event_id=ctx.event_id,
                 status="succeeded",
                 feature=feature,
-                model_alias=COMPLETE_PAGE_GATEWAY_MODEL,
+                model_alias=self._gateway_model,
                 latency_ms=latency_ms,
                 usage=usage,
                 response_data=response_data,
@@ -989,7 +1046,7 @@ class GoogleVertexCompletePageTransport:
             await finalise_image_failure(
                 ctx=ctx,
                 config=self._config,
-                model=COMPLETE_PAGE_GATEWAY_MODEL,
+                model=self._gateway_model,
                 feature=feature,
                 error=exc,
                 error_response=response,
@@ -1008,6 +1065,20 @@ class GoogleVertexCompletePageTransport:
         )
 
 
+class OpenAICompletePageAdapter(GoogleVertexCompletePageTransport):
+    """Public Image API through the gateway; one accounted submission per page."""
+
+    def __init__(self, config: Config, profile: PageCapabilityProfile) -> None:
+        super().__init__(config)
+        if profile != openai_page_capability_profile(profile.model):
+            raise ValueError("Unsupported OpenAI complete-page profile")
+        self._profile = profile
+        self._gateway_model = "image-" + profile.model.removeprefix("gpt-image-2.5-")
+
+    def prepare(self, compiled: CompiledPageGeneration) -> PreparedCompletePageRequest:
+        return _prepare_complete_page(compiled, self._profile)
+
+
 async def draw_complete_page(
     compiled: CompiledPageGeneration,
     *,
@@ -1022,7 +1093,7 @@ async def draw_complete_page(
 ) -> PageGenerationProvenance:
     """Persist and execute exactly one complete-page request."""
 
-    _validate_compiled_page(compiled, current_page_capability_profile())
+    adapter.prepare(compiled)
 
     correction = compiled.request.correction
     if correction is None and parent_render_revision is not None:
@@ -1050,7 +1121,7 @@ async def draw_complete_page(
                     image=image,
                     ocr=ocr, artifacts=artifacts,
                 )
-            if not defer_completion:
+            if not defer_completion and calculate_cost_breakdown(saved.usage).source != "unknown_provider_usage":
                 artifacts.mark_generation_complete(saved)
             return saved
     occupied_images = set(artifacts.render_revisions(page.page_number))
@@ -1104,8 +1175,9 @@ async def draw_complete_page(
         model=compiled.request.model,
         latency_ms=provider_result.latency_ms,
         cost_usd=(
-            None if provider_result.usage.funding == "codex_subscription"
-            and provider_result.usage.cost_usd is None
+            None if (provider_result.usage.funding == "codex_subscription"
+            and provider_result.usage.cost_usd is None)
+            or calculate_cost_breakdown(provider_result.usage).source == "unknown_provider_usage"
             else Decimal(str(calculate_cost(provider_result.usage)))
         ),
     )
@@ -1124,7 +1196,7 @@ async def draw_complete_page(
             ocr=ocr,
             artifacts=artifacts,
         )
-    if not defer_completion:
+    if not defer_completion and calculate_cost_breakdown(provenance.usage).source != "unknown_provider_usage":
         artifacts.mark_generation_complete(provenance)
     return provenance
 
@@ -1284,7 +1356,7 @@ async def correct_complete_page(
             artifacts, issue_id=corrected.id, page_number=page.page_number,
             resolution_revision=provenance.render.revision, verified=verified,
         )
-    if not defer_completion:
+    if not defer_completion and calculate_cost_breakdown(provenance.usage).source != "unknown_provider_usage":
         artifacts.mark_generation_complete(provenance)
     return provenance
 

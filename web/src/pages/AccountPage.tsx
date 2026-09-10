@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { Mail, KeyRound } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { useAuth } from "../hooks/useAuth";
@@ -10,6 +10,10 @@ import { Button } from "../components/ui/Button";
 
 type FormMessage = { type: "ok" | "err"; text: string } | null;
 
+const AccountModelPanel = import.meta.env.DEV
+  ? lazy(() => import("../components/AccountModelPanel").then((module) => ({ default: module.AccountModelPanel })))
+  : null;
+
 export function AccountPage() {
   const { user } = useAuth();
   const { t } = useI18n();
@@ -18,10 +22,12 @@ export function AccountPage() {
   return (
     <SettingsLayout kicker={t("ACCOUNT // PREFERENCES")} title={t("Account")}
       subtitle={t("Manage your email address and password.")}
-      tabs={[{ id: "email", label: t("Email") }, { id: "password", label: t("Password") }]}
+      tabs={[{ id: "email", label: t("Email") }, { id: "password", label: t("Password") },
+        ...(AccountModelPanel ? [{ id: "models", label: t("Models (dev)") }] : [])]}
       activeTab={activeTab} onTabChange={setActiveTab}>
       <div hidden={activeTab !== "email"}><EmailTab email={user?.email ?? ""} /></div>
       <div hidden={activeTab !== "password"}><PasswordTab /></div>
+      {activeTab === "models" && AccountModelPanel && <Suspense fallback={<p role="status">{t("Loading model settings…")}</p>}><AccountModelPanel /></Suspense>}
     </SettingsLayout>
   );
 }

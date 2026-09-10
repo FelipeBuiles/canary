@@ -17,15 +17,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from novel_to_comic.ai.providers.base import RefImage, order_refs_for_upload
-from novel_to_comic.config import Config, is_gpt_image_2, is_reve_model, is_seedream_model
+from novel_to_comic.config import Config, is_gpt_image_2, is_seedream_model
 
 _GPT_LOCATION_PLATE_WIDTH = 1536
 _GPT_LOCATION_PLATE_HEIGHT = 1024
-
-# Reve style text is clamped so the style reference image, not prose, carries
-# the visual guidance.
-_REVE_STYLE_TEXT_MAX_CHARS = 200
 
 
 def is_prop_ref(path: Path) -> bool:
@@ -67,84 +62,6 @@ def _gpt_image_2_subject_refs(paths: list[Path]) -> list[Path]:
     return prop_refs[:1]
 
 
-# Pose-crop preference per framing. Close framings want a face-forward crop;
-# Wide framings want a full-body crop so proportions carry over.
-_SHOT_VIEW_PREFERENCES: dict[str, list[str]] = {
-    "close": ["portrait", "full_body", "sheet"],
-    "wide": ["full_body", "portrait", "sheet"],
-    "default": ["full_body", "portrait", "sheet"],
-}
-
-
-def _shot_view_preference(composition: str | None) -> list[str]:
-    text = (composition or "").lower()
-    if "close-up" in text or "close up" in text or "portrait" in text:
-        return _SHOT_VIEW_PREFERENCES["close"]
-    if any(token in text for token in ("wide", "establishing", "panorama", "full body")):
-        return _SHOT_VIEW_PREFERENCES["wide"]
-    return _SHOT_VIEW_PREFERENCES["default"]
-
-
-def _select_subject_crops(
-    subjects: list[RefImage],
-    composition: str | None,
-    primary_poses: dict[str, str] | None = None,
-) -> list[RefImage]:
-    """Pick ONE pose crop per character, matched to the panel's framing.
-
-    Sending several crops of the same character (or a composite sheet) makes
-    ref-driven models blend poses and occasionally leak the grid layout into
-    the panel. One clean, framing-appropriate crop per character keeps identity
-    strong without those artifacts. A legacy/internal override (keyed by the
-    character directory name) can still override the framing preference.
-    """
-    preference = {stem: i for i, stem in enumerate(_shot_view_preference(composition))}
-    primary = primary_poses or {}
-    order: list[Path] = []
-    by_character: dict[Path, list[RefImage]] = {}
-    for ref in subjects:
-        character_dir = ref.path.parent
-        if character_dir not in by_character:
-            by_character[character_dir] = []
-            order.append(character_dir)
-        by_character[character_dir].append(ref)
-
-    def crop_rank(character_dir: Path, ref: RefImage) -> tuple[int, int, str]:
-        is_primary = 0 if primary.get(character_dir.name) == ref.path.stem else 1
-        return (is_primary, preference.get(ref.path.stem, 99), str(ref.path))
-
-    return [min(by_character[d], key=lambda r: crop_rank(d, r)) for d in order]
-
-
-def _reve_refs(
-    refs: list[RefImage],
-    composition: str | None = None,
-    primary_poses: dict[str, str] | None = None,
-) -> list[RefImage]:
-    """Select up to 4 refs for Reve, identity first.
-
-    Character identity is the thing reference images are best at and the
-    hardest to recover via text, so subjects always win slots: one crop per
-    character (up to 3), chosen by the panel's framing. Remaining slots fill
-    with continuity, prop, style, then location refs.
-    """
-    subjects = _select_subject_crops(
-        [r for r in refs if r.role == "subject"], composition, primary_poses
-    )[:3]
-    continuities = [r for r in refs if r.role == "continuity"]
-    props = [r for r in refs if r.role == "prop"]
-    styles = [r for r in refs if r.role == "style"]
-    locations = [r for r in refs if r.role == "location_plate"]
-
-    selected: list[RefImage] = list(subjects)
-    for ref in [*continuities[:1], *props, *styles[:1], *locations[:1]]:
-        if len(selected) >= 4:
-            break
-        if ref not in selected:
-            selected.append(ref)
-    return order_refs_for_upload(selected)
-
-
 @dataclass(frozen=True)
 class RefStrategy:
     """Decision surface for one image model route.
@@ -166,9 +83,6 @@ class RefStrategy:
     def _gpt_image_2(self) -> bool:
         return is_gpt_image_2(self.model)
 
-    @property
-    def _reve(self) -> bool:
-        return is_reve_model(self.model)
 
     @property
     def _seedream(self) -> bool:
@@ -197,16 +111,6 @@ class RefStrategy:
         # details or texture artifacts, so keep its cast refs text-driven.
         return None
 
-    def use_clean_text_character_prompt(self) -> bool:
-        """Reve gets a clean text character prompt instead of layout-heavy wording."""
-        return self._reve
-
-    def clamp_style_text(self, style: str) -> str:
-        # When using Reve with style reference, reduce style text to avoid
-        # conflicts — the style reference image provides stronger visual guidance.
-        if self._reve and len(style) > _REVE_STYLE_TEXT_MAX_CHARS:
-            return style[:_REVE_STYLE_TEXT_MAX_CHARS]
-        return style
 
     def use_structured_location_plate_prompt(self) -> bool:
         """GPT Image 2 location plates use the labeled design-plate prompt layout."""
@@ -233,11 +137,3 @@ class RefStrategy:
 
     def include_rendering_discipline(self) -> bool:
         return self._gpt_image_2
-
-    def use_indexed_ref_instructions(self) -> bool:
-        """Reve v2 create prompts reference uploads via <frame>N</frame>.
-
-        Layout-aware render requests bind regions structurally and therefore
-        do not use inline tags; this flag is for the ordinary v2 create path.
-        """
-        return self._reve

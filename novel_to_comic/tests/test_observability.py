@@ -79,7 +79,7 @@ def test_prometheus_metrics_are_aggregate_and_low_cardinality():
     )
     metrics.record_ai_call(
         provider="gemini",
-        model="image-quality",
+        model="image-gpt-2",
         operation="image",
         status="succeeded",
         stage="draw",
@@ -105,8 +105,8 @@ def test_prometheus_metrics_are_aggregate_and_low_cardinality():
     assert 'canary_generation_jobs{status="queued"} 1' in rendered
     assert "canary_generation_queue_items 3" in rendered
     assert "canary_ai_provider_cost_usd_total" in rendered
-    assert 'canary_ai_reasoning_tokens_total{provider="gemini",model="image-quality",stage="draw"} 50' in rendered
-    assert 'canary_ai_output_tokens_total{provider="gemini",model="image-quality",stage="draw"} 80' in rendered
+    assert 'canary_ai_reasoning_tokens_total{provider="gemini",model="image-gpt-2",stage="draw"} 50' in rendered
+    assert 'canary_ai_output_tokens_total{provider="gemini",model="image-gpt-2",stage="draw"} 80' in rendered
     assert 'canary_structured_call_attempts_total{feature="plan.scene_layout",attempt="retry"} 1' in rendered
     assert "user_id" not in rendered
     assert "project_id=\"" not in rendered

@@ -42,7 +42,7 @@ def test_non_panel_prompt_has_no_panel_identity_fields():
 
 
 def test_abstract_style_proof_does_not_invent_entity_anchor():
-    config = Config(image_model="image-balanced", style_template="Woodblock print")
+    config = Config(image_model="image-gemini-pro", style_template="Woodblock print")
     request = compile_non_panel_request(
         config,
         AbstractStyleProofInput(
@@ -66,7 +66,7 @@ def test_abstract_style_proof_does_not_invent_entity_anchor():
 
 
 def test_entity_specific_style_proof_preserves_supplied_anchor_verbatim():
-    config = Config(image_model="image-balanced", style_template="Ink wash")
+    config = Config(image_model="image-gemini-pro", style_template="Ink wash")
     sentinel = "CHARACTER-SENTINEL: cobalt eyes, brass prosthetic hand, scarlet scarf"
     request = compile_non_panel_request(
         config,
@@ -94,7 +94,7 @@ def test_entity_specific_style_proof_preserves_supplied_anchor_verbatim():
 
 
 def test_location_plate_uses_verified_landscape_geometry():
-    config = Config(image_model="image-balanced", style_template="Ink wash")
+    config = Config(image_model="image-gemini-pro", style_template="Ink wash")
     request = compile_non_panel_request(
         config,
         CanonicalLocationPlateInput(
@@ -124,7 +124,7 @@ def test_non_page_style_omits_production_contract_but_proof_retains_it():
     from novel_to_comic.asset_generation import PropReferenceInput
     from novel_to_comic.style_contract import page_style_template, LETTERING_MARKER, FRAMING_MARKER
 
-    config = Config(image_model="image-balanced")
+    config = Config(image_model="image-gemini-pro")
     style = page_style_template("Watercolor rendering")
     for input_type, page in ((PropReferenceInput, False), (AbstractStyleProofInput, True)):
         request = compile_non_panel_request(config, input_type(
@@ -146,7 +146,7 @@ def test_guard_survives_sanitizing_and_budget_while_subject_direction_is_emitted
 
     guard = "Guard: inscribed NEVER restore this wing. captions remain absent! END_GUARD"
     identity = "A young winged creature with one cobalt wing."
-    request = compile_non_panel_request(Config(image_model="image-balanced"), AbstractStyleProofInput(
+    request = compile_non_panel_request(Config(image_model="image-gemini-pro"), AbstractStyleProofInput(
         asset_identity="guard-proof",
         prompt=GenerationPromptInput(
             subjects=(PromptSubject(character_id="bird", name="Bird", identity=identity,
@@ -195,7 +195,7 @@ def test_calibration_and_character_requests_preserve_nonhuman_canonical_anatomy(
     from novel_to_comic.models.story_bible import Character, StoryBible
     from novel_to_comic.stages.s3_cast import _character_generation_input, _character_style_calibration_input
 
-    config = Config(image_model="image-balanced")
+    config = Config(image_model="image-gemini-pro")
     anchor = "adult tortoiseshell cat, four short legs, round amber eyes, long fluffy tail"
     cat = Character(
         id="char_cat", name="Moss", visual_anchor=anchor, age_range="adult",
@@ -238,7 +238,7 @@ def test_editable_sanitizer_does_not_match_caption_prefix_inside_words():
 
 def test_location_guard_is_protected_in_final_asset_prompt():
     guard = "NIGHT_GUARD: inscribed words are absent. Never restore the roof!"
-    request = compile_non_panel_request(Config(image_model="image-balanced"), CanonicalLocationPlateInput(
+    request = compile_non_panel_request(Config(image_model="image-gemini-pro"), CanonicalLocationPlateInput(
         asset_identity="house:night",
         prompt=GenerationPromptInput(anchors=(PromptAnchor(
             kind="location", entity_id="house", name="House", appearance_state_id="night",
@@ -249,7 +249,7 @@ def test_location_guard_is_protected_in_final_asset_prompt():
     assert guard in protected.body
 
 def test_common_non_panel_provenance_has_asset_identity_and_wire_fields():
-    config = Config(image_model="image-balanced")
+    config = Config(image_model="image-gemini-pro")
     request = compile_non_panel_request(
         config,
         AbstractStyleProofInput(
@@ -288,7 +288,7 @@ def test_common_non_panel_provenance_has_asset_identity_and_wire_fields():
 
 
 def test_non_panel_submission_freezes_before_transport_and_persists_provenance(tmp_path, monkeypatch):
-    config = Config(image_model="image-balanced")
+    config = Config(image_model="image-gemini-pro")
     request = compile_non_panel_request(
         config,
         AbstractStyleProofInput(
@@ -326,7 +326,7 @@ def test_non_panel_submission_freezes_before_transport_and_persists_provenance(t
 
 
 def test_non_panel_failure_persists_request_provenance_without_provider_result(tmp_path, monkeypatch):
-    config = Config(image_model="image-balanced")
+    config = Config(image_model="image-gemini-pro")
     request = compile_non_panel_request(
         config,
         AbstractStyleProofInput(
@@ -362,7 +362,7 @@ def test_non_panel_failure_persists_request_provenance_without_provider_result(t
 def test_non_panel_gateway_failure_persists_retryable_service_classification(
     tmp_path, monkeypatch,
 ):
-    config = Config(image_model="image-balanced")
+    config = Config(image_model="image-gemini-pro")
     request = compile_non_panel_request(
         config,
         AbstractStyleProofInput(

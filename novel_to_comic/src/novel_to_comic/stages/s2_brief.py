@@ -30,7 +30,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
     story_bible = artifacts.read_story_bible(project_dir)
     prompt = build_brief_inference_prompt(source, story_bible)
     page_envelope = story_page_envelope(source, story_bible)
-    model = config.effective_extraction_model()
+    model = config.effective_brief_model()
     estimate = estimate_text_cost(model, prompt, output_chars=8_000)
 
     def parse(raw: object):
@@ -85,7 +85,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
         artifacts.read_story_bible(project_dir),
     )
     return estimate_text_cost(
-        config.effective_extraction_model(),
+        config.effective_brief_model(),
         prompt,
         output_chars=8_000,
     )

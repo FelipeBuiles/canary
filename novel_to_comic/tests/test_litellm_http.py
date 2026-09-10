@@ -40,7 +40,7 @@ def _wire(
 def test_gpt_image_2_wire_request_uses_openai_image_api_fields():
     params, files = serialize_wire_request(
         _wire(
-            alias="image-quality",
+            alias="image-gpt-2",
             route=ImageRoute.GPT_IMAGE_2,
             provider_key="openai",
             provider_model="openai/gpt-image-2",
@@ -50,7 +50,7 @@ def test_gpt_image_2_wire_request_uses_openai_image_api_fields():
 
     assert files == []
     assert params == {
-        "model": "image-quality",
+        "model": "image-gpt-2",
         "prompt": "A test image",
         "size": "1024x1536",
         "n": 1,
@@ -61,7 +61,7 @@ def test_gpt_image_2_wire_request_uses_openai_image_api_fields():
 def test_custom_image_routes_keep_the_wire_manifest_for_handlers():
     params, files = serialize_wire_request(
         _wire(
-            alias="image-balanced",
+            alias="image-gemini-pro",
             route=ImageRoute.GEMINI_PRO_IMAGE,
             provider_key="vertex-multimodal",
             provider_model="vertex_ai/gemini-3-pro-image",
@@ -80,7 +80,7 @@ def test_custom_image_routes_keep_the_wire_manifest_for_handlers():
 def test_provider_key_controls_serializer_when_model_version_changes():
     params, files = serialize_wire_request(
         _wire(
-            alias="image-quality",
+            alias="image-gpt-2",
             route=ImageRoute.UNKNOWN,
             provider_key="openai",
             provider_model="openai/future-image-model",
@@ -118,7 +118,7 @@ def test_accepted_wire_result_retains_hold_unless_known_refusal(monkeypatch, fai
 
     monkeypatch.setattr(credits, "_unsettled_jobs", set())
     monkeypatch.setattr(credits, "_reservation_jobs", {"hold": "job"})
-    wire = _wire(alias="image-quality", route=ImageRoute.GPT_IMAGE_2,
+    wire = _wire(alias="image-gpt-2", route=ImageRoute.GPT_IMAGE_2,
                  provider_key="openai", provider_model="openai/gpt-image-2")
     response = httpx.Response(200, content=b"bad" if failure == "json" else b"{}")
     if failure == "shape":

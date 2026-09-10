@@ -51,7 +51,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default=os.environ.get("LITELLM_BASE_URL", "http://localhost:4000"))
     parser.add_argument("--api-key", default=os.environ.get("LITELLM_API_KEY", "sk-local-canary"))
-    parser.add_argument("--model", default="image-balanced-seedream-test")
+    parser.add_argument("--model", default="image-seedream-v5-lite")
     parser.add_argument("--prompt", default="A painterly comic panel with the referenced characters grounded in the referenced setting.")
     parser.add_argument("--size", default="1024x1024")
     parser.add_argument("--output", type=Path, default=Path("/tmp/seedream-litellm.png"))

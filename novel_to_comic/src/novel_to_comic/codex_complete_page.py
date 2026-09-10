@@ -7,7 +7,7 @@ from pathlib import Path
 
 from novel_to_comic.ai import codex_runtime
 from novel_to_comic.codex_dev import assert_request_funding, route_for
-from novel_to_comic.config import COMPLETE_PAGE_GATEWAY_MODEL, Config
+from novel_to_comic.config import Config
 from novel_to_comic.models.draw import CompletePageProviderResult
 from novel_to_comic.page_drawing import (
     CompiledPageGeneration, PreparedCompletePageRequest, _prepare_complete_page,
@@ -54,7 +54,7 @@ class CodexCompletePageAdapter:
         self._config = config
 
     def prepare(self, compiled: CompiledPageGeneration) -> PreparedCompletePageRequest:
-        profile = current_page_capability_profile()
+        profile = current_page_capability_profile(self._config)
         if not page_profile_uses_native_dimensions(profile):
             raise ValueError("Codex complete-page routing is not enabled")
         prepared = _prepare_complete_page(compiled, profile)
@@ -78,14 +78,14 @@ class CodexCompletePageAdapter:
             begin_image_call, finalise_image_cancelled, finalise_image_failure,
         )
 
-        profile = current_page_capability_profile()
+        profile = current_page_capability_profile(self._config)
         if not page_profile_uses_native_dimensions(profile):
             raise ValueError("Codex complete-page routing is not enabled")
         _validate_prepared_page(prepared, profile)
-        route = route_for("complete_page", COMPLETE_PAGE_GATEWAY_MODEL)
+        route = route_for("complete_page", self._config.draw_model)
         if route is None:
             raise ValueError("Codex complete-page routing is not enabled")
-        assert_request_funding("complete_page", COMPLETE_PAGE_GATEWAY_MODEL)
+        assert_request_funding("complete_page", self._config.draw_model)
         references = self._references(prepared)
         feature = "complete_page_draw"
         params = {
@@ -97,7 +97,7 @@ class CodexCompletePageAdapter:
             **dict(codex_runtime.image_execution_controls()),
         }
         ctx = await begin_image_call(
-            config=self._config, model=COMPLETE_PAGE_GATEWAY_MODEL, feature=feature,
+            config=self._config, model=self._config.draw_model, feature=feature,
             prompt=prepared.prompt, params=params,
             ref_reads=[(Path(f"complete-page-input-{index}"), data)
                        for index, (data, _) in enumerate(references)],
@@ -133,7 +133,7 @@ class CodexCompletePageAdapter:
                 ) from exc
             latency_ms = int((time.perf_counter() - ctx.started) * 1000)
             usage = UsageRecord(
-                call_id=ctx.event_id, provider="codex", model=COMPLETE_PAGE_GATEWAY_MODEL,
+                call_id=ctx.event_id, provider="codex", model=self._config.draw_model,
                 operation="image", input_tokens=result.input_tokens or 0,
                 output_tokens=result.output_tokens or 0, image_count=1,
                 provider_model=None, cost_usd=None, cost_source="codex_subscription",
@@ -142,13 +142,13 @@ class CodexCompletePageAdapter:
             ctx.metadata = {**ctx.metadata, "codex_runtime": metadata}
         except asyncio.CancelledError as exc:
             await finalise_image_cancelled(
-                ctx=ctx, config=self._config, model=COMPLETE_PAGE_GATEWAY_MODEL,
+                ctx=ctx, config=self._config, model=self._config.draw_model,
                 feature=feature, error=exc,
             )
             raise
         except BaseException as exc:
             await finalise_image_failure(
-                ctx=ctx, config=self._config, model=COMPLETE_PAGE_GATEWAY_MODEL,
+                ctx=ctx, config=self._config, model=self._config.draw_model,
                 feature=feature, error=exc,
             )
             raise
@@ -156,7 +156,7 @@ class CodexCompletePageAdapter:
         try:
             await ai_client._finalize_event_shielded(
                 event_id=ctx.event_id, status="succeeded", feature=feature,
-                model_alias=COMPLETE_PAGE_GATEWAY_MODEL, latency_ms=latency_ms, usage=usage,
+                model_alias=self._config.draw_model, latency_ms=latency_ms, usage=usage,
                 response_data={"id": provider_request_id, "codex_runtime": metadata, "funding": usage.funding,
                                "usage": {"prompt_tokens": usage.input_tokens,
                                          "completion_tokens": usage.output_tokens}},
@@ -168,7 +168,7 @@ class CodexCompletePageAdapter:
             )
         except Exception as exc:
             await finalise_image_failure(
-                ctx=ctx, config=self._config, model=COMPLETE_PAGE_GATEWAY_MODEL,
+                ctx=ctx, config=self._config, model=self._config.draw_model,
                 feature=feature, error=exc,
             )
             raise

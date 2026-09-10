@@ -445,7 +445,7 @@ def test_book_edition_rejects_unselected_capability_before_cost() -> None:
     with pytest.raises(ValueError):
         select_book_edition(
             edition_id="edition-001",
-            profile=_profile(provider="reve"),
+            profile=_profile(provider="unsupported-provider"),
         )
 
     existing = _edition()
@@ -598,7 +598,7 @@ def test_native_vertex_transport_preserves_reference_order_and_returns_one_page(
         200,
         json={
             "id": "vertex-response-1",
-            "model": "image-balanced",
+            "model": "image-gemini-pro",
             "data": [{"b64_json": "unused-by-test-decoder"}],
         },
         request=httpx.Request("POST", "http://gateway/v1/images/edits"),
@@ -636,12 +636,12 @@ def test_native_vertex_transport_preserves_reference_order_and_returns_one_page(
         prepared.reference_bytes
     )
     assert submitted["data"]["prompt"] == prepared.prompt
-    assert submitted["data"]["model"] == "image-balanced"
+    assert submitted["data"]["model"] == "image-gemini-pro"
     assert result.artifact_kind == "complete_page"
     assert (result.width, result.height) == (1696, 2528)
     assert result.actual_provider_model == "vertex_ai/gemini-3-pro-image"
     finalized = finalize.call_args.kwargs
-    assert finalized["model_alias"] == "image-balanced"
+    assert finalized["model_alias"] == "image-gemini-pro"
     assert finalized["operation"] == "image"
     assert finalized["metadata"]["trace_name"] == "complete_page_draw"
     assert finalized["langfuse_input"]["prompt"] == prepared.prompt
@@ -670,7 +670,7 @@ def test_native_vertex_transport_uses_generation_endpoint_without_references(
         200,
         json={
             "id": "vertex-response-1",
-            "model": "image-balanced",
+            "model": "image-gemini-pro",
             "data": [{"b64_json": "unused-by-test-decoder"}],
         },
         request=httpx.Request("POST", "http://gateway/v1/images/generations"),
@@ -701,7 +701,7 @@ def test_native_vertex_transport_uses_generation_endpoint_without_references(
 
     assert post.call_args.args[0] == "http://gateway/v1/images/generations"
     submitted = post.call_args.kwargs
-    assert submitted["json"]["model"] == "image-balanced"
+    assert submitted["json"]["model"] == "image-gemini-pro"
     assert submitted["json"]["prompt"] == prepared.prompt
     assert "files" not in submitted
     assert result.actual_provider_model == "vertex_ai/gemini-3-pro-image"
@@ -816,7 +816,7 @@ def test_reserved_generation_job_reserves_executes_debits_and_releases(
             work=work,
             debit_description="Complete page 7",
             reservation_credits=38,
-            operations=(("complete_page", "image-balanced"),),
+            operations=(("complete_page", "image-gemini-pro"),),
         )
         asyncio.run(job.runner())
 
@@ -1078,7 +1078,7 @@ def test_reserved_generation_job_releases_without_debit_on_cancellation(
             work=work,
             debit_description="Complete page 7",
             reservation_credits=38,
-            operations=(("complete_page", "image-balanced"),),
+            operations=(("complete_page", "image-gemini-pro"),),
         )
         with pytest.raises(asyncio.CancelledError):
             asyncio.run(job.runner())

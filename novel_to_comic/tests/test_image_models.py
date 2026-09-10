@@ -17,27 +17,26 @@ from novel_to_comic.image_models import (
     ("alias", "route", "provider_model", "provider_key", "display_name"),
     [
         (
-            "image-fast",
+            "image-gemini-flash-lite",
             ImageRoute.GEMINI_FLASH_LITE,
             "vertex-multimodal/gemini-3.1-flash-lite-image",
             "vertex-multimodal",
-            "Fast — Gemini 3.1 Flash Lite Image",
+            "Gemini 3.1 Flash Lite Image",
         ),
         (
-            "image-balanced",
+            "image-gemini-pro",
             ImageRoute.GEMINI_PRO_IMAGE,
             "vertex-multimodal/gemini-3-pro-image",
             "vertex-multimodal",
-            "Balanced — Gemini 3 Pro Image (Nano Banana Pro)",
+            "Gemini 3 Pro Image (Nano Banana Pro)",
         ),
         (
-            "image-quality",
+            "image-gpt-2",
             ImageRoute.GPT_IMAGE_2,
             "openai/gpt-image-2",
             "openai",
-            "Quality — GPT Image 2",
+            "GPT Image 2",
         ),
-        ("image-reve", ImageRoute.REVE, "reve/create", "reve", "Reve"),
     ],
 )
 def test_production_alias_route_descriptions(
@@ -78,8 +77,8 @@ def test_labs_seedream_gateway_alias_resolves_to_fal_provider():
 
 
 @pytest.mark.parametrize("model", ["reve/create", "reve/remix", "reve/custom"])
-def test_literal_reve_models_are_classified(model: str):
-    assert describe_image_model(model).route is ImageRoute.REVE
+def test_removed_reve_models_are_unknown(model: str):
+    assert describe_image_model(model).route is ImageRoute.UNKNOWN
 
 
 @pytest.mark.parametrize("model", ["gpt-image-2", "openai/gpt-image-2"])

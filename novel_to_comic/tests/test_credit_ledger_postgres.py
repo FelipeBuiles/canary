@@ -110,7 +110,7 @@ def test_different_cast_jobs_compete_for_one_balance(ledger, tmp_path):
                 project_dir=tmp_path, stage="cast", kind="character_ref_regen",
                 label=asset, payload={"char_id": asset}, work=work,
                 debit_description="cast", estimate_credits=5,
-                operations=(("image", "image-quality"),),
+                operations=(("image", "image-gpt-2"),),
             )[0]
         except HTTPException as exc:
             return exc.status_code
@@ -126,8 +126,8 @@ def test_different_cast_jobs_compete_for_one_balance(ledger, tmp_path):
 def test_committed_zero_settlement_is_immutable_after_response_loss(ledger):
     db, user = ledger
     job = str(uuid.uuid4())
-    first = UsageRecord(provider="openai", model="plan-balanced", operation="text", input_tokens=1)
-    second = UsageRecord(provider="openai", model="plan-balanced", operation="text", input_tokens=1)
+    first = UsageRecord(provider="openai", model="gpt-5.6-terra", operation="text", input_tokens=1)
+    second = UsageRecord(provider="openai", model="gpt-5.6-terra", operation="text", input_tokens=1)
     with patch.object(credits, "usage_to_credit_debit", return_value=(1, 0.001)):
         credits.debit_model_usage(db, user, None, first, description="first", job_id=job)
         db.lose_response = True
@@ -180,10 +180,10 @@ def test_subscription_failure_settles_zero_and_replays_without_losing_evidence(l
         "insert into public.ai_usage_events "
         "(id, user_id, feature, operation, status, model_alias, funding) values "
         f"('{call}', '{user}', 'test.subscription', 'text', 'failed', "
-        "'plan-balanced', 'codex_subscription');"
+        "'gpt-5.6-terra', 'codex_subscription');"
     )
     usage = UsageRecord(
-        call_id=call, provider="openai", model="plan-balanced", operation="text",
+        call_id=call, provider="openai", model="gpt-5.6-terra", operation="text",
         input_tokens=100, funding="codex_subscription",
     )
     db.lose_response = True
@@ -212,7 +212,7 @@ def test_sql_subscription_dollars_and_billable_flag_cannot_charge_or_poison_api_
         "p_user_id": user, "p_project_id": None, "p_job_id": job,
         "p_stage": "extract", "p_description": "contradictory evidence",
         "p_usage_call_id": str(uuid.uuid4()), "p_provider": "openai",
-        "p_model": "plan-balanced", "p_provider_model": None, "p_operation": "text",
+        "p_model": "gpt-5.6-terra", "p_provider_model": None, "p_operation": "text",
         "p_input_tokens": 100, "p_output_tokens": 100, "p_image_count": 0,
         "p_cost_usd": 100, "p_cost_source": "provider_reported_cost",
         "p_pricing_snapshot": None, "p_credits_per_usd": 100, "p_markup": 1,
@@ -230,7 +230,7 @@ def test_sql_subscription_dollars_and_billable_flag_cannot_charge_or_poison_api_
 def test_subscription_image_ledger_preserves_observed_model_identity(ledger, provider_model):
     db, user = ledger
     usage = UsageRecord(
-        provider="codex", model="image-quality", provider_model=provider_model,
+        provider="codex", model="image-gpt-2", provider_model=provider_model,
         operation="image", image_count=1, funding="codex_subscription",
     )
     credits.debit_model_usage(db, user, None, usage, description="subscription image")
@@ -239,5 +239,5 @@ def test_subscription_image_ledger_preserves_observed_model_identity(ledger, pro
         f"from public.credit_ledger where usage_call_id='{usage.call_id}') t;"
     ))
     assert result == {
-        "model": "image-quality", "provider_model": provider_model, "amount_credits": 0,
+        "model": "image-gpt-2", "provider_model": provider_model, "amount_credits": 0,
     }

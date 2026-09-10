@@ -45,10 +45,10 @@ def _wire(sources: list[Path], *, prompt: str = "frozen prompt") -> ProviderWire
     request = ProviderWireRequest(
         discriminator=PROVIDER_WIRE_DISCRIMINATOR,
         schema_version=PROVIDER_WIRE_SCHEMA_VERSION,
-        requested_alias="image-quality",
+        requested_alias="image-gpt-2",
         expected_route="balanced",
         provider_key="openai",
-        configured_provider_model="gateway/image-quality",
+        configured_provider_model="gateway/image-gpt-2",
         prompt_parts=(prompt,),
         references=tuple(references),
         width=768,
@@ -454,7 +454,7 @@ def test_frozen_job_loads_only_persisted_request(tmp_path: Path, credit_db):
             debit_description="panel",
             idempotency_key="panel-1",
             estimate_credits=5,
-            operations=(("image", "image-quality"),),
+            operations=(("image", "image-gpt-2"),),
         )
         source.write_bytes(b"changed-after-submit")
         asyncio.run(job.runner())
@@ -492,7 +492,7 @@ def test_staging_failure_does_not_enqueue_or_debit(tmp_path: Path):
                 wire=wire,
                 output_path=tmp_path / "draw" / "panel.png",
                 debit_description="panel",
-                operations=(("image", "image-quality"),),
+                operations=(("image", "image-gpt-2"),),
             )
 
     assert app.state.generation_queue.empty()
@@ -520,7 +520,7 @@ def test_duplicate_frozen_enqueue_is_idempotent_and_not_double_queued(tmp_path: 
         "debit_description": "panel",
         "idempotency_key": "panel-1",
         "estimate_credits": 5,
-        "operations": (("image", "image-quality"),),
+        "operations": (("image", "image-gpt-2"),),
     }
     first, first_created = enqueue_frozen_generation_job(app, **kwargs)
     second, second_created = enqueue_frozen_generation_job(app, **kwargs)
@@ -554,7 +554,7 @@ def test_concurrent_frozen_enqueue_is_idempotent(tmp_path: Path, credit_db):
         "debit_description": "panel",
         "idempotency_key": "panel-concurrent",
         "estimate_credits": 5,
-        "operations": (("image", "image-quality"),),
+        "operations": (("image", "image-gpt-2"),),
     }
 
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -590,7 +590,7 @@ def test_completed_frozen_enqueue_remains_idempotent(tmp_path: Path, credit_db):
         "debit_description": "panel",
         "idempotency_key": "panel-complete",
         "estimate_credits": 5,
-        "operations": (("image", "image-quality"),),
+        "operations": (("image", "image-gpt-2"),),
     }
 
     async def fake_generate_wire_image(**kwargs):

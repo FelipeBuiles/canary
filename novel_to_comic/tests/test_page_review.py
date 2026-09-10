@@ -152,7 +152,7 @@ class _OCR:
             ),
             usage=UsageRecord(
                 provider="gemini",
-                model="ocr-balanced",
+                model="gemini-3.8-flash",
                 operation="text",
                 input_tokens=1200,
                 output_tokens=80,

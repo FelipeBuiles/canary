@@ -88,38 +88,21 @@ Defaults in `config.py`, overridable in `config.yaml`.
 All text stages route through `novel_to_comic.ai.client` and LiteLLM gateway aliases.
 Provider routes live in `litellm/config.yaml`.
 
-| Stage | Default alias (balanced) | Config field |
-|-------|--------------------------|-------------|
-| Extract (1) | `extract-balanced` | `extraction_model` |
-| Adapt (4) | `screenplay-balanced` | `screenplay_model` |
-| Plan (5) | `panel-balanced` | `panel_model` |
-| Prompt/style/instruction tasks | `prompt-balanced` | `prompt_model` |
-
-Aliases are intent + preset (e.g. `extract-fast`, `screenplay-quality`).
-Set `quality_preset: fast | balanced | quality` to switch all five intents at once.
-`dev_mode` forces the `fast` preset regardless.
+Each stage selects a concrete model independently. The development API model
+settings panel exposes supported models per role; it does not switch quality
+presets or change model choices when development mode is enabled.
 
 ### Image generation
 
 Configured via gateway aliases in `config.yaml`:
 
 ```yaml
-image_model: "image-quality"
-fallback_image_model: "image-fast"
-layout_prompts_enabled: false
+image_model: "image-gemini-pro"
 ```
 
-Available image aliases: `image-fast`, `image-balanced`, `image-quality`, `image-reve`.
-The LiteLLM proxy resolves them to provider/model routes. `image-fast` routes
-to Gemini 3.1 Flash Lite Image, `image-balanced` routes to Gemini 3 Pro Image
-(Nano Banana Pro), `image-quality` routes to GPT Image 2, and `image-reve`
-routes to Reve (`REVE_ALIASES`). For Reve (`image-reve`), draw selects refs via `_reve_refs()`:
-up to 3 subject crops plus continuity/prop/style/location up to 4 total. With
-`layout_prompts_enabled: true`, the panel wire uses Reve v2 `render_layout`
-with compound references and structural region bindings; otherwise the normal
-Reve path uses v2 `create`. Layout transport failures also fall back to v2
-`create`; already-frozen layout wires remain exact when the flag is later
-disabled. `GPT_IMAGE_2_ALIASES` contains `image-quality`.
+Image model choices and their provider routes are documented in
+[the model reference](reference/models.md). New requests preserve the canonical
+page specification and ordered reference authorities through the provider wire.
 
 ---
 
@@ -447,16 +430,16 @@ gateway aliases at startup.
 
 | Component | Model/alias | What drives cost |
 |-----------|-------------|------------------|
-| Global extraction | `extract-balanced` | novel length and output Story Bible size |
-| Style suggestions | `prompt-balanced` | Story Bible size and suggestion count |
-| Style samples | `image-quality` | sample count and image-model route |
-| Character refs | `image-quality` | character count and reference conditioning |
-| Prop refs | `image-quality` | recurring/plot-central prop count and reference conditioning |
-| Location plates | `image-quality` | location count |
-| Screenplay adapt | `screenplay-balanced` | scene count and prose length |
-| Layout planning | `panel-balanced` | scene count and beat count |
+| Global extraction | `gemini-3.8-flash` | novel length and output Story Bible size |
+| Style suggestions | `gpt-5.6-luna` | Story Bible size and suggestion count |
+| Style samples | `image-gemini-pro` | sample count and image-model route |
+| Character refs | `image-gemini-pro` | character count and reference conditioning |
+| Prop refs | `image-gemini-pro` | recurring/plot-central prop count and reference conditioning |
+| Location plates | `image-gemini-pro` | location count |
+| Screenplay adapt | `gpt-5.6-terra` | scene count and prose length |
+| Layout planning | `gpt-5.6-terra` | scene count and beat count |
 | Prompt specs | deterministic | no model cost |
-| Panel images | `image-quality` | panel count, provider-specific reference image count, image dimensions, and provider pricing |
+| Complete page images | `image-gemini-pro` | page count, provider-specific reference image count, image dimensions, and provider pricing |
 
 ### Scale estimates
 

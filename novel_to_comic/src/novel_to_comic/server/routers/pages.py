@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from novel_to_comic.server.codex_admission import visual_review_operations
+
 import uuid
 import hashlib
 from typing import Literal
@@ -278,10 +280,10 @@ def prepare_undrawn_pages(*, project_dir, config, rerun: bool = False):
     classify_operations(draw_operations(config))
     target = TargetArtifacts(project_dir)
     edition = (
-        ensure_current_page_edition(target, target.read_book_edition())
+        ensure_current_page_edition(target, target.read_book_edition(), config)
         if target.book_edition_path.exists()
         else select_book_edition(
-            edition_id="book-edition-001", profile=current_page_capability_profile(),
+            edition_id="book-edition-001", profile=current_page_capability_profile(config),
         )
     )
     inventory = approved_visual_inventory(project_dir)
@@ -318,7 +320,7 @@ def enqueue_all_undrawn_pages(
     )
     # Estimation can select an ephemeral first edition; submission requires
     # Draw initialization to have durably pinned it first.
-    ensure_current_page_edition(target, target.read_book_edition())
+    ensure_current_page_edition(target, target.read_book_edition(), config)
     # No reservation or publication occurs until the entire batch is prepared.
     pkey = project_key(user_id, project_id)
     queue = request.app.state.event_queues.get(pkey)
@@ -565,7 +567,7 @@ def _prepare_initial_generation(
         )
     try:
         page = target.read_page(page_number)
-        edition = ensure_current_page_edition(target, target.read_book_edition())
+        edition = ensure_current_page_edition(target, target.read_book_edition(), config)
         compiled = compile_page_generation_request(
             page,
             edition,
@@ -943,7 +945,7 @@ def _prepare_explicit_correction(
 
     try:
         page = target.read_page(page_number)
-        edition = ensure_current_page_edition(target, target.read_book_edition())
+        edition = ensure_current_page_edition(target, target.read_book_edition(), config)
         provenance = _latest_provenance(target, page_number)
         resumable = target.resumable_generation_request(page_number)
         if (resumable is not None and resumable.correction is not None
@@ -1254,7 +1256,7 @@ def visual_review_estimate(page_number: int, project=Depends(get_project)):
     try:
         compiled = compile_page_generation_request(
             target.read_page(page_number),
-            ensure_current_page_edition(target, target.read_book_edition()),
+            ensure_current_page_edition(target, target.read_book_edition(), config),
             approved_visual_inventory(project_dir),
             approved_reference_files(project_dir),
             retry=RetryProvenance(attempt=1),
@@ -1284,14 +1286,14 @@ async def visual_review_page(page_number: int, project_id: str,
     try:
         page = target.read_page(page_number)
         compiled = compile_page_generation_request(
-            page, ensure_current_page_edition(target, target.read_book_edition()), approved_visual_inventory(project_dir),
+            page, ensure_current_page_edition(target, target.read_book_edition(), config), approved_visual_inventory(project_dir),
             approved_reference_files(project_dir), retry=RetryProvenance(attempt=1), style_template=config.style_template,
         )
         complete_page_adapter(config).prepare(compiled)
         result = await run_credited_page_check(
             user_id=user_id, project_id=project_id, project_dir=project_dir, page_number=page_number,
             estimated_cost_usd=float(PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD),
-            operations=page_check_operations(config),
+            operations=visual_review_operations(config),
             work=lambda: review_page_visuals(config=config, page=page, render=active.render,
                 image=target.read_render(page_number, active.render.revision), compiled=compiled, artifacts=target,
                 producing_request=_producing_request(target, active.render)),
@@ -1334,7 +1336,7 @@ def read_saved_visual_review(page_number: int, project=Depends(get_project)):
         page = target.read_page(page_number)
         image = target.read_render(page_number, active.render.revision)
         compiled = compile_page_generation_request(
-            page, ensure_current_page_edition(target, target.read_book_edition()), approved_visual_inventory(project_dir),
+            page, ensure_current_page_edition(target, target.read_book_edition(), config), approved_visual_inventory(project_dir),
             approved_reference_files(project_dir), retry=RetryProvenance(attempt=1),
             style_template=config.style_template,
         )

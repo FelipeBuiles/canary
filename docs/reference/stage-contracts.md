@@ -147,7 +147,7 @@ action is provided. Request hashes identify input but do not guarantee
 provider deduplication. Ambiguous image submissions are not automatically retried.
 
 Local Codex development routing can bind a first Draw edition to a separate
-experimental complete-page profile when `image-balanced` and OCR are both
+experimental complete-page profile when its image route and OCR are both
 subscription-selected. It permits five total ordered image inputs, including a
 correction parent; all required authorities and authored lettering remain intact.
 Queue all prepares every page before any hold or enqueue. Subscription quotes,

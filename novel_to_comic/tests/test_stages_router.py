@@ -420,7 +420,7 @@ def test_brief_stage_repairs_an_invalid_inference_with_one_retry(
             value=responses[len(prompts) - 1],
             usage=UsageRecord(
                 provider="test",
-                model="extract-balanced",
+                model="gemini-3.8-flash",
                 operation="text",
                 input_tokens=100,
                 output_tokens=50,

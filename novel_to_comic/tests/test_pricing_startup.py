@@ -18,6 +18,17 @@ def test_every_model_the_pipeline_uses_has_pricing():
     assert audit_pricing() == []
 
 
+def test_pricing_audit_requires_api_prices_only(monkeypatch):
+    from novel_to_comic import model_catalog
+    from novel_to_comic.usage import audit_pricing
+
+    monkeypatch.setattr(model_catalog, "models", lambda: [
+        {"id": "codex-dev/text/gpt-5.5", "funding": "codex_subscription"},
+        {"id": "missing-api-price", "funding": "api"},
+    ])
+    assert audit_pricing() == ["missing-api-price"]
+
+
 def test_pricing_audit_raises_in_production(monkeypatch):
     monkeypatch.setattr(server_app, "audit_pricing", lambda: ["missing-model"])
     monkeypatch.setenv("CANARY_ENV", "production")

@@ -154,7 +154,7 @@ def test_generate_structured_object_returns_dict_and_usage(monkeypatch, _patch_e
     result = asyncio.run(
         client.generate_structured_object(
             config=Config(),
-            model="plan-balanced",
+            model="gpt-5.6-terra",
             system_prompt="Return JSON.",
             user_content="{}",
             feature="test.json",
@@ -170,7 +170,7 @@ def test_generate_structured_object_returns_dict_and_usage(monkeypatch, _patch_e
     assert result.usage is not None
     assert result.usage.call_id
     assert result.usage.provider == "openai"
-    assert result.usage.model == "plan-balanced"
+    assert result.usage.model == "gpt-5.6-terra"
     assert result.usage.provider_model == "openai/gpt-5.4-mini"
     assert result.usage.input_tokens == 10
     assert result.usage.output_tokens == 3
@@ -181,6 +181,41 @@ def test_generate_structured_object_returns_dict_and_usage(monkeypatch, _patch_e
     assert response_format["json_schema"]["schema"]["required"] == ["ok"]
     assert _patch_events[0][0] == "insert"
     assert _patch_events[-1][1]["status"] == "succeeded"
+
+
+def test_openrouter_structured_request_uses_supported_max_tokens_field(
+    monkeypatch, _patch_events
+):
+    _patch_http(
+        monkeypatch,
+        {
+            "id": "glm-response",
+            "model": "z-ai/glm-5.3-flash",
+            "choices": [{"message": {"content": '{"ok": true}'}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
+        },
+    )
+
+    result = asyncio.run(
+        client.generate_structured_object(
+            config=Config(),
+            model="glm-5.3-flash",
+            system_prompt="Return JSON.",
+            user_content="{}",
+            max_output_tokens=128,
+            feature="extract.story_bible",
+            json_schema={
+                "type": "object",
+                "properties": {"ok": {"type": "boolean"}},
+                "required": ["ok"],
+            },
+        )
+    )
+
+    assert result.value == {"ok": True}
+    request = _FakeAsyncClient.last_request["json"]
+    assert request["max_tokens"] == 128
+    assert "max_completion_tokens" not in request
 
 
 def test_generate_structured_object_retries_then_succeeds_on_malformed_json(
@@ -219,7 +254,7 @@ def test_generate_structured_object_retries_then_succeeds_on_malformed_json(
     result = asyncio.run(
         client.generate_structured_object(
             config=Config(),
-            model="plan-balanced",
+            model="gpt-5.6-terra",
             system_prompt="Return JSON.",
             user_content="{}",
             feature="test.json",
@@ -257,7 +292,7 @@ def test_structured_response_retains_malformed_paid_text_without_resubmission(
     with pytest.raises(ValueError):
         asyncio.run(client.generate_structured_object(
             config=Config(),
-            model="ocr-balanced",
+            model="gemini-3.8-flash",
             system_prompt="Transcribe visible text.",
             user_content="Read this page.",
             response_sink=retain,
@@ -286,7 +321,7 @@ def test_response_persistence_failure_does_not_resubmit_paid_request(
     with pytest.raises(OSError, match="storage unavailable"):
         asyncio.run(client.generate_structured_object(
             config=Config(),
-            model="ocr-balanced",
+            model="gemini-3.8-flash",
             system_prompt="Transcribe visible text.",
             user_content="Read this page.",
             response_sink=cannot_persist,
@@ -313,7 +348,7 @@ def test_generate_structured_object_raises_with_context_after_exhausting_retries
         asyncio.run(
             client.generate_structured_object(
                 config=Config(),
-                model="plan-balanced",
+                model="gpt-5.6-terra",
                 system_prompt="Return JSON.",
                 user_content="{}",
                 feature="test.json",
@@ -322,7 +357,7 @@ def test_generate_structured_object_raises_with_context_after_exhausting_retries
 
     msg = str(exc_info.value)
     assert "malformed JSON" in msg
-    assert "plan-balanced" in msg
+    assert "gpt-5.6-terra" in msg
     assert "tru" in msg
     assert isinstance(exc_info.value.__cause__, __import__("json").JSONDecodeError)
 
@@ -341,7 +376,7 @@ def test_generate_text_does_not_store_prompt_in_params(monkeypatch, _patch_event
     asyncio.run(
         client.generate_text(
             config=Config(),
-            model="adapt-balanced",
+            model="gpt-5.6-terra",
             system_prompt="system secret",
             user_content="user secret",
             feature="test.text",
@@ -370,7 +405,7 @@ def test_generate_image_writes_b64_response(monkeypatch, tmp_path: Path):
     result = asyncio.run(
         client.generate_image(
             config=Config(),
-            model="image-balanced",
+            model="image-gemini-pro",
             prompt="draw this",
             output_path=output_path,
             width=1024,
@@ -386,7 +421,7 @@ def test_generate_image_writes_b64_response(monkeypatch, tmp_path: Path):
     request = _FakeAsyncClient.last_request
     assert request is not None
     assert request["url"].endswith("/v1/images/generations")
-    assert request["json"]["model"] == "image-balanced"
+    assert request["json"]["model"] == "image-gemini-pro"
     assert request["json"]["quality"] == "medium"
     assert "steps" not in request["json"]
     assert "response_format" not in request["json"]
@@ -401,7 +436,7 @@ def test_extract_usage_preserves_litellm_response_cost():
             "_hidden_params": {"response_cost": 0.0042},
         },
         "event_1",
-        "plan-balanced",
+        "gpt-5.6-terra",
         "text",
     )
 
@@ -413,7 +448,7 @@ def test_extract_usage_preserves_litellm_response_cost():
 def test_extract_usage_prefers_body_cost_over_litellm_header():
     usage = client._extract_usage(
         {
-            "model": "image-fast",
+            "model": "image-gemini-flash-lite",
             "usage": {
                 "input_tokens": 3403,
                 "output_tokens": 1120,
@@ -421,7 +456,7 @@ def test_extract_usage_prefers_body_cost_over_litellm_header():
             },
         },
         "event_1",
-        "image-fast",
+        "image-gemini-flash-lite",
         "image",
         httpx.Headers({"x-litellm-response-cost": "0.00056"}),
     )
@@ -433,7 +468,7 @@ def test_extract_usage_prefers_body_cost_over_litellm_header():
 def test_pricing_estimate_drift_pct_only_for_provider_reported_image_cost():
     usage = client.UsageRecord(
         provider="openai",
-        model="image-quality",
+        model="image-gpt-2",
         provider_model="openai/gpt-image-2",
         operation="image",
         image_count=1,
@@ -475,7 +510,7 @@ def test_generate_image_with_references_uses_image_edits(monkeypatch, tmp_path: 
     asyncio.run(
         client.generate_image(
             config=Config(),
-            model="image-balanced",
+            model="image-gemini-pro",
             prompt="draw this",
             output_path=output_path,
             width=1024,
@@ -488,7 +523,7 @@ def test_generate_image_with_references_uses_image_edits(monkeypatch, tmp_path: 
     request = _FakeAsyncClient.last_request
     assert request is not None
     assert request["url"].endswith("/v1/images/edits")
-    assert request["data"]["model"] == "image-balanced"
+    assert request["data"]["model"] == "image-gemini-pro"
     assert request["data"]["size"] == "1024x1536"
     # assert request["data"]["steps"] == "28"
     assert "response_format" not in request["data"]
@@ -515,7 +550,7 @@ def test_generate_image_reference_filename_includes_label(monkeypatch, tmp_path:
     asyncio.run(
         client.generate_image(
             config=Config(),
-            model="image-balanced",
+            model="image-gemini-pro",
             prompt="draw this",
             output_path=output_path,
             width=1024,
@@ -568,7 +603,7 @@ def test_failed_request_estimate_all_finalizes_billable_usage(
         asyncio.run(
             client.generate_text(
                 config=Config(ai_bill_failed_requests="estimate_all"),
-                model="prompt-balanced",
+                model="gpt-5.6-luna",
                 system_prompt="system",
                 user_content="user",
                 feature="test.failure",
@@ -603,7 +638,7 @@ def test_text_gateway_error_identifies_feature_model_and_provider_detail(
         asyncio.run(
             client.generate_text(
                 config=Config(),
-                model="prompt-balanced",
+                model="gpt-5.6-luna",
                 system_prompt="system",
                 user_content="user",
                 feature="style.suggestions",
@@ -612,7 +647,7 @@ def test_text_gateway_error_identifies_feature_model_and_provider_detail(
 
     message = str(exc_info.value)
     assert "style.suggestions" in message
-    assert "prompt-balanced" in message
+    assert "gpt-5.6-luna" in message
     assert "/v1/chat/completions" in message
     assert "404 Not Found" in message
     assert "Publisher model gemini-preview was not found in global" in message
@@ -638,7 +673,7 @@ def test_text_gateway_read_error_identifies_operation_after_retries(
         asyncio.run(
             client.generate_text(
                 config=Config(),
-                model="prompt-balanced",
+                model="gpt-5.6-luna",
                 system_prompt="system",
                 user_content="user",
                 feature="style.suggestions",
@@ -647,7 +682,7 @@ def test_text_gateway_read_error_identifies_operation_after_retries(
 
     message = str(exc_info.value)
     assert "style.suggestions" in message
-    assert "prompt-balanced" in message
+    assert "gpt-5.6-luna" in message
     assert "/v1/chat/completions" in message
     assert "transport ReadError" in message
     assert "after 4 attempts" in message
@@ -689,13 +724,13 @@ class TestPostWithRetry:
             client._post_with_retry(
                 "http://gw/v1/images/edits",
                 headers={},
-                data={"model": "image-balanced", "prompt": "page 11"},
+                data={"model": "image-gemini-pro", "prompt": "page 11"},
                 files=[],
             )
         )
 
         assert response.status_code == 200
-        assert captured == {"model": ["image-balanced"], "prompt": ["page 11"]}
+        assert captured == {"model": ["image-gemini-pro"], "prompt": ["page 11"]}
 
     def test_recovers_after_rate_limit_and_honors_retry_after(self, monkeypatch):
         delays = _patch_sleep(monkeypatch)
@@ -841,7 +876,7 @@ class TestStreamingChatCompletion:
         result = asyncio.run(
             client.generate_structured_object(
                 config=Config(),
-                model="plan-balanced",
+                model="gpt-5.6-terra",
                 system_prompt="Return JSON.",
                 user_content="{}",
                 feature="test.stream",
@@ -912,7 +947,7 @@ class TestStreamingChatCompletion:
                 asyncio.run(
                     client.generate_structured_object(
                         config=Config(),
-                        model="plan-balanced",
+                        model="gpt-5.6-terra",
                         system_prompt="Return JSON.",
                         user_content="{}",
                         feature="test.truncated",
@@ -1121,7 +1156,7 @@ class TestStreamingOptOut:
         _patch_http(
             monkeypatch,
             {
-                "model": "vertex_ai/gemini-3.8-flash",
+                "model": "gpt-5.6-terra",
                 "choices": [{"message": {"content": '{"ok": true}'}}],
                 "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
             },
@@ -1130,7 +1165,7 @@ class TestStreamingOptOut:
         result = asyncio.run(
             client.generate_structured_object(
                 config=Config(),
-                model="adapt-balanced",
+                model="gpt-5.6-terra",
                 system_prompt="Return JSON.",
                 user_content="{}",
                 feature="adapt.book",
@@ -1231,7 +1266,7 @@ def test_finalize_shielded_completes_billing_before_cancellation_surfaces(
                 event_id="evt-cancel",
                 status="succeeded",
                 feature="test.cancel",
-                model_alias="plan-balanced",
+                model_alias="gpt-5.6-terra",
                 latency_ms=1,
             )
         )
@@ -1265,7 +1300,7 @@ def test_chat_completion_cancellation_records_cancelled_status(
         task = asyncio.create_task(
             client._chat_completion(
                 config=Config(),
-                model="plan-balanced",
+                model="gpt-5.6-terra",
                 system_prompt="Return JSON.",
                 user_content="{}",
                 temperature=0.0,
@@ -1312,7 +1347,7 @@ def test_chat_completion_cancel_during_insert_still_records_cancelled(
         task = asyncio.create_task(
             client._chat_completion(
                 config=Config(),
-                model="plan-balanced",
+                model="gpt-5.6-terra",
                 system_prompt="Say hi.",
                 user_content="hi",
                 temperature=0.0,
@@ -1355,7 +1390,7 @@ def test_finalise_image_cancelled_records_cancelled_status(_patch_events):
         finalise_image_cancelled(
             ctx=ctx,
             config=Config(),
-            model="image-balanced",
+            model="image-gemini-pro",
             feature="test.img",
             error=asyncio.CancelledError(),
         )
@@ -1395,7 +1430,7 @@ def test_chat_completion_late_cancel_does_not_overwrite_success(
         task = asyncio.create_task(
             client._chat_completion(
                 config=Config(),
-                model="plan-balanced",
+                model="gpt-5.6-terra",
                 system_prompt="Say hi.",
                 user_content="hi",
                 temperature=0.0,

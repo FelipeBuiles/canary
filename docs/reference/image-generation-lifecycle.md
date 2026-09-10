@@ -81,19 +81,6 @@ supported controls. Provider-side prose, truncation, hidden caps, sorting,
 filename role inference, mutable-path reads, and model-family fallback are
 forbidden.
 
-Reve's ordinary path uses the v2 `/v2/image/create` contract through the
-isolated LiteLLM handler: the prompt is capped at 4000 characters, references
-are raw ordered `{data|ref}` image objects, and positional references use
-`<frame>N</frame>`. Layout-enabled panel requests bypass that gateway because
-the OpenAI-compatible envelope cannot carry compound references; the direct
-adapter sends `/v2/image/render_layout` with the compiled layout, structural
-`image_index` bindings, and a `fit_image` postprocessor. The endpoint accepts
-up to eight references; Canary's product selector remains conservatively capped
-at four to reduce conditioning noise. `layout_prompts_enabled` is applied when
-compiling new requests; already-frozen requests retain their exact persisted
-wire. If the experimental layout transport fails, the same ordered references
-and flat `<frame>N</frame>` prompt fall back to v2 create.
-
 ## Golden and visual evaluation
 
 Run the golden corpus, legacy-cutover, and provider-wire tests without

@@ -38,20 +38,10 @@ MODEL_REGISTRY: dict[str, str] = {
     # OpenAI
     "gpt-5.4": "openai",
     "gpt-5.4-mini": "openai",
-    # Gateway aliases (intent-preset)
-    "extract-fast": "litellm",
-    "extract-balanced": "litellm",
-    "extract-quality": "litellm",
-    "adapt-fast": "litellm",
-    "adapt-balanced": "litellm",
-    "adapt-quality": "litellm",
-    "plan-fast": "litellm",
-    "plan-balanced": "litellm",
-    "plan-quality": "litellm",
-    "prompt-fast": "litellm",
-    "prompt-balanced": "litellm",
-    "prompt-quality": "litellm",
-    "ocr-balanced": "litellm",
+    "gpt-5.6-terra": "openai",
+    "gpt-5.6-luna": "openai",
+    "deepseek-v4.1-flash": "openrouter",
+    "glm-5.3-flash": "openrouter",
 }
 
 

@@ -963,7 +963,7 @@ def test_a_drawn_page_reaches_export_without_hand_written_analysis(
                 ),
                 usage=UsageRecord(
                     provider="gemini",
-                    model="ocr-balanced",
+                    model="gemini-3.8-flash",
                     operation="text",
                     input_tokens=1200,
                     output_tokens=80,

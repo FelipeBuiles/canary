@@ -11,10 +11,10 @@ MOCK_URL="${CANARY_MOCK_MODEL_BASE_URL:-http://127.0.0.1:4010}"
 LITELLM_URL="${LITELLM_BASE_URL:-http://127.0.0.1:4000}"
 DEFAULT_FIXTURE="$REPO_ROOT/projects/63f06b92-a5c6-4f5b-b0e5-c330abe49982/the-call-of-cthulhu"
 BACKEND_PYTHON="$REPO_ROOT/novel_to_comic/.venv/bin/python"
-DEFAULT_CODEX_TEXT_ROUTES='{"extract-fast":"gpt-5.6-terra","extract-balanced":"gpt-5.6-terra","extract-quality":"gpt-5.6-terra","adapt-fast":"gpt-5.6-terra","adapt-balanced":"gpt-5.6-terra","adapt-quality":"gpt-5.6-terra","plan-fast":"gpt-5.6-terra","plan-balanced":"gpt-5.6-terra","plan-quality":"gpt-5.6-terra","prompt-fast":"gpt-5.6-terra","prompt-balanced":"gpt-5.6-terra","prompt-quality":"gpt-5.6-terra","ocr-fast":"gpt-5.6-terra","ocr-balanced":"gpt-5.6-terra","ocr-quality":"gpt-5.6-terra"}'
-DEFAULT_CODEX_IMAGE_ROUTES='["image-fast","image-balanced","image-quality"]'
+DEFAULT_CODEX_TEXT_ROUTES='{}'
+DEFAULT_CODEX_IMAGE_ROUTES='[]'
 
-MODE="codex"
+MODE="api"
 EXPLICIT_MODE=""
 CHECK_ONLY=false
 OBSERVABILITY=false
@@ -27,12 +27,12 @@ usage() {
 Usage: ./scripts/dev.sh [options]
 
 Start the backend and Vite client, reusing only compatible healthy services.
-Codex (default) and API modes also start LiteLLM and its Postgres dependency
+API (default) and Codex modes also start LiteLLM and its Postgres dependency
 with Docker Compose when needed. Startup never generates or probes Codex auth.
 
 Options:
-  --codex                Use local Codex subscription routes (default; SDK required)
-  --api                  Use normal live paid API routing
+  --codex                Enable local Codex model choices (SDK required)
+  --api                  Use normal live paid API routing (default)
   --mock                 Use the zero-cost local model replay service
   --fixture DIR          Completed project used by mock replay
   --observability        Also start/check the optional Langfuse stack
@@ -50,7 +50,10 @@ Examples:
 Mode flags are mutually exclusive. Stop an incompatible existing backend manually;
 the launcher never restarts it. Flags do not re-route saved artifacts. Experimental
 Codex Draw supports new editions only, five total image inputs and native output
-dimensions. See docs/reference/codex-dev-capabilities.md for setup and limits.
+dimensions. Select Codex models in Account → Models (dev); no route maps are
+required and no API model selection is automatically redirected.
+API model settings reject aliases overridden by Codex; restart with --api to use
+those selections. See docs/reference/codex-dev-capabilities.md for setup and limits.
 EOF
 }
 
@@ -320,6 +323,7 @@ elif [ "$CHECK_ONLY" = false ] && [ "$required_failed" = false ]; then
   (
     cd "$REPO_ROOT/novel_to_comic"
     export CANARY_LOCAL_DIAGNOSTICS=true
+    export CANARY_ENV="${CANARY_ENV-development}"
     export CANARY_CODEX_DEV_ENABLED=0
     export CANARY_MOCK_GENERATIONS_ENABLED=false
     if [ "$MODE" = "mock" ]; then
@@ -327,9 +331,11 @@ elif [ "$CHECK_ONLY" = false ] && [ "$required_failed" = false ]; then
       export CANARY_MOCK_MODEL_BASE_URL="$MOCK_URL"
     elif [ "$MODE" = "codex" ]; then
       export CANARY_CODEX_DEV_ENABLED=1
-      export CANARY_ENV="${CANARY_ENV-development}"
       export CANARY_CODEX_DEV_TEXT_ROUTES="${CANARY_CODEX_DEV_TEXT_ROUTES-$DEFAULT_CODEX_TEXT_ROUTES}"
       export CANARY_CODEX_DEV_IMAGE_ROUTES="${CANARY_CODEX_DEV_IMAGE_ROUTES-$DEFAULT_CODEX_IMAGE_ROUTES}"
+      if [ "$CANARY_CODEX_DEV_TEXT_ROUTES" = '{}' ] && [ "$CANARY_CODEX_DEV_IMAGE_ROUTES" = '[]' ]; then
+        echo "[dev] Choose Codex or API models in Account → Models (dev). No legacy route overrides are active." >&2
+      fi
       export CANARY_CODEX_DEV_IMAGE_REASONING_MODEL="${CANARY_CODEX_DEV_IMAGE_REASONING_MODEL-gpt-5.5}"
       exec uv run --no-sync pipeline serve --dev --projects-dir "$REPO_ROOT/projects"
     fi

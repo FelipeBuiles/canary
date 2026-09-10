@@ -181,7 +181,7 @@ def visual_review_input_digest(
             raise ValueError(
                 "visual review reference bytes do not match approved authority"
             )
-    model = config.effective_page_ocr_model()
+    model = config.effective_visual_review_model()
     prompt = visual_review_prompt(compiled=compiled, producing_request=producing_request)
     return hashlib.sha256(
         json.dumps(
@@ -244,7 +244,7 @@ async def review_page_visuals(
     Findings are editorial evidence for a person to inspect, never a claim of
     objective visual correctness. No auto-corrections or critic loop.
     """
-    model = config.effective_page_ocr_model()
+    model = config.effective_visual_review_model()
     prompt = visual_review_prompt(compiled=compiled, producing_request=producing_request)
     digest = visual_review_input_digest(
         config=config, page=page, render=render, image=image, compiled=compiled,

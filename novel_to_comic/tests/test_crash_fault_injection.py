@@ -94,7 +94,7 @@ def _child(root: Path, phase: str):
             project_dir=root / "book", stage="draw", kind="complete_page_draw",
             label="Page 7", payload={"page_number": 7}, work=work,
             debit_description="Page", reservation_credits=2,
-            operations=(("complete_page", "image-balanced"),),
+            operations=(("complete_page", "image-gemini-pro"),),
         )
         job.status = "running"
         persist_generation_job(app, job)

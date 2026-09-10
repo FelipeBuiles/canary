@@ -462,7 +462,7 @@ def test_tight_cap_drops_style_before_canonical_identity(tmp_path: Path):
 
     # Cap of 1: only the canonical identity fits.
     tight_profile = ImageModelProfile(
-        route=ImageRoute.REVE, max_references=1,
+        route=ImageRoute.UNKNOWN, max_references=1,
         supported_roles=frozenset({"subject", "style"}),
         prompt_char_limit=4000, native_aspect_modes=("1:1",),
         supported_controls=frozenset(),
@@ -933,7 +933,7 @@ def test_cast_estimate_uses_final_state_reference_count(tmp_path: Path, monkeypa
         return float(ref_count)
 
     monkeypatch.setattr("novel_to_comic.usage.estimate_image_cost", fake_estimate)
-    s3_cast.estimate_cost(Config(image_model="image-balanced"), tmp_path, None)
+    s3_cast.estimate_cost(Config(image_model="image-gemini-pro"), tmp_path, None)
 
     assert (1, 2) in calls
 
@@ -955,7 +955,7 @@ def test_state_only_first_run_estimate_omits_missing_parent_reference(tmp_path: 
     ))
 
     assert s3_cast.estimate_state_reference_count(
-        Config(image_model="image-balanced"), tmp_path, "character", char.id, state.id,
+        Config(image_model="image-gemini-pro"), tmp_path, "character", char.id, state.id,
     ) == 0
 
 

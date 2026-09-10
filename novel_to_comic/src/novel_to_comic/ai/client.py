@@ -106,24 +106,31 @@ _JSON_PARSE_MAX_RETRIES = 2
 # gateway to drop them.
 _TEMPERATURE_DEPRECATED_ALIASES = frozenset(
     {
-        "adapt-quality",
-        "extract-fast",
-        "extract-balanced",
-        "extract-quality",
-        "adapt-balanced",
-        "plan-fast",
-        "plan-balanced",
-        "plan-quality",
-        "prompt-fast",
-        "prompt-balanced",
-        "prompt-quality",
-        "ocr-balanced",
+        "gpt-5.6-terra",
+        "openai/gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "openai/gpt-5.6-luna",
+        "deepseek-v4.1-flash",
+        "openrouter/deepseek/deepseek-v4.1-flash",
         "gemini-3.5-flash-lite",
         "gemini-3.6-flash",
         "gemini-3.8-flash",
         "vertex_ai/gemini-3.5-flash-lite",
         "vertex_ai/gemini-3.6-flash",
         "vertex_ai/gemini-3.8-flash",
+    }
+)
+
+# OpenRouter exposes the output limit for these model groups as ``max_tokens``.
+# Sending the newer OpenAI spelling (``max_completion_tokens``) while the
+# gateway route requires providers to support every parameter leaves GLM and
+# DeepSeek with no eligible endpoints.
+_OPENROUTER_MAX_TOKENS_ALIASES = frozenset(
+    {
+        "deepseek-v4.1-flash",
+        "openrouter/deepseek/deepseek-v4.1-flash",
+        "glm-5.3-flash",
+        "openrouter/z-ai/glm-5.3-flash",
     }
 )
 
@@ -626,8 +633,6 @@ def _provider_from_model(model: str | None) -> str:
     if not model:
         return "litellm"
     lower = model.lower()
-    if lower.startswith("reve"):
-        return "reve"
     if "/" in lower:
         return lower.split("/", 1)[0]
     if lower.startswith("gemini"):
@@ -636,7 +641,7 @@ def _provider_from_model(model: str | None) -> str:
         return "anthropic"
     if lower.startswith("gpt") or lower.startswith("dall-e"):
         return "openai"
-    # Bare gateway aliases (extract-fast, image-balanced, etc.) land here.
+    # Bare gateway aliases (gpt-5.6-luna, image-gemini-pro, etc.) land here.
     return "litellm"
 
 
@@ -651,10 +656,10 @@ def _extract_response_cost(
             return float(value), "litellm_response_cost"
     usage = data.get("usage")
     if isinstance(usage, dict):
-        value = usage.get("cost") or usage.get("response_cost")
+        value = usage.get("cost") if usage.get("cost") is not None else usage.get("response_cost")
         if value is not None:
             return float(value), "litellm_usage_cost"
-    value = data.get("response_cost") or data.get("cost")
+    value = data.get("response_cost") if data.get("response_cost") is not None else data.get("cost")
     if value is not None:
         return float(value), "litellm_response_cost"
     # LiteLLM proxy returns cost in a response header — most reliable for HTTP calls.
@@ -689,6 +694,14 @@ def _extract_usage(
     if provider_model == "canary-mock":
         response_cost = 0.0
         response_cost_source = "mock"
+    details = usage.get("input_tokens_details") or {}
+    cached = details.get("cached_tokens_details") or {}
+    cached_total = details.get("cached_tokens", 0)
+    # Preserve modality detail; never assign aggregate cached tokens to text.
+    cache_known = not cached_total or bool(cached)
+    if cached and "cached_tokens" in details:
+        cache_known = cached.get("text_tokens", 0) + cached.get("image_tokens", 0) == cached_total
+    output_details = usage.get("output_tokens_details") or {}
     return UsageRecord(
         call_id=event_id,
         provider=_provider_from_model(provider_model),
@@ -698,6 +711,11 @@ def _extract_usage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         image_count=image_count,
+        input_text_tokens=details.get("text_tokens"),
+        input_image_tokens=details.get("image_tokens"),
+        cached_text_tokens=cached.get("text_tokens", 0) if cache_known else None,
+        cached_image_tokens=cached.get("image_tokens", 0) if cache_known else None,
+        image_output_tokens=output_details.get("image_tokens", usage.get("output_tokens")),
         cost_usd=response_cost,
         cost_source=response_cost_source,
     )
@@ -903,8 +921,11 @@ def _finalize_event(
         provider_model = usage.provider_model if usage else None
     cost = calculate_cost_breakdown(usage) if usage is not None else None
     cost_usd = usage.cost_usd if funding == "codex_subscription" else (cost.cost_usd if cost is not None else None)
+    if cost is not None and cost.source == "unknown_provider_usage":
+        cost_usd = None
     billable = bool(
         usage
+        and (cost is None or cost.source != "unknown_provider_usage")
         and usage_has_billable_activity(usage)
         and (
             status == "succeeded"
@@ -1570,7 +1591,12 @@ async def _chat_completion(
     if response_format is not None:
         payload["response_format"] = response_format
     if route is None and max_output_tokens is not None:
-        payload["max_completion_tokens"] = max_output_tokens
+        token_limit_field = (
+            "max_tokens"
+            if model in _OPENROUTER_MAX_TOKENS_ALIASES
+            else "max_completion_tokens"
+        )
+        payload[token_limit_field] = max_output_tokens
     # Stream so the read timeout is per-chunk: long adapt repairs exceed the
     # read budget as a single blocking response. include_usage puts the usage
     # block on a final chunk, which streaming otherwise omits.

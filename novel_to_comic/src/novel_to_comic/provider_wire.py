@@ -17,9 +17,6 @@ from typing import Any
 
 from novel_to_comic.compiled_request import CompiledGenerationRequest
 from novel_to_comic.image_models import ImageRoute
-from novel_to_comic.image_geometry import (
-    aspect_for_dimensions,
-)
 
 PROVIDER_WIRE_SCHEMA_VERSION = 3
 PROVIDER_WIRE_DISCRIMINATOR = "canary.provider-wire/3"
@@ -134,11 +131,6 @@ def _wire_prompt(compiled: CompiledGenerationRequest, edit_parent_indices: tuple
             "Supplied references are scoped evidence, not edit parents. Rendering-only references "
             "do not supply scene layout, subject identity, or anatomy."
         )
-    if compiled.expected_route is ImageRoute.REVE:
-        for instruction in compiled.reference_instructions:
-            prompt = prompt.replace(
-                instruction.marker, f"<frame>{instruction.index}</frame>"
-            )
     return prompt
 
 
@@ -171,28 +163,6 @@ def compile_provider_wire_request(
         raise ProviderWireError("edit parents must identify supplied non-style references")
     width, height = compiled.effective_dimensions
     structured_aspect = None
-    if compiled.expected_route is ImageRoute.REVE:
-        ratio = aspect_for_dimensions(width, height)
-        modes = {
-            "4:1": 4.0,
-            "3:1": 3.0,
-            "21:9": 21 / 9,
-            "2:1": 2.0,
-            "17:9": 17 / 9,
-            "16:9": 16 / 9,
-            "3:2": 1.5,
-            "4:3": 4 / 3,
-            "5:4": 1.25,
-            "1:1": 1.0,
-            "4:5": 0.8,
-            "3:4": 3 / 4,
-            "2:3": 2 / 3,
-            "9:16": 9 / 16,
-            "1:2": 0.5,
-            "1:3": 1 / 3,
-            "1:4": 0.25,
-        }
-        structured_aspect = min(modes, key=lambda key: abs(modes[key] - ratio))
     controls = tuple(sorted(compiled.controls.active_controls().items()))
     if compiled.provider_key == "codex-dev":
         from novel_to_comic.ai.codex_runtime import image_execution_controls

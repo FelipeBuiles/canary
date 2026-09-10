@@ -159,7 +159,7 @@ exit 1
 
 
 def _run_dev(
-    tmp_path: Path, backend_payload: str, *, check_only: bool = True
+    tmp_path: Path, backend_payload: str, *, check_only: bool = True, default_mode: bool = False
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -174,7 +174,9 @@ def _run_dev(
     env["DEV_TEST_BACKEND_PAYLOAD"] = backend_payload
     env["DEV_TEST_DOCKER_LOG"] = str(docker_log)
     env["DEV_TEST_START_LOG"] = str(start_log)
-    command = ["bash", str(REPO_ROOT / "scripts" / "dev.sh"), "--api"]
+    command = ["bash", str(REPO_ROOT / "scripts" / "dev.sh")]
+    if not default_mode:
+        command.append("--api")
     if check_only:
         command.append("--check")
     result = subprocess.run(
@@ -236,4 +238,14 @@ def test_api_start_rejects_backend_with_mismatched_mode_without_starting_service
 
     assert result.returncode == 1, result.stdout + result.stderr
     assert "incompatible" in result.stdout + result.stderr
+    assert "up -d" not in docker_log
+
+
+def test_default_launcher_mode_uses_api_without_starting_services(tmp_path: Path) -> None:
+    payload = (
+        '{"checks":{"litellm":"ok"},"model_mode":"api",'
+        '"pipeline_contract":"eight-stage-v2"}'
+    )
+    result, docker_log = _run_dev(tmp_path, payload, default_mode=True)
+    assert result.returncode == 0, result.stdout + result.stderr
     assert "up -d" not in docker_log

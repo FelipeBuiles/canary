@@ -25,6 +25,7 @@ from .ratelimit import configure_rate_limiting
 from .sentry import configure_sentry
 from .routers import (
     billing,
+    account_models,
     backoffice,
     cast_assets,
     config,
@@ -517,6 +518,7 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         return exception_snapshot(app)
 
     # Routers
+    app.include_router(account_models.router, prefix="/api/account", tags=["account"])
     app.include_router(credits.router, prefix="/api/credits", tags=["credits"])
     app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
     app.include_router(

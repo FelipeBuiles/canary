@@ -751,7 +751,7 @@ def test_compiled_location_authorities_reach_fresh_thread_as_creation_or_parent_
     for module in (codex_dev, asset_generation, provider):
         monkeypatch.setattr(module, "route_for", lambda kind, model: route)
     monkeypatch.setattr(provider, "assert_request_funding", lambda *args: None)
-    config = Config(image_model="image-quality")
+    config = Config(image_model="image-gpt-2")
     references = []
     for index, role in enumerate(("style", "location_plate") if state_id else ("style",)):
         data = _png("blue" if index == 0 else "red")

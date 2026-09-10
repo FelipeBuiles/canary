@@ -24,7 +24,7 @@ DEFAULT_OVERRIDES_PATH = PACKAGE_DIR / "litellm_pricing_overrides.yaml"
 
 @dataclass(frozen=True)
 class CostBreakdown:
-    cost_usd: float
+    cost_usd: float | None
     source: str
     model_alias: str
     provider_model: str
@@ -251,6 +251,23 @@ class PricingResolver:
 
         input_per_token = float(pricing.get("input_cost_per_token") or 0.0)
         output_per_token = float(pricing.get("output_cost_per_token") or 0.0)
+
+        # An allowance is only an estimate, never a per-image settlement tariff.
+        # New image models need usage measurements before a token-consumption
+        # table is justified. Keep their reservation metadata out of calculate().
+        allowance = pricing.get("estimated_output_cost_per_image")
+        if allowance is not None:
+            return CostBreakdown(
+                cost_usd=(
+                    count * float(allowance)
+                    + ref_count * float(pricing.get("estimated_input_cost_per_reference") or 0.0)
+                    + prompt_tokens * input_per_token
+                ),
+                source="configured_reservation_allowance",
+                model_alias=model,
+                provider_model=resolved,
+                pricing_snapshot=self.pricing_snapshot,
+            )
 
         token_meta = self._image_token_meta(resolved)
         quality_table = token_meta.get("image_output_tokens_by_quality") or {}

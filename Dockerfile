@@ -50,7 +50,7 @@ RUN export VITE_SUPABASE_URL="$VITE_SUPABASE_URL" \
 #
 # One container runs two processes:
 #   1. LiteLLM proxy on 127.0.0.1:4000 (holds all provider API keys; the only
-#      process that egresses to OpenAI/Anthropic/Vertex/Reve/fal).
+#      process that egresses to OpenAI/Anthropic/Vertex/fal).
 #   2. uvicorn web app on 0.0.0.0:8000 (talks to the proxy over loopback).
 #
 # Collapsing the previous two-Fly-app split into one machine keeps provider
@@ -116,7 +116,7 @@ RUN python -m venv /app/.venv-litellm \
         'google-auth>=2.49' \
         'google-genai==1.75.0'
 
-# LiteLLM config + custom handlers (vertex-multimodal / reve / fal-queue).
+# LiteLLM config + custom handlers (vertex-multimodal / fal-queue).
 # PYTHONPATH makes the handlers importable; config.yaml's custom_provider_map
 # registers them with the proxy at boot.
 COPY litellm/config.yaml /app/config.yaml

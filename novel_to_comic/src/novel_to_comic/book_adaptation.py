@@ -1570,11 +1570,6 @@ async def _generate_blueprint(
             user_content=attempt_prompt,
             feature="adapt.blueprint",
             json_schema=_BlueprintDraft.model_json_schema(),
-            quality_tier=(
-                "quality"
-                if repairing_cached_blueprint or attempt > 1
-                else None
-            ),
         )
         _record_result_usage(ctx, result)
         try:

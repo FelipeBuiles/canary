@@ -52,7 +52,7 @@ def _project(tmp_path, status: StageStatus = StageStatus.PENDING):
     artifacts.story_bible_path(tmp_path).write_text(_bible().model_dump_json())
     state = create_initial_state("demo", "novel.txt")
     state.stages["style"].status = status
-    return tmp_path, Config(image_model="image-balanced"), state
+    return tmp_path, Config(image_model="image-gemini-pro"), state
 
 
 def test_credit_failure_leaves_no_direction_artifacts(tmp_path):
@@ -272,7 +272,7 @@ def test_decoded_image_dimensions_are_bounded(tmp_path):
     )
     with pytest.raises(HTTPException) as exc_info:
         asyncio.run(_prepare_style_direction(
-            project_dir=tmp_path, config=Config(image_model="image-balanced"),
+            project_dir=tmp_path, config=Config(image_model="image-gemini-pro"),
             bible=_bible(), text="ink", label=None, image=upload,
         ))
     assert exc_info.value.status_code == 400
@@ -292,7 +292,7 @@ def test_direction_rejects_oversized_content_length_before_queue(tmp_path):
 
 
 def test_image_backed_direction_estimate_covers_references_and_retry(tmp_path):
-    config = Config(image_model="image-balanced")
+    config = Config(image_model="image-gemini-pro")
     _project(tmp_path)
     without_image = estimate_style_batch_cost_usd(
         config, tmp_path, 4, has_style_reference=False,
@@ -313,7 +313,7 @@ def test_image_backed_direction_estimate_covers_references_and_retry(tmp_path):
 
 
 def test_batch_estimator_prices_each_neighbor_reference_size(tmp_path):
-    config = Config(image_model="image-balanced")
+    config = Config(image_model="image-gemini-pro")
     _project(tmp_path)
     captured = []
 

@@ -278,6 +278,14 @@ def _candidate_role(candidate: dict, index: int) -> str:
     return PORTFOLIO_ROLES[min(index, len(PORTFOLIO_ROLES) - 1)]
 
 
+def _missing_portfolio_roles(candidates: list[dict], roles: tuple[str, ...]) -> tuple[str, ...]:
+    present = {
+        _candidate_role(candidate, index)
+        for index, candidate in enumerate(candidates)
+    }
+    return tuple(role for role in roles if role not in present)
+
+
 def _select_role_portfolio(
     candidates: list[dict], roles: tuple[str, ...], *, require_realism: bool = False,
 ) -> list[dict]:
@@ -350,11 +358,21 @@ async def generate_suggestions(
     first_usage = None
     medium_restriction_quote = ""
 
-    async def _call_llm(avoid_pool: list[dict]) -> list[dict]:
+    async def _call_llm(
+        avoid_pool: list[dict], *, required_roles: tuple[str, ...] = (),
+    ) -> list[dict]:
         nonlocal first_usage, medium_restriction_quote
+        role_gap = (
+            "\n\nThe prior response was missing these required portfolio roles: "
+            + ", ".join(required_roles)
+            + ". This response MUST include at least one candidate for each missing role, "
+            "using the exact portfolio_role value."
+            if required_roles else ""
+        )
         system = (
             _SYSTEM_PROMPT
             + _build_avoid_block(avoid_pool)
+            + role_gap
             + config.generation_language_instruction()
         )
         user = (
@@ -393,29 +411,34 @@ async def generate_suggestions(
         medium_restriction_quote = quote
         return [style.model_dump() for style in result.styles]
 
+    portfolio_roles = (
+        ("story_fit_primary", "adjacent", "contrast", "wildcard")
+        if custom_direction else PORTFOLIO_ROLES
+    )
+
     # --- first attempt -------------------------------------------------------
     pool = existing_suggestions or []
     suggestions = _dedupe_suggestions(await _call_llm(pool), pool)
     required_count = 4 if custom_direction else SAMPLE_COUNT
 
-    # --- retry if dedup left us with fewer than SAMPLE_COUNT -----------------
+    # --- retry if dedup left us short or the model omitted a required role ----
     for _attempt in range(1, _GENERATION_MAX_ATTEMPTS):
-        if len(suggestions) >= required_count:
+        missing_roles = _missing_portfolio_roles(suggestions, portfolio_roles)
+        if len(suggestions) >= required_count and not missing_roles:
             break
         # Expand the avoid-pool with the *unused* suggestions from the first
         # pass so the retry gets an even stronger steer.
         retry_pool = pool + suggestions
-        suggestions.extend(_dedupe_suggestions(await _call_llm(retry_pool), retry_pool))
+        suggestions.extend(_dedupe_suggestions(
+            await _call_llm(retry_pool, required_roles=missing_roles),
+            retry_pool,
+        ))
 
     if len(suggestions) < required_count:
         raise RuntimeError(
             f"Style curation produced {len(suggestions)} usable directions; "
             f"{required_count} are required. Please retry."
         )
-    portfolio_roles = (
-        ("story_fit_primary", "adjacent", "contrast", "wildcard")
-        if custom_direction else PORTFOLIO_ROLES
-    )
     curated = [
         normalize_suggestion(
             suggestion,

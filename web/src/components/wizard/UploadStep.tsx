@@ -1,8 +1,7 @@
-import { useState, useRef, useMemo, useEffect } from "react";
+import { useState, useRef, useMemo, useEffect, lazy, Suspense } from "react";
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
-import { CreditAmount } from "../ui/CreditAmount";
 import type { ConfigOverrides, ShortStory } from "../../types/api";
 import { LANGUAGES, useI18n } from "../../i18n";
 import type { LanguageCode } from "../../i18n";
@@ -19,6 +18,8 @@ interface UploadStepProps {
   onCancel?: () => void;
 }
 
+const ProjectModelControls = import.meta.env.DEV ? lazy(() => import("./ProjectModelControls")) : null;
+
 const ACCEPTED = [".txt", ".epub", ".pdf"];
 const PAGE_SIZE = 8;
 const SAMPLE_CHOICES = [
@@ -26,29 +27,14 @@ const SAMPLE_CHOICES = [
   { code: "the-open-window", label: "DIALOGUE-LED", basis: "A visitor, a conversation, and a surprise: a useful study in expressions and dialogue." },
   { code: "the-most-dangerous-game", label: "VISUALLY VARIED", basis: "From shipwreck to chateau to jungle pursuit: contrasting settings and physical action." },
 ] as const;
-const QUALITY_OPTIONS = [
-  { value: "fast", label: "Fast draft" },
-  { value: "balanced", label: "Balanced" },
-  { value: "quality", label: "High quality" },
-] as const;
-
-// Retained planning heuristic, not a provider quote or the cost of creating a
-// project. Compressed/document bytes and unknown URL lengths are not prose size.
-function roughBookRange(textBytes: number, quality: string): string {
-  const scenes = Math.max(1, Math.min(150, Math.round(textBytes / 10_000)));
-  const pages = Math.max(1, Math.round(scenes * 2.5));
-  const imageCost = quality === "quality" ? 0.075 : quality === "balanced" ? 0.042 : 0.015;
-  const base = Math.ceil((Math.max(0.01, textBytes * 0.000003) + 0.05 + scenes * 0.035 + pages * imageCost) * 100);
-  return `~${Math.max(10, Math.round(base * 0.75)).toLocaleString()}–${Math.round(base * 1.5).toLocaleString()}`;
-}
-
 export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCancel }: UploadStepProps) {
   const { language, t } = useI18n();
+  const [modelControlsOpen, setModelControlsOpen] = useState(false);
+  const [modelSelections, setModelSelections] = useState<Record<string, string>>({});
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [targetLanguage, setTargetLanguage] = useState<LanguageCode>(language);
   const [step, setStep] = useState<"source" | "details">("source");
-  const [quality, setQuality] = useState<"fast" | "balanced" | "quality">("balanced");
   const [tab, setTab] = useState<"file" | "library">("library");
   const [browsing, setBrowsing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -77,10 +63,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
   const extOk = !file || ACCEPTED.includes(ext);
   const sourceReady = tab === "file" ? Boolean(file && extOk) : Boolean(selectedStory || pastedUrlOrCode.trim());
   const sourceTitle = tab === "file" ? file?.name : selectedStory?.title ?? pastedUrlOrCode;
-  const textBytes = tab === "file" ? (file && ext === ".txt" ? file.size : null) : (selectedStory ? selectedStory.words * 6 : null);
-  const bookRange = textBytes !== null ? roughBookRange(textBytes, quality) : null;
   const languageLabel = LANGUAGES.find((item) => item.code === targetLanguage)?.label ?? targetLanguage;
-  const qualityLabel = t(QUALITY_OPTIONS.find((item) => item.value === quality)!.label);
 
   useEffect(() => {
     if (previousStep.current === step) return;
@@ -102,7 +85,8 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
       return;
     }
     if (!name.trim()) return;
-    const overrides: Partial<ConfigOverrides> = { target_language: targetLanguage, quality_preset: quality, dev_mode: false };
+    const overrides: Partial<ConfigOverrides> = { target_language: targetLanguage };
+    if (import.meta.env.DEV && Object.keys(modelSelections).length) overrides.dev_model_selections = modelSelections;
     if (tab === "file" && file) onSubmit(file, name.trim(), overrides);
     else onSubmitImport(selectedStory?.code ?? pastedUrlOrCode.trim(), name.trim(), overrides);
   }
@@ -208,21 +192,21 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                   <div className="min-w-0"><p className="font-meta text-xs text-ink-muted">{t("PRODUCTION TICKET")}</p><p className="mt-1 break-words font-body text-base font-bold">{sourceTitle}</p></div>
                   <Button type="button" variant="outline" onClick={() => setStep("source")} disabled={isPending}>{t("CHANGE")}</Button>
                 </div>
-                <p className="mt-3 text-sm">{languageLabel} · {qualityLabel}</p>
+                <p className="mt-3 text-sm">{languageLabel}</p>
                 <p className="mt-2 text-sm leading-relaxed text-ink-muted">{t("First review after analysis: your characters, places, story outline, and proposed adaptation brief.")}</p>
               </div>
               <div><FieldLabel htmlFor="project-name">{t("PROJECT NAME")}</FieldLabel><TextField id="project-name" name="projectName" value={name} onChange={(e) => setName(e.target.value)} required autoComplete="off" disabled={isPending} /></div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div><FieldLabel>{t("OUTPUT LANGUAGE")}</FieldLabel><Select aria-label={t("OUTPUT LANGUAGE")} value={targetLanguage} onValueChange={(value) => setTargetLanguage(value as LanguageCode)} options={LANGUAGES.map((item) => ({ value: item.code, label: item.label }))} disabled={isPending} className="w-full" /></div>
-                <div><FieldLabel>{t("GENERATION QUALITY")}</FieldLabel><Select aria-label={t("GENERATION QUALITY")} value={quality} onValueChange={(value) => setQuality(value as typeof quality)} options={QUALITY_OPTIONS.map((item) => ({ value: item.value, label: t(item.label) }))} disabled={isPending} className="w-full" /></div>
               </div>
-              <p className="text-sm leading-relaxed text-ink-muted">{t("Output language controls generated dialogue and narration. Higher quality can increase generation time and credits.")}</p>
-              <section className="bg-surface-container p-4" aria-label={t("Rough whole-book estimate")}>
-                <h2 className="font-meta text-xs font-bold uppercase">{t("Rough whole-book estimate")}</h2>
-                <p className="mt-2 font-body text-lg font-bold">{bookRange ? <CreditAmount value={bookRange} label={t("credits")} /> : t("Available after the source is prepared")}</p>
-                <p className="mt-2 text-sm leading-relaxed text-ink-muted">{bookRange ? t("Planning guide only, based on source length and quality—not a quote or spending cap. Page count, models, references, and revisions change the total. Each generation action has its own live estimate.") : t("PDF, EPUB, and pasted sources need their text read before a useful length estimate is available.")}</p>
-                <p className="mt-2 text-sm text-ink-muted">{t("Set the target page range in Story")}</p>
-              </section>
+              <p className="text-sm leading-relaxed text-ink-muted">{t("Output language controls generated dialogue and narration.")}</p>
+              {ProjectModelControls && <details className="bg-surface-container px-4" onToggle={(event) => setModelControlsOpen(event.currentTarget.open)}>
+                <summary className="min-h-11 cursor-pointer py-3 font-meta text-xs uppercase">{t("Models for this project (dev)")}</summary>
+                {modelControlsOpen && <Suspense fallback={<p role="status">{t("Loading model settings…")}</p>}>
+                  <ProjectModelControls selections={modelSelections} onChange={setModelSelections} disabled={isPending} />
+                </Suspense>}
+              </details>}
+              <p className="bg-surface-container p-4 text-sm leading-relaxed text-ink-muted">{t("Review a live credit estimate before each generation action. Set the target page range in Story.")}</p>
               <p className="text-sm leading-relaxed text-ink-muted">{t("After analysis, approve your brief in Story, choose your look, then approve the cast before preparing pages. Drawing waits for your action in Pages.")}</p>
             </div>
           )}
@@ -231,7 +215,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
           {error && <p role="alert" className="mb-3 text-sm text-hero-red">{error}</p>}
           <div className="mb-3 min-w-0" aria-live="polite">
             <p className="truncate font-body text-sm font-bold">{sourceReady ? (step === "details" ? name || sourceTitle : sourceTitle) : t("Choose a source to continue")}</p>
-            <p className="mt-1 text-xs leading-relaxed text-ink-muted">{step === "source" && sourceReady && bookRange ? <>{t("Rough whole-book estimate")}: <CreditAmount value={bookRange} label={t("credits")} /> · {t("Not charged now")}</> : t("Saves your source only. No generation starts now.")}</p>
+            <p className="mt-1 text-xs leading-relaxed text-ink-muted">{t("Saves your source only. No generation starts now.")}</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <Button type="submit" size="lg" disabled={isPending || !sourceReady || (step === "details" && !name.trim())}>{isPending ? t("CREATING…") : step === "source" ? t("CONTINUE") : t("CREATE PROJECT")}</Button>

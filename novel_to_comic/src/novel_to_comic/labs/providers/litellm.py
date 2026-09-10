@@ -1,7 +1,7 @@
 """LiteLLM-backed provider — reuses the existing pipeline image client.
 
 Lets us register the production image aliases (Gemini 3.1 Flash Lite Image and
-Reve) in the labs registry so they can be A/B'd against new
+Seedream) in the labs registry so they can be A/B'd against new
 candidates without duplicating the generation code.
 """
 

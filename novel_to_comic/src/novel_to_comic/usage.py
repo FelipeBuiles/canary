@@ -35,6 +35,11 @@ class UsageRecord(BaseModel, frozen=True):
     input_tokens: int = 0
     output_tokens: int = 0
     image_count: int = 0
+    input_text_tokens: int | None = Field(default=None, ge=0)
+    input_image_tokens: int | None = Field(default=None, ge=0)
+    cached_text_tokens: int | None = Field(default=None, ge=0)
+    cached_image_tokens: int | None = Field(default=None, ge=0)
+    image_output_tokens: int | None = Field(default=None, ge=0)
     cost_usd: float | None = None
     cost_source: str | None = None
     funding: Literal["api", "codex_subscription"] = "api"
@@ -59,7 +64,26 @@ class ApiResult(Generic[T]):
 
 def calculate_cost_breakdown(record: UsageRecord) -> CostBreakdown:
     """Return detailed USD cost metadata for one API call."""
-    return get_pricing_resolver().calculate(
+    resolver = get_pricing_resolver()
+    resolved = resolver.resolve_model(record.model, record.provider_model)
+    if record.funding == "api" and record.cost_usd is None and "gpt-image-2.5-" in resolved:
+        pricing, source = resolver._pricing_for(resolved.removesuffix("-2026-09-08"))
+        fields = (record.input_text_tokens, record.input_image_tokens,
+                  record.cached_text_tokens, record.cached_image_tokens, record.image_output_tokens)
+        complete = all(value is not None for value in fields)
+        if complete:
+            text, image, cached_text, cached_image, output = fields
+            complete = cached_text <= text and cached_image <= image and text + image == record.input_tokens and output <= record.output_tokens
+        cost = None
+        if complete and pricing:
+            cost = ((text - cached_text) * pricing["input_cost_per_token"]
+                    + (image - cached_image) * pricing["image_input_cost_per_token"]
+                    + cached_text * pricing["cached_text_input_cost_per_token"]
+                    + cached_image * pricing["cached_image_input_cost_per_token"]
+                    + output * pricing["output_cost_per_token"])
+        return CostBreakdown(cost_usd=cost, source=source if complete and pricing else "unknown_provider_usage",
+            model_alias=record.model, provider_model=resolved, pricing_snapshot=resolver.pricing_snapshot)
+    return resolver.calculate(
         model_alias=record.model,
         provider_model=record.provider_model,
         operation=record.operation,
@@ -74,7 +98,10 @@ def calculate_cost_breakdown(record: UsageRecord) -> CostBreakdown:
 
 def calculate_cost(record: UsageRecord) -> float:
     """Return the USD cost of one API call. Returns 0.0 for unknown models."""
-    return calculate_cost_breakdown(record).cost_usd
+    cost = calculate_cost_breakdown(record).cost_usd
+    if cost is None:
+        raise ValueError("Provider usage is incomplete; monetary cost is unknown")
+    return cost
 
 
 def usage_has_billable_activity(record: UsageRecord) -> bool:
@@ -183,8 +210,8 @@ def estimate_image_cost(
 def audit_pricing(extra_models: list[str] | None = None) -> list[str]:
     """Return model names that are used by the pipeline but missing pricing.
 
-    Covers: all text models in MODEL_REGISTRY, all gateway aliases in the
-    quality presets, all image model defaults from Config, and any additional
+    Covers: all text models in MODEL_REGISTRY, all selectable concrete model routes in the
+    account catalog funded by APIs, all image model defaults from Config, and any additional
     model names passed in extra_models.
 
     Usage:
@@ -193,16 +220,16 @@ def audit_pricing(extra_models: list[str] | None = None) -> list[str]:
             print("Missing pricing entries:", missing)
     """
     from novel_to_comic.clients.text import MODEL_REGISTRY
-    from novel_to_comic.config import Config, _QUALITY_PRESETS
+    from novel_to_comic.config import Config
+    from novel_to_comic.model_catalog import models
 
     cfg = Config()
     known = set(MODEL_REGISTRY.keys())
-    for preset in _QUALITY_PRESETS.values():
-        known.update(preset.values())
+    known.update(model["id"] for model in models() if model["funding"] == "api")
     known.update(
         [
             cfg.image_model,
-            cfg.fallback_image_model,
+            cfg.draw_model,
             cfg.effective_image_model(),
             "gpt-image-2",
             "dall-e-3",
