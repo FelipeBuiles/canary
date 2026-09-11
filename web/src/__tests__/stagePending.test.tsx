@@ -1,3 +1,4 @@
+import { MemoryRouter } from "react-router-dom";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { StageCostEstimate } from "../types/api";
@@ -178,5 +179,23 @@ describe("Readable adaptation failures", () => {
     expect(run).not.toHaveBeenCalled();
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Resume adaptation" }));
     expect(run).toHaveBeenCalledWith("demo", "adapt", expect.objectContaining({ rerun: false }));
+  });
+});
+
+
+describe("Model refusal recovery", () => {
+  it.each([
+    { errorCode: "model_refusal", error: "Provider declined" },
+    { error: "runtime_turn_error: stream disconnected before completion: Incomplete response returned, reason: content_filter" },
+    { error: "AI request was refused by gateway/provider (finish_reason=content_filter)" },
+  ])("shows refusal guidance without an unchanged paid retry", (failure) => {
+    render(<MemoryRouter><I18nProvider><StagePlaceholder project="demo" stage="extract" status="failed"
+      {...failure} errorDetail="Traceback: AIRefusalError"
+    /></I18nProvider></MemoryRouter>);
+    expect(screen.getByText("Model declined this content")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Back to projects" }).getAttribute("href")).toBe("/");
+    expect(screen.queryByRole("button", { name: /try again|retry|restart|resume/i })).toBeNull();
+    expect(screen.getByText("Technical details").closest("details")?.open).toBe(false);
+    expect(run).not.toHaveBeenCalled();
   });
 });

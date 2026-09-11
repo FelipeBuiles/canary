@@ -67,6 +67,10 @@ def test_balanced_image_alias_estimates_nano_banana_pro_cost():
     assert estimate_image_cost("image-gemini-pro", 2) == approx(0.268)
 
 
+def test_muse_image_alias_uses_openrouter_per_image_pricing():
+    assert estimate_image_cost("image-muse", 3, ref_count=10) == approx(0.03)
+
+
 def test_fast_image_alias_estimates_reference_input_images():
     # image-gemini-flash-lite -> nano banana 2 lite (gemini-3.1-flash-lite-image): $0.0336/image.
     assert estimate_image_cost("image-gemini-flash-lite", 1, ref_count=0) == 0.0336

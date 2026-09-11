@@ -130,9 +130,16 @@ export function StyleRoom() {
 
   const isSuggesting = suggestionStatus === "running";
   const styleActionsDisabled = isStageGenerating || isSuggesting || suggestStyles.isPending || createStyleDirection.isPending;
-  const { data: suggestEstimate } = useSuggestStylesEstimate(id, !isSuggesting);
-  const { data: directionEstimate } = useStyleDirectionEstimate(id, !createStyleDirection.isPending);
+  const { data: suggestEstimate, error: suggestEstimateError, refetch: refetchSuggestEstimate } = useSuggestStylesEstimate(id, !isSuggesting);
+  const { data: directionEstimate, error: directionEstimateError, refetch: refetchDirectionEstimate } = useStyleDirectionEstimate(id, !createStyleDirection.isPending);
   const { data: sampleEstimate } = useStyleSampleEstimate(id, pendingRefresh.length > 0);
+
+  const estimateError = suggestEstimateError ?? directionEstimateError;
+  const estimatesMissing = !suggestEstimate || !directionEstimate;
+  const retryEstimates = () => {
+    void refetchSuggestEstimate();
+    void refetchDirectionEstimate();
+  };
 
   const startSuggestions = useCallback((directionId?: string) => {
     clearEvents();
@@ -432,8 +439,10 @@ export function StyleRoom() {
             customSingleReferenceCost={directionEstimate?.estimates_with_reference.faithful.estimate_credits}
             customNeighborsReferenceCost={directionEstimate?.estimates_with_reference.faithful_with_neighbors.estimate_credits}
             imageReferenceSupported={directionEstimate?.image_reference_supported}
-            busy={styleActionsDisabled || !suggestEstimate || !directionEstimate}
-            error={suggestionError}
+            busy={styleActionsDisabled || (estimatesMissing && !estimateError)}
+            disabled={estimatesMissing || !!estimateError}
+            onRetry={estimateError ? retryEstimates : undefined}
+            error={suggestionError ?? estimateError?.message}
             onAutomatic={() => setShowSuggestConfirm(true)}
             onCustom={setPendingCustomInput}
           />
@@ -470,8 +479,10 @@ export function StyleRoom() {
                 customSingleReferenceCost={directionEstimate?.estimates_with_reference.faithful.estimate_credits}
                 customNeighborsReferenceCost={directionEstimate?.estimates_with_reference.faithful_with_neighbors.estimate_credits}
                 imageReferenceSupported={directionEstimate?.image_reference_supported}
-                busy={styleActionsDisabled || !suggestEstimate || !directionEstimate}
-                error={suggestionError}
+                busy={styleActionsDisabled || (estimatesMissing && !estimateError)}
+                disabled={estimatesMissing || !!estimateError}
+                onRetry={estimateError ? retryEstimates : undefined}
+                error={suggestionError ?? estimateError?.message}
                 onAutomatic={() => setShowSuggestConfirm(true)}
                 onCustom={setPendingCustomInput}
               />

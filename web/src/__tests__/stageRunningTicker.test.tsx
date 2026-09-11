@@ -21,12 +21,12 @@ describe("StageRunning log ticker", () => {
   });
 
   it("clamps stale over-complete totals to a valid percentage", () => {
-    renderStage(<StageRunning stage="plan" itemsDone={16} itemsTotal={9} />);
+    renderStage(<StageRunning stage="draw" itemsDone={16} itemsTotal={9} />);
 
-    expect(screen.getByText("16 / 9")).toBeTruthy();
+    expect(screen.getByText("9 / 9")).toBeTruthy();
     expect(screen.getByText("100%")).toBeTruthy();
     expect(screen.queryByText("178%")).toBeNull();
-    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("100");
+    expect(screen.getByRole("progressbar").getAttribute("value")).toBe("100");
   });
 
   it("shows the last three readable log lines for the running stage only", () => {
@@ -76,5 +76,27 @@ describe("StageRunning log ticker", () => {
     rerender(<I18nProvider><StageRunning stage="draw" /></I18nProvider>);
     expect(screen.getByText("03")).toBeTruthy();
     expect(screen.queryByText("07")).toBeNull();
+  });
+});
+
+
+describe("Long-running Story and Pages work", () => {
+  it.each(["extract", "brief", "adapt", "plan"] as const)("uses an active step instead of a resetting percentage for %s", (stage) => {
+    const { rerender } = renderStage(<StageRunning stage={stage} itemsDone={1} itemsTotal={1} />);
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(screen.queryByText(/\d+%/)).toBeNull();
+    expect(screen.getByText("Work in progress")).toBeTruthy();
+    expect(screen.getByRole("list").querySelector('[aria-current="step"]')?.textContent).toContain("In progress");
+    rerender(<I18nProvider><StageRunning stage={stage} itemsDone={0} itemsTotal={8} /></I18nProvider>);
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(screen.getByText("This step can take several minutes. Results appear when the step finishes.")).toBeTruthy();
+  });
+
+  it("advances the Pages checklist when adaptation finishes", () => {
+    const { rerender } = renderStage(<StageRunning stage="adapt" />);
+    expect(screen.getByText("Adapting your story", { selector: "li span" }).closest("li")?.getAttribute("aria-current")).toBe("step");
+    rerender(<I18nProvider><StageRunning stage="plan" /></I18nProvider>);
+    expect(screen.getByText("Adapting your story").closest("li")?.textContent).toContain("Done");
+    expect(screen.getByText("Planning your pages", { selector: "li span" }).closest("li")?.getAttribute("aria-current")).toBe("step");
   });
 });

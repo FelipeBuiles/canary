@@ -1,9 +1,10 @@
 # Full-page generation — implementation plan
 
 **Date:** 2026-07-25
-**Status:** Implementation substantially complete on `render-full-pages`;
-Ticket 09 acceptance evidence, documentation cleanup, and release integration
-remain before launch.
+**Status:** Historical migration plan. Branch, sequencing, and implementation
+instructions below describe the July migration, not current agent workflow.
+The original Ticket 09 acceptance checklist is retained for reference; its
+outstanding items require revalidation against current evidence.
 **Design:** ADRs 0003-0015 in [`docs/adr/`](../../adr/) — the dated design
 document was removed once its decisions were recorded there.
 

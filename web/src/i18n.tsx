@@ -16,6 +16,17 @@ const STORAGE_KEY = "canary.uiLanguage";
 const TEXT: Record<LanguageCode, Record<string, string>> = {
   en: {},
   es: {
+    "Work in progress": "Trabajo en curso",
+    "Elapsed {time}": "Tiempo transcurrido {time}",
+    "This step can take several minutes. Results appear when the step finishes.": "Este paso puede tardar varios minutos. Los resultados aparecen cuando termina.",
+    "Production steps": "Pasos de producción",
+    "Next": "Siguiente",
+    "Done": "Completado",
+    "Model declined this content": "El modelo rechazó este contenido",
+    "MODEL REFUSAL": "SOLICITUD RECHAZADA",
+    "The model provider declined this request under its content rules. This step could not finish.": "El proveedor del modelo rechazó esta solicitud según sus normas de contenido. Este paso no pudo completarse.",
+    "An unchanged retry may be refused again. To continue, start a new project with a different model or revised source.": "Reintentar sin cambios puede provocar otro rechazo. Para continuar, crea un proyecto con otro modelo o un texto revisado.",
+
     "Extraction and brief": "Análisis y brief",
     "Adaptation and planning": "Adaptación y planificación",
     "Style text and images": "Texto e imágenes de estilo",
@@ -1635,6 +1646,17 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
     "AWAITING REVIEW": "PENDIENTE DE REVISIÓN",
   },
   fr: {
+    "Work in progress": "Travail en cours",
+    "Elapsed {time}": "Temps écoulé {time}",
+    "This step can take several minutes. Results appear when the step finishes.": "Cette étape peut prendre plusieurs minutes. Les résultats apparaissent une fois l’étape terminée.",
+    "Production steps": "Étapes de production",
+    "Next": "À suivre",
+    "Done": "Terminé",
+    "Model declined this content": "Le modèle a refusé ce contenu",
+    "MODEL REFUSAL": "DEMANDE REFUSÉE",
+    "The model provider declined this request under its content rules. This step could not finish.": "Le fournisseur du modèle a refusé cette demande selon ses règles de contenu. Cette étape n’a pas pu être terminée.",
+    "An unchanged retry may be refused again. To continue, start a new project with a different model or revised source.": "Une nouvelle tentative sans modification peut être refusée. Pour continuer, créez un projet avec un autre modèle ou un texte révisé.",
+
     "Extraction and brief": "Analyse et brief",
     "Adaptation and planning": "Adaptation et planification",
     "Style text and images": "Texte et images de style",

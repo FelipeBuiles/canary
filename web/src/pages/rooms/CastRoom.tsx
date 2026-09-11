@@ -1298,6 +1298,7 @@ export function CastRoom() {
           itemsTotal={stageInfo?.items_total}
           error={stageInfo?.error}
           errorDetail={stageInfo?.error_detail}
+          errorCode={stageInfo?.error_code}
         />
       </RoomShell>
     );

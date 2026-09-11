@@ -371,14 +371,9 @@ begin
   where user_id = p_user_id and status = 'reserved'
     and reservation_started_at is null
     and reservation_expires_at <= clock_timestamp();
-  if exists (
-    select 1 from public.credit_ledger
-    where user_id = p_user_id and status = 'reserved' and amount_credits < 0
-      and (reservation_expires_at is null
-        or reservation_expires_at <= clock_timestamp())
-  ) then
-    raise exception 'Expired credit reservation requires reconciliation';
-  end if;
+  -- Started/legacy expired holds remain reserved and reduce available credit.
+  -- Their reconciliation must not freeze unrelated work with enough balance.
+  -- Lease validation still prevents the expired job itself from starting.
 
   select coalesce(
     sum(case when status != 'released' then amount_credits else 0 end),

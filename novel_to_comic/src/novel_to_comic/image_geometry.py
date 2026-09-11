@@ -16,7 +16,10 @@ ASPECT_TOLERANCE = 0.12
 #: prompt promises "Portrait 4:5 frame"). The generation dimensions must agree
 #: with that promised composition, so style proof generation uses these
 #: dimensions instead of the (default square) panel config dimensions.
-STYLE_PROOF_SIZE = (819, 1024)
+# GPT Image 2.5 requires custom dimensions to be multiples of 16. This keeps
+# the required 4:5 proof composition while remaining valid for every OpenAI
+# image model Canary supports.
+STYLE_PROOF_SIZE = (1024, 1280)
 STYLE_PROOF_ASPECT = 0.8  # 4:5 portrait
 
 #: Location design plates are composed as a wide landscape frame (the

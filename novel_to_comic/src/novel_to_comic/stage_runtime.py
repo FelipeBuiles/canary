@@ -135,12 +135,13 @@ class StageRuntime:
         })
         save_state(self._state, self._project_dir)
 
-    def fail(self, error: str, *, error_detail: str | None = None) -> None:
+    def fail(self, error: str, *, error_detail: str | None = None, error_code: str | None = None) -> None:
         fail_stage(
             self._state,
             self.name,
             error,
             error_detail=error_detail,
+            detail={"error": error_code} if error_code else None,
         )
         try:
             from novel_to_comic.server.diagnostics import record_diagnostic
@@ -186,8 +187,11 @@ class StageRuntime:
                 from novel_to_comic.text_utils import clean_exception_message
                 from novel_to_comic.server.diagnostics import local_diagnostics_enabled
 
+                from novel_to_comic.ai.errors import AIRefusalError
+
                 self.fail(
                     clean_exception_message(exc),
+                    error_code="model_refusal" if isinstance(exc, AIRefusalError) else None,
                     error_detail=traceback.format_exc()
                     if local_diagnostics_enabled()
                     else None,

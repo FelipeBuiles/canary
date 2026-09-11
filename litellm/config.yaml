@@ -29,8 +29,10 @@ model_list:
   litellm_params:
     model: openrouter/deepseek/deepseek-v4.1-flash
     api_key: os.environ/OPENROUTER_API_KEY
-    reasoning_effort: low
+    reasoning_effort: none
     extra_body:
+      reasoning:
+        enabled: false
       provider:
         require_parameters: true
 - model_name: glm-5.3-flash
@@ -67,6 +69,10 @@ model_list:
   litellm_params:
     model: openai/gpt-image-2.5-flare
     api_key: os.environ/OPENAI_API_KEY
+- model_name: image-muse
+  litellm_params:
+    model: openrouter/meta/muse-image
+    api_key: os.environ/OPENROUTER_API_KEY
 litellm_settings:
   set_verbose: false
   num_retries: 0

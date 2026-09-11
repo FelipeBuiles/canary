@@ -452,8 +452,8 @@ def test_generate_sample_image_uses_brief_and_writes_meta(tmp_path):
     assert meta["provenance"]["asset_kind"] == "style_sample"
     assert meta["provenance"]["asset_identity"] == "style_sample:style_1"
     # Slice 06: style proof images use a portrait 4:5 frame.
-    assert meta["parameters"]["width"] == 819
-    assert meta["parameters"]["height"] == 1024
+    assert meta["parameters"]["width"] == 1024
+    assert meta["parameters"]["height"] == 1280
     assert "The night held its breath." in meta["prompt"]
     assert "We keep moving." in meta["prompt"]
     assert "1man, adult male, leather jacket" in meta["prompt"]

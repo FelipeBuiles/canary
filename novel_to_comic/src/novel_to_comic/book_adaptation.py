@@ -323,6 +323,8 @@ def _canonicalize_candidate_requirements(
     candidate: BookAdaptation,
     source: SourceDocument,
     brief: AdaptationBrief,
+    *,
+    story_bible: StoryBible | None = None,
 ) -> BookAdaptation:
     retained_exceptions = tuple(
         _LedgerException(
@@ -376,7 +378,9 @@ def _canonicalize_candidate_requirements(
             "ledger": [entry.model_dump(mode="json") for entry in draft.ledger],
         }
     )
-    return _materialize_protected_lettering(canonical, source, brief)
+    return _materialize_protected_lettering(
+        canonical, source, brief, story_bible=story_bible
+    )
 
 
 def _canonicalize_prior_states(beats: list[AdaptedBeat]) -> list[AdaptedBeat]:
@@ -559,6 +563,8 @@ def _materialize_protected_lettering(
     candidate: BookAdaptation,
     source: SourceDocument,
     brief: AdaptationBrief,
+    *,
+    story_bible: StoryBible | None = None,
 ) -> BookAdaptation:
     """Realize protected wording and ledgered speech as canonical lettering."""
 
@@ -627,6 +633,30 @@ def _materialize_protected_lettering(
             continue
         ledger_index = ledger_index_by_source.get(source_unit.id)
         entry = ledger[ledger_index] if ledger_index is not None else None
+        # A protected, source-backed title has a deterministic home: the
+        # opening beat. Do not infer placement for omitted narrative phrases.
+        restore_title = (
+            story_bible is not None
+            and phrase == story_bible.title
+            and entry is not None
+            and entry.disposition == "intentionally_omitted"
+            and not entry.adapted_beat_ids
+            and bool(beats)
+        )
+        if restore_title:
+            entry = entry.model_copy(update={
+                "disposition": "caption",
+                "adapted_beat_ids": (beats[0].id,),
+                "reason": None,
+            })
+            ledger[ledger_index] = entry
+            source_order = {unit.id: unit.ordinal for unit in source.units}
+            beats[0] = beats[0].model_copy(update={
+                "source_unit_ids": tuple(sorted(
+                    set((*beats[0].source_unit_ids, source_unit.id)),
+                    key=lambda source_id: source_order.get(source_id, len(source_order)),
+                )),
+            })
         if (
             entry is not None
             and entry.disposition not in kind_by_disposition
@@ -659,7 +689,10 @@ def _materialize_protected_lettering(
         next_lettering_number += 1
         beat = beats[beat_index]
         beats[beat_index] = beat.model_copy(
-            update={"lettering": (*beat.lettering, lettering)}
+            update={"lettering": (
+                (lettering, *beat.lettering) if restore_title
+                else (*beat.lettering, lettering)
+            )}
         )
         existing_keys.add(phrase_key)
 
@@ -1167,8 +1200,18 @@ def build_adaptation_blueprint_prompt(
         "story moment and make chronology, evidence, motives, deductions, reactions, "
         "consequences, and aftermath explicit in the beat sequence. Preserve the "
         "relative weight in scene_obligations. Carry every owned requirement onto "
-        "the beat that realizes it. Record continuity and appearance changes using "
-        "stable Story Bible IDs. Do not write dialogue, captions, thoughts, SFX, "
+        "the beat that realizes it by copying its exact registry key into that "
+        "beat's brief_requirement_ids array. Across all beats, cite every ID in "
+        "adaptation_scope.owned_requirement_ids at least once; requirement text "
+        "in a summary does not substitute for its ID. Include brief_requirement_ids "
+        "and transitions on every beat, using [] only when none apply. "
+        "Every beat whose narrative_function or story_functions includes transition "
+        "must have a nonempty transitions array. Each transition contains dimension "
+        "(time, place, knowledge, or emotional_state), scope_id (a stable entity "
+        "or narrative-thread ID), from_state, to_state, and description; from_state "
+        "and to_state must differ and describe a source-supported change. "
+        "Record appearance changes using stable Story Bible IDs. "
+        "Do not write dialogue, captions, thoughts, SFX, "
         "pages, panels, or layouts: another locked expansion pass writes the final "
         "words without changing this structure. Do not return a canonical ledger. "
         "Code derives ordinary source accounting from beat provenance. Use "
@@ -1222,7 +1265,14 @@ def build_locked_lettering_prompt(
         "between evidence that a still image cannot establish must appear in "
         "dialogue, thought, or caption. Preserve protected language verbatim. "
         "For every LetteringItem cite source_unit_ids and set delivery. On-screen "
-        "dialogue/thought requires one precise speaker and its speaker_entity_id; "
+        "dialogue/thought requires speaker (the precise character name) and "
+        "speaker_entity_id (that character's exact Story Bible ID). Include "
+        "speaker, speaker_entity_id, and delivery on every item, using null for "
+        "speaker fields only when no character speaks. Third-person narration "
+        "about a character's feelings is kind='caption', delivery='narration'; "
+        "do not label it thought merely because it describes an emotion. "
+        "For example, 'She felt warm.' is narration, while 'I feel warm.' can "
+        "be a thought only with an identified speaker. "
         "off-panel voices use offscreen; narration uses narration; quoted prose, "
         "inscriptions, and manuscript excerpts use caption/quoted_text; SFX uses "
         "display. Never combine two speakers in one item. Return only beat_id and "
@@ -1561,6 +1611,13 @@ async def _generate_blueprint(
                 cached.model_dump(mode="json"),
                 error,
             )
+    response_schema = _BlueprintDraft.model_json_schema()
+    # Require an explicit model decision for fields with semantic coverage rules.
+    # Empty arrays remain valid for individual beats; scope validation below
+    # still enforces complete requirement coverage and transition detail.
+    response_schema["$defs"]["_BlueprintBeat"]["required"].extend(
+        ["brief_requirement_ids", "transitions"]
+    )
     for attempt in range(1, _MAX_ADAPT_ATTEMPTS + 1):
         result = await generate(
             system_prompt=(
@@ -1569,7 +1626,7 @@ async def _generate_blueprint(
             ),
             user_content=attempt_prompt,
             feature="adapt.blueprint",
-            json_schema=_BlueprintDraft.model_json_schema(),
+            json_schema=response_schema,
         )
         _record_result_usage(ctx, result)
         try:
@@ -1737,6 +1794,10 @@ async def _generate_locked_lettering(
                 cached.model_dump(mode="json"),
                 error,
             )
+    response_schema = _LetteringDraft.model_json_schema()
+    response_schema["$defs"]["LetteringItem"]["required"].extend(
+        ["speaker", "speaker_entity_id", "delivery"]
+    )
     for attempt in range(1, _MAX_ADAPT_ATTEMPTS + 1):
         result = await generate(
             system_prompt=(
@@ -1745,7 +1806,7 @@ async def _generate_locked_lettering(
             ),
             user_content=attempt_prompt,
             feature="adapt.lettering",
-            json_schema=_LetteringDraft.model_json_schema(),
+            json_schema=response_schema,
         )
         _record_result_usage(ctx, result)
         try:
@@ -2303,7 +2364,9 @@ def recoverable_adaptation_candidate(
         or candidate.brief_sha256 != brief.content_sha256
     ):
         return None
-    candidate = _canonicalize_candidate_requirements(candidate, source, brief)
+    candidate = _canonicalize_candidate_requirements(
+        candidate, source, brief, story_bible=story_bible
+    )
     validation = validate_book_adaptation(source, brief, candidate, story_bible=story_bible)
     if validation.invariant_failures:
         return None
@@ -2560,6 +2623,7 @@ async def produce_book_adaptation(
                 candidate,
                 source,
                 brief,
+                story_bible=story_bible,
             )
             validation = validate_book_adaptation(
                 source,
@@ -3115,7 +3179,19 @@ def validate_book_adaptation(
                 for unit in source.units
             )
         )
-        if not _has_terminal_display_punctuation(text) and not is_book_title:
+        # Exact approved narration can intentionally be a phrase without a
+        # final stop. Adding punctuation would violate protected wording.
+        is_protected_narration = (
+            item.kind == "caption"
+            and item.delivery == "narration"
+            and text in brief.protected_language
+            and any(unit.id in item.source_unit_ids for unit in source.units)
+        )
+        if (
+            not _has_terminal_display_punctuation(text)
+            and not is_book_title
+            and not is_protected_narration
+        ):
             failures.append(
                 InvariantFailure(
                     id=f"adapt_failure_trailing_clipped_display_text_{item.id}",

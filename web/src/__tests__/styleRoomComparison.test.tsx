@@ -9,7 +9,7 @@ import { I18nProvider } from "../i18n";
 const state = vi.hoisted(() => {
   const mutation = { mutate: vi.fn(), isPending: false };
   const emptyQuery = () => ({ data: undefined });
-  return { mutation, emptyQuery, labels: ["Ink", "Watercolor", "Noir", "Graphic"] };
+  return { mutation, emptyQuery, estimateError: null as Error | null, retryEstimate: vi.fn(), labels: ["Ink", "Watercolor", "Noir", "Graphic"] };
 });
 vi.mock("../api/queries", () => ({
   useStyles: () => ({ data: { suggestions: state.labels.map((label, index) => ({
@@ -17,7 +17,7 @@ vi.mock("../api/queries", () => ({
   })) }, refetch: vi.fn(), isLoading: false, isError: false }),
   useProjectConfig: state.emptyQuery, useStoryBible: state.emptyQuery,
   useProjectStatus: state.emptyQuery, useGenerationJobs: state.emptyQuery,
-  useSuggestStylesEstimate: state.emptyQuery, useStyleDirectionEstimate: state.emptyQuery,
+  useSuggestStylesEstimate: () => ({ error: state.estimateError, refetch: state.retryEstimate }), useStyleDirectionEstimate: () => ({ refetch: vi.fn() }),
   useStyleSampleEstimate: state.emptyQuery, useStageEstimate: state.emptyQuery,
   useProjectCoverEstimate: state.emptyQuery, useProjects: state.emptyQuery,
   useImageGenerationMeta: state.emptyQuery,
@@ -70,3 +70,17 @@ describe("StyleRoom comparison", () => {
     expect(state.mutation.mutate).not.toHaveBeenCalled();
   });
 });
+
+it("shows estimate failures with a retry instead of claiming generation is running", async () => {
+    state.labels = [];
+    state.estimateError = new Error("A job cannot mix API-funded and Codex-subscription operations");
+    render(<I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
+      <Route path="/projects/:id/style" element={<StyleRoom />} />
+    </Routes></MemoryRouter></I18nProvider>);
+    expect(screen.getByRole("alert").textContent).toContain(state.estimateError.message);
+    expect(screen.queryByText("PREPARING DIRECTIONS…")).toBeNull();
+    expect(screen.getByRole("button", { name: "CREATE FIVE DIRECTIONS" })).toHaveProperty("disabled", true);
+    await userEvent.setup().click(screen.getByRole("button", { name: "TRY AGAIN" }));
+    expect(state.retryEstimate).toHaveBeenCalledOnce();
+    expect(state.mutation.mutate).not.toHaveBeenCalled();
+ });

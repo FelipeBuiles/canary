@@ -4,8 +4,8 @@ This file defines the project's canonical vocabulary. It is intentionally
 implementation-free: runtime contracts, file paths, API routes, model choices,
 and UI behavior belong in `docs/reference/`.
 
-When a term conflicts with this glossary, stop and resolve the vocabulary
-before changing code or documentation.
+Use these terms consistently. Correct stale definitions when current evidence
+settles the meaning; ask only when ambiguity affects the requested result.
 
 ## Pipeline concepts
 
@@ -59,10 +59,9 @@ It allocates Adapt's complete lettering by citing lettering IDs; the wording
 itself is copied from the adaptation and is never restated, so it cannot be
 rewritten or shortened.
 
-**Finish stage** — The final pipeline stage, which verifies and corrects page
-renders, coordinates correction requests with Draw, performs production-safe
-normalization, and exports the book. It does not repair artwork or lettering
-pixels itself.
+**Finish stage** — The final pipeline stage, which checks book readiness,
+performs production-safe normalization, and packages the book for export.
+It does not generate or correct artwork or lettering.
 _Avoid_: Compose stage
 
 **Story Bible** — The shared story understanding used by later pipeline work:
@@ -176,7 +175,7 @@ separate from target language.
 **Quality preset** — A named generation-quality choice that selects a coherent
 set of model intents.
 
-**Generation job** — An asynchronous unit of asset generation, such as a panel
+**Generation job** — An asynchronous unit of asset generation, such as a page
 or character reference regeneration.
 
 **Labs run** — An independent model-experiment run. It is not a pipeline run

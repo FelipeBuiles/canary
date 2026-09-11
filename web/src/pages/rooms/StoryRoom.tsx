@@ -87,8 +87,10 @@ export function StoryRoom() {
           project={id ?? ""}
           stage={stage}
           status={status}
+          startedAt={(stage === "extract" ? extract : briefStage)?.started_at}
           error={stageInfo?.error}
           errorDetail={stageInfo?.error_detail}
+          errorCode={stageInfo?.error_code}
           loadError={errorMessage}
           allowPendingStart
         />

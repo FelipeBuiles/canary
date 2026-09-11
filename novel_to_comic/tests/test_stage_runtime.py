@@ -335,3 +335,16 @@ class TestActivity:
         ctx.activity(fraction=0.9, detail="drafting")
         # Advisory only: a stale fraction must never be mistaken for progress.
         assert state.stages["adapt"].items_done == 0
+
+
+def test_refusal_persists_machine_readable_error_code(tmp_path):
+    import pytest
+    from novel_to_comic.ai.errors import AIRefusalError
+    state = _state(tmp_path)
+    ctx = StageRuntime("extract", state, tmp_path)
+    with pytest.raises(AIRefusalError):
+        with ctx.execute():
+            raise AIRefusalError("Provider declined")
+    assert state.stages["extract"].error_code == "model_refusal"
+    ctx.fail("Ordinary failure")
+    assert state.stages["extract"].error_code is None

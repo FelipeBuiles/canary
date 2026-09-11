@@ -1853,6 +1853,9 @@ def test_producer_writes_one_book_artifact_and_records_model_usage(
         "adapt.lettering",
     ]
     assert all(call["json_schema"]["type"] == "object" for call in calls)
+    item_schema = calls[2]["json_schema"]["$defs"]["LetteringItem"]
+    assert {"speaker", "speaker_entity_id", "delivery"} <= set(item_schema["required"])
+    assert "Third-person narration" in calls[2]["user_content"]
     assert "ledger" not in calls[1]["json_schema"]["properties"]
     assert state.stages["adapt"].items_done == 3
     assert len(state.stages["adapt"].usage_log) == 3
@@ -2310,6 +2313,11 @@ def test_a_blocked_adaptation_gets_one_repair_pass_with_its_failures(
 
     assert produced.beats == expected.beats
     assert len(calls) == 4
+    # These omissions caused both Flash models to exhaust structural repairs.
+    beat_schema = calls[1]["json_schema"]["$defs"]["_BlueprintBeat"]
+    assert {"brief_requirement_ids", "transitions"} <= set(beat_schema["required"])
+    assert "brief_requirement_ids" in calls[1]["user_content"]
+    assert "from_state" in calls[1]["user_content"]
     # Structural omissions are repaired before the expensive prose pass.
     assert "missing owned requirement IDs" in calls[2]["user_content"]
     assert "quality_tier" not in calls[2]
@@ -3071,3 +3079,39 @@ def test_saved_candidate_recovery_requires_unchanged_authority(tmp_path: Path, c
         story_instruction="Change the ending" if change == "instruction" else "",
     ) is None
     assert artifacts.failed_adaptation_candidate_path.exists()
+
+
+def test_exact_protected_narration_does_not_require_added_punctuation() -> None:
+    text = "I saw the door open"
+    candidate = _with_lettering_text(text)
+    beat = candidate.beats[0]
+    item = beat.lettering[0].model_copy(update={"kind": "caption", "delivery": "narration"})
+    candidate = candidate.model_copy(update={"beats": (beat.model_copy(update={"lettering": (item, *beat.lettering[1:])}),)})
+    brief = _approved_brief().model_copy(update={"protected_language": (text,)})
+    result = validate_book_adaptation(_source_document(), brief, candidate)
+    assert "trailing_clipped_display_text" not in {f.code for f in result.invariant_failures}
+    assert candidate.beats[0].lettering[0].text == text
+
+
+def test_omitted_protected_title_is_restored_to_opening_beat() -> None:
+    source, brief, candidate, bible = _protected_title_candidate()
+    first = candidate.beats[0]
+    candidate = candidate.model_copy(update={
+        "beats": (first.model_copy(update={"lettering": first.lettering[1:]}),),
+        "ledger": tuple(entry.model_copy(update={
+            "disposition": "intentionally_omitted", "adapted_beat_ids": (),
+            "reason": "Front matter omitted.",
+        }) if entry.source_unit_id == source.units[0].id else entry for entry in candidate.ledger),
+    })
+    recovered = _canonicalize_candidate_requirements(candidate, source, brief, story_bible=bible)
+    title = recovered.beats[0].lettering[0]
+    assert title.text == bible.title
+    assert title.delivery == "quoted_text"
+    assert title.source_unit_ids == (source.units[0].id,)
+    entry = next(e for e in recovered.ledger if e.source_unit_id == source.units[0].id)
+    assert entry.disposition == "caption"
+    assert entry.adapted_beat_ids == (first.id,)
+    assert _canonicalize_candidate_requirements(recovered, source, brief, story_bible=bible) == recovered
+    wrong_bible = bible.model_copy(update={"title": "Another title"})
+    unchanged = _canonicalize_candidate_requirements(candidate, source, brief, story_bible=wrong_bible)
+    assert not any(i.text == bible.title for b in unchanged.beats for i in b.lettering)

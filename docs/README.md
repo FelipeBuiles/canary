@@ -13,20 +13,23 @@ must not make claims that conflict with executable code or tests.
 
 ## Source-of-truth hierarchy
 
-When sources disagree, use this order:
+For evidence of current behavior, use this order:
 
 1. Executable implementation and tests.
 2. Checked-in configuration and fixtures.
 3. Focused reference documentation in `docs/reference/`.
-4. `AGENTS.md` and `CLAUDE.md` for guardrails and pointers.
-5. `CONTEXT.md` for domain vocabulary only.
-6. Proposals, plans, handoffs, and other historical material.
+4. [CONTEXT.md](../CONTEXT.md) for domain vocabulary only.
+5. Proposals, plans, handoffs, and other historical material.
+
+[AGENTS.md](../AGENTS.md) governs agent workflow and project guardrails.
+Existing code describes behavior; it does not override user instructions or
+justify preserving a bug. Consult only the sources relevant to the task.
 
 Generated references identify their generator and must be regenerated rather
 than edited by hand.
 
-By default, files under `docs/proposals/` and `docs/superpowers/` are
-**Proposed**, and files under `docs/handoffs/` are **Historical**. Add a more
+By default, files under `docs/proposals/` are **Proposed**, and dated files under
+`docs/plans/`, `docs/reviews/`, and `docs/handoffs/` are **Historical**. Add a more
 specific status when a document is intentionally promoted, superseded, or
 retained as current reference.
 
@@ -52,11 +55,11 @@ retained as current reference.
   [pricing](proposals/pricing-and-margin.md): current implementation evidence
   and unresolved production/commercial checks.
 
-Only active, accepted, or genuinely pending design work should remain under
-`docs/superpowers/`:
-
-- full-page implementation plan:
-  `docs/superpowers/plans/2026-07-25-full-page-generation/README.md`
+The [full-page implementation plan](plans/2026-07-25-full-page-generation/README.md)
+records the migration and its original acceptance checklist. Its branch and
+sequencing instructions are historical; current work follows AGENTS and the
+reference contracts. Revalidate outstanding acceptance items before treating
+them as current work.
 
 The full-page pipeline design itself is no longer kept as a document: its
 durable decisions are recorded as ADRs 0003–0015 in `docs/adr/`, and its

@@ -28,7 +28,7 @@ object whose stage/model pairs must belong to the configured catalog.
 ## Providers and local startup
 
 `scripts/dev.sh` defaults to API mode and enables local development controls.
-Configure `OPENROUTER_API_KEY` for DeepSeek V4.1 Flash and `OPENAI_API_KEY` for
+Configure `OPENROUTER_API_KEY` for OpenRouter models and `OPENAI_API_KEY` for
 OpenAI models. Restart the local gateway and backend after updating routes or
 environment variables. Model aliases and pricing remain in configuration.
 
@@ -38,6 +38,7 @@ environment variables. Model aliases and pricing remain in configuration.
 | GLM 5.3 Flash | `glm-5.3-flash` | `openrouter/z-ai/glm-5.3-flash` |
 | GPT Image 2.5 Sunburst | `image-sunburst` | `openai/gpt-image-2.5-sunburst` |
 | GPT Image 2.5 Flare | `image-flare` | `openai/gpt-image-2.5-flare` |
+| Muse Image | `image-muse` | `openrouter/meta/muse-image` |
 
 GLM 5.3 Flash uses the same `OPENROUTER_API_KEY`. The standard paid model supports
 text, image input, and structured outputs, so it is available for text stages and

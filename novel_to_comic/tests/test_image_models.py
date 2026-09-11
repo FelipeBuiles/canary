@@ -37,6 +37,27 @@ from novel_to_comic.image_models import (
             "openai",
             "GPT Image 2",
         ),
+        (
+            "image-sunburst",
+            ImageRoute.GPT_IMAGE_2,
+            "openai/gpt-image-2.5-sunburst",
+            "openai",
+            "GPT Image 2.5 Sunburst",
+        ),
+        (
+            "image-flare",
+            ImageRoute.GPT_IMAGE_2,
+            "openai/gpt-image-2.5-flare",
+            "openai",
+            "GPT Image 2.5 Flare",
+        ),
+        (
+            "image-muse",
+            ImageRoute.MUSE_IMAGE,
+            "openrouter/meta/muse-image",
+            "openrouter",
+            "Muse Image",
+        ),
     ],
 )
 def test_production_alias_route_descriptions(
@@ -88,6 +109,15 @@ def test_literal_gpt_image_2_models_are_classified(model: str):
     assert description.route is ImageRoute.GPT_IMAGE_2
     assert description.provider_key == "openai"
     assert description.display_name == "GPT Image 2"
+
+
+@pytest.mark.parametrize("model", ["meta/muse-image", "openrouter/meta/muse-image"])
+def test_literal_muse_models_are_classified(model: str):
+    description = describe_image_model(model)
+
+    assert description.route is ImageRoute.MUSE_IMAGE
+    assert description.provider_key == "openrouter"
+    assert description.display_name == "Muse Image"
 
 
 @pytest.mark.parametrize(

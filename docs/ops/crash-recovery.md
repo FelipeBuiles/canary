@@ -212,3 +212,17 @@ Local subprocess exits do not establish Fly scheduling/restart latency or live
 notification delivery. No provider spend is necessary for these infrastructure
 checks; any customer generation smoke test requires separate explicit spend
 consent.
+
+## Expired hold isolation
+
+Apply `docs/sql/2026-09-11-reservation-isolation.sql` to existing databases.
+The canonical schema includes the same change. Started or legacy expired holds
+remain deducted from available credit and require explicit reconciliation; they
+do not veto unrelated reservations when the account has sufficient balance.
+An expired job still fails its ownership/lease check and cannot resume paid work.
+Never release an uncertain hold simply because it expired.
+
+Vertex terminal image policy refusals return HTTP 400 rather than HTTP 500.
+This prevents a known refusal from being retained as an ambiguous submission.
+Unknown empty responses, transport timeouts and server failures still retain
+their holds. Provider-cost evidence remains separate from reservation release.
