@@ -16,6 +16,8 @@ interface StyleDirectionComposerProps {
   customNeighborsReferenceCost?: number | null;
   imageReferenceSupported?: boolean;
   busy?: boolean;
+  disabled?: boolean;
+  onRetry?: () => void;
   error?: string | null;
   onAutomatic: () => void;
   onCustom: (input: { direction: string; image: File | null; mode: StyleDirectionMode }) => void;
@@ -32,6 +34,8 @@ export function StyleDirectionComposer({
   customNeighborsReferenceCost,
   imageReferenceSupported = true,
   busy = false,
+  disabled = false,
+  onRetry,
   error,
   onAutomatic,
   onCustom,
@@ -125,7 +129,7 @@ export function StyleDirectionComposer({
 
       {lane === "automatic" ? (
         <div className="mt-6 flex flex-wrap items-center gap-3">
-          <Button size="lg" onClick={onAutomatic} disabled={busy}>
+          <Button size="lg" onClick={onAutomatic} disabled={busy || disabled}>
             {busy ? t("PREPARING DIRECTIONS…") : t("CREATE FIVE DIRECTIONS")}
           </Button>
           {automaticCost != null && automaticCost > 0 && (
@@ -226,7 +230,7 @@ export function StyleDirectionComposer({
           <div className="flex flex-wrap items-center gap-3">
             <Button
               size="lg"
-              disabled={!canSubmitCustom || busy || !!fileError}
+              disabled={!canSubmitCustom || busy || disabled || !!fileError}
               onClick={() => onCustom({ direction: direction.trim(), image, mode })}
             >
               {busy ? t("PREPARING PROOF…") : mode === "single" ? t("CREATE MY PROOF") : t("CREATE FIVE DIRECTIONS")}
@@ -242,6 +246,8 @@ export function StyleDirectionComposer({
           </div>
         </div>
       )}
+
+      {onRetry && <Button size="sm" onClick={onRetry} disabled={busy}>{t("TRY AGAIN")}</Button>}
 
       {error && (
         <p role="alert" className="mt-5 border-[2px] border-hero-red bg-chip-red/30 px-3 py-2 text-[0.82rem] font-semibold text-hero-red">

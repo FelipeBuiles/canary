@@ -1,10 +1,12 @@
 # Canary — Agent Guidelines
 
-Canary turns novels into complete, lettered comic pages. Read `CONTEXT.md` for
-vocabulary, relevant `docs/adr/` decisions, and `docs/README.md` for source
-hierarchy. Implementation and tests outrank historical plans and proposals.
-Current runtime navigation: `docs/reference/agent-context.md`. Artifact
-contracts: `docs/reference/stage-contracts.md`.
+Canary turns novels into complete, lettered comic pages. Start from the reported
+symptom and relevant code/tests. Use [agent context](docs/reference/agent-context.md#code-navigation)
+for navigation, [stage contracts](docs/reference/stage-contracts.md) for a touched
+artifact boundary, and [CONTEXT.md](CONTEXT.md) for unfamiliar domain terms.
+Read relevant ADRs when an architectural decision is involved. These are lookup
+resources, not a mandatory onboarding sequence; reuse context already loaded.
+[Documentation policy](docs/README.md) distinguishes current evidence from plans.
 
 ## Guardrails
 
@@ -50,29 +52,36 @@ implemented by `book_adaptation.py`, `page_planning.py`, `page_drawing.py`,
 `web/src/pages/rooms/`.
 
 Use targeted `rg` searches; exclude generated outputs, dependencies, lockfiles,
-and logs unless directly relevant. Backend tests use
-`novel_to_comic/.venv/bin/python -m pytest novel_to_comic/tests -q`.
-Frontend checks: `npm test`, `npm run build`, `npm run lint` in `web/`.
-Documentation checks: `python3 scripts/check_docs_reliability.py`.
+and logs unless directly relevant. Issues and PRDs live in GitHub
+`FelipeBuiles/canary`; consult [issue conventions](docs/agents/issue-tracker.md)
+and [labels](docs/agents/triage-labels.md) when working with tickets.
 
-Issues and PRDs: GitHub `FelipeBuiles/canary`, via `gh`; see
-`docs/agents/issue-tracker.md` and `docs/agents/triage-labels.md`. Domain guidance:
-`docs/agents/domain.md`. Launch branding research is proposed material in
-`docs/proposals/branding-and-marketing.md`, not a runtime contract.
+## Debugging and verification
 
-### Task Execution & Autonomy
-- For implementation or fix requests, carry the authorized work through implementation and relevant verification. Do not stop at a proposed plan when you can proceed.
-- Make reasonable assumptions for routine, reversible decisions. Ask a focused question when missing information materially affects correctness, scope, or authorization.
-- Continue with authorized read-only actions, local worktrees, branch edits, and appropriate tests without repeatedly asking.
-- Before requesting approval, finish the preparation that is already authorized and present a concrete, reviewable result.
-- Respect required approval gates. Ask before destructive, irreversible, or otherwise unauthorized actions.
-- Avoid boilerplate warnings about hypothetical risks. Explain concrete blockers or material risks when relevant.
-### Instruction Conflicts
-- Explicit user instructions take precedence over conflicting skill guidelines, subject to higher-priority instructions and actual permission boundaries.
-- If a skill causes a pause or deviation, identify the file and relevant rule, and explain whether it is an explicit requirement or your interpretation. Continue any unaffected authorized work.
-### Style & Output
-- Lead with the result. Use plain language, active voice, and concise paragraphs. Include technical details that help assess the work.
-- Use lists when they improve readability; avoid repetitive transitions and stock phrases such as "it's worth noting", "delve", "leverage", and "Bottom line".
-- Report what changed, what was verified, and any remaining uncertainty.
-### Verification
-- Match verification to the scope and impact of the change. Complete required checks; expand testing when a concrete unresolvedconcern justifies it.
+Reuse the reported failure, existing tests, and captured evidence. Inspect code
+and logs to choose the smallest useful check. Build a harness, minimize a repro,
+or expand hypotheses only when it resolves uncertainty. Keep reproduction loops
+provider-free; paid generation and ambiguous submissions retain the guardrails above.
+
+- Backend: start with `novel_to_comic/.venv/bin/python -m pytest novel_to_comic/tests/test_<area>.py -q`
+  (substitute the relevant test file; use `-k` to narrow further).
+- Frontend: in `web/`, use `npm test -- src/__tests__/<area>.test.tsx` for the
+  affected behavior. Run `npm run build` for TypeScript/bundling changes and
+  `npm run lint` for frontend source changes.
+- Docs: run `python3 scripts/check_docs_reliability.py`. Regenerate affected
+  generated references with `python3 scripts/update_docs.py` after source changes.
+- Broaden to the backend suite (`novel_to_comic/.venv/bin/python -m pytest novel_to_comic/tests -q`)
+  or frontend suite (`npm test` in `web/`) for shared contracts, integration impact,
+  or release requirements. Do not repeat passing checks without a relevant change
+  or unresolved concern. Mocked tests do not establish image quality.
+
+## Working agreements
+
+Carry authorized work through implementation and relevant verification. Make
+routine reversible decisions locally; ask when missing information affects
+correctness, scope, or authorization. Preserve unrelated edits in this shared
+checkout. Report the result, checks performed, and remaining uncertainty.
+
+Explicit user instructions take precedence over skill guidelines, subject to
+higher-priority instructions and permission boundaries. If a skill causes a
+pause or deviation, identify the file and exact rule and continue unaffected work.

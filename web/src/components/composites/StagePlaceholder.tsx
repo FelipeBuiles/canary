@@ -1,3 +1,5 @@
+import { useNow } from "../../hooks/useNow";
+import { Link } from "react-router-dom";
 import { useMemo, useState, type ReactNode } from "react";
 import { type StageName, type StageStatus } from "../../types/api";
 import { useStageEstimate } from "../../api/queries";
@@ -270,12 +272,21 @@ interface StageRunningProps {
   stage: StageName;
   itemsDone?: number;
   itemsTotal?: number;
+  startedAt?: string | null;
 }
 
-export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0 }: StageRunningProps) {
+export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0, startedAt }: StageRunningProps) {
   const { t } = useI18n();
   const meta = STAGE_META[stage];
-  const hasProgress = itemsTotal > 0;
+  const textWork = ["extract", "brief", "adapt", "plan"].includes(stage);
+  const hasProgress = !textWork && itemsTotal > 0;
+  const now = useNow(1000, Boolean(startedAt));
+  const started = startedAt ? Date.parse(startedAt) : NaN;
+  const seconds = Number.isFinite(started) ? Math.max(0, Math.floor((now - started) / 1000)) : null;
+  const elapsed = seconds === null ? null : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  const steps: StageName[] = stage === "extract" || stage === "brief"
+    ? ["extract", "brief"] : ["adapt", "plan", "draw"];
+  const currentStep = steps.indexOf(stage);
   const pct = hasProgress
     ? Math.min(100, Math.max(0, Math.round((itemsDone / itemsTotal) * 100)))
     : 0;
@@ -303,23 +314,35 @@ export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0 }: StageRunn
   return (
     <StageDocket stage={stage} state="RUNNING" tone="running">
         <div className="mt-7">
-          <div className="mb-2 flex items-center justify-between font-meta text-xs font-bold text-ink-muted">
-            <span>{hasProgress ? `${itemsDone} / ${itemsTotal}` : t("Working; no completed count yet.")}</span>
-            {hasProgress && <span>{pct}%</span>}
+          <div role="status" className="flex items-center gap-3 font-body text-sm font-semibold">
+            <Icon name="loader" size={20} className="shrink-0 motion-safe:animate-spin" />
+            <span>{t("Work in progress")}</span>
+            {elapsed && <span aria-live="off" className="ml-auto font-meta tabular-nums text-ink-muted">{t("Elapsed {time}").replace("{time}", elapsed)}</span>}
           </div>
-          <div
-            className="h-3 w-full overflow-hidden border-[2px] border-ink-black bg-pulp-paper"
-            role="progressbar"
-            aria-label={`${t(meta.title)} ${t("progress")}`}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={hasProgress ? pct : undefined}
-          >
-            <div
-              className="h-full origin-left bg-hero-red transition-transform duration-[220ms]"
-              style={{ transform: `scaleX(${hasProgress ? pct / 100 : 0})` }}
-            />
-          </div>
+          {textWork ? (
+            <>
+              <p className="mt-3 font-body text-sm leading-6 text-ink-muted">{t("This step can take several minutes. Results appear when the step finishes.")}</p>
+              <ol aria-label={t("Production steps")} className="mt-5 space-y-3">
+                {steps.map((step, index) => (
+                  <li key={step} aria-current={index === currentStep ? "step" : undefined}
+                    className={`flex items-center gap-3 font-body text-sm ${index === currentStep ? "font-bold text-ink-black" : "text-ink-muted"}`}>
+                    <Icon name={index < currentStep ? "check" : index === currentStep ? "loader" : "circle"} size={16} />
+                    <span>{t(STAGE_META[step].title)}</span>
+                    <span className="ml-auto font-meta text-xs">{t(index < currentStep ? "Done" : index === currentStep ? "In progress" : "Next")}</span>
+                  </li>
+                ))}
+              </ol>
+            </>
+          ) : (
+            <div className="mt-4">
+              <div className="mb-2 flex items-center justify-between font-meta text-xs font-bold text-ink-muted">
+                <span>{hasProgress ? `${Math.min(itemsDone, itemsTotal)} / ${itemsTotal}` : t("Working; no completed count yet.")}</span>
+                {hasProgress && <span>{pct}%</span>}
+              </div>
+              <progress aria-label={`${t(meta.title)} ${t("progress")}`} max={100} value={hasProgress ? pct : undefined}
+                className="h-3 w-full overflow-hidden border-[2px] border-ink-black bg-pulp-paper [&::-webkit-progress-bar]:bg-pulp-paper [&::-webkit-progress-value]:bg-hero-red [&::-moz-progress-bar]:bg-hero-red" />
+            </div>
+          )}
           {logLines.length > 0 && (
             <details className="mt-4">
               <summary className="min-h-11 cursor-pointer py-3 font-meta text-xs font-bold">{t("Activity details")}</summary>
@@ -361,26 +384,36 @@ interface StageFailedProps {
   rerun: boolean;
   error?: string | null;
   errorDetail?: string | null;
+  errorCode?: string | null;
 }
 
-function StageFailed({ project, stage, rerun, error, errorDetail }: StageFailedProps) {
+function StageFailed({ project, stage, rerun, error, errorDetail, errorCode }: StageFailedProps) {
   const { t } = useI18n();
+  const refused = errorCode === "model_refusal" || /^runtime_turn_error: stream disconnected before completion: Incomplete response returned, reason: content_filter$/.test(error ?? "") || /^AI (?:image )?request was refused by gateway\/provider/.test(error ?? "");
   const validationFailure = /invariant|validation/i.test(error ?? "");
-  const summary = stage === "adapt" && validationFailure
+  const summary = refused
+    ? t("The model provider declined this request under its content rules. This step could not finish.")
+    : stage === "adapt" && validationFailure
     ? t("The comic script needs a few corrections before page planning can continue.")
     : t("This step stopped before it could finish. You can try it again below.");
   const hasDetails = Boolean(error || errorDetail);
   return (
-    <StageDocket stage={stage} state="PRESS STOPPED" tone="failed" failureTitle={stage === "adapt" ? t("Adaptation paused") : t(STAGE_META[stage].title)}>
+    <StageDocket stage={stage} state={refused ? "MODEL REFUSAL" : "PRESS STOPPED"} tone="failed" failureTitle={refused ? t("Model declined this content") : stage === "adapt" ? t("Adaptation paused") : t(STAGE_META[stage].title)}>
       <div role="status" className="mt-5 font-body text-base leading-7 text-ink-black">
         <p>{summary}</p>
         <p className="mt-3 text-sm leading-6 text-ink-muted">
-          {stage === "adapt" && !rerun
+          {refused
+            ? t("An unchanged retry may be refused again. To continue, start a new project with a different model or revised source.")
+            : stage === "adapt" && !rerun
             ? t("Resume using saved work where possible. Review the estimate before continuing.")
             : t("Review the estimate, then try again. If it stops again, open the technical details to help investigate.")}
         </p>
       </div>
-      <StageStartAction project={project} stage={stage} retry rerun={rerun} />
+      {refused ? (
+        <Link to="/" className="mt-6 inline-flex min-h-11 items-center font-body text-sm font-semibold underline underline-offset-4">
+          {t("Back to projects")}
+        </Link>
+      ) : <StageStartAction project={project} stage={stage} retry rerun={rerun} />}
       {hasDetails && (
         <details className="mt-6 bg-surface-container px-4 pb-1">
           <summary className="min-h-11 cursor-pointer py-3 font-meta text-sm font-semibold">
@@ -424,10 +457,12 @@ interface StagePlaceholderProps {
   stale?: boolean;
   itemsDone?: number;
   itemsTotal?: number;
+  startedAt?: string | null;
   retryAsRerun?: boolean;
   allowPendingStart?: boolean;
   error?: string | null;
   errorDetail?: string | null;
+  errorCode?: string | null;
   loadError?: string | null;
 }
 
@@ -438,10 +473,12 @@ export function StagePlaceholder({
   stale = false,
   itemsDone,
   itemsTotal,
+  startedAt,
   retryAsRerun = false,
   allowPendingStart = false,
   error,
   errorDetail,
+  errorCode,
   loadError,
 }: StagePlaceholderProps) {
   const { t } = useI18n();
@@ -467,6 +504,7 @@ export function StagePlaceholder({
         rerun={retryAsRerun}
         error={error}
         errorDetail={errorDetail}
+        errorCode={errorCode}
       />
     );
   }
@@ -474,7 +512,7 @@ export function StagePlaceholder({
     return <StageLoadError stage={stage} message={loadError} />;
   }
   if (status === "running" && !stale) {
-    return <StageRunning stage={stage} itemsDone={itemsDone} itemsTotal={itemsTotal} />;
+    return <StageRunning stage={stage} itemsDone={itemsDone} itemsTotal={itemsTotal} startedAt={startedAt} />;
   }
   if (status === "pending") {
     return (

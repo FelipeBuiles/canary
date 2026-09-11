@@ -201,7 +201,7 @@ describe("StoryRoom Extract background loading (regression)", () => {
     await client.invalidateQueries({ queryKey: ["project", "demo", "status"] });
 
     await waitFor(() => {
-      expect(screen.getByRole("progressbar")).toBeTruthy();
+      expect(screen.getByText("Work in progress")).toBeTruthy();
       expect(screen.queryByText("API 404: story not found")).toBeNull();
     });
 
@@ -210,7 +210,7 @@ describe("StoryRoom Extract background loading (regression)", () => {
     await client.invalidateQueries({ queryKey: ["project", "demo", "status"] });
 
     await waitFor(() => {
-      expect(screen.getByRole("progressbar")).toBeTruthy();
+      expect(screen.getByText("Work in progress")).toBeTruthy();
       expect(screen.queryByText("API 404: story not found")).toBeNull();
     });
 

@@ -1,29 +1,15 @@
-# Domain Docs
+# Domain documentation
 
-How the engineering skills should consume this repo's domain documentation when exploring the codebase.
+Use [the glossary](../../CONTEXT.md) for unfamiliar domain concepts and
+[ADRs](../adr/) for decisions relevant to the boundary being changed. Read the
+needed entries once; there is no prerequisite to read the entire glossary or
+ADR collection before exploring code.
 
-## Before exploring, read these
+Use established vocabulary in output. Correct clearly stale wording against
+current evidence; flag substantive architectural conflicts rather than silently
+changing an accepted decision. Ask only when the ambiguity affects correctness
+or scope. Missing terminology alone does not block unrelated work.
 
-- **`CONTEXT.md`** at the repo root.
-- **`docs/adr/`** — read ADRs that touch the area you're about to work in.
-
-If any of these files don't exist, proceed silently. The `/domain-modeling` skill creates them lazily when terms or decisions actually get resolved.
-
-## File structure
-
-This is a single-context repo:
-
-```
-/
-├── CONTEXT.md
-├── docs/adr/
-└── src/
-```
-
-## Use the glossary's vocabulary
-
-When output names a domain concept, use the term as defined in `CONTEXT.md`. If the concept isn't in the glossary yet, note the gap for `/domain-modeling`.
-
-## Flag ADR conflicts
-
-If output contradicts an existing ADR, surface it explicitly rather than silently overriding it.
+Python source lives in `novel_to_comic/src/novel_to_comic/`; frontend source lives
+in `web/src/`. [Agent context](../reference/agent-context.md#code-navigation)
+provides focused code navigation.

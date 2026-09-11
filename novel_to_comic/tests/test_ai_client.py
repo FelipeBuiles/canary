@@ -1483,3 +1483,35 @@ def test_ambiguous_paid_submission_retains_credit_hold(monkeypatch, failure):
     db.rpc.assert_not_called()
     assert calls and len(calls) == 1
     assert "job" in credits._unsettled_jobs
+
+
+def test_terminal_image_refusal_releases_credit_hold(monkeypatch):
+    from novel_to_comic.ai.context import ai_request_context
+    from novel_to_comic.server import credits
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr(credits, "_unsettled_jobs", set())
+    monkeypatch.setattr(credits, "_reservation_jobs", {"hold": "job"})
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(400, json={"error": {"message": "Vertex image request blocked"}})
+
+    _mock_transport(monkeypatch, handler)
+
+    async def run():
+        with ai_request_context(job_id="job"):
+            response = await client._post_with_retry(
+                "http://gw/v1/images", headers={}, json={}, retry_ambiguous=False,
+            )
+            assert response.status_code == 400
+
+    asyncio.run(run())
+    db = MagicMock()
+    credits.release_reservation(db, "hold")
+    db.rpc.assert_called_once_with("release_credit_reservation", {
+        "p_reservation_id": "hold", "p_owner": credits._reservation_owner,
+    })
+    assert len(calls) == 1
+    assert not credits._unsettled_jobs

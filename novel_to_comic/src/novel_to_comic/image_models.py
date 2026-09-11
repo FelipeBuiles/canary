@@ -11,6 +11,7 @@ GATEWAY_IMAGE_BALANCED = "image-gemini-pro"
 GATEWAY_IMAGE_QUALITY = "image-gpt-2"
 GATEWAY_IMAGE_SUNBURST = "image-sunburst"
 GATEWAY_IMAGE_FLARE = "image-flare"
+GATEWAY_IMAGE_MUSE = "image-muse"
 GATEWAY_IMAGE_SEEDREAM_TEST = "image-seedream-v5-lite"
 
 IMAGE_MODEL_ALIASES = (
@@ -19,12 +20,14 @@ IMAGE_MODEL_ALIASES = (
     GATEWAY_IMAGE_QUALITY,
     GATEWAY_IMAGE_SUNBURST,
     GATEWAY_IMAGE_FLARE,
+    GATEWAY_IMAGE_MUSE,
     GATEWAY_IMAGE_SEEDREAM_TEST,
 )
 
 _GEMINI_FLASH_LITE_MODEL = "vertex-multimodal/gemini-3.1-flash-lite-image"
 _GEMINI_PRO_IMAGE_MODEL = "vertex-multimodal/gemini-3-pro-image"
 _GPT_IMAGE_2_MODEL = "openai/gpt-image-2"
+_MUSE_IMAGE_MODEL = "openrouter/meta/muse-image"
 _SEEDREAM_V5_LITE_MODEL = "fal-queue/bytedance/seedream/v5/lite/edit"
 _SEEDREAM_V5_PRO_MODEL = "fal-queue/bytedance/seedream/v5/pro/edit"
 
@@ -33,6 +36,7 @@ _SEEDREAM_V5_PRO_MODEL = "fal-queue/bytedance/seedream/v5/pro/edit"
 # production aliases, and adding a future provider does not change the quality
 # alias contract.
 IMAGE_PROVIDER_OPENAI = "openai"
+IMAGE_PROVIDER_OPENROUTER = "openrouter"
 IMAGE_PROVIDER_VERTEX_MULTIMODAL = "vertex-multimodal"
 IMAGE_PROVIDER_FAL_QUEUE = "fal-queue"
 IMAGE_PROVIDER_UNKNOWN = "unknown"
@@ -45,6 +49,7 @@ class ImageRoute(str, Enum):
     GEMINI_PRO_IMAGE = "gemini_pro_image"
     SEEDREAM = "seedream"
     GPT_IMAGE_2 = "gpt_image_2"
+    MUSE_IMAGE = "muse_image"
     CODEX_BUILTIN = "codex_builtin"
     UNKNOWN = "unknown"
 
@@ -90,6 +95,12 @@ _ALIAS_DESCRIPTIONS: dict[str, ImageModelDescription] = {
         provider_model="openai/gpt-image-2.5-flare",
         provider_key=IMAGE_PROVIDER_OPENAI,
     ),
+    GATEWAY_IMAGE_MUSE: ImageModelDescription(
+        route=ImageRoute.MUSE_IMAGE,
+        display_name="Muse Image",
+        provider_model=_MUSE_IMAGE_MODEL,
+        provider_key=IMAGE_PROVIDER_OPENROUTER,
+    ),
     GATEWAY_IMAGE_SEEDREAM_TEST: ImageModelDescription(
         route=ImageRoute.SEEDREAM,
         display_name="Seedream 5.0 Lite",
@@ -110,6 +121,13 @@ def describe_image_model(model: str) -> ImageModelDescription:
             display_name=normalized.removeprefix("openai/").replace("gpt-image-", "GPT Image "),
             provider_model=normalized,
             provider_key=IMAGE_PROVIDER_OPENAI,
+        )
+    if normalized.removeprefix("openrouter/") == "meta/muse-image":
+        return ImageModelDescription(
+            route=ImageRoute.MUSE_IMAGE,
+            display_name="Muse Image",
+            provider_model=normalized,
+            provider_key=IMAGE_PROVIDER_OPENROUTER,
         )
     if normalized == _GEMINI_FLASH_LITE_MODEL:
         return ImageModelDescription(
@@ -190,6 +208,7 @@ _PROMPT_CHAR_LIMITS: dict[ImageRoute, int | None] = {
     ImageRoute.GEMINI_PRO_IMAGE: None,
     ImageRoute.SEEDREAM: None,
     ImageRoute.GPT_IMAGE_2: None,
+    ImageRoute.MUSE_IMAGE: None,
     ImageRoute.UNKNOWN: None,
 }
 
@@ -201,6 +220,7 @@ _NATIVE_ASPECTS: dict[ImageRoute, tuple[str, ...]] = {
     ImageRoute.GEMINI_PRO_IMAGE: (),
     ImageRoute.SEEDREAM: (),
     ImageRoute.GPT_IMAGE_2: (),
+    ImageRoute.MUSE_IMAGE: (),
     ImageRoute.UNKNOWN: (),
 }
 
@@ -216,6 +236,9 @@ _SUPPORTED_CONTROLS: dict[ImageRoute, frozenset[str]] = {
     ImageRoute.GEMINI_PRO_IMAGE: frozenset({"quality"}),
     ImageRoute.SEEDREAM: frozenset({"quality"}),
     ImageRoute.GPT_IMAGE_2: frozenset({"quality"}),
+    # OpenRouter's Muse catalog entry does not advertise a quality control;
+    # leave the control out rather than implying that LiteLLM will honor it.
+    ImageRoute.MUSE_IMAGE: frozenset(),
     ImageRoute.UNKNOWN: frozenset(),
 }
 
@@ -298,6 +321,8 @@ _ROUTE_REFERENCE_CAPS: dict[ImageRoute, int] = {
     ImageRoute.GEMINI_PRO_IMAGE: 10,
     ImageRoute.SEEDREAM: 10,
     ImageRoute.GPT_IMAGE_2: 4,
+    # OpenRouter documents Muse Image with up to ten reference images.
+    ImageRoute.MUSE_IMAGE: 10,
     ImageRoute.UNKNOWN: 10,
 }
 
@@ -307,6 +332,7 @@ _ROUTE_PROVIDER_KEYS: dict[ImageRoute, str] = {
     ImageRoute.GEMINI_PRO_IMAGE: IMAGE_PROVIDER_VERTEX_MULTIMODAL,
     ImageRoute.SEEDREAM: IMAGE_PROVIDER_FAL_QUEUE,
     ImageRoute.GPT_IMAGE_2: IMAGE_PROVIDER_OPENAI,
+    ImageRoute.MUSE_IMAGE: IMAGE_PROVIDER_OPENROUTER,
     ImageRoute.UNKNOWN: IMAGE_PROVIDER_UNKNOWN,
 }
 

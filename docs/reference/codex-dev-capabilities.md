@@ -175,7 +175,10 @@ succeeded without widening it. Ordered attachment transport is controlled; the
 reasoning model's tool arguments and semantic use of references remain
 prompt-directed, not a hard fidelity guarantee.
 
-Request/stream retries are zero. Validated completed image bytes are checkpointed
+Image request/stream retries are zero. Text-only turns allow up to two runtime
+stream-recovery attempts; retry notifications keep the same turn listener alive.
+Terminal errors still fail without an application-level resubmission.
+Validated completed image bytes are checkpointed
 before best-effort interrupt/SDK teardown. Timeout recovery can return that same
 validated, request-bound completed checkpoint; it does not submit another turn or
 regenerate. A missing/invalid checkpoint or ambiguous submission remains a failure

@@ -15,7 +15,8 @@ pages from novels through an eight-stage Python/FastAPI and React application.
 | 8 | `finish` | No |
 
 See [stage contracts](stage-contracts.md) for authority, recovery, and validation.
-Read [documentation policy](../README.md) and root `CONTEXT.md` for vocabulary.
+Use [documentation policy](../README.md) to resolve source status and
+[the glossary](../../CONTEXT.md) for unfamiliar terms; read only relevant sections.
 ADRs 0003–0015 record the full-page architecture; historical panel plans are not
 implementation instructions.
 The optional local [Codex adapter guide](codex-dev-capabilities.md) distinguishes
@@ -178,8 +179,7 @@ OCR recovery selection; `BookRoom.tsx` owns package readiness and review links.
 
 ## Local validation
 
-Use `novel_to_comic/.venv/bin/python -m pytest novel_to_comic/tests -q` for backend
-checks and `npm test`, `npm run build`, `npm run lint` in `web/` for frontend
-checks. Run `python3 scripts/check_docs_reliability.py` after documentation or
-stage changes. Model comparisons require separately recorded provider costs
-and human visual review; mocked tests cannot establish image quality.
+Follow [AGENTS.md verification guidance](../../AGENTS.md#debugging-and-verification)
+for targeted checks and when to broaden them. Model comparisons require
+separately recorded provider costs and human visual review; mocked tests cannot
+establish image quality.

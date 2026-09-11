@@ -939,7 +939,15 @@ def _extract_image(response: types.GenerateContentResponse) -> tuple[bytes, str]
         details.append(f"prompt_feedback: {'; '.join(feedback_details)}")
 
     detail_str = " | ".join(details)
-    if prompt_block_reason is not None:
+    # A terminal policy refusal has a known outcome. Reporting it as a 500
+    # makes the caller retain a paid-submission hold indefinitely.
+    policy_reasons = {"SAFETY", "PROHIBITED_CONTENT", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT"}
+    candidate_blocked = any(
+        str(getattr(getattr(candidate, "finish_reason", None), "value",
+                    getattr(candidate, "finish_reason", ""))) in policy_reasons
+        for candidate in response.candidates or []
+    )
+    if prompt_block_reason is not None or candidate_blocked:
         raise litellm.APIError(
             status_code=400,
             message=f"Vertex image request blocked: {detail_str}",

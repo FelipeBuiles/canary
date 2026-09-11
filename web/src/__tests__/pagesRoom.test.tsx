@@ -460,7 +460,8 @@ describe("PagesRoom", () => {
 
     renderRoom();
 
-    expect(screen.getByText("1 / 2")).toBeTruthy();
+    expect(screen.getByText("Work in progress")).toBeTruthy();
+    expect(screen.queryByRole("progressbar")).toBeNull();
   });
 
   it("shows the render canvas and revision history", () => {

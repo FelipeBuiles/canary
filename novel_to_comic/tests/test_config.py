@@ -97,7 +97,7 @@ class TestEffectiveImageModel:
 
 class TestImageModelAliases:
     def test_exposes_production_gateway_aliases(self):
-        assert set(image_model_aliases()) == {"image-gemini-pro", "image-gemini-flash-lite", "image-gpt-2", "image-sunburst", "image-flare", "image-seedream-v5-lite"}
+        assert set(image_model_aliases()) == {"image-gemini-pro", "image-gemini-flash-lite", "image-gpt-2", "image-sunburst", "image-flare", "image-muse", "image-seedream-v5-lite"}
 
     def test_validates_supported_alias(self):
         assert validate_image_model_alias(" image-gpt-2 ") == GATEWAY_IMAGE_QUALITY

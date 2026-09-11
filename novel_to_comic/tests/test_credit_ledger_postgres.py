@@ -168,8 +168,12 @@ def test_foreign_live_and_expired_reservations(ledger):
     db.rpc("release_credit_reservation", {"p_reservation_id": live, "p_owner": expired_owner}).execute()
     assert db.query(f"select status from public.credit_ledger where id='{live}';") == "reserved"
     assert db.rpc("check_credit_reservation_lease", {"p_reservation_id": started, "p_owner": expired_owner}).execute().data is False
-    with pytest.raises(RuntimeError, match="reconciliation"):
-        reserve(live_owner)
+    # An unresolved started hold stays deducted, but cannot freeze the account.
+    assert reserve(live_owner) is not None
+    assert db.query(f"select status from public.credit_ledger where id='{started}';") == "reserved"
+    assert reserve(live_owner) is not None
+    assert reserve(live_owner) is not None
+    assert reserve(live_owner) is None
 
 
 def test_subscription_failure_settles_zero_and_replays_without_losing_evidence(ledger):

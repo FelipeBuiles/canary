@@ -791,3 +791,53 @@ def test_compiled_location_authorities_reach_fresh_thread_as_creation_or_parent_
         ref.content_sha256 for ref in references
     ]
     assert len(sdk.threads) == 1
+
+
+def test_content_filter_runtime_error_is_a_refusal_with_original_evidence():
+    from novel_to_comic.ai.errors import AIRefusalError
+    evidence = {"provider_error": {"message": "stream disconnected before completion: Incomplete response returned, reason: content_filter"},
+                "funding": "codex_subscription", "input_tokens": 31, "output_tokens": 7}
+    error = runtime._runtime_error("runtime_turn_error", evidence)
+    assert isinstance(error, AIRefusalError)
+    assert isinstance(error, runtime.CodexRuntimeError)
+    assert error.metadata == evidence
+    assert error.response_data is None
+    assert not isinstance(runtime._runtime_error("runtime_timeout", evidence), AIRefusalError)
+    assert not isinstance(runtime._runtime_error("runtime_turn_error", {"provider_error": {"message": "connection lost"}}), AIRefusalError)
+
+
+def test_text_stream_recovery_keeps_listening_to_the_same_turn(sdk):
+    sdk.events = [
+        sdk.types.ErrorNotification(will_retry=True, error=_Record(
+            message="stream disconnected before completion: Transport error: network error: error decoding response body")),
+        sdk.types.ItemCompletedNotification(item=_Record(root=sdk.types.AgentMessageThreadItem(
+            id="text-1", type="agentMessage", phase=None, text='{"ok": true}'))),
+        _usage(sdk), _completed(sdk),
+    ]
+    result = asyncio.run(runtime.run_text(model="exact-model", system_prompt="Extract", user_content="Story"))
+    assert result.text == '{"ok": true}'
+    assert len(sdk.turns) == 1
+    assert result.metadata["events"][0]["will_retry"] is True
+    assert result.input_tokens == 31
+
+
+def test_text_allows_bounded_stream_recovery_but_images_never_retry(tmp_path):
+    text = runtime._config(tmp_path, {"kind": "text"}, "restricted")
+    image = runtime._config(tmp_path, {"kind": "image"}, "restricted")
+    assert text["model_providers"][runtime.PROVIDER]["stream_max_retries"] == 2
+    assert image["model_providers"][runtime.PROVIDER]["stream_max_retries"] == 0
+    assert image["model_providers"][runtime.PROVIDER]["request_max_retries"] == 0
+
+
+@pytest.mark.parametrize("kind,will_retry", [("text", False), ("image", True), ("image", False)])
+def test_terminal_text_errors_and_all_image_errors_remain_failures(sdk, kind, will_retry):
+    sdk.events = [sdk.types.ErrorNotification(will_retry=will_retry, error=_Record(
+        message="stream disconnected before completion: Transport error: network error: error decoding response body"))]
+    with pytest.raises(runtime.CodexRuntimeError, match="runtime_turn_error"):
+        if kind == "image":
+            _generate()
+        else:
+            asyncio.run(runtime.run_text(model="exact-model", system_prompt="Extract", user_content="Story"))
+    assert len(sdk.turns) == 1
+    assert sdk.notification_reads == 1
+    assert sdk.interrupts == [("thread-1", "turn-1")]

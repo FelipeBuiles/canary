@@ -90,6 +90,10 @@ def check_local_links(failures: list[str]) -> None:
     paths = [ROOT / "AGENTS.md", ROOT / "CLAUDE.md", ROOT / "CONTEXT.md", *((ROOT / "docs").rglob("*.md"))]
     pattern = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
     for path in paths:
+        if not path.is_file():
+            if path.name != "CLAUDE.md":
+                fail(f"Required documentation missing: {path.relative_to(ROOT)}", failures)
+            continue
         for target in pattern.findall(path.read_text()):
             target = target.split("#", 1)[0]
             if not target or "://" in target or target.startswith("mailto:"):

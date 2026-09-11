@@ -276,11 +276,30 @@ def test_extract_image_candidate_finish_reason_diagnostics():
     )
     response = SimpleNamespace(candidates=[mock_candidate], prompt_feedback=None)
 
-    with pytest.raises(ValueError) as excinfo:
+    with pytest.raises(litellm.APIError) as excinfo:
         _extract_image(response)
 
+    assert excinfo.value.status_code == 400
     err_msg = str(excinfo.value)
     assert "candidate #0" in err_msg
     assert "finish_reason=SAFETY" in err_msg
     assert "finish_message=Candidate blocked by safety" in err_msg
     assert "HARM_CATEGORY_HARASSMENT(prob=MEDIUM, blocked=True)" in err_msg
+
+
+@pytest.mark.parametrize("reason", ["IMAGE_PROHIBITED_CONTENT", "IMAGE_SAFETY", "PROHIBITED_CONTENT", "SAFETY"])
+def test_candidate_policy_refusal_is_not_an_ambiguous_server_error(reason):
+    response = SimpleNamespace(candidates=[SimpleNamespace(
+        content=None, finish_reason=reason, finish_message="Blocked", safety_ratings=None,
+    )], prompt_feedback=None, model_version="gemini-3-pro-image")
+    with pytest.raises(litellm.APIError) as error:
+        _extract_image(response)
+    assert error.value.status_code == 400
+
+
+def test_empty_image_with_unknown_finish_reason_remains_ambiguous():
+    response = SimpleNamespace(candidates=[SimpleNamespace(
+        content=None, finish_reason="STOP", finish_message=None, safety_ratings=None,
+    )], prompt_feedback=None)
+    with pytest.raises(ValueError, match="did not contain image bytes"):
+        _extract_image(response)

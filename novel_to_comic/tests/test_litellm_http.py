@@ -58,6 +58,26 @@ def test_gpt_image_2_wire_request_uses_openai_image_api_fields():
     }
 
 
+def test_muse_wire_request_uses_openrouter_image_fields():
+    params, files = serialize_wire_request(
+        _wire(
+            alias="image-muse",
+            route=ImageRoute.MUSE_IMAGE,
+            provider_key="openrouter",
+            provider_model="openrouter/meta/muse-image",
+        )
+    )
+
+    assert files == []
+    assert params == {
+        "model": "image-muse",
+        "prompt": "A test image",
+        "size": "1024x1536",
+        "n": 1,
+        "quality": "medium",
+    }
+
+
 def test_custom_image_routes_keep_the_wire_manifest_for_handlers():
     params, files = serialize_wire_request(
         _wire(

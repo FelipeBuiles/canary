@@ -91,6 +91,9 @@ class CodexImageResult:
     metadata: dict[str, Any]
 
 
+from novel_to_comic.ai.errors import AIRefusalError
+
+
 class CodexRuntimeError(RuntimeError):
     """Sanitized failure with submission/usage evidence, including ambiguity."""
 
@@ -107,6 +110,20 @@ class CodexRuntimeError(RuntimeError):
             super().__init__(message)
         else:
             super().__init__(f"{code}: {reason}" if reason else code)
+
+
+class CodexRuntimeRefusalError(CodexRuntimeError, AIRefusalError):
+    """Explicit provider refusal retaining Codex submission and usage evidence."""
+
+
+def _runtime_error(code: str, metadata: dict[str, Any]) -> CodexRuntimeError:
+    provider = metadata.get("provider_error") or {}
+    message = provider.get("message", "") if isinstance(provider, dict) else ""
+    if code == "runtime_turn_error" and isinstance(message, str) and message.endswith(
+        "Incomplete response returned, reason: content_filter"
+    ):
+        return CodexRuntimeRefusalError(code, metadata)
+    return CodexRuntimeError(code, metadata)
 
 
 def _provider_error(error: Any, request: dict[str, Any]) -> dict[str, Any]:
@@ -348,7 +365,7 @@ async def _run(request: dict[str, Any]) -> dict[str, Any]:
                     if completed is not None:
                         completed["metadata"].update(recovered_after_timeout=True)
                         return completed
-                raise CodexRuntimeError(result["error"], result["metadata"])
+                raise _runtime_error(result["error"], result["metadata"])
             return result
 
 
@@ -454,7 +471,8 @@ def _config(root: Path, request: dict[str, Any], profile: str) -> dict[str, Any]
         "permissions": {profile: {"filesystem": {str(workspace): "read"},
                                    "network": {"enabled": False}}},
         "model_providers": {PROVIDER: {"name": "OpenAI", "requires_openai_auth": True,
-                                        "request_max_retries": 0, "stream_max_retries": 0,
+                                        "request_max_retries": 0,
+                                        "stream_max_retries": 2 if request["kind"] == "text" else 0,
                                         "wire_api": "responses", "supports_websockets": False,
                                         "supports_standalone_web_search": False}},
     }
@@ -712,7 +730,10 @@ async def _execute(root: Path, request: dict[str, Any], evidence: dict[str, Any]
                     evidence["provider_error"] = diagnostic
                     evidence["events"].append({"type": "error", "will_retry": payload.will_retry,
                                                "error": diagnostic})
-                    raise CodexRuntimeError("runtime_turn_error", evidence)
+                    # Text has no side-effecting tools. Let the runtime recover
+                    # its stream within this turn; never resubmit an image call.
+                    if request["kind"] != "text" or not payload.will_retry:
+                        raise _runtime_error("runtime_turn_error", evidence)
                 elif isinstance(payload, (ItemStartedNotification, ItemCompletedNotification)):
                     item = payload.item.root
                     if isinstance(payload, ItemStartedNotification) and isinstance(item, ImageGenerationThreadItem):
