@@ -22,7 +22,7 @@ from fastapi import FastAPI
 
 from novel_to_comic.ai import ai_request_context
 from novel_to_comic.config import Config
-from novel_to_comic.codex_dev import classify_operations, funding_scope
+from novel_to_comic.codex_dev import classify_operations
 from .codex_admission import Operations, stage_operations
 from novel_to_comic.frozen_requests import (
     FrozenRequestError,
@@ -90,7 +90,7 @@ async def run_credited_stage(
     Raises CreditReservationDenied when the reservation cannot be placed
     (insufficient credits or ledger errors); the stage is not started.
     """
-    funding = classify_operations(stage_operations(config, stage))
+    classify_operations(stage_operations(config, stage))
     db = get_db()
     try:
         reservation_credits = estimate_stage_credit_reservation(config, project_dir, state, stage)
@@ -109,7 +109,7 @@ async def run_credited_stage(
 
     try:
         assert_reservation_active(db, reservation_id)
-        with funding_scope(funding), ai_request_context(
+        with ai_request_context(
             user_id=user_id,
             project_id=project_id,
             project_name=project_dir.name,
@@ -256,7 +256,7 @@ def enqueue_reserved_generation_job(
     async def _runner() -> None:
         try:
             assert_reservation_active(db, reservation_id)
-            with funding_scope(funding), ai_request_context(
+            with ai_request_context(
                 user_id=user_id,
                 project_id=project_id,
                 project_name=project_dir.name,
@@ -494,7 +494,7 @@ async def run_credited_page_check(*, user_id: str, project_id: str, project_dir:
         reservation, job_id = reserve_credits(db, user_id, project_id, 'draw', estimate["reserved_credits"] or 0)
         try:
             assert_reservation_active(db, reservation)
-            with funding_scope(funding), ai_request_context(user_id=user_id, project_id=project_id,
+            with ai_request_context(user_id=user_id, project_id=project_id,
                                     project_name=project_dir.name, stage='draw', job_id=job_id,
                                     page_number=page_number):
                 return await work()

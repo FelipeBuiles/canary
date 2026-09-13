@@ -11,13 +11,12 @@ from novel_to_comic.models.validation import EditorialIssue
 
 
 class ApprovedPageRange(BaseModel):
-    """The human-approved page-count bounds Plan must respect."""
+    """The human-approved target length; actual allocation may be shorter or longer."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     minimum: int = Field(ge=1)
     maximum: int = Field(ge=1)
-    allow_expansion: bool = False
     approved: Literal[True] = True
 
     @model_validator(mode="after")
@@ -201,8 +200,6 @@ class BookPlan(RevisionedArtifact):
         page_numbers = [page.page_number for page in self.pages]
         if page_numbers != list(range(1, len(self.pages) + 1)):
             raise ValueError("planned page numbers must be consecutive")
-        if not self.target_page_min <= len(self.pages) <= self.target_page_max:
-            raise ValueError("planned page count is outside the approved target range")
         if any(issue.owner_stage != "plan" for issue in self.editorial_issues):
             raise ValueError("book-plan editorial issues must be owned by Plan")
         return self

@@ -48,6 +48,13 @@ from novel_to_comic.usage import ApiResult
 
 console = Console()
 
+_CAST_RENDERING_CONSISTENCY = (
+    "Keep one artistic hand across the entire cast, matching the shared style reference's "
+    "medium, line weight, facial modeling, and degree of realism. Human, animal, and "
+    "creature anatomy must not switch the rendering style. Do not render one character "
+    "photographically and another as animation. Identity and age differences change "
+    "the subject, not the artistic treatment."
+)
 
 
 
@@ -215,6 +222,14 @@ def _cast_asset_style_ref(config: Config, style_ref: Path | None) -> Path | None
     return RefStrategy.for_config(config).cast_style_ref(style_ref)
 
 
+def _require_shared_character_style(config: Config, style_ref: Path | None) -> None:
+    if (not RefStrategy.for_config(config).use_character_style_calibration()
+            and (style_ref is None or not style_ref.is_file())):
+        raise ValueError(
+            "The selected Style proof is required for consistent character rendering. "
+            "Regenerate and select a Style sample before generating Cast references."
+        )
+
 
 
 
@@ -269,6 +284,16 @@ def _character_generation_input(
         "and a neutral three-quarter whole-body view on the right. Use the natural posture "
         "and complete anatomy specified by the character's visual anchor, on a plain background."
     )
+    identity_details = "\n".join(filter(None, (
+        f"Canonical age: {char.age_range}.",
+        f"Canonical wardrobe: {char.default_outfit}." if char.default_outfit else "",
+        "Canonical distinguishing details: " + "; ".join(char.distinguishing_features)
+        if char.distinguishing_features else "",
+        "Design this named individual's own face and silhouette from the canonical facts. "
+        "People in a style reference are not a cast to choose from: do not copy their "
+        "faces, hair, age, or clothing. Unspecified details must remain compatible with "
+        "this individual's age, anatomy, and wardrobe.",
+    )))
     return CanonicalCharacterReferenceInput(
         asset_identity=f"character_ref:{char.id}",
         prompt=GenerationPromptInput(
@@ -278,12 +303,12 @@ def _character_generation_input(
             ),),
             visual_brief=direction,
             editorial_addendum=addendum,
-            editable_facets=("wardrobe color", "wardrobe material", "accessories", "expression"),
             composition="Square two-view character reference sheet, portrait left and full body right.",
             constraints=(
                 "Preserve active anatomy, age, and proportions in the selected style. "
                 "Each view stays within its equal vertical half. No text, labels, "
-                "divider lines, scenery, or other characters."
+                "divider lines, scenery, or other characters.\n" + identity_details
+                + "\n" + _CAST_RENDERING_CONSISTENCY
             ),
             width=1024,
             height=1024,
@@ -304,9 +329,11 @@ def _character_style_reference(
     config: Config, project_dir: Path, fallback: Path | None,
 ) -> Path | None:
     """Use a calibration board only when its producing request is current."""
+    if not RefStrategy.for_config(config).use_character_style_calibration():
+        return fallback
     board = _character_style_board_path(project_dir)
-    request = compile_non_panel_request(
-        config, _character_style_calibration_input(config, artifacts.read_story_bible(project_dir)),
+    request = _compile_cast_request(
+        config, project_dir, _character_style_calibration_input(config, artifacts.read_story_bible(project_dir)),
         reference_plan=style_reference_plan(config, fallback),
     )
     return board if asset_matches_request(board, request) else fallback
@@ -367,7 +394,6 @@ def _location_generation_input(
             ),),
             visual_brief=direction,
             editorial_addendum=addendum,
-            editable_facets=("lighting", "weather", "atmosphere", "surface color"),
             composition="Wide environment design plate with no characters or text.",
             constraints="No text, noisy grain, repeated texture fields, or muddy micro-detail.",
             width=1344,
@@ -397,7 +423,6 @@ def _prop_generation_input(
             visual_brief=direction,
             composition="Single centered prop reference, no cropping.",
             editorial_addendum=addendum,
-            editable_facets=("material", "color", "surface condition"),
             constraints="No characters, hands, scenery, other objects, text, labels, or captions.",
             width=1024,
             height=1024,
@@ -465,20 +490,24 @@ def _state_asset_prompt(spec: StateAssetGenerationSpec) -> GenerationPromptInput
         anchors=tuple(anchors), subjects=tuple(subjects), composition=composition,
         visual_brief=spec.state_direction or None,
         editorial_addendum=spec.state_addendum,
-        editable_facets=(("wardrobe color", "wardrobe material", "accessories", "expression")
-                         if spec.asset_kind == "character_state_ref"
-                         else ("lighting", "weather", "atmosphere", "surface color")
-                         if spec.asset_kind == "location_state_plate" else ("material", "color", "surface condition")),
         constraints=(
             "The active-state anchor and verbatim guard win over changed canonical facts. "
             "Canonical references preserve only explicitly compatible identity facets; "
             "selected art direction owns rendering."
+            + ("\n" + _CAST_RENDERING_CONSISTENCY if spec.asset_kind == "character_state_ref" else "")
         ),
         location_state_id=spec.state_id if spec.asset_kind == "location_state_plate" else None,
         width=spec.effective_width, height=spec.effective_height,
         generation_width=spec.effective_width, generation_height=spec.effective_height,
         generation_shape=spec.requested_shape,
     )
+
+
+def _compile_cast_request(config, project_dir, input_data, *, reference_plan):
+    from novel_to_comic.cast_reference_inputs import with_cast_reference_inputs
+
+    plan = with_cast_reference_inputs(config, project_dir, input_data, reference_plan)
+    return compile_non_panel_request(config, input_data, reference_plan=plan)
 
 
 def _compile_state_asset_wire(
@@ -506,7 +535,7 @@ def _compile_state_asset_wire(
         lineage=spec.lineage_metadata(),
         edit_parent_indices=tuple(index for index, ref in enumerate(plan.selected) if ref.role != "style"),
     )
-    request = compile_non_panel_request(config, input_data, reference_plan=plan)
+    request = _compile_cast_request(config, project_dir, input_data, reference_plan=plan)
     spec.compiled_request_sha256 = request.compiled.compiled_request_sha256
     spec.execution_fingerprint = request.wire.execution_fingerprint
     return replace(
@@ -559,10 +588,11 @@ async def regenerate_character_ref(
         config, _find_style_ref(project_dir, config.style_template)
     )
     style_ref = _character_style_reference(config, project_dir, approved_style_ref)
+    _require_shared_character_style(config, style_ref)
     addendum = _read_character_ref_addendum(project_dir, char.id)
     input_data = _character_generation_input(config, story_bible, char, addendum)
-    request = compile_non_panel_request(
-        config, input_data, reference_plan=style_reference_plan(config, style_ref)
+    request = _compile_cast_request(
+        config, project_dir, input_data, reference_plan=style_reference_plan(config, style_ref)
     )
 
     record_asset_version(output_path, project_dir, reason="before_regenerate")
@@ -607,6 +637,7 @@ async def regenerate_character_state_ref(
         config, _find_style_ref(project_dir, config.style_template)
     )
     style_ref = _character_style_reference(config, project_dir, approved_style_ref)
+    _require_shared_character_style(config, style_ref)
     spec = build_character_state_spec(config, project_dir, char, state, style_path=style_ref)
 
     record_asset_version(output_path, project_dir, reason="before_regenerate")
@@ -636,8 +667,8 @@ async def regenerate_prop_ref(
     style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
     addendum = _read_prop_ref_addendum(project_dir, prop.id)
     input_data = _prop_generation_input(config, prop, addendum)
-    request = compile_non_panel_request(
-        config, input_data, reference_plan=style_reference_plan(config, style_ref)
+    request = _compile_cast_request(
+        config, project_dir, input_data, reference_plan=style_reference_plan(config, style_ref)
     )
 
     async with sem:
@@ -680,8 +711,8 @@ async def regenerate_location_plate(
     else:
         addendum = _read_location_plate_addendum(project_dir, loc.id)
         input_data = _location_generation_input(config, loc, addendum, anchor=anchor)
-        request = compile_non_panel_request(
-            config, input_data, reference_plan=style_reference_plan(config, style_ref)
+        request = _compile_cast_request(
+            config, project_dir, input_data, reference_plan=style_reference_plan(config, style_ref)
         )
         spec = None
 
@@ -712,8 +743,8 @@ async def _generate_character_style_board(
         config, _find_style_ref(project_dir, config.style_template)
     )
     input_data = _character_style_calibration_input(config, artifacts.read_story_bible(project_dir))
-    request = compile_non_panel_request(
-        config,
+    request = _compile_cast_request(
+        config, project_dir,
         input_data,
         reference_plan=style_reference_plan(config, approved_style_ref),
     )
@@ -772,17 +803,13 @@ async def _generate_character_refs(
     # type (human → concept art, cat → anime, creature → dark fantasy).
     candidate_style_ref = _find_style_ref(project_dir, config.style_template)
     style_ref = style_ref or _cast_asset_style_ref(config, candidate_style_ref)
+    _require_shared_character_style(config, style_ref)
     if style_ref:
         console.print(f"[dim]Using style reference: {style_ref.name}[/dim]")
-    elif candidate_style_ref:
-        console.print(
-            "[dim]Skipping style image reference for gpt-image-2 cast refs "
-            "to avoid copied subject details and texture artifacts.[/dim]"
-        )
     else:
         console.print(
-            "[yellow]No style sample found — run `pipeline style` and generate a sample "
-            "before indexing for tighter style consistency across character sheets.[/yellow]"
+            "[yellow]No style sample found — generate and select a Style sample "
+            "in the app before generating character references.[/yellow]"
         )
 
     chars_to_gen = [c for c in story_bible.characters if not char_ids or c.id in char_ids]
@@ -797,8 +824,8 @@ async def _generate_character_refs(
             output_path = char_dir / "sheet.png"
             addendum = _read_character_ref_addendum(project_dir, char.id)
             input_data = _character_generation_input(config, story_bible, char, addendum)
-            request = compile_non_panel_request(
-                config, input_data, reference_plan=style_reference_plan(config, style_ref)
+            request = _compile_cast_request(
+                config, project_dir, input_data, reference_plan=style_reference_plan(config, style_ref)
             )
 
             if asset_matches_request(output_path, request):
@@ -815,8 +842,8 @@ async def _generate_character_refs(
                     ctx.log(f"Generating ref sheet for {char.name}")
                     # The shared two-view sheet provides both facial identity
                     # and body proportions for framing-aware conditioning.
-                    # Pass the style sample when the active image model handles
-                    # references reliably; gpt-image-2 cast refs stay text-driven.
+                    # Every character uses the same shared rendering authority;
+                    # no character-specific style selection happens here.
                     async with semaphore:
                         submission = await submit_non_panel_request(
                             config=config, project_dir=project_dir, request=request,
@@ -863,6 +890,7 @@ async def _generate_character_state_refs(
     style_ref = style_ref or _cast_asset_style_ref(
         config, _find_style_ref(project_dir, config.style_template)
     )
+    _require_shared_character_style(config, style_ref)
     semaphore = _cast_semaphore(config)
 
     with make_progress(ctx.on_event) as progress:
@@ -976,8 +1004,8 @@ async def _generate_location_plates(
             else:
                 addendum = _read_location_plate_addendum(project_dir, loc.id)
                 input_data = _location_generation_input(config, loc, addendum, anchor=anchor)
-                wire = compile_non_panel_request(
-                    config, input_data, reference_plan=style_reference_plan(config, style_ref)
+                wire = _compile_cast_request(
+                    config, project_dir, input_data, reference_plan=style_reference_plan(config, style_ref)
                 )
                 spec = None
             if asset_matches_request(output_path, wire):
@@ -1049,8 +1077,8 @@ async def _generate_prop_refs(
             output_path.parent.mkdir(parents=True, exist_ok=True)
             addendum = _read_prop_ref_addendum(project_dir, prop.id)
             input_data = _prop_generation_input(config, prop, addendum)
-            request = compile_non_panel_request(
-                config, input_data, reference_plan=style_reference_plan(config, style_ref)
+            request = _compile_cast_request(
+                config, project_dir, input_data, reference_plan=style_reference_plan(config, style_ref)
             )
 
             if asset_matches_request(output_path, request):
@@ -1119,7 +1147,7 @@ async def run(
     total_items = 0
     if should_generate_refs:
         chars_for_count = [c for c in story_bible.characters if not char_ids or c.id in char_ids]
-        if chars_for_count:
+        if chars_for_count and RefStrategy.for_config(config).use_character_style_calibration():
             total_items += 1  # shared character style calibration board
         total_items += len(chars_for_count)
         total_items += sum(len(_character_state_jobs(c)) for c in chars_for_count)
@@ -1136,7 +1164,8 @@ async def run(
         if should_generate_refs:
             character_style_ref = (
                 await _generate_character_style_board(config, project_dir, ctx)
-                if chars_for_count else None
+                if chars_for_count and RefStrategy.for_config(config).use_character_style_calibration()
+                else _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
             )
             await _generate_character_refs(
                 config, project_dir, story_bible, ctx, char_ids, character_style_ref
@@ -1286,8 +1315,8 @@ def ready_asset_count(config: Config, project_dir: Path) -> int | None:
         for char in bible.characters:
             requests.append((
                 artifacts.character_ref_sheet_path(project_dir, char.id),
-                compile_non_panel_request(
-                    config, _character_generation_input(
+                _compile_cast_request(
+                    config, project_dir, _character_generation_input(
                         config, bible, char, _read_character_ref_addendum(project_dir, char.id)
                     ), reference_plan=style_reference_plan(config, character_style_ref),
                 ),
@@ -1304,8 +1333,8 @@ def ready_asset_count(config: Config, project_dir: Path) -> int | None:
         for loc in bible.locations:
             requests.append((
                 artifacts.location_plate_path(project_dir, loc.id),
-                compile_non_panel_request(
-                    config, _location_generation_input(
+                _compile_cast_request(
+                    config, project_dir, _location_generation_input(
                         config, loc, _read_location_plate_addendum(project_dir, loc.id)
                     ), reference_plan=style_reference_plan(config, style_ref),
                 ),
@@ -1321,8 +1350,8 @@ def ready_asset_count(config: Config, project_dir: Path) -> int | None:
         for prop in bible.props:
             requests.append((
                 artifacts.prop_ref_path(project_dir, prop.id),
-                compile_non_panel_request(
-                    config, _prop_generation_input(
+                _compile_cast_request(
+                    config, project_dir, _prop_generation_input(
                         config, prop, _read_prop_ref_addendum(project_dir, prop.id)
                     ), reference_plan=style_reference_plan(config, style_ref),
                 ),
@@ -1371,7 +1400,8 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     total = 0.0
     character_style_ref = _character_style_reference(config, project_dir, style_ref)
     character_style_plan = style_reference_plan(config, character_style_ref)
-    if story_bible.characters and not _character_style_board_path(project_dir).exists():
+    if (story_bible.characters and RefStrategy.for_config(config).use_character_style_calibration()
+            and not _character_style_board_path(project_dir).exists()):
         total += estimate_non_panel_request(
             config,
             _character_style_calibration_input(config, story_bible),

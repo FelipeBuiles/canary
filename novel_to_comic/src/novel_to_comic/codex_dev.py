@@ -9,9 +9,7 @@ import ipaddress
 import json
 import os
 import re
-from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
-from contextvars import ContextVar
+from collections.abc import Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
@@ -25,7 +23,6 @@ _KEYS = (
     "CANARY_CODEX_DEV_IMAGE_REASONING_MODEL", "CANARY_CODEX_DEV_MODELS",
 )
 _PROCESS = MappingProxyType({key: os.environ.get(key) for key in _KEYS})
-_FUNDING: ContextVar[Funding | None] = ContextVar("codex_admitted_funding", default=None)
 
 
 class CodexRoutingError(ValueError):
@@ -180,37 +177,12 @@ def route_for(kind: str, model: str) -> CodexRoute | None:
 
 
 def classify_operations(operations: Sequence[tuple[str, str]]) -> Funding:
-    fundings = {"codex_subscription" if route_for(kind, model) else "api" for kind, model in operations}
-    if len(fundings) > 1:
-        raise CodexRoutingError("A job cannot mix API-funded and Codex-subscription operations")
-    return "codex_subscription" if "codex_subscription" in fundings else "api"
+    """Validate routes and summarize whether the work contains API spend.
 
-
-@contextmanager
-def funding_scope(funding: Funding) -> Iterator[None]:
-    if funding not in {"api", "codex_subscription"}:
-        raise CodexRoutingError("Unknown admitted funding")
-    previous = _FUNDING.get()
-    if previous is not None and previous != funding:
-        raise CodexRoutingError("Nested job funding disagrees with admitted funding")
-    token = _FUNDING.set(funding)
-    try:
-        yield
-    finally:
-        _FUNDING.reset(token)
-
-
-def assert_request_funding(kind: str, model: str, *, require_admission: bool = False) -> None:
-    actual = classify_operations(((kind, model),))
-    admitted = _FUNDING.get()
-    if require_admission and admitted is None and actual == "codex_subscription":
-        raise CodexRoutingError("A selected Codex request in a job requires admitted funding")
-    if admitted is not None and admitted != actual:
-        raise CodexRoutingError("Request funding disagrees with the admitted job")
-
-
-def require_same_text_target(*models: str) -> None:
-    classify_operations(tuple(("text", model) for model in models))
-    targets = {route.reasoning_model for model in models if (route := route_for("text", model))}
-    if len(targets) > 1:
-        raise CodexRoutingError("Automatic escalation cannot switch Codex reasoning models")
+    This is an estimate label, not an execution lock. Codex is a local transport;
+    it can be mixed with API calls in any job. Each call owns its usage and only
+    API calls settle credits. Visit every route so a disabled/invalid Codex
+    selection still fails before work starts.
+    """
+    routes = [route_for(kind, model) for kind, model in operations]
+    return "codex_subscription" if routes and all(routes) else "api"

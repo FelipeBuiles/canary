@@ -180,7 +180,7 @@ def find_active_generation_job(
     # instructed requests for the same asset must share one active-work slot.
     def identity(value: dict[str, Any]) -> dict[str, Any]:
         if kind in {"character_ref_regen", "location_plate_regen", "prop_ref_regen"}:
-            return {key: item for key, item in value.items() if key != "instruction"}
+            return {key: item for key, item in value.items() if key not in {"instruction", "reference_assets"}}
         return value
 
     jobs = app.state.generation_jobs if app is not None else _global_jobs

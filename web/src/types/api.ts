@@ -110,6 +110,7 @@ export interface StageCostEstimate extends CostEstimate {
 }
 
 export interface AssetRegenCostEstimate extends CostEstimate {
+  reference_assets_supported?: boolean;
   asset_type: "character" | "location" | "prop";
   asset_id: string;
   state_id: string | null;
@@ -662,4 +663,10 @@ export interface ShortStory {
   image?: string;
   blurb?: string;
   description?: string;
+}
+
+export interface CastReferenceInput {
+  asset_type: "character" | "location" | "prop";
+  asset_id: string;
+  state_id?: string;
 }

@@ -68,6 +68,7 @@ class ReferenceAsset:
     content_sha256: str
     lineage_parent_sha256: str | None
     label: str | None = None
+    purpose: Literal["authority", "instruction_context"] = "authority"
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +110,7 @@ def selection_fingerprint_hex(selected: Iterable[ReferenceAsset]) -> str:
     projection = [
         {
             "role": asset.role,
+            **({"purpose": asset.purpose} if asset.purpose != "authority" else {}),
             "entity_id": asset.entity_id,
             "appearance_state_id": asset.appearance_state_id,
             "authority_scope": asset.authority_scope.value,

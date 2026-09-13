@@ -1,11 +1,13 @@
 import { useState } from "react";
-import { useRunAction } from "../../hooks/useRunAction";
+import { useQueryClient } from "@tanstack/react-query";
 import { useStageEstimate } from "../../api/queries";
+import { useRunAction } from "../../hooks/useRunAction";
+import { useI18n } from "../../i18n";
 import { RERUN_IMPACT } from "../../lib/rerunImpact";
-import type { StageName } from "../../types/api";
-import { STAGE_DISPLAY_NAMES } from "../../types/api";
-import { DestructiveButton } from "../ui/DestructiveButton";
 import { RerunDrawer } from "./RerunDrawer";
+import { DestructiveButton } from "../ui/DestructiveButton";
+import type { StageName } from "../../types/api";
+import { Button } from "../ui/Button";
 
 interface RerunStageActionProps {
   project: string;
@@ -13,6 +15,7 @@ interface RerunStageActionProps {
   label: string;
   disabled?: boolean;
   itemsAtRisk?: string;
+  description?: string;
   className?: string;
 }
 
@@ -22,40 +25,68 @@ export function RerunStageAction({
   label,
   disabled = false,
   itemsAtRisk,
+  description,
   className,
 }: RerunStageActionProps) {
-  const [open, setOpen] = useState(false);
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
   const { handleRun, isPending } = useRunAction();
-  const impact = RERUN_IMPACT[stage];
-  const busy = disabled || isPending;
-
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const estimate = useStageEstimate(project, stage, open);
+  const unavailable = disabled || isPending || !estimate.data || !!estimate.error || estimate.isFetching;
 
-  function confirmRerun() {
-    handleRun(project, stage, { rerun: true });
-    setOpen(false);
+  function confirm() {
+    if (unavailable) return;
+    setError(null);
+    handleRun(project, stage, {
+      rerun: true,
+      actionLabel: t(`Rerun ${label}`),
+      onSuccess: () => {
+        setOpen(false);
+        void queryClient.invalidateQueries({ queryKey: ["project", project] });
+      },
+      onError: (failure) => setError(failure.message),
+    });
   }
 
   return (
     <>
       <DestructiveButton
         size="sm"
-        onClick={() => setOpen(true)}
-        disabled={busy}
         className={className}
+        disabled={disabled || isPending}
+        onClick={() => { setError(null); setOpen(true); }}
       >
-        {busy ? "Rerunning…" : `↺ Rerun ${label}`}
+        {isPending ? "Rerunning…" : `↺ ${t(`Rerun ${label}`)}`}
       </DestructiveButton>
       <RerunDrawer
         open={open}
-        stageName={label}
-        impactStages={impact.downstream}
-        cost={estimate.data}
+        stageName={t(label)}
+        impactStages={RERUN_IMPACT[stage].downstream}
         itemsAtRisk={itemsAtRisk}
-        confirmLabel={`Rerun ${STAGE_DISPLAY_NAMES[stage]}`}
-        busy={busy}
-        onConfirm={confirmRerun}
-        onClose={() => setOpen(false)}
+        cost={estimate.error ? undefined : estimate.data}
+        confirmLabel={t(`Rerun ${label}`)}
+        busy={isPending}
+        disabled={unavailable}
+        onConfirm={confirm}
+        onClose={() => { if (!isPending) setOpen(false); }}
+        extraBody={(
+          <div className="space-y-3 text-sm leading-6">
+            {description && <p>{description}</p>}
+            {disabled && <p role="status">{t("Wait for current project work to finish before restarting this step.")}</p>}
+            {estimate.isFetching && <p role="status">{t("Loading estimate…")}</p>}
+            {estimate.error && (
+              <div role="alert">
+                <p>{t("The estimate could not be loaded. No work has started.")}</p>
+                <Button variant="outline" size="sm" onClick={() => void estimate.refetch()} disabled={estimate.isFetching}>
+                  {t("Retry estimate")}
+                </Button>
+              </div>
+            )}
+            {error && <p role="alert" className="text-hero-red">{error}</p>}
+          </div>
+        )}
       />
     </>
   );

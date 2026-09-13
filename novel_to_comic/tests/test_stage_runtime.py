@@ -348,3 +348,26 @@ def test_refusal_persists_machine_readable_error_code(tmp_path):
     assert state.stages["extract"].error_code == "model_refusal"
     ctx.fail("Ordinary failure")
     assert state.stages["extract"].error_code is None
+
+
+@pytest.mark.parametrize('environment,visible', [('dev', True), ('production', False)])
+def test_refusal_details_follow_existing_local_diagnostics_gate(tmp_path, monkeypatch, environment, visible):
+    from novel_to_comic.ai.errors import AIRefusalError
+    monkeypatch.setenv('CANARY_ENV', environment)
+    monkeypatch.setenv('CANARY_LOCAL_DIAGNOSTICS', 'true')
+    state = _state(tmp_path)
+    with pytest.raises(AIRefusalError):
+        with StageRuntime('adapt', state, tmp_path).execute():
+            raise AIRefusalError('Provider declined', diagnostics={
+                'feature': 'adapt.lettering', 'source_scope': 'lettering/shard_002',
+                'source_unit_ids': ['source_0181'],
+                'content_filter_results': {'violence': {'filtered': True}},
+            })
+    detail = load_state(tmp_path).stages['adapt'].error_detail
+    if visible:
+        assert 'source_0181' in detail
+        assert 'content_filter_results' in detail
+        assert 'lettering/shard_002' in (tmp_path / '.canary/diagnostics.jsonl').read_text()
+    else:
+        assert detail is None
+        assert not (tmp_path / '.canary/diagnostics.jsonl').exists()

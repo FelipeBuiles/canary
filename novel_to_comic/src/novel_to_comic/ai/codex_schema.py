@@ -1,4 +1,4 @@
-"""SDK-only normalization for Codex's strict structured-output contract.
+"""Request normalization for gateway and Codex strict structured output.
 
 Rules: https://developers.openai.com/api/docs/guides/structured-outputs
 Traversal follows OpenAI's public Python SDK schema conversion strategy, without
@@ -35,7 +35,7 @@ def strict_output_schema(schema: dict[str, Any]) -> dict[str, Any]:
     root = deepcopy(schema)
 
     def fail(path: str, reason: str) -> ValueError:
-        return ValueError(f"Unsupported Codex output schema at {path}: {reason}")
+        return ValueError(f"Unsupported strict output schema at {path}: {reason}")
 
     def resolve(reference: Any, path: str) -> dict[str, Any]:
         if not isinstance(reference, str) or not (

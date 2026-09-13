@@ -1,4 +1,8 @@
-"""Server-owned provider manifests; routing authority lives in codex_dev only."""
+"""Provider manifests for route validation and API cost estimates.
+
+A manifest may freely mix local Codex and API operations. Routing authority
+lives in codex_dev; the returned label describes whether API spend is present.
+"""
 from __future__ import annotations
 
 from novel_to_comic.codex_dev import Funding, classify_operations

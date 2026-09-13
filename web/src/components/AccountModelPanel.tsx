@@ -9,18 +9,6 @@ import { SettingsRow } from "./ui/SettingsLayout";
 import { Button } from "./ui/Button";
 
 const QUERY_KEY = ["account-model-settings"];
-const STAGE_HINTS: Record<string, string> = {
-  extract: "Read the source and build the Story Bible.",
-  brief: "Propose the adaptation brief.",
-  adapt: "Write the adaptation and exact dialogue.",
-  plan: "Allocate the adaptation and lettering to pages.",
-  prompt: "Suggest styles and rewrite asset instructions.",
-  image: "Generate style proofs, cast references, and covers.",
-  draw: "Generate complete, lettered comic pages.",
-  ocr: "Read rendered lettering for exact text checks.",
-  visual_review: "Compare artwork against approved references.",
-};
-
 /** Mounted only in a development build. The API independently enforces its gate. */
 export function AccountModelPanel() {
   const { t } = useI18n();
@@ -53,7 +41,6 @@ export function AccountModelPanel() {
   const changes = Object.fromEntries(Object.entries(draft).filter(([stage, model]) => settings.selections[stage] !== model));
   const changed = Object.keys(changes).length > 0;
   const selections = { ...settings.selections, ...draft };
-  const mixedGroups = (settings.funding_groups ?? []).filter((group) => new Set(group.stages.map((stage) => settings.models.find((model) => model.id === selections[stage])?.funding ?? "api")).size > 1);
   return <form aria-label={t("Account model settings")} onSubmit={(event) => {
     event.preventDefault();
     if (changed && !save.isPending) save.mutate(changes);
@@ -62,14 +49,13 @@ export function AccountModelPanel() {
       <h2 className="font-display text-2xl font-black tracking-tight">{t("Models for your account")}</h2>
       <p className="mt-2 max-w-prose font-body text-sm leading-6 text-ink-muted">{t("Choose account defaults for each part of production. New work uses these defaults unless a project has its own model choice.")}</p>
       <p className="mt-2 max-w-prose font-body text-sm leading-6 text-ink-muted">{t("Changing the Draw model requires a new edition or project. Existing pages are never switched automatically.")}</p>
-      <p className="mt-2 max-w-prose font-body text-sm leading-6 text-ink-muted">{t("Saving settings does not start generation. API models use provider billing; Codex models use your local Codex subscription.")}</p>
+      <p className="mt-2 max-w-prose font-body text-sm leading-6 text-ink-muted">{t("Saving settings does not start generation. Mix API and Codex models freely; only API calls use credits.")}</p>
       {settings.codex_enabled === false && <p className="mt-2 max-w-prose font-body text-sm leading-6 text-ink-muted">{t("Codex is disabled on this server. Start local development with --codex to enable its model choices.")}</p>}
-      {mixedGroups.length > 0 && <p role="status" className="mt-3 max-w-prose font-body text-sm leading-6">{t("These linked steps must use the same billing source before you can run them:")} {mixedGroups.map((group) => t(group.label)).join("; ")}. {t("You can use different models within the same billing source.")}</p>}
     </header>
     <Surface border="soft" shadow="none">
       {settings.stages.map((stage) => {
         const selected = settings.models.find((model) => model.id === selections[stage.id]);
-        return <SettingsRow key={stage.id} label={t(stage.label)} hint={t(STAGE_HINTS[stage.id] ?? "")}>
+        return <SettingsRow key={stage.id} label={t(stage.label)} hint={t(stage.description ?? "")}>
         <SelectField
           name={stage.id}
           aria-label={t(stage.label)}
@@ -96,6 +82,7 @@ export function AccountModelPanel() {
       </SettingsRow>;
       })}
     </Surface>
+    <p className="font-body text-sm leading-6 text-ink-muted">{t("8. Finish packages your comic for export. It has no separate model to choose.")}</p>
     {save.isError && <p role="alert" className="font-body text-sm text-hero-red">{save.error.message}</p>}
     {save.isSuccess && <p role="status" className="font-body text-sm">{t("Account models saved. New jobs will use these choices.")}</p>}
     <div className="flex flex-wrap items-center gap-3">

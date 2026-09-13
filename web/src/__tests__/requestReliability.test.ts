@@ -18,6 +18,24 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("paid action receipts", () => {
+  it("releases a replayed Adapt approval rejection for the next explicit attempt", async () => {
+    const fetcher = vi.fn()
+      .mockRejectedValueOnce(new TypeError("Connection lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "Adapt requires an approved adaptation brief" }), {
+        status: 409, headers: { "Idempotency-Replayed": "true" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "started", stage: "adapt" })));
+    vi.stubGlobal("fetch", fetcher);
+    const send = () => apiFetch("/projects/demo/run?stage=adapt", { method: "POST" });
+    await expect(send()).rejects.toThrow("Connection lost");
+    await expect(send()).rejects.toThrow("Adapt requires an approved adaptation brief");
+    expect(fetcher).toHaveBeenCalledTimes(2); // No automatic paid retry.
+    await expect(send()).resolves.toMatchObject({ status: "started" });
+    const keys = fetcher.mock.calls.map((call) => call[1].headers["Idempotency-Key"]);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
+  });
+
   it("does not retry a lost response; an explicit reattempt after navigation reuses its receipt", async () => {
     const fetcher = vi.fn().mockRejectedValueOnce(new TypeError("Connection lost"))
       .mockResolvedValue(new Response(JSON.stringify({ job: { id: "accepted" } }), { status: 200 }));

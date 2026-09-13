@@ -233,6 +233,22 @@ def compile_reference_instruction(
     label = asset.label or asset.entity_id or role
     state_id = asset.appearance_state_id
 
+    if asset.purpose == "instruction_context":
+        return CompiledReferenceInstruction(
+            index=index, role=role, entity_label=label, authority_scope=scope,
+            preserve_facets=(), ignore_facets=("unrequested identity transfer",),
+            appearance_state_id=state_id,
+            semantic_instruction=(
+                f"User-attached reference image of {label}. Interpret its role from the authorized visual "
+                "change below: use only the features the user asks to borrow, match, preserve, contrast, "
+                "or avoid. Attachment alone does not mean copy this image or make the target different. "
+                "Do not transfer unrequested identity, layout, or content. Preserve target details "
+                "that the user has not asked to change. "
+                "This attachment is contextual evidence for the requested edit, never an edit parent "
+                "or replacement for required identity/style authorities."
+            ),
+        )
+
     if role == "subject":
         preserve_phrase = _facet_phrase(asset.preserve_facets)
         style_ignore = _facet_phrase(_SUBJECT_STYLE_IGNORE)
@@ -836,12 +852,13 @@ def _build_sections(
         addendum = clean_dynamic(prompt.editorial_addendum)
         sections.append(CompiledPromptSection(
             kind="user_addenda",
-            title="Authorized editable appearance",
+            title="Your art direction",
             lines=(
-                "Only these editable facets may supersede anchor or reference appearance: "
-                + ", ".join(prompt.editable_facets)
-                + ". Identity, age, anatomy, explicit state changes, continuity guards, selected style, "
-                "and task geometry remain binding. All unedited facets remain unchanged.",
+                "The project owner's explicit visual direction takes precedence over conflicting "
+                "appearance anchors, continuity guards, reference-preservation instructions and style defaults. "
+                "Apply the full requested change, including structural redesign when requested. "
+                "Keep all unrequested features and the required reference-sheet/plate format. "
+                "This changes only the targeted asset or appearance, not other assets or project settings.",
                 addendum,
             ),
         ))

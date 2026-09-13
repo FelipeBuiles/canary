@@ -20,6 +20,8 @@ from typing import Any
 
 import httpx
 
+from novel_to_comic.ai.codex_schema import strict_output_schema
+from novel_to_comic.ai.anthropic_schema import anthropic_output_schema
 from novel_to_comic.ai.context import (
     current_ai_request_context,
     current_stream_observer,
@@ -32,7 +34,7 @@ from novel_to_comic.ai.finalisation import (
     finalise_image_success,
 )
 from novel_to_comic.config import Config, mock_mode_active
-from novel_to_comic.codex_dev import CodexRoutingError, assert_request_funding, route_for
+from novel_to_comic.codex_dev import CodexRoutingError, route_for
 from novel_to_comic.provider_wire import ProviderWireRequest
 from novel_to_comic.usage import (
     ApiResult,
@@ -106,6 +108,12 @@ _JSON_PARSE_MAX_RETRIES = 2
 # gateway to drop them.
 _TEMPERATURE_DEPRECATED_ALIASES = frozenset(
     {
+        "gpt-6-astra",
+        "openai/gpt-6-astra",
+        "claude-fable-5-1",
+        "anthropic/claude-fable-5-1",
+        "claude-opus-5",
+        "anthropic/claude-opus-5",
         "gpt-5.6-terra",
         "openai/gpt-5.6-terra",
         "gpt-5.6-luna",
@@ -120,6 +128,11 @@ _TEMPERATURE_DEPRECATED_ALIASES = frozenset(
         "vertex_ai/gemini-3.8-flash",
     }
 )
+
+_CLAUDE_NATIVE_JSON_ALIASES = frozenset({
+    "claude-fable-5-1", "anthropic/claude-fable-5-1",
+    "claude-opus-5", "anthropic/claude-opus-5",
+})
 
 # OpenRouter exposes the output limit for these model groups as ``max_tokens``.
 # Sending the newer OpenAI spelling (``max_completion_tokens``) while the
@@ -301,6 +314,7 @@ _STREAM_CARRIED_FIELDS = (
     "model",
     "system_fingerprint",
     "prompt_feedback",
+    "prompt_filter_results",
     "error",
     "response_cost",
     "cost",
@@ -323,6 +337,7 @@ def _collapse_chat_chunks(chunks: list[dict[str, Any]]) -> dict[str, Any]:
     finish_reason: str | None = None
     refusal: Any = None
     filter_results: Any = None
+    stop_details: dict[str, Any] | None = None
     usage: dict[str, Any] = {}
     for chunk in chunks:
         for field in _STREAM_CARRIED_FIELDS:
@@ -335,10 +350,13 @@ def _collapse_chat_chunks(chunks: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         choice = choices[0]
         delta = choice.get("delta") or {}
+        provider_fields = delta.get("provider_specific_fields") or {}
+        if isinstance(provider_fields.get("stop_details"), dict):
+            stop_details = provider_fields["stop_details"]
         if delta.get("content"):
             parts.append(str(delta["content"]))
-        if delta.get("refusal") and refusal is None:
-            refusal = delta["refusal"]
+        if delta.get("refusal"):
+            refusal = (refusal or "") + str(delta["refusal"])
         if choice.get("finish_reason"):
             finish_reason = choice["finish_reason"]
         if choice.get("content_filter_results") and filter_results is None:
@@ -346,6 +364,8 @@ def _collapse_chat_chunks(chunks: list[dict[str, Any]]) -> dict[str, Any]:
     message: dict[str, Any] = {"role": "assistant", "content": "".join(parts)}
     if refusal is not None:
         message["refusal"] = refusal
+    if stop_details is not None:
+        message["provider_specific_fields"] = {"stop_details": stop_details}
     rebuilt: dict[str, Any] = {
         "index": 0,
         "message": message,
@@ -625,6 +645,8 @@ def _metadata(
             "project_id": ctx.project_id,
             "workspace_id": ctx.workspace_id,
             "stage": ctx.stage,
+            "source_scope": ctx.source_scope,
+            "source_unit_ids": list(ctx.source_unit_ids),
         },
     }
 
@@ -731,17 +753,68 @@ def _refusal_reason(data: dict[str, Any]) -> str | None:
     choices = data.get("choices") or []
     if choices:
         choice = choices[0]
+        reasons = []
         if choice.get("finish_reason") == "content_filter":
-            return "finish_reason=content_filter"
+            reasons.append("finish_reason=content_filter")
         message = choice.get("message") or {}
         if message.get("refusal"):
-            return f"message.refusal={str(message['refusal'])[:120]!r}"
+            reasons.append(f"message.refusal={str(message['refusal'])[:1000]!r}")
+        if reasons:
+            return "; ".join(reasons)
     error = data.get("error") or {}
     if isinstance(error, dict):
         code = str(error.get("code") or "").lower()
         if code in {"content_policy_violation", "content_filter", "policy_violation"}:
             return f"error.code={code}"
     return None
+
+
+def _text_refusal_error(
+    data: dict[str, Any], *, reason: str, model: str, feature: str, event_id: str,
+    response: httpx.Response | None,
+) -> AIRefusalError:
+    """Retain refusal evidence without copying source prose or request headers."""
+
+    ctx = current_ai_request_context()
+    choice = (data.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    diagnostics = {
+        "event_id": event_id,
+        "feature": feature,
+        "model_alias": model,
+        "provider_model": data.get("model") or model,
+        "provider": _provider_from_model(str(data.get("model") or model)),
+        "source_scope": ctx.source_scope,
+        "source_unit_ids": list(ctx.source_unit_ids),
+        "finish_reason": choice.get("finish_reason"),
+        "refusal": str(message["refusal"])[:4000] if message.get("refusal") else None,
+    }
+    provider_fields = message.get("provider_specific_fields") or {}
+    stop_details = provider_fields.get("stop_details")
+    if isinstance(stop_details, dict):
+        diagnostics["stop_details"] = {
+            key: str(stop_details[key])[:1000] if stop_details.get(key) is not None else None
+            for key in ("type", "category", "explanation")
+        }
+        explanation = diagnostics["stop_details"]["explanation"]
+        if explanation:
+            reason += f"; provider_explanation={explanation!r}"
+    for field, value in (
+        ("content_filter_results", choice.get("content_filter_results")),
+        ("prompt_filter_results", data.get("prompt_filter_results")),
+        ("prompt_feedback", data.get("prompt_feedback")),
+    ):
+        if value is not None:
+            # Keep bounded metadata only; never log the generated story as a reason.
+            encoded = json.dumps(value, ensure_ascii=False, default=str)
+            diagnostics[field] = value if len(encoded) <= 4000 else encoded[:4000]
+    scope = f"; source_scope={ctx.source_scope}" if ctx.source_scope else ""
+    return AIRefusalError(
+        f"AI request was refused by gateway/provider ({reason}); "
+        f"provider={diagnostics['provider']}; model={model}; feature={feature}"
+        f"{scope}; event_id={event_id}",
+        response_data=data, response=response, diagnostics=diagnostics,
+    )
 
 
 def _is_refusal(data: dict[str, Any]) -> bool:
@@ -830,6 +903,8 @@ def _error_json(
             payload["body"] = None
     if exc is not None:
         payload["exception"] = type(exc).__name__
+        if isinstance(exc, AIRefusalError) and exc.diagnostics:
+            payload["refusal_diagnostics"] = exc.diagnostics
         if getattr(exc, "phase", None) == "ambiguous_submission":
             payload["phase"] = "ambiguous_submission"
     return payload
@@ -1019,7 +1094,7 @@ def _finalize_event(
     except Exception as exc:
         event_persisted = False
         logger.warning("ai_usage_events update failed for %s: %s", event_id, exc)
-    if event_persisted and usage is not None and (billable or funding == "codex_subscription"):
+    if event_persisted and usage is not None and billable and funding != "codex_subscription":
         _settle_event_usage(usage, feature=feature, status=status)
     if status != "cancelled" and metadata is not None:
         try:
@@ -1294,7 +1369,7 @@ def _settle_event_usage(usage: UsageRecord, *, feature: str, status: str) -> Non
     from upstream callers collapse to a single ledger row.
     """
     ctx = current_ai_request_context()
-    if not ctx.user_id:
+    if not ctx.user_id or usage.funding == "codex_subscription":
         return
     if status == "succeeded":
         description = f"Model call: {feature}"
@@ -1531,7 +1606,6 @@ async def _chat_completion(
     image_attachments: tuple[tuple[bytes, str], ...] = (),
 ) -> dict[str, Any]:
     route = route_for("text", model)
-    assert_request_funding("text", model, require_admission=current_ai_request_context().job_id is not None)
     if config.mock_mode and (route is not None or not mock_mode_active(config)):
         raise CodexRoutingError("Mock projects cannot execute live Codex requests")
     event_id = str(uuid.uuid4())
@@ -1554,7 +1628,11 @@ async def _chat_completion(
             "json_schema": {
                 "name": schema_name,
                 "strict": True,
-                "schema": json_schema,
+                "schema": (
+                    strict_output_schema(json_schema)
+                    if route is None and model not in _CLAUDE_NATIVE_JSON_ALIASES
+                    else json_schema
+                ),
             },
         }
     elif json_mode:
@@ -1588,7 +1666,15 @@ async def _chat_completion(
     }
     if route is None and model not in _TEMPERATURE_DEPRECATED_ALIASES:
         payload["temperature"] = temperature
-    if response_format is not None:
+    if route is None and model in _CLAUDE_NATIVE_JSON_ALIASES:
+        # The pinned gateway translates unknown Claude response_format models
+        # into forced tool calls, which Fable 5.1 rejects. Use native JSON
+        # output; schema-less JSON uses the instruction and parser above.
+        if json_schema:
+            payload["output_config"] = {"format": {
+                "type": "json_schema", "schema": anthropic_output_schema(json_schema),
+            }}
+    elif response_format is not None:
         payload["response_format"] = response_format
     if route is None and max_output_tokens is not None:
         token_limit_field = (
@@ -1726,8 +1812,9 @@ async def _chat_completion(
             data = response.json()
         refusal = _refusal_reason(data)
         if refusal:
-            raise AIRefusalError(
-                f"AI request was refused by gateway/provider ({refusal})"
+            raise _text_refusal_error(
+                data, reason=refusal, model=model, feature=feature,
+                event_id=event_id, response=response,
             )
         choice = (data.get("choices") or [{}])[0]
         text = (choice.get("message") or {}).get("content")
@@ -1791,6 +1878,7 @@ async def _chat_completion(
     except AIRefusalError as exc:
         # `data` is the collapsed stream body — a streamed response has no
         # buffered content to re-parse here.
+        logger.warning("AI text refusal diagnostics=%s", exc.diagnostics)
         usage = (
             _codex_error_usage(event_id, model, route.reasoning_model, exc)
             if route else (_extract_usage(data, event_id, model, operation) if data else None)
@@ -1892,10 +1980,6 @@ async def generate_wire_image(
         (Path(ref.source_path), data)
         for ref, data in zip(transport_wire.references, blobs, strict=True)
     ]
-    assert_request_funding(
-        "image", transport_wire.requested_alias or transport_wire.configured_provider_model,
-        require_admission=current_ai_request_context().job_id is not None,
-    )
     provider = selector.pick(
         transport_wire.requested_alias or "", config, provider_key=transport_wire.provider_key
     )

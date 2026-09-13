@@ -65,3 +65,51 @@ def test_image_output_detail_excludes_nonimage_tokens():
         output_tokens_details={'image_tokens': 2000, 'text_tokens': 100})},
         'call', 'image-flare', 'image')
     assert calculate_cost_breakdown(record).cost_usd == pytest.approx(.069)
+
+
+def test_measured_style_estimate_is_bounded_and_never_changes_settlement():
+    from novel_to_comic.model_costs import get_pricing_resolver
+
+    resolver = get_pricing_resolver()
+    quote = resolver.estimate_image_cost("image-sunburst", 1, quality="medium",
+        width=1024, height=1280, prompt_tokens=897, ref_count=1)
+    assert quote.source == "measured_consumption_estimate"
+    assert quote.cost_usd == pytest.approx(.034885)
+    observed = _extract_usage({"usage": {
+        "input_tokens": 2402, "output_tokens": 378,
+        "input_tokens_details": {"text_tokens": 897, "image_tokens": 1505},
+        "output_tokens_details": {"image_tokens": 378, "text_tokens": 0},
+    }}, "observed", "image-sunburst", "image")
+    assert calculate_cost_breakdown(observed).cost_usd == pytest.approx(.027865)
+    assert .027865 < quote.cost_usd < .05
+
+
+@pytest.mark.parametrize("model,quality,width,height", [
+    ("image-flare", "medium", 1024, 1280),
+    ("image-sunburst", "high", 1024, 1280),
+    ("image-sunburst", "auto", 1024, 1280),
+    ("image-sunburst", "medium", 768, 1024),
+])
+def test_unmeasured_image_settings_keep_conservative_allowance(model, quality, width, height):
+    from novel_to_comic.model_costs import get_pricing_resolver
+
+    quote = get_pricing_resolver().estimate_image_cost(model, 1, quality=quality, width=width, height=height)
+    assert quote.source == "configured_reservation_allowance"
+    assert quote.cost_usd == .25
+
+
+def test_measured_draw_quote_covers_observed_usage_without_flat_allowance():
+    from novel_to_comic.model_costs import get_pricing_resolver
+
+    quote = get_pricing_resolver().estimate_image_cost(
+        'image-sunburst', 1, quality='high', width=1024, height=1536,
+        prompt_tokens=2022, ref_count=4,
+    )
+    assert quote.source == 'measured_consumption_estimate'
+    assert quote.cost_usd == pytest.approx(.12661)
+    assert .082855 < quote.cost_usd < .15
+    flare = get_pricing_resolver().estimate_image_cost(
+        'image-flare', 1, quality='high', width=1024, height=1536,
+    )
+    assert flare.source == 'configured_reservation_allowance'
+    assert flare.cost_usd == .25

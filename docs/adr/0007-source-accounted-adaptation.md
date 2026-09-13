@@ -70,11 +70,9 @@ source scene and replaces only that scene's beats and ledger decisions inside
 the affected shard. Failures without resolvable local evidence may still
 require a full-shard repair.
 
-The approved minimum page count is a narrative floor, while the maximum is a
-soft editorial constraint rather than permission to drop essential material
-or overload pages. `adapt` uses the range to guide proportional selection and
-compression, while `plan` determines the actual page count. `plan` may not
-lower the approved minimum to legitimize an underdeveloped allocation. If the
-approved story requirements cannot fit the range at acceptable density,
-Canary expands or reports the conflict and recommends a larger range rather
-than silently cutting, truncating, or crowding the adaptation.
+The earlier minimum-page-floor policy is superseded by
+[ADR 0016](0016-narrative-review-and-advisory-length.md). Both ends of the
+approved range are now advisory. Adapt preserves the source's narrative
+functions; Plan chooses the purposeful length without padding to meet a minimum
+or cutting/crowding essential material to meet a maximum. Separate narrative
+review evaluates completeness, coherence, and pacing before drawing.

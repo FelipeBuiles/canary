@@ -8,6 +8,54 @@ export interface LedgerDayGroup {
   runs: CreditLedgerRun[];
 }
 
+export type LedgerFilter = "all" | "charged" | "held" | "failed" | "added";
+
+export function matchesLedgerFilter(run: CreditLedgerRun, filter: LedgerFilter): boolean {
+  switch (filter) {
+    case "charged": return run.actual_credits > 0;
+    case "held": return run.status === "in_flight";
+    case "failed": return run.status === "failed";
+    case "added": return run.credits_added > 0;
+    default: return true;
+  }
+}
+
+export interface LedgerActivityGroup {
+  key: string;
+  label: string;
+  projectId: string | null;
+  actualCredits: number;
+  heldCredits: number;
+  creditsAdded: number;
+  failedCount: number;
+  heldCount: number;
+  runs: CreditLedgerRun[];
+}
+
+/** Condense page jobs without merging their accounting records or outcomes. */
+export function groupRunsByActivity(runs: readonly CreditLedgerRun[]): LedgerActivityGroup[] {
+  const groups = new Map<string, LedgerActivityGroup>();
+  for (const run of runs) {
+    const category = run.credits_added > 0 ? "purchase" : run.stage ?? "adjustment";
+    const key = JSON.stringify([run.project_id, category]);
+    const group = groups.get(key) ?? {
+      key, label: category === "draw" ? "Draw pages" : runActivityLabel(run),
+      projectId: run.project_id, actualCredits: 0, heldCredits: 0, creditsAdded: 0,
+      failedCount: 0, heldCount: 0, runs: [],
+    };
+    group.runs.push(run);
+    group.actualCredits += run.actual_credits;
+    group.creditsAdded += run.credits_added;
+    group.failedCount += Number(run.status === "failed");
+    if (run.status === "in_flight") {
+      group.heldCount++;
+      group.heldCredits += run.estimate_credits;
+    }
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
+
 function localDayKey(iso: string): string {
   const date = new Date(iso);
   const year = date.getFullYear();

@@ -116,10 +116,10 @@ describe("account model controls", () => {
     expect((select as HTMLSelectElement).value).toBe("gpt-5.6-terra");
   });
 
-  it("updates linked-step billing guidance as draft selections change", async () => {
+  it("allows mixed model choices without linked-step billing warnings", async () => {
     const codexId = "codex-dev/text/gpt-5.5";
     vi.mocked(getAccountModelSettings).mockResolvedValue({
-      ...settings, funding_groups: [{ stages: ["adapt", "plan"], label: "Adaptation and page planning" }],
+      ...settings,
       selections: { ...settings.selections, plan: "gpt-5.6-terra" },
       stages: settings.stages.map((stage) => stage.id === "adapt" ? { ...stage, model_ids: [...stage.model_ids, codexId] } : stage),
       models: [...settings.models, { id: codexId, label: "GPT-5.5", provider: "Codex", kind: "text", vision: true, funding: "codex_subscription" }],
@@ -127,7 +127,8 @@ describe("account model controls", () => {
     mount();
     const select = await screen.findByRole("combobox", { name: "Adapt" });
     await userEvent.selectOptions(select, codexId);
-    expect(screen.getByText(/These linked steps must use the same billing source/).textContent).toContain("Adaptation and page planning");
+    expect(screen.queryByText(/These linked steps must use the same billing source/)).toBeNull();
+    expect(screen.getByText(/Mix API and Codex models freely/)).toBeTruthy();
     await userEvent.selectOptions(select, "gpt-5.6-terra");
     expect(screen.queryByText(/These linked steps must use the same billing source/)).toBeNull();
   });

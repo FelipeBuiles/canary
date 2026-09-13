@@ -49,7 +49,7 @@ def test_hosted_activation_is_rejected_even_after_environment_changes(monkeypatc
         routes.route_for("text", "gpt-5.6-terra")
 
 
-def test_classification_separates_complete_page_from_mixed_jobs_and_escalation(monkeypatch):
+def test_classification_allows_mixed_jobs_without_weakening_local_gate(monkeypatch):
     routes = _isolated_settings(
         monkeypatch, CANARY_CODEX_DEV_ENABLED="1", CANARY_ENV="development",
         CANARY_CODEX_DEV_TEXT_ROUTES=json.dumps({"gpt-5.6-terra": "gpt-5.6-terra", "gpt-5.6-luna": "gpt-5.4"}),
@@ -62,17 +62,10 @@ def test_classification_separates_complete_page_from_mixed_jobs_and_escalation(m
         (("text", "gpt-5.6-terra"), ("text", "deepseek-v4.1-flash")),
         (("complete_page", "image-gemini-pro"), ("text", "gemini-3.8-flash")),
     ):
-        with pytest.raises(routes.CodexRoutingError):
-            routes.classify_operations(operations)
-    with pytest.raises(routes.CodexRoutingError):
-        routes.require_same_text_target("gpt-5.6-terra", "gpt-5.6-luna")
+        assert routes.classify_operations(operations) == "api"
+    assert routes.classify_operations((("text", "gpt-5.6-terra"), ("text", "gpt-5.6-luna"))) == "codex_subscription"
     with pytest.raises(routes.CodexRoutingError):
         routes.validate_startup("0.0.0.0")
-    with routes.funding_scope("api"):
-        with pytest.raises(routes.CodexRoutingError):
-            routes.assert_request_funding("text", "gpt-5.6-terra")
-    with pytest.raises(routes.CodexRoutingError):
-        routes.assert_request_funding("text", "gpt-5.6-terra", require_admission=True)
 
 
 @pytest.fixture
@@ -139,13 +132,20 @@ def test_runtime_failure_and_cancel_retain_subscription_evidence(monkeypatch, se
     assert terminal["estimated_cost_usd"] is None
 
 
-def test_declared_job_and_mock_cannot_bypass_authority(monkeypatch, selected_client):
+def test_job_context_does_not_require_funding_admission(monkeypatch, selected_client):
     async def run(**kwargs):
-        pytest.fail("unadmitted call reached runtime")
+        return SimpleNamespace(text="ok", model=kwargs["model"], input_tokens=1, output_tokens=1, metadata={})
     _runtime(monkeypatch, run)
     with ai_request_context(job_id="declared-job"):
-        with pytest.raises(codex_dev.CodexRoutingError):
-            asyncio.run(client.generate_text(config=Config(), model="gpt-5.6-terra", system_prompt="s", user_content="u"))
+        result = asyncio.run(client.generate_text(config=Config(), model="gpt-5.6-terra", system_prompt="s", user_content="u"))
+    assert result.value == "ok"
+    assert result.usage.funding == "codex_subscription"
+
+
+def test_mock_cannot_bypass_selected_transport(monkeypatch, selected_client):
+    async def run(**kwargs):
+        pytest.fail("mock call reached runtime")
+    _runtime(monkeypatch, run)
     with pytest.raises(codex_dev.CodexRoutingError):
         asyncio.run(client.generate_text(config=Config(mock_mode=True), model="gpt-5.6-terra", system_prompt="s", user_content="u"))
     assert selected_client == []

@@ -115,8 +115,8 @@ export function App() {
           />
           <Route path="account" element={lazyRoute(AccountPage)} />
           <Route path="credits" element={lazyRoute(CreditsPage)} />
-          <Route path="project/:id/settings" element={lazyRoute(ProjectSettingsPage)} />
           <Route path="project/:id" element={lazyRoute(ProjectRooms)}>
+            <Route path="settings" element={lazyRoute(ProjectSettingsPage)} />
             <Route index element={lazyRoute(NavigateToRoom)} />
             <Route path="story" element={lazyRoute(StoryRoom)} />
             <Route path="cast" element={lazyRoute(CastRoom)} />

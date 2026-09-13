@@ -1,8 +1,8 @@
 import { useNow } from "../../hooks/useNow";
 import { Link } from "react-router-dom";
-import { useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import { type StageName, type StageStatus } from "../../types/api";
-import { useStageEstimate } from "../../api/queries";
+import { useProjectConfig, useUpdateProjectConfig, useStageEstimate } from "../../api/queries";
 import { STATIONS } from "../../lib/stations";
 import { CreditAmount } from "../ui/CreditAmount";
 import { ConfirmDrawer } from "./ConfirmDrawer";
@@ -15,6 +15,8 @@ import { Icon } from "../ui/Icon";
 import { Button } from "../ui/Button";
 import { CreditsGate } from "./CreditsGate";
 import { useI18n } from "../../i18n";
+
+const ProjectModelControls = import.meta.env.DEV ? lazy(() => import("../wizard/ProjectModelControls")) : null;
 
 // ── Stage metadata ────────────────────────────────────────────────────────────
 
@@ -155,11 +157,13 @@ function StageStartAction({
   stage,
   retry = false,
   rerun = false,
+  disabled = false,
 }: {
   project: string;
   stage: StageName;
   retry?: boolean;
   rerun?: boolean;
+  disabled?: boolean;
 }) {
   const { t } = useI18n();
   const { handleRun, isPending } = useRunAction();
@@ -171,7 +175,7 @@ function StageStartAction({
     : retry
       ? stage === "adapt" ? t("Resume adaptation") : t("Retry stage")
       : stage === "extract" ? t("Start Story analysis") : t("Start this step");
-  const unavailable = isPending || !estimate.data || estimate.isError || estimate.isFetching;
+  const unavailable = disabled || isPending || !estimate.data || estimate.isError || estimate.isFetching;
 
   function confirmStart() {
     if (unavailable) return;
@@ -378,6 +382,31 @@ export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0, startedAt }
 
 // ── Failed and unavailable states ────────────────────────────────────────────
 
+function ExtractionRetry({ project, rerun }: { project: string; rerun: boolean }) {
+  const { t } = useI18n();
+  const config = useProjectConfig(project);
+  const update = useUpdateProjectConfig();
+  return <div className="mt-5">
+    {config.isPending && <p role="status">{t("Loading model settings…")}</p>}
+    {config.isError && <div role="alert">
+      <p className="font-body text-sm text-hero-red">{config.error.message}</p>
+      <Button variant="outline" onClick={() => void config.refetch()} disabled={config.isFetching}>{t("Try again")}</Button>
+    </div>}
+    {config.data && ProjectModelControls && <Suspense fallback={<p role="status">{t("Loading model settings…")}</p>}>
+      <ProjectModelControls
+        stageIds={["extract"]}
+        selections={config.data.dev_model_selections ?? {}}
+        disabled={update.isPending}
+        onChange={(selections) => update.mutate({ project, data: { dev_model_selections: selections } })}
+      />
+    </Suspense>}
+    {update.isPending && <p role="status">{t("Saving…")}</p>}
+    {update.isError && <p role="alert" className="font-body text-sm text-hero-red">{update.error.message}</p>}
+    {update.isSuccess && <p role="status">{t("Settings saved.")}</p>}
+    <StageStartAction project={project} stage="extract" retry rerun={rerun} disabled={!config.data || config.isError || update.isPending || update.isError} />
+  </div>;
+}
+
 interface StageFailedProps {
   project: string;
   stage: StageName;
@@ -390,26 +419,36 @@ interface StageFailedProps {
 function StageFailed({ project, stage, rerun, error, errorDetail, errorCode }: StageFailedProps) {
   const { t } = useI18n();
   const refused = errorCode === "model_refusal" || /^runtime_turn_error: stream disconnected before completion: Incomplete response returned, reason: content_filter$/.test(error ?? "") || /^AI (?:image )?request was refused by gateway\/provider/.test(error ?? "");
+  const creditBlocked = errorCode === "credit_reservation_reconciliation" || /Expired credit reservation requires reconciliation|An earlier credit hold is blocking new work/.test(error ?? "");
   const validationFailure = /invariant|validation/i.test(error ?? "");
-  const summary = refused
+  const summary = creditBlocked
+    ? t("An earlier credit hold is blocking new work. No model request was started.")
+    : refused
     ? t("The model provider declined this request under its content rules. This step could not finish.")
     : stage === "adapt" && validationFailure
     ? t("The comic script needs a few corrections before page planning can continue.")
     : t("This step stopped before it could finish. You can try it again below.");
   const hasDetails = Boolean(error || errorDetail);
+  const canChangeExtractionModel = stage === "extract" && !!ProjectModelControls;
   return (
-    <StageDocket stage={stage} state={refused ? "MODEL REFUSAL" : "PRESS STOPPED"} tone="failed" failureTitle={refused ? t("Model declined this content") : stage === "adapt" ? t("Adaptation paused") : t(STAGE_META[stage].title)}>
+    <StageDocket stage={stage} state={refused ? "MODEL REFUSAL" : "PRESS STOPPED"} tone="failed" failureTitle={creditBlocked ? t("Credit hold needs attention") : refused ? t("Model declined this content") : stage === "adapt" ? t("Adaptation paused") : t(STAGE_META[stage].title)}>
       <div role="status" className="mt-5 font-body text-base leading-7 text-ink-black">
         <p>{summary}</p>
         <p className="mt-3 text-sm leading-6 text-ink-muted">
-          {refused
-            ? t("An unchanged retry may be refused again. To continue, start a new project with a different model or revised source.")
+          {creditBlocked
+            ? t("The credit database needs maintenance. Changing models or recreating the project will not fix this.")
+            : refused
+            ? canChangeExtractionModel
+              ? t("Choose a different extraction model below, then review the updated estimate and retry.")
+              : stage === "adapt"
+              ? t("Retry the adaptation with the current settings after reviewing the estimate. The provider may decline the same input again.")
+              : t("An unchanged retry may be refused again. To continue, start a new project with a different model or revised source.")
             : stage === "adapt" && !rerun
             ? t("Resume using saved work where possible. Review the estimate before continuing.")
             : t("Review the estimate, then try again. If it stops again, open the technical details to help investigate.")}
         </p>
       </div>
-      {refused ? (
+      {canChangeExtractionModel ? <ExtractionRetry project={project} rerun={rerun} /> : refused && stage !== "adapt" ? (
         <Link to="/" className="mt-6 inline-flex min-h-11 items-center font-body text-sm font-semibold underline underline-offset-4">
           {t("Back to projects")}
         </Link>

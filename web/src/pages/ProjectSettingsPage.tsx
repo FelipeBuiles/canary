@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useProjectConfig, useProjectStatus, useUpdateProjectConfig, useDeleteProject } from "../api/queries";
 import { SettingsLayout, SettingsRow } from "../components/ui/SettingsLayout";
@@ -12,9 +12,12 @@ import { useShowDevContent } from "../lib/devContent";
 
 const TABS = [
   { id: "language", label: "Language" },
+  ...(import.meta.env.DEV ? [{ id: "models", label: "Models (dev)" }] : []),
   { id: "dev", label: "Advanced" },
   { id: "delete", label: "Delete Project" },
 ];
+
+const ProjectModelControls = import.meta.env.DEV ? lazy(() => import("../components/wizard/ProjectModelControls")) : null;
 
 export function ProjectSettingsPage() {
   const { id } = useParams();
@@ -97,6 +100,18 @@ export function ProjectSettingsPage() {
             </SettingsRow>
           </Surface></div>
         )}
+
+        {activeTab === "models" && ProjectModelControls && (<div>
+          <SectionHeader title="Models for this project (dev)" description="Model changes apply to new work. Saving does not start generation." />
+          <p className="mb-4 font-body text-sm leading-6 text-ink-muted">{t("Changing the Draw model requires a new edition or project. Existing pages are never switched automatically.")}</p>
+          <Suspense fallback={<p role="status">{t("Loading model settings…")}</p>}>
+            {config && <ProjectModelControls
+              selections={config.dev_model_selections ?? {}}
+              onChange={(selections) => patch({ dev_model_selections: selections })}
+              disabled={updating}
+            />}
+          </Suspense>
+        </div>)}
 
         {activeTab === "dev" && (<div>
           <SectionHeader title="Advanced" description="Development tools and smaller test runs." />

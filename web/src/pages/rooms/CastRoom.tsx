@@ -1,18 +1,20 @@
-import { ArrowUpRight, Search, Users, MapPin, Box } from "lucide-react";
+import { CastRegenAction } from "../../components/composites/CastRegenAction";
+import { ArrowUpRight, Search, Users, MapPin, Box, LoaderCircle, ImagePlus } from "lucide-react";
 import { FieldLabel, TextField } from "../../components/ui/Field";
 import { useReferenceJob } from "../../hooks/useReferenceJob";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   useApproveStage,
+  useGenerationJobs,
   useProjectStatus,
   useStageEstimate,
   useStoryBible,
   useRegenRef,
   useRegenStateRef,
   useRegenLocationState,
-  useCharacterRefVersions,
-  useRestoreCharacterRefVersion,
+  useCastAssetVersions,
+  useRestoreCastAssetVersion,
   useRegenRefWithInstruction,
   useRegenPlate,
   useRegenPlateWithInstruction,
@@ -22,7 +24,7 @@ import {
   useImageGenerationMeta,
   useResetStale,
 } from "../../api/queries";
-import { ApprovalBar, ConfirmDrawer, RegenAction, RoomHeader, RoomShell, RerunStageAction, StagePlaceholder, SectionHeader, EntityCard } from "../../components/composites";
+import { ApprovalBar, ConfirmDrawer, RoomHeader, RoomShell, RerunStageAction, StagePlaceholder, SectionHeader, EntityCard } from "../../components/composites";
 import { useRunAction } from "../../hooks/useRunAction";
 import { useLiveStageAsset } from "../../hooks/useLiveStageAsset";
 import { Tag } from "../../components/ui/Tag";
@@ -31,7 +33,7 @@ import { ImageModal } from "../../components/ui/ImageModal";
 import { GenerationDetailsPanel } from "../../components/ui/GenerationDetailsModal";
 import { LazyImage } from "../../components/ui/LazyImage";
 import { StatusPill } from "../../components/ui/StatusPill";
-import type { AppearanceState, Character, GenerationJob, Location, Prop } from "../../types/api";
+import type { AppearanceState, CastReferenceInput, Character, GenerationJob, Location, Prop } from "../../types/api";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { useI18n } from "../../i18n";
 import { FlowingDotsPlaceholder } from "../../components/ui/FlowingDotsPlaceholder";
@@ -97,7 +99,7 @@ function ReferenceViews({ projectName, charId, timestamp }: { projectName: strin
  * Per-state appearance refs (silver hands, stumps, collapsed building, …).
  * Each visually-significant state gets its own generated ref under
  * refs/<id>/states/<state>/ (characters) or plates/<id>/states/<state>.png (locations).
- * States whose ref hasn't been generated yet (or failed) show a PENDING chip
+ * States whose ref hasn't been generated yet (or failed) show a compact status
  * rather than vanishing, so the gap is visible.
  */
 export function StateRefRow({
@@ -117,61 +119,78 @@ export function StateRefRow({
 }) {
   const { t } = useI18n();
   const [failed, setFailed] = useState<Record<string, boolean>>({});
-  const [viewer, setViewer] = useState<{ src: string; title: string } | null>(null);
+  const [viewer, setViewer] = useState<AppearanceState | null>(null);
+  const [restoredAt, setRestoredAt] = useState<Record<string, number>>({});
 
   const significant = (states ?? []).filter((s) => s.visually_significant);
+  const { data: jobs } = useGenerationJobs(projectName, [], significant.length > 0);
   if (significant.length === 0) return null;
+  const stateJob = (stateId: string) => (jobs?.jobs ?? []).filter((job) =>
+    job.payload[kind === "character" ? "char_id" : "loc_id"] === `${entityId}:${stateId}`,
+  ).reduce<GenerationJob | undefined>((latest, job) =>
+    !latest || Date.parse(job.queued_at) >= Date.parse(latest.queued_at) ? job : latest, undefined);
+  const version = (stateId: string) => {
+    const job = stateJob(stateId);
+    return encodeURIComponent(`${refreshToken ?? "current"}${restoredAt[stateId] ? `-restored-${restoredAt[stateId]}` : ""}${job ? `-${job.id}-${job.status}` : ""}`);
+  };
 
   const base = `/api/projects/${encodeURIComponent(projectName)}/files`;
   const thumbUrl = (stateId: string) =>
     kind === "character"
-      ? `${base}/refs/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}/portrait.png?v=${encodeURIComponent(refreshToken ?? "current")}`
-      : `${base}/plates/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}.png?v=${encodeURIComponent(refreshToken ?? "current")}`;
-  const fullUrl = (stateId: string) =>
-    kind === "character"
-      ? `${base}/refs/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}/sheet.png?v=${encodeURIComponent(refreshToken ?? "current")}`
-      : `${base}/plates/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}.png?v=${encodeURIComponent(refreshToken ?? "current")}`;
+      ? `${base}/refs/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}/portrait.png?v=${version(stateId)}`
+      : `${base}/plates/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}.png?v=${version(stateId)}`;
 
-  const tileWidth = kind === "character" ? "w-[104px] max-w-full" : "w-[156px] max-w-full";
-  const imgAspect = kind === "character" ? "aspect-[64/84]" : "aspect-[16/9]";
+
+  const tileWidth = "flex w-60 max-w-full shrink-0 items-center gap-3 p-2";
+  const imgAspect = "h-12 w-12 shrink-0 overflow-hidden";
 
   return (
     <div className="mt-4">
       <div className="font-meta text-xs tracking-[0.12em] text-ink-muted mb-3">
-        {t("APPEARANCE STATES")}
+        {t("Alternate appearances")} · {significant.length}
       </div>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex gap-2 overflow-x-auto pb-1">
         {significant.map((s) => {
           const src = thumbUrl(s.id);
-          const frameClass = `${imgAspect} w-full bg-surface-container`;
-          const labelClass = "block break-words bg-ink-black/5 px-2 py-2 text-left font-body text-sm leading-snug text-ink-black";
+          const job = stateJob(s.id);
+          const generating = stageRegenerating || job?.status === "queued" || job?.status === "running";
+          const frameClass = `${imgAspect} bg-surface-container`;
+          const labelClass = "block min-w-0 break-words text-left font-body text-sm leading-snug text-ink-black";
 
           // A state tile is only unknown while its own file is absent. Each
           // poll changes the URL, so `failed` re-tests rather than latching.
           return failed[src] ? (
-            <div
+            <button
+              type="button"
+              onClick={() => setViewer(s)}
+              aria-label={`${t("Review & adjust")} · ${s.label}`}
               key={s.id}
               title={
-                stageRegenerating
+                generating
                   ? t("Being generated by the cast stage")
-                  : t("Not generated yet — re-run cast to build this state")
+                  : t("Review & adjust")
               }
-              className={`${tileWidth} overflow-hidden border-[2px] ${stageRegenerating ? "border-ink-black/20" : "border-dashed border-ink-black/20"}`}
+              className={`${tileWidth} overflow-hidden border-[2px] ${generating ? "border-ink-black/20" : "border-dashed border-ink-black/20"}`}
             >
-              <div className={`${frameClass} flex items-center justify-center px-1 text-center`}>
-                <span className="font-meta text-xs tracking-normal text-hero-red">
-                  {stageRegenerating ? t("REBUILDING") : t("PENDING")}
-                </span>
+              <div className={`${frameClass} flex items-center justify-center text-ink-muted`} aria-hidden="true">
+                {generating
+                  ? <LoaderCircle size={20} className="motion-safe:animate-spin" />
+                  : <ImagePlus size={20} />}
               </div>
-              <span className={labelClass}>{s.label}</span>
-            </div>
+              <span className={labelClass}>
+                <span className="line-clamp-2" title={s.label}>{s.label}</span>
+                <span role="status" className="mt-1 block text-xs text-ink-muted">
+                  {generating ? t("Generating appearance…") : t("Not generated yet")}
+                </span>
+              </span>
+            </button>
           ) : (
             <button
               key={s.id}
               type="button"
               title={`${s.label} — ${t("click for full size")}`}
               aria-label={`${t("Open image")} · ${s.label}`}
-              onClick={() => setViewer({ src: fullUrl(s.id), title: s.label })}
+              onClick={() => setViewer(s)}
               className={`${tileWidth} overflow-hidden border-[2px] border-ink-black/15 transition-colors hover:border-ink-black/50 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red`}
             >
               <div className={frameClass}>
@@ -183,46 +202,93 @@ export function StateRefRow({
                   onError={() => setFailed((f) => ({ ...f, [src]: true }))}
                 />
               </div>
-              <span className={labelClass}>{s.label}</span>
+              <span className={labelClass}><span className="line-clamp-2" title={s.label}>{s.label}</span><span className="mt-1 block text-xs text-ink-muted">{t("Review & adjust")}</span></span>
             </button>
           );
         })}
       </div>
-      <ImageModal
-        isOpen={!!viewer}
-        onClose={() => setViewer(null)}
-        src={viewer?.src ?? ""}
-        alt={viewer?.title ?? ""}
-        title={viewer?.title}
-      />
+      {viewer && <StateAppearanceModal projectName={projectName} entityId={entityId} kind={kind}
+        state={viewer} stageRegenerating={stageRegenerating} onClose={() => setViewer(null)}
+        onRestored={() => setRestoredAt((previous) => ({ ...previous, [viewer.id]: Date.now() }))} />}
+
     </div>
   );
 }
 
+function StateAppearanceModal({ projectName, entityId, kind, state, stageRegenerating, onClose, onRestored }: {
+  projectName: string; entityId: string; kind: "character" | "location";
+  state: AppearanceState; stageRegenerating: boolean; onClose: () => void; onRestored: () => void;
+}) {
+  const { t } = useI18n();
+  const job = useReferenceJob(projectName, kind === "character" ? "char_id" : "loc_id", entityId, state.id);
+  const characterRegen = useRegenStateRef();
+  const locationRegen = useRegenLocationState();
+  const characterEdit = useRegenRefWithInstruction();
+  const locationEdit = useRegenPlateWithInstruction();
+  const [instruction, setInstruction] = useState<string | null>(null);
+  const { data: estimate } = useAssetRegenEstimate(projectName, kind, entityId, state.id);
+  const busy = stageRegenerating || job.isSubmitting || !!job.activeJob || characterRegen.isPending || locationRegen.isPending || characterEdit.isPending || locationEdit.isPending;
+  const src = `/api/projects/${encodeURIComponent(projectName)}/files/${kind === "character"
+    ? `refs/${encodeURIComponent(entityId)}/states/${encodeURIComponent(state.id)}/sheet.png`
+    : `plates/${encodeURIComponent(entityId)}/states/${encodeURIComponent(state.id)}.png`}?t=${job.timestamp}`;
+  const submit = (text?: string, referenceAssets?: CastReferenceInput[]) => {
+    job.setRegenError(null);
+    const callbacks = {
+      onSuccess: (data: { job: GenerationJob }) => job.setActiveJob(data.job),
+      onError: (error: Error) => {
+        if (maybeShowInsufficientCredits(error, { actionLabel: "Regenerate appearance", onRetry: () => submit(text, referenceAssets) })) return;
+        job.setRegenError(error.message);
+      },
+    };
+    if (text) {
+      if (kind === "character") characterEdit.mutate({ project: projectName, charId: entityId, stateId: state.id, instruction: text, referenceAssets }, callbacks);
+      else locationEdit.mutate({ project: projectName, locId: entityId, stateId: state.id, instruction: text, referenceAssets }, callbacks);
+    } else if (kind === "character") characterRegen.mutate({ project: projectName, charId: entityId, stateId: state.id }, callbacks);
+    else locationRegen.mutate({ project: projectName, locId: entityId, stateId: state.id }, callbacks);
+  };
+  return <ImageModal isOpen onClose={onClose} src={src} alt={state.label} title={state.label}
+    imageAvailable={!job.imgFailed} emptyLabel={t("NOT GENERATED")}
+    sidebar={<div className="space-y-5">
+      <p className="font-body text-sm leading-6 text-ink-black">{state.visual_anchor}</p>
+      <img src={src} alt="" className="hidden" onError={() => job.setImgFailed(true)} />
+      <CastRegenAction projectName={projectName} assetType={kind} assetId={entityId} stateId={state.id}
+        assetLabel={state.label} cost={estimate} hasImage={!job.imgFailed} busy={busy}
+        busyLabel={job.activeJob ? queuedLabel(job.activeJob) : t("DRAWING…")}
+        instruction={instruction ?? job.instructionDraft} onInstructionChange={setInstruction}
+        error={job.regenError} onRegenerate={() => submit()} onRegenerateWithInstruction={submit} />
+      <RefVersionHistory projectName={projectName} assetType={kind} assetId={entityId} stateId={state.id} busy={busy}
+        refreshKey={job.timestamp} onRestored={() => { job.setTimestamp(Date.now()); job.setImgFailed(false); onRestored(); }} />
+    </div>} />;
+}
+
 /**
- * Re-roll history for one character ref sheet (canonical or a state). Renders
+ * Re-roll history for a character or location (main or alternate appearance). Renders
  * nothing until at least one prior version has been archived, so it stays out
  * of the way until you've actually re-rolled. Clicking a thumbnail restores it.
  */
 function RefVersionHistory({
   projectName,
-  charId,
+  assetType,
+  assetId,
   stateId,
   refreshKey,
   onRestored,
-  heading,
+  busy = false,
 }: {
   projectName: string;
-  charId: string;
+  assetType: "character" | "location";
+  assetId: string;
   stateId?: string;
   refreshKey?: unknown;
   onRestored?: () => void;
-  heading?: string;
+  busy?: boolean;
 }) {
   const { t } = useI18n();
-  const { data } = useCharacterRefVersions(projectName, charId, stateId, refreshKey);
-  const restore = useRestoreCharacterRefVersion();
+  const { data, error, isPending } = useCastAssetVersions(projectName, assetType, assetId, stateId, refreshKey);
+  const restore = useRestoreCastAssetVersion();
   const archived = (data?.versions ?? []).filter((v) => !v.current);
+  if (isPending) return <p className="font-body text-sm text-ink-muted">{t("Loading version history…")}</p>;
+  if (error) return <p role="alert" className="font-body text-sm text-hero-red">{t("Version history could not be loaded.")}</p>;
   if (archived.length === 0) return null;
 
   const fileUrl = (relPath: string) =>
@@ -231,7 +297,7 @@ function RefVersionHistory({
   return (
     <div className="mt-1.5">
       <div className="font-meta text-xs tracking-[0.1em] text-ink-muted">
-        {heading ?? t("PREVIOUS")} ({archived.length})
+        {t("PREVIOUS VERSIONS")} ({archived.length})
       </div>
       <div className="mt-2 flex flex-wrap gap-2">
         {archived.map((v) => (
@@ -240,10 +306,10 @@ function RefVersionHistory({
             type="button"
             title={t("Restore") + ` v${v.version}`}
             aria-label={t("Restore") + ` v${v.version}`}
-            disabled={restore.isPending}
+            disabled={busy || restore.isPending}
             onClick={() =>
               restore.mutate(
-                { project: projectName, charId, version: v.version, stateId },
+                { project: projectName, assetType, assetId, version: v.version, stateId },
                 { onSuccess: () => onRestored?.() },
               )
             }
@@ -254,138 +320,6 @@ function RefVersionHistory({
           </button>
         ))}
       {restore.error && <p role="alert" className="mt-2 font-body text-sm text-hero-red">{restore.error.message}</p>}
-      </div>
-    </div>
-  );
-}
-
-/**
- * One alternate-appearance tile inside the base character's full-size modal:
- * its generated ref thumbnail, or a GENERATE button when the ref is missing
- * (failed/incomplete in the cast run), plus a RE-ROLL. Owns its own regen job
- * lifecycle so each state retries independently.
- */
-function StateRefTile({
-  projectName,
-  charId,
-  state,
-}: {
-  projectName: string;
-  charId: string;
-  state: AppearanceState;
-}) {
-  const { t } = useI18n();
-  const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, regenError, setRegenError } =
-    useReferenceJob(projectName, "char_id", charId, state.id);
-  const [confirmRegen, setConfirmRegen] = useState(false);
-  const regenState = useRegenStateRef();
-  const { data: regenEstimate } = useAssetRegenEstimate(projectName, "character", charId, state.id);
-
-
-  const thumbUrl = `/api/projects/${encodeURIComponent(projectName)}/files/refs/${encodeURIComponent(charId)}/states/${encodeURIComponent(state.id)}/portrait.png?t=${timestamp}`;
-
-  const startRegen = () => {
-    setConfirmRegen(false);
-    setRegenError(null);
-    regenState.mutate(
-      { project: projectName, charId, stateId: state.id },
-      {
-        onSuccess: (data) => setActiveJob(data.job),
-        onError: (err) => {
-          if (maybeShowInsufficientCredits(err, { actionLabel: "Regenerate appearance", onRetry: startRegen })) return;
-          setRegenError(err.message);
-        },
-      },
-    );
-  };
-
-  const busy = regenState.isPending || !!activeJob;
-  const isQueued = activeJob?.status === "queued" || (activeJob && activeJob.queue_position);
-
-  return (
-    <div className="w-[140px] max-w-full">
-      <div className="relative aspect-[64/84] w-full overflow-hidden border-[2px] border-ink-black/15 bg-surface-container">
-        {busy ? (
-          <FlowingDotsPlaceholder
-            compact
-            aspect="64 / 84"
-            className="!border-0 h-full"
-            label={isQueued ? t("QUEUED") : t("DRAWING…")}
-          />
-        ) : imgFailed ? (
-          <div className="flex h-full w-full items-center justify-center px-1 text-center">
-            <span className="font-meta text-xs leading-snug tracking-normal text-hero-red">{t("NOT GENERATED")}</span>
-          </div>
-        ) : (
-          <img
-            src={thumbUrl}
-            alt={`${state.label} ${t("reference")}`}
-            className="h-full w-full object-cover"
-            onError={() => setImgFailed(true)}
-          />
-        )}
-      </div>
-      <div className="mt-2 break-words font-body text-sm leading-snug text-ink-black" title={state.label}>
-        {state.label}
-      </div>
-      <button
-        type="button"
-        onClick={() => setConfirmRegen(true)}
-        aria-label={`${imgFailed ? t("GENERATE") : t("REGENERATE")} · ${state.label}`}
-        disabled={busy || !regenEstimate}
-        className="mt-1 min-h-11 w-full border-[1.5px] border-ink-black/25 bg-bristol px-1 py-2 font-meta text-xs tracking-normal text-ink-muted transition-colors hover:border-ink-black hover:text-ink-black focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red disabled:opacity-50"
-      >
-        {busy ? queuedLabel(activeJob) : imgFailed ? t("GENERATE") : t("REGENERATE")}
-      </button>
-      <RefVersionHistory
-        projectName={projectName}
-        charId={charId}
-        stateId={state.id}
-        refreshKey={timestamp}
-        onRestored={() => {
-          setTimestamp(Date.now());
-          setImgFailed(false);
-        }}
-      />
-      {regenError && <div role="alert" className="mt-1 break-words text-xs leading-snug text-hero-red">{regenError}</div>}
-      <ConfirmDrawer
-        open={confirmRegen}
-        title={imgFailed ? t("Generate image") : t("Try another version")}
-        body={imgFailed
-          ? t("Scenewright will create this image from its saved visual brief.")
-          : t("Scenewright will create a new image from the same saved brief. The current version stays in history.")}
-        cost={regenEstimate}
-        confirmLabel={imgFailed ? t("GENERATE IMAGE") : t("TRY ANOTHER VERSION")}
-        onConfirm={startRegen}
-        onClose={() => setConfirmRegen(false)}
-        busy={busy}
-      />
-    </div>
-  );
-}
-
-/** Alternate-appearance refs for a character, shown inside its full-size modal. */
-function AppearanceStatesPanel({
-  projectName,
-  charId,
-  states,
-}: {
-  projectName: string;
-  charId: string;
-  states: AppearanceState[] | undefined;
-}) {
-  const { t } = useI18n();
-  const significant = (states ?? []).filter((s) => s.visually_significant);
-  if (significant.length === 0) return null;
-  return (
-    <div>
-      <div className="font-meta text-xs tracking-[0.12em] text-ink-muted mb-3">
-        {t("ALTERNATE APPEARANCES")}
-      </div>
-      <div className="flex flex-wrap gap-3">
-        {significant.map((s) => (
-          <StateRefTile key={s.id} projectName={projectName} charId={charId} state={s} />
-        ))}
       </div>
     </div>
   );
@@ -446,13 +380,13 @@ function CharacterCastCard({
     );
   };
 
-  const submitInstruction = (nextInstruction: string) => {
+  const submitInstruction = (nextInstruction: string, referenceAssets: CastReferenceInput[]) => {
     const trimmed = nextInstruction.trim();
     if (!trimmed) return;
     setInstruction(trimmed);
     setRegenError(null);
     regenRefInstructed.mutate(
-      { project: projectName, charId: character.id, instruction: trimmed },
+      { project: projectName, charId: character.id, instruction: trimmed, referenceAssets },
       {
         onSuccess: (data) => {
           setActiveJob(data.job);
@@ -461,7 +395,7 @@ function CharacterCastCard({
           if (
             maybeShowInsufficientCredits(err, {
               actionLabel: "Apply & regenerate character",
-              onRetry: () => submitInstruction(trimmed),
+              onRetry: () => submitInstruction(trimmed, referenceAssets),
             })
           ) {
             return;
@@ -485,7 +419,7 @@ function CharacterCastCard({
     <>
       <EntityCard
         padding="tight"
-        className="group/cast-card h-full"
+        className="group/cast-card min-w-0"
         media={
           <button
             type="button"
@@ -577,7 +511,8 @@ function CharacterCastCard({
               <h3 className="font-meta text-xs text-ink-muted">{t("VISUAL ANCHOR")}</h3>
               <p className="mt-1 break-words text-sm leading-6 text-ink-black">{character.visual_anchor}</p>
             </section>
-            <RegenAction
+            <CastRegenAction
+              projectName={projectName} assetType="character" assetId={character.id}
               assetLabel={character.name}
               cost={regenEstimate}
               instructionCost={regenEstimate?.instruction_estimate}
@@ -593,19 +528,15 @@ function CharacterCastCard({
             <ReferenceViews projectName={projectName} charId={character.id} timestamp={timestamp} />
             <RefVersionHistory
               projectName={projectName}
-              charId={character.id}
+              assetType="character" assetId={character.id}
               refreshKey={timestamp}
-              heading="PREVIOUS VERSIONS"
+              busy={isGenerating || isInstructionBusy}
               onRestored={() => {
                 setTimestamp(Date.now());
                 setImgFailed(false);
               }}
             />
-            <AppearanceStatesPanel
-              projectName={projectName}
-              charId={character.id}
-              states={character.appearance_states}
-            />
+            <StateRefRow projectName={projectName} entityId={character.id} kind="character" states={character.appearance_states} stageRegenerating={stageRegenerating} refreshToken={timestamp} />
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">AGE</div>
@@ -655,125 +586,6 @@ function CharacterCastCard({
         )}
       />
     </>
-  );
-}
-
-function LocationStateTile({
-  projectName,
-  locId,
-  state,
-}: {
-  projectName: string;
-  locId: string;
-  state: AppearanceState;
-}) {
-  const { t } = useI18n();
-  const { imgFailed, setImgFailed, timestamp, activeJob, setActiveJob, regenError, setRegenError } =
-    useReferenceJob(projectName, "loc_id", locId, state.id);
-  const [confirmRegen, setConfirmRegen] = useState(false);
-  const regenState = useRegenLocationState();
-  const { data: regenEstimate } = useAssetRegenEstimate(projectName, "location", locId, state.id);
-
-
-  const imageUrl = `/api/projects/${encodeURIComponent(projectName)}/files/plates/${encodeURIComponent(locId)}/states/${encodeURIComponent(state.id)}.png?t=${timestamp}`;
-  const busy = regenState.isPending || !!activeJob;
-  const isQueued = activeJob?.status === "queued" || (activeJob && activeJob.queue_position);
-
-  const startRegen = () => {
-    setConfirmRegen(false);
-    setRegenError(null);
-    regenState.mutate(
-      { project: projectName, locId, stateId: state.id },
-      {
-        onSuccess: (data) => setActiveJob(data.job),
-        onError: (err) => {
-          if (maybeShowInsufficientCredits(err, { actionLabel: "Regenerate location appearance", onRetry: startRegen })) return;
-          setRegenError(err.message);
-        },
-      },
-    );
-  };
-
-  return (
-    <div className="w-[208px] max-w-full">
-      <div className="relative aspect-[16/9] w-full overflow-hidden border-[2px] border-ink-black/15 bg-surface-container">
-        {busy ? (
-          <FlowingDotsPlaceholder
-            compact
-            aspect="16 / 9"
-            className="h-full !border-0"
-            label={isQueued ? t("QUEUED") : t("DRAWING…")}
-          />
-        ) : imgFailed ? (
-          <div className="flex h-full w-full items-center justify-center px-2 text-center">
-            <span className="font-meta text-xs leading-snug tracking-normal text-hero-red">{t("NOT GENERATED")}</span>
-          </div>
-        ) : (
-          <img
-            src={imageUrl}
-            alt={`${state.label} ${t("location reference")}`}
-            className="h-full w-full object-cover"
-            onError={() => setImgFailed(true)}
-          />
-        )}
-      </div>
-      <div className="mt-2 break-words font-body text-sm leading-snug text-ink-black" title={state.label}>
-        {state.label}
-      </div>
-      <button
-        type="button"
-        onClick={() => setConfirmRegen(true)}
-        aria-label={`${imgFailed ? t("GENERATE") : t("REGENERATE")} · ${state.label}`}
-        disabled={busy || !regenEstimate}
-        className="mt-1 min-h-11 w-full border-[1.5px] border-ink-black/25 bg-bristol px-2 py-2 font-meta text-xs tracking-normal text-ink-muted transition-colors hover:border-ink-black hover:text-ink-black focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red disabled:opacity-50"
-      >
-        {busy ? queuedLabel(activeJob) : imgFailed ? t("GENERATE") : t("REGENERATE")}
-      </button>
-      {regenError && <div role="alert" className="mt-1 break-words text-xs leading-snug text-hero-red">{regenError}</div>}
-      <ConfirmDrawer
-        open={confirmRegen}
-        title={imgFailed ? t("Generate image") : t("Try another version")}
-        body={imgFailed
-          ? t("Scenewright will create this image from its saved visual brief.")
-          : t("Scenewright will create a new image from the same saved brief. The current version stays in history.")}
-        cost={regenEstimate}
-        confirmLabel={imgFailed ? t("GENERATE IMAGE") : t("TRY ANOTHER VERSION")}
-        onConfirm={startRegen}
-        onClose={() => setConfirmRegen(false)}
-        busy={busy}
-      />
-    </div>
-  );
-}
-
-function LocationAppearanceStatesPanel({
-  projectName,
-  locId,
-  states,
-}: {
-  projectName: string;
-  locId: string;
-  states: AppearanceState[] | undefined;
-}) {
-  const { t } = useI18n();
-  const significant = (states ?? []).filter((state) => state.visually_significant);
-  if (significant.length === 0) return null;
-  return (
-    <div>
-      <div className="mb-3 font-meta text-xs tracking-[0.12em] text-ink-muted">
-        {t("ALTERNATE APPEARANCES")}
-      </div>
-      <div className="flex flex-wrap gap-3">
-        {significant.map((state) => (
-          <LocationStateTile
-            key={state.id}
-            projectName={projectName}
-            locId={locId}
-            state={state}
-          />
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -832,13 +644,13 @@ function LocationPlateCard({
     );
   };
 
-  const submitInstruction = (nextInstruction: string) => {
+  const submitInstruction = (nextInstruction: string, referenceAssets: CastReferenceInput[]) => {
     const trimmed = nextInstruction.trim();
     if (!trimmed) return;
     setInstruction(trimmed);
     setLocalRegenError(null);
     regenPlateInstructed.mutate(
-      { project: projectName, locId: location.id, instruction: trimmed },
+      { project: projectName, locId: location.id, instruction: trimmed, referenceAssets },
       {
         onSuccess: (data) => {
           setActiveJob(data.job);
@@ -847,7 +659,7 @@ function LocationPlateCard({
           if (
             maybeShowInsufficientCredits(err, {
               actionLabel: "Apply & regenerate plate",
-              onRetry: () => submitInstruction(trimmed),
+              onRetry: () => submitInstruction(trimmed, referenceAssets),
             })
           ) {
             return;
@@ -871,7 +683,7 @@ function LocationPlateCard({
     <>
       <EntityCard
         padding="tight"
-        className="group/cast-card h-full"
+        className="group/cast-card min-w-0"
         media={
           <button
             type="button"
@@ -954,7 +766,8 @@ function LocationPlateCard({
         title={location.name.toUpperCase()}
         sidebar={(
           <div className="space-y-5">
-            <RegenAction
+            <CastRegenAction
+              projectName={projectName} assetType="location" assetId={location.id}
               assetLabel={location.name}
               cost={regenEstimate}
               instructionCost={regenEstimate?.instruction_estimate}
@@ -967,11 +780,10 @@ function LocationPlateCard({
               onRegenerate={startRegen}
               onRegenerateWithInstruction={submitInstruction}
             />
-            <LocationAppearanceStatesPanel
-              projectName={projectName}
-              locId={location.id}
-              states={location.appearance_states}
-            />
+            <RefVersionHistory projectName={projectName} assetType="location" assetId={location.id}
+              refreshKey={timestamp} busy={isGenerating || isInstructionBusy}
+              onRestored={() => { setTimestamp(Date.now()); setImgFailed(false); }} />
+            <StateRefRow projectName={projectName} entityId={location.id} kind="location" states={location.appearance_states} stageRegenerating={stageRegenerating} refreshToken={timestamp} />
             <div>
               <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">VISUAL ANCHOR</div>
               <p className="text-[0.82rem] leading-6 text-ink-black">{location.visual_anchor}</p>
@@ -1056,13 +868,13 @@ function PropRefCard({
     );
   };
 
-  const submitInstruction = (nextInstruction: string) => {
+  const submitInstruction = (nextInstruction: string, referenceAssets: CastReferenceInput[]) => {
     const trimmed = nextInstruction.trim();
     if (!trimmed) return;
     setInstruction(trimmed);
     setLocalRegenError(null);
     regenPropInstructed.mutate(
-      { project: projectName, propId: prop.id, instruction: trimmed },
+      { project: projectName, propId: prop.id, instruction: trimmed, referenceAssets },
       {
         onSuccess: (data) => {
           setActiveJob(data.job);
@@ -1071,7 +883,7 @@ function PropRefCard({
           if (
             maybeShowInsufficientCredits(err, {
               actionLabel: "Apply & regenerate prop",
-              onRetry: () => submitInstruction(trimmed),
+              onRetry: () => submitInstruction(trimmed, referenceAssets),
             })
           ) {
             return;
@@ -1172,7 +984,8 @@ function PropRefCard({
         title={prop.name.toUpperCase()}
         sidebar={(
           <div className="space-y-5">
-            <RegenAction
+            <CastRegenAction
+              projectName={projectName} assetType="prop" assetId={prop.id}
               assetLabel={prop.name}
               cost={regenEstimate}
               instructionCost={regenEstimate?.instruction_estimate}
@@ -1361,7 +1174,7 @@ export function CastRoom() {
             title="CHARACTER REFS"
             description="Portrait proofs keep faces, clothing, and silhouettes consistent from scene to scene."
           />
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+          <div className="grid items-start gap-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
             {bible.characters.map((char) => (
               <div key={char.id} hidden={!matches(char)} className="min-w-0">
               <CharacterCastCard
@@ -1380,7 +1193,7 @@ export function CastRoom() {
             title="LOCATION PLATES"
             description="Wide environment plates anchor geography, architecture, light, and atmosphere."
           />
-          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid items-start gap-5 md:grid-cols-2 xl:grid-cols-3">
             {bible.locations.map((loc) => (
               <div key={loc.id} hidden={!matches(loc)} className="min-w-0">
               <LocationPlateCard

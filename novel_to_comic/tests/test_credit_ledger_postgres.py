@@ -176,7 +176,7 @@ def test_foreign_live_and_expired_reservations(ledger):
     assert reserve(live_owner) is None
 
 
-def test_subscription_failure_settles_zero_and_replays_without_losing_evidence(ledger):
+def test_subscription_failure_keeps_evidence_outside_credit_ledger(ledger):
     db, user = ledger
     job = str(uuid.uuid4())
     call = str(uuid.uuid4())
@@ -190,19 +190,10 @@ def test_subscription_failure_settles_zero_and_replays_without_losing_evidence(l
         call_id=call, provider="openai", model="gpt-5.6-terra", operation="text",
         input_tokens=100, funding="codex_subscription",
     )
-    db.lose_response = True
     credits.debit_model_usage(db, user, None, usage, description="failed", job_id=job)
-    credits.debit_model_usage(
-        db, user, None, usage, description="replayed", job_id=str(uuid.uuid4()),
-    )
-    result = json.loads(db.query(
-        "select row_to_json(t) from (select amount_credits, cost_usd, funding, "
-        f"usage_status, job_id from public.credit_ledger where usage_call_id='{call}') t;"
-    ))
-    assert result == {
-        "amount_credits": 0, "cost_usd": None, "funding": "codex_subscription",
-        "usage_status": "failed", "job_id": job,
-    }
+    credits.debit_model_usage(db, user, None, usage, description="replayed", job_id=job)
+    assert db.query(f"select count(*) from public.credit_ledger where usage_call_id='{call}';") == "0"
+    assert db.query(f"select count(*) from public.ai_usage_events where id='{call}';") == "1"
     assert db.query(f"select balance_credits from public.user_credits where user_id='{user}';") == "5"
     assert db.query(
         f"select count(*) from public.ops_usage_reconciliation where usage_call_id='{call}';"
@@ -231,17 +222,38 @@ def test_sql_subscription_dollars_and_billable_flag_cannot_charge_or_poison_api_
 
 
 @pytest.mark.parametrize("provider_model", [None, "observed-image-model"])
-def test_subscription_image_ledger_preserves_observed_model_identity(ledger, provider_model):
+def test_subscription_images_do_not_write_credit_ledger(ledger, provider_model):
     db, user = ledger
     usage = UsageRecord(
         provider="codex", model="image-gpt-2", provider_model=provider_model,
         operation="image", image_count=1, funding="codex_subscription",
     )
     credits.debit_model_usage(db, user, None, usage, description="subscription image")
-    result = json.loads(db.query(
-        "select row_to_json(t) from (select model, provider_model, amount_credits "
-        f"from public.credit_ledger where usage_call_id='{usage.call_id}') t;"
-    ))
-    assert result == {
-        "model": "image-gpt-2", "provider_model": provider_model, "amount_credits": 0,
-    }
+    assert db.query(f"select count(*) from public.credit_ledger where usage_call_id='{usage.call_id}';") == "0"
+
+
+@pytest.mark.parametrize("started", [False, True])
+def test_deleted_project_hold_does_not_block_recreated_project(ledger, started):
+    db, user = ledger
+    old_project, new_project, owner = (str(uuid.uuid4()) for _ in range(3))
+    db.query(f"insert into public.projects(id, user_id, name) values ('{old_project}', '{user}', 'Same story');")
+    def reserve(project, amount):
+        return db.rpc("reserve_stage_credits", {
+            "p_user_id": user, "p_project_id": project, "p_stage": "extract",
+            "p_amount_credits": amount, "p_job_id": str(uuid.uuid4()),
+            "p_owner": owner, "p_lease_seconds": 3600,
+        }).execute().data
+    hold = reserve(old_project, 3)
+    if started:
+        assert db.rpc("check_credit_reservation_lease", {"p_reservation_id": hold, "p_owner": owner}).execute().data
+    db.query(f"update public.credit_ledger set reservation_expires_at=now()-interval '1 second' where id='{hold}';")
+    db.query(f"delete from public.projects where id='{old_project}';")
+    db.query(f"insert into public.projects(id, user_id, name) values ('{new_project}', '{user}', 'Same story');")
+    assert reserve(new_project, 2) is not None
+    row = json.loads(db.query(f"select row_to_json(r) from (select project_id, status, amount_credits from public.credit_ledger where id='{hold}') r;"))
+    assert row == {"project_id": None, "status": "reserved" if started else "released", "amount_credits": -3}
+    assert db.rpc("check_credit_reservation_lease", {"p_reservation_id": hold, "p_owner": owner}).execute().data is False
+    if started:
+        assert reserve(new_project, 1) is None  # Liability still counts after deletion.
+    else:
+        assert reserve(new_project, 3) is not None  # Never-started hold is reclaimable.

@@ -62,7 +62,7 @@ reference contracts. Revalidate outstanding acceptance items before treating
 them as current work.
 
 The full-page pipeline design itself is no longer kept as a document: its
-durable decisions are recorded as ADRs 0003–0015 in `docs/adr/`, and its
+durable decisions are recorded as ADRs 0003–0016 in `docs/adr/`, and its
 contracts are enforced by implementation and tests.
 
 Completed implementation plans and superseded designs should be deleted once

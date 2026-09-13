@@ -91,8 +91,8 @@ export async function apiFetch<T>(
   if (!res.ok) {
     const body = await res.text();
     assertAccountEpoch(epoch);
-    // 409 can mean accepted but indeterminate: retain its receipt, never
-    // silently create a fresh paid action. Other 4xx responses rejected it.
+    // Unknown 409s may be indeterminate; keep their receipts. Other 4xx
+    // responses rejected the action.
     if (res.status < 500 && res.status !== 409) action?.complete();
     let message = body;
     let detail: unknown = body;
@@ -106,6 +106,15 @@ export async function apiFetch<T>(
       }
     } catch {
       // Keep the raw response body when the server did not return JSON.
+    }
+    // Adapt's approval gate runs before job creation or provider submission.
+    // Release this definite rejection, including a replay saved before the
+    // user approved the brief. A subsequent explicit click is a new action.
+    // Do not generalize this to other conflicts: they may follow side effects.
+    if (res.status === 409 && method === "POST"
+      && /^\/projects\/[^/]+\/run(?:\?|$)/.test(path)
+      && detail === "Adapt requires an approved adaptation brief") {
+      action?.complete();
     }
     if (res.status === 402) {
       const info = parseInsufficientCredits(detail);

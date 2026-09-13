@@ -40,6 +40,8 @@ Given the complete text of a novel, output a single JSON object matching the sch
           "baseline_affect": "string or null — only when this state has a stable altered demeanor; never a beat-level reaction",
           "visually_significant": true,
           "canonical_equivalent": false,
+          "changed_facets": ["anatomy", "materials"],
+          "replaces_identity": false,
           "continuity_guard": "When visually_significant is true, ONE imperative sentence stating what the image model must preserve and must NOT revert to its default, plus how to stage actions to stay consistent. State the rule in this entity's own terms; do not assume a generic case. Examples: a lost limb → 'She has no hands — both arms end in bandaged stumps; never depict her holding, gripping, or gesturing; she acts with her mouth or against her stumps.' A prosthetic → 'Her hands are rigid polished silver prosthetics, not flesh; always show the metallic sheen.' Omit (null) for minor/text-only states."
         }
       ],
@@ -67,6 +69,8 @@ Given the complete text of a novel, output a single JSON object matching the sch
           "visual_anchor": "STRICT self-contained TAGS for this state only. NEVER mix pre/post or before/after details in one anchor.",
           "visually_significant": true,
           "canonical_equivalent": false,
+          "changed_facets": ["architecture", "damage"],
+          "replaces_identity": false,
           "continuity_guard": "When visually_significant is true, ONE imperative sentence on what to preserve and NOT revert to the default — e.g. a drained lake → 'The basin is empty cracked mud, never water'; a burned house → 'Charred timber and ash, never an intact building.' Null for minor states."
         }
       ],
@@ -153,6 +157,12 @@ CHARACTERS
   explanation, decision, or reaction is important to understanding the story,
   even when that character appears in only one scene. A comic cannot assign
   dialogue balloons or stable visual identity to a missing speaker.
+- Also include every plot-critical embodied actor even if silent and present in
+  only one scene: an antagonist, creature, animal, rescuer, victim, or witness
+  whose physical action is essential to the scene. A creature that emerges,
+  attacks, pursues, or is struck is a Character, not a prop or background lore.
+  Check the climax and each scene's decisive action against its character roster
+  before returning JSON. Diary/testimony framing does not exclude those actors.
 - Include only characters actually staged by the source, not anyone an adaptation could imagine showing.
 - For every candidate character, supply character_participation evidence for each scene in whose roster they occur. Use exactly one classification per character/scene pair and a nonempty VERBATIM source passage. This is extraction-only evidence, not physical identity.
 - direct_action: the source stages the character physically acting, speaking, or undergoing an event in the scene. Important one-scene embodied actors and speakers qualify.
@@ -214,7 +224,7 @@ APPEARANCE TIMELINE (characters[] and locations[] — how a look changes over th
 - Most entities genuinely look the SAME throughout and should keep empty arrays, but never choose [] by default. Empty arrays are valid only after the inventory finds no explicit before/after change and no sustained visually distinct condition.
 - Use states whenever an entity changes at a definite point or remains in a story-significant altered condition for one or more depictable beats. A state does not need to be permanent or span multiple scenes.
 - Model it as a CATALOG of alternate looks (appearance_states) + an ordered TIMELINE of transitions (appearance_timeline).
-- appearance_states[]: each {id, label, visual_anchor, baseline_affect, visually_significant, canonical_equivalent, continuity_guard}.
+- appearance_states[]: each {id, label, visual_anchor, baseline_affect, visually_significant, canonical_equivalent, continuity_guard, changed_facets, replaces_identity}. Always emit changed_facets and replaces_identity explicitly, including empty/false values. For changed hair color, changed_facets includes "hair"; an empty list would incorrectly preserve canonical hair from the reference image.
   - visual_anchor is SELF-CONTAINED physical identity: it fully describes the entity in that state (identity + the physical change) so it can REPLACE the base look with no contradiction. Never a bare delta; never mix two states' tags; never include emotion, expression, pose, or action.
   - A sustained mental or medical condition may justify a state even when the source gives few new physical traits. Keep its visual_anchor evidence-grounded and self-contained; record the sustained altered demeanor in baseline_affect instead of inventing sweat, wounds, clothing, or anatomy.
   - baseline_affect is optional and describes a sustained state-specific demeanor such as delirious, possessed, or shell-shocked. A momentary expression remains panel direction, not appearance identity.
@@ -222,6 +232,8 @@ APPEARANCE TIMELINE (characters[] and locations[] — how a look changes over th
   - canonical_equivalent: true only for a return to the unchanged base physical look, such as recovery after a temporary fever. This lets the timeline explicitly leave the altered state while reusing canonical identity. A return-to-base state must set `"canonical_equivalent": true`; every physically changed look must set it to false.
 - appearance_timeline[]: each {state_id, at, transition?}, ORDERED by story position.
   - at = {scene_id, beat}: the FIRST point where the new look holds. beat = null means "from that scene's start" (the usual case). Before the first activation, the base visual_anchor applies.
+  - Never place two activations for one entity at the same scene/beat. Illness and recovery within a scene require distinct numbered beats or separate source-ordered scenes; two null beats would erase the illness interval.
+  - A framing mention of a later appearance is not an activation in an earlier lived-time diary sequence. Explicitly return to a canonical-equivalent state at the start of an earlier flashback, then activate the changed state where its cause occurs in that sequence. Do not carry a survivor's white hair backward into the pre-trauma voyage.
   - Place `at` at the scene where the NEW look first clearly holds. If a destructive act must be SHOWN with the old look (the hand being cut), set `at` to the following scene.
   - transition (encouraged): {label, depicted_at, cause}. label = short name ("hands severed"); depicted_at = where it is shown; cause = why (kept for narration, does not change rendering).
 - THINK IN TRANSITIONS: list every moment an entity enters or leaves an altered look, in order; each becomes one appearance_state + one timeline activation. For a temporary condition, create both the altered state and a later recovered/restored state. Never activate a temporary state without a subsequent exit when the source explicitly says it ends.

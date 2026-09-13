@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from novel_to_comic.ai import codex_runtime
-from novel_to_comic.codex_dev import assert_request_funding, route_for
+from novel_to_comic.codex_dev import route_for
 from novel_to_comic.config import Config
 from novel_to_comic.models.draw import CompletePageProviderResult
 from novel_to_comic.page_drawing import (
@@ -85,7 +85,6 @@ class CodexCompletePageAdapter:
         route = route_for("complete_page", self._config.draw_model)
         if route is None:
             raise ValueError("Codex complete-page routing is not enabled")
-        assert_request_funding("complete_page", self._config.draw_model)
         references = self._references(prepared)
         feature = "complete_page_draw"
         params = {

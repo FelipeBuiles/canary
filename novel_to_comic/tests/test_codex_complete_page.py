@@ -23,6 +23,7 @@ from tests.test_complete_page_draw import _page
 
 
 @pytest.fixture
+
 def dev_routes(monkeypatch):
     process = dict.fromkeys(codex_dev._PROCESS)
     process.update(CANARY_CODEX_DEV_ENABLED="1", CANARY_ENV="development")
@@ -284,14 +285,7 @@ def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(
     )
     asyncio.run(job.runner())
     assert created
-    database.rpc.assert_called_once()
-    settlement, payload = database.rpc.call_args.args
-    assert settlement == "settle_model_usage_credits"
-    assert payload["p_funding"] == "codex_subscription"
-    assert payload["p_billable"] is False
-    assert payload["p_cost_usd"] is None
-    assert payload["p_provider_model"] is None
-    assert payload["p_usage_call_id"] == "native-call"
+    database.rpc.assert_not_called()
     assert runtime.call_args.kwargs["reasoning_model"] == (reasoner or "gpt-5.5")
     assert runtime.await_count == 1
     assert runtime.call_args.kwargs["prompt"] == compiled.request.prompt
@@ -445,3 +439,12 @@ def test_explicit_codex_draw_selection_cannot_reroute_frozen_request(tmp_path, d
     )
     with pytest.raises(ValueError, match="different page profile"):
         page_drawing.ensure_current_page_edition(TargetArtifacts(tmp_path), edition, second)
+
+
+@pytest.fixture(autouse=True)
+def reviewed_story_precondition(monkeypatch):
+    # This suite tests rendering/credit contracts with deliberately partial
+    # upstream fixtures. Real missing/stale review admission is tested in
+    # test_narrative_review.py.
+    monkeypatch.setattr("novel_to_comic.server.routers.pages.require_draw_narrative_reviews", lambda target: None)
+    monkeypatch.setattr("novel_to_comic.narrative_review.require_draw_narrative_reviews", lambda target: None)

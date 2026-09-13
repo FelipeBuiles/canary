@@ -151,8 +151,8 @@ describe("StoryRoom", () => {
   it("saves an edited target page range against the current Brief revision", () => {
     renderRoom();
 
-    fireEvent.change(screen.getByLabelText("Minimum pages"), { target: { value: "24" } });
-    fireEvent.change(screen.getByLabelText("Maximum pages"), { target: { value: "32" } });
+    fireEvent.change(screen.getByLabelText("Page target: from"), { target: { value: "24" } });
+    fireEvent.change(screen.getByLabelText("Page target: to"), { target: { value: "32" } });
     fireEvent.click(screen.getByRole("button", { name: "SAVE BRIEF" }));
 
     expect(updateBrief).toHaveBeenCalledWith({

@@ -116,6 +116,12 @@ RUN python -m venv /app/.venv-litellm \
         'google-auth>=2.49' \
         'google-genai==1.75.0'
 
+COPY litellm/patch_http_errors.py /app/patch_http_errors.py
+RUN /app/.venv-litellm/bin/python /app/patch_http_errors.py
+
+COPY litellm/patch_anthropic_refusals.py /app/patch_anthropic_refusals.py
+RUN /app/.venv-litellm/bin/python /app/patch_anthropic_refusals.py
+
 # LiteLLM config + custom handlers (vertex-multimodal / fal-queue).
 # PYTHONPATH makes the handlers importable; config.yaml's custom_provider_map
 # registers them with the proxy at boot.

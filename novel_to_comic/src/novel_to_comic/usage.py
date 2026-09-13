@@ -163,6 +163,10 @@ def estimate_text_cost(model: str, input_text: str | int, output_chars: int = 0)
 
     output_chars is always a character count since output text is unknown pre-call.
     """
+    from novel_to_comic.codex_dev import route_for
+
+    if route_for("text", model) is not None:
+        return 0.0
     input_tokens = estimate_token_count(input_text)
     output_tokens = estimate_token_count(output_chars)
     breakdown = get_pricing_resolver().estimate_text_cost(model, input_tokens, output_tokens)
@@ -189,6 +193,10 @@ def estimate_image_cost(
     priced per-image, falls back to output_cost_per_image plus per-reference
     input cost, both sourced from litellm_pricing_overrides.yaml.
     """
+    from novel_to_comic.codex_dev import route_for
+
+    if route_for("image", model) is not None:
+        return 0.0
     resolver = get_pricing_resolver()
     prompt_tokens = estimate_token_count(prompt_text) if prompt_text is not None else 0
     breakdown = resolver.estimate_image_cost(

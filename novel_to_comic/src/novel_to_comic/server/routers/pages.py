@@ -28,6 +28,7 @@ from novel_to_comic.page_drawing import (
     enqueue_complete_page_draw,
     prepare_page_correction,
 )
+from novel_to_comic.narrative_review import require_draw_narrative_reviews
 from novel_to_comic.page_previews import ensure_page_render_preview
 from novel_to_comic.page_ocr import GatewayPageOCRAdapter
 from novel_to_comic.page_review import (
@@ -279,6 +280,7 @@ def prepare_undrawn_pages(*, project_dir, config, rerun: bool = False):
     """Preflight every selected page without writing an edition or placing holds."""
     classify_operations(draw_operations(config))
     target = TargetArtifacts(project_dir)
+    require_draw_narrative_reviews(target)
     edition = (
         ensure_current_page_edition(target, target.read_book_edition(), config)
         if target.book_edition_path.exists()
@@ -528,7 +530,7 @@ def get_page_render_preview(
 @router.get("/pages/generate/estimate")
 def estimate_remaining_page_generation(project=Depends(get_project)):
     """Quote only undrawn pages, rounding each independent credit hold."""
-    from novel_to_comic.config import PAGE_OCR_ESTIMATED_COST_USD
+    from novel_to_comic.page_drawing import estimate_draw_api_cost
     from ..credits import credit_estimate_for_provider_cost
 
     project_dir, _config, _state = project
@@ -541,7 +543,7 @@ def estimate_remaining_page_generation(project=Depends(get_project)):
         for _page_number, _page, compiled in prepared:
             page_cost = float(compiled.request.estimated_cost_usd)
             part = credit_estimate_for_provider_cost(
-                page_cost + float(PAGE_OCR_ESTIMATED_COST_USD), "draw", reserve=True,
+                estimate_draw_api_cost(_config, page_cost, compiled=compiled), "draw", reserve=True,
                 funding=funding,
             )
             estimate["estimate_credits"] += part["estimate_credits"]
@@ -566,6 +568,7 @@ def _prepare_initial_generation(
             "Page already has a render; create an issue and request a correction.",
         )
     try:
+        require_draw_narrative_reviews(target)
         page = target.read_page(page_number)
         edition = ensure_current_page_edition(target, target.read_book_edition(), config)
         compiled = compile_page_generation_request(
@@ -944,6 +947,7 @@ def _prepare_explicit_correction(
     from novel_to_comic.target_artifacts import ArtifactInvalid
 
     try:
+        require_draw_narrative_reviews(target)
         page = target.read_page(page_number)
         edition = ensure_current_page_edition(target, target.read_book_edition(), config)
         provenance = _latest_provenance(target, page_number)

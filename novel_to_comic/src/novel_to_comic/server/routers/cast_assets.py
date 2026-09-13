@@ -11,9 +11,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from novel_to_comic import artifacts
+from novel_to_comic.cast_reference_inputs import CastReferenceInput
 from novel_to_comic.asset_versions import list_asset_versions, restore_asset_version
 from novel_to_comic.cast_instructions import (
     ASSET_REGEN_KINDS,
@@ -21,6 +22,7 @@ from novel_to_comic.cast_instructions import (
     apply_asset_instruction,
     asset_regen_label,
     resolve_cast_asset,
+    restore_asset_instruction_direction,
 )
 
 from ..auth import get_current_user
@@ -39,23 +41,28 @@ from ..ratelimit import cost_limit, limiter
 router = APIRouter()
 
 
-class InstructedRefRegenRequest(BaseModel):
+class CastInstructionRequest(BaseModel):
+    # Reject mismatched request fields instead of silently dropping attachments
+    # and charging for a correction that cannot honor the author's request.
+    model_config = ConfigDict(extra="forbid")
+    instruction: str = Field(min_length=1, max_length=MAX_INSTRUCTION_CHARS)
+    reference_assets: list[CastReferenceInput] | None = Field(default=None, max_length=3)
+
+
+class InstructedRefRegenRequest(CastInstructionRequest):
     char_id: str = Field(min_length=1)
-    instruction: str = Field(min_length=1, max_length=MAX_INSTRUCTION_CHARS)
 
 
-class InstructedPlateRegenRequest(BaseModel):
+class InstructedPlateRegenRequest(CastInstructionRequest):
     loc_id: str = Field(min_length=1)
-    instruction: str = Field(min_length=1, max_length=MAX_INSTRUCTION_CHARS)
 
 
-class InstructedPropRegenRequest(BaseModel):
+class InstructedPropRegenRequest(CastInstructionRequest):
     prop_id: str = Field(min_length=1)
-    instruction: str = Field(min_length=1, max_length=MAX_INSTRUCTION_CHARS)
 
 
-class InstructedStateRegenRequest(BaseModel):
-    instruction: str = Field(min_length=1, max_length=MAX_INSTRUCTION_CHARS)
+class InstructedStateRegenRequest(CastInstructionRequest):
+    pass
 
 
 def _require_path_safe_id(value: str, field_name: str) -> str:
@@ -135,6 +142,7 @@ async def asset_regen_estimate(
     asset_type: str = Query(...),
     asset_id: str = Query(...),
     state_id: str | None = Query(None),
+    reference_count: int | None = Query(None, ge=0, le=3),
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),  # noqa: ARG001 — auth gate
 ):
@@ -153,7 +161,7 @@ async def asset_regen_estimate(
     _require_cast_asset(project_dir, asset_type, asset_id, state_id)
     resolver_asset_id = f"{asset_id}:{state_id}" if state_id else asset_id
     breakdown = UnifiedCostResolver.estimate_asset_regen_cost(
-        config, project_dir, regen_kind, resolver_asset_id
+        config, project_dir, regen_kind, resolver_asset_id, additional_reference_count=reference_count
     )
     try:
         instruction_estimate = UnifiedCostResolver.estimate_instructed_regen_cost(
@@ -165,6 +173,7 @@ async def asset_regen_estimate(
         "asset_type": asset_type,
         "asset_id": asset_id,
         "state_id": state_id,
+        "reference_assets_supported": True,
         **breakdown,
         "instruction_estimate": instruction_estimate,
     }
@@ -340,6 +349,7 @@ async def regen_ref_with_instruction(
         asset_type="character",
         asset_id=body.char_id,
         instruction=body.instruction,
+        reference_assets=body.reference_assets,
         app=request.app,
     )
 
@@ -364,6 +374,7 @@ async def regen_plate_with_instruction(
         asset_type="location",
         asset_id=body.loc_id,
         instruction=body.instruction,
+        reference_assets=body.reference_assets,
         app=request.app,
     )
 
@@ -388,6 +399,7 @@ async def regen_prop_with_instruction(
         asset_type="prop",
         asset_id=body.prop_id,
         instruction=body.instruction,
+        reference_assets=body.reference_assets,
         app=request.app,
     )
 
@@ -416,6 +428,7 @@ async def regenerate_character_state_instructed(
         asset_id=char_id,
         state_id=state_id,
         instruction=body.instruction,
+        reference_assets=body.reference_assets,
         app=request.app,
     )
 
@@ -444,6 +457,7 @@ async def regenerate_location_state_instructed(
         asset_id=loc_id,
         state_id=state_id,
         instruction=body.instruction,
+        reference_assets=body.reference_assets,
         app=request.app,
     )
 
@@ -498,6 +512,7 @@ def restore_character_ref_version(
         restore_asset_version(sheet, project_dir, version)
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
+    restore_asset_instruction_direction(project_dir, "character", char_id, state_id, sheet, version)
     # The single-view crops (portrait/full_body) are derived from the sheet, so
     # re-crop after restoring so they match.
     s3_cast._crop_sheet_to_poses(sheet)
@@ -511,4 +526,65 @@ def restore_character_ref_version(
         "char_id": char_id,
         "state_id": state_id,
         "versions": list_asset_versions(sheet, project_dir),
+    }
+
+
+def _location_history_path(project_dir: Path, loc_id: str, state_id: str | None) -> Path:
+    _require_path_safe_id(loc_id, "loc_id")
+    if state_id is not None:
+        _require_path_safe_id(state_id, "state_id")
+    _require_cast_asset(project_dir, "location", loc_id, state_id)
+    return (
+        artifacts.location_state_plate_path(project_dir, loc_id, state_id)
+        if state_id else artifacts.location_plate_path(project_dir, loc_id)
+    )
+
+
+@router.get("/location-plate-versions")
+def get_location_plate_versions(
+    loc_id: str = Query(...),
+    state_id: str | None = Query(None),
+    project=Depends(get_project),
+):
+    """Saved location versions, scoped to the main or selected alternate appearance."""
+    project_dir, _config, _state = project
+    plate = _location_history_path(project_dir, loc_id, state_id)
+    versions = list_asset_versions(plate, project_dir)
+    return {
+        "loc_id": loc_id,
+        "state_id": state_id,
+        "has_history": any(not version.get("current") for version in versions),
+        "versions": versions,
+    }
+
+
+@router.post("/location-plate-versions/restore")
+def restore_location_plate_version(
+    loc_id: str = Query(...),
+    version: int = Query(..., ge=1),
+    state_id: str | None = Query(None),
+    project=Depends(get_project),
+):
+    from novel_to_comic.state_assets import (
+        mark_dependent_states_stale,
+        revalidate_state_asset_lineage,
+    )
+
+    project_dir, _config, _state = project
+    plate = _location_history_path(project_dir, loc_id, state_id)
+    try:
+        restore_asset_version(plate, project_dir, version)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    restore_asset_instruction_direction(project_dir, "location", loc_id, state_id, plate, version)
+    if state_id is None:
+        mark_dependent_states_stale(project_dir, "location", loc_id)
+    else:
+        revalidate_state_asset_lineage(
+            plate, artifacts.location_plate_path(project_dir, loc_id)
+        )
+    return {
+        "loc_id": loc_id,
+        "state_id": state_id,
+        "versions": list_asset_versions(plate, project_dir),
     }

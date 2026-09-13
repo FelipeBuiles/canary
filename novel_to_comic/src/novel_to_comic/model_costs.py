@@ -252,6 +252,27 @@ class PricingResolver:
         input_per_token = float(pricing.get("input_cost_per_token") or 0.0)
         output_per_token = float(pricing.get("output_cost_per_token") or 0.0)
 
+        # Measured consumption applies only to the observed quality/geometry.
+        # Unknown settings retain the conservative allowance below; these
+        # estimates never participate in actual-usage settlement.
+        measured = pricing.get("estimated_image_tokens_by_quality_and_size") or {}
+        output_estimate = (measured.get((quality or "auto").lower()) or {}).get(
+            f"{width}x{height}"
+        )
+        if output_estimate is not None:
+            return CostBreakdown(
+                cost_usd=(
+                    count * float(output_estimate) * output_per_token
+                    + ref_count * float(pricing.get("estimated_input_tokens_per_reference") or 0)
+                    * float(pricing.get("image_input_cost_per_token") or input_per_token)
+                    + prompt_tokens * input_per_token
+                ),
+                source="measured_consumption_estimate",
+                model_alias=model,
+                provider_model=resolved,
+                pricing_snapshot=self.pricing_snapshot,
+            )
+
         # An allowance is only an estimate, never a per-image settlement tariff.
         # New image models need usage measurements before a token-consumption
         # table is justified. Keep their reservation metadata out of calculate().

@@ -67,6 +67,7 @@ from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 from novel_to_comic.usage import UsageRecord
 
 
+
 def _source() -> SourceDocument:
     text = "The door opened. Nothing moved."
     return SourceDocument(
@@ -1284,3 +1285,12 @@ def test_interrupted_correction_route_resumes_original_parent_without_redraw(tmp
     assert result.render.parent_revision == 1
     assert result.render.revision == 2
     assert transport.calls == 1
+
+
+@pytest.fixture(autouse=True)
+def reviewed_story_precondition(monkeypatch):
+    # This suite tests rendering/credit contracts with deliberately partial
+    # upstream fixtures. Real missing/stale review admission is tested in
+    # test_narrative_review.py.
+    monkeypatch.setattr("novel_to_comic.server.routers.pages.require_draw_narrative_reviews", lambda target: None)
+    monkeypatch.setattr("novel_to_comic.narrative_review.require_draw_narrative_reviews", lambda target: None)

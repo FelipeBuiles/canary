@@ -154,6 +154,7 @@ def _extract_routes() -> list[dict]:
 
     # These must stay in sync with the include_router() calls in server/app.py.
     prefix_map = {
+        "account_models.py": "/api/account",
         "projects.py": "/api/projects",
         "pipeline.py": "/api/projects/{project}",
         "pages.py": "/api/projects/{project}",

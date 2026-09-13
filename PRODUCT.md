@@ -63,6 +63,12 @@ vocabulary (entity IDs, telemetry, prompts) stays behind Dev Content.
 5. **Honest machinery.** Real progress counts, real ETAs, real credit estimates
    and holds — flavor never obscures what the pipeline is actually doing.
 
+6. **The author owns the project.** Generated descriptions are starting points,
+   not creative permission boundaries. Explicit visual changes take precedence;
+   preserve what the author did not ask to change. Keep optional reference
+   attachments neutral and let the author describe their purpose. Make creative
+   experiments reversible through visible version history.
+
 ## Accessibility & Inclusion
 
 - Body text contrast ≥ 4.5:1; hero-red text only on bristol/pulp backgrounds

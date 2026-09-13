@@ -5,9 +5,8 @@ export interface AccountModelSettings {
   funding?: string;
   codex_enabled?: boolean;
   warnings?: string[];
-  funding_groups?: Array<{ stages: string[]; label: string }>;
   selections: Record<string, string>;
-  stages: Array<{ id: string; label: string; model_ids: string[] }>;
+  stages: Array<{ id: string; label: string; description?: string; model_ids: string[] }>;
   models: Array<{ id: string; label: string; kind: "text" | "image"; provider: string; vision: boolean; funding?: "api" | "codex_subscription"; available?: boolean; description?: string }>;
 }
 

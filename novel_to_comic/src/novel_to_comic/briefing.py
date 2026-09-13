@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable
 
 from pydantic import BaseModel, ConfigDict
 
+from novel_to_comic.narrative_instructions import BRIEF_DEPICTION_GUIDANCE
 from novel_to_comic.models.adaptation import AdaptationBrief
 from novel_to_comic.models.source import SourceDocument
 from novel_to_comic.models.story_bible import StoryBible
@@ -90,7 +91,9 @@ def build_brief_inference_prompt(
         "recommendation, not a page-allocation or layout decision. Do not equate "
         "source units, sentences, paragraphs, or prose pages with comic pages, "
         "and do not assign one page per source unit. "
-        "Do not return approval status or revision metadata.\n"
+        "Do not return approval status or revision metadata. "
+        + BRIEF_DEPICTION_GUIDANCE
+        + "\n"
         + json.dumps(
             context,
             ensure_ascii=False,

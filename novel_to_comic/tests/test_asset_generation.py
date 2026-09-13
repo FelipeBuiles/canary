@@ -424,3 +424,29 @@ def test_asset_restore_only_reactivates_archived_bytes_and_metadata(tmp_path, mo
     assert output_path.read_bytes() == b"archived-image"
     restored = json.loads(output_path.with_suffix(".png.meta.json").read_text())
     assert restored["provenance"]["request_id"] == "original-request"
+
+
+@pytest.mark.parametrize("kind", ["location", "character_state"])
+def test_owner_direction_wins_in_image_wire_but_source_anchors_stay_verbatim(kind):
+    from novel_to_comic.asset_generation import _meta_payload
+    from novel_to_comic.models.generation import PromptSubject
+    config = Config(image_model="image-gemini-pro", style_template="Ink wash")
+    anchor = "gas lamp beside an oak desk" if kind == "location" else "white hair, hollow face"
+    direction = "Replace the gas lamp with a brass pendant." if kind == "location" else "Make his hair black and his face rugged, with a haunted sailor's stare."
+    prompt = GenerationPromptInput(
+        anchors=(PromptAnchor(kind="location", entity_id="loc_001", name="Office", text=anchor),) if kind == "location" else (),
+        subjects=(PromptSubject(character_id="char_001", name="Sailor", identity=anchor,
+                                appearance_locked=True, appearance_state_id="haunted",
+                                appearance_guard="His hair must stay entirely white."),) if kind == "character_state" else (),
+        editorial_addendum=direction, width=1344, height=768, generation_shape="landscape",
+    )
+    request = compile_non_panel_request(config, CanonicalLocationPlateInput(
+        asset_identity="location_plate:loc_001", prompt=prompt,
+    ), reference_plan=_empty_plan(config))
+    wire = request.wire.prompt_parts[0]
+    assert anchor in wire
+    assert direction in wire
+    assert "explicit visual direction takes precedence" in wire
+    assert "Only these editable facets" not in wire
+    assert "fixed altered appearance" not in wire
+    assert _meta_payload(request, {})["art_direction"] == direction

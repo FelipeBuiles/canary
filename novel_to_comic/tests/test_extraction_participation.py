@@ -108,3 +108,32 @@ def test_extraction_preserves_nonhuman_anchor_verbatim_despite_adult_gender_meta
     payload["characters"][0].update(visual_anchor=anchor, gender="nonbinary", age_range="adult")
     bible = _parse_extraction(payload, SOURCE)
     assert bible.characters[0].visual_anchor == anchor
+
+
+def test_extraction_rejects_collapsed_illness_and_recovery_interval():
+    payload = _payload()
+    char = payload["characters"][0]
+    char["appearance_states"] = [
+        {"id": state, "label": state, "visual_anchor": char["visual_anchor"],
+         "changed_facets": [], "replaces_identity": False}
+        for state in ("ill", "recovered")
+    ]
+    char["appearance_timeline"] = [
+        {"state_id": state, "at": {"scene_id": "now", "beat": None}}
+        for state in ("ill", "recovered")
+    ]
+    with pytest.raises(ValueError, match="Conflicting appearance activations"):
+        _parse_extraction(payload, SOURCE)
+    char["appearance_timeline"][1]["at"]["beat"] = 2
+    assert len(_parse_extraction(payload, SOURCE).characters[0].appearance_timeline) == 2
+
+
+def test_extraction_requires_explicit_state_conditioning_facets():
+    payload = _payload()
+    payload["characters"][0]["appearance_states"] = [
+        {"id": "white_hair", "label": "White hair", "visual_anchor": "adult male, white hair"},
+    ]
+    with pytest.raises(ValueError, match="must explicitly declare changed_facets"):
+        _parse_extraction(payload, SOURCE)
+    payload["characters"][0]["appearance_states"][0].update(changed_facets=["hair"], replaces_identity=False)
+    assert _parse_extraction(payload, SOURCE).characters[0].appearance_states[0].changed_facets == ("hair",)

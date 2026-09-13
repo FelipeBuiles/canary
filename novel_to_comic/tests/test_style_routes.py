@@ -310,6 +310,25 @@ def test_image_backed_direction_estimate_covers_references_and_retry(tmp_path):
     assert two_attempts > one_attempt
 
 
+def test_style_batch_estimates_structured_text_output_and_story_context(tmp_path):
+    from novel_to_comic.stages.s2_style import LLM_REQUEST_COUNT
+
+    _project(tmp_path)
+    with patch("novel_to_comic.usage.estimate_text_cost", return_value=.2) as text_cost:
+        estimate_style_batch_cost_usd(Config(image_model="image-sunburst"), tmp_path)
+    assert text_cost.call_args.kwargs["output_chars"] == LLM_REQUEST_COUNT * 1800
+    assert "Generate 8 style options" in text_cost.call_args.args[1]
+
+
+def test_generic_style_quote_uses_proof_geometry():
+    from novel_to_comic.server.routers.styles import _style_sample_credit_estimate
+
+    with patch("novel_to_comic.server.routers.styles.estimate_image_cost", return_value=.03) as estimate:
+        _style_sample_credit_estimate(Config(image_model="image-sunburst"), has_style_reference=True)
+    assert (estimate.call_args.kwargs["width"], estimate.call_args.kwargs["height"]) == (1024, 1280)
+    assert estimate.call_args.kwargs["ref_count"] == 1
+
+
 
 
 def test_batch_estimator_prices_each_neighbor_reference_size(tmp_path):

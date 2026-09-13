@@ -276,7 +276,26 @@ def _parse_extraction(raw: object, novel_text: str) -> StoryBible:
             if character["id"] in scene["character_ids"]
         )
     result.pop("character_participation", None)
-    return StoryBible.model_validate(_normalize_result(result))
+    result = _normalize_result(result)
+    for kind in ("characters", "locations", "props"):
+        for entity in result.get(kind, []):
+            for appearance in entity.get("appearance_states", []):
+                if "changed_facets" not in appearance or "replaces_identity" not in appearance:
+                    raise ValueError(
+                        f"Appearance state {entity['id']} / {appearance['id']} must explicitly "
+                        "declare changed_facets and replaces_identity; do not infer empty defaults."
+                    )
+            positions = set()
+            for activation in entity.get("appearance_timeline", []):
+                at = activation["at"]
+                position = (at["scene_id"], at.get("beat"))
+                if position in positions:
+                    raise ValueError(
+                        f"Conflicting appearance activations for {entity['id']} at {position}; "
+                        "use distinct beats or scenes so every state has a visible interval."
+                    )
+                positions.add(position)
+    return StoryBible.model_validate(result)
 
 
 async def _extract_with_retry(

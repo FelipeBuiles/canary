@@ -22,7 +22,6 @@ def routed(monkeypatch):
     route = codex_dev.CodexRoute(reasoning_model="gpt-5.6-terra", image_model="gpt-image-2")
     for module in (codex_dev, asset_generation, provider_module):
         monkeypatch.setattr(module, "route_for", lambda kind, model: route)
-    monkeypatch.setattr(provider_module, "assert_request_funding", lambda *args: None)
     return Config(image_model="image-gpt-2")
 
 

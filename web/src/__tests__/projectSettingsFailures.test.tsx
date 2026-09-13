@@ -7,13 +7,14 @@ import type * as ClientApi from "../api/client";
 import { I18nProvider } from "../i18n";
 import { ProjectSettingsPage } from "../pages/ProjectSettingsPage";
 
-const requests = vi.hoisted(() => ({ save: vi.fn(), remove: vi.fn() }));
+const requests = vi.hoisted(() => ({ save: vi.fn(), remove: vi.fn(), config: vi.fn(), models: vi.fn() }));
 vi.mock("../api/client", async (importOriginal) => ({
   ...await importOriginal<typeof ClientApi>(),
   apiFetch: async (path: string, options?: RequestInit) => {
     if (options?.method === "DELETE") return requests.remove();
-    if (options?.method === "PATCH") return requests.save();
-    if (path.includes("config")) return { target_language: "en" };
+    if (options?.method === "PATCH") return requests.save(JSON.parse(String(options.body)));
+    if (path.includes("model-settings")) return requests.models();
+    if (path.includes("config")) return requests.config() ?? { target_language: "en" };
     return { project_name: "My project", stages: {} };
   },
 }));
@@ -58,4 +59,36 @@ it("retains delete confirmation input on failure and only navigates after succes
   expect(requests.remove).toHaveBeenCalledTimes(1);
   await user.click(within(dialog).getByRole("button", { name: "Delete Project" }));
   expect(await screen.findByRole("status")).toHaveProperty("textContent", "Deleted My project");
+});
+
+
+it("edits an existing project's model and restores account inheritance without starting generation", async () => {
+  let saved = { target_language: "en", dev_model_selections: { adapt: "opus" } as Record<string, string> };
+  requests.config.mockImplementation(() => saved);
+  requests.models.mockResolvedValue({
+    enabled: true, selections: { adapt: "terra" },
+    stages: [{ id: "adapt", label: "Adaptation", model_ids: ["terra", "opus", "astra"] }],
+    models: [
+      { id: "terra", label: "Terra", kind: "text", provider: "OpenAI", vision: true, funding: "api" },
+      { id: "opus", label: "Opus", kind: "text", provider: "Anthropic", vision: true, funding: "api" },
+      { id: "astra", label: "Astra", kind: "text", provider: "Codex", vision: true, funding: "codex_subscription" },
+    ],
+  });
+  requests.save.mockRejectedValueOnce(new Error("Could not save model choices"))
+    .mockImplementation(async (data) => { saved = { ...saved, ...data }; return saved; });
+  const user = userEvent.setup();
+  openSettings();
+  await user.click(screen.getByRole("button", { name: "Models (dev)" }));
+  const select = await screen.findByRole("combobox", { name: "Adaptation" });
+  expect(select).toHaveProperty("value", "opus");
+  await user.selectOptions(select, "astra");
+  expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Could not save model choices");
+  expect(select).toHaveProperty("value", "opus");
+  await user.selectOptions(select, "astra");
+  await waitFor(() => expect(select).toHaveProperty("value", "astra"));
+  expect(requests.save).toHaveBeenLastCalledWith({ dev_model_selections: { adapt: "astra" } });
+  await user.selectOptions(select, "");
+  await waitFor(() => expect(select).toHaveProperty("value", ""));
+  expect(requests.save).toHaveBeenLastCalledWith({ dev_model_selections: {} });
+  expect(requests.save).toHaveBeenCalledTimes(3);
 });

@@ -22,17 +22,19 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `google_use_vertex_ai` | `bool` | `True` |  |
 | `google_cloud_project` | `str` | `''` |  |
 | `google_cloud_location` | `str` | `'global'` |  |
-| `extraction_model` | `str` | `GATEWAY_EXTRACT_BALANCED` |  |
-| `adapt_model` | `str` | `GATEWAY_ADAPT_BALANCED` |  |
-| `plan_model` | `str` | `GATEWAY_PLAN_BALANCED` |  |
-| `prompt_model` | `str` | `GATEWAY_PROMPT_BALANCED` |  |
+| `dev_model_selections` | `dict[str, str]` | `Field(default_factory=dict)` |  |
+| `extraction_model` | `str` | `GATEWAY_GEMINI_FLASH` |  |
+| `brief_model` | `str` | `GATEWAY_LUNA` |  |
+| `adapt_model` | `str` | `GATEWAY_TERRA` |  |
+| `plan_model` | `str` | `GATEWAY_TERRA` |  |
+| `prompt_model` | `str` | `GATEWAY_LUNA` |  |
 | `page_ocr_model` | `str` | `GATEWAY_PAGE_OCR` |  |
-| `image_provider` | `Literal['gemini', 'openai', 'openrouter', 'together', 'reve']` | `'gemini'` |  |
-| `image_model` | `str` | `GATEWAY_IMAGE_QUALITY` |  |
-| `fallback_image_model` | `str` | `GATEWAY_IMAGE_FAST` |  |
+| `visual_review_model` | `str` | `GATEWAY_PAGE_OCR` |  |
+| `image_provider` | `Literal['gemini', 'openai', 'openrouter', 'together']` | `'gemini'` |  |
+| `image_model` | `str` | `GATEWAY_IMAGE_BALANCED` |  |
+| `draw_model` | `str` | `GATEWAY_IMAGE_BALANCED` |  |
 | `target_language` | `str` | `'en'` |  |
 | `dev_mode` | `bool` | `False` |  |
-| `quality_preset` | `QualityPreset | None` | `None` |  |
 | `dev_image_scale` | `float` | `0.5` |  |
 | `dev_image_steps` | `int` | `8` |  |
 | `dev_image_concurrency` | `int` | `5` |  |

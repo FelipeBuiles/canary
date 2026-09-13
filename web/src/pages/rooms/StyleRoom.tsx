@@ -120,13 +120,15 @@ export function StyleRoom() {
   const { handleRun, isPending: isPipelineRunning } = useRunAction();
   const { data: castEstimate } = useStageEstimate(id, "cast");
   const styleSelected = !!status?.style_selected;
+  const castStarted = status?.stages.cast?.status != null && status.stages.cast.status !== "pending";
+  const castReady = ["complete", "awaiting_review"].includes(status?.stages.cast.status ?? "");
   const { data: projectSummaries } = useProjects();
   const projectSummary = projectSummaries?.find((project) => project.id === id);
   const coverJobActive = projectSummary?.cover_job?.status === "queued"
     || projectSummary?.cover_job?.status === "running";
   const needsCover = !!status && !status.has_cover && !projectSummary?.has_cover && !coverJobActive;
   const generateCover = useGenerateProjectCover();
-  const { data: coverEstimate } = useProjectCoverEstimate(id, styleSelected && needsCover);
+  const { data: coverEstimate } = useProjectCoverEstimate(id, styleSelected && castReady && needsCover);
 
   const isSuggesting = suggestionStatus === "running";
   const styleActionsDisabled = isStageGenerating || isSuggesting || suggestStyles.isPending || createStyleDirection.isPending;
@@ -249,18 +251,18 @@ export function StyleRoom() {
   const suggestions = stylesData?.suggestions ?? [];
 
   const styleNeedsApproval = styleStage?.status === "awaiting_review";
-  const castStarted = status?.stages.cast?.status != null && status.stages.cast.status !== "pending";
   const continueEstimateCredits = styleSelected
     && (castStarted || castEstimate != null)
-    && (!needsCover || coverEstimate != null)
+    && (!castReady || !needsCover || coverEstimate != null)
     ? (castStarted ? 0 : castEstimate?.estimate_credits ?? 0)
-      + (needsCover ? coverEstimate?.estimate_credits ?? 0 : 0)
+      + (castReady && needsCover ? coverEstimate?.estimate_credits ?? 0 : 0)
     : null;
 
   function handleContinueToCast() {
     if (!id) return;
     const startCastIfNeeded = () => {
-      if (needsCover) {
+      // A new Cast run queues its cover on the server after references exist.
+      if (castReady && needsCover) {
         generateCover.mutate(
           { project: id },
           {
@@ -593,7 +595,7 @@ export function StyleRoom() {
           || isStageGenerating
           || isSuggesting
           || (!castStarted && castEstimate == null)
-          || (needsCover && coverEstimate == null)
+          || (castReady && needsCover && coverEstimate == null)
         }
         busy={approveStage.isPending}
         secondary={suggestions.length > 0 && (styleStage?.status === "complete" || styleStage?.status === "awaiting_review") ? (

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Iterator
 
 # Cumulative characters received so far on the in-flight streamed completion.
@@ -27,6 +27,8 @@ class AIRequestContext:
     job_id: str | None = None
     page_number: int | None = None
     is_correction: bool = False
+    source_scope: str | None = None
+    source_unit_ids: tuple[str, ...] = ()
 
 
 _current_ai_request_context: ContextVar[AIRequestContext] = ContextVar(
@@ -39,6 +41,20 @@ def current_ai_request_context() -> AIRequestContext:
     """Return the active AI request context, or an empty context."""
 
     return _current_ai_request_context.get()
+
+
+@contextmanager
+def ai_source_context(scope: str, source_unit_ids: tuple[str, ...]) -> Iterator[None]:
+    """Attach source provenance to one call without losing the enclosing job."""
+
+    token = _current_ai_request_context.set(replace(
+        current_ai_request_context(), source_scope=scope,
+        source_unit_ids=source_unit_ids,
+    ))
+    try:
+        yield
+    finally:
+        _current_ai_request_context.reset(token)
 
 
 @contextmanager

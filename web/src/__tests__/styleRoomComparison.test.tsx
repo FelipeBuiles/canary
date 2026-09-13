@@ -9,28 +9,33 @@ import { I18nProvider } from "../i18n";
 const state = vi.hoisted(() => {
   const mutation = { mutate: vi.fn(), isPending: false };
   const emptyQuery = () => ({ data: undefined });
-  return { mutation, emptyQuery, estimateError: null as Error | null, retryEstimate: vi.fn(), labels: ["Ink", "Watercolor", "Noir", "Graphic"] };
+  return { mutation, emptyQuery, estimateError: null as Error | null, retryEstimate: vi.fn(), labels: ["Ink", "Watercolor", "Noir", "Graphic"],
+    castStatus: undefined as string | undefined, handleRun: vi.fn(), generateCover: vi.fn() };
 });
 vi.mock("../api/queries", () => ({
   useStyles: () => ({ data: { suggestions: state.labels.map((label, index) => ({
     id: label, index, label, template: `Full ${label} direction`, has_sample: true, is_active: false,
   })) }, refetch: vi.fn(), isLoading: false, isError: false }),
   useProjectConfig: state.emptyQuery, useStoryBible: state.emptyQuery,
-  useProjectStatus: state.emptyQuery, useGenerationJobs: state.emptyQuery,
+  useProjectStatus: () => ({ data: state.castStatus ? { style_selected: true, has_cover: false,
+    stages: { style: { status: "complete" }, cast: { status: state.castStatus } } } : undefined }), useGenerationJobs: state.emptyQuery,
   useSuggestStylesEstimate: () => ({ error: state.estimateError, refetch: state.retryEstimate }), useStyleDirectionEstimate: () => ({ refetch: vi.fn() }),
-  useStyleSampleEstimate: state.emptyQuery, useStageEstimate: state.emptyQuery,
+  useStyleSampleEstimate: state.emptyQuery, useStageEstimate: () => ({ data: { estimate_credits: 25 } }),
   useProjectCoverEstimate: state.emptyQuery, useProjects: state.emptyQuery,
   useImageGenerationMeta: state.emptyQuery,
   useSuggestStyles: () => state.mutation, useCreateStyleDirection: () => state.mutation,
   useGenerateStyleSamples: () => state.mutation, useGenerateStyleValidation: () => state.mutation,
-  useApproveStage: () => state.mutation, useGenerateProjectCover: () => state.mutation,
+  useApproveStage: () => state.mutation, useGenerateProjectCover: () => ({ mutate: state.generateCover }),
   useSetActiveStyle: () => state.mutation,
 }));
-vi.mock("../hooks/useRunAction", () => ({ useRunAction: () => ({ handleRun: vi.fn(), isPending: false }) }));
+vi.mock("../hooks/useRunAction", () => ({ useRunAction: () => ({ handleRun: state.handleRun, isPending: false }) }));
 vi.mock("../components/composites", async (importOriginal) => ({
   ...await importOriginal<object>(),
   RoomShell: ({ children }: { children: ReactNode }) => <main>{children}</main>,
-  RoomHeader: () => null, ApprovalBar: () => null, ConfirmDrawer: () => null, RerunStageAction: () => null,
+  RoomHeader: () => null,
+  ApprovalBar: ({ onPrimary, primaryDisabled, estimateCredits }: { onPrimary: () => void; primaryDisabled: boolean; estimateCredits: number }) =>
+    <button disabled={primaryDisabled} onClick={onPrimary}>Continue for {estimateCredits}</button>,
+  ConfirmDrawer: () => null, RerunStageAction: () => null,
 }));
 
 function proof(label: string) {
@@ -84,3 +89,17 @@ it("shows estimate failures with a retry instead of claiming generation is runni
     expect(state.retryEstimate).toHaveBeenCalledOnce();
     expect(state.mutation.mutate).not.toHaveBeenCalled();
  });
+
+it("starts Cast with its bundled cover estimate without requesting a cover before references exist", async () => {
+  state.castStatus = "pending";
+  state.estimateError = null;
+  render(<I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
+    <Route path="/projects/:id/style" element={<StyleRoom />} />
+    <Route path="/project/:id/cast" element={<p>Cast room</p>} />
+  </Routes></MemoryRouter></I18nProvider>);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Continue for 25" }));
+  expect(state.handleRun).toHaveBeenCalledWith("book", "cast", { actionLabel: "Cast characters & places" });
+  expect(state.generateCover).not.toHaveBeenCalled();
+  expect(screen.getByText("Cast room")).toBeTruthy();
+  state.castStatus = undefined;
+});

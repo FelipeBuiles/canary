@@ -78,6 +78,7 @@ def approved_reference_files(
             reference_id=reference_id(character.id),
             path=path,
             media_type="image/png",
+            metadata_path=artifacts.asset_meta_path(artifacts.character_ref_sheet_path(project_dir, character.id)),
         )
         for appearance in character.appearance_states:
             state_reference = reference_id(character.id, appearance.id)
@@ -95,6 +96,11 @@ def approved_reference_files(
                 reference_id=state_reference,
                 path=appearance_path,
                 media_type="image/png",
+                metadata_path=artifacts.asset_meta_path(
+                    artifacts.character_ref_sheet_path(project_dir, character.id)
+                    if appearance.canonical_equivalent or not appearance.visually_significant
+                    else appearance_path
+                ),
             )
     for location in bible.locations:
         files[reference_id(location.id)] = ApprovedReferenceFile(
@@ -145,6 +151,8 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
 
     target = TargetArtifacts(project_dir)
     brief = target.read_brief()
+    from novel_to_comic.narrative_review import adaptation_context, require_narrative_review
+    require_narrative_review(target, "adapt", adaptation_context(target.read_source(), brief, target.read_adaptation()))
     # One-shot layout/pacing input from an explicitly applied story change.
     # The instruction travels inside Plan's prompts under a hard constraint:
     # Plan reallocates pages but never rewrites Adapt's lettering. It is
@@ -168,7 +176,6 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
         ApprovedPageRange(
             minimum=brief.target_page_min,
             maximum=brief.target_page_max,
-            allow_expansion=brief.transformation_level == "faithful",
         ),
         artifacts=target,
         ctx=ctx,
@@ -194,7 +201,6 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
         ApprovedPageRange(
             minimum=brief.target_page_min,
             maximum=brief.target_page_max,
-            allow_expansion=brief.transformation_level == "faithful",
         ),
         model=config.effective_plan_model(),
         story_instruction=directive.instruction if directive is not None else "",

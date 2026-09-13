@@ -8,7 +8,7 @@ from typing import Any
 
 from novel_to_comic.ai import codex_runtime
 from novel_to_comic.ai.providers.base import ProviderRawResult
-from novel_to_comic.codex_dev import assert_request_funding, route_for
+from novel_to_comic.codex_dev import route_for
 from novel_to_comic.config import Config
 from novel_to_comic.image_models import ImageRoute, image_model_profile
 from novel_to_comic.provider_wire import ProviderWireError, ProviderWireRequest, materialize_wire_references
@@ -67,7 +67,6 @@ class CodexDevImageProvider:
         event_id: str, metadata: dict[str, Any],
     ) -> ProviderRawResult:
         reasoning_model = validate_codex_wire(wire)
-        assert_request_funding("image", wire.requested_alias or "")
         blobs = materialize_wire_references(wire)
         references = tuple((data, _image_mime(data)) for data in blobs)
         started = time.perf_counter()

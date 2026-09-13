@@ -17,11 +17,13 @@ class AIRefusalError(RuntimeError):
         response_data: dict[str, Any] | None = None,
         response_headers: httpx.Headers | None = None,
         response: httpx.Response | None = None,
+        diagnostics: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.response_data = response_data
         self.response_headers = response_headers
         self.response = response
+        self.diagnostics = diagnostics or {}
 
 
 class AITransportError(ValueError):
