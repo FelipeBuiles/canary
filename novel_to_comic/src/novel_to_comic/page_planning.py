@@ -9,6 +9,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from novel_to_comic.ai.context import ai_source_context
+from novel_to_comic.narrative_instructions import PLAN_DEPICTION_GUIDANCE
 from novel_to_comic.editorial import story_instruction_section
 from novel_to_comic.models.adaptation import BookAdaptation, LetteringItem
 from novel_to_comic.models.page import (
@@ -27,6 +29,7 @@ from novel_to_comic.models.validation import (
     StageValidation,
     ValidationAttempt,
 )
+from novel_to_comic.narrative_review import planning_context, review_narrative
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.paid_shards import run_paid_shards
 from novel_to_comic.target_artifacts import TargetArtifacts
@@ -436,20 +439,14 @@ def build_book_plan_prompt(
         "approved_target_page_range": target_range.model_dump(mode="json"),
     }
     page_range_instruction = (
-        "The approved minimum is a narrative floor. Because this adaptation is "
-        "allowed to expand for fidelity, keep every page needed for safe, legible "
-        "storytelling even when the allocation exceeds the approved maximum. "
-        if target_range.allow_expansion
-        else "Stay within the approved target page range unless the complete safe "
-        "allocation proves that the range is insufficient. "
+        "The target page range is advisory, not a floor or ceiling. Choose the "
+        "length the story earns, even below the minimum or above the maximum. "
+        "Never pad the ending or compress essential context to hit a number. "
     )
     overflow_instruction = (
-        "Do not compress required content to fit the approved maximum; return the "
-        "complete safe allocation and let the resulting page count expand. "
-        if target_range.allow_expansion
-        else "If required content cannot fit safely inside the approved range, "
-        "return the complete safe allocation even when it exceeds the maximum; "
-        "Plan will report the evidenced conflict and recommended minimum. "
+        "Explain the actual allocation in rhythm_summary, including any departure "
+        "from the target. Distribute space by dramatic importance across the whole "
+        "book; one beat does not imply one page. "
     )
     return (
         "Allocate the single ordered BookAdaptation globally into canonical comic "
@@ -477,7 +474,9 @@ def build_book_plan_prompt(
         + overflow_instruction
         + "Page numbers, content IDs, content order, and reading_order are "
         "deterministic: omit them or return provisional values because code "
-        "canonicalizes them. Return only the global page-plan JSON object.\n"
+        "canonicalizes them. Return only the global page-plan JSON object. "
+        + PLAN_DEPICTION_GUIDANCE
+        + "\n"
         + json.dumps(
             context,
             ensure_ascii=False,
@@ -495,13 +494,16 @@ def _build_page_map_prompt(
         "Create the compact global page map for this complete graphic novel. "
         "Allocate every beat at least once, in order, without returning to an "
         "earlier beat after advancing. Own book-wide page count, page turns, "
-        "spreads, emphasis, density, and rhythm. The approved minimum is a "
-        "narrative floor. Preserve investigation, causality, reactions, and "
+        "spreads, emphasis, density, and rhythm. The target range is advisory, "
+        "not a floor or ceiling. Use fewer or more pages when the story requires. "
+        "Never pad a closing beat to meet a minimum. Preserve investigation, causality, reactions, and "
         "aftermath rather than compressing toward the maximum. A repeated beat "
         "is allowed only on an immediately adjacent page when decompression "
         "creates a distinct visual submoment. Do not author panels, visual "
         "intent, entity placement, lettering allocation, or geometry yet. Page "
-        "numbers are canonicalized by code. Return only the page-map JSON.\n"
+        "numbers are canonicalized by code. Return only the page-map JSON. "
+        + PLAN_DEPICTION_GUIDANCE
+        + "\n"
         + json.dumps(
             {
                 "planning_view": _planning_view(adaptation),
@@ -558,37 +560,6 @@ def _validate_page_map(
                 evidence=[
                     f"Expected ordered beats {list(expected)!r}; page map allocated "
                     f"{list(allocated)!r}. Unknown beats: {list(unknown)!r}."
-                ],
-            )
-        )
-    if len(page_map.pages) < target_range.minimum:
-        failures.append(
-            InvariantFailure(
-                id="plan_map_failure_page_floor",
-                owner_stage="plan",
-                code="target_page_range_conflict",
-                message="The page map is below the approved narrative floor.",
-                artifact_ids=expected,
-                evidence=[
-                    f"The page map has {len(page_map.pages)} pages; the approved "
-                    f"minimum is {target_range.minimum}. Decompress purposeful "
-                    "story moments rather than lowering the floor."
-                ],
-            )
-        )
-    elif (
-        not target_range.allow_expansion and len(page_map.pages) > target_range.maximum
-    ):
-        failures.append(
-            InvariantFailure(
-                id="plan_map_failure_page_ceiling",
-                owner_stage="plan",
-                code="target_page_range_conflict",
-                message="The complete page map exceeds the approved range.",
-                artifact_ids=expected,
-                evidence=[
-                    f"The page map requires {len(page_map.pages)} pages; the "
-                    f"approved maximum is {target_range.maximum}."
                 ],
             )
         )
@@ -651,6 +622,8 @@ def _detail_batch_prompt(
         + _SEMANTIC_PAGE_CONTRACT
         + "Reserve one-panel pages for exceptional moments."
         + concern_text
+        + " "
+        + PLAN_DEPICTION_GUIDANCE
         + "\n"
         + json.dumps(
             {
@@ -681,6 +654,10 @@ def estimate_book_plan_cost(
     """Estimate the selected internal workflow, including bounded detail calls."""
 
     instruction_suffix = story_instruction_section(story_instruction, stage="plan")
+    review_allowance = estimate_text_cost(
+        model, adaptation.model_dump_json() * 2,
+        output_chars=max(10_000, len(adaptation.beats) * 2_000),
+    ) * 2
     if len(adaptation.beats) < _TWO_PASS_PLAN_MIN_BEATS:
         prompt = build_book_plan_prompt(
             adaptation, references, target_range
@@ -689,7 +666,7 @@ def estimate_book_plan_cost(
             model,
             prompt,
             output_chars=max(8_000, len(adaptation.beats) * 2_000),
-        )
+        ) + review_allowance
     page_count = max(
         target_range.minimum,
         (len(adaptation.beats) + 1) // 2,
@@ -739,7 +716,7 @@ def estimate_book_plan_cost(
             + instruction_suffix,
             output_chars=max(4_000, (stop - start) * 1_600),
         )
-    return total
+    return total + review_allowance
 
 
 def _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat):
@@ -759,11 +736,7 @@ def _write_valid_plan(*, artifacts, adaptation, target_range, pages, rhythm_summ
         adaptation_revision=adaptation.revision,
         adaptation_sha256=adaptation.content_sha256,
         target_page_min=target_range.minimum,
-        target_page_max=(
-            max(target_range.maximum, len(pages))
-            if target_range.allow_expansion
-            else target_range.maximum
-        ),
+        target_page_max=target_range.maximum,
         rhythm_summary=rhythm_summary,
         pages=[
             PlannedPageRevision(
@@ -800,11 +773,8 @@ async def _produce_book_plan_one_shot(
     prompt = build_book_plan_prompt(
         adaptation, references, target_range
     ) + story_instruction_section(story_instruction, stage="plan")
-    estimate = estimate_text_cost(
-        model,
-        prompt,
-        output_chars=max(8_000, len(adaptation.beats) * 2_000),
-    )
+    estimate = estimate_book_plan_cost(adaptation, references, target_range,
+                                      model=model, story_instruction=story_instruction)
     with ctx.execute(total=1, estimated_cost_usd=estimate):
         attempt_prompt = prompt
         pages: tuple[ComicPage, ...] = ()
@@ -814,14 +784,17 @@ async def _produce_book_plan_one_shot(
         ) = None
         history: list[ValidationAttempt] = []
         for attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
-            result = await generate(
-                system_prompt=(
-                    "You are the sole global page architect for a complete comic book."
-                ),
-                user_content=attempt_prompt,
-                feature="plan.book",
-                json_schema=_BookPlanDraft.model_json_schema(),
-            )
+            with ai_source_context("book", tuple(dict.fromkeys(
+                unit_id for beat in adaptation.beats for unit_id in beat.source_unit_ids
+            ))):
+                result = await generate(
+                    system_prompt=(
+                        "You are the sole global page architect for a complete comic book."
+                    ),
+                    user_content=attempt_prompt,
+                    feature="plan.book",
+                    json_schema=_BookPlanDraft.model_json_schema(),
+                )
             # A retried attempt was still paid for, so its usage is recorded
             # without counting a completed item.
             if result.usage is not None:
@@ -848,6 +821,12 @@ async def _produce_book_plan_one_shot(
                 validation = allocation_error.validation
             except ValidationError as error:
                 validation = _canonical_page_validation(error)
+            if not validation.invariant_failures:
+                review_failures = await review_narrative(
+                    planning_context(adaptation, pages), generate=generate, ctx=ctx,
+                    artifacts=artifacts, model=model, instruction=story_instruction,
+                )
+                validation = validation.model_copy(update={"invariant_failures": review_failures})
             history.append(_attempt_record(attempt, validation))
             if not validation.invariant_failures:
                 retryable_issues = tuple(
@@ -869,6 +848,8 @@ async def _produce_book_plan_one_shot(
                     continue
                 ctx.record_item_done()
                 break
+            if any(f.code == "narrative_review_invalid" for f in validation.invariant_failures):
+                break
             if all(
                 failure.owner_stage != "plan"
                 for failure in validation.invariant_failures
@@ -883,6 +864,12 @@ async def _produce_book_plan_one_shot(
             ctx.record_item_done()
         ctx.progress(1, 1)
 
+        if not validation.invariant_failures:
+            review_failures = await review_narrative(
+                planning_context(adaptation, pages), generate=generate, ctx=ctx,
+                artifacts=artifacts, model=model, instruction=story_instruction,
+            )
+            validation = validation.model_copy(update={"invariant_failures": review_failures})
         _persist_validation(
             artifacts, validation, attempts=attempt, history=tuple(history)
         )
@@ -907,7 +894,10 @@ async def _generate_page_map(
     *,
     generate: StructuredGenerator,
     ctx: StageRuntime,
+    artifacts: TargetArtifacts,
+    model: str,
     story_instruction: str = "",
+    review_instruction: str | None = None,
 ) -> tuple[_BookPageMap, list[ValidationAttempt]]:
     prompt = _build_page_map_prompt(
         adaptation, target_range
@@ -916,14 +906,17 @@ async def _generate_page_map(
     history: list[ValidationAttempt] = []
     page_map: _BookPageMap | None = None
     for attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
-        result = await generate(
-            system_prompt=(
-                "You are the global rhythm architect for a complete comic book."
-            ),
-            user_content=attempt_prompt,
-            feature="plan.map",
-            json_schema=_BookPageMap.model_json_schema(),
-        )
+        with ai_source_context("page_map", tuple(dict.fromkeys(
+            unit_id for beat in adaptation.beats for unit_id in beat.source_unit_ids
+        ))):
+            result = await generate(
+                system_prompt=(
+                    "You are the global rhythm architect for a complete comic book."
+                ),
+                user_content=attempt_prompt,
+                feature="plan.map",
+                json_schema=_BookPageMap.model_json_schema(),
+            )
         _record_plan_usage(ctx, result)
         try:
             page_map = _canonicalize_page_map(result.value)
@@ -933,19 +926,16 @@ async def _generate_page_map(
             attempt_prompt = _schema_repair_prompt(prompt, result.value, error)
             continue
         validation = _validate_page_map(adaptation, target_range, page_map)
+        if not validation.invariant_failures:
+            review_failures = await review_narrative(
+                planning_context(adaptation, page_map.pages, phase="plan_map"),
+                generate=generate, ctx=ctx, artifacts=artifacts, model=model, instruction=story_instruction if review_instruction is None else review_instruction,
+            )
+            validation = validation.model_copy(update={"invariant_failures": review_failures})
         history.append(_attempt_record(attempt, validation))
         if not validation.invariant_failures:
             return page_map, history
-        if (
-            not target_range.allow_expansion
-            and len(page_map.pages) > target_range.maximum
-            and all(
-                failure.code == "target_page_range_conflict"
-                for failure in validation.invariant_failures
-            )
-        ):
-            # The map is complete but the author-approved range is not. A model
-            # retry cannot grant authority to compress story requirements.
+        if any(f.owner_stage != "plan" or f.code == "narrative_review_invalid" for f in validation.invariant_failures):
             raise PlanInvariantError(validation)
         if attempt == _MAX_PLAN_ATTEMPTS:
             raise PlanInvariantError(validation)
@@ -1022,16 +1012,25 @@ async def _generate_detail_batch(
         concerns=concerns,
     ) + story_instruction_section(story_instruction, stage="plan")
     attempt_prompt = base_prompt
+    target_beat_ids = {
+        beat_id for page in page_map.pages[start:stop] for beat_id in page.beat_ids
+    }
+    source_unit_ids = tuple(dict.fromkeys(
+        unit_id
+        for beat in adaptation.beats if beat.id in target_beat_ids
+        for unit_id in beat.source_unit_ids
+    ))
     for attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
-        result = await generate(
-            system_prompt=(
-                "You are the local page-composition architect working under a "
-                "fixed global comic-book page map."
-            ),
-            user_content=attempt_prompt,
-            feature="plan.detail",
-            json_schema=_BookPlanDraft.model_json_schema(),
-        )
+        with ai_source_context(f"pages_{start + 1}-{stop}", source_unit_ids):
+            result = await generate(
+                system_prompt=(
+                    "You are the local page-composition architect working under a "
+                    "fixed global comic-book page map."
+                ),
+                user_content=attempt_prompt,
+                feature="plan.detail",
+                json_schema=_BookPlanDraft.model_json_schema(),
+            )
         _record_plan_usage(ctx, result)
         try:
             draft = _BookPlanDraft.model_validate(result.value)
@@ -1146,6 +1145,7 @@ async def _produce_book_plan_two_pass(
     author_pins: tuple[AuthorGeometryPin, ...] | list[AuthorGeometryPin],
     story_instruction: str = "",
 ) -> BookPlan:
+    author_instruction = story_instruction
     pin_by_beat = _validate_author_pins(adaptation, author_pins)
     estimate = estimate_book_plan_cost(
         adaptation,
@@ -1155,120 +1155,42 @@ async def _produce_book_plan_two_pass(
         story_instruction=story_instruction,
     )
     with ctx.execute(total=0, estimated_cost_usd=estimate):
-        try:
-            page_map, history = await _generate_page_map(
-                adaptation,
-                target_range,
-                generate=generate,
-                ctx=ctx,
-                story_instruction=story_instruction,
-            )
-        except PlanInvariantError as error:
-            _persist_validation(
-                artifacts,
-                error.validation,
-                attempts=1,
-            )
-            raise
-        ranges = [
-            (start, min(start + _PLAN_DETAIL_BATCH_PAGES, len(page_map.pages)))
-            for start in range(0, len(page_map.pages), _PLAN_DETAIL_BATCH_PAGES)
-        ]
-        # One step is reserved for canonicalization, validation, and artifact
-        # persistence so the stage cannot report completion while that work is
-        # still running.
-        total_steps = 2 + len(ranges)
-        ctx.set_progress_total(total_steps)
-        ctx.record_item_done()
-        ctx.progress(1, total_steps)
-        ctx.set_estimated_cost(
-            estimate_text_cost(
-                model,
-                _build_page_map_prompt(
-                    adaptation, target_range
-                ) + story_instruction_section(story_instruction, stage="plan"),
-                output_chars=max(4_000, len(page_map.pages) * 350),
-            )
-            + sum(
-                estimate_text_cost(
-                    model,
-                    _detail_batch_prompt(
-                        adaptation,
-                        references,
-                        page_map,
-                        start=start,
-                        stop=stop,
-                    )
-                    + story_instruction_section(story_instruction, stage="plan"),
-                    output_chars=max(4_000, (stop - start) * 1_600),
+        prior_history: list[ValidationAttempt] = []
+        for global_attempt in range(1, 3):
+            try:
+                page_map, history = await _generate_page_map(
+                    adaptation,
+                    target_range,
+                    generate=generate,
+                    ctx=ctx,
+                    artifacts=artifacts,
+                    model=model,
+                    review_instruction=author_instruction,
+                    story_instruction=story_instruction,
                 )
-                for start, stop in ranges
-            )
-        )
-
-        async def generate_batch(
-            start: int, stop: int
-        ) -> tuple[int, int, _BookPlanDraft]:
-            draft = await _generate_detail_batch(
-                adaptation,
-                references,
-                page_map,
-                start=start,
-                stop=stop,
-                generate=generate,
-                ctx=ctx,
-                story_instruction=story_instruction,
-            )
-            ctx.record_item_done()
-            return start, stop, draft
-
-        try:
-            batches = await run_paid_shards(
-                [lambda start=start, stop=stop: generate_batch(start, stop)
-                 for start, stop in ranges],
-                limit=4,
-            )
-        except PlanInvariantError as error:
-            _persist_validation(
-                artifacts,
-                error.validation,
-                attempts=_MAX_PLAN_ATTEMPTS,
-            )
-            raise
-        draft = _merge_detail_drafts(
-            adaptation,
-            references,
-            page_map,
-            batches,
-        )
-        pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat)
-
-        repairable = (
-            *validation.invariant_failures,
-            *(
-                issue
-                for issue in validation.editorial_issues
-                if issue.code
-                in {
-                    "repetitive_page_composition",
-                    "density_mismatch",
-                }
-            ),
-        )
-        grouped = _concern_batch_indexes(
-            tuple(repairable),
-            page_count=len(page_map.pages),
-        )
-        if grouped:
-            total_steps += len(grouped)
+            except PlanInvariantError as error:
+                _persist_validation(
+                    artifacts,
+                    error.validation,
+                    attempts=1,
+                )
+                raise
+            ranges = [
+                (start, min(start + _PLAN_DETAIL_BATCH_PAGES, len(page_map.pages)))
+                for start in range(0, len(page_map.pages), _PLAN_DETAIL_BATCH_PAGES)
+            ]
+            # One step is reserved for canonicalization, validation, and artifact
+            # persistence so the stage cannot report completion while that work is
+            # still running.
+            total_steps = ctx.stage_state.items_done + 2 + len(ranges)
             ctx.set_progress_total(total_steps)
-            by_index = {
-                start // _PLAN_DETAIL_BATCH_PAGES: (start, stop, batch)
-                for start, stop, batch in batches
-            }
-            for index, concerns in grouped.items():
-                start, stop, _ = by_index[index]
-                repaired = await _generate_detail_batch(
+            ctx.record_item_done()
+            ctx.progress(ctx.stage_state.items_done, total_steps)
+
+            async def generate_batch(
+                start: int, stop: int
+            ) -> tuple[int, int, _BookPlanDraft]:
+                draft = await _generate_detail_batch(
                     adaptation,
                     references,
                     page_map,
@@ -1276,13 +1198,24 @@ async def _produce_book_plan_two_pass(
                     stop=stop,
                     generate=generate,
                     ctx=ctx,
-                    concerns=tuple(concerns),
                     story_instruction=story_instruction,
                 )
                 ctx.record_item_done()
-                ctx.progress(ctx.stage_state.items_done, total_steps)
-                by_index[index] = (start, stop, repaired)
-            batches = list(by_index.values())
+                return start, stop, draft
+
+            try:
+                batches = await run_paid_shards(
+                    [lambda start=start, stop=stop: generate_batch(start, stop)
+                     for start, stop in ranges],
+                    limit=4,
+                )
+            except PlanInvariantError as error:
+                _persist_validation(
+                    artifacts,
+                    error.validation,
+                    attempts=_MAX_PLAN_ATTEMPTS,
+                )
+                raise
             draft = _merge_detail_drafts(
                 adaptation,
                 references,
@@ -1290,20 +1223,95 @@ async def _produce_book_plan_two_pass(
                 batches,
             )
             pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat)
+            if not validation.invariant_failures:
+                review_failures = await review_narrative(
+                    planning_context(adaptation, pages), generate=generate, ctx=ctx,
+                    artifacts=artifacts, model=model, instruction=author_instruction,
+                )
+                validation = validation.model_copy(update={"invariant_failures": review_failures})
 
-        _persist_validation(
-            artifacts,
-            validation,
-            attempts=1 + bool(grouped),
-            history=tuple(history),
-        )
-        if validation.invariant_failures:
-            raise PlanInvariantError(validation)
-        plan = _write_valid_plan(artifacts=artifacts, adaptation=adaptation,
-            target_range=target_range, pages=pages, rhythm_summary=page_map.rhythm_summary,
-            validation=validation)
-        ctx.record_item_done()
-        ctx.progress(total_steps, total_steps)
+
+            repairable = (
+                *(f for f in validation.invariant_failures if f.owner_stage == "plan"
+                  and not f.code.startswith("narrative_review_")),
+                *(
+                    issue
+                    for issue in validation.editorial_issues
+                    if issue.code
+                    in {
+                        "repetitive_page_composition",
+                        "density_mismatch",
+                    }
+                ),
+            )
+            grouped = _concern_batch_indexes(
+                tuple(repairable),
+                page_count=len(page_map.pages),
+            )
+            if grouped:
+                total_steps += len(grouped)
+                ctx.set_progress_total(total_steps)
+                by_index = {
+                    start // _PLAN_DETAIL_BATCH_PAGES: (start, stop, batch)
+                    for start, stop, batch in batches
+                }
+                for index, concerns in grouped.items():
+                    start, stop, _ = by_index[index]
+                    repaired = await _generate_detail_batch(
+                        adaptation,
+                        references,
+                        page_map,
+                        start=start,
+                        stop=stop,
+                        generate=generate,
+                        ctx=ctx,
+                        concerns=tuple(concerns),
+                        story_instruction=story_instruction,
+                    )
+                    ctx.record_item_done()
+                    ctx.progress(ctx.stage_state.items_done, total_steps)
+                    by_index[index] = (start, stop, repaired)
+                batches = list(by_index.values())
+                draft = _merge_detail_drafts(
+                    adaptation,
+                    references,
+                    page_map,
+                    batches,
+                )
+                pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat)
+
+            if not validation.invariant_failures:
+                review_failures = await review_narrative(
+                    planning_context(adaptation, pages), generate=generate, ctx=ctx,
+                    artifacts=artifacts, model=model, instruction=author_instruction,
+                )
+                validation = validation.model_copy(update={"invariant_failures": review_failures})
+            history.append(_attempt_record(1 + bool(grouped), validation))
+            if (global_attempt == 1 and validation.invariant_failures
+                    and any(f.owner_stage == "plan" and f.code.startswith("narrative_review_")
+                            and f.code != "narrative_review_invalid" for f in validation.invariant_failures)):
+                # A structural defect must be allowed to change the global map,
+                # not merely add panels inside the already defective allocation.
+                prior_history.extend(history)
+                story_instruction += "\nRepair the global narrative allocation, including page count and beat distribution:\n" + "\n".join(
+                    " ".join(f.evidence) for f in validation.invariant_failures
+                )
+                continue
+            history = [*prior_history, *history]
+            _persist_validation(
+                artifacts,
+                validation,
+                attempts=1 + bool(grouped),
+                history=tuple(history),
+            )
+            if validation.invariant_failures:
+                raise PlanInvariantError(validation)
+            plan = _write_valid_plan(artifacts=artifacts, adaptation=adaptation,
+                target_range=target_range, pages=pages, rhythm_summary=page_map.rhythm_summary,
+                validation=validation)
+            ctx.record_item_done()
+            ctx.progress(total_steps, total_steps)
+            break
     return plan
 
 
@@ -1374,7 +1382,9 @@ def _repair_prompt(
     return (
         f"{prompt}\n\nYour previous global page plan violated these blocking "
         "contract requirements. Return one complete corrected JSON object that "
-        "preserves its valid decisions and resolves every failure.\n\n"
+        "resolves every failure. Redistribute beats and lettering across the whole book, "
+        "remove padding, and change page count when needed. Preserve exact words, "
+        "story order, and source-supported events, not the defective allocation.\n\n"
         "YOUR PREVIOUS JSON:\n"
         f"{json.dumps(raw, indent=2, default=str)}\n\n"
         "BLOCKING CONTRACT FAILURES:\n"
@@ -2088,39 +2098,6 @@ def validate_book_plan(
                     ],
                 )
             )
-
-    if len(pages) < target_range.minimum:
-        failures.append(
-            InvariantFailure(
-                id="plan_failure_target_page_range",
-                owner_stage="plan",
-                code="target_page_range_conflict",
-                message="The allocation is below the approved narrative floor.",
-                artifact_ids=expected_beats,
-                evidence=[
-                    f"The complete allocation is {len(pages)} pages; the "
-                    f"approved minimum is {target_range.minimum}. Do not lower "
-                    "the approved minimum to match an underdeveloped plan; "
-                    "redistribute and decompress the complete adaptation to at "
-                    f"least {target_range.minimum} purposeful pages."
-                ],
-            )
-        )
-    elif not target_range.allow_expansion and len(pages) > target_range.maximum:
-        failures.append(
-            InvariantFailure(
-                id="plan_failure_target_page_range",
-                owner_stage="plan",
-                code="target_page_range_conflict",
-                message="Required content cannot fit safely in the approved page range.",
-                artifact_ids=expected_beats,
-                evidence=[
-                    f"The complete allocation requires {len(pages)} pages; "
-                    f"the approved range is {target_range.minimum}-"
-                    f"{target_range.maximum}. Recommend a minimum of {len(pages)} pages."
-                ],
-            )
-        )
 
     single_panel_run: list[ComicPage] = []
     for page in (*pages, None):

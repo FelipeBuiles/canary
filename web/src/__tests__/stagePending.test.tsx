@@ -184,12 +184,38 @@ describe("Readable adaptation failures", () => {
 
 
 describe("Model refusal recovery", () => {
+  it("allows an estimated and explicitly confirmed Adapt retry", () => {
+    estimate = {
+      stage: "adapt",
+      estimate_credits: 8,
+      reserved_credits: 12,
+      reservation_multiplier: 1.5,
+      confidence: "usually_within_estimate",
+    };
+    render(<MemoryRouter><I18nProvider><StagePlaceholder project="demo" stage="adapt" status="failed"
+      errorCode="model_refusal" error="Provider declined" errorDetail="Traceback: AIRefusalError"
+    /></I18nProvider></MemoryRouter>);
+
+    expect(screen.getByText("Model declined this content")).toBeTruthy();
+    expect(screen.getByText(
+      "Retry the adaptation with the current settings after reviewing the estimate. The provider may decline the same input again.",
+    )).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Resume adaptation" }));
+    const confirmation = screen.getByRole("alertdialog");
+    expect(within(confirmation).getByLabelText("about 8 credits")).toBeTruthy();
+    expect(within(confirmation).getByLabelText("12 credits")).toBeTruthy();
+    expect(run).not.toHaveBeenCalled();
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Resume adaptation" }));
+
+    expect(run).toHaveBeenCalledWith("demo", "adapt", expect.objectContaining({ rerun: false }));
+  });
+
   it.each([
     { errorCode: "model_refusal", error: "Provider declined" },
     { error: "runtime_turn_error: stream disconnected before completion: Incomplete response returned, reason: content_filter" },
     { error: "AI request was refused by gateway/provider (finish_reason=content_filter)" },
   ])("shows refusal guidance without an unchanged paid retry", (failure) => {
-    render(<MemoryRouter><I18nProvider><StagePlaceholder project="demo" stage="extract" status="failed"
+    render(<MemoryRouter><I18nProvider><StagePlaceholder project="demo" stage="draw" status="failed"
       {...failure} errorDetail="Traceback: AIRefusalError"
     /></I18nProvider></MemoryRouter>);
     expect(screen.getByText("Model declined this content")).toBeTruthy();

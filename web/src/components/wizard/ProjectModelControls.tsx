@@ -6,11 +6,12 @@ import { SelectField } from "../ui/Field";
 import { SettingsRow } from "../ui/SettingsLayout";
 import { Button } from "../ui/Button";
 
-/** Lazy mounted inside the development-only creation controls. */
-export default function ProjectModelControls({ selections, onChange, disabled }: {
+/** Shared development-only controls for project creation and settings. */
+export default function ProjectModelControls({ selections, onChange, disabled, stageIds }: {
   selections: Record<string, string>;
   onChange: (selections: Record<string, string>) => void;
   disabled: boolean;
+  stageIds?: string[];
 }) {
   const { t } = useI18n();
   const query = useQuery({ queryKey: ["account-model-settings"], queryFn: getAccountModelSettings, retry: false });
@@ -22,15 +23,13 @@ export default function ProjectModelControls({ selections, onChange, disabled }:
   if (!query.data.enabled) return null;
   const settings = query.data;
   const effective = { ...settings.selections, ...selections };
-  const mixed = (settings.funding_groups ?? []).filter((group) => new Set(group.stages.map((stage) => settings.models.find((model) => model.id === effective[stage])?.funding ?? "api")).size > 1);
   return <div className="space-y-3 pb-4">
     <p className="font-body text-sm leading-6 text-ink-muted">{t("Leave a step on account settings, or pin a model for this project. Your account settings will not change.")}</p>
-    <p className="font-body text-sm leading-6 text-ink-muted">{t("API models use provider billing; Codex models use your local Codex subscription.")}</p>
-    {mixed.length > 0 && <p role="status" className="text-sm leading-6">{t("These linked steps must use the same billing source before you can run them:")} {mixed.map((group) => t(group.label)).join("; ")}. {t("You can use different models within the same billing source.")}</p>}
-    {settings.stages.map((stage) => {
+    <p className="font-body text-sm leading-6 text-ink-muted">{t("Mix API and Codex models freely. Only API calls use credits.")}</p>
+    {settings.stages.filter((stage) => !stageIds || stageIds.includes(stage.id)).map((stage) => {
       const inherited = settings.models.find((model) => model.id === settings.selections[stage.id]);
       const selected = settings.models.find((model) => model.id === effective[stage.id]);
-      return <SettingsRow key={stage.id} label={t(stage.label)}>
+      return <SettingsRow key={stage.id} label={t(stage.label)} hint={t(stage.description ?? "")} stacked={!!stageIds}>
         <SelectField aria-label={t(stage.label)} value={selections[stage.id] ?? ""} disabled={disabled} className="w-full bg-bristol font-body text-sm" onChange={(event) => {
           const next = { ...selections };
           if (event.target.value) next[stage.id] = event.target.value;
@@ -49,5 +48,6 @@ export default function ProjectModelControls({ selections, onChange, disabled }:
         {selected?.description && <p className="mt-1 text-xs leading-5 text-ink-muted">{t(selected.description)}</p>}
       </SettingsRow>;
     })}
+    {!stageIds && <p className="font-body text-sm leading-6 text-ink-muted">{t("8. Finish packages your comic for export. It has no separate model to choose.")}</p>}
   </div>;
 }

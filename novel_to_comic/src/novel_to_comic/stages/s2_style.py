@@ -342,6 +342,24 @@ def _build_avoid_block(pool: list[dict]) -> str:
     )
 
 
+def _suggestion_story_context(story_bible: StoryBible, custom_direction: dict | None = None) -> str:
+    return (
+        f'Story: "{story_bible.title}" by {story_bible.author}\n'
+        f"Style notes: {story_bible.style_notes or 'none'}\n"
+        f"Narrative arcs: {'; '.join(f'{a.title}: {a.turning_point or ""}' for a in story_bible.narrative_arcs) or 'not supplied'}\n"
+        f"Scene range: {'; '.join(f'{s.scene_type}/{s.narrative_beat}: {s.summary}' for s in story_bible.scenes[:12])}\n"
+        f"Settings: {'; '.join(f'{loc.name} — {loc.mood}: {loc.visual_anchor}' for loc in story_bible.locations[:8])}\n"
+        f"Character demands: {'; '.join(f'{char.name}: {char.visual_anchor}' for char in story_bible.characters[:8])}\n"
+        + (
+            "Author-supplied visual direction to use as the center of gravity while still "
+            f"preserving portfolio variance: {custom_direction.get('text') or 'uploaded visual reference'}\n"
+            if custom_direction else ""
+        )
+        + "\n"
+        f"Generate {LLM_REQUEST_COUNT} style options for this story."
+    )
+
+
 async def generate_suggestions(
     config: Config,
     story_bible: StoryBible,
@@ -375,21 +393,7 @@ async def generate_suggestions(
             + role_gap
             + config.generation_language_instruction()
         )
-        user = (
-            f'Story: "{story_bible.title}" by {story_bible.author}\n'
-            f"Style notes: {story_bible.style_notes or 'none'}\n"
-            f"Narrative arcs: {'; '.join(f'{a.title}: {a.turning_point or ""}' for a in story_bible.narrative_arcs) or 'not supplied'}\n"
-            f"Scene range: {'; '.join(f'{s.scene_type}/{s.narrative_beat}: {s.summary}' for s in story_bible.scenes[:12])}\n"
-            f"Settings: {'; '.join(f'{loc.name} — {loc.mood}: {loc.visual_anchor}' for loc in story_bible.locations[:8])}\n"
-            f"Character demands: {'; '.join(f'{char.name}: {char.visual_anchor}' for char in story_bible.characters[:8])}\n"
-            + (
-                "Author-supplied visual direction to use as the center of gravity while still "
-                f"preserving portfolio variance: {custom_direction.get('text') or 'uploaded visual reference'}\n"
-                if custom_direction else ""
-            )
-            + "\n"
-            f"Generate {LLM_REQUEST_COUNT} style options for this story."
-        )
+        user = _suggestion_story_context(story_bible, custom_direction)
 
         api_result = await text_client.generate_json(
             config=config,
@@ -1039,6 +1043,7 @@ def estimate_style_proof_cost_usd(
         brief_cost = estimate_text_cost(
             config.effective_prompt_model(),
             STYLE_SAMPLE_BRIEF_SYSTEM_PROMPT + "\n" + _style_sample_brief_source(bible),
+            output_chars=800,
         )
 
     proof_config = config.model_copy(update={"style_template": template})
@@ -1084,23 +1089,12 @@ def estimate_style_proof_cost_usd(
 
 
 def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
-    from novel_to_comic.usage import estimate_image_cost, estimate_text_cost
+    from novel_to_comic.usage import estimate_image_cost
 
     suggestions = load_suggestions(project_dir)
     needs_suggestions = not suggestions
     if needs_suggestions:
-        story_bible_text = ""
-        sb_path = artifacts.story_bible_path(project_dir)
-        if sb_path.exists():
-            try:
-                story_bible_text = sb_path.read_text()[:3000]
-            except Exception:
-                pass
-        text_cost = estimate_text_cost(
-            config.effective_prompt_model(),
-            story_bible_text,
-        )
-        sample_count = SAMPLE_COUNT
+        return estimate_style_batch_cost_usd(config, project_dir)
     else:
         text_cost = 0.0
         sample_count = len(missing_sample_indices(
@@ -1141,19 +1135,16 @@ def estimate_style_batch_cost_usd(
     """Conservatively estimate one suggestion batch, including a possible retry."""
     from novel_to_comic.usage import estimate_image_cost, estimate_text_cost
 
-    story_bible_text = ""
-    sb_path = artifacts.story_bible_path(project_dir)
-    if sb_path.exists():
-        try:
-            story_bible_text = sb_path.read_text()[:3000]
-        except Exception:
-            pass
-
+    bible = artifacts.read_story_bible_safe(project_dir)
+    # Price the actual bounded story context, the novelty context, and the
+    # structured output. Input-only estimates omitted most of this text cost.
+    context = _suggestion_story_context(bible) if bible else ""
     text_cost = suggestion_attempts * estimate_text_cost(
         config.effective_prompt_model(),
-        story_bible_text,
+        _SYSTEM_PROMPT + _build_avoid_block(load_suggestions(project_dir))
+        + config.generation_language_instruction() + context,
+        output_chars=LLM_REQUEST_COUNT * 1800,
     )
-    bible = artifacts.read_story_bible_safe(project_dir)
     if bible is not None:
         estimates = [
             _style_sample_estimate(

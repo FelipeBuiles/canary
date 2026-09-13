@@ -222,7 +222,24 @@ do not veto unrelated reservations when the account has sufficient balance.
 An expired job still fails its ownership/lease check and cannot resume paid work.
 Never release an uncertain hold simply because it expired.
 
+If the live database still returns `Expired credit reservation requires
+reconciliation`, reservation admission reports a maintenance error before any
+model call and logs the migration path. Story also recognizes the previously
+saved raw error. Changing models or recreating projects cannot repair this
+database rule. Deleting a project clears ledger project links; it does not erase
+charges or release uncertain holds. The PostgreSQL regression tests cover
+deletion followed by recreation with the same project name.
+
 Vertex terminal image policy refusals return HTTP 400 rather than HTTP 500.
 This prevents a known refusal from being retained as an ambiguous submission.
 Unknown empty responses, transport timeouts and server failures still retain
 their holds. Provider-cost evidence remains separate from reservation release.
+
+Both gateway Docker builds apply `litellm/patch_http_errors.py` to the pinned
+LiteLLM version. Without it, masking a multipart HTTP error reads an unread
+upload stream and replaces the provider's rejection with `RequestNotRead` /
+HTTP 500. The patch preserves the original response status and body without
+reading or resending the upload. Run `litellm/test_http_errors.py` inside the
+built gateway with networking disabled to verify this boundary. Old masked
+failures still require reconciliation; this patch does not release their holds
+or retry images automatically.

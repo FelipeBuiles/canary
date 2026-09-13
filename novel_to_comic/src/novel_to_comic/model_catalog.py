@@ -3,17 +3,40 @@ from novel_to_comic.config import Config
 from novel_to_comic.codex_dev import selectable_models, selector_available, model_has_vision
 from novel_to_comic.image_models import IMAGE_MODEL_ALIASES, describe_image_model
 
+# Keep controls in pipeline order. Style/Cast share settings; Draw has three
+# distinct model jobs rather than three additional pipeline stages.
 STAGE_FIELDS = {
-    "extract": "extraction_model", "brief": "brief_model", "adapt": "adapt_model",
-    "plan": "plan_model", "prompt": "prompt_model", "image": "image_model",
+    "extract": "extraction_model", "brief": "brief_model",
+    "prompt": "prompt_model", "image": "image_model",
+    "adapt": "adapt_model", "plan": "plan_model",
     "draw": "draw_model", "ocr": "page_ocr_model", "visual_review": "visual_review_model",
 }
 STAGE_LABELS = {
-    "extract": "Novel extraction", "brief": "Creative brief", "adapt": "Adaptation",
-    "plan": "Page planning", "prompt": "Style and cast text", "image": "Style and cast images",
-    "draw": "Comic pages", "ocr": "Lettering checks", "visual_review": "Visual review",
+    "extract": "1. Extract — story analysis",
+    "brief": "2. Brief — creative direction",
+    "prompt": "3–4. Style & Cast — text",
+    "image": "3–4. Style & Cast — images",
+    "adapt": "5. Adapt — script & dialogue",
+    "plan": "6. Plan — page layouts",
+    "draw": "7. Draw — page artwork",
+    "ocr": "7. Draw — lettering checks",
+    "visual_review": "7. Draw — visual review",
+}
+STAGE_DESCRIPTIONS = {
+    "extract": "Reads the manuscript and identifies scenes, characters, places, and appearance changes.",
+    "brief": "Proposes the creative brief that guides how the story becomes a comic.",
+    "prompt": "Shared by Style and Cast: suggests visual styles, writes sample briefs, and rewrites asset instructions.",
+    "image": "Shared by Style and Cast: generates style samples, character references, location images, props, and covers.",
+    "adapt": "Writes the comic adaptation: narrative treatment, pacing, captions, and exact dialogue.",
+    "plan": "Turns the adaptation into pages and panels, placing characters, actions, and lettering.",
+    "draw": "Generates each complete comic page with artwork and the lettering written by Adapt.",
+    "ocr": "After a page is drawn, reads its lettering to check for missing or incorrect text.",
+    "visual_review": "Reviews drawn pages against approved references for visual issues such as character or costume changes.",
 }
 TEXT_MODELS = (
+    {"id": "gpt-6-astra", "label": "GPT-6 Astra", "provider": "OpenAI"},
+    {"id": "claude-fable-5-1", "label": "Claude Fable 5.1", "provider": "Anthropic"},
+    {"id": "claude-opus-5", "label": "Claude Opus 5", "provider": "Anthropic"},
     {"id": "gpt-5.6-terra", "label": "GPT-5.6 Terra", "provider": "OpenAI"},
     {"id": "gpt-5.6-luna", "label": "GPT-5.6 Luna", "provider": "OpenAI"},
     {"id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash", "provider": "Google Vertex AI"},
@@ -21,14 +44,6 @@ TEXT_MODELS = (
     {"id": "glm-5.3-flash", "label": "GLM 5.3 Flash", "provider": "OpenRouter"},
 )
 DRAW_MODELS = ("image-gemini-pro", "image-sunburst", "image-flare")
-
-
-FUNDING_GROUPS = (
-    {"label": "Extraction and brief", "stages": ["extract", "brief"]},
-    {"label": "Adaptation and planning", "stages": ["adapt", "plan"]},
-    {"label": "Style text and images", "stages": ["prompt", "image"]},
-    {"label": "Draw and lettering checks", "stages": ["draw", "ocr"]},
-)
 
 
 def codex_models() -> list[dict]:

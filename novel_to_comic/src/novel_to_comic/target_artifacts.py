@@ -90,6 +90,18 @@ class TargetArtifacts:
     def __init__(self, project_dir: Path) -> None:
         self.project_dir = Path(project_dir)
 
+    def narrative_review_path(self, phase: str) -> Path:
+        if phase not in {"adapt", "plan", "plan_map"}:
+            raise ValueError("unknown narrative review phase")
+        return self.project_dir / ("adapt" if phase == "adapt" else "plan") / f"{phase}_review.json"
+
+    def read_narrative_review(self, phase: str):
+        from novel_to_comic.narrative_review import NarrativeReviewRecord
+        return self._read_model("narrative_review", self.narrative_review_path(phase), NarrativeReviewRecord)
+
+    def write_narrative_review(self, phase: str, review) -> None:
+        self._write_model(self.narrative_review_path(phase), review)
+
     @property
     def source_path(self) -> Path:
         return self.project_dir / "source" / "source.json"
@@ -342,6 +354,17 @@ class TargetArtifacts:
 
     def write_adapt_checkpoint(self, name: str, checkpoint: BaseModel) -> None:
         self._write_model(self.adapt_checkpoint_path(name), checkpoint)
+
+    def adapt_repair_namespaces(self) -> tuple[str, ...]:
+        """List repair batches, newest first, without reading their contents."""
+        root = self.adapt_checkpoint_path("repairs/batch").parent
+        if not root.exists():
+            return ()
+        directories = {path.parent for path in root.rglob("round_*.json")}
+        return tuple(
+            path.relative_to(root.parent).as_posix()
+            for path in sorted(directories, key=lambda p: p.stat().st_mtime, reverse=True)
+        )
 
     def read_adapt_checkpoint(
         self,

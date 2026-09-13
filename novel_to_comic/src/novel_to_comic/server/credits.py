@@ -14,6 +14,7 @@ from typing import Literal, TypedDict
 
 from fastapi import HTTPException
 from supabase import Client
+from postgrest.exceptions import APIError
 
 from novel_to_comic.config import Config, mock_mode_active
 from novel_to_comic.state import PipelineState
@@ -305,6 +306,7 @@ class UnifiedCostResolver:
                 stage,
                 reserve=False,
                 zero_cost_estimate=1,
+                funding=classify_operations((("text", config.effective_prompt_model()),)),
             )
             text_credits += rewrite_estimate["estimate_credits"]
         return CreditEstimate(
@@ -334,6 +336,7 @@ class UnifiedCostResolver:
         project_dir: Path,
         asset_type: str,
         asset_id: str,
+        additional_reference_count: int | None = None,
     ) -> CreditEstimate:
         """Estimate the credits needed to regenerate a single cast asset (character sheet or plate)."""
         funding = classify_operations(image_operations(config))
@@ -341,7 +344,12 @@ class UnifiedCostResolver:
             return credit_estimate_for_provider_cost(0.0, "cast", reserve=False, funding=funding)
         if mock_mode_active(config):
             return credit_estimate_for_provider_cost(0.0, "cast", reserve=False)
-        ref_count = 0
+        from novel_to_comic.cast_reference_inputs import saved_reference_inputs
+        entity_id, _, state_id = asset_id.partition(":")
+        if additional_reference_count is None:
+            kind = {"character_ref_regen": "character", "location_plate_regen": "location", "prop_ref_regen": "prop"}[asset_type]
+            additional_reference_count = len(saved_reference_inputs(project_dir, kind, entity_id, state_id or None))
+        ref_count = 1  # selected style authority
         if asset_type in {"character_ref_regen", "location_plate_regen"} and ":" in asset_id:
             entity_id, state_id = asset_id.split(":", 1)
             from novel_to_comic.stages.s3_cast import estimate_state_reference_count
@@ -357,7 +365,7 @@ class UnifiedCostResolver:
             config.effective_image_model(),
             1,
             quality=getattr(config, "image_quality", None),
-            ref_count=ref_count,
+            ref_count=ref_count + additional_reference_count,
         )
         return credit_estimate_for_provider_cost(
             cost_usd, "cast", reserve=False, zero_cost_estimate=1
@@ -454,8 +462,8 @@ def reserve_credits(
         job_id = str(uuid_lib.uuid4())
     if amount_credits <= 0:
         return None, job_id
-    result = (
-        db.rpc(
+    try:
+        result = db.rpc(
             "reserve_stage_credits",
             {
                 "p_user_id": user_id,
@@ -466,9 +474,16 @@ def reserve_credits(
                 "p_owner": _reservation_owner,
                 "p_lease_seconds": RESERVATION_LEASE_SECONDS,
             },
-        )
-        .execute()
-    )
+        ).execute()
+    except APIError as exc:
+        if exc.message != "Expired credit reservation requires reconciliation":
+            raise
+        log.error("Credit database needs docs/sql/2026-09-11-reservation-isolation.sql")
+        raise HTTPException(503, {
+            "error": "credit_reservation_reconciliation",
+            "message": "An earlier credit hold is blocking new work. No model request was started. "
+            "The credit database needs maintenance; changing models or recreating the project will not fix this.",
+        }) from exc
     reservation_id = result.data
     if not reservation_id:
         balance = get_balance_credits(db, user_id)
@@ -501,6 +516,9 @@ def debit_model_usage(
     without rounding every tiny request up independently. Ambiguous responses
     are reconciled by retrying the immutable, idempotent database operation.
     """
+    # Local Codex diagnostics live in AI usage events, never the credit ledger.
+    if usage.funding == "codex_subscription":
+        return
     if calculate_cost_breakdown(usage).source == "unknown_provider_usage":
         retain_ambiguous_job(job_id)
         raise RuntimeError("Provider image usage is incomplete; reconcile billing without regenerating the saved image")
@@ -513,7 +531,7 @@ def debit_model_usage(
         # audit color. Log so a persistent pricing-resolver failure surfaces.
         log.warning("calculate_cost_breakdown failed; debiting without metadata", exc_info=True)
         cost = None
-    if credits <= 0 and usage.funding != "codex_subscription":
+    if credits <= 0:
         return
     params = {
         "p_user_id": user_id,
@@ -524,17 +542,12 @@ def debit_model_usage(
         "p_usage_call_id": usage.call_id,
         "p_provider": usage.provider,
         "p_model": usage.model,
-        # Subscription identity is provider evidence, never a pricing alias.
-        "p_provider_model": (
-            usage.provider_model
-            if usage.funding == "codex_subscription"
-            else cost.provider_model if cost else None
-        ),
+        "p_provider_model": cost.provider_model if cost else None,
         "p_operation": usage.operation,
         "p_input_tokens": usage.input_tokens,
         "p_output_tokens": usage.output_tokens,
         "p_image_count": usage.image_count,
-        "p_cost_usd": usage.cost_usd if usage.funding == "codex_subscription" else cost_usd,
+        "p_cost_usd": cost_usd,
         "p_cost_source": cost.source if cost else None,
         "p_pricing_snapshot": cost.pricing_snapshot if cost else None,
         "p_credits_per_usd": credits_per_provider_usd(),

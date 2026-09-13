@@ -14,8 +14,8 @@ interface SettingsLayoutProps {
   children: React.ReactNode;
 }
 
-export function SettingsRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return <section className="grid gap-4 px-5 py-6 not-last:border-b not-last:border-ink-black/10 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)] lg:gap-8 lg:px-7 lg:py-8">
+export function SettingsRow({ label, hint, children, stacked = false }: { label: string; hint?: string; children: React.ReactNode; stacked?: boolean }) {
+  return <section className={cn("grid gap-4 not-last:border-b not-last:border-ink-black/10", stacked ? "py-4" : "px-5 py-6 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)] lg:gap-8 lg:px-7 lg:py-8")}>
     <div>
       <h3 className="font-body text-base font-bold leading-6 text-ink-black">{label}</h3>
       {hint && <p className="mt-2 max-w-[42ch] font-body text-sm leading-6 text-ink-muted">{hint}</p>}

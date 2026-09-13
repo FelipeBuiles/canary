@@ -1,11 +1,15 @@
 # Account model settings
 
-**Status: Current, September 10, 2026.** Implementation and tests are authoritative.
+**Status: Current, September 11, 2026.** Implementation and tests are authoritative.
 
 In local development, open **Account → Models (dev)** to choose a specific model
 for extraction, brief, adaptation, planning, style/cast text, style/cast images,
 Draw, lettering checks, and visual review. Quality presets have been removed.
-Adaptation and planning default to GPT-5.6 Terra. Saving choices starts no work.
+Controls follow pipeline order: Extract, Brief, shared Style/Cast text and images,
+Adapt, Plan, then Draw artwork, lettering checks and visual review. Each numbered
+label names its stage and each description explains the model’s responsibility.
+Finish is noted as having no separate model. Adaptation and planning default to
+GPT-5.6 Terra. Saving choices starts no work.
 
 Preferences apply across the authenticated account's projects. New jobs receive
 a configuration snapshot; changing preferences does not mutate running jobs.
@@ -14,7 +18,18 @@ During local project creation, **Models for this project (dev)** can override
 individual stages. Omitted stages continue to inherit account settings. Explicit
 choices are saved in the project's `dev_model_selections` mapping and apply to
 new work for that project; they never change the account's defaults. The same
-controls work for uploaded manuscripts and imported stories. Creation accepts
+controls work for uploaded manuscripts and imported stories.
+
+After creation, **Project settings → Models (dev)** edits the same overrides.
+Each selection saves immediately; choose **Account setting** to remove an
+override. `PATCH /api/projects/{project_id}/config/` accepts the complete
+`dev_model_selections` map, with omitted stages returning to account inheritance.
+Validation happens before any settings are persisted, and running configuration
+snapshots remain unchanged. Changing Draw after an edition exists is rejected;
+other model choices can still be changed. Model edits are gated to local
+development on the server, just like creation.
+
+Creation accepts
 this mapping only under the original local-development process gate, and saved
 overrides are inert outside that gate. Existing edition/profile protections
 still apply. Old flat project model and preset fields are discarded on load.
@@ -29,11 +44,14 @@ object whose stage/model pairs must belong to the configured catalog.
 
 `scripts/dev.sh` defaults to API mode and enables local development controls.
 Configure `OPENROUTER_API_KEY` for OpenRouter models and `OPENAI_API_KEY` for
-OpenAI models. Restart the local gateway and backend after updating routes or
+OpenAI models, and `ANTHROPIC_API_KEY` for Claude models. Restart the local gateway and backend after updating routes or
 environment variables. Model aliases and pricing remain in configuration.
 
 | Account choice | Gateway alias | Provider model |
 |---|---|---|
+| GPT-6 Astra | `gpt-6-astra` | `openai/gpt-6-astra` |
+| Claude Fable 5.1 | `claude-fable-5-1` | `anthropic/claude-fable-5-1` |
+| Claude Opus 5 | `claude-opus-5` | `anthropic/claude-opus-5` |
 | DeepSeek V4.1 Flash | `deepseek-v4.1-flash` | `openrouter/deepseek/deepseek-v4.1-flash` |
 | GLM 5.3 Flash | `glm-5.3-flash` | `openrouter/z-ai/glm-5.3-flash` |
 | GPT Image 2.5 Sunburst | `image-sunburst` | `openai/gpt-image-2.5-sunburst` |
@@ -68,11 +86,27 @@ image tool. Its source selector remains GPT Image 2; these choices do not select
 GPT Image 2.5, and the actual image backend may be unknown. API GPT Image 2.5
 choices remain separate. Codex work uses subscription funding, not API credits.
 
-Settings can combine funding sources for independent jobs, but each job must
-use one funding source. The panel warns about the paired work that must match:
-extract/brief, adapt/plan, style text/images, and Draw/lettering checks. Admission
-rejects incompatible jobs before submission. Disabled saved Codex choices stay
-visible; replace them or restart with the adaptor enabled before generating.
+The premium API text choices also accept images for lettering and visual checks.
+Astra uses configured low reasoning effort; Claude uses native adaptive thinking
+with the provider default effort. New Claude schema requests use native
+`output_config.format` because the pinned gateway otherwise translates them into
+legacy forced tool calls. Schema-less JSON requests use a JSON instruction and
+local parsing. No automatic model fallback is enabled.
+
+Linked text stages can use different models, including different Codex reasoning
+models. There is no active same-model requirement between Extract/Brief or
+Adapt/Plan. Style and Cast currently share one text setting and one image setting;
+this is configuration granularity, not a provider restriction.
+
+API and Codex choices can be mixed within any job or auto-chain, including
+extract/brief, adapt/plan, style text/images, and Draw/lettering checks. Routes
+are validated before work, but there is no job-wide funding lock. Estimates and
+reservations include only API operations. Codex usage remains diagnostic AI
+usage evidence and never writes a credit-ledger row; API calls retain normal
+reservation, settlement, cancellation and ambiguous-submission handling. A mixed
+job's estimate is labeled `api` because it contains API spend, not because every
+call uses the API. Pure Codex work needs no credit hold. Disabled saved Codex
+choices stay visible; replace them or enable the adaptor before generating.
 
 Legacy explicit route maps remain available for diagnostics. Account API choices reject conflicting Codex
 route overrides, so an API selection cannot silently use subscription funding.
@@ -80,6 +114,15 @@ Reve's provider, Labs integration, layout request formatting, and configuration
 have been removed.
 
 ## Draw and billing
+
+In local development, failed extraction (including provider refusal) exposes the
+project's extraction model choice directly in Story. Saving preserves other
+stage overrides and refreshes the estimate before enabling an explicit retry.
+A failed save keeps retry disabled. Saving a choice never starts generation.
+
+Project routes, including settings, return to the library when project status
+returns 404, including after revalidating a previously open tab on focus.
+Artifact 404s and temporary server errors do not imply project deletion.
 
 GPT Image 2.5 Draw uses an immutable 1024×1536, high-quality profile. It preserves
 required identity/style references and correction parents, rejecting more than

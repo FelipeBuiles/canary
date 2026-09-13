@@ -32,10 +32,13 @@ MODEL_REGISTRY: dict[str, str] = {
     "gemini-2.5-flash": "gemini",
     "gemini-2.5-flash-lite": "gemini",
     # Anthropic Claude
+    "claude-fable-5-1": "anthropic",
+    "claude-opus-5": "anthropic",
     "claude-opus-4-7": "anthropic",
     "claude-sonnet-4-6": "anthropic",
     "claude-haiku-4-5": "anthropic",
     # OpenAI
+    "gpt-6-astra": "openai",
     "gpt-5.4": "openai",
     "gpt-5.4-mini": "openai",
     "gpt-5.6-terra": "openai",

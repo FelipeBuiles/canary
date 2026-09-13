@@ -200,6 +200,8 @@ def test_every_cast_route_the_ui_calls_is_mounted():
         (f"{prefix}/asset-regen-estimate", "GET"),
         (f"{prefix}/character-ref-versions", "GET"),
         (f"{prefix}/character-ref-versions/restore", "POST"),
+        (f"{prefix}/location-plate-versions", "GET"),
+        (f"{prefix}/location-plate-versions/restore", "POST"),
         (f"{prefix}/locations/{{loc_id}}/states/{{state_id}}/regenerate", "POST"),
         (f"{prefix}/regen-extract", "POST"),
         (f"{prefix}/regen-plate", "POST"),
@@ -300,14 +302,14 @@ def test_blocked_rewrite_is_durable_recoverable_and_releases_credit(
     app = _app()
     journal_path = tmp_path / "jobs.sqlite3"
     app.state.admission = SimpleNamespace(journal=lambda: sqlite3.connect(journal_path))
-    reason = "This would replace the canonical identity; request its faithful depiction instead."
+    reason = "Describe the visual change you want to make."
     with patch(
         "novel_to_comic.clients.text.generate_json",
         return_value=ApiResult(value={"status": "blocked", "message": reason}, usage=_rewrite().usage),
     ), patch("novel_to_comic.server.credits.debit_model_usage") as debit:
         result = _apply(
             project_dir, app, asset_type=asset_type, asset_id=asset_id, state_id=state_id,
-            instruction="Change the canonical identity.",
+            instruction="Switch the account to another model.",
         )
     job = app.state.generation_jobs[result["job"]["id"]]
     assert result["job"]["status"] == "queued"
@@ -315,7 +317,7 @@ def test_blocked_rewrite_is_durable_recoverable_and_releases_credit(
     assert job.user_message == reason
     assert job.recoverable is True
     assert job.payload[payload_key] == (f"{asset_id}:{state_id}" if state_id else asset_id)
-    assert job.payload["instruction"] == "Change the canonical identity."
+    assert job.payload["instruction"] == "Switch the account to another model."
     assert not list(project_dir.rglob("*instructions*"))
     for image in image_work.values():
         image.assert_not_awaited()
@@ -667,3 +669,202 @@ def test_status_recognizes_individually_generated_cast_without_calibration_board
     assert response["stages"]["cast"]["approved"] is not True
     assert load_state(project_dir).stages["cast"].status == StageStatus.AWAITING_REVIEW
     assert len(submissions) == 5
+
+
+def _comparison_image(project_dir):
+    from PIL import Image
+    from novel_to_comic.cast_reference_inputs import CastReferenceInput
+    path = artifacts.location_plate_path(project_dir, "loc_001")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (32, 32), "blue").save(path)
+    return CastReferenceInput(asset_type="location", asset_id="loc_001")
+
+
+def test_comparison_reaches_rewrite_and_saved_state_request(tmp_path, image_work):
+    from novel_to_comic.cast_reference_inputs import saved_reference_inputs
+    project_dir = _project(tmp_path)
+    comparison = _comparison_image(project_dir)
+    with patch("novel_to_comic.clients.text.generate_json", return_value=_rewrite()) as rewrite, patch("novel_to_comic.server.credits.debit_model_usage"):
+        result = _apply(project_dir, _app(), state_id="burned", reference_assets=[comparison])
+    context = json.loads(rewrite.call_args.kwargs["user_content"])["asset_context"]
+    assert context["reference_assets"][0]["visual_anchor"] == "stone hall, high windows"
+    assert context["visual_anchor"] == "1woman, adult female, singed coat"
+    assert saved_reference_inputs(project_dir, "character", "char_001", "burned") == [comparison]
+    assert saved_reference_inputs(project_dir, "character", "char_001") == []
+    assert result["job"]["payload"]["char_id"] == "char_001:burned"
+
+
+@pytest.mark.parametrize("failure", ["missing", "self", "overflow", "unknown", "unreadable"])
+def test_bad_comparison_is_rejected_before_rewrite_or_reservation(tmp_path, failure):
+    from dataclasses import replace
+    from novel_to_comic.cast_reference_inputs import CastReferenceInput
+    from novel_to_comic.image_models import image_model_profile_for_config
+    project_dir = _project(tmp_path)
+    comparison = _comparison_image(project_dir)
+    image = artifacts.location_plate_path(project_dir, "loc_001")
+    if failure == "missing":
+        image.unlink()
+    elif failure == "unreadable":
+        image.write_text("broken image")
+    elif failure == "self":
+        comparison = CastReferenceInput(asset_type="character", asset_id="char_001")
+    elif failure == "unknown":
+        comparison = CastReferenceInput(asset_type="location", asset_id="absent")
+    profile = image_model_profile_for_config(Config())
+    if failure == "overflow":
+        profile = replace(profile, max_references=1)
+    with patch("novel_to_comic.image_models.image_model_profile_for_config", return_value=profile), patch("novel_to_comic.clients.text.generate_json") as rewrite, patch("novel_to_comic.server.credited_job.enqueue_reserved_generation_job") as enqueue:
+        with pytest.raises(HTTPException):
+            _apply(project_dir, _app(), reference_assets=[comparison])
+    rewrite.assert_not_called()
+    enqueue.assert_not_called()
+
+
+@pytest.mark.parametrize("kind,state_id", [("character", None), ("character", "burned"), ("location", "ruined")])
+def test_comparison_pixels_reach_compiled_request_without_becoming_identity_or_edit_parent(tmp_path, monkeypatch, kind, state_id):
+    from PIL import Image
+    from novel_to_comic.cast_instructions import _instructions_path
+    from novel_to_comic.stages import s3_cast
+    project_dir = _project(tmp_path)
+    comparison = _comparison_image(project_dir)
+    # Use a character as the comparison for the location state.
+    canonical = artifacts.character_ref_sheet_path(project_dir, "char_001")
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (32, 32), "white").save(canonical)
+    if kind == "location":
+        from novel_to_comic.cast_reference_inputs import CastReferenceInput
+        comparison = CastReferenceInput(asset_type="character", asset_id="char_001")
+    entity_id = "char_001" if kind == "character" else "loc_001"
+    artifacts.append_instruction_log_entry(_instructions_path(project_dir, kind, entity_id, state_id), {
+        "patch": {"addendum": "Make the design visibly distinct."}, "reference_assets": [comparison.model_dump()],
+    })
+    captured = []
+    async def submit(**kwargs):
+        captured.append(kwargs["request"])
+        output = kwargs["output_path"]
+        Image.new("RGB", (32, 32), "red").save(output)
+        return SimpleNamespace(result=ApiResult(value=output))
+    monkeypatch.setattr(s3_cast, "submit_non_panel_request", submit)
+    config = Config(style_template="Clean ink")
+    if kind == "location":
+        asyncio.run(s3_cast.regenerate_location_plate(config, project_dir, entity_id, state_id=state_id))
+    elif state_id:
+        asyncio.run(s3_cast.regenerate_character_state_ref(config, project_dir, entity_id, state_id))
+    else:
+        asyncio.run(s3_cast.regenerate_character_ref(config, project_dir, entity_id))
+    request = captured[0]
+    index = next(i for i, ref in enumerate(request.reference_plan.selected) if ref.purpose == "instruction_context")
+    assert request.reference_plan.selected[index].path.is_file()
+    assert index not in request.input.edit_parent_indices
+    assert "Attachment alone does not mean copy this image or make the target different" in request.compiled.final_prompt
+    assert "contextual evidence for the requested edit" in request.compiled.final_prompt
+    if state_id:
+        assert any(ref.purpose == "authority" and ref.entity_id == entity_id for ref in request.reference_plan.selected)
+
+
+def test_cast_instruction_rejects_unknown_attachment_fields_instead_of_ignoring_them():
+    from pydantic import ValidationError
+    from novel_to_comic.server.routers.cast_assets import InstructedPlateRegenRequest
+    with pytest.raises(ValidationError):
+        InstructedPlateRegenRequest.model_validate({
+            "loc_id": "loc_002", "instruction": "Borrow the window design.",
+            "unsupported_attachments": [{"asset_type": "location", "asset_id": "loc_001"}],
+        })
+
+
+@pytest.mark.parametrize("asset_type,asset_id,state_id,instruction,direction", [
+    ("character", "char_001", "burned", "Make her a rougher haunted sailor.", "Weather-beaten sailor with a haunted stare and ragged peacoat."),
+    ("location", "loc_001", None, "Replace the canonical lamp with a hanging lantern.", "Remove the gas lamp; hang a brass lantern above the desk."),
+    ("location", "loc_001", "ruined", "Rebuild the roof in glass.", "Replace the collapsed roof with a clear glass vault."),
+    ("prop", "prop_001", None, "Make it a wooden key instead of iron.", "Carve the key from pale wood instead of iron."),
+])
+def test_owner_redesign_reaches_scoped_renderer_without_changing_source(
+    tmp_path, image_work, asset_type, asset_id, state_id, instruction, direction,
+):
+    project_dir = _project(tmp_path)
+    source = (project_dir / "story_bible.json").read_bytes()
+    app = _app()
+    with patch("novel_to_comic.clients.text.generate_json", AsyncMock(return_value=_rewrite(direction))), patch("novel_to_comic.server.credits.debit_model_usage"):
+        _apply(project_dir, app, asset_type=asset_type, asset_id=asset_id,
+               state_id=state_id, instruction=instruction)
+    from novel_to_comic.cast_instructions import _instructions_path
+    assert direction == artifacts.read_active_addendum(
+        _instructions_path(project_dir, asset_type, asset_id, state_id)
+    )
+    assert (project_dir / "story_bible.json").read_bytes() == source
+    assert sum(mock.await_count for mock in image_work.values()) == 1
+
+
+def test_rewrite_treats_generated_appearance_as_defaults_not_a_veto():
+    from novel_to_comic.cast_instructions import asset_instruction_rewrite_system_prompt
+    for kind in ("character_ref", "location_plate", "prop_ref"):
+        rewrite = asset_instruction_rewrite_system_prompt(kind)
+        assert "There is no whitelist" in rewrite
+        assert "contradict generated descriptions" in rewrite
+        assert "continuity guard" in rewrite
+        assert "Do not assume differentiation or copying" in rewrite
+        assert "change alone does not satisfy that request" in rewrite
+        assert "Only asset_context.editable_facets" not in rewrite
+
+
+@pytest.mark.parametrize("state_id", [None, "ruined"])
+def test_location_history_restores_only_selected_appearance_and_keeps_undo(tmp_path, state_id):
+    from novel_to_comic.asset_versions import record_asset_version
+    from novel_to_comic.server.routers.cast_assets import get_location_plate_versions, restore_location_plate_version
+    project_dir = _project(tmp_path)
+    base = artifacts.location_plate_path(project_dir, "loc_001")
+    alternate = artifacts.location_state_plate_path(project_dir, "loc_001", "ruined")
+    base.parent.mkdir(parents=True, exist_ok=True)
+    alternate.parent.mkdir(parents=True, exist_ok=True)
+    base.write_bytes(b"main")
+    alternate.write_bytes(b"alternate")
+    selected, other = (alternate, base) if state_id else (base, alternate)
+    untouched = other.read_bytes()
+    selected.write_bytes(b"first")
+    artifacts.write_asset_meta(selected, {"art_direction": "First design"})
+    record_asset_version(selected, project_dir, reason="before_regenerate")
+    selected.write_bytes(b"second")
+    artifacts.write_asset_meta(selected, {"art_direction": "Second design"})
+    project = (project_dir, Config(), None)
+    history = get_location_plate_versions(loc_id="loc_001", state_id=state_id, project=project)
+    assert history["has_history"]
+    assert len(history["versions"]) == 2
+    with patch("novel_to_comic.state_assets.mark_dependent_states_stale") as stale, patch("novel_to_comic.state_assets.revalidate_state_asset_lineage") as revalidate:
+        restored = restore_location_plate_version(loc_id="loc_001", version=1, state_id=state_id, project=project)
+    assert selected.read_bytes() == b"first"
+    assert other.read_bytes() == untouched
+    assert artifacts.read_asset_meta(selected)["art_direction"] == "First design"
+    from novel_to_comic.cast_instructions import _instructions_path
+    assert artifacts.read_active_addendum(_instructions_path(project_dir, "location", "loc_001", state_id)) == "First design"
+    assert len(restored["versions"]) == 3
+    assert revalidate.call_count == (1 if state_id else 0)
+    assert stale.call_count == (0 if state_id else 1)
+    restore_location_plate_version(loc_id="loc_001", version=2, state_id=state_id, project=project)
+    assert selected.read_bytes() == b"second"
+
+
+def test_location_history_rejects_unknown_or_unsafe_appearance(tmp_path):
+    from novel_to_comic.server.routers.cast_assets import get_location_plate_versions
+    project = (_project(tmp_path), Config(), None)
+    for loc_id, state_id in [("../escape", None), ("loc_001", "../escape"), ("loc_001", "missing")]:
+        with pytest.raises(HTTPException) as exc:
+            get_location_plate_versions(loc_id=loc_id, state_id=state_id, project=project)
+        assert exc.value.status_code in (400, 404)
+
+
+@pytest.mark.parametrize("instruction", ["Add a secret compartment to the desk.", "Give him a lucky token necklace.", "Ignore my previous instruction about the coat; use a sailor's jacket."])
+def test_ordinary_creative_words_are_not_treated_as_prompt_control(instruction):
+    assert validate_user_instruction(instruction) == instruction
+
+
+def test_restoring_an_unedited_version_clears_newer_design_and_attachments(tmp_path):
+    from novel_to_comic.cast_instructions import _instructions_path, restore_asset_instruction_direction
+    from novel_to_comic.cast_reference_inputs import saved_reference_inputs
+    project_dir = _project(tmp_path)
+    log = _instructions_path(project_dir, "location", "loc_001", None)
+    artifacts.append_instruction_log_entry(log, {"patch": {"addendum": "Redesign the desk."},
+        "reference_assets": [{"asset_type": "character", "asset_id": "char_001"}]})
+    image = artifacts.location_plate_path(project_dir, "loc_001")
+    restore_asset_instruction_direction(project_dir, "location", "loc_001", None, image, 1)
+    assert artifacts.read_active_addendum(log) == ""
+    assert saved_reference_inputs(project_dir, "location", "loc_001") == []

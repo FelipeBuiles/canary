@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
 from novel_to_comic.codex_dev import selector_available
-from novel_to_comic.model_catalog import FUNDING_GROUPS, STAGE_FIELDS, STAGE_LABELS, allowed_models, models
+from novel_to_comic.model_catalog import STAGE_FIELDS, STAGE_LABELS, STAGE_DESCRIPTIONS, allowed_models, models
 from ..account_models import model_settings_enabled, read_selections, update_selections
 from ..auth import get_current_user
 
@@ -21,17 +21,15 @@ def _require_development() -> None:
 
 
 def _payload(selections: dict) -> dict:
-    warnings = [f"{group['label']} must use the same funding source when run together."
-                for group in FUNDING_GROUPS
-                if len({selections[stage].startswith("codex-dev/") for stage in group["stages"]}) > 1]
+    warnings = []
     if not selector_available() and any(model.startswith("codex-dev/") for model in selections.values()):
         warnings.append("Saved Codex choices are unavailable. Start the server with the Codex adaptor enabled or replace them with API models.")
     return {
-        "codex_enabled": selector_available(), "funding_groups": FUNDING_GROUPS, "warnings": warnings,
+        "codex_enabled": selector_available(), "warnings": warnings,
         "enabled": True, "selections": selections, "models": models(),
-        "stages": [{"id": stage, "label": STAGE_LABELS[stage], "model_ids": list(allowed_models(stage))} for stage in STAGE_FIELDS],
+        "stages": [{"id": stage, "label": STAGE_LABELS[stage], "description": STAGE_DESCRIPTIONS[stage], "model_ids": list(allowed_models(stage))} for stage in STAGE_FIELDS],
         "funding": "mixed" if any(model.startswith("codex-dev/") for model in selections.values()) and any(not model.startswith("codex-dev/") for model in selections.values()) else "codex_subscription" if all(model.startswith("codex-dev/") for model in selections.values()) else "api",
-        "note": "Applies to new jobs in every project in this account. API choices use provider billing; Codex choices use the local subscription adaptor. Jobs cannot mix funding sources. Existing jobs and rendered editions keep their recorded models.",
+        "note": "Applies to new jobs in every project in this account. API choices use provider billing; Codex choices use the local subscription adaptor. API and Codex models can be mixed freely; only API calls use credits. Existing jobs and rendered editions keep their recorded models.",
     }
 
 

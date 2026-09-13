@@ -3,9 +3,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
+import type { CreditLedgerRun } from "../types/api";
 import { CreditsPage } from "../pages/CreditsPage";
 
 const mocks = vi.hoisted(() => ({
+  runs: [] as CreditLedgerRun[],
   balanceError: false,
   historyError: false,
   packagesError: false,
@@ -23,7 +25,7 @@ vi.mock("../api/queries", () => ({
     refetch: mocks.refetchBalance,
   }),
   useCreditHistory: () => ({
-    data: mocks.historyError ? undefined : { pages: [{ runs: [], month_used_credits: 153 }] },
+    data: mocks.historyError ? undefined : { pages: [{ runs: mocks.runs, month_used_credits: 153 }] },
     isLoading: false,
     isError: mocks.historyError,
     refetch: mocks.refetchHistory,
@@ -61,6 +63,7 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.runs = [];
   mocks.balanceError = false;
   mocks.historyError = false;
   mocks.packagesError = false;
@@ -115,4 +118,29 @@ describe("credits page data and recovery", () => {
     fireEvent.click(screen.getByRole("button", { name: "Buy $45" }));
     expect(mocks.checkout).toHaveBeenCalledExactlyOnceWith({ packageId: "actual-large-pack" });
   });
+});
+
+
+it("condenses attempts and filters open holds without showing them as charges", () => {
+  const base: CreditLedgerRun = {
+    run_id: "complete", job_id: "job", stage: "draw", project_id: "cthulhu",
+    started_at: "2026-09-12T12:00:00Z", last_activity_at: "2026-09-12T12:01:00Z",
+    estimate_credits: 37, actual_credits: 8, returned_credits: 29,
+    credits_added: 0, status: "complete", rows: [],
+  };
+  mocks.runs = [base,
+    { ...base, run_id: "open", status: "in_flight", actual_credits: 0, returned_credits: 0 },
+    { ...base, run_id: "failed", status: "failed", actual_credits: 0, returned_credits: 37 },
+  ];
+  const { container } = renderPage();
+  const group = container.querySelector("details.group\\/activity")!;
+  expect(group.textContent).toContain("3 activities");
+  expect(group.textContent).toContain("1 open hold");
+  expect(group.textContent).toContain("1 unsuccessful");
+  expect(group.hasAttribute("open")).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Filter history by activity" }));
+  fireEvent.click(screen.getByRole("option", { name: "Open holds" }));
+  expect(container.querySelector("details.group\\/activity")?.textContent).toContain("1 activity");
+  expect(container.querySelector("details.group\\/activity")?.textContent).not.toContain("unsuccessful");
+  expect(screen.queryByLabelText("8 credits")).toBeNull();
 });

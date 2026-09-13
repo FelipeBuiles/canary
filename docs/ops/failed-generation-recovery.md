@@ -21,6 +21,23 @@ requests, pending paid results, renders, provenance, OCR evidence, and state.
 Never release all holds at startup, approve a checkpoint, or overwrite artwork
 to make a project appear complete.
 
+### Codex text connection timeouts
+
+Codex text turns have a 900-second absolute execution deadline, including the
+runtime's existing maximum of two stream reconnects within the same turn.
+The adapter does not start a replacement turn on timeout. Image execution
+retains its separate 300-second deadline and zero stream retries. The parent
+process allows 15 additional seconds for child cleanup in both cases.
+
+Inspect `timeout_seconds`, `timeout_owner`, `execution_elapsed_seconds`,
+`last_notification_elapsed_seconds`, and reconnect event `elapsed_seconds`
+in runtime evidence. Notification timing is measured from turn submission;
+execution timing includes child setup. Queue time is outside the deadline.
+A `runtime_timeout` reports Canary's local cutoff, not a provider refusal or
+proof that the provider stopped processing. Only validated completed results
+can be recovered; partial output remains indeterminate. Restart the backend
+after changing adapter code, once active work has finished.
+
 ## Saved complete pages
 
 1. Inspect the canonical ComicPage, saved render and provenance, and pending
@@ -42,6 +59,38 @@ to make a project appear complete.
    visual issues were verified; retain visual review requirements.
 
 ## Operator reconciliation
+
+### Text provider refusals
+
+Text refusals remain terminal: there is no automatic model fallback or content
+rewrite retry. The error identifies provider, model alias, feature, source scope,
+and usage event ID. `ai_usage_events.error_json.refusal_diagnostics` retains the
+reported refusal text, finish reason, available filter metadata, and source unit
+IDs. Streamed refusal fragments are joined before inspection. Opt-in local
+technical details and the project diagnostic journal include this evidence;
+production keeps those local details disabled. Missing filter reasons mean
+unknown, not a confirmed content category.
+
+The pinned gateway is patched to retain Anthropic `stop_details` in both buffered
+and streamed responses. Canary records its type, category, and explanation when
+provided, without copying thinking blocks. Rebuild the gateway image after
+changing this patch. Earlier failures whose metadata was dropped cannot be
+backfilled from the saved error; providers may also return null details.
+
+Brief inference, Adapt treatment/blueprint/lettering, and Plan map/detail prompts
+separate required events from explicit depiction. They preserve victims,
+consequences, and evidence while asking for restrained staging. Verbatim literary
+wording is scoped to the approved Brief's protected phrases; identity anchors,
+continuity guards, IDs, and Plan's exact Adapt lettering retain their contracts.
+For a conflicting existing brief, revise its tone, emphasis, and event wording
+through the normal Brief edit flow. Preserve needed recovery evidence first:
+saving a Brief revision invalidates dependent artifacts. Adapt checkpoint files
+may remain, but changed Brief content and prompts change their request hashes,
+preventing reuse under the revised instructions.
+Approval may start paid Adapt when Cast is complete; prompt changes and mocked
+tests alone do not prove provider acceptance or output quality.
+
+### Submission and settlement
 
 - **Before submission:** confirm the durable job/action and usage evidence show
   no submission. Absence of a response alone is not sufficient. Unstarted expired

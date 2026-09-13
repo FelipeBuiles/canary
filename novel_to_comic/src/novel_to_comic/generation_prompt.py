@@ -226,7 +226,14 @@ def generate_system_constraints(
     crop_policy = getattr(prompt, "crop_policy", None)
     if crop_policy:
         lines.append(f"crop policy: {crop_policy}")
-    lines.extend(_appearance_lock_clauses(prompt))
+    if prompt.editorial_addendum:
+        lines.append(
+            "The owner's explicit art direction overrides conflicting appearance and style defaults "
+            "throughout this request, including anchors and continuity guards. Preserve unrequested "
+            "details and the required reference format. Do not reduce a redesign to a cosmetic variation."
+        )
+    else:
+        lines.extend(_appearance_lock_clauses(prompt))
     if has_style_reference:
         # Reference-specific rendering authority is declared once by the compiler.
         if subjects and has_subject_references:

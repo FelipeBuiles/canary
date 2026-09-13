@@ -208,7 +208,7 @@ def read_active_addendum(instructions_path: Path) -> str:
             except Exception:
                 continue
             addendum = payload.get("patch", {}).get("addendum")
-            if isinstance(addendum, str) and addendum.strip():
+            if isinstance(addendum, str) and (addendum.strip() or payload.get("operation") == "restore"):
                 last = addendum.strip()
     except Exception:
         return ""

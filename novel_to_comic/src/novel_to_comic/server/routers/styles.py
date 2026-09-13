@@ -18,6 +18,7 @@ from novel_to_comic.config import Config, mock_mode_active, save_config
 from novel_to_comic.codex_dev import CodexRoutingError, classify_operations
 from ..codex_admission import image_operations, prompt_image_operations, style_sample_operations
 from novel_to_comic.image_models import image_model_profile_for_config
+from novel_to_comic.image_geometry import style_proof_dimensions
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.asset_generation import asset_matches_request
 from novel_to_comic.style_contract import (
@@ -155,7 +156,11 @@ def _style_sample_credit_estimate(
     if mock_mode_active(config):
         return dict(credit_estimate_for_provider_cost(0.0, "style", reserve=reserve))
     if exact_cost_usd is None:
-        cost_kwargs = {"quality": getattr(config, "image_quality", None)}
+        width, height = style_proof_dimensions()
+        cost_kwargs = {
+            "quality": getattr(config, "image_quality", None),
+            "width": width, "height": height,
+        }
         if has_style_reference and _supports_style_reference(config):
             cost_kwargs["ref_count"] = 1
         exact_cost_usd = estimate_image_cost(
@@ -192,6 +197,7 @@ def _direction_credit_estimates(
     bible = _get_bible(project_dir)
 
     def faithful_cost():
+        width, height = style_proof_dimensions()
         return (
             estimate_style_proof_cost_usd(
                 config, project_dir, bible, template or config.style_template, candidate_id,
@@ -201,6 +207,7 @@ def _direction_credit_estimates(
             else estimate_image_cost(
                 config.effective_image_model(), 1,
                 quality=getattr(config, "image_quality", None),
+                width=width, height=height,
                 ref_count=reference_count,
                 ref_image_sizes=[reference_size or (1024, 1024)] if reference_count else None,
             )

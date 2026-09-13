@@ -242,6 +242,20 @@ async def _run_stage_with_credits(
         stage=stage,
         outcome=outcome,
     )
+    if (
+        stage == "cast"
+        and current.status in {StageStatus.COMPLETE, StageStatus.AWAITING_REVIEW}
+        and request is not None
+        and project_id is not None
+    ):
+        from .projects import enqueue_project_cover, needs_initial_project_cover
+
+        if needs_initial_project_cover(request, project_key(user_id, project_id), project_dir):
+            try:
+                enqueue_project_cover(request, project_id, (project_dir, config, state), user_id)
+            except Exception:
+                # A cover is auxiliary: an enqueue failure must not undo Cast.
+                logger.exception("Could not queue project cover after Cast project=%s", project_id)
     if current.status != StageStatus.COMPLETE:
         return
     for next_stage in STAGE_AUTO_CHAIN.get(stage, ()):
@@ -317,6 +331,7 @@ def _require_adaptation_brief(project_dir) -> None:
 
 @router.get("/estimate")
 async def estimate_stage_cost(
+    request: Request,
     project_id: str,
     stage: str = Query(...),
     project=Depends(get_project),
@@ -340,6 +355,12 @@ async def estimate_stage_cost(
         )
         for name in chain
     ]
+    if stage == "cast":
+        from .projects import _project_cover_credit_estimate, needs_initial_project_cover
+
+        if needs_initial_project_cover(request, project_key(user_id, project_id), project_dir):
+            cover = _project_cover_credit_estimate(config)
+            parts.append({**cover, "reserved_credits": cover["estimate_credits"]})
     return {
         "stage": stage,
         **CreditEstimate(
@@ -401,6 +422,11 @@ async def _start_stage(
             state,
             stage,
         )
+        if stage == "cast":
+            from .projects import _project_cover_credit_estimate, needs_initial_project_cover
+
+            if needs_initial_project_cover(request, pkey, project_dir):
+                required += _project_cover_credit_estimate(config)["estimate_credits"]
         assert_sufficient_credits(get_db(), user_id, required, stage=stage)
     queue = EventChannel()
     request.app.state.event_queues[pkey] = queue

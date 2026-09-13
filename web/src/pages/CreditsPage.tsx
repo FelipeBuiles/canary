@@ -13,7 +13,8 @@ import { Skeleton } from "../components/ui/Skeleton";
 import { CreditAmount } from "../components/ui/CreditAmount";
 import { Surface } from "../components/ui/Surface";
 import { EntityCard, SectionHeader } from "../components/composites";
-import { groupRunsByDay, runActivityLabel, type LedgerDayGroup } from "../lib/creditsHistory";
+import { groupRunsByDay, groupRunsByActivity, matchesLedgerFilter, runActivityLabel, type LedgerDayGroup, type LedgerFilter } from "../lib/creditsHistory";
+import { useI18n } from "../i18n";
 import { trackProductEvent } from "../api/events";
 
 function formatTime(iso: string): string {
@@ -65,17 +66,18 @@ function childRowLabel(tx: CreditTransaction): string {
 }
 
 function StatusBadge({ status }: { status: CreditLedgerRun["status"] }) {
+  const { t } = useI18n();
   if (status === "in_flight") {
     return (
       <span className="bg-narrator-gold px-2 py-1 font-meta text-xs font-bold tracking-[0.08em] text-ink-black">
-        IN FLIGHT
+        {t("Open hold")}
       </span>
     );
   }
   if (status === "complete") return null;
   return (
     <span className="bg-hero-red px-2 py-1 font-meta text-xs font-bold tracking-[0.08em] text-bristol">
-      FAILED
+      {t("Unsuccessful")}
     </span>
   );
 }
@@ -89,6 +91,7 @@ function LedgerRunRow({
   projectName: string | null;
   showDevContent: boolean;
 }) {
+  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const settled = run.rows.filter((row) => row.status === "settled");
   const detailsId = `ledger-run-${run.run_id}`;
@@ -130,7 +133,7 @@ function LedgerRunRow({
         </div>
 
         {/* Net credit change is the primary accounting fact. */}
-        <div className="flex basis-full items-baseline justify-start gap-2 pl-7 font-meta tabular-nums sm:ml-auto sm:w-auto sm:basis-auto sm:justify-end sm:pl-0">
+        <div className="flex basis-full flex-wrap items-baseline justify-start gap-2 pl-7 font-meta tabular-nums sm:ml-auto sm:w-auto sm:basis-auto sm:justify-end sm:pl-0">
           {isPurchase ? (
             <CreditAmount value={run.credits_added} sign="+" className="text-[0.82rem] font-bold text-archive-sage" />
           ) : run.actual_credits > 0 ? (
@@ -142,6 +145,7 @@ function LedgerRunRow({
           ) : (
             <span className="text-sm font-bold text-ink-muted">No charge</span>
           )}
+          {run.status === "in_flight" && run.actual_credits > 0 && <span className="text-sm text-ink-muted"><CreditAmount value={run.estimate_credits} /> {t("held")}</span>}
         </div>
       </button>
 
@@ -199,6 +203,7 @@ function DayLedgerSection({
   projectNameMap: Map<string, string>;
   showDevContent: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <section aria-labelledby={`ledger-day-${group.key}`}>
       <div className="mb-2 flex flex-wrap items-end justify-between gap-3 px-1">
@@ -218,13 +223,37 @@ function DayLedgerSection({
         </div>
       </div>
       <div className="border-[2px] border-ink-black/10 bg-surface-container">
-        {group.runs.map((run) => (
-          <LedgerRunRow
-            key={run.run_id}
-            run={run}
-            projectName={run.project_id ? (projectNameMap.get(run.project_id) ?? null) : null}
-            showDevContent={showDevContent}
-          />
+        {groupRunsByActivity(group.runs).map((activity) => (
+          <details key={activity.key} className="group/activity bg-bristol open:bg-pulp-paper">
+            <summary className="flex min-h-16 cursor-pointer list-none flex-wrap items-center gap-3 px-4 py-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-hero-red sm:px-5 [&::-webkit-details-marker]:hidden">
+              <Icon name="chevron-down" size={16} className="shrink-0 -rotate-90 text-ink-muted group-open/activity:rotate-0" />
+              <div className="min-w-0 flex-1 basis-40">
+                <p className="font-body font-bold text-ink-black">{t(activity.label)}</p>
+                <p className="mt-1 break-words font-body text-sm text-ink-muted">
+                  {activity.projectId ? projectNameMap.get(activity.projectId) ?? t("Project no longer available") : t("Account")}
+                </p>
+                <p className="mt-1 font-body text-sm text-ink-muted">
+                  {t(activity.runs.length === 1 ? "{count} activity" : "{count} activities").replace("{count}", String(activity.runs.length))}
+                  {activity.heldCount > 0 && ` · ${t(activity.heldCount === 1 ? "{count} open hold" : "{count} open holds").replace("{count}", String(activity.heldCount))}`}
+                  {activity.failedCount > 0 && ` · ${t("{count} unsuccessful").replace("{count}", String(activity.failedCount))}`}
+                </p>
+              </div>
+              <div className="flex basis-full flex-wrap gap-x-4 gap-y-1 pl-7 font-body text-sm font-semibold tabular-nums sm:basis-auto sm:justify-end sm:pl-0">
+                {activity.actualCredits > 0 && <span><CreditAmount value={activity.actualCredits} /> {t("charged")}</span>}
+                {activity.heldCredits > 0 && <span className="text-ink-muted"><CreditAmount value={activity.heldCredits} /> {t("held")}</span>}
+                {activity.creditsAdded > 0 && <CreditAmount value={activity.creditsAdded} sign="+" className="text-archive-sage" />}
+                {activity.actualCredits === 0 && activity.heldCredits === 0 && activity.creditsAdded === 0 && <span className="text-ink-muted">{t("No charge")}</span>}
+              </div>
+            </summary>
+            {activity.runs.map((run) => (
+              <LedgerRunRow
+                key={run.run_id}
+                run={run}
+                projectName={run.project_id ? (projectNameMap.get(run.project_id) ?? null) : null}
+                showDevContent={showDevContent}
+              />
+            ))}
+          </details>
         ))}
       </div>
     </section>
@@ -232,6 +261,8 @@ function DayLedgerSection({
 }
 
 export function CreditsPage() {
+  const { t } = useI18n();
+  const [activityFilter, setActivityFilter] = useState<LedgerFilter>("all");
   const [searchParams, setSearchParams] = useSearchParams();
   const successParam = searchParams.get("success");
   const cancelledParam = searchParams.get("cancelled");
@@ -295,8 +326,8 @@ export function CreditsPage() {
     [projects],
   );
   const visibleRuns = useMemo(
-    () => projectFilter ? runs.filter((run) => run.project_id === projectFilter) : runs,
-    [runs, projectFilter],
+    () => runs.filter((run) => (!projectFilter || run.project_id === projectFilter) && matchesLedgerFilter(run, activityFilter)),
+    [runs, projectFilter, activityFilter],
   );
   const dayGroups = useMemo(() => groupRunsByDay(visibleRuns), [visibleRuns]);
 
@@ -431,23 +462,39 @@ export function CreditsPage() {
               History
             </h2>
             <p className="mt-1.5 font-body text-sm font-semibold text-ink-muted">
-              Newest first. Open an activity to see how its charge was calculated.
+              {t("Grouped by day, project, and activity. Open a group to see individual attempts and charges.")}
             </p>
           </div>
-          {filterProjectIds.length > 0 && (
+          <div className="flex flex-col gap-2 sm:flex-row">
             <Select
-              aria-label="Filter history by project"
+              aria-label={t("Filter history by activity")}
               size="sm"
-              value={projectFilter ?? ""}
-              onValueChange={(value) => setProjectFilter(value || null)}
-              className="w-full sm:w-auto"
+              value={activityFilter}
+              onValueChange={(value) => setActivityFilter(value as LedgerFilter)}
               options={[
-                { value: "", label: "All projects" },
-                ...filterProjectIds.map((id) => ({ value: id, label: projectNameMap.get(id) ?? "Project no longer available" })),
+                { value: "all", label: t("All activity") },
+                { value: "charged", label: t("Charges") },
+                { value: "held", label: t("Open holds") },
+                { value: "failed", label: t("Unsuccessful") },
+                { value: "added", label: t("Credits added") },
               ]}
             />
-          )}
+            {filterProjectIds.length > 0 && (
+              <Select
+                aria-label="Filter history by project"
+                size="sm"
+                value={projectFilter ?? ""}
+                onValueChange={(value) => setProjectFilter(value || null)}
+                className="w-full sm:w-auto"
+                options={[
+                  { value: "", label: "All projects" },
+                  ...filterProjectIds.map((id) => ({ value: id, label: projectNameMap.get(id) ?? "Project no longer available" })),
+                ]}
+              />
+            )}
+          </div>
         </div>
+        <p className="mb-4 max-w-prose font-body text-sm leading-6 text-ink-muted">{t("Open holds are still reserved, including attempts awaiting billing reconciliation. They are separate from final charges.")}</p>
         {historyError && <Surface tone="pulp" padding="md" shadow="none" role="alert" className="mb-4"><p className="font-body text-sm">Credit history could not be refreshed. Any activity shown below was loaded earlier.</p><Button variant="outline" size="sm" className="mt-3" onClick={() => void refetchHistory()}>Retry history</Button></Surface>}
         {historyLoading ? (
           <div className="space-y-2">
@@ -456,8 +503,8 @@ export function CreditsPage() {
         ) : historyError && dayGroups.length === 0 ? null : dayGroups.length === 0 ? (
           <div className="space-y-3">
             <div className="border-[2px] border-ink-black/12 bg-surface-container px-5 py-8 font-body text-[0.9rem] font-semibold text-ink-muted">
-              {projectFilter
-                ? "No loaded history for this project. Load older history to keep looking."
+              {projectFilter || activityFilter !== "all"
+                ? t("No matching activity in loaded history. Load older history or change the filters.")
                 : "No transactions yet. Your first hold and final charge will appear here after you run a paid stage."}
             </div>
             {hasNextPage && (

@@ -750,7 +750,6 @@ def test_compiled_location_authorities_reach_fresh_thread_as_creation_or_parent_
     route = codex_dev.CodexRoute(reasoning_model="exact-model", image_model="gpt-image-2")
     for module in (codex_dev, asset_generation, provider):
         monkeypatch.setattr(module, "route_for", lambda kind, model: route)
-    monkeypatch.setattr(provider, "assert_request_funding", lambda *args: None)
     config = Config(image_model="image-gpt-2")
     references = []
     for index, role in enumerate(("style", "location_plate") if state_id else ("style",)):
@@ -841,3 +840,77 @@ def test_terminal_text_errors_and_all_image_errors_remain_failures(sdk, kind, wi
     assert len(sdk.turns) == 1
     assert sdk.notification_reads == 1
     assert sdk.interrupts == [("thread-1", "turn-1")]
+
+
+def test_child_text_reconnect_can_complete_beyond_image_deadline(sdk, monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime, 'TIMEOUT_SECONDS', 0.01)
+    monkeypatch.setattr(runtime, 'TEXT_TIMEOUT_SECONDS', 1)
+    monkeypatch.setattr(runtime.importlib.metadata, 'version', lambda package: runtime.SDK_VERSION)
+    monkeypatch.setattr(runtime.tempfile, 'gettempdir', lambda: str(tmp_path))
+    execute = runtime._execute
+
+    async def delayed_execute(root, request, evidence):
+        await asyncio.sleep(0.02)
+        return await execute(root, request, evidence)
+
+    monkeypatch.setattr(runtime, '_execute', delayed_execute)
+    sdk.events = [
+        sdk.types.ErrorNotification(will_retry=True, error=_Record(message='Reconnecting... 1/2')),
+        sdk.types.ItemCompletedNotification(item=_Record(root=sdk.types.AgentMessageThreadItem(
+            id='text-1', type='agentMessage', phase=None, text='{"ok": true}'))),
+        _completed(sdk),
+    ]
+    (tmp_path / 'request.json').write_text(json.dumps({
+        'kind': 'text', 'model': 'exact-model', 'system_prompt': 'Extract',
+        'prompt': 'Story', 'schema': None, 'references': [],
+    }))
+    asyncio.run(runtime._child(tmp_path))
+    result = json.loads((tmp_path / 'result.json').read_text())
+    assert result['text'] == '{"ok": true}'
+    assert result['metadata']['timeout_seconds'] == 1
+    assert result['metadata']['execution_elapsed_seconds'] >= 0.02
+    assert result['metadata']['events'][0]['elapsed_seconds'] >= 0
+    assert len(sdk.turns) == 1
+
+
+def test_child_text_still_has_absolute_deadline(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime, 'TEXT_TIMEOUT_SECONDS', 0.01)
+    monkeypatch.setattr(runtime.importlib.metadata, 'version', lambda package: runtime.SDK_VERSION)
+    monkeypatch.setattr(runtime.tempfile, 'gettempdir', lambda: str(tmp_path))
+
+    async def stalled_execute(root, request, evidence):
+        evidence.update(submitted=True, indeterminate=True)
+        await asyncio.Future()
+
+    monkeypatch.setattr(runtime, '_execute', stalled_execute)
+    (tmp_path / 'request.json').write_text(json.dumps({'kind': 'text'}))
+    asyncio.run(runtime._child(tmp_path))
+    result = json.loads((tmp_path / 'result.json').read_text())
+    assert result['error'] == 'runtime_timeout'
+    assert result['metadata']['timeout_owner'] == 'child'
+    assert result['metadata']['indeterminate'] is True
+    assert 'Canary stopped the request after 0.01 seconds' in str(
+        runtime._runtime_error(result['error'], result['metadata']))
+
+
+@pytest.mark.parametrize('kind,deadline', [('text', 915), ('image', 315)])
+def test_parent_deadline_leaves_child_cleanup_time(monkeypatch, supported_host, kind, deadline):
+    observed = []
+    real_wait_for = asyncio.wait_for
+
+    async def wait_for(awaitable, timeout):
+        observed.append(timeout)
+        return await real_wait_for(awaitable, timeout)
+
+    class Process:
+        async def wait(self):
+            return 0
+
+    async def spawn(*args, **kwargs):
+        return Process()
+
+    monkeypatch.setattr(runtime.asyncio, 'create_subprocess_exec', spawn)
+    monkeypatch.setattr(runtime.asyncio, 'wait_for', wait_for)
+    with pytest.raises(runtime.CodexRuntimeError, match='child_result_missing'):
+        asyncio.run(runtime._run({'kind': kind, 'model': 'exact-model'}))
+    assert observed == [deadline]

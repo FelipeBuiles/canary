@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, type ReactNode } from "react";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { cn } from "../../lib/cn";
 import { CreditAmount } from "../ui/CreditAmount";
@@ -18,6 +18,8 @@ export interface RerunDrawerProps {
   onClose: () => void;
   confirmLabel?: string;
   busy?: boolean;
+  disabled?: boolean;
+  extraBody?: ReactNode;
 }
 
 export function RerunDrawer({
@@ -30,6 +32,8 @@ export function RerunDrawer({
   onClose,
   confirmLabel,
   busy = false,
+  disabled = false,
+  extraBody,
 }: RerunDrawerProps) {
   const drawerRef = useRef<HTMLDivElement | null>(null);
 
@@ -156,6 +160,8 @@ export function RerunDrawer({
             )}
           </div>
 
+          {extraBody && <div className="mt-4">{extraBody}</div>}
+
           <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
             <Button variant="outline" size="md" onClick={onClose} disabled={busy}>
               Cancel
@@ -163,7 +169,7 @@ export function RerunDrawer({
             <DestructiveButton
               size="md"
               onClick={onConfirm}
-              disabled={busy}
+              disabled={busy || disabled}
             >
               {busy ? "Running…" : confirmLabel ?? `Rerun ${stageName}`}
             </DestructiveButton>

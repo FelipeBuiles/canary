@@ -1,6 +1,6 @@
 # Codex development capability report
 
-**Status: local development adapter (the dev launcher defaults to Codex); scoped
+**Status: local development adapter (the dev launcher defaults to API); scoped
 live text, image, reference and correction evidence observed on macOS,
 September 8–9, 2026.** September 8's complete-page proof and September 9's
 extraction proof required manual recovery of captured output; neither was an
@@ -49,22 +49,20 @@ explicitly disable Codex; API and Codex children explicitly disable mock generat
 In `--codex` mode, choose exact Codex models through **Account → Models (dev)**.
 These account-wide selections need no route maps; see
 [account model settings](account-model-settings.md) for the allowlist, API/Codex
-funding groups, and image-tool distinction.
+freely mixed transports, and image-tool distinction.
 
 The launcher does not create legacy route maps. Explicit Codex diagnostic routing uses
 `CANARY_CODEX_DEV_TEXT_ROUTES` and/or `CANARY_CODEX_DEV_IMAGE_ROUTES`; their defaults
 are empty. Image reasoning defaults to `gpt-5.5`, which does not identify the
 image backend. The model settings panel rejects API selections shadowed by an
 explicit Codex route: restart the launcher with `--api` to use those API choices.
-Experimental Codex Draw requires its image route and OCR route to be selected
-together for a new edition.
+Experimental Codex Draw can use API OCR, and API Draw can use Codex OCR.
 
 To override routing, set `CANARY_CODEX_DEV_TEXT_ROUTES` (a JSON alias-to-model map),
 `CANARY_CODEX_DEV_IMAGE_ROUTES` (a JSON alias list), or
 `CANARY_CODEX_DEV_IMAGE_REASONING_MODEL` in the launching environment. Explicit
-values replace the corresponding defaults, not merge with them. Match **every
-alias used by the intended action**, including auto-chained stages; partial selection
-can reject mixed jobs. Project `config.yaml`, project `.env`, browser input and
+values replace the corresponding defaults, not merge with them. Select only the
+aliases you want to route through Codex; other operations retain API routing. Project `config.yaml`, project `.env`, browser input and
 `Config.dev_mode` cannot authorize routing.
 
 **Stop an existing backend manually before switching modes or changing route
@@ -84,18 +82,17 @@ credentials/authentication remain unchanged.
 
 ### Admission, funding and Draw
 
-Whole-job manifests classify **all planned operations in every job**: all selected
-and eligible means `codex_subscription`; wholly unselected retains normal API
-behavior. **Mixed API/subscription jobs reject before generation or credit holds.**
-Selecting only images is insufficient when the job also plans text.
+As of September 11, 2026, jobs and auto-chains can freely mix API and Codex
+operations. Manifests validate route availability and summarize whether any API
+spend is expected; they do not impose a funding lock or model equality. Estimates
+exclude Codex calls, including either side of Draw/OCR and style text/images.
 
-Subscription usage has zero credit holds/debits and explicit zero-debit history,
-not mock usage, a tariff fallback or free API inference. Provider cost remains
-unknown (`cost_usd=null`); consumed Codex allowance is not converted to USD or
-assumed unlimited. **Apply [the canonical schema SQL](../supabase-schema.sql)
-before starting the updated backend**, including funding-aware events, ledger and
-RPC signatures. Fresh-schema installation and upgrade from the preceding schema
-passed against isolated local PostgreSQL 18; no production database was changed.
+Codex usage remains in diagnostic AI usage events with unknown provider cost
+(`cost_usd=null`). It creates neither credit holds nor credit-ledger rows. API
+calls in the same job retain normal holds and settlement. The existing schema
+already excludes subscription events from missing-debit reconciliation, so this
+simplification needs no database migration. Historical live proofs below describe
+the older zero-debit ledger behavior and are not the current billing contract.
 
 Draw uses a **separate local-only experimental profile**, not a relaxed production
 profile. With the default launcher routes, open a project with an approved Plan

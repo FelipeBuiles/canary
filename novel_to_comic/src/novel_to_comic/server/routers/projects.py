@@ -77,6 +77,7 @@ from ..generation_jobs import (
     generation_job_payload,
     generation_semaphore_for_config,
     prune_finished_generation_jobs,
+    recovered_generation_jobs,
 )
 
 router = APIRouter()
@@ -213,6 +214,29 @@ def _active_project_cover_job(request: Request, pkey: str):
         ):
             return job
     return None
+
+
+def needs_initial_project_cover(request: Request, pkey: str, project_dir: Path) -> bool:
+    """Auto-create once; prior attempts require an explicit user retry."""
+    return (
+        not _cover_path(project_dir).exists()
+        and _latest_project_cover_job(request, pkey) is None
+        and not any(
+            job["kind"] == "project_cover"
+            for job in recovered_generation_jobs(request.app, pkey)
+        )
+    )
+
+
+def _project_cover_job_payload(request: Request, pkey: str) -> dict | None:
+    job = _latest_project_cover_job(request, pkey)
+    if job is not None:
+        return generation_job_payload(request.app, job)
+    return max(
+        (job for job in recovered_generation_jobs(request.app, pkey) if job["kind"] == "project_cover"),
+        key=lambda job: job["queued_at"],
+        default=None,
+    )
 
 
 def _story_bible_author(project_dir: Path) -> str | None:
@@ -620,7 +644,7 @@ def list_projects(
             results.append(_incompatible_project_summary(row, d))
             continue
         pkey = project_key(user_id, row["id"])
-        cover_job = _latest_project_cover_job(request, pkey)
+        cover_job = _project_cover_job_payload(request, pkey)
         furthest = None
         for name in STAGE_NAMES:
             if _stage_payload(d, name, state)["status"] in (
@@ -642,9 +666,7 @@ def list_projects(
                 "page_count": _target_page_count(d),
                 "page_issue_summary": _target_issue_summary(d),
                 "finish_ready": _finish_ready(d),
-                "cover_job": generation_job_payload(request.app, cover_job)
-                if cover_job
-                else None,
+                "cover_job": cover_job,
                 "incompatible": False,
                 "incompatibility_reason": None,
             }
@@ -741,6 +763,13 @@ async def generate_cover(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
+    return enqueue_project_cover(request, project_id, project, user_id, force=force)
+
+
+def enqueue_project_cover(request: Request, project_id: str, project, user_id: str, *, force: bool = False):
+    """Shared HTTP and post-Cast orchestration; generation stays in its own job."""
+    from novel_to_comic.artifacts import character_ref_sheet_path
+
     project_dir, config, state = project
     pkey = project_key(user_id, project_id)
 
@@ -751,8 +780,6 @@ async def generate_cover(
     if not (project_dir / "story_bible.json").exists():
         raise HTTPException(404, "Story bible not found — run extract first.")
 
-    cover_estimate = _project_cover_credit_estimate(config)
-
     existing = _active_project_cover_job(request, pkey)
     if existing:
         return {
@@ -760,6 +787,16 @@ async def generate_cover(
             "path": "cover/cover.png",
             "job": generation_job_payload(request.app, existing),
         }
+
+    # Reject missing inputs before publishing a paid job or reserving credits.
+    bible = StoryBible.model_validate_json((project_dir / "story_bible.json").read_text())
+    missing = [
+        char.name for char in bible.characters[:3]
+        if not character_ref_sheet_path(project_dir, char.id).exists()
+    ]
+    if missing:
+        raise HTTPException(409, "Generate character references before creating the cover: " + ", ".join(missing))
+    cover_estimate = _project_cover_credit_estimate(config)
 
     async def _runner():
         return await _generate_project_cover(config, project_dir, user_id, project_id)

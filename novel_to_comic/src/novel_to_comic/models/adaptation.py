@@ -88,7 +88,7 @@ class AdaptationBrief(RevisionedArtifact):
 
 
 class NarrativeTreatment(BaseModel):
-    """The adaptation's global dramatic reasoning before page allocation."""
+    """An editorial story outline of fictional events and character arcs before page allocation."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 

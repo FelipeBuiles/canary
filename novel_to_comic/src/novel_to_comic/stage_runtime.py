@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime
+import json
 import logging
 import time
 import traceback
@@ -189,12 +190,17 @@ class StageRuntime:
 
                 from novel_to_comic.ai.errors import AIRefusalError
 
+                error_detail = None
+                if local_diagnostics_enabled():
+                    error_detail = traceback.format_exc()
+                    if isinstance(exc, AIRefusalError) and exc.diagnostics:
+                        error_detail += "\nRefusal diagnostics:\n" + json.dumps(
+                            exc.diagnostics, ensure_ascii=False, indent=2,
+                        )
                 self.fail(
                     clean_exception_message(exc),
                     error_code="model_refusal" if isinstance(exc, AIRefusalError) else None,
-                    error_detail=traceback.format_exc()
-                    if local_diagnostics_enabled()
-                    else None,
+                    error_detail=error_detail,
                 )
                 raise
 

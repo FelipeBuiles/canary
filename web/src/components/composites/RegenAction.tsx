@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import type { CostEstimate } from "../../types/api";
 import { useI18n } from "../../i18n";
 import { Button } from "../ui/Button";
@@ -7,6 +7,9 @@ import { ConfirmDrawer } from "./ConfirmDrawer";
 
 interface RegenActionProps {
   assetLabel: string;
+  instructionControls?: ReactNode;
+  instructionPlaceholder?: string;
+  instructionSummary?: ReactNode;
   cost?: CostEstimate;
   instructionCost?: CostEstimate;
   hasImage?: boolean;
@@ -31,6 +34,9 @@ type ConfirmMode = "same" | "instruction" | null;
  */
 export function RegenAction({
   assetLabel,
+  instructionControls,
+  instructionPlaceholder,
+  instructionSummary,
   cost,
   instructionCost,
   hasImage = true,
@@ -117,7 +123,7 @@ export function RegenAction({
             aria-invalid={!!instructionError}
             aria-describedby={instructionError ? instructionErrorId : undefined}
             className="w-full resize-y border-[2px] border-ink-black/25 bg-bristol px-3 py-2.5 font-body text-[0.86rem] leading-6 text-ink-black outline-none transition-colors focus:border-ink-black disabled:opacity-55"
-            placeholder={t("For example: darker lighting, rain on the window, keep the face unchanged…")}
+            placeholder={instructionPlaceholder ?? t("For example: darker lighting, rain on the window, keep the face unchanged…")}
           />
           <div className="mt-1 flex items-start justify-between gap-3">
             <p
@@ -128,6 +134,7 @@ export function RegenAction({
               {instructionError ?? `${instruction.length}/500`}
             </p>
           </div>
+          {instructionControls}
           <Button
             className="mt-1 w-full"
             size="sm"
@@ -184,9 +191,9 @@ export function RegenAction({
             ? t("Scenewright will create a new image from the same saved brief. The current version stays in history.")
             : t("Scenewright will create this image from its saved visual brief.")}
         extraBody={confirmMode === "instruction" ? (
-          <blockquote className="break-words border-[2px] border-ink-black/10 bg-bristol px-3 py-2 text-[0.8rem] leading-5 text-ink-black/75">
+          <div>{instructionSummary}<blockquote className="break-words border-[2px] border-ink-black/10 bg-bristol px-3 py-2 text-[0.8rem] leading-5 text-ink-black/75">
             “{instruction.trim()}”
-          </blockquote>
+          </blockquote></div>
         ) : undefined}
         cost={confirmMode === "instruction" ? instructionCost : cost}
         confirmLabel={confirmMode === "instruction" ? t("REGENERATE WITH CHANGE") : hasImage ? t("TRY ANOTHER VERSION") : t("GENERATE IMAGE")}

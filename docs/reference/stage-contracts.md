@@ -48,9 +48,56 @@ discard. They are never silently applied to a newer Brief.
 
 Entering Cast does not spend. Starting or resuming missing references is an
 explicit estimated action; Style's explicit Continue action may start Cast
-and a needed cover before navigating there. Approving Cast accepts the
+before navigating there. Cast's estimate includes an initial cover, queued by
+the server only after Cast succeeds and its identity references exist. Existing
+cover attempts (including interrupted jobs recovered after restart) require an
+explicit retry; entering a room never retries them. Approving Cast accepts the
 estimated Adapt → Plan chain. Pages retains one Continue to Book decision,
 not per-page acceptance.
+
+### Cast reference corrections
+
+Every significant character or location appearance opens its own revision controls.
+State corrections use the entity-scoped instructed regeneration routes; their
+instructions and images do not replace the main reference. Missing appearances
+can be generated individually. Each paid action remains explicitly estimated
+and confirmed.
+
+Cast instruction bodies optionally accept `reference_assets` (project-local
+`asset_type`, `asset_id`, optional `state_id`; up to three). **Add a reference**
+reveals the optional picker. Attached thumbnails can be reviewed and removed;
+the author describes how each should guide the change in the same instruction.
+There is no mandatory reference operation: borrowing a detail, matching an
+appearance, preserving continuity, or avoiding similarity all use this flow.
+
+The rewriter receives each attachment's name, state label and visual anchor;
+the renderer receives the actual image as instruction context. Attachment alone
+never implies copying or differentiation. The owner's explicit art direction takes
+precedence over generated appearance details, continuity guards and style defaults
+for the targeted asset/state. Unrequested details and the reference format remain
+stable. Source anchors and guards remain verbatim for provenance; they cannot veto
+a requested redesign. Attachments never become edit parents.
+
+Successful image metadata stores the applied art direction. Draw carries that
+direction with the selected reference, so source descriptions do not undo Cast
+edits. Failed drafts are not treated as approved art direction. Main and alternate
+location references expose version history and reversible restoration, including
+the corresponding image metadata; restoring a main reference marks dependent
+states stale without automatically regenerating them.
+
+Missing/unreadable images, unknown identifiers, self-attachments and reference
+overflow fail before the rewrite spends credits. Accepted attachments are saved
+with the instruction and reused by plain rerolls. An explicit empty list removes
+them from the next correction. `reference_count` on the asset estimate includes
+the selected additional image inputs. `reference_assets_supported` advertises
+attachment support to the UI; unknown correction fields are rejected rather
+than silently ignored.
+
+Location corrections may distinguish layout, furniture arrangement, decor, and
+architectural details/materials consistent with canonical facts. They are no
+longer restricted to lighting/weather changes. Visual anchors and active-state
+continuity guards remain verbatim and authoritative. These controls do not
+establish that the resulting designs are visually distinct; that requires review.
 
 ## Authority through generation
 
@@ -88,6 +135,38 @@ drafts author non-lettering `continuity_intent` for scene transitions, staging,
 and held-object ownership. Canonicalization folds it into `ComicPage.layout_intent`
 as ordered panel staging, not a new `PageContent.continuity_intent` field.
 
+### Narrative review and flexible length
+
+Brief's page range is a preferred scale, not a minimum or maximum allocation.
+Plan preserves that target as metadata while allowing the actual book to be
+shorter or longer. Exact lettering, source accounting, continuity, reference
+capacity, and protected language remain enforced.
+
+Before publishing Adapt, a separate structured editorial call reviews source
+windows, including omitted units, alongside global beat summaries and neighboring
+beats. It checks reader-visible context, repeated events, unsupported additions,
+and essential development. Plan reviews the global map before detail in its
+larger-book workflow and reviews actual canonical page candidates before
+publication. Silence/SFX-only runs and disproportionate reuse of a beat are
+computed questions that the reviewer must assess, not numerical quality scores
+or automatic bans on silent comics. Defects cite known artifacts and carry
+repair ownership; Plan cannot repair missing Adapt wording by inventing copy.
+
+Findings enter bounded stage repair. Plan may change global allocation and page
+count rather than only editing panels inside a defective map. Failed or malformed
+review blocks publication and persists evidence. Text review calls are metered
+through StageRuntime and exact-input checkpoints; estimates include a review
+allowance. These are model judgments, not guaranteed story-quality measurements.
+
+`TargetArtifacts` stores `adapt/adapt_review.json`, `plan/plan_map_review.json`,
+and `plan/plan_review.json`. Required successful reviews are keyed by version and
+input digest. Draw initialization, batch preflight, individual generation, and
+correction preflight reject missing, failed, or stale Adapt/Plan reviews before
+spend. Reading existing pages and OCR-only recovery do not require new narrative
+review. Older projects need rerunning Adapt and Plan; no artifacts or request
+hashes are migrated in place. A frozen pending image result is retained, never
+authorization to silently redraw or release a reservation.
+
 ### Style and reference authority
 
 Style curation uses typed `visual_logic`: `photographic`,
@@ -124,6 +203,24 @@ postures, not an invented human/adult roster or a lettered page sample.
 It supplies rendering evidence only, never another character's identity, and
 is not a required Cast approval output. Reuse requires its current producing
 request; otherwise the approved style proof is the fallback conditioning image.
+Sunburst uses the same approved proof directly for every Cast character and state
+reference, instead of generating or reusing a shared character lineup. Saved
+Sunburst project evidence showed the lineup leaking its identities into other
+characters. Other models retain shared calibration to prevent per-character or
+per-species style drift; the exception does not apply to the whole GPT Image route.
+Sunburst character generation fails before submission if the proof is absent,
+rather than silently falling back to text. Cast prompts explicitly keep one
+medium and degree of realism across human, animal, and creature subjects.
+An image-edit transport never licenses discarding the selected style image.
+Canonical character sheets also receive the Story Bible's age, wardrobe, and
+distinguishing details alongside the exact protected visual anchor.
+
+Extraction requires explicit `changed_facets` and `replaces_identity` for every
+returned appearance state and rejects two activations for one entity at the
+same scene/beat. Its prompt includes plot-critical silent/nonhuman actors even
+when they occur in only one scene, and explicit returns to the canonical look
+when a later source passage depicts an earlier lived-time flashback. These
+prompt requirements do not prove semantic completeness of a generated roster.
 
 Style references are rendering-only, not implicit edit parents. Only explicitly
 selected edit-parent references authorize preserving an existing composition
@@ -240,11 +337,24 @@ Adaptation/Plan stays read-only.
 Adapt resumes by revalidating its saved failed candidate against the unchanged
 source and approved brief. Source-backed protected quotations receive explicit
 quoted-caption delivery; exact protected book titles do not require terminal
-punctuation. A valid recovered candidate is persisted without a model call.
+punctuation. Missing terminal punctuation alone produces a nonblocking
+`possible_clipped_display_text` editorial issue: headings, date cards, chants,
+and quoted phrases may intentionally omit it. Unclosed quotation marks and
+delimiters remain blocking. Warnings preserve the exact lettering and cited IDs.
+A valid recovered candidate with current successful narrative-review evidence
+is persisted without a model call; structural validity alone does not waive review.
 Changed source/brief identities or a new story instruction prevent this reuse.
 If validation still fails, an explicit resume reuses initial generation
-checkpoints but gives the existing bounded repair pass a fresh checkpoint
-namespace, so a cached failed repair cannot trap every subsequent retry.
+checkpoints. An interrupted repair batch reuses its completed siblings only when
+every existing sibling matches the exact model and prompt hash. Only the missing
+sections generate again. A fully completed repair batch gets a fresh namespace
+on explicit retry, so a cached failed repair cannot trap subsequent attempts.
+Repair scope starts from affected source scenes, then includes all source units
+and literal ledger claims carried by any beat being replaced, including its
+lettering. Overlapping beats expand that scope until stable. The splice rejects
+a partial scope before replacing anything; it must not keep a caption claim
+while deleting the caption that realized it. Compression-only links may still
+redirect to replacement beats and remain subject to narrative review.
 The Pages error screen offers Resume adaptation with the existing estimate and
 confirmation, plain-language checks, and collapsed technical evidence.
 

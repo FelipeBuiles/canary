@@ -207,7 +207,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `provider` | `str` | `Field(min_length=1)` |
 | `model` | `str` | `Field(min_length=1)` |
 | `latency_ms` | `int` | `Field(ge=0)` |
-| `cost_usd` | `Decimal` | `Field(ge=0)` |
+| `cost_usd` | `Decimal | None` | `Field(ge=0)` |
 
 ## CompletePageProviderResult _(draw.py)_
 
@@ -220,8 +220,9 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `height` | `int` | `Field(gt=0)` |
 | `latency_ms` | `int` | `Field(ge=0)` |
 | `provider_request_id` | `str | None` | `None` |
-| `actual_provider_model` | `str` | `Field(min_length=1)` |
+| `actual_provider_model` | `str | None` | `Field(min_length=1)` |
 | `usage` | `UsageRecord` |  |
+| `response_metadata` | `dict[str, object] | None` | `None` |
 
 ## PageGenerationProvenance _(draw.py)_
 
@@ -230,6 +231,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `render` | `PageRenderRevision` |  |
 | `usage` | `UsageRecord` |  |
 | `provider_request_id` | `str | None` | `None` |
+| `response_metadata` | `dict[str, object] | None` | `None` |
 
 ## PageGenerationFailure _(draw.py)_
 
@@ -555,7 +557,6 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 |-------|------|---------|
 | `minimum` | `int` | `Field(ge=1)` |
 | `maximum` | `int` | `Field(ge=1)` |
-| `allow_expansion` | `bool` | `False` |
 | `approved` | `Literal[True]` | `True` |
 
 ## ApprovedVisualReference _(page.py)_

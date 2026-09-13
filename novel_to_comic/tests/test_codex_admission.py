@@ -1,4 +1,4 @@
-"""Whole-action funding is decided before money, mutations, or provider work."""
+"""Mixed local transports preserve API holds without billing Codex calls."""
 import asyncio
 from types import MappingProxyType, SimpleNamespace
 from unittest.mock import MagicMock
@@ -41,42 +41,72 @@ def app():
     ))
 
 
-def test_mixed_queue_refused_before_hold_or_publication(tmp_path, monkeypatch, select_routes):
+@pytest.mark.parametrize("cancel", [False, True])
+def test_mixed_queue_reserves_api_spend_and_releases_hold(tmp_path, monkeypatch, select_routes, cancel):
+    from novel_to_comic.ai.context import current_ai_request_context
+    from novel_to_comic.usage import UsageRecord
+
     config = Config()
     select_routes(text=(config.effective_prompt_model(),))
-    database = MagicMock(side_effect=AssertionError("admission must precede the database"))
-    monkeypatch.setattr(credited_job, "get_db", database)
-    queue = app()
-
-    async def work():
-        raise AssertionError("mixed work must never execute")
-
-    with pytest.raises(codex_dev.CodexRoutingError):
-        credited_job.enqueue_reserved_generation_job(
-            queue, project_name="project", user_id="user", project_id="id",
-            project_dir=tmp_path, stage="style", kind="style_suggest", label="Style",
-            payload={}, work=work, debit_description="Style", reservation_credits=10,
-            operations=prompt_image_operations(config),
-        )
-    database.assert_not_called()
-    assert queue.state.generation_jobs == {}
-    assert queue.state.generation_queue.empty()
-
-
-def test_subscription_job_has_no_hold_and_pins_execution_funding(tmp_path, monkeypatch, select_routes):
-    config = Config()
-    alias = config.effective_image_model()
-    select_routes(images=(alias,))
     database = MagicMock()
     monkeypatch.setattr(credited_job, "get_db", lambda: database)
+    reserve = MagicMock(return_value=("hold", "job"))
+    release = MagicMock()
+    monkeypatch.setattr(credited_job, "reserve_credits", reserve)
+    monkeypatch.setattr(credited_job, "release_reservation", release)
+    monkeypatch.setattr(credited_job, "assert_reservation_active", lambda *args: None)
     executed = []
 
     async def work():
-        codex_dev.assert_request_funding("image", alias, require_admission=True)
-        with pytest.raises(codex_dev.CodexRoutingError):
-            codex_dev.assert_request_funding("text", "unselected-api-model")
-        executed.append("subscription")
-        return ApiResult(value="generated")
+        assert current_ai_request_context().job_id == "job"
+        executed.append("mixed")
+        if cancel:
+            raise asyncio.CancelledError()
+        return ApiResult(value="generated", usage=UsageRecord(
+            provider="codex", model=config.effective_prompt_model(), operation="text",
+            funding="codex_subscription", input_tokens=100,
+        ), additional_usage=(UsageRecord(
+            provider="openai", model="gpt-6-astra", operation="text",
+            input_tokens=1000, output_tokens=1000,
+        ),))
+
+    queue = app()
+    job, created = credited_job.enqueue_reserved_generation_job(
+        queue, project_name="project", user_id="user", project_id="id",
+        project_dir=tmp_path, stage="style", kind="style", label="Style", payload={},
+        work=work, debit_description="Style", reservation_credits=10,
+        operations=prompt_image_operations(config),
+    )
+    assert created
+    assert reserve.call_args.args[-1] == 10
+    if cancel:
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(job.runner())
+        database.rpc.assert_not_called()
+    else:
+        asyncio.run(job.runner())
+        database.rpc.assert_called_once()
+        name, params = database.rpc.call_args.args
+        assert name == "settle_model_usage_credits"
+        assert params["p_funding"] == "api"
+        assert params["p_cost_usd"] == pytest.approx(0.06)
+    assert executed == ["mixed"]
+    release.assert_called_once_with(database, "hold")
+
+
+def test_subscription_job_needs_no_credit_hold_or_ledger_entry(tmp_path, monkeypatch, select_routes):
+    from novel_to_comic.usage import UsageRecord
+
+    config = Config()
+    select_routes(images=(config.effective_image_model(),))
+    database = MagicMock()
+    monkeypatch.setattr(credited_job, "get_db", lambda: database)
+
+    async def work():
+        return ApiResult(value="generated", usage=UsageRecord(
+            provider="codex", model=config.effective_image_model(), operation="image",
+            funding="codex_subscription", image_count=1,
+        ))
 
     queue = app()
     job, created = credited_job.enqueue_reserved_generation_job(
@@ -86,11 +116,8 @@ def test_subscription_job_has_no_hold_and_pins_execution_funding(tmp_path, monke
         operations=image_operations(config),
     )
     asyncio.run(job.runner())
-    assert created and job.id in queue.state.generation_jobs
-    assert executed == ["subscription"]
+    assert created
     database.rpc.assert_not_called()
-    with pytest.raises(codex_dev.CodexRoutingError):
-        codex_dev.assert_request_funding("image", alias, require_admission=True)
 
 
 def test_subscription_quotes_bypass_tariffs_and_minimums(tmp_path, monkeypatch, select_routes):
@@ -108,45 +135,19 @@ def test_subscription_quotes_bypass_tariffs_and_minimums(tmp_path, monkeypatch, 
 def test_missing_style_brief_is_included_but_validation_is_image_only(select_routes):
     config = Config(style_sample_brief_enabled=True)
     select_routes(images=(config.effective_image_model(),))
-    with pytest.raises(codex_dev.CodexRoutingError):
-        codex_dev.classify_operations(style_sample_operations(config))
+    assert codex_dev.classify_operations(style_sample_operations(config)) == "api"
     assert codex_dev.classify_operations(style_sample_operations(config, validation=True)) == "codex_subscription"
 
 
-def test_instructed_cast_refuses_before_rewrite_or_asset_mutation(tmp_path, monkeypatch, select_routes):
-    from novel_to_comic import cast_instructions
+@pytest.mark.parametrize("stage", ["extract", "adapt"])
+def test_autochain_allows_either_mixed_transport_order(select_routes, stage):
+    from novel_to_comic.server.codex_admission import admit_stage_action
 
-    config = Config()
-    select_routes(images=(config.effective_image_model(),))
-    resolve = MagicMock(side_effect=AssertionError("mixed action reached asset handling"))
-    monkeypatch.setattr(cast_instructions, "resolve_cast_asset", resolve)
-    database = MagicMock()
-    with pytest.raises(codex_dev.CodexRoutingError):
-        asyncio.run(cast_instructions.apply_asset_instruction(
-            config, tmp_path, database, "user", "project", "character", "ada", "Change the hat",
-        ))
-    resolve.assert_not_called()
-    database.rpc.assert_not_called()
-
-
-def test_adapt_autochain_refuses_before_start_and_approval_mutation(tmp_path, monkeypatch, select_routes):
-    from novel_to_comic.server.routers import pipeline
-    from novel_to_comic.state import StageStatus, create_initial_state
-
-    config = Config(plan_model="gpt-5.6-luna")
-    select_routes(text=(config.effective_adapt_model(),))
-    state = create_initial_state("project", "novel.txt")
-    state.stages["cast"].status = StageStatus.AWAITING_REVIEW
-    project = (tmp_path, config, state)
-    request = SimpleNamespace(app=app())
-    save = MagicMock(side_effect=AssertionError("mixed chain mutated state"))
-    monkeypatch.setattr(pipeline, "save_state", save)
-    with pytest.raises(codex_dev.CodexRoutingError):
-        asyncio.run(pipeline._start_stage(request, "id", "adapt", False, project, "user"))
-    with pytest.raises(codex_dev.CodexRoutingError):
-        asyncio.run(pipeline.approve("cast", "id", request, project, "user"))
-    save.assert_not_called()
-    assert state.stages["cast"].status == StageStatus.AWAITING_REVIEW
+    config = Config(extraction_model="gpt-5.6-terra", brief_model="gpt-5.6-luna",
+                    adapt_model="gpt-5.6-terra", plan_model="gpt-5.6-luna")
+    for alias in ("gpt-5.6-terra", "gpt-5.6-luna"):
+        select_routes(text=(alias,))
+        assert admit_stage_action(config, stage) == "api"
 
 
 def test_adapt_admission_uses_only_explicit_adapt_and_plan_models(select_routes):
@@ -158,16 +159,14 @@ def test_adapt_admission_uses_only_explicit_adapt_and_plan_models(select_routes)
     )
 
 
-def test_dev_draw_requires_both_complete_page_and_ocr_selection(select_routes):
+def test_dev_draw_allows_either_or_both_codex_selections(select_routes):
     config = Config()
     select_routes(images=("image-gemini-pro",), text=(config.effective_page_ocr_model(),))
     assert codex_dev.classify_operations(draw_operations(config)) == "codex_subscription"
     select_routes(images=("image-gemini-pro",))
-    with pytest.raises(codex_dev.CodexRoutingError):
-        codex_dev.classify_operations(draw_operations(config))
+    assert codex_dev.classify_operations(draw_operations(config)) == "api"
     select_routes(text=(config.effective_page_ocr_model(),))
-    with pytest.raises(codex_dev.CodexRoutingError):
-        codex_dev.classify_operations(draw_operations(config))
+    assert codex_dev.classify_operations(draw_operations(config)) == "api"
     select_routes(images=("image-gpt-2",))
     assert codex_dev.classify_operations(draw_operations(config)) == "api"
 
@@ -186,3 +185,53 @@ def test_cached_page_recovery_needs_neither_selected_route_nor_hold(tmp_path, mo
     ))
     assert result == {"recovered": True}
     database.assert_not_called()
+
+
+@pytest.mark.parametrize("codex_image,codex_ocr,expected", [
+    (False, False, 0.52), (True, False, 0.02),
+    (False, True, 0.50), (True, True, 0.0),
+])
+def test_draw_estimates_include_only_api_operations(select_routes, monkeypatch, codex_image, codex_ocr, expected):
+    from novel_to_comic import page_drawing
+
+    config = Config()
+    select_routes(images=(config.draw_model,) if codex_image else (),
+                  text=(config.effective_page_ocr_model(),) if codex_ocr else ())
+    monkeypatch.setattr(page_drawing, "PAGE_OCR_ESTIMATED_COST_USD", 0.02)
+    assert page_drawing.estimate_draw_api_cost(config, 0.50) == pytest.approx(expected)
+    assert page_drawing.estimate_draw_api_cost(config, 0.50, ocr=False) == (0 if codex_image else 0.50)
+
+
+@pytest.mark.parametrize("codex_text", [False, True])
+def test_instructed_cast_mixed_estimate_excludes_codex_portion(select_routes, tmp_path, codex_text):
+    from novel_to_comic.usage import estimate_text_cost, estimate_image_cost
+
+    config = Config()
+    select_routes(text=(config.effective_prompt_model(),) if codex_text else (),
+                  images=() if codex_text else (config.effective_image_model(),))
+    image = credits.UnifiedCostResolver.estimate_asset_regen_cost(config, tmp_path, "prop_ref_regen", "prop")
+    combined = credits.UnifiedCostResolver.estimate_instructed_regen_cost(config, image, "cast")
+    assert combined["funding"] == "api"
+    if codex_text:
+        assert estimate_text_cost(config.effective_prompt_model(), 1000, 1000) == 0
+        assert combined["estimate_credits"] == image["estimate_credits"] > 0
+    else:
+        assert estimate_image_cost(config.effective_image_model(), 1) == 0
+        assert image["estimate_credits"] == 0
+        assert combined["estimate_credits"] > 0
+
+
+def test_mixed_route_still_rejects_disabled_codex_before_queue(tmp_path, monkeypatch, select_routes):
+    monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType({**codex_dev._PROCESS, "CANARY_CODEX_DEV_ENABLED": "0"}))
+    database = MagicMock(side_effect=AssertionError("invalid route reached database"))
+    monkeypatch.setattr(credited_job, "get_db", database)
+    queue = app()
+    with pytest.raises(codex_dev.CodexRoutingError, match="ENABLED"):
+        credited_job.enqueue_reserved_generation_job(
+            queue, project_name="project", user_id="user", project_id="id",
+            project_dir=tmp_path, stage="style", kind="style", label="Style", payload={},
+            work=MagicMock(), debit_description="Style", reservation_credits=10,
+            operations=(("image", "image-gemini-pro"), ("text", "codex-dev/text/gpt-6-astra")),
+        )
+    database.assert_not_called()
+    assert queue.state.generation_queue.empty()

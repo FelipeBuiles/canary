@@ -20,6 +20,7 @@ const recoverChecks = vi.fn();
 const estimateChecks = vi.fn();
 const finishChecks = vi.fn();
 let analysisChecked = true;
+let briefApproved = true;
 type TestStageInfo = {
   status: StageStatus;
   stale: boolean;
@@ -57,6 +58,9 @@ let generationJobResults: Array<{
   error?: string | null;
   payload?: { page_number: number };
 }> = [];
+let generationJobsLoading = false;
+let projectRunning = false;
+let stageEstimateFetching = false;
 let previewResult: Record<string, unknown> | undefined;
 let estimateError: Error | null = null;
 const retryEstimate = vi.fn();
@@ -65,8 +69,9 @@ const cost: CostEstimate = { estimate_credits: 7, reserved_credits: 10, reservat
 vi.mock("../api/queries", () => ({
   useProjectStatus: () => ({
     data: {
-      stages: stageStatuses,
+      stages: { ...stageStatuses, brief: { status: briefApproved ? "complete" : "awaiting_review", approved: briefApproved } },
       style_selected: true,
+      is_running: projectRunning,
     },
   }),
   useAdaptation: () => ({
@@ -174,11 +179,12 @@ vi.mock("../api/queries", () => ({
       queued_at: "2026-09-07T12:00:00Z",
       ...job,
     })) },
+    isLoading: generationJobsLoading,
   }),
   useCreditBalance: () => ({ data: { balance_credits: 100 } }),
   useCreditPackages: () => ({ data: { packages: [] }, isLoading: false }),
   useStyles: () => ({ data: undefined }),
-  useStageEstimate: () => ({ data: cost, error: estimateError, refetch: retryEstimate }),
+  useStageEstimate: () => ({ data: cost, error: estimateError, isFetching: stageEstimateFetching, refetch: retryEstimate }),
   useCompletePageBatchEstimate: () => ({ data: cost, error: estimateError, refetch: retryEstimate }),
   useCompletePageEstimate: () => ({ data: estimateError ? undefined : cost, error: estimateError, refetch: retryEstimate }),
   usePageAnalysisEstimate: () => ({ data: cost, error: estimateError, refetch: retryEstimate }),
@@ -260,6 +266,7 @@ describe("PagesRoom", () => {
     persistedPageFailure = null;
     persistedRenderedFailure = null;
     analysisChecked = true;
+    briefApproved = true;
     recoverChecks.mockReset();
     estimateChecks.mockReset();
     finishChecks.mockReset().mockResolvedValue({ status: "done" });
@@ -273,6 +280,9 @@ describe("PagesRoom", () => {
     planIssues = [];
     planValidation = undefined;
     generationJobResults = [];
+    generationJobsLoading = false;
+    projectRunning = false;
+    stageEstimateFetching = false;
     stageStatuses = {
       adapt: { status: "complete", stale: false },
       plan: { status: "complete", stale: false },
@@ -282,6 +292,73 @@ describe("PagesRoom", () => {
 
   afterEach(() => {
     usePipelineStore.setState(usePipelineStore.getInitialState());
+  });
+
+  it("sends a revised brief back to Story instead of offering a rejected start", () => {
+    briefApproved = false;
+    stageStatuses.adapt = { status: "pending", stale: false };
+    completePagesUnavailable = true;
+    renderRoom();
+    expect(screen.getByText("Approve your brief first")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Start this step" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Review and approve brief" }));
+    expect(runPipeline).not.toHaveBeenCalled();
+  });
+
+  it("offers an adaptation rerun after drawing has begun, with explicit impact and consent", () => {
+    stageStatuses.draw = { status: "running", stale: true };
+    renderRoom();
+    expect(screen.getByRole("button", { name: /Rerun adaptation/ }).closest("footer")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Rerun adaptation/ }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).getByText(/drawn pages, revisions, and exports will be cleared/)).toBeTruthy();
+    expect(within(dialog).getByText(/Drawing starts only when you choose/)).toBeTruthy();
+    expect(within(dialog).getByText(/~7/)).toBeTruthy();
+    expect(runPipeline).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: /Rerun adaptation/ }));
+    expect(runPipeline).toHaveBeenCalledWith(
+      { project: "demo", stage: "adapt", rerun: true, retryFailed: undefined }, expect.any(Object),
+    );
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(generatePage).not.toHaveBeenCalled();
+  });
+
+  it("keeps adaptation rerun available when the saved page plan cannot load", () => {
+    completePagesUnavailable = true;
+    renderRoom();
+    expect((screen.getByRole("button", { name: /Rerun adaptation/ }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it.each(["project", "page", "loading"])("disables adaptation rerun while %s work is active or unknown", (kind) => {
+    projectRunning = kind === "project";
+    generationJobsLoading = kind === "loading";
+    if (kind === "page") generationJobResults = [{ id: "queued-page", status: "queued" }];
+    renderRoom();
+    expect((screen.getByRole("button", { name: /Rerun adaptation/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it.each(["loading", "failed"])("blocks rerun confirmation when the estimate is %s", (state) => {
+    stageEstimateFetching = state === "loading";
+    if (state === "failed") estimateError = new Error("Offline");
+    renderRoom();
+    expect(screen.getByRole("button", { name: /Rerun adaptation/ }).closest("footer")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Rerun adaptation/ }));
+    const dialog = screen.getByRole("alertdialog");
+    expect((within(dialog).getByRole("button", { name: /Rerun adaptation/ }) as HTMLButtonElement).disabled).toBe(true);
+    if (state === "failed") {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Retry estimate" }));
+      expect(retryEstimate).toHaveBeenCalledOnce();
+    }
+    fireEvent.click(within(dialog).getAllByRole("button", { name: "Cancel" })[1]);
+    expect(runPipeline).not.toHaveBeenCalled();
+  });
+
+  it("keeps a rejected rerun visible in the confirmation so it can be retried", () => {
+    runPipeline.mockImplementation((_variables, options) => options?.onError?.(new Error("Wait for all project jobs to finish.")));
+    renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: /Rerun adaptation/ }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: /Rerun adaptation/ }));
+    expect(within(screen.getByRole("alertdialog")).getByRole("alert").textContent).toContain("Wait for all project jobs to finish.");
   });
 
   it("counts saved artwork against all planned pages even when the gallery is filtered", () => {
@@ -676,6 +753,58 @@ describe("PagesRoom", () => {
     })).toBeTruthy();
   });
 
+  it("restores one-confirmation retry for all incomplete pages after a server restart", () => {
+    includeUndrawnPage = true;
+    stageStatuses = {
+      adapt: { status: "complete", stale: false },
+      plan: { status: "complete", stale: false },
+      draw: { status: "running", stale: true },
+    };
+    renderRoom();
+
+    expect(screen.getByText("1 of 2 pages drawn")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "RETRY ALL INCOMPLETE PAGES" }));
+    const confirmation = screen.getByRole("alertdialog", { name: "Retry the remaining pages?" });
+    expect(within(confirmation).getByText(
+      "Only pages without a saved render will be queued. Completed artwork stays available to review.",
+    )).toBeTruthy();
+    expect(runPipeline).not.toHaveBeenCalled();
+
+    fireEvent.click(within(confirmation).getByRole("button", { name: "CONFIRM RETRY" }));
+    expect(runPipeline).toHaveBeenCalledWith(
+      { project: "demo", stage: "draw", queuePages: true },
+      expect.any(Object),
+    );
+    expect(screen.getByText("1 of 2 pages drawn")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Page 2: generation in progress" })).toBeTruthy();
+  });
+
+  it("waits for current page-job status before offering a batch retry", () => {
+    includeUndrawnPage = true;
+    generationJobsLoading = true;
+    stageStatuses = {
+      adapt: { status: "complete", stale: false },
+      plan: { status: "complete", stale: false },
+      draw: { status: "running", stale: true },
+    };
+    renderRoom();
+
+    expect(screen.queryByRole("button", { name: "RETRY ALL INCOMPLETE PAGES" })).toBeNull();
+  });
+
+  it("offers to batch the remaining pages after choosing one-by-one", () => {
+    includeUndrawnPage = true;
+    stageStatuses = {
+      adapt: { status: "complete", stale: false },
+      plan: { status: "complete", stale: false },
+      draw: { status: "running", stale: false },
+    };
+    renderRoom();
+
+    fireEvent.click(screen.getByRole("button", { name: "QUEUE REMAINING PAGES" }));
+    expect(screen.getByRole("alertdialog", { name: "Queue all undrawn pages?" })).toBeTruthy();
+  });
+
   it("explains OCR mismatches with full evidence and routes redraws through the draft", () => {
     pageIssues = [{
       id: "page-issue-draw-page-001-render-002-misspelled_lettering",
@@ -866,6 +995,7 @@ describe("PagesRoom", () => {
     recoverChecks.mockResolvedValueOnce({ pages: [{ page_number: 1, status: "requires_ocr" }] })
       .mockImplementationOnce(async () => {
         analysisChecked = true;
+    briefApproved = true;
         return { pages: [{ page_number: 1, status: "checked" }] };
       });
     estimateChecks.mockResolvedValue({ ...cost, paid_pages: 1, pages: [{
@@ -899,6 +1029,7 @@ describe("PagesRoom", () => {
     expect(screen.queryByRole("button", { name: "TRY AGAIN" })).toBeNull();
     room.unmount();
     analysisChecked = true;
+    briefApproved = true;
     renderRoom();
     expect(screen.queryByRole("button", { name: "RETRY TEXT CHECK" })).toBeNull();
     expect(screen.queryByText("Old generic failure")).toBeNull();

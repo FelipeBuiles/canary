@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CreditLedgerRun, CreditTransaction } from "../types/api";
-import { groupRunsByDay, runActivityLabel } from "../lib/creditsHistory";
+import { groupRunsByDay, groupRunsByActivity, matchesLedgerFilter, runActivityLabel } from "../lib/creditsHistory";
 
 function transaction(overrides: Partial<CreditTransaction> = {}): CreditTransaction {
   return {
@@ -76,5 +76,32 @@ describe("credits history hierarchy", () => {
 
     expect(groups).toHaveLength(1);
     expect(groups[0].runs[0].run_id).toBe("cast-1");
+  });
+});
+
+describe("condensed credit activity", () => {
+  it("groups page attempts by project while keeping charges, holds, and failures distinct", () => {
+    const groups = groupRunsByActivity([
+      run({ run_id: "page-1", stage: "draw", actual_credits: 8, estimate_credits: 37, returned_credits: 29 }),
+      run({ run_id: "page-2", stage: "draw", status: "in_flight", actual_credits: 2, estimate_credits: 37 }),
+      run({ run_id: "failed", stage: "draw", status: "failed", actual_credits: 0, estimate_credits: 37, returned_credits: 37 }),
+      run({ run_id: "other-project", stage: "draw", project_id: "project-2", actual_credits: 9 }),
+      run({ run_id: "cast", stage: "cast" }),
+    ]);
+    expect(groups).toHaveLength(3);
+    expect(groups[0]).toMatchObject({ label: "Draw pages", actualCredits: 10, heldCredits: 37, heldCount: 1, failedCount: 1 });
+    expect(groups[0].runs.map((item) => item.run_id)).toEqual(["page-1", "page-2", "failed"]);
+  });
+
+  it("keeps purchases separate from adjustments and preserves charged failures in both filters", () => {
+    expect(groupRunsByActivity([
+      run({ stage: null, credits_added: 100, actual_credits: 0 }),
+      run({ run_id: "adjustment", stage: null }),
+    ])).toHaveLength(2);
+    const failed = run({ status: "failed", actual_credits: 3 });
+    expect(matchesLedgerFilter(failed, "failed")).toBe(true);
+    expect(matchesLedgerFilter(failed, "charged")).toBe(true);
+    expect(matchesLedgerFilter(failed, "held")).toBe(false);
+    expect(matchesLedgerFilter(failed, "added")).toBe(false);
   });
 });

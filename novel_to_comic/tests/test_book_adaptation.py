@@ -19,6 +19,10 @@ from novel_to_comic.book_adaptation import (
     _generate_book_draft,
     _materialize_draft_ledger,
     _repair_source_scope,
+    _closed_repair_scope,
+    _repair_checkpoint_names,
+    _checkpoint_key,
+    _write_checkpoint,
     _splice_draft_repair,
     _story_bible_view,
     _validate_blueprint_scope,
@@ -57,6 +61,12 @@ from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.state import PipelineState
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import ApiResult, UsageRecord
+
+
+@pytest.fixture(autouse=True)
+def isolate_editorial_judgment(monkeypatch):
+    from .narrative_review_support import accept_narrative
+    monkeypatch.setattr("novel_to_comic.book_adaptation.review_narrative", accept_narrative)
 
 
 def _source_document() -> SourceDocument:
@@ -466,7 +476,7 @@ def test_faithful_adaptation_cannot_erase_almost_an_entire_source_scene() -> Non
     assert failure.source_unit_ids[-1] == "source_000020"
 
 
-def test_faithful_adaptation_rejects_reader_critical_silent_runs() -> None:
+def test_reader_critical_silent_runs_require_editorial_assessment() -> None:
     source = build_source_document(
         "A clue appears. It matches a second record. The witness understands.",
         [
@@ -531,12 +541,10 @@ def test_faithful_adaptation_rejects_reader_critical_silent_runs() -> None:
 
     validation = validate_book_adaptation(source, brief, adaptation)
 
-    failure = next(
-        item
-        for item in validation.invariant_failures
-        if item.code == "reader_context_gap"
-    )
-    assert failure.artifact_ids == ("beat_0001", "beat_0002", "beat_0003")
+    from novel_to_comic.narrative_review import adaptation_context, narrative_signals
+    signals = narrative_signals(adaptation_context(source, brief, adaptation))
+    assert signals[0]["artifact_ids"] == ["beat_0001", "beat_0002", "beat_0003"]
+    assert not any(f.code == "reader_context_gap" for f in validation.invariant_failures)
 
 
 def test_dialogue_requires_explicit_delivery_and_onscreen_speaker_entity() -> None:
@@ -746,6 +754,42 @@ def _with_lettering_text(text: str) -> BookAdaptation:
     return BookAdaptation.model_validate(payload)
 
 
+def test_interrupted_repairs_reuse_completed_siblings_only(tmp_path: Path) -> None:
+    artifacts = TargetArtifacts(tmp_path)
+    prompts = ["repair first", "repair second", "repair third"]
+    draft = _BookDraft.model_validate({"beats": [b.model_dump() for b in _book_adaptation().beats]})
+    def save(index):
+        _write_checkpoint(artifacts, name=f"repairs/old/round_01_shard_{index + 1:03d}",
+                          input_sha256=_checkpoint_key(model="gpt-4o-mini", feature="adapt.book", prompt=prompts[index]),
+                          payload=draft)
+    save(0)
+    save(2)
+    def names(request_prompts=prompts, model="gpt-4o-mini"):
+        return _repair_checkpoint_names(artifacts, prompts=request_prompts, model=model,
+                                       shard_indices=[0, 1, 2], round_number=1, fresh_namespace="repairs/new")
+    recovered = names()
+    assert all(n.startswith("repairs/old/") for n in recovered)
+    calls = []
+    async def generate(**request):
+        calls.append(request["user_content"])
+        return ApiResult(value=draft.model_dump(), usage=None)
+    async def resume():
+        ctx = StageRuntime("adapt", PipelineState(project_name="repair", novel_path="novel.txt",
+                           created_at=datetime.now(timezone.utc)), tmp_path)
+        for prompt, name in zip(prompts, recovered, strict=True):
+            await _generate_book_draft(prompt=prompt, generate=generate, ctx=ctx,
+                artifacts=artifacts, model="gpt-4o-mini", checkpoint_name=name,
+                known_speaker_ids={"char_001"})
+    # Changed authorities or model must not reuse an old batch.
+    assert all(n.startswith("repairs/new/") for n in names(["changed", *prompts[1:]]))
+    assert all(n.startswith("repairs/new/") for n in names(model="different-model"))
+    asyncio.run(resume())
+    assert calls == ["repair second"]
+    # A complete batch may have failed global validation: a new explicit repair
+    # must remain possible, rather than returning the same rejected draft forever.
+    assert all(n.startswith("repairs/new/") for n in names())
+
+
 def test_protected_language_must_survive_verbatim_in_publishable_wording() -> None:
     candidate = _with_lettering_text("I watched the door open.")
 
@@ -763,11 +807,10 @@ def test_protected_language_must_survive_verbatim_in_publishable_wording() -> No
 @pytest.mark.parametrize(
     ("text", "code"),
     [
-        ("I saw the door open", "trailing_clipped_display_text"),
         ('I saw the door open. "Then I fled.', "incomplete_display_text"),
     ],
 )
-def test_incomplete_or_trailing_clipped_display_text_blocks(
+def test_unclosed_display_text_blocks(
     text: str,
     code: str,
 ) -> None:
@@ -780,6 +823,23 @@ def test_incomplete_or_trailing_clipped_display_text_blocks(
     )
 
     assert code in {failure.code for failure in result.invariant_failures}
+
+
+@pytest.mark.parametrize("text", [
+    "MARCH 23, 1925", "CTHULHU CULT",
+    "Ph'nglui mglw'nafh Cthulhu R'lyeh wgah'nagl fhtagn",
+    "The chant meant: In his house at R'lyeh dead Cthulhu waits dreaming",
+    "I saw the door open",
+])
+def test_unpunctuated_display_text_is_an_editorial_question(text: str) -> None:
+    candidate = _with_lettering_text(text)
+    result = validate_book_adaptation(_source_document(), _approved_brief(), candidate)
+    assert "trailing_clipped_display_text" not in {f.code for f in result.invariant_failures}
+    issue = next(i for i in result.editorial_issues if i.code == "possible_clipped_display_text")
+    assert not issue.blocking
+    assert issue.artifact_ids == (candidate.beats[0].lettering[0].id,)
+    assert text in issue.evidence[0]
+    assert candidate.beats[0].lettering[0].text == text
 
 
 def test_continuity_is_scoped_to_the_character_or_narrative_thread() -> None:
@@ -1038,7 +1098,9 @@ def test_canonicalization_discards_a_transition_to_the_current_state() -> None:
 
 
 def test_spliced_repair_redirects_external_compression_to_replacement_beat() -> None:
-    template = _book_adaptation().beats[0]
+    # These are visual beats; an external caption would be literal evidence
+    # that must enter the replacement scope, not a compression-only link.
+    template = _book_adaptation().beats[0].model_copy(update={"lettering": ()})
     original = _BookDraft(
         beats=(
             template.model_copy(
@@ -1100,6 +1162,42 @@ def test_spliced_repair_redirects_external_compression_to_replacement_beat() -> 
     )
 
     assert spliced.ledger[0].adapted_beat_ids == ("beat_0002",)
+
+
+def test_cross_scene_repair_cannot_drop_a_caption_outside_initial_scope() -> None:
+    source_ids = ("source_000001", "source_000002")
+    beat = _book_adaptation().beats[0]
+    original = _materialize_draft_ledger(_BookDraft(beats=(beat,)), source_ids)
+    scope = _closed_repair_scope(original, (source_ids[1],), source_ids)
+    assert scope == source_ids
+    # Reproduce the old failure: replacing the whole shared beat with a repair
+    # that was only asked about the second source passage drops the first line.
+    incomplete = beat.model_copy(update={
+        "source_unit_ids": (source_ids[1],),
+        "lettering": tuple(i for i in beat.lettering if source_ids[0] not in i.source_unit_ids),
+    })
+    repair = _materialize_draft_ledger(_BookDraft(beats=(incomplete,)), (source_ids[1],))
+    with pytest.raises(ValueError, match="out-of-scope source evidence"):
+        _splice_draft_repair(original, repair, (source_ids[1],), dict(zip(source_ids, (1, 2))))
+    # A repair authored against the closed scope keeps both lines realized.
+    spliced = _splice_draft_repair(original, original, scope, dict(zip(source_ids, (1, 2))))
+    for entry in spliced.ledger:
+        if entry.disposition in {"caption", "dialogue", "thought"}:
+            assert any(entry.source_unit_id in i.source_unit_ids and i.kind == entry.disposition
+                       for b in spliced.beats for i in b.lettering)
+    assert [i.text for b in spliced.beats for i in b.lettering] == [i.text for i in beat.lettering]
+
+
+def test_repair_scope_closes_transitively_over_shared_beats() -> None:
+    template = _book_adaptation().beats[0].model_copy(update={"lettering": ()})
+    draft = _BookDraft(beats=(
+        template.model_copy(update={"id": "first", "source_unit_ids": ("a", "b")}),
+        template.model_copy(update={"id": "second", "source_unit_ids": ("b", "c")}),
+        template.model_copy(update={"id": "unrelated", "source_unit_ids": ("d",)}),
+    ))
+    assert _closed_repair_scope(draft, ("a",), ("a", "b", "c", "d")) == ("a", "b", "c")
+    with pytest.raises(ValueError, match="unowned source"):
+        _closed_repair_scope(draft, ("a",), ("a", "b"))
 
 
 def test_canonicalization_derives_a_wrong_appearance_origin() -> None:
@@ -1842,6 +1940,7 @@ def test_producer_writes_one_book_artifact_and_records_model_usage(
     # One adaptation authority, plus Adapt's own derived verdict on it. No
     # per-scene screenplay outputs of any kind.
     assert sorted(path.name for path in (tmp_path / "adapt").iterdir()) == [
+        "adapt_review.json",
         "book.json",
         "validation.json",
     ]
@@ -2019,6 +2118,9 @@ def test_retry_recovers_a_paid_candidate_without_another_model_call(
     )
     artifacts = TargetArtifacts(tmp_path)
     artifacts.write_failed_adaptation_candidate(candidate)
+    from .narrative_review_support import approve_recovery_candidate
+    approve_recovery_candidate(artifacts, _source_document(), _story_bible(), _approved_brief(), candidate)
+
 
     async def generate(**request):
         raise AssertionError("a recoverable paid candidate must not call the model")
@@ -3018,7 +3120,7 @@ def test_protected_title_recovers_missing_delivery_without_changing_wording() ->
     source, brief, candidate, bible = _protected_title_candidate()
     before = validate_book_adaptation(source, brief, candidate, story_bible=bible)
     assert {failure.code for failure in before.invariant_failures} >= {
-        "invalid_lettering_speaker", "trailing_clipped_display_text",
+        "invalid_lettering_speaker",
     }
     recovered = _canonicalize_candidate_requirements(candidate, source, brief)
     after = validate_book_adaptation(source, brief, recovered, story_bible=bible)
@@ -3028,7 +3130,7 @@ def test_protected_title_recovers_missing_delivery_without_changing_wording() ->
 
 
 @pytest.mark.parametrize("defect", ["prose", "wrong_title", "missing_provenance"])
-def test_title_exception_does_not_allow_clipped_prose_or_unproven_titles(defect: str) -> None:
+def test_unproven_titles_and_unpunctuated_prose_remain_editorial_questions(defect: str) -> None:
     source, brief, candidate, bible = _protected_title_candidate()
     candidate = _canonicalize_candidate_requirements(candidate, source, brief)
     if defect == "prose":
@@ -3041,13 +3143,16 @@ def test_title_exception_does_not_allow_clipped_prose_or_unproven_titles(defect:
         beat = candidate.beats[0].model_copy(update={"lettering": (item,)})
         candidate = candidate.model_copy(update={"beats": (beat,)})
     result = validate_book_adaptation(source, brief, candidate, story_bible=bible)
-    assert "trailing_clipped_display_text" in {failure.code for failure in result.invariant_failures}
+    assert "possible_clipped_display_text" in {issue.code for issue in result.editorial_issues}
 
 
 def test_saved_protected_title_resumes_without_a_provider_call(tmp_path: Path) -> None:
     source, brief, candidate, bible = _protected_title_candidate()
     artifacts = TargetArtifacts(tmp_path)
     artifacts.write_failed_adaptation_candidate(candidate)
+    from .narrative_review_support import approve_recovery_candidate
+    approve_recovery_candidate(artifacts, source, bible, brief, candidate)
+
 
     async def forbidden_generate(**request):
         pytest.fail("Recovering a source-backed title must not call a provider")
@@ -3115,3 +3220,67 @@ def test_omitted_protected_title_is_restored_to_opening_beat() -> None:
     wrong_bible = bible.model_copy(update={"title": "Another title"})
     unchanged = _canonicalize_candidate_requirements(candidate, source, brief, story_bible=wrong_bible)
     assert not any(i.text == bible.title for b in unchanged.beats for i in b.lettering)
+
+
+def test_depiction_guidance_reaches_brief_and_every_adapt_pass_without_changing_source():
+    from novel_to_comic.briefing import build_brief_inference_prompt
+    from novel_to_comic.book_adaptation import (
+        build_adaptation_blueprint_prompt, build_locked_lettering_prompt,
+    )
+    from novel_to_comic.narrative_instructions import DEPICTION_GUIDANCE
+
+    source, bible, brief = _source_document(), _story_bible(), _approved_brief()
+    expected = _book_adaptation()
+    source_ids = tuple(unit.id for unit in source.units)
+    blueprint = _BlueprintDraft.model_validate(_blueprint_response(expected.beats))
+    prompts = [
+        build_brief_inference_prompt(source, bible),
+        build_narrative_treatment_prompt(source, bible, brief),
+        build_book_adaptation_prompt(source, bible, brief, expected.treatment),
+        build_adaptation_blueprint_prompt(
+            source, bible, brief, expected.treatment,
+            primary_source_unit_ids=source_ids, owned_requirement_ids=(),
+            shard_index=1, shard_count=1,
+        ),
+        build_locked_lettering_prompt(
+            source, bible, brief, expected.treatment, blueprint,
+            primary_source_unit_ids=source_ids, shard_index=1, shard_count=1,
+        ),
+    ]
+    for prompt in prompts:
+        assert DEPICTION_GUIDANCE in prompt
+        # Prose instructions stay outside the canonical JSON context.
+        context = json.loads(prompt.split('\n', 1)[1])
+        assert [unit['text'] for unit in context['source_units']] == [unit.text for unit in source.units]
+        if 'approved_adaptation_brief' in context:
+            assert context['approved_adaptation_brief']['protected_language'] == list(brief.protected_language)
+    assert 'protected_language entries' in prompts[-1]
+
+
+def test_refused_lettering_reports_its_source_scope_without_retry(tmp_path):
+    from novel_to_comic.ai.context import current_ai_request_context
+    from novel_to_comic.ai.errors import AIRefusalError
+
+    source, brief, expected = _source_document(), _approved_brief(), _book_adaptation()
+    calls = []
+    async def generate(**request):
+        context = current_ai_request_context()
+        calls.append((request['feature'], context.source_scope, context.source_unit_ids))
+        if request['feature'] == 'adapt.narrative_treatment':
+            return ApiResult(value=expected.treatment.model_dump(mode='json'))
+        if request['feature'] == 'adapt.blueprint':
+            return ApiResult(value=_blueprint_response(expected.beats))
+        raise AIRefusalError('provider refused')
+
+    runtime = StageRuntime('adapt', PipelineState(
+        project_name='refusal', novel_path='novel.txt', created_at=datetime.now(timezone.utc),
+    ), tmp_path)
+    with pytest.raises(AIRefusalError):
+        asyncio.run(produce_book_adaptation(
+            source, _story_bible(), brief, artifacts=TargetArtifacts(tmp_path),
+            ctx=runtime, model='gpt-4o-mini', generate=generate,
+        ))
+    assert [call[0] for call in calls] == ['adapt.narrative_treatment', 'adapt.blueprint', 'adapt.lettering']
+    assert calls[-1][1] == 'lettering/shard_001'
+    assert calls[-1][2] == tuple(unit.id for unit in source.units)
+    assert current_ai_request_context().source_scope is None

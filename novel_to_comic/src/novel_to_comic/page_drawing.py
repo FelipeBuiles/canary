@@ -69,6 +69,7 @@ class ApprovedReferenceFile:
     reference_id: str
     path: Path
     media_type: str
+    metadata_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,6 +316,7 @@ def _compile_prompt(
     depiction: Literal["canonical", "less_graphic"] = "canonical",
     style_template: str = "",
     correction_context: "PageCorrectionContext | None" = None,
+    cast_art_direction: Mapping[str, str] | None = None,
 ) -> str:
     # Identity is independent of state labels and reference traversal order.
     entity_ids = sorted({
@@ -370,7 +372,10 @@ def _compile_prompt(
             "labeled parent-edit-base, when present, is not an approved asset and does not "
             "advance asset ordering. Use each asset only for its assigned subject and state; "
             "preserve hairstyle, age, facial structure, clothing design and recurring object "
-            "features shown by that authority unless the assigned state explicitly changes them."
+            "features shown by that authority unless the assigned state explicitly changes them. "
+            "When an asset includes owner art_direction, it records the approved Cast design: "
+            "it overrides conflicting source appearance and continuity defaults for that asset/state. "
+            "Preserve its requested design in the page without changing exact lettering or story events."
         ),
         "approved_page_references": [
             {
@@ -379,6 +384,8 @@ def _compile_prompt(
                 "appearance": reference.label,
                 "visual_anchor": reference.visual_anchor,
                 "continuity_guard": reference.continuity_guard,
+                **({"art_direction": cast_art_direction[reference.id]}
+                   if cast_art_direction and reference.id in cast_art_direction else {}),
             }
             for reference in references
         ],
@@ -594,6 +601,17 @@ def compile_page_generation_request(
                 continuity_guard=authority.continuity_guard,
             )
         )
+    # Use direction stored with the rendered image, never a newer failed draft.
+    # Version restoration restores this sidecar alongside the reference pixels.
+    cast_art_direction: dict[str, str] = {}
+    for reference in references:
+        source = reference_files[reference.id]
+        meta_path = source.metadata_path or source.path.with_suffix(f"{source.path.suffix}.meta.json")
+        if meta_path.exists():
+            metadata = json.loads(meta_path.read_text())
+            direction = metadata.get("art_direction")
+            if isinstance(direction, str) and direction.strip():
+                cast_art_direction[reference.id] = direction
     prompt = _compile_prompt(
         page,
         tuple(references),
@@ -601,6 +619,7 @@ def compile_page_generation_request(
         depiction,
         style_template,
         correction_context,
+        cast_art_direction,
     )
     request = FrozenPageGenerationRequest.compile(
         page=page,
@@ -682,6 +701,31 @@ def prepare_page_correction(
     return PreparedPageCorrection(correction=correction, compiled=compiled, context=context)
 
 
+def estimate_draw_api_cost(
+    config: Config, image_cost: float, *, ocr: bool = True,
+    compiled: CompiledPageGeneration | None = None,
+) -> float:
+    """Include only the API portions of a page render and optional readback."""
+    from novel_to_comic.codex_dev import route_for
+
+    if compiled is not None and compiled.request.provider == "openai":
+        from novel_to_comic.usage import estimate_image_cost
+
+        request = compiled.request
+        # Pricing is a current quote, separate from the frozen edition and
+        # request identity. Corrections also send the parent page as an input.
+        image_cost = estimate_image_cost(
+            request.model, 1, quality="high",
+            ref_count=len(request.references) + int(compiled.edit_source_bytes is not None),
+            prompt_text=request.prompt,
+            width=request.output_width, height=request.output_height,
+        )
+    total = 0.0 if route_for("complete_page", config.draw_model) else image_cost
+    if ocr and route_for("text", config.effective_page_ocr_model()) is None:
+        total += float(PAGE_OCR_ESTIMATED_COST_USD)
+    return total
+
+
 def correction_credit_estimate(compiled: CompiledPageGeneration, *, config: Config, reserve: bool):
     """Credit estimate for one compiled correction, including its text check."""
     from novel_to_comic.server.credits import credit_estimate_for_provider_cost
@@ -691,7 +735,7 @@ def correction_credit_estimate(compiled: CompiledPageGeneration, *, config: Conf
     funding = classify_operations(draw_operations(config))
 
     return credit_estimate_for_provider_cost(
-        float(compiled.request.estimated_cost_usd) + float(PAGE_OCR_ESTIMATED_COST_USD),
+        estimate_draw_api_cost(config, float(compiled.request.estimated_cost_usd), compiled=compiled),
         "draw",
         reserve=reserve,
         zero_cost_estimate=0,
@@ -887,13 +931,13 @@ class GoogleVertexCompletePageTransport:
             "canary_idempotency_key": request.idempotency_key,
         }
         if self._profile.provider == "openai":
+            # GPT Image 2.5 rejects input_fidelity, including on image edits.
+            # Reference images are still sent unchanged in the multipart files.
             request_data = {
                 "model": self._gateway_model, "prompt": request.prompt,
                 "size": f"{request.width}x{request.height}", "quality": "high",
                 "output_format": "png", "n": 1,
             }
-            if files:
-                request_data["input_fidelity"] = "high"
         feature = "complete_page_draw"
         ctx = await begin_image_call(
             config=self._config,
@@ -1394,8 +1438,7 @@ def enqueue_complete_page_draw(
     funding = classify_operations(operations)
 
     estimate = credit_estimate_for_provider_cost(
-        float(compiled.request.estimated_cost_usd)
-        + (0.0 if ocr is None else float(PAGE_OCR_ESTIMATED_COST_USD)),
+        estimate_draw_api_cost(config, float(compiled.request.estimated_cost_usd), ocr=ocr is not None, compiled=compiled),
         "draw",
         reserve=True,
         zero_cost_estimate=0,

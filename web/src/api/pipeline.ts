@@ -1,3 +1,4 @@
+import type { CastReferenceInput } from "../types/api";
 import { apiFetch, isNotFoundError } from "./client";
 import type {
   CharacterRefVersionsResponse,
@@ -100,6 +101,24 @@ export function restoreCharacterRefVersion(
   );
 }
 
+export function getCastAssetVersions(
+  project: string, assetType: "character" | "location", assetId: string, stateId?: string,
+): Promise<Pick<CharacterRefVersionsResponse, "versions">> {
+  if (assetType === "character") return getCharacterRefVersions(project, assetId, stateId);
+  const params = new URLSearchParams({ loc_id: assetId });
+  if (stateId) params.set("state_id", stateId);
+  return apiFetch(`/projects/${encodeURIComponent(project)}/location-plate-versions?${params}`);
+}
+
+export function restoreCastAssetVersion(
+  project: string, assetType: "character" | "location", assetId: string, version: number, stateId?: string,
+): Promise<Pick<CharacterRefVersionsResponse, "versions">> {
+  if (assetType === "character") return restoreCharacterRefVersion(project, assetId, version, stateId);
+  const params = new URLSearchParams({ loc_id: assetId, version: String(version) });
+  if (stateId) params.set("state_id", stateId);
+  return apiFetch(`/projects/${encodeURIComponent(project)}/location-plate-versions/restore?${params}`, { method: "POST" });
+}
+
 export function regenPlate(
   project: string,
   locId: string,
@@ -114,12 +133,14 @@ export function regenRefWithInstruction(
   project: string,
   charId: string,
   instruction: string,
+  referenceAssets?: CastReferenceInput[],
+  stateId?: string,
 ): Promise<InstructedRefRegenResponse> {
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/regen-ref-instructed`,
+    stateId ? `/projects/${encodeURIComponent(project)}/characters/${encodeURIComponent(charId)}/states/${encodeURIComponent(stateId)}/regenerate-instructed` : `/projects/${encodeURIComponent(project)}/regen-ref-instructed`,
     {
       method: "POST",
-      body: JSON.stringify({ char_id: charId, instruction }),
+      body: JSON.stringify({ ...(stateId ? {} : { char_id: charId }), instruction, reference_assets: referenceAssets }),
     },
   );
 }
@@ -128,12 +149,14 @@ export function regenPlateWithInstruction(
   project: string,
   locId: string,
   instruction: string,
+  referenceAssets?: CastReferenceInput[],
+  stateId?: string,
 ): Promise<InstructedPlateRegenResponse> {
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/regen-plate-instructed`,
+    stateId ? `/projects/${encodeURIComponent(project)}/locations/${encodeURIComponent(locId)}/states/${encodeURIComponent(stateId)}/regenerate-instructed` : `/projects/${encodeURIComponent(project)}/regen-plate-instructed`,
     {
       method: "POST",
-      body: JSON.stringify({ loc_id: locId, instruction }),
+      body: JSON.stringify({ ...(stateId ? {} : { loc_id: locId }), instruction, reference_assets: referenceAssets }),
     },
   );
 }
@@ -152,12 +175,14 @@ export function regenPropWithInstruction(
   project: string,
   propId: string,
   instruction: string,
+  referenceAssets?: CastReferenceInput[],
+  stateId?: string,
 ): Promise<InstructedPropRegenResponse> {
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/regen-prop-instructed`,
+    stateId ? `/projects/${encodeURIComponent(project)}/props/${encodeURIComponent(propId)}/states/${encodeURIComponent(stateId)}/regenerate-instructed` : `/projects/${encodeURIComponent(project)}/regen-prop-instructed`,
     {
       method: "POST",
-      body: JSON.stringify({ prop_id: propId, instruction }),
+      body: JSON.stringify({ ...(stateId ? {} : { prop_id: propId }), instruction, reference_assets: referenceAssets }),
     },
   );
 }
@@ -201,12 +226,14 @@ export function fetchAssetRegenEstimate(
   assetType: "character" | "location" | "prop",
   assetId: string,
   stateId?: string,
+  referenceCount?: number,
 ): Promise<AssetRegenCostEstimate> {
   const params = new URLSearchParams({
     asset_type: assetType,
     asset_id: assetId,
   });
   if (stateId) params.set("state_id", stateId);
+  if (referenceCount !== undefined) params.set("reference_count", String(referenceCount));
   return apiFetch(
     `/projects/${encodeURIComponent(project)}/asset-regen-estimate?${params.toString()}`,
   );

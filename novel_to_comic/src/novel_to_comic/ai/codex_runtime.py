@@ -30,6 +30,8 @@ EXECUTION_VERSION = "canary-codex-subprocess-v6-image-tool-arguments"
 IMAGE_SOURCE_SELECTOR = "gpt-image-2"
 PROVIDER = "canary_codex_subscription"
 TIMEOUT_SECONDS = 300
+TEXT_TIMEOUT_SECONDS = 900
+CHILD_CLEANUP_SECONDS = 15
 MAX_IMAGE_BYTES = 32 * 1024 * 1024
 MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 EXECUTION_FINGERPRINT = hashlib.sha256(
@@ -37,6 +39,12 @@ EXECUTION_FINGERPRINT = hashlib.sha256(
 ).hexdigest()
 _ENV_KEYS = ("HOME", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR")
 _LOCK = asyncio.Lock()
+
+
+def _timeout_seconds(request: dict[str, Any]) -> int:
+    # Text stream recovery shares this deadline with generation. The image
+    # deadline remains independent of the longer, side-effect-free text turn.
+    return TEXT_TIMEOUT_SECONDS if request["kind"] == "text" else TIMEOUT_SECONDS
 
 
 def image_execution_controls() -> tuple[tuple[str, str], ...]:
@@ -102,7 +110,12 @@ class CodexRuntimeError(RuntimeError):
         self.metadata = metadata or {}
         provider = self.metadata.get("provider_error", {})
         reason = provider.get("message") if isinstance(provider, dict) else None
-        if code == "image_output_missing":
+        if code == "runtime_timeout" and self.metadata.get("timeout_seconds"):
+            message = f"{code}: Canary stopped the request after {self.metadata['timeout_seconds']} seconds without a completed result."
+            if reason:
+                message += f" Last connection status: {reason}"
+            super().__init__(message)
+        elif code == "image_output_missing":
             message = f"{code}: Codex returned no image."
             assistant = self.metadata.get("assistant_response_diagnostic")
             if isinstance(assistant, str) and assistant:
@@ -336,12 +349,14 @@ async def _run(request: dict[str, Any]) -> dict[str, Any]:
                 raise
             cancelled = False
             try:
-                await asyncio.wait_for(process.wait(), timeout=TIMEOUT_SECONDS + 15)
+                await asyncio.wait_for(process.wait(), timeout=_timeout_seconds(request) + CHILD_CLEANUP_SECONDS)
             except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
                 cancelled = isinstance(exc, asyncio.CancelledError)
                 await asyncio.shield(_terminate(process))
                 evidence = _read_evidence(root)
                 evidence["process_group_terminated"] = True
+                if not cancelled:
+                    evidence.update(timeout_seconds=_timeout_seconds(request), timeout_owner="parent")
                 completed = _read_completed(root, request)
                 if completed is not None:
                     evidence.update(completed_result_available=True,
@@ -714,6 +729,7 @@ async def _execute(root: Path, request: dict[str, Any], evidence: dict[str, Any]
         started = await client.turn_start(thread.thread.id, inputs,
                                           {"outputSchema": request.get("schema")} if request.get("schema") else {})
         evidence.update(turn_id=started.turn.id, submitted=True)
+        turn_started = asyncio.get_running_loop().time()
         _save_evidence(root, evidence)
         text = None
         image = None
@@ -721,6 +737,8 @@ async def _execute(root: Path, request: dict[str, Any], evidence: dict[str, Any]
         try:
             while True:
                 event = await client.next_turn_notification(started.turn.id)
+                evidence["last_notification_elapsed_seconds"] = round(
+                    asyncio.get_running_loop().time() - turn_started, 3)
                 payload = event.payload
                 if isinstance(payload, ThreadTokenUsageUpdatedNotification):
                     evidence.update(input_tokens=payload.token_usage.total.input_tokens,
@@ -729,6 +747,7 @@ async def _execute(root: Path, request: dict[str, Any], evidence: dict[str, Any]
                     diagnostic = _provider_error(getattr(payload, "error", None), request)
                     evidence["provider_error"] = diagnostic
                     evidence["events"].append({"type": "error", "will_retry": payload.will_retry,
+                                               "elapsed_seconds": evidence["last_notification_elapsed_seconds"],
                                                "error": diagnostic})
                     # Text has no side-effecting tools. Let the runtime recover
                     # its stream within this turn; never resubmit an image call.
@@ -825,6 +844,7 @@ def _save_evidence(root: Path, evidence: dict[str, Any]) -> None:
 
 
 async def _child(root: Path) -> None:
+    execution_started = asyncio.get_running_loop().time()
     evidence: dict[str, Any] = {"sdk_version": SDK_VERSION, "runtime_version": RUNTIME_VERSION,
         "execution_fingerprint": EXECUTION_FINGERPRINT, "submitted": False,
         "indeterminate": False, "events": [], "funding": "codex_subscription"}
@@ -845,7 +865,9 @@ async def _child(root: Path) -> None:
             if importlib.metadata.version(package) != SDK_VERSION:
                 raise CodexRuntimeError("unsupported_sdk_runtime_version")
         request = json.loads((root / "request.json").read_text(encoding="utf-8"))
-        result = await asyncio.wait_for(_execute(root, request, evidence), TIMEOUT_SECONDS)
+        evidence["timeout_seconds"] = _timeout_seconds(request)
+        _save_evidence(root, evidence)
+        result = await asyncio.wait_for(_execute(root, request, evidence), _timeout_seconds(request))
     except BaseException as exc:
         if isinstance(exc, CodexRuntimeError):
             evidence.update(exc.metadata)
@@ -854,8 +876,12 @@ async def _child(root: Path) -> None:
             "runtime_cancelled" if isinstance(exc, asyncio.CancelledError) else
             "sdk_unavailable" if isinstance(exc, (ImportError, importlib.metadata.PackageNotFoundError)) else
             "sdk_execution_failed")
+        if code == "runtime_timeout":
+            evidence["timeout_owner"] = "child"
         result = {"error": code, "metadata": evidence}
     finally:
+        evidence["execution_elapsed_seconds"] = round(
+            asyncio.get_running_loop().time() - execution_started, 3)
         if lock_fd is not None:
             os.close(lock_fd)
     _save_evidence(root, evidence)

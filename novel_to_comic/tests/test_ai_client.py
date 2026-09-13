@@ -183,6 +183,39 @@ def test_generate_structured_object_returns_dict_and_usage(monkeypatch, _patch_e
     assert _patch_events[-1][1]["status"] == "succeeded"
 
 
+@pytest.mark.parametrize("stream", ["0", "1"])
+def test_gateway_normalizes_narrative_treatment_schema(monkeypatch, _patch_events, stream):
+    from copy import deepcopy
+
+    from novel_to_comic.models.adaptation import NarrativeTreatment
+
+    monkeypatch.setenv("CANARY_AI_STREAM_TEXT", stream)
+    treatment = NarrativeTreatment(causal_spine=("A choice has consequences.",))
+    schema = NarrativeTreatment.model_json_schema()
+    original = deepcopy(schema)
+    _patch_http(monkeypatch, {
+        "model": "gpt-6-astra",
+        "choices": [{"message": {"content": treatment.model_dump_json()}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 3},
+    })
+
+    result = asyncio.run(client.generate_structured_object(
+        config=Config(), model="gpt-6-astra", system_prompt="Return JSON.",
+        user_content="Write a treatment.", json_schema=schema,
+        feature="adapt.narrative_treatment",
+    ))
+
+    sent = _FakeAsyncClient.last_request["json"]["response_format"]["json_schema"]
+    assert sent["name"] == "adapt_narrative_treatment"
+    assert sent["strict"] is True
+    assert sent["schema"]["required"] == list(schema["properties"])
+    assert sent["schema"]["additionalProperties"] is False
+    assert "character_arcs" in sent["schema"]["required"]
+    assert schema == original
+    assert "character_arcs" not in schema["required"]
+    assert NarrativeTreatment.model_validate(result.value) == treatment
+
+
 def test_openrouter_structured_request_uses_supported_max_tokens_field(
     monkeypatch, _patch_events
 ):
@@ -1149,14 +1182,15 @@ class TestStreamingOptOut:
         monkeypatch.setenv("CANARY_AI_STREAM_TEXT", "1")
         assert client._stream_text_enabled() is True
 
+    @pytest.mark.parametrize("model", ["gpt-5.6-terra", "gpt-6-astra", "claude-fable-5-1", "claude-opus-5"])
     def test_opting_out_falls_back_to_a_buffered_request(
-        self, monkeypatch, _patch_events
+        self, monkeypatch, _patch_events, model
     ):
         monkeypatch.setenv("CANARY_AI_STREAM_TEXT", "0")
         _patch_http(
             monkeypatch,
             {
-                "model": "gpt-5.6-terra",
+                "model": model,
                 "choices": [{"message": {"content": '{"ok": true}'}}],
                 "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
             },
@@ -1165,7 +1199,7 @@ class TestStreamingOptOut:
         result = asyncio.run(
             client.generate_structured_object(
                 config=Config(),
-                model="gpt-5.6-terra",
+                model=model,
                 system_prompt="Return JSON.",
                 user_content="{}",
                 feature="adapt.book",
@@ -1515,3 +1549,133 @@ def test_terminal_image_refusal_releases_credit_hold(monkeypatch):
     })
     assert len(calls) == 1
     assert not credits._unsettled_jobs
+
+
+@pytest.mark.parametrize("model", ["claude-fable-5-1", "claude-opus-5"])
+def test_new_claude_models_use_native_json_schema(monkeypatch, _patch_events, model):
+    monkeypatch.setenv("CANARY_AI_STREAM_TEXT", "0")
+    _patch_http(monkeypatch, {
+        "model": model,
+        "choices": [{"message": {"content": '{"ok": true}'}}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2},
+    })
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"},
+              "count": {"type": "integer", "minimum": 1}},
+              "required": ["ok"], "additionalProperties": False}
+    result = asyncio.run(client.generate_structured_object(
+        config=Config(), model=model, system_prompt="Return JSON.",
+        user_content="{}", json_schema=schema, max_output_tokens=4096,
+    ))
+    assert result.value == {"ok": True}
+    sent = _FakeAsyncClient.last_request["json"]
+    assert "response_format" not in sent
+    assert "temperature" not in sent
+    wire_schema = sent["output_config"]["format"]["schema"]
+    assert "minimum" not in wire_schema["properties"]["count"]
+    assert '"minimum": 1' in wire_schema["properties"]["count"]["description"]
+    assert schema["properties"]["count"]["minimum"] == 1
+    assert sent["max_completion_tokens"] == 4096
+
+
+def test_streamed_text_refusal_preserves_reason_provenance_and_usage(monkeypatch, _patch_events):
+    from novel_to_comic.ai.context import ai_request_context, ai_source_context
+    from novel_to_comic.ai.errors import AIRefusalError
+
+    _patch_http(monkeypatch, {
+        "model": "gpt-6-astra",
+        "choices": [{
+            "message": {"content": "", "refusal": "Cannot depict explicit injury."},
+            "finish_reason": "content_filter",
+            "content_filter_results": {"violence": {"filtered": True}},
+        }],
+        "prompt_filter_results": [{"prompt_index": 0, "filtered": False}],
+        "usage": {"prompt_tokens": 100, "completion_tokens": 8},
+    })
+    with ai_request_context(project_id="project-1", job_id="job-1", stage="adapt"):
+        with ai_source_context("lettering/shard_002", ("source_0181", "source_0182")):
+            with pytest.raises(AIRefusalError) as caught:
+                asyncio.run(client.generate_structured_object(
+                    config=Config(), model="gpt-6-astra", system_prompt="Return JSON.",
+                    user_content="PRIVATE SOURCE PROSE", feature="adapt.lettering",
+                ))
+    error = caught.value
+    assert "content_filter" in str(error)
+    assert "Cannot depict explicit injury." in str(error)
+    assert "lettering/shard_002" in str(error)
+    assert "adapt.lettering" in str(error)
+    assert error.diagnostics["source_unit_ids"] == ["source_0181", "source_0182"]
+    assert error.diagnostics["provider"] == "openai"
+    assert error.diagnostics["content_filter_results"]["violence"]["filtered"]
+    assert error.diagnostics["prompt_filter_results"][0]["filtered"] is False
+    assert "PRIVATE SOURCE PROSE" not in json.dumps(error.diagnostics)
+    assert client._error_json(error)["refusal_diagnostics"] == error.diagnostics
+    # A refusal is terminal, even though structured JSON repair is enabled.
+    assert [kind for kind, _ in _patch_events] == ["insert", "finalize"]
+    event = _patch_events[-1][1]
+    assert event["status"] == "refused"
+    assert event["usage"].input_tokens == 100
+    assert event["metadata"]["metadata"]["source_scope"] == "lettering/shard_002"
+    assert event["metadata"]["metadata"]["project_id"] == "project-1"
+
+
+def test_refusal_stream_concatenates_fragments_and_ignores_story_words():
+    data = client._collapse_chat_chunks([
+        {"choices": [{"delta": {"refusal": "Cannot "}}]},
+        {"choices": [{"delta": {"refusal": "fulfill this."}, "finish_reason": "content_filter"}]},
+    ])
+    assert "Cannot fulfill this." in client._refusal_reason(data)
+    assert client._refusal_reason({"choices": [{
+        "message": {"content": '{"name":"Safety", "story":"blocked by a guard"}'},
+        "finish_reason": "stop",
+    }]}) is None
+
+
+def test_source_diagnostics_are_isolated_across_concurrent_shards():
+    from novel_to_comic.ai.context import (
+        ai_request_context, ai_source_context, current_ai_request_context,
+    )
+
+    async def exercise():
+        async def shard(number):
+            with ai_source_context(f"shard_{number}", (f"unit_{number}",)):
+                await asyncio.sleep(0)
+                return current_ai_request_context()
+        with ai_request_context(project_id="parent", job_id="job"):
+            contexts = await asyncio.gather(shard(1), shard(2))
+            assert current_ai_request_context().source_scope is None
+            return contexts
+
+    first, second = asyncio.run(exercise())
+    assert first.source_unit_ids == ("unit_1",)
+    assert second.source_unit_ids == ("unit_2",)
+    assert first.project_id == second.project_id == "parent"
+    assert first.job_id == second.job_id == "job"
+
+
+def test_anthropic_stop_details_survive_stream_collapse_and_local_diagnostics():
+    details = {'type': 'refusal', 'category': 'general_harms', 'explanation': 'Provider explanation.'}
+    data = client._collapse_chat_chunks([
+        {'model': 'claude-fable-5-1', 'choices': [{'delta': {'content': ''}}]},
+        {'choices': [{'delta': {'provider_specific_fields': {'stop_details': details, 'thinking_blocks': ['private']}}, 'finish_reason': 'content_filter'}]},
+    ])
+    error = client._text_refusal_error(
+        data, reason=client._refusal_reason(data), model='claude-fable-5-1',
+        feature='adapt.narrative_treatment', event_id='event-test', response=None,
+    )
+    assert error.diagnostics['stop_details'] == details
+    assert 'Provider explanation.' in str(error)
+    assert 'thinking_blocks' not in str(data)
+    assert client._error_json(error)['refusal_diagnostics']['stop_details'] == details
+
+
+def test_anthropic_unknown_category_stays_unknown():
+    details = {'type': 'refusal', 'category': None, 'explanation': None}
+    data = {'choices': [{'finish_reason': 'content_filter', 'message': {
+        'provider_specific_fields': {'stop_details': details},
+    }}]}
+    error = client._text_refusal_error(
+        data, reason=client._refusal_reason(data), model='claude-fable-5-1',
+        feature='adapt.narrative_treatment', event_id='event-test', response=None,
+    )
+    assert error.diagnostics['stop_details'] == details
+    assert 'provider_explanation' not in str(error)

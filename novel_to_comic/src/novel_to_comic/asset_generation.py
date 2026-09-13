@@ -279,6 +279,12 @@ def _meta_payload(request: NonPanelRequest, provenance: dict[str, Any], *, error
             "controls": dict(request.wire.controls),
         },
         "provenance": provenance,
+        "art_direction": request.input.prompt.editorial_addendum,
+        "reference_assets": [
+            {"asset_type": {"subject": "character", "location_plate": "location", "prop": "prop"}[asset.role],
+             "asset_id": asset.entity_id, "state_id": asset.appearance_state_id}
+            for asset in request.reference_plan.selected if asset.purpose == "instruction_context"
+        ],
     }
     if request.input.lineage:
         # State-asset readers historically consume these fields at the sidecar

@@ -680,6 +680,7 @@ def test_plan_run_consumes_directive_persists_plan_without_draw(
         return nxt
 
     with (
+        patch("novel_to_comic.narrative_review.require_narrative_review"),
         patch.object(s5_plan, "produce_book_plan", side_effect=_persisting_produce),
         patch.object(
             s5_plan, "generate_json", new=AsyncMock(return_value={"ok": True})

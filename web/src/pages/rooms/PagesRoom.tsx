@@ -23,6 +23,7 @@ import { pageRenderPreviewUrl } from "../../api/pages";
 import { ReadingWorkspace } from "../../components/pages/ReadingWorkspace";
 import {
   ApprovalBar,
+  RerunStageAction,
   EntityCard,
   ConfirmDrawer,
   RoomHeader,
@@ -35,6 +36,7 @@ import { Button } from "../../components/ui/Button";
 import { FlowingDotsPlaceholder } from "../../components/ui/FlowingDotsPlaceholder";
 import { StatusPill } from "../../components/ui/StatusPill";
 import { Surface } from "../../components/ui/Surface";
+import { StateBlock } from "../../components/ui/StateBlock";
 import { useI18n } from "../../i18n";
 import { getImageFailureCopy } from "../../lib/imageFailure";
 import type {
@@ -53,13 +55,14 @@ import { RevisionDraft } from "../../components/pages/RevisionDraft";
 import { PageCheckRecovery } from "../../components/pages/PageCheckRecovery";
 import { VisualReviewPanel, type VisualReviewDraftSeed } from "../../components/pages/VisualReviewPanel";
 import type { DrawerKind } from "../../lib/stations";
+import { BottomBarPortal } from "../../layout/TopBarSlot";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 
 type ReviewView = "page" | "visual" | "checks";
 type PageFilter = "all" | "needs-review" | "drawing" | "failed";
 type PaidPageIntent =
-  | { kind: "batch" }
+  | { kind: "batch"; retry?: boolean }
   | { kind: "page"; pageNumber: number; depiction: "canonical" | "less_graphic" }
   | { kind: "analysis"; pageNumber: number };
 
@@ -87,19 +90,22 @@ function PageSpendConsent({
     project, intent.kind === "analysis" ? intent.pageNumber : undefined, intent.kind === "analysis",
   );
   const estimate = intent.kind === "batch" ? batch : intent.kind === "page" ? page : analysis;
+  const retryBatch = intent.kind === "batch" && intent.retry === true;
   return (
     <ConfirmDrawer
       open
-      title={intent.kind === "batch" ? t("Queue all undrawn pages?") : `${t("Page")} ${intent.pageNumber}`}
+      title={intent.kind === "batch" ? retryBatch ? t("Retry the remaining pages?") : t("Queue all undrawn pages?") : `${t("Page")} ${intent.pageNumber}`}
       body={intent.kind === "batch"
-        ? t("This starts drawing the remaining pages now. Completed artwork stays available to review.")
+        ? retryBatch
+          ? t("Only pages without a saved render will be queued. Completed artwork stays available to review.")
+          : t("This starts drawing the remaining pages now. Completed artwork stays available to review.")
         : intent.kind === "analysis"
           ? t("Run the text check again on this render. This does not redraw the page.")
           : intent.depiction === "less_graphic"
             ? t("Draw a less graphic version of this page while keeping required identity references.")
             : t("Draw one complete page now, including its lettering.")}
       cost={estimate.data}
-      confirmLabel={intent.kind === "batch" ? t("CONFIRM QUEUE") : intent.kind === "analysis" ? t("CONFIRM TEXT CHECK") : t("CONFIRM DRAW")}
+      confirmLabel={intent.kind === "batch" ? retryBatch ? t("CONFIRM RETRY") : t("CONFIRM QUEUE") : intent.kind === "analysis" ? t("CONFIRM TEXT CHECK") : t("CONFIRM DRAW")}
       busy={busy || estimate.isFetching || !estimate.data || !!estimate.error}
       onConfirm={() => { if (estimate.data && !estimate.error && !estimate.isFetching && !busy) onConfirm(); }}
       onClose={onClose}
@@ -490,7 +496,7 @@ export function PagesRoom() {
   const [pageActionErrors, setPageActionErrors] = useState<Partial<Record<number, string>>>({});
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [recoveryRequested, setRecoveryRequested] = useState(0);
-  const { data: generationJobs } = useGenerationJobs(id, [], true);
+  const { data: generationJobs, isLoading: generationJobsLoading } = useGenerationJobs(id, [], true);
   const observedTerminalJobs = useRef(new Set<string>());
   const firstArtworkObserved = useRef<boolean | null>(null);
   const [revealedPage, setRevealedPage] = useState<number | null>(null);
@@ -581,7 +587,32 @@ export function PagesRoom() {
     );
   }
 
+  const rerunAdaptation = id && status && ["complete", "running"].includes(status.stages.adapt?.status ?? "pending") ? (
+    <RerunStageAction
+      project={id}
+      stage="adapt"
+      label="adaptation"
+      itemsAtRisk={t("The current adaptation, page plan, drawn pages, revisions, and exports will be cleared. Your manuscript, approved brief, style, and cast stay saved.")}
+      description={t("This rebuilds the adaptation and page plan with the current checks. Drawing starts only when you choose to draw pages.")}
+      disabled={!!status.is_running || !status.style_selected || generationJobsLoading
+        || (generationJobs?.jobs ?? []).some((job) => job.status === "queued" || job.status === "running")}
+    />
+  ) : null;
+
   if (!id || error || !data) {
+    if (id && status && interruptedStage === "adapt" && (
+      status.stages.brief?.status !== "complete" || status.stages.brief?.approved !== true
+    )) {
+      return (
+        <RoomShell project={id}>
+          <StateBlock
+            title={t("Approve your brief first")}
+            description={t("Your revised brief is waiting for approval in Story. Approve it there before adaptation can start.")}
+            action={<Button onClick={() => navigate(`/project/${id}/story`)}>{t("Review and approve brief")}</Button>}
+          />
+        </RoomShell>
+      );
+    }
     return (
       <RoomShell project={id ?? ""}>
         <StagePlaceholder
@@ -599,6 +630,11 @@ export function PagesRoom() {
           errorCode={interruptedStageInfo?.error_code}
         />
         <BlockingFailureList validation={adaptValidation ?? planValidation} />
+        {rerunAdaptation && <BottomBarPortal>
+          <footer className="flex min-h-shell-footer flex-wrap items-center justify-end gap-3 border-t-[3px] border-ink-black bg-bristol px-4 py-3 shadow-[0_-4px_0_0_var(--color-ghost-shadow)] md:pr-6">
+            {rerunAdaptation}
+          </footer>
+        </BottomBarPortal>}
       </RoomShell>
     );
   }
@@ -617,6 +653,10 @@ export function PagesRoom() {
     return job?.status === "failed" || !!pageFailures[item.page.page_number] || !!item.failure;
   }).map((item) => item.page.page_number));
   const drawnPages = pages.filter((item) => item.active_render);
+  const undrawnPages = pages.filter((item) => !item.active_render);
+  const retryingDraw = undrawnPages.some((item) => failedPages.has(item.page.page_number))
+    || drawStatus === "failed"
+    || !!status?.stages.draw?.stale;
   const unresolvedPages = pages.filter(needsReview);
   const uncheckedPages = pages.filter((item) => item.active_render && item.analysis_recovery?.status !== "checked");
   const visiblePages = pages.filter((item) => filter === "all"
@@ -689,7 +729,7 @@ export function PagesRoom() {
     );
   }
 
-  function startDraw(queuePages: boolean) {
+  function startDraw(queuePages: boolean, retry = false) {
     if (!status?.style_selected || run.isPending) return;
     setActionError(null);
     const undrawnPages = pages
@@ -705,8 +745,8 @@ export function PagesRoom() {
         onError: (error) => {
           setActionError(error.message);
           maybeShowInsufficientCredits(error, {
-            actionLabel: t("QUEUE ALL PAGES"),
-            onRetry: () => requestSpend({ kind: "batch" }),
+            actionLabel: t(retry ? "RETRY ALL INCOMPLETE PAGES" : "QUEUE ALL PAGES"),
+            onRetry: () => requestSpend({ kind: "batch", retry }),
           });
           if (queuePages) setBatchPages([]);
         },
@@ -817,6 +857,29 @@ export function PagesRoom() {
               </div>
             </div>
             {actionError && !paidIntent && <p role="alert" className="mt-3 text-sm">{actionError}</p>}
+          </Surface>
+        )}
+        {drawStatus !== "pending" && !generationJobsLoading && undrawnPages.length > 0 && drawingPages.size === 0 && (
+          <Surface tone="pulp" padding="md" className="mb-5">
+            <div className="flex flex-wrap items-end justify-between gap-5">
+              <div className="max-w-[62ch]">
+                <h3 className="font-body text-base font-bold text-ink-black">{t("Finish drawing the edition")}</h3>
+                <p className="mt-1 text-sm leading-6 text-ink-muted">
+                  {t("{count} pages still need artwork. Completed pages are saved. Queue the unfinished pages together after reviewing the current estimate.")
+                    .replace("{count}", String(undrawnPages.length))}
+                </p>
+              </div>
+              <Button
+                variant="primary"
+                onClick={() => requestSpend({
+                  kind: "batch",
+                  retry: retryingDraw,
+                })}
+                disabled={run.isPending || !status?.style_selected}
+              >
+                {t(retryingDraw ? "RETRY ALL INCOMPLETE PAGES" : "QUEUE REMAINING PAGES")}
+              </Button>
+            </div>
           </Surface>
         )}
         {drawingPages.size > 0 && (
@@ -1071,7 +1134,7 @@ export function PagesRoom() {
           error={actionError}
           onClose={() => setPaidIntent(null)}
           onConfirm={() => {
-            if (paidIntent.kind === "batch") startDraw(true);
+            if (paidIntent.kind === "batch") startDraw(true, paidIntent.retry);
             else if (paidIntent.kind === "analysis") retryAnalysis(paidIntent.pageNumber);
             else drawPage(paidIntent.pageNumber, paidIntent.depiction);
           }}
@@ -1101,6 +1164,7 @@ export function PagesRoom() {
           || data.pages.some((item) => !item.active_render)
         }
         busy={approve.isPending}
+        secondary={rerunAdaptation}
         note={
           data.issue_summary.unresolved_issue_ids.length > 0
             ? `${data.issue_summary.unresolved_issue_ids.length} ${t("unresolved page issues must be accepted before export")}`

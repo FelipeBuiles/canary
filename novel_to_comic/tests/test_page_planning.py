@@ -49,6 +49,12 @@ from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import ApiResult, UsageRecord
 
 
+@pytest.fixture(autouse=True)
+def isolate_editorial_judgment(monkeypatch):
+    from .narrative_review_support import accept_narrative
+    monkeypatch.setattr("novel_to_comic.page_planning.review_narrative", accept_narrative)
+
+
 def _adaptation() -> BookAdaptation:
     lettering = (
         LetteringItem(
@@ -1321,7 +1327,7 @@ def test_lettering_cited_by_the_wrong_content_item_cannot_be_planned(
     ]
 
 
-def test_plan_persists_its_verdict_and_page_range_recommendation(
+def test_plan_persists_reviewed_allocation_above_target(
     tmp_path: Path,
 ) -> None:
     adaptation = _adaptation()
@@ -1369,36 +1375,29 @@ def test_plan_persists_its_verdict_and_page_range_recommendation(
         )
 
     artifacts = TargetArtifacts(tmp_path)
-    with pytest.raises(PlanInvariantError):
-        asyncio.run(
-            produce_book_plan(
-                adaptation,
-                _inventory(),
-                ApprovedPageRange(minimum=1, maximum=1),
-                artifacts=artifacts,
-                ctx=StageRuntime(
-                    "plan",
-                    PipelineState(
-                        project_name="cthulhu",
-                        novel_path="novel.txt",
-                        created_at=datetime.now(timezone.utc),
-                    ),
-                    tmp_path,
+    asyncio.run(
+        produce_book_plan(
+            adaptation,
+            _inventory(),
+            ApprovedPageRange(minimum=1, maximum=1),
+            artifacts=artifacts,
+            ctx=StageRuntime(
+                "plan",
+                PipelineState(
+                    project_name="cthulhu",
+                    novel_path="novel.txt",
+                    created_at=datetime.now(timezone.utc),
                 ),
-                model="test-planner",
-                generate=generate,
-            )
+                tmp_path,
+            ),
+            model="test-planner",
+            generate=generate,
         )
-
-    # The recommendation is the one thing the user can act on, so it has to
-    # outlive the raised exception.
+    )
     validation = artifacts.read_validation("plan")
-    assert validation.owner_stage == "plan"
-    assert validation.attempts == 2
-    assert [failure.code for failure in validation.invariant_failures] == [
-        "target_page_range_conflict"
-    ]
-    assert "Recommend a minimum of 2 pages." in validation.recommendations[0]
+    assert not validation.invariant_failures
+    assert len(artifacts.read_plan().pages) == 2
+    assert artifacts.read_plan().target_page_max == 1
 
 
 def test_coordinates_are_absent_unless_the_author_explicitly_pins_a_beat(
@@ -1492,7 +1491,7 @@ def test_coordinates_are_absent_unless_the_author_explicitly_pins_a_beat(
     assert "pinned_geometry" not in content[1].model_dump(exclude_none=True)
 
 
-def test_range_conflict_recommends_more_pages_with_allocation_evidence() -> None:
+def test_safe_allocation_can_exceed_advisory_range() -> None:
     adaptation = _adaptation()
     pages = [
         ComicPage(
@@ -1530,18 +1529,7 @@ def test_range_conflict_recommends_more_pages_with_allocation_evidence() -> None
         pages,
     )
 
-    conflict = next(
-        failure
-        for failure in validation.invariant_failures
-        if failure.code == "target_page_range_conflict"
-    )
-    assert conflict.blocking is True
-    assert conflict.artifact_ids == ("beat_0001", "beat_0002")
-    assert conflict.evidence == (
-        "The complete allocation requires 2 pages; the approved range is 1-1. "
-        "Recommend a minimum of 2 pages.",
-    )
-    assert issubclass(PlanInvariantError, ValueError)
+    assert not validation.invariant_failures
 
 
 def test_fidelity_page_floor_allows_safe_allocation_beyond_maximum() -> None:
@@ -1578,7 +1566,7 @@ def test_fidelity_page_floor_allows_safe_allocation_beyond_maximum() -> None:
     validation = validate_book_plan(
         adaptation,
         _inventory(),
-        ApprovedPageRange(minimum=1, maximum=1, allow_expansion=True),
+        ApprovedPageRange(minimum=1, maximum=1),
         pages,
     )
 
@@ -1587,7 +1575,7 @@ def test_fidelity_page_floor_allows_safe_allocation_beyond_maximum() -> None:
     }
 
 
-def test_allocation_below_the_approved_floor_is_blocking() -> None:
+def test_complete_allocation_can_be_shorter_than_target() -> None:
     adaptation = _adaptation()
     pages = [
         ComicPage(
@@ -1622,19 +1610,11 @@ def test_allocation_below_the_approved_floor_is_blocking() -> None:
     validation = validate_book_plan(
         adaptation,
         _inventory(),
-        ApprovedPageRange(minimum=4, maximum=8, allow_expansion=True),
+        ApprovedPageRange(minimum=4, maximum=8),
         pages,
     )
 
-    shortfall = next(
-        failure
-        for failure in validation.invariant_failures
-        if failure.code == "target_page_range_conflict"
-    )
-    assert shortfall.blocking is True
-    assert "allocation is 1 pages" in shortfall.evidence[0]
-    assert "approved minimum is 4" in shortfall.evidence[0]
-    assert "Do not lower the approved minimum" in shortfall.evidence[0]
+    assert not validation.invariant_failures
 
 
 def test_onscreen_lettering_speaker_must_be_visible_in_its_panel() -> None:
@@ -1675,7 +1655,7 @@ def test_onscreen_lettering_speaker_must_be_visible_in_its_panel() -> None:
     validation = validate_book_plan(
         adaptation,
         _inventory(),
-        ApprovedPageRange(minimum=1, maximum=2, allow_expansion=True),
+        ApprovedPageRange(minimum=1, maximum=2),
         [page],
     )
 
@@ -2779,17 +2759,17 @@ def test_planning_view_excludes_the_source_ledger_and_provenance() -> None:
     assert "speaker_entity_id" in serialized
 
 
-def test_fidelity_plan_prompt_treats_page_maximum_as_expandable_floor() -> None:
+def test_plan_prompt_makes_both_page_targets_advisory() -> None:
     from novel_to_comic.page_planning import build_book_plan_prompt
 
     prompt = build_book_plan_prompt(
         _adaptation(),
         _inventory(),
-        ApprovedPageRange(minimum=1, maximum=2, allow_expansion=True),
+        ApprovedPageRange(minimum=1, maximum=2),
     )
 
-    assert "approved minimum is a narrative floor" in prompt
-    assert "exceeds the approved maximum" in prompt
+    assert "not a floor or ceiling" in prompt
+    assert "Never pad the ending" in prompt
 
 
 def _soaked_adaptation() -> BookAdaptation:
@@ -3117,3 +3097,26 @@ def test_detail_context_prunes_only_explicit_scopes_and_keeps_speakers():
     assert 'unrelated distant mansion' not in prompt
     assert 'gaunt Norwegian sailor' in prompt
     assert 'small steam yacht' in prompt
+
+
+def test_all_plan_prompts_preserve_restrained_depiction_and_exact_lettering():
+    from novel_to_comic.narrative_instructions import PLAN_DEPICTION_GUIDANCE
+    from novel_to_comic.page_planning import build_book_plan_prompt, _build_page_map_prompt
+
+    adaptation = _adaptation()
+    target = ApprovedPageRange(minimum=1, maximum=2)
+    page_map = _BookPageMap(rhythm_summary='One moment per page.', pages=[
+        _PageMapEntry(page_number=index, beat_ids=(beat.id,), emphasis='initial',
+                      density_intent='standard', rhythm_intent='Advance the scene.')
+        for index, beat in enumerate(adaptation.beats, 1)
+    ])
+    for prompt in (
+        build_book_plan_prompt(adaptation, _inventory(), target),
+        _build_page_map_prompt(adaptation, target),
+        _detail_batch_prompt(adaptation, _inventory(), page_map, start=0, stop=1),
+    ):
+        assert PLAN_DEPICTION_GUIDANCE in prompt
+        context = json.loads(prompt.split('\n', 1)[1])
+        for planned in context['planning_view']['beats']:
+            original = next(beat for beat in adaptation.beats if beat.id == planned['id'])
+            assert [item['text'] for item in planned['lettering']] == [item.text for item in original.lettering]

@@ -49,6 +49,7 @@ from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import ApiResult, UsageRecord
 
 
+
 def _profile(**updates: object) -> PageCapabilityProfile:
     payload: dict[str, object] = production_page_capability_profile().model_dump()
     payload.update(updates)
@@ -1840,3 +1841,42 @@ def test_complete_page_accepted_response_retains_incomplete_hold(tmp_path, monke
     else:
         assert "job" in credits._unsettled_jobs
         db.rpc.assert_not_called()
+
+
+@pytest.fixture(autouse=True)
+def reviewed_story_precondition(monkeypatch):
+    # This suite tests rendering/credit contracts with deliberately partial
+    # upstream fixtures. Real missing/stale review admission is tested in
+    # test_narrative_review.py.
+    monkeypatch.setattr("novel_to_comic.server.routers.pages.require_draw_narrative_reviews", lambda target: None)
+    monkeypatch.setattr("novel_to_comic.narrative_review.require_draw_narrative_reviews", lambda target: None)
+
+
+def test_cast_art_direction_follows_selected_image_and_restored_version(tmp_path):
+    from novel_to_comic import artifacts
+    from novel_to_comic.asset_versions import record_asset_version, restore_asset_version
+    files = _reference_files(tmp_path)
+    image = files["ward-bloodied-ref"].path
+    artifacts.write_asset_meta(image, {"art_direction": "A weather-beaten sailor with white hair and a haunted stare."})
+    record_asset_version(image, tmp_path, reason="before_regenerate")
+    first = _compile(tmp_path, files=files)
+    image.write_bytes(b"second-design")
+    artifacts.write_asset_meta(image, {"art_direction": "Black hair, a calm gaze and a clean uniform."})
+    second = _compile(tmp_path, files=files)
+    brief = _provider_brief(second.request.prompt)
+    assert brief["approved_page_references"][0]["art_direction"] == "Black hair, a calm gaze and a clean uniform."
+    assert "art_direction" not in brief["approved_page_references"][1]
+    assert "overrides conflicting source appearance" in brief["reference_scope"]
+    restore_asset_version(image, tmp_path, 1)
+    restored = _compile(tmp_path, files=files)
+    assert restored.request.prompt == first.request.prompt
+    assert restored.reference_bytes == first.reference_bytes
+
+
+def test_selected_character_crop_uses_its_sheet_art_direction(tmp_path):
+    files = _reference_files(tmp_path)
+    metadata = tmp_path / "sheet.png.meta.json"
+    metadata.write_text(json.dumps({"art_direction": "A ragged naval coat."}))
+    files["ward-bloodied-ref"] = replace(files["ward-bloodied-ref"], metadata_path=metadata)
+    brief = _provider_brief(_compile(tmp_path, files=files).request.prompt)
+    assert brief["approved_page_references"][0]["art_direction"] == "A ragged naval coat."

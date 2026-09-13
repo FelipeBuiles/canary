@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from novel_to_comic.config import Config, is_gpt_image_2, is_seedream_model
+from novel_to_comic.image_models import GATEWAY_IMAGE_SUNBURST, describe_image_model
 
 _GPT_LOCATION_PLATE_WIDTH = 1536
 _GPT_LOCATION_PLATE_HEIGHT = 1024
@@ -104,12 +105,18 @@ class RefStrategy:
     # ------------------------------------------------------------------
 
     def cast_style_ref(self, style_ref: Path | None) -> Path | None:
-        if not self._gpt_image_2:
-            return style_ref
-        # The gpt-image-2 route treats reference inputs as edit conditioning.
-        # Reusing the selected style sample for cast assets can carry over subject
-        # details or texture artifacts, so keep its cast refs text-driven.
-        return None
+        # The wire carries explicit rendering-only authority. An edit transport
+        # does not authorize dropping the author's selected visual direction.
+        return style_ref
+
+    def use_character_style_calibration(self) -> bool:
+        # Only Sunburst has evidence of copying the lineup's people. Preserve
+        # calibration for other models: it prevents per-species style drift.
+        # Sunburst still uses ONE shared approved proof, never per-character
+        # style invention or text-only conditioning.
+        provider_model = describe_image_model(self.model).provider_model.removeprefix("openai/")
+        sunburst = describe_image_model(GATEWAY_IMAGE_SUNBURST).provider_model.removeprefix("openai/")
+        return provider_model != sunburst and not provider_model.startswith(sunburst + "-")
 
 
     def use_structured_location_plate_prompt(self) -> bool:

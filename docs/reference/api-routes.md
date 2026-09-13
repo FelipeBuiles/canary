@@ -8,6 +8,8 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 
 | Method | Path | Handler | File |
 |--------|------|---------|------|
+| `GET` | `/api/account/model-settings` | `get_model_settings` | `account_models.py` |
+| `PATCH` | `/api/account/model-settings` | `patch_model_settings` | `account_models.py` |
 | `GET` | `/api/backoffice` | `backoffice_snapshot` | `backoffice.py` |
 | `POST` | `/api/backoffice/users/{user_id}/credits` | `grant_credits` | `backoffice.py` |
 | `GET` | `/api/billing/packages` | `list_packages` | `billing.py` |
@@ -26,6 +28,8 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `POST` | `/api/cast_assets/locations/{loc_id}/states/{state_id}/regenerate-instructed` | `regenerate_location_state_instructed` | `cast_assets.py` |
 | `GET` | `/api/cast_assets/character-ref-versions` | `get_character_ref_versions` | `cast_assets.py` |
 | `POST` | `/api/cast_assets/character-ref-versions/restore` | `restore_character_ref_version` | `cast_assets.py` |
+| `GET` | `/api/cast_assets/location-plate-versions` | `get_location_plate_versions` | `cast_assets.py` |
+| `POST` | `/api/cast_assets/location-plate-versions/restore` | `restore_location_plate_version` | `cast_assets.py` |
 | `GET` | `/api/projects/{project}/config` | `get_config` | `config.py` |
 | `PATCH` | `/api/projects/{project}/config` | `update_config` | `config.py` |
 | `GET` | `/api/credits/pricing-reference` | `pricing_reference` | `credits.py` |

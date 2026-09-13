@@ -1,7 +1,19 @@
+import { useState, type ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
 import { StateRefRow } from "../pages/rooms/CastRoom";
+
+vi.mock("../api/client", () => ({
+  isNotFoundError: () => false,
+  apiFetch: async () => ({ jobs: [], versions: [], characters: [], locations: [], props: [] }),
+}));
+
+function TestProviders({ children }: { children: ReactNode }) {
+  const [client] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  return <QueryClientProvider client={client}><I18nProvider>{children}</I18nProvider></QueryClientProvider>;
+}
 
 const alternateAppearance = {
   id: "after_fire",
@@ -13,7 +25,7 @@ const alternateAppearance = {
 
 function renderRow(kind: "character" | "location", refreshToken = "poll-1") {
   return render(
-    <I18nProvider>
+    <TestProviders>
       <StateRefRow
         projectName="demo"
         entityId={kind === "character" ? "char_1" : "loc_1"}
@@ -22,13 +34,13 @@ function renderRow(kind: "character" | "location", refreshToken = "poll-1") {
         stageRegenerating
         refreshToken={refreshToken}
       />
-    </I18nProvider>,
+    </TestProviders>,
   );
 }
 
 describe.each([
-  ["character", "aspect-[64/84]"],
-  ["location", "aspect-[16/9]"],
+  ["character", "h-12 w-12"],
+  ["location", "h-12 w-12"],
 ] as const)("StateRefRow %s tile", (kind, aspectClass) => {
   it("reserves the same image frame while each poll checks a missing image", () => {
     const view = renderRow(kind);
@@ -38,11 +50,11 @@ describe.each([
     expect(initialFrame?.className).toContain(aspectClass);
 
     fireEvent.error(image);
-    const missingFrame = screen.getByText("REBUILDING").parentElement;
+    const missingFrame = screen.getByText("Generating appearance…").parentElement?.previousElementSibling;
     expect(missingFrame?.className).toContain(aspectClass);
 
     view.rerender(
-      <I18nProvider>
+      <TestProviders>
         <StateRefRow
           projectName="demo"
           entityId={kind === "character" ? "char_1" : "loc_1"}
@@ -51,21 +63,21 @@ describe.each([
           stageRegenerating
           refreshToken="poll-2"
         />
-      </I18nProvider>,
+      </TestProviders>,
     );
 
     const polledImage = screen.getByAltText("After the fire reference");
     expect(polledImage.parentElement?.className).toContain(aspectClass);
     fireEvent.error(polledImage);
-    expect(screen.getByText("REBUILDING").parentElement?.className).toContain(aspectClass);
+    expect(screen.getByText("Generating appearance…").parentElement?.previousElementSibling?.className).toContain(aspectClass);
   });
 });
 
 it("keeps two locations with the same state id independent in thumbnail and full-size views", () => {
-  render(<I18nProvider>{["loc_1", "loc_2"].map((entityId) => (
+  render(<TestProviders>{["loc_1", "loc_2"].map((entityId) => (
     <StateRefRow key={entityId} projectName="demo" entityId={entityId} kind="location"
       states={[alternateAppearance]} stageRegenerating={false} refreshToken="current" />
-  ))}</I18nProvider>);
+  ))}</TestProviders>);
   const thumbnails = screen.getAllByAltText("After the fire reference");
   expect(thumbnails.map((image) => image.getAttribute("src"))).toEqual([
     "/api/projects/demo/files/plates/loc_1/states/after_fire.png?v=current",
@@ -73,8 +85,8 @@ it("keeps two locations with the same state id independent in thumbnail and full
   ]);
   thumbnails.forEach((thumbnail, index) => {
     fireEvent.click(thumbnail);
-    expect(screen.getByAltText("After the fire").getAttribute("src")).toBe(
-      `/api/projects/demo/files/plates/loc_${index + 1}/states/after_fire.png?v=current`,
+    expect(screen.getByAltText("After the fire").getAttribute("src")).toContain(
+      `/api/projects/demo/files/plates/loc_${index + 1}/states/after_fire.png?t=`,
     );
     fireEvent.keyDown(document, { key: "Escape" });
   });

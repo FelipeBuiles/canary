@@ -111,7 +111,7 @@ const BRIEF_FIELD_LABELS: Partial<Record<keyof AdaptationBrief, string>> = {
   narrator_treatment: "NARRATOR TREATMENT", tone: "TONE", ambiguities: "AMBIGUITIES TO PRESERVE",
   motifs: "MOTIFS", protected_language: "PROTECTED LANGUAGE", essential_events: "ESSENTIAL EVENTS",
   character_turns: "CHARACTER TURNS", desired_emphasis: "DESIRED EMPHASIS",
-  target_page_min: "Minimum pages", target_page_max: "Maximum pages",
+  target_page_min: "Page target: from", target_page_max: "Page target: to",
 };
 
 function StoryEditor({ id, data, brief, stageStatus }: {
@@ -332,10 +332,10 @@ function StoryEditor({ id, data, brief, stageStatus }: {
             <BriefSection id="tone" title={t("TONE")} value={draft.tone} onChange={(value) => change("tone", value)} />
             <div className="bg-surface-container p-5">
               <h3 className="font-display text-xl font-black uppercase">{t("Target length")}</h3>
-              <p className="mb-5 mt-2 font-body text-sm text-ink-muted">{t("Give your story room to breathe.")}</p>
+              <p className="mb-5 mt-2 font-body text-sm text-ink-muted">{t("A flexible guide. The finished book may be shorter or longer to preserve the story and its pacing.")}</p>
               <div className="grid grid-cols-2 gap-4">
-                <div><FieldLabel htmlFor="minimum-pages">{t("Minimum pages")}</FieldLabel><TextField id="minimum-pages" type="number" min={1} value={draft.target_page_min} onChange={(event) => change("target_page_min", Number(event.target.value))} /></div>
-                <div><FieldLabel htmlFor="maximum-pages">{t("Maximum pages")}</FieldLabel><TextField id="maximum-pages" type="number" min={draft.target_page_min} value={draft.target_page_max} onChange={(event) => change("target_page_max", Number(event.target.value))} /></div>
+                <div><FieldLabel htmlFor="minimum-pages">{t("Page target: from")}</FieldLabel><TextField id="minimum-pages" type="number" min={1} value={draft.target_page_min} onChange={(event) => change("target_page_min", Number(event.target.value))} /></div>
+                <div><FieldLabel htmlFor="maximum-pages">{t("Page target: to")}</FieldLabel><TextField id="maximum-pages" type="number" min={draft.target_page_min} value={draft.target_page_max} onChange={(event) => change("target_page_max", Number(event.target.value))} /></div>
               </div>
             </div>
           </div>

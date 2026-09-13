@@ -18,6 +18,7 @@ from tests.test_complete_page_draw import _page, _inventory, _reference_files
 
 
 @pytest.mark.parametrize('variant', ['sunburst', 'flare'])
+
 def test_public_image_page_preserves_references_and_sends_fixed_controls(tmp_path, variant):
     config = Config(draw_model=f'image-{variant}')
     profile = current_page_capability_profile(config)
@@ -44,7 +45,7 @@ def test_public_image_page_preserves_references_and_sends_fixed_controls(tmp_pat
     assert kwargs['retry_ambiguous'] is False
     assert kwargs['data'] == {
         'model': f'image-{variant}', 'prompt': prepared.prompt, 'size': '1024x1536',
-        'quality': 'high', 'output_format': 'png', 'n': 1, 'input_fidelity': 'high',
+        'quality': 'high', 'output_format': 'png', 'n': 1,
     }
     assert [entry[1][1] for entry in kwargs['files']] == list(prepared.reference_bytes)
     assert result.actual_provider_model == f'openai/gpt-image-2.5-{variant}'
@@ -124,3 +125,77 @@ def test_unknown_billing_recovery_and_correction_keep_generation_pending(tmp_pat
         asyncio.run(correct_complete_page(SimpleNamespace(request=SimpleNamespace(correction=correction)),
             issue=None, adapter=adapter, artifacts=artifacts, page=_page()))
     assert artifacts.resumable_generation_request(7) is not None
+
+
+def test_page_quote_uses_current_pricing_and_counts_correction_source(tmp_path):
+    from dataclasses import replace
+    from novel_to_comic.page_drawing import estimate_draw_api_cost, correction_credit_estimate
+    from novel_to_comic.usage import estimate_image_cost
+
+    config = Config(draw_model='image-sunburst')
+    profile = current_page_capability_profile(config)
+    compiled = compile_page_generation_request(
+        _page(), select_book_edition(edition_id='test', profile=profile),
+        _inventory(), _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
+    )
+    frozen = compiled.request.model_dump_json()
+    expected = estimate_image_cost(
+        compiled.request.model, 1, quality='high', width=1024, height=1536,
+        ref_count=len(compiled.request.references), prompt_text=compiled.request.prompt,
+    )
+    quote = estimate_draw_api_cost(config, float(compiled.request.estimated_cost_usd), compiled=compiled, ocr=False)
+    assert quote == pytest.approx(expected)
+    assert quote < float(compiled.request.estimated_cost_usd)
+    correction = replace(compiled, edit_source_bytes=b'parent page')
+    assert estimate_draw_api_cost(config, 0, compiled=correction, ocr=False) == pytest.approx(quote + .016)
+    assert correction_credit_estimate(correction, config=config, reserve=True)['estimate_credits'] > 0
+    assert compiled.request.model_dump_json() == frozen
+    complete_page_adapter(config).prepare(compiled)
+
+
+def test_sunburst_stage_and_batch_quotes_use_the_same_measured_page_cost(tmp_path):
+    from types import SimpleNamespace
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from novel_to_comic.server.deps import get_project
+    from novel_to_comic.server.routers.pages import router
+    from novel_to_comic.stages.s7_page_draw import estimate_cost
+    from novel_to_comic.target_artifacts import TargetArtifacts
+    from novel_to_comic.page_drawing import correction_credit_estimate, estimate_draw_api_cost
+
+    config = Config(draw_model='image-sunburst')
+    page = _page()
+    files = _reference_files(tmp_path)
+    artifacts = TargetArtifacts(tmp_path)
+    artifacts.write_page(page)
+    edition = select_book_edition(edition_id='test', profile=current_page_capability_profile(config))
+    artifacts.write_book_edition(edition)
+    artifacts.plan_path.parent.mkdir(parents=True, exist_ok=True)
+    artifacts.plan_path.write_text('{}')
+    compiled = compile_page_generation_request(page, edition, _inventory(), files, retry=RetryProvenance(attempt=1), style_template=config.style_template)
+    expected = dict(correction_credit_estimate(compiled, config=config, reserve=True))
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[get_project] = lambda: (tmp_path, config, None)
+    with (
+        patch.object(TargetArtifacts, 'read_plan', return_value=SimpleNamespace(pages=[page])),
+        patch('novel_to_comic.server.routers.pages.approved_visual_inventory', return_value=_inventory()),
+        patch('novel_to_comic.server.routers.pages.approved_reference_files', return_value=files),
+        patch('novel_to_comic.stages.s5_plan.approved_visual_inventory', return_value=_inventory()),
+        patch('novel_to_comic.stages.s5_plan.approved_reference_files', return_value=files),
+    ):
+        response = TestClient(app).get('/pages/generate/estimate')
+        assert response.status_code == 200
+        assert response.json() == expected
+        assert estimate_cost(config, tmp_path, None) == pytest.approx(
+            estimate_draw_api_cost(config, 0, compiled=compiled),
+        )
+
+
+@pytest.fixture(autouse=True)
+def reviewed_story_precondition(monkeypatch):
+    # This suite tests rendering/credit contracts with deliberately partial
+    # upstream fixtures. Real missing/stale review admission is tested in
+    # test_narrative_review.py.
+    monkeypatch.setattr("novel_to_comic.server.routers.pages.require_draw_narrative_reviews", lambda target: None)
+    monkeypatch.setattr("novel_to_comic.narrative_review.require_draw_narrative_reviews", lambda target: None)

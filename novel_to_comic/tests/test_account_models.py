@@ -115,7 +115,11 @@ def test_catalog_matches_exact_gateway_and_pricing_routes(client):
     assert aliases["deepseek-v4.1-flash"] == "openrouter/deepseek/deepseek-v4.1-flash"
     catalog = client.get("/api/account/model-settings").json()
     assert {model["id"] for model in catalog["models"] if model["funding"] == "api"} <= aliases.keys()
+    assert [stage["id"] for stage in catalog["stages"]] == [
+        "extract", "brief", "prompt", "image", "adapt", "plan", "draw", "ocr", "visual_review",
+    ]
     for stage in catalog["stages"]:
+        assert stage["description"]
         assert catalog["selections"][stage["id"]] in stage["model_ids"]
 
 
@@ -161,7 +165,8 @@ def test_explicit_codex_models_route_without_shadowing_api(client, tmp_path, mon
     payload = response.json()
     assert payload["codex_enabled"] is True
     assert payload["funding"] == "mixed"
-    assert any("Adaptation and planning" in warning for warning in payload["warnings"])
+    assert payload["warnings"] == []
+    assert "funding_groups" not in payload
     assert codex_dev.route_for("text", selection).reasoning_model == "gpt-5.6-terra"
     assert codex_dev.route_for("text", "gpt-5.6-terra") is None
     assert account_config(Config(), tmp_path, "alice").adapt_model == selection
@@ -202,13 +207,12 @@ def test_model_allowlist_cannot_be_extended_by_project_environment(client, monke
     assert client.patch("/api/account/model-settings", json={"selections": {"adapt": "codex-dev/text/gpt-invented"}}).status_code == 400
 
 
-def test_explicit_codex_choices_preserve_mixed_job_admission(client, tmp_path, monkeypatch):
+def test_explicit_codex_choices_allow_mixed_jobs(client, tmp_path, monkeypatch):
     from novel_to_comic.server.codex_admission import admit_stage_action
     enable_codex(monkeypatch)
     selected = "codex-dev/text/gpt-5.6-luna"
     update_selections(tmp_path, "alice", {"adapt": selected})
-    with pytest.raises(codex_dev.CodexRoutingError, match="mix"):
-        admit_stage_action(account_config(Config(), tmp_path, "alice"), "adapt")
+    assert admit_stage_action(account_config(Config(), tmp_path, "alice"), "adapt") == "api"
     update_selections(tmp_path, "alice", {"plan": selected})
     assert admit_stage_action(account_config(Config(), tmp_path, "alice"), "adapt") == "codex_subscription"
 
@@ -249,14 +253,13 @@ def test_creation_validates_project_choices_and_routes(client, tmp_path, selecti
         creation_config({'dev_model_selections': selections}, tmp_path, 'alice')
 
 
-def test_project_codex_overrides_preserve_funding_gate(client, tmp_path, monkeypatch):
+def test_project_codex_overrides_allow_mixed_jobs(client, tmp_path, monkeypatch):
     from novel_to_comic.server.account_models import creation_config
     from novel_to_comic.server.codex_admission import admit_stage_action
     enable_codex(monkeypatch)
     model = 'codex-dev/text/gpt-5.5'
     config = creation_config({'dev_model_selections': {'adapt': model}}, tmp_path, 'alice')
-    with pytest.raises(codex_dev.CodexRoutingError, match='mix'):
-        admit_stage_action(config, 'adapt')
+    assert admit_stage_action(config, 'adapt') == 'api'
     config = creation_config({'dev_model_selections': {'adapt': model, 'plan': model}}, tmp_path, 'alice')
     assert admit_stage_action(config, 'adapt') == 'codex_subscription'
 
@@ -312,3 +315,97 @@ def test_creation_endpoints_persist_dev_choices_or_reject(client, tmp_path, monk
     loaded, _ = load_config(tmp_path / 'alice' / 'novel')
     assert loaded.dev_model_selections == selections
     assert account_config(loaded, tmp_path, 'alice').adapt_model == 'gpt-5.6-luna'
+
+
+@pytest.mark.parametrize("model,expected_cost", [
+    ("gpt-6-astra", 0.06),
+    ("claude-fable-5-1", 0.06),
+    ("claude-opus-5", 0.03),
+])
+def test_premium_models_select_independently_with_known_pricing(client, tmp_path, model, expected_cost):
+    from novel_to_comic.model_costs import PricingResolver
+    from novel_to_comic.server.codex_admission import admit_stage_action
+
+    response = client.patch("/api/account/model-settings", json={"selections": {"adapt": model}})
+    assert response.status_code == 200
+    config = account_config(Config(), tmp_path, "alice")
+    assert config.adapt_model == model
+    assert config.plan_model == "gpt-5.6-terra"
+    assert admit_stage_action(config, "adapt") == "api"
+    cost = PricingResolver().calculate(model_alias=model, operation="text", input_tokens=1000, output_tokens=1000)
+    assert cost.cost_usd == pytest.approx(expected_cost)
+
+
+def test_linked_subscription_stages_can_select_different_models(client, tmp_path, monkeypatch):
+    from novel_to_comic.server.codex_admission import admit_stage_action
+
+    enable_codex(monkeypatch)
+    update_selections(tmp_path, "alice", {
+        "adapt": "codex-dev/text/gpt-6-astra",
+        "plan": "codex-dev/text/gpt-5.6-luna",
+    })
+    assert admit_stage_action(account_config(Config(), tmp_path, "alice"), "adapt") == "codex_subscription"
+
+
+@pytest.fixture
+def project_settings(client, tmp_path):
+    from novel_to_comic.server.deps import get_project
+    from novel_to_comic.server.routers.config import router as config_router
+
+    project = tmp_path / "alice" / "novel"
+    project.mkdir(parents=True)
+    save_config(Config(dev_model_selections={"plan": "gpt-5.6-luna"}), project)
+    client.app.include_router(config_router, prefix="/api/projects/{project_id}/config")
+    client.app.dependency_overrides[get_project] = lambda: (
+        project, account_config(load_config(project)[0], tmp_path, "alice"), None,
+    )
+    return project
+
+
+def test_existing_project_models_update_and_reset_to_account(client, tmp_path, project_settings):
+    update_selections(tmp_path, "alice", {"adapt": "deepseek-v4.1-flash"})
+    snapshot = account_config(load_config(project_settings)[0], tmp_path, "alice")
+    response = client.patch("/api/projects/novel/config/", json={
+        "dev_model_selections": {"adapt": "claude-opus-5", "plan": "gpt-5.6-luna"},
+    })
+    assert response.status_code == 200
+    assert response.json()["adapt_model"] == "claude-opus-5"
+    assert load_config(project_settings)[0].dev_model_selections == {"adapt": "claude-opus-5", "plan": "gpt-5.6-luna"}
+    assert snapshot.adapt_model == "deepseek-v4.1-flash"
+    assert read_selections(tmp_path, "alice")["adapt"] == "deepseek-v4.1-flash"
+    response = client.patch("/api/projects/novel/config/", json={"dev_model_selections": {}})
+    assert response.status_code == 200
+    assert response.json()["adapt_model"] == "deepseek-v4.1-flash"
+    assert response.json()["plan_model"] == "gpt-5.6-terra"
+    assert load_config(project_settings)[0].dev_model_selections == {}
+
+
+@pytest.mark.parametrize("selections", [None, [], {"adapt": "unknown"}, {"draw": "gpt-6-astra"}])
+def test_project_model_validation_is_atomic(client, project_settings, selections):
+    before = (project_settings / "config.yaml").read_bytes()
+    response = client.patch("/api/projects/novel/config/", json={"dev_model_selections": selections, "target_language": "fr"})
+    assert response.status_code == 400
+    assert (project_settings / "config.yaml").read_bytes() == before
+
+
+def test_project_model_changes_require_dev_gate(client, project_settings, monkeypatch):
+    monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType({**codex_dev._PROCESS, "CANARY_ENV": "production"}))
+    before = (project_settings / "config.yaml").read_bytes()
+    response = client.patch("/api/projects/novel/config/", json={"dev_model_selections": {}})
+    assert response.status_code == 403
+    assert (project_settings / "config.yaml").read_bytes() == before
+
+
+def test_existing_edition_allows_text_changes_but_not_draw_model_changes(client, project_settings):
+    from novel_to_comic.target_artifacts import TargetArtifacts
+
+    edition = TargetArtifacts(project_settings).book_edition_path
+    edition.parent.mkdir(parents=True, exist_ok=True)
+    edition.write_text("{}")
+    response = client.patch("/api/projects/novel/config/", json={"dev_model_selections": {"adapt": "gpt-6-astra"}})
+    assert response.status_code == 200
+    before = (project_settings / "config.yaml").read_bytes()
+    response = client.patch("/api/projects/novel/config/", json={"dev_model_selections": {"draw": "image-flare", "adapt": "claude-opus-5"}})
+    assert response.status_code == 409
+    assert "new edition" in response.json()["detail"]
+    assert (project_settings / "config.yaml").read_bytes() == before

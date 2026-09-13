@@ -17,7 +17,7 @@ pages from novels through an eight-stage Python/FastAPI and React application.
 See [stage contracts](stage-contracts.md) for authority, recovery, and validation.
 Use [documentation policy](../README.md) to resolve source status and
 [the glossary](../../CONTEXT.md) for unfamiliar terms; read only relevant sections.
-ADRs 0003–0015 record the full-page architecture; historical panel plans are not
+ADRs 0003–0016 record the full-page architecture; historical panel plans are not
 implementation instructions.
 The optional local [Codex adapter guide](codex-dev-capabilities.md) distinguishes
 process routing/funding controls from scoped live evidence, including experimental Draw.
@@ -85,6 +85,13 @@ process routing/funding controls from scoped live evidence, including experiment
 - Marketing must describe the actual workflow without quality/time guarantees.
   No finished-page showcase was added: the available asset was unsuitable.
 
+Narrative length is advisory: Plan can finish below or above the Brief target
+without changing its metadata. `narrative_review.py` owns source/page editorial
+review and versioned content-bound evidence. Adapt/Plan publication and new Draw
+spend require successful review; older unreviewed artifacts need rerunning their
+owning stages. Silence and beat concentration trigger assessment, not automatic
+word or page quotas. Review is metered text work and not a quality guarantee.
+
 ## Prompt and reference authority
 
 - Extract classifies private character/scene evidence as `direct_action`,
@@ -112,6 +119,9 @@ process routing/funding controls from scoped live evidence, including experiment
   anatomy/state. Character calibration is a distinct text-free lineup of
   canonical subjects in anatomy-appropriate postures, not invented human adults
   or a page-style sample; it supplies rendering evidence only.
+  Sunburst alone bypasses that shared lineup after observed identity copying;
+  all its characters/states use the same approved proof, required before
+  generation. Other models retain calibration against per-species style drift.
 - Location state plates live at `plates/{location}/states/{state}.png`;
   instructions and lineage remain location-scoped. No old-artifact migration.
 - Provider wire v3 and current profiles are a breaking cutover; local Codex uses

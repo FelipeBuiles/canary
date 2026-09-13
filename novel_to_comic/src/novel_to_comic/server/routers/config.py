@@ -1,10 +1,11 @@
 """Config view and edit."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from novel_to_comic.config import LANGUAGE_NAMES, image_model_aliases, save_config
 
 from ..deps import get_project
+from ..auth import get_current_user
 
 router = APIRouter()
 
@@ -42,7 +43,7 @@ def get_config(project=Depends(get_project)):
 
 
 @router.patch("/")
-def update_config(body: dict, project=Depends(get_project)):
+def update_config(body: dict, request: Request, project=Depends(get_project), user_id: str = Depends(get_current_user)):
     project_dir, config, state = project
 
     # Reject attempts to set API keys via the web UI
@@ -51,9 +52,30 @@ def update_config(body: dict, project=Depends(get_project)):
             raise HTTPException(400, f"Cannot set '{key}' via the web UI. Use .env or environment variables.")
 
     from novel_to_comic.model_catalog import STAGE_FIELDS
-    forbidden = set(STAGE_FIELDS.values()) | {"quality_preset", "image_provider", "fallback_image_model", "dev_model_selections"}
+    forbidden = set(STAGE_FIELDS.values()) | {"quality_preset", "image_provider", "fallback_image_model"}
     if forbidden.intersection(body):
-        raise HTTPException(400, "Use account settings, or select project models when creating a local development project.")
+        raise HTTPException(400, "Use dev_model_selections for local project model choices.")
+
+    # Work on a new snapshot; a rejected edit must not affect running jobs.
+    config = config.model_copy(deep=True)
+    if "dev_model_selections" in body:
+        from ..account_models import account_config, model_settings_enabled
+        from novel_to_comic.model_catalog import validate_selections
+
+        if not model_settings_enabled():
+            raise HTTPException(403, "Project model choices require local development mode.")
+        previous_draw_model = config.draw_model
+        try:
+            # Replace the override map: omitted stages inherit account settings.
+            config.dev_model_selections = validate_selections(body["dev_model_selections"])
+            config = account_config(config, request.app.state.projects_dir, user_id)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        if config.draw_model != previous_draw_model:
+            from novel_to_comic.target_artifacts import TargetArtifacts
+
+            if TargetArtifacts(project_dir).book_edition_path.exists():
+                raise HTTPException(409, "Changing the Draw model requires a new edition or project. Other model choices can still be updated.")
 
     # Apply updates
     for key, value in body.items():
