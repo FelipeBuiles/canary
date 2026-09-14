@@ -142,11 +142,7 @@ def test_project_credentials_are_not_reachable_as_assets(tmp_path: Path):
         assert response.status_code == 403, secret
 
 
-def test_a_page_render_is_cacheable_forever(tmp_path: Path):
-    # The book reader pages through a whole book off the bytes the Panels grid
-    # already fetched. That only holds if a render revision — which is
-    # immutable, corrections write a new revision — is cached without
-    # revalidation. Private: renders belong to one user's project.
+def test_a_page_render_revalidates_across_edition_restarts(tmp_path: Path):
     client, project_dir = _client(tmp_path)
     render = TargetArtifacts(project_dir).render_path(1, 1)
     render.parent.mkdir(parents=True)
@@ -157,11 +153,11 @@ def test_a_page_render_is_cacheable_forever(tmp_path: Path):
     assert response.status_code == 200
     assert response.content == b"page-one-render"
     assert response.headers["cache-control"] == (
-        "private, max-age=31536000, immutable"
+        "private, no-cache"
     )
 
 
-def test_a_page_render_preview_is_a_small_immutable_webp(tmp_path: Path):
+def test_a_page_render_preview_is_a_small_revalidated_webp(tmp_path: Path):
     client, project_dir = _client(tmp_path)
     render = TargetArtifacts(project_dir).render_path(1, 1)
     render.parent.mkdir(parents=True)
@@ -174,7 +170,7 @@ def test_a_page_render_preview_is_a_small_immutable_webp(tmp_path: Path):
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/webp"
     assert response.headers["cache-control"] == (
-        "private, max-age=31536000, immutable"
+        "private, no-cache"
     )
     with Image.open(io.BytesIO(response.content)) as preview:
         assert preview.format == "WEBP"
@@ -248,3 +244,26 @@ def test_pages_route_rejects_legacy_hash_and_requests_replanning(
 
     assert response.status_code == 409
     assert "Rerun Plan" in response.text
+
+
+def test_restarted_edition_serves_new_art_at_reused_revision(tmp_path: Path):
+    import shutil
+
+    client, project_dir = _client(tmp_path)
+    target = TargetArtifacts(project_dir)
+    url = "/api/projects/demo/pages/1/renders/1/preview/thumbnail?delivery=2"
+
+    def write_image(color):
+        render = target.render_path(1, 1)
+        render.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (40, 60), color).save(render, "PNG")
+
+    write_image("navy")
+    old = client.get(url)
+    # Adapt/Plan restart removes the prior edition, including derived previews.
+    shutil.rmtree(project_dir / "draw")
+    write_image("red")
+    current = client.get(url)
+    assert old.status_code == current.status_code == 200
+    assert old.content != current.content
+    assert current.headers["cache-control"] == "private, no-cache"

@@ -26,7 +26,7 @@ from novel_to_comic.ai.context import (
     current_ai_request_context,
     current_stream_observer,
 )
-from novel_to_comic.ai.errors import AIRefusalError, AITransportError
+from novel_to_comic.ai.errors import AIEmptyResponseError, AIRefusalError, AITransportError
 from novel_to_comic.ai.finalisation import (
     begin_image_call,
     finalise_image_cancelled,
@@ -71,12 +71,13 @@ _MAX_RETRIES = 3
 _READ_TIMEOUT = 600.0
 _STREAM_TOTAL_TIMEOUT = 1800.0
 # Keepalive comments and empty chunks reset the per-chunk read timeout, so a
-# gateway that accepts the request but never produces content would otherwise
-# ride the total budget. Bound the wait for the *first content* separately —
+# gateway that accepts the request but never produces output would otherwise
+# ride the total budget. Bound inactivity before the first answer separately —
 # above _READ_TIMEOUT, so this only fires when non-content bytes are actively
 # masking a stall. Time-to-first-content is legitimately long here: an observed
 # adapt treatment call spent ~520s before emitting just 2k output tokens, so a
-# bound under the read timeout would kill healthy requests.
+# bound under the read timeout would kill healthy requests. Actual reasoning
+# deltas count as generation progress, but never as the requested answer.
 _STREAM_FIRST_CONTENT_TIMEOUT = 900.0
 
 
@@ -330,6 +331,24 @@ def _chunk_content_length(chunk: dict[str, Any]) -> int:
     return len(content) if isinstance(content, str) else 0
 
 
+def _chunk_has_reasoning(chunk: dict[str, Any]) -> bool:
+    """Recognize substantive LiteLLM/OpenRouter reasoning, not role/keepalive events."""
+    choices = chunk.get("choices") or []
+    if not choices:
+        return False
+    delta = choices[0].get("delta") or {}
+    if any(isinstance(delta.get(key), str) and delta[key].strip()
+           for key in ("reasoning_content", "reasoning")):
+        return True
+    details = delta.get("reasoning_details")
+    return isinstance(details, list) and any(
+        isinstance(detail, dict) and any(
+            isinstance(detail.get(key), str) and detail[key].strip()
+            for key in ("text", "summary", "data")
+        ) for detail in details
+    )
+
+
 def _collapse_chat_chunks(chunks: list[dict[str, Any]]) -> dict[str, Any]:
     """Reassemble streamed deltas into a non-streaming chat-completion body."""
     collapsed: dict[str, Any] = {}
@@ -340,6 +359,10 @@ def _collapse_chat_chunks(chunks: list[dict[str, Any]]) -> dict[str, Any]:
     stop_details: dict[str, Any] | None = None
     usage: dict[str, Any] = {}
     for chunk in chunks:
+        if chunk.get("error") is not None:
+            # HTTP 200 only acknowledges stream headers. An error can be the
+            # first event or follow apparently complete JSON; never discard it.
+            collapsed.setdefault("error", chunk["error"])
         for field in _STREAM_CARRIED_FIELDS:
             if chunk.get(field) is not None and field not in collapsed:
                 collapsed[field] = chunk[field]
@@ -408,6 +431,13 @@ async def _read_chat_stream(
         dropped = 0
         opened = time.perf_counter()
         first_content_at: float | None = None
+        last_progress_at = opened
+        reasoning_events = 0
+        stream_identity = (
+            f"event_id={headers.get('X-Canary-AI-Event-ID', '-')} "
+            f"model={payload.get('model', '-')} "
+            f"scope={current_ai_request_context().source_scope or '-'}"
+        )
         # `data:` lines accumulate until they parse, or until a blank line ends
         # the event. Dispatching as soon as the payload is valid JSON handles the
         # usual one-object-per-line shape even from a server that omits the
@@ -428,7 +458,7 @@ async def _read_chat_stream(
 
         def dispatch(blob: str) -> bool:
             """Consume one complete data payload; False if it isn't valid yet."""
-            nonlocal streamed_chars, first_content_at
+            nonlocal streamed_chars, first_content_at, last_progress_at, reasoning_events
             if not blob or blob == "[DONE]":
                 return True
             try:
@@ -439,10 +469,19 @@ async def _read_chat_stream(
                 return False
             chunks.append(chunk)
             content_chars = _chunk_content_length(chunk)
+            has_reasoning = _chunk_has_reasoning(chunk)
+            if content_chars or has_reasoning:
+                last_progress_at = time.perf_counter()
+            if has_reasoning:
+                reasoning_events += 1
+                if reasoning_events == 1:
+                    logger.info("Stream first reasoning after %.1fs %s",
+                                last_progress_at - opened, stream_identity)
             if content_chars and first_content_at is None:
-                first_content_at = time.perf_counter()
+                first_content_at = last_progress_at
                 logger.info(
-                    "Stream first content after %.1fs", first_content_at - opened
+                    "Stream first content after %.1fs (%d reasoning events) %s",
+                    first_content_at - opened, reasoning_events, stream_identity,
                 )
             streamed_chars += content_chars
             notify(streamed_chars)
@@ -470,25 +509,27 @@ async def _read_chat_stream(
                         if dispatch("\n".join(event_data)):
                             event_data.clear()
                     elif line.startswith(":"):
-                        continue  # SSE comment / keepalive
+                        pass  # Keepalives must still pass the inactivity check.
                     else:
                         raw.append(line)
                     if (
                         first_content_at is None
-                        and time.perf_counter() - opened
+                        and time.perf_counter() - last_progress_at
                         > _STREAM_FIRST_CONTENT_TIMEOUT
                     ):
                         raise httpx.ReadTimeout(
-                            "no content in the first "
-                            f"{_STREAM_FIRST_CONTENT_TIMEOUT:.0f}s of the stream "
-                            f"({len(chunks)} non-content events received)",
+                            "no answer or reasoning progress for "
+                            f"{_STREAM_FIRST_CONTENT_TIMEOUT:.0f}s before first content "
+                            f"({len(chunks)} events, {reasoning_events} reasoning events); "
+                            + stream_identity,
                             request=response.request,
                         )
                 end_event()
         except TimeoutError as exc:
             raise httpx.ReadTimeout(
                 f"stream exceeded its {_STREAM_TOTAL_TIMEOUT:.0f}s total budget "
-                f"({streamed_chars} chars received)",
+                f"({streamed_chars} answer chars, {reasoning_events} reasoning events); "
+                + stream_identity,
                 request=response.request,
             ) from exc
         if dropped:
@@ -504,12 +545,14 @@ async def _read_chat_stream(
                 buffered = json.loads("".join(raw))
             except ValueError:
                 buffered = None
-            if isinstance(buffered, dict) and buffered.get("choices"):
+            if isinstance(buffered, dict) and (buffered.get("choices") or buffered.get("error") is not None):
                 return buffered, response
         collapsed = _collapse_chat_chunks(chunks)
         # Carried so a downstream JSON parse failure can say whether the text
         # arrived intact. Private prefix: not a provider field.
-        collapsed["_canary_stream"] = {"events": len(chunks), "dropped": dropped}
+        collapsed["_canary_stream"] = {
+            "events": len(chunks), "dropped": dropped, "reasoning_events": reasoning_events,
+        }
         return collapsed, response
 
 
@@ -889,6 +932,41 @@ def _gateway_transport_error(
     )
 
 
+def _text_response_error(data, *, model, feature, event_id, response, empty=False):
+    """Retain bounded failure evidence without copying story or reasoning text."""
+    choice = (data.get("choices") or [{}])[0]
+    error = data.get("error")
+    diagnostics = {
+        "event_id": event_id, "feature": feature, "model": model,
+        "source_scope": current_ai_request_context().source_scope,
+        "provider_response_id": data.get("id"),
+        "finish_reason": choice.get("finish_reason"),
+        "stream": data.get("_canary_stream"),
+    }
+    if isinstance(error, dict):
+        diagnostics["provider_error"] = {
+            key: " ".join(str(error[key]).split())[:800]
+            for key in ("code", "type", "message") if error.get(key) is not None
+        }
+    elif error is not None:
+        diagnostics["provider_error"] = {"message": " ".join(str(error).split())[:800]}
+    usage = data.get("usage") or {}
+    if usage:
+        diagnostics["completion_tokens"] = usage.get("completion_tokens")
+    error_type = AIEmptyResponseError if empty else AITransportError
+    description = "Empty text response" if empty else "Provider text response failed"
+    return error_type(
+        f"{description} for {feature} (model={model}, "
+        f"source_scope={diagnostics['source_scope']!r}, "
+        f"finish_reason={diagnostics['finish_reason']!r}, "
+        f"event_id={event_id}): "
+        + json.dumps({k: v for k, v in diagnostics.items()
+                      if k in {"provider_error", "stream", "completion_tokens"}}, ensure_ascii=False),
+        phase="empty_response" if empty else "provider_response",
+        response=response, diagnostics=diagnostics,
+    )
+
+
 def _error_json(
     exc: BaseException | None = None, response: httpx.Response | None = None
 ) -> dict[str, Any]:
@@ -905,6 +983,8 @@ def _error_json(
         payload["exception"] = type(exc).__name__
         if isinstance(exc, AIRefusalError) and exc.diagnostics:
             payload["refusal_diagnostics"] = exc.diagnostics
+        if isinstance(exc, AITransportError) and exc.diagnostics:
+            payload["transport_diagnostics"] = exc.diagnostics
         if getattr(exc, "phase", None) == "ambiguous_submission":
             payload["phase"] = "ambiguous_submission"
     return payload
@@ -1496,20 +1576,32 @@ async def generate_structured_object(
     last_exc: json.JSONDecodeError | None = None
     last_text: str = ""
     prior_usage: list[UsageRecord] = []
+    empty_retried = False
     max_parse_retries = _JSON_PARSE_MAX_RETRIES if retry_invalid_json else 0
     for attempt in range(max_parse_retries + 1):
-        data = await _chat_completion(
-            config=config,
-            model=model,
-            system_prompt=system_prompt,
-            user_content=attempt_user_content,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-            json_mode=True,
-            json_schema=json_schema,
-            feature=feature,
-            image_attachments=image_attachments,
-        )
+        try:
+            data = await _chat_completion(
+                config=config,
+                model=model,
+                system_prompt=system_prompt,
+                user_content=attempt_user_content,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+                json_mode=True,
+                json_schema=json_schema,
+                feature=feature,
+                image_attachments=image_attachments,
+            )
+        except AIEmptyResponseError as exc:
+            # Share the existing structured-recovery allowance, with at most
+            # one empty-answer retry. Durable raw-response recovery can opt out.
+            if empty_retried or attempt >= max_parse_retries:
+                raise
+            empty_retried = True
+            if exc.usage is not None:
+                prior_usage.append(exc.usage)
+            logger.warning("Retrying empty structured response once: %s", exc)
+            continue
         if response_sink is not None:
             response_sink(ApiResult(
                 value=data["text"],
@@ -1817,22 +1909,16 @@ async def _chat_completion(
                 event_id=event_id, response=response,
             )
         choice = (data.get("choices") or [{}])[0]
+        if data.get("error") is not None or str(choice.get("finish_reason") or "").lower() == "error":
+            raise _text_response_error(data, model=model, feature=feature,
+                                       event_id=event_id, response=response)
         text = (choice.get("message") or {}).get("content")
         if not text:
-            # Surface WHY it was empty so a safety block (finish_reason
-            # content_filter/SAFETY) is distinguishable from thinking-budget
-            # exhaustion (finish_reason length/MAX_TOKENS with high
-            # completion_tokens). Otherwise every cause looks identical in logs.
-            detail = f"finish_reason={choice.get('finish_reason')!r}"
-            feedback = data.get("prompt_feedback") or choice.get(
-                "content_filter_results"
-            )
-            if feedback:
-                detail += f", feedback={feedback!r}"
-            completion_tokens = (data.get("usage") or {}).get("completion_tokens")
-            if completion_tokens is not None:
-                detail += f", completion_tokens={completion_tokens}"
-            raise ValueError(f"Empty response from LiteLLM ({model}; {detail})")
+            # Output-cap exhaustion is not transient: another identical request
+            # cannot be assumed to help. Refusals were already handled above.
+            empty = str(choice.get("finish_reason") or "").lower() in {"", "stop"}
+            raise _text_response_error(data, model=model, feature=feature,
+                                       event_id=event_id, response=response, empty=empty)
         usage = (
             _codex_text_usage(event_id, model, route.reasoning_model, data.get("usage") or {})
             if route is not None else _extract_usage(data, event_id, model, operation, response.headers)
@@ -1903,11 +1989,14 @@ async def _chat_completion(
         raise
     except Exception as exc:
         usage = _codex_error_usage(event_id, model, route.reasoning_model, exc) if route else None
+        if route is None and data.get("usage"):
+            usage = _extract_usage(data, event_id, model, operation,
+                                   response.headers if response is not None else None)
         if route is not None:
             metadata["codex_runtime"] = getattr(exc, "metadata", None) or metadata.get("codex_runtime", {})
             if data.get("usage"):
                 usage = _codex_text_usage(event_id, model, route.reasoning_model, data["usage"])
-        if route is None and config.ai_bill_failed_requests == "estimate_all" and response is not None:
+        if usage is None and route is None and config.ai_bill_failed_requests == "estimate_all" and response is not None:
             usage = estimate_text_usage(
                 provider="litellm",
                 model=model,
@@ -1916,6 +2005,8 @@ async def _chat_completion(
                 output_text="",
                 call_id=event_id,
             )
+        if isinstance(exc, AIEmptyResponseError):
+            exc.usage = usage
         await _finalize_event_shielded(
             event_id=event_id,
             status="failed",
@@ -1923,6 +2014,7 @@ async def _chat_completion(
             model_alias=model,
             latency_ms=int((time.perf_counter() - started) * 1000),
             usage=usage,
+            response_data=data,
             error=exc,
             error_response=response,
             config=config,

@@ -37,8 +37,10 @@ export function getCompletePage(project: string, pageNumber: number): Promise<Co
   return apiFetch(`${projectPath(project)}/pages/${pageNumber}`);
 }
 
+// The delivery version bypasses previously year-cached URLs. The server now
+// requires revalidation because a restart can reuse a page/revision number.
 export function pageRenderUrl(project: string, pageNumber: number, revision: number): string {
-  return `/api${projectPath(project)}/pages/${pageNumber}/renders/${revision}`;
+  return `/api${projectPath(project)}/pages/${pageNumber}/renders/${revision}?delivery=2`;
 }
 
 export type PageRenderRendition = "thumbnail" | "reader";
@@ -49,7 +51,7 @@ export function pageRenderPreviewUrl(
   revision: number,
   rendition: PageRenderRendition,
 ): string {
-  return `/api${projectPath(project)}/pages/${pageNumber}/renders/${revision}/preview/${rendition}`;
+  return `/api${projectPath(project)}/pages/${pageNumber}/renders/${revision}/preview/${rendition}?delivery=2`;
 }
 
 export function analyzeCompletePage(

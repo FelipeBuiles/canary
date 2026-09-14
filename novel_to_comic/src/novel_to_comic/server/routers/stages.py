@@ -163,6 +163,19 @@ def get_stage_validation(stage: str, project=Depends(get_project)):
         raise _not_found(exc) from exc
 
 
+@router.get("/plan/review-draft")
+def get_plan_review_draft(project=Depends(get_project)):
+    project_dir, _config, _state = project
+    target = TargetArtifacts(project_dir)
+    try:
+        draft = target.read_plan_review_draft()
+        if draft.adaptation_sha256 != target.read_adaptation().content_sha256:
+            raise HTTPException(409, "The saved plan draft belongs to an older adaptation. Rerun Plan.")
+        return draft
+    except ArtifactMissing as exc:
+        raise _not_found(exc) from exc
+
+
 @router.get("/adaptation")
 def get_book_adaptation(project=Depends(get_project)):
     project_dir, _config, _state = project

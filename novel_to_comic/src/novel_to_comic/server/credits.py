@@ -197,8 +197,8 @@ def stage_cost_confidence(stage: str) -> CostConfidence:
         "brief": "usually_within_estimate",
         "style": "usually_within_estimate",
         "cast": "variable",
-        "adapt": "usually_within_estimate",
-        "plan": "usually_within_estimate",
+        "adapt": "variable",
+        "plan": "variable",
         "draw": "variable",
         "finish": "low_variance",
     }
@@ -236,6 +236,20 @@ def credit_estimate_for_provider_cost(
         confidence=stage_cost_confidence(stage),
         funding=funding,
     )
+
+
+def estimate_adaptation_restart(config: Config, project_dir: Path, state: PipelineState) -> CreditEstimate:
+    """Quote a new Adapt attempt, without credit for saved drafts or responses.
+
+    Plan is estimated separately once the replacement script exists.
+    """
+    from novel_to_comic.stages.s4_adapt import estimate_cost
+
+    funding = classify_operations(stage_operations(config, "adapt"))
+    cost = 0.0 if mock_mode_active(config) or funding == "codex_subscription" else estimate_cost(
+        config, project_dir, state, fresh=True,
+    )
+    return credit_estimate_for_provider_cost(cost, "adapt", reserve=True, funding=funding)
 
 
 def estimate_stage_credit_breakdown(

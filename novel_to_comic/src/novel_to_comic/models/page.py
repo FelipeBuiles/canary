@@ -182,6 +182,15 @@ class PlannedPageRevision(BaseModel):
     content_sha256: str = Field(min_length=64, max_length=64)
 
 
+class PlanReviewDraft(BaseModel):
+    """Structurally valid pages awaiting a narrative decision, never Draw authority."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    adaptation_sha256: str = Field(min_length=64, max_length=64)
+    rhythm_summary: str
+    pages: tuple[ComicPage, ...] = Field(min_length=1)
+
+
 class BookPlan(RevisionedArtifact):
     """The ordered manifest for Plan-owned canonical pages."""
 

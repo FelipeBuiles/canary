@@ -353,11 +353,10 @@ def test_ocr_sweep_order_alone_is_an_editorial_issue_not_a_blocking_failure(
     ]
 
 
-def test_ocr_invariant_failures_become_page_issues_that_gate_book(
+def test_ocr_differences_become_advisory_page_issues(
     tmp_path: Path,
 ) -> None:
-    # Without this the failure lives only in the derived analysis, and Continue
-    # to Book stays enabled on a page whose lettering is provably wrong.
+    # Transcription differences are reviewable suggestions, not proven defects.
     artifacts = TargetArtifacts(tmp_path)
     analysis = _analyze(
         page=_page(),
@@ -369,7 +368,8 @@ def test_ocr_invariant_failures_become_page_issues_that_gate_book(
     recorded = record_analysis_issues(artifacts, analysis)
 
     assert [issue.issue_type for issue in recorded] == ["missing_lettering"]
-    assert all(issue.classification == "invariant_failure" for issue in recorded)
+    assert all(issue.classification == "editorial_issue" for issue in recorded)
+    assert all(not issue.requires_resolution for issue in recorded)
     assert any(
         evidence.startswith("expected_text=")
         for evidence in recorded[0].evidence
@@ -379,8 +379,8 @@ def test_ocr_invariant_failures_become_page_issues_that_gate_book(
         for evidence in recorded[0].evidence
     )
     summary = summarize_page_issues(artifacts, page_number=34)
-    assert summary.blocking_issue_ids == (recorded[0].id,)
-    assert summary.can_continue is False
+    assert summary.blocking_issue_ids == ()
+    assert summary.can_continue is True
     # Re-analysing the same immutable render must not duplicate the issue.
     assert record_analysis_issues(artifacts, analysis) == ()
 
@@ -748,7 +748,7 @@ def test_cached_current_validation_reconciles_issues_after_interruption(tmp_path
             page=_page(), render=_render(), artifacts=artifacts,
         )
     assert artifacts.read_analysis(34, 1).validator_version == "post-interruption-validator"
-    assert summarize_page_issues(artifacts).can_continue is False
+    assert summarize_page_issues(artifacts).can_continue is True
     monkeypatch.setattr(page_review, "record_analysis_issues", reconcile)
     retried = page_review.revalidate_cached_page_render(
         page=_page(), render=_render(), artifacts=artifacts,

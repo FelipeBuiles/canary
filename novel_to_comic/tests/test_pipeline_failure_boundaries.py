@@ -10,6 +10,7 @@ from novel_to_comic.server.credited_job import CreditReservationDenied
 from novel_to_comic.server.event_channel import EventChannel
 from novel_to_comic.server.routers import pipeline
 from novel_to_comic.state import PipelineState, StageState, StageStatus, load_state, save_state
+from novel_to_comic.target_artifacts import TargetArtifacts
 
 
 def run_async(test):
@@ -88,3 +89,127 @@ async def test_missing_style_rejects_rerun_without_reset(tmp_path, monkeypatch):
     assert denied.value.status_code == 403
     assert artifact.exists()
     assert (tmp_path / "state.json").read_bytes() == before
+
+
+def adaptation_work(tmp_path):
+    state, _ = existing_project(tmp_path)
+    state.stages["cast"] = StageState(status=StageStatus.COMPLETE)
+    state.stages["adapt"] = StageState(status=StageStatus.FAILED, error="narrative_review_padding")
+    state.stages["plan"] = StageState(status=StageStatus.COMPLETE)
+    save_state(state, tmp_path)
+    paths = ["adapt/failed_candidate.json", "plan/book.json", "draw/page.png", "exports/book.pdf",
+             ".checkpoints/adapt/responses/old.json", ".checkpoints/adapt/work/budget.json",
+             ".checkpoints/plan/work/budget.json"]
+    upstream = ["source/source.json", "brief/adaptation_brief.json", "samples/style.png",
+                "refs/character.png", "story_changes/directive_adapt.json"]
+    for name in paths + upstream:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(name)
+    return state, paths, upstream
+
+
+@run_async
+@pytest.mark.parametrize("rerun", [False, True])
+async def test_adapt_restart_archives_only_after_hold_and_resume_keeps_work(tmp_path, monkeypatch, rerun):
+    state, paths, upstream = adaptation_work(tmp_path)
+    before = (tmp_path / "state.json").read_bytes()
+
+    async def credited(**kwargs):
+        assert kwargs["fresh_adaptation"] is rerun
+        assert all((tmp_path / path).exists() for path in paths)
+        await kwargs["run"]()
+        return "held-job"
+
+    async def run(stage, config, project_dir, active_state, queue):
+        assert stage == "adapt"
+        assert all((tmp_path / path).exists() is not rerun for path in paths)
+        assert all((tmp_path / path).read_text() == path for path in upstream)
+        assert active_state.stages["plan"].status == (StageStatus.PENDING if rerun else StageStatus.COMPLETE)
+        # Stop here without invoking providers or auto-chaining.
+        active_state.stages[stage].status = StageStatus.FAILED
+
+    monkeypatch.setattr(pipeline, "run_credited_stage", credited)
+    monkeypatch.setattr(pipeline, "_run_stage", run)
+    monkeypatch.setattr(pipeline, "capture_server_event", lambda *args, **kwargs: None)
+    await pipeline._run_stage_with_credits("adapt", Config(), tmp_path, state, EventChannel(), "account", "book", rerun=rerun)
+    archives = list((tmp_path / ".checkpoints/restarts").glob("*"))
+    assert len(archives) == int(rerun)
+    if rerun:
+        assert (archives[0] / "state.json").read_bytes() == before
+        assert all((archives[0] / path).read_text() == path for path in paths)
+
+
+@run_async
+async def test_adapt_restart_credit_race_preserves_checkpoints(tmp_path, monkeypatch):
+    state, paths, _ = adaptation_work(tmp_path)
+    before = (tmp_path / "state.json").read_bytes()
+
+    async def reject(**kwargs):
+        raise CreditReservationDenied("Insufficient credits")
+
+    monkeypatch.setattr(pipeline, "run_credited_stage", reject)
+    monkeypatch.setattr(pipeline, "capture_server_event", lambda *args, **kwargs: None)
+    await pipeline._run_stage_with_credits("adapt", Config(), tmp_path, state, EventChannel(), "account", "book", rerun=True)
+    assert all((tmp_path / path).read_text() == path for path in paths)
+    assert (tmp_path / "state.json").read_bytes() == before
+    assert not (tmp_path / ".checkpoints/restarts").exists()
+
+
+def test_adapt_archive_failure_restores_moved_work(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    _, paths, upstream = adaptation_work(tmp_path)
+    rename = Path.rename
+
+    def fail_midway(path, destination):
+        if path == tmp_path / "plan":
+            raise OSError("Archive unavailable")
+        return rename(path, destination)
+
+    monkeypatch.setattr(Path, "rename", fail_midway)
+    with pytest.raises(OSError, match="Archive unavailable"):
+        TargetArtifacts(tmp_path).archive_adaptation_work()
+    assert all((tmp_path / path).read_text() == path for path in paths + upstream)
+    assert not list((tmp_path / ".checkpoints/restarts").iterdir())
+
+
+@run_async
+async def test_adapt_restart_estimate_ignores_saved_draft_and_old_plan(tmp_path, monkeypatch):
+    from novel_to_comic.stages import s4_adapt
+
+    state, _, _ = adaptation_work(tmp_path)
+    calls = []
+
+    def fresh_cost(config, project_dir, active_state, *, fresh=False):
+        calls.append(fresh)
+        return 2.0 if fresh else 0.0
+
+    monkeypatch.setattr(s4_adapt, "estimate_cost", fresh_cost)
+    monkeypatch.setattr("novel_to_comic.server.credits.mock_mode_active", lambda config: False)
+    monkeypatch.setattr(pipeline.UnifiedCostResolver, "estimate_stage_cost", lambda *args: pytest.fail("Old plan must not enter fresh quote"))
+    result = await pipeline.estimate_stage_cost(None, "book", stage="adapt", rerun=True, project=(tmp_path, Config(), state), user_id="account")
+    assert calls == [True]
+    assert result["estimate_credits"] > 0
+    assert result["reserved_credits"] >= result["estimate_credits"]
+
+
+@pytest.mark.parametrize("case", ["current", "changed_page", "missing_request", "missing_page", "different_request"])
+def test_page_job_history_is_bound_to_current_frozen_input(tmp_path, case):
+    from .test_complete_page_draw import _compile, _page
+
+    target = TargetArtifacts(tmp_path)
+    compiled = _compile(tmp_path)
+    if case != "missing_page":
+        target.write_page(_page(visual_intent="A newly planned scene.") if case == "changed_page" else _page())
+    if case != "missing_request":
+        target.write_request(compiled.request, request_revision=1)
+    jobs = [{
+        "id": "old-or-current-job", "kind": "complete_page_draw", "status": "failed",
+        "payload": {"page_number": compiled.request.page_number,
+                    "request_sha256": "f" * 64 if case == "different_request" else compiled.request.request_sha256},
+    }, {"id": "cast-history", "kind": "character_reference", "status": "failed", "payload": {}}]
+    pipeline._mark_current_page_jobs(target, jobs)
+    assert jobs[0]["is_current_page"] is (case == "current")
+    assert jobs[0]["status"] == "failed"  # History is retained, not deleted or relabeled as successful.
+    assert "is_current_page" not in jobs[1]

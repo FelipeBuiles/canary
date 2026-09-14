@@ -1245,11 +1245,10 @@ def test_failed_page_correction_gets_new_retry_lineage(tmp_path: Path) -> None:
     )
 
 
-def test_draw_analyses_its_render_and_records_blocking_lettering_issues(
+def test_explicit_draw_analysis_records_advisory_lettering_issues(
     tmp_path: Path,
 ) -> None:
-    # Without this wiring no analysis artifact exists at all, and Finish blocks
-    # every page for missing OCR status.
+    # Explicit analysis remains available, but its suggestions do not gate export.
     artifacts = TargetArtifacts(tmp_path / "project")
     page = _page()
 
@@ -1288,7 +1287,8 @@ def test_draw_analyses_its_render_and_records_blocking_lettering_issues(
         "misspelled_lettering"
     ]
     issues = artifacts.read_issues(7)
-    assert [issue.classification for issue in issues] == ["invariant_failure"]
+    assert [issue.classification for issue in issues] == ["editorial_issue"]
+    assert not issues[0].requires_resolution
     assert issues[0].correction_owner == "draw"
 
 
@@ -1492,7 +1492,7 @@ def test_visual_review_route_compiles_current_authority_without_redrawing(tmp_pa
     assert artifacts.provenance_revisions(page.page_number) == (1,)
 
 
-def test_draw_estimate_is_read_only_and_includes_lettering_check(tmp_path: Path) -> None:
+def test_draw_estimate_is_read_only_and_excludes_optional_lettering_check(tmp_path: Path) -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from novel_to_comic.config import PAGE_OCR_ESTIMATED_COST_USD
@@ -1520,7 +1520,7 @@ def test_draw_estimate_is_read_only_and_includes_lettering_check(tmp_path: Path)
         response = client.get("/pages/7/generate/estimate?depiction=less_graphic")
         assert response.status_code == 200
         assert response.json() == dict(credit_estimate_for_provider_cost(
-            float(compiled.request.estimated_cost_usd) + float(PAGE_OCR_ESTIMATED_COST_USD),
+            float(compiled.request.estimated_cost_usd),
             "draw", reserve=True,
         ))
         assert response.json()["reserved_credits"] >= response.json()["estimate_credits"] > 0

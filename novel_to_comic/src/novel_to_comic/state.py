@@ -221,7 +221,8 @@ def fail_stage(
         s.required_credits = detail.get("required_credits")
         s.shortfall_credits = detail.get("shortfall_credits")
     else:
-        s.error_code = "model_refusal" if detail and detail.get("error") == "model_refusal" else None
+        s.error_code = (detail["error"] if detail and detail.get("error")
+                        in {"model_refusal", "generation_work_limit"} else None)
         s.balance_credits = None
         s.required_credits = None
         s.shortfall_credits = None

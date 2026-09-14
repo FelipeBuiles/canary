@@ -109,9 +109,7 @@ export function LetteringIssueCard({ issue }: { issue: PageIssue }) {
               ? "sage"
               : issue.status === "revised"
                 ? "gold"
-                : issue.classification === "invariant_failure"
-                  ? "red"
-                  : "gold"
+                : "gold"
           }
         >
           {t(
@@ -124,10 +122,12 @@ export function LetteringIssueCard({ issue }: { issue: PageIssue }) {
         </StatusPill>
         <p className="mt-3 font-body text-sm font-bold">{t(ocrIssueTitle(issue))}</p>
         <p className="mt-1 max-w-[62ch] font-body text-xs leading-5 text-ink-black/75">
-          {t("The text check compared this page with the approved script and found a difference.")}
+          {t("Possible wording difference. The checker can misread text; compare it with the saved artwork before making changes.")}
         </p>
       </div>
       {(expected || recognized) && (
+        <details>
+        <summary className="cursor-pointer py-2 font-meta text-xs font-bold">{t("Full text comparison")}</summary>
         <dl className="grid gap-2 font-body text-xs leading-5">
           {expected && (
             <div>
@@ -137,16 +137,17 @@ export function LetteringIssueCard({ issue }: { issue: PageIssue }) {
           )}
           {recognized && (
             <div>
-              <dt className="font-meta font-bold text-ink-muted">{t("FOUND ON PAGE")}</dt>
+              <dt className="font-meta font-bold text-ink-muted">{t("CHECKER READ")}</dt>
               <dd>{recognized.join(" · ") || t("No readable lettering found")}</dd>
             </div>
           )}
         </dl>
+        </details>
       )}
       {differences && changedCount > 0 && (
-        <div className="border-l-[3px] border-narrator-gold bg-chip-gold/40 px-3 py-2 font-body text-xs leading-5">
+        <div className="bg-chip-gold/40 px-3 py-2 font-body text-xs leading-5">
           <p className="font-meta font-bold text-ink-muted">
-            {t("EXACT DIFFERENCES")} · {changedCount}
+            {t("POSSIBLE DIFFERENCES")} · {changedCount}
           </p>
           <ul className="mt-2 space-y-2">
             {differences
@@ -175,7 +176,7 @@ export function LetteringIssueCard({ issue }: { issue: PageIssue }) {
         {t("Revision")} {issue.render_revision}
         {issue.resolution_revision ? ` → ${t("Revision")} ${issue.resolution_revision}` : ""}
         {" · "}
-        {issue.classification === "invariant_failure" ? t("Text check") : t("Visual finding")}
+        {t("Optional text review")}
       </p>
       {issue.dismissal_reason && (
         <p className="mt-2 font-body text-xs leading-5 text-ink-black/70">{issue.dismissal_reason}</p>

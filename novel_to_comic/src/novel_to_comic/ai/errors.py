@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import httpx
+
+if TYPE_CHECKING:
+    from novel_to_comic.usage import UsageRecord
 
 
 class AIRefusalError(RuntimeError):
@@ -35,7 +38,15 @@ class AITransportError(ValueError):
         *,
         phase: str,
         response: httpx.Response | None = None,
+        diagnostics: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.phase = phase
         self.response = response
+        self.diagnostics = diagnostics or {}
+
+
+class AIEmptyResponseError(AITransportError):
+    """A completed text request returned no answer and no explicit provider error."""
+
+    usage: UsageRecord | None = None

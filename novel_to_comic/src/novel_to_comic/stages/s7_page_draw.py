@@ -52,7 +52,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     )
     if not target.plan_path.exists():
         return 0.0
-    # Every generated page is read back; estimate each selected transport.
+    # Drawing estimates artwork only; text review is an explicit optional action.
     from novel_to_comic.page_drawing import (
         compile_page_generation_request,
         estimate_draw_api_cost, select_book_edition,

@@ -31,3 +31,19 @@ def test_classifies_common_panel_failures():
 
 def test_classifies_aspect_mismatch_without_relying_on_exception_text():
     assert classify_image_failure(ValueError("invalid image"), shape_mismatch=True) == "shape_mismatch"
+
+
+def test_classifies_openai_output_moderation_wrapped_by_gateway():
+    error = ValueError(
+        'AI gateway request failed for complete_page_draw: 400 Bad Request — '
+        'litellm.BadRequestError: OpenAIException - {"error": {'
+        '"code": "moderation_blocked", "moderation_details": {'
+        '"moderation_stage": "output", "categories": ["other"]}}}'
+    )
+    assert classify_image_failure(error) == "provider_blocked"
+
+
+def test_classifies_openai_policy_violation():
+    assert classify_image_failure(
+        ValueError('{"error": {"code": "content_policy_violation"}}')
+    ) == "provider_blocked"

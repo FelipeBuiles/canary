@@ -467,12 +467,7 @@ def record_analysis_issues(
     *,
     lettering_item_ids: tuple[str, ...] = (),
 ) -> tuple[PageIssue, ...]:
-    """Turn render-analysis evidence into the page issues that gate Book.
-
-    Without this, an OCR invariant failure lives only inside the derived
-    analysis: ``PageIssueSummary`` sees nothing open and Continue to Book stays
-    enabled on a page whose lettering is provably wrong.
-    """
+    """Record optional transcription suggestions without blocking Book."""
 
     recorded: list[PageIssue] = []
     current_ids = {
@@ -491,11 +486,10 @@ def record_analysis_issues(
     if retained != prior:
         artifacts.write_issues(analysis.page_number, retained)
     for result in (*analysis.invariant_failures, *analysis.editorial_issues):
-        invariant = result.kind == "invariant_failure"
         issue = PageIssue(
             id=f"page-issue-{result.id}",
             issue_type=result.code,
-            classification="invariant_failure" if invariant else "editorial_issue",
+            classification="editorial_issue",
             correction_kind="render_fidelity",
             correction_owner="draw",
             page_number=analysis.page_number,
@@ -504,8 +498,8 @@ def record_analysis_issues(
             requested_correction=(
                 "Review the page order visually if desired; no redraw is required."
                 if result.code == "unverified_lettering_order"
-                else f"{result.message} Render one corrected complete page whose visible "
-                "lettering matches the canonical ComicPage exactly."
+                else "Possible text difference. Compare the saved artwork with the script; "
+                "the checker may have misread it. Redraw only if the artwork needs a correction."
             ),
             lettering_item_ids=lettering_item_ids or result.artifact_ids,
             detected_region_ids=(),
@@ -559,6 +553,7 @@ def summarize_page_issues(
             for issue in issues
             if issue.status in {"open", "revised"}
             and issue.classification == "invariant_failure"
+            and issue.requires_resolution
         ),
         accepted_editorial_issue_ids=tuple(
             issue.id for issue in issues if issue.status == "accepted"

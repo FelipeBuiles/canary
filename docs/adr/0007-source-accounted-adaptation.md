@@ -68,7 +68,11 @@ Validation failures are repaired at the smallest source-owned scope that
 preserves coherence. A failure with source evidence expands to its complete
 source scene and replaces only that scene's beats and ledger decisions inside
 the affected shard. Failures without resolvable local evidence may still
-require a full-shard repair.
+require a full-shard repair. Provenance closure also includes intervening beats
+in authored order, so replacement is one contiguous interval. Splicing retains
+the generated repair's order and the untouched prefix/suffix. Sorting by earliest
+source citation is invalid: an event's supporting provenance can include an
+earlier summary or foreshadowing without moving its dramatization there.
 
 The earlier minimum-page-floor policy is superseded by
 [ADR 0016](0016-narrative-review-and-advisory-length.md). Both ends of the

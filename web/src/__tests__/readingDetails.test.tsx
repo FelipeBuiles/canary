@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { AdaptationDetails, PagePlanDetails } from "../components/pages/ReadingDetails";
 import { I18nProvider } from "../i18n";
-import type { BookAdaptation, BookPlan, CompletePageSummary } from "../types/api";
+import type { BookAdaptation, BookPlan, CompletePageSummary, EditorialIssue } from "../types/api";
 
 const plan: BookPlan = {
   revision: 1,
@@ -29,6 +29,20 @@ function renderPlan(pages: CompletePageSummary[] | undefined, detailsLoading = f
 }
 
 describe("Reading document details", () => {
+  it.each(["adaptation", "plan"])("shows %s editorial concerns as optional notes", (kind) => {
+    const issues: EditorialIssue[] = [{ id: "note", owner_stage: kind === "adaptation" ? "adapt" : "plan", code: "narrative_review_padding", message: "Optional improvement.",
+      evidence: ["The closing pause could be shorter.", "Consider one fewer panel."] }];
+    render(<I18nProvider>{kind === "adaptation"
+      ? <AdaptationDetails adaptation={{ revision: 1, editorial_issues: issues }} />
+      : <PagePlanDetails plan={{ ...plan, editorial_issues: issues }} pages={[]} detailsLoading={false} detailsError={null} />}
+    </I18nProvider>);
+    expect(screen.getByRole("region", { name: "Optional editorial notes" })).toBeTruthy();
+    expect(screen.getByText("These suggestions do not block completion or start another generation.")).toBeTruthy();
+    expect(screen.getByText("The closing pause could be shorter.")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
   it("uses the plan's canonical order and keeps planned pages visible when details are missing", () => {
     renderPlan([page(1), page(3), page(9)]);
     expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["Page 03", "Page 01", "Page 02"]);

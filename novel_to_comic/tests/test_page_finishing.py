@@ -403,15 +403,16 @@ def test_stale_render_blocks_export_and_emits_complete_page_draw_request(
     assert not (tmp_path / "compose").exists()
 
 
-def test_missing_ocr_blocks_export_without_requesting_redraw(tmp_path: Path) -> None:
+def test_missing_ocr_allows_export_without_claiming_text_was_checked(tmp_path: Path) -> None:
     artifacts, _ = _write_valid_book(tmp_path)
     artifacts.analysis_path(1, 1).unlink()
     result = finish_book(
         artifacts, formats=(),
         production=FinishProductionSpec(canvas_width=120, canvas_height=180, bleed_px=10),
     )
-    assert not result.preflight.ready_to_export
-    assert {failure.code for failure in result.preflight.pages[0].invariant_failures} == {"ocr_evidence_missing"}
+    assert result.preflight.ready_to_export
+    assert result.preflight.pages[0].invariant_failures == ()
+    assert result.preflight.pages[0].analysis_render_revision is None
     assert result.preflight.correction_requests == ()
 
 
@@ -437,7 +438,7 @@ def test_inexact_ocr_and_wrong_dimensions_block_without_normalizing_pixels(
         failure.code
         for failure in result.preflight.pages[0].invariant_failures
     }
-    assert {"lettering_mismatch", "page_render_dimensions"} <= codes
+    assert codes == {"page_render_dimensions"}
     assert set(result.preflight.correction_requests[0].failure_codes) >= codes
     assert not artifacts.normalized_page_path(1).exists()
     assert not artifacts.export_path("cbz").exists()
@@ -1003,7 +1004,7 @@ def test_a_drawn_page_reaches_export_without_hand_written_analysis(
     assert [package.format for package in result.packages] == ["pdf", "cbz"]
 
 
-def test_finish_revalidates_old_observations_without_provider_and_keeps_order_advisory(tmp_path, monkeypatch):
+def test_finish_does_not_rewrite_optional_text_evidence_and_keeps_order_advisory(tmp_path, monkeypatch):
     from novel_to_comic import page_review
 
     artifacts, _ = _write_valid_book(tmp_path)
@@ -1013,8 +1014,8 @@ def test_finish_revalidates_old_observations_without_provider_and_keeps_order_ad
         formats=(),
     )
     assert result.preflight.ready_to_export
-    assert artifacts.read_analysis(1, 1).validator_version == "finish-upgraded-validator"
-    assert artifacts.read_raw_ocr(1, 1).render_image_sha256 == artifacts.read_provenance(1, 1).render.image_sha256
+    assert artifacts.read_analysis(1, 1).validator_version == "legacy"
+    assert not artifacts.raw_ocr_path(1, 1).exists()
     artifacts.write_issues(1, (
         PageIssue(
             id="uncertain-order", issue_type="unverified_lettering_order",
@@ -1128,3 +1129,38 @@ def test_native_page_rejects_fixed_canvas_or_custom_trim_without_redraw(tmp_path
     assert not result.packages
     assert not artifacts.normalized_page_path(1).exists()
     assert artifacts.render_path(1, 1).read_bytes() == source
+
+
+@pytest.mark.parametrize("evidence", ["missing", "invalid", "stale"])
+def test_export_packages_saved_artwork_without_optional_ocr(tmp_path, evidence):
+    artifacts, _ = _write_valid_book(tmp_path)
+    path = artifacts.analysis_path(1, 1)
+    if evidence == "missing":
+        path.unlink()
+    elif evidence == "invalid":
+        path.write_text("not json")
+    else:
+        analysis = artifacts.read_analysis(1, 1)
+        path.write_text(analysis.model_copy(update={"render_image_sha256": "f" * 64}).model_dump_json())
+    before = path.read_bytes() if path.exists() else None
+    result = finish_book(artifacts, formats=("cbz",),
+                         production=FinishProductionSpec(canvas_width=120, canvas_height=180))
+    assert result.preflight.ready_to_export
+    assert artifacts.export_path("cbz").exists()
+    assert result.preflight.pages[0].analysis_render_revision is None
+    assert (path.read_bytes() if path.exists() else None) == before
+
+
+def test_existing_open_ocr_alarm_is_advisory_without_marking_it_resolved(tmp_path):
+    artifacts, _ = _write_valid_book(tmp_path)
+    issue = PageIssue(
+        id="page-issue-draw-page-001-render-001-misspelled_lettering",
+        issue_type="misspelled_lettering", classification="invariant_failure",
+        page_number=1, render_revision=1, evidence=("Checker read a different word.",),
+        requested_correction="Compare the image.", status="open",
+    )
+    artifacts.write_issues(1, (issue,))
+    result = finish_book(artifacts, formats=("cbz",),
+                         production=FinishProductionSpec(canvas_width=120, canvas_height=180))
+    assert result.preflight.ready_to_export
+    assert artifacts.read_issues(1) == (issue,)

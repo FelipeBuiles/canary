@@ -47,13 +47,13 @@ export function PageCheckRecovery({ project, onRecovered, requested = 0 }: { pro
 
   return <div className="space-y-3">
     <Button variant="outline" disabled={busy} onClick={() => void recover()}>
-      {busy ? t("CHECKING TEXT…") : t("Recover missing text checks")}
+      {busy ? t("CHECKING TEXT…") : t("CHECK UNCHECKED PAGES")}
     </Button>
     {error && <p role="alert" className="text-sm text-hero-red">{error}</p>}
     {results.length > 0 && <div role="status" className="text-sm">
       <p>{t("Text checks completed")}: {results.filter((page) => page.status === "checked").length}</p>
       {results.filter((page) => page.status !== "checked" && page.status !== "undrawn").map((page) =>
-        <p key={page.page_number}>{t("Page")} {page.page_number}: {page.error || t("Text check incomplete")}</p>)}
+        <p key={page.page_number}>{t("Page")} {page.page_number}: {t("Not checked — export is still available")}</p>)}
     </div>}
     {estimate && <ConfirmDrawer open title={t("Check text on saved pages?")}
       body={`${estimate.paid_pages} ${t("pages need a new text check. Artwork will not be redrawn. Cached checks are free.")}`}

@@ -28,7 +28,6 @@ from novel_to_comic.models.finish import (
 from novel_to_comic.models.page import ComicPage
 from novel_to_comic.models.validation import InvariantFailure
 from novel_to_comic.page_drawing import page_profile_uses_native_dimensions
-from novel_to_comic.page_review import normalize_ocr_punctuation
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
 
 
@@ -78,54 +77,6 @@ def _diagnostic(
         artifact_ids=artifact_ids,
         evidence=evidence,
     )
-
-
-def _canonical_lettering(page: ComicPage):
-    by_id = {
-        lettering.id: lettering
-        for content in page.content
-        for lettering in content.lettering
-    }
-    return tuple(by_id[item_id] for item_id in page.reading_order if item_id in by_id)
-
-
-def _ocr_is_exact(
-    page: ComicPage,
-    render: PageRenderRevision,
-    analysis: RenderAnalysis,
-    *,
-    dismissed_failure_ids: frozenset[str] = frozenset(),
-) -> bool:
-    canonical = _canonical_lettering(page)
-    active_failures = tuple(
-        failure
-        for failure in analysis.invariant_failures
-        if failure.id not in dismissed_failure_ids
-    )
-    if (
-        analysis.page_number != page.page_number
-        or analysis.render_revision != render.revision
-        or analysis.render_image_sha256 != render.image_sha256
-        or active_failures
-    ):
-        return False
-    # A dismissed Draw finding is an explicit visual-review override of the
-    # detector's OCR verdict. The analysis remains immutable evidence, but it
-    # must not continue to block Finish after that decision.
-    if analysis.invariant_failures:
-        return True
-    if len(analysis.lettering_matches) != len(canonical):
-        return False
-    for expected, match in zip(canonical, analysis.lettering_matches, strict=True):
-        if (
-            match.lettering_item_id != expected.id
-            or normalize_ocr_punctuation(match.canonical_text)
-            != normalize_ocr_punctuation(expected.text)
-            or normalize_ocr_punctuation(match.observed_text)
-            != normalize_ocr_punctuation(expected.text)
-        ):
-            return False
-    return True
 
 
 def _appearance_diagnostics(
@@ -545,27 +496,20 @@ def finish_book(
             dpi=dpi,
         )
     pages = tuple(artifacts.read_page(item.page_number) for item in plan.pages)
-    from novel_to_comic.page_review import revalidate_cached_page_render
-
-    # Validation may invalidate old packages/normalized pages. Finish all such
-    # mutations before writing any new production output for this book.
+    # Optional OCR evidence is read-only here. Export never runs or repairs a checker.
     analyses: dict[int, RenderAnalysis] = {}
-    unavailable_evidence: dict[int, str] = {}
     for page in pages:
         revisions = artifacts.provenance_revisions(page.page_number)
         if not revisions:
             continue
         render = artifacts.read_provenance(page.page_number, revisions[-1]).render
         try:
-            analyses[page.page_number] = revalidate_cached_page_render(
-                page=page, render=render, artifacts=artifacts,
-            )
-        except ArtifactMissing:
-            unavailable_evidence[page.page_number] = "ocr_evidence_missing"
-        except (ArtifactInvalid, ValueError):
-            # Invalid retained evidence must be reparsed, never redrawn or paid
-            # for again automatically.
-            unavailable_evidence[page.page_number] = "ocr_evidence_stale"
+            analysis = artifacts.read_analysis(page.page_number, render.revision)
+            if (analysis.render_image_sha256 == render.image_sha256
+                    and analysis.comic_page_sha256 == page.content_sha256):
+                analyses[page.page_number] = analysis
+        except (ArtifactMissing, ArtifactInvalid, ValueError):
+            pass
     appearance = _appearance_diagnostics(adaptation, pages)
     preflight_pages: list[PreflightPage] = []
     correction_requests: list[DrawCorrectionRequest] = []
@@ -663,40 +607,6 @@ def finish_book(
                     )
                 )
             analysis = analyses.get(page.page_number)
-            dismissed_failure_ids = frozenset(
-                issue.id.removeprefix("page-issue-")
-                for issue in issues
-                if (
-                    issue.status == "dismissed"
-                    and issue.classification == "invariant_failure"
-                    and issue.render_revision == render.revision
-                )
-            )
-            if analysis is None or not _ocr_is_exact(
-                page,
-                render,
-                analysis,
-                dismissed_failure_ids=dismissed_failure_ids,
-            ):
-                failures.append(
-                    _failure(
-                        page_number=selected.page_number,
-                        owner_stage="draw",
-                        code=unavailable_evidence.get(page.page_number, "ocr_evidence_missing") if analysis is None else (
-                            "ocr_evidence_stale"
-                            if analysis.render_image_sha256 != render.image_sha256
-                            or analysis.comic_page_sha256 != page.content_sha256
-                            else "lettering_mismatch"
-                        ),
-                        message=(
-                            "Artwork is saved; its text check is incomplete. Recover the check on saved pixels."
-                            if analysis is None else
-                            "Active page render does not have current exact canonical OCR evidence."
-                        ),
-                        artifact_ids=(f"render_{render.revision:03d}",),
-                        evidence=("Every canonical lettering item must match in order.",),
-                    )
-                )
 
         width = height = None
         page_production = production
@@ -789,6 +699,8 @@ def finish_book(
                 current_revision,
             ).render.parent_revision
         for issue in issues:
+            if not issue.requires_resolution:
+                continue
             if issue.page_number != selected.page_number:
                 failures.append(
                     _failure(
@@ -861,6 +773,7 @@ def finish_book(
             for issue in issues
             if issue.status in {"open", "revised"}
             and issue.classification == "invariant_failure"
+            and issue.requires_resolution
         ]
         open_draw = [
             issue for issue in open_invariants if issue.correction_owner == "draw"

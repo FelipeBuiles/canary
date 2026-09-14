@@ -26,7 +26,7 @@ from novel_to_comic.state import (
     reset_stale_stages,
     save_state,
 )
-from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
+from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
 
 from ..auth import get_current_user
 from ..credited_job import CreditReservationDenied, run_credited_stage
@@ -35,6 +35,7 @@ from ..credits import (
     CreditEstimate,
     UnifiedCostResolver,
     assert_sufficient_credits,
+    estimate_adaptation_restart,
     estimate_stage_credit_reservation,
 )
 from ..db import get_db
@@ -171,8 +172,8 @@ async def _run_stage_with_credits(
     async def execute():
         # The credited wrapper invokes this only after acquiring the hold.
         if rerun:
-            _reset_stage_and_downstream(state, stage)
             _clear_outputs_for_rerun(project_dir, stage)
+            _reset_stage_and_downstream(state, stage)
             save_state(state, project_dir)
         await _run_stage(stage, config, project_dir, state, queue)
 
@@ -203,6 +204,7 @@ async def _run_stage_with_credits(
                 state=state,
                 stage=stage,
                 run=execute,
+                fresh_adaptation=rerun and stage == "adapt",
             )
     except CreditReservationDenied as denied:
         if not rerun:
@@ -300,6 +302,9 @@ def _reset_stage_and_downstream(state, stage: str) -> None:
 
 
 def _clear_outputs_for_rerun(project_dir, stage: str) -> None:
+    if stage == "adapt":
+        TargetArtifacts(project_dir).archive_adaptation_work()
+        return
     stage_obj = REGISTRY.get(stage)
     if stage_obj is None:
         return
@@ -336,11 +341,14 @@ async def estimate_stage_cost(
     stage: str = Query(...),
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
+    rerun: bool = False,
 ):
     if stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}. Valid: {STAGE_NAMES}")
     project_dir, config, state = project
     funding = admit_stage_action(config, stage)
+    if stage == "adapt" and rerun:
+        return {"stage": stage, **estimate_adaptation_restart(config, project_dir, state)}
     if stage == "draw":
         from .pages import estimate_remaining_page_generation
 
@@ -406,7 +414,7 @@ async def _start_stage(
     if stage == "adapt":
         _require_adaptation_brief(project_dir)
 
-    if not rerun:
+    if not rerun or stage == "adapt":
         _require_previous_stage(state, stage)
 
     if stage in {"cast", "adapt", "plan", "draw", "finish"}:
@@ -416,12 +424,10 @@ async def _start_stage(
             raise HTTPException(403, "Style must be selected first.")
 
     if stage != "draw":
-        required = estimate_stage_credit_reservation(
-            config,
-            project_dir,
-            state,
-            stage,
-        )
+        if rerun and stage == "adapt":
+            required = estimate_adaptation_restart(config, project_dir, state)["reserved_credits"] or 0
+        else:
+            required = estimate_stage_credit_reservation(config, project_dir, state, stage)
         if stage == "cast":
             from .projects import _project_cover_credit_estimate, needs_initial_project_cover
 
@@ -523,6 +529,7 @@ def get_generation_jobs(
     request: Request,
     project_id: str,
     ids: list[str] | None = Query(None),
+    project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
     pkey = project_key(user_id, project_id)
@@ -538,7 +545,37 @@ def get_generation_jobs(
         job for job in recovered_generation_jobs(request.app, pkey)
         if ids is None or job["id"] in ids
     ]
-    return {"jobs": recovered + [generation_job_payload(request.app, job) for job in jobs]}
+    payloads = recovered + [generation_job_payload(request.app, job) for job in jobs]
+    _mark_current_page_jobs(TargetArtifacts(project[0]), payloads)
+    return {"jobs": payloads}
+
+
+def _mark_current_page_jobs(target: TargetArtifacts, jobs: list[dict]) -> None:
+    """Keep job history, but bind page status to the actual frozen page input."""
+    current_requests: dict[int, set[str]] = {}
+    for job in jobs:
+        if job["kind"] != "complete_page_draw":
+            continue
+        payload = job.get("payload", {})
+        page_number = payload.get("page_number")
+        job["is_current_page"] = False
+        if not isinstance(page_number, int) or page_number < 1:
+            continue
+        if page_number not in current_requests:
+            hashes: set[str] = set()
+            current_requests[page_number] = hashes
+            try:
+                page = target.read_page(page_number)
+            except (ArtifactMissing, ArtifactInvalid):
+                continue
+            for revision in target.request_revisions(page_number):
+                try:
+                    frozen = target.read_request(page_number, revision)
+                except (ArtifactMissing, ArtifactInvalid):
+                    continue
+                if not frozen.is_stale_for(page):
+                    hashes.add(frozen.request_sha256)
+        job["is_current_page"] = payload.get("request_sha256") in current_requests[page_number]
 
 
 @router.post("/approve/{stage}")

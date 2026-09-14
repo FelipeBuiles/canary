@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+from copy import deepcopy
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -22,6 +23,7 @@ from novel_to_comic.models.page import (
     PageContent,
     PinnedGeometry,
     PlannedPageRevision,
+    PlanReviewDraft,
 )
 from novel_to_comic.models.validation import (
     EditorialIssue,
@@ -29,7 +31,7 @@ from novel_to_comic.models.validation import (
     StageValidation,
     ValidationAttempt,
 )
-from novel_to_comic.narrative_review import planning_context, review_narrative
+from novel_to_comic.narrative_review import planning_context, review_narrative, reviewed_validation
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.paid_shards import run_paid_shards
 from novel_to_comic.target_artifacts import TargetArtifacts
@@ -39,6 +41,7 @@ from novel_to_comic.usage import ApiResult, estimate_text_cost
 _MAX_PLAN_ATTEMPTS = 2
 _TWO_PASS_PLAN_MIN_BEATS = 24
 _PLAN_DETAIL_BATCH_PAGES = 8
+_MIN_PLAN_GENERATION_CALLS = 64
 
 
 class PlanValidation(BaseModel):
@@ -53,10 +56,11 @@ class PlanValidation(BaseModel):
 class PlanInvariantError(ValueError):
     """Raised when a proposed global plan violates a Plan invariant."""
 
-    def __init__(self, validation: PlanValidation) -> None:
+    def __init__(self, validation: PlanValidation, *, history: tuple[ValidationAttempt, ...] = ()) -> None:
         codes = ", ".join(failure.code for failure in validation.invariant_failures)
         super().__init__(f"Book plan has invariant failures: {codes}")
         self.validation = validation
+        self.history = history
 
 
 class _AppearanceStateBinding(BaseModel):
@@ -68,13 +72,8 @@ class _AppearanceStateBinding(BaseModel):
     state_id: str = Field(min_length=1)
 
 
-class _PageContentDraft(BaseModel):
-    """Plan allocates lettering by ID; the wording itself is never restated.
-
-    Asking a model to copy every LetteringItem "byte-for-byte" made exact
-    lettering a validation problem. Citing IDs and letting code copy the
-    canonical item makes it a property of the artifact instead.
-    """
+class _PanelCompositionDraft(BaseModel):
+    """Authored visual decisions, independent of locked-copy allocation."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -93,12 +92,11 @@ class _PageContentDraft(BaseModel):
     ] = "standard"
     visual_intent: str = Field(min_length=1)
     continuity_intent: str = ""
-    lettering_ids: tuple[str, ...] = ()
     entity_ids: tuple[str, ...] = ()
     appearance_states: tuple[_AppearanceStateBinding, ...] = ()
 
     @model_validator(mode="after")
-    def _validate_appearance_state_bindings(self) -> "_PageContentDraft":
+    def _validate_appearance_state_bindings(self) -> "_PanelCompositionDraft":
         seen: set[str] = set()
         for binding in self.appearance_states:
             if binding.entity_id in seen:
@@ -107,6 +105,12 @@ class _PageContentDraft(BaseModel):
                 )
             seen.add(binding.entity_id)
         return self
+
+
+class _PageContentDraft(_PanelCompositionDraft):
+    """Internal placement cites canonical Adapt copy without restating it."""
+
+    lettering_ids: tuple[str, ...] = ()
 
 
 class _PageDraft(BaseModel):
@@ -146,6 +150,64 @@ class _BookPlanDraft(BaseModel):
         return self
 
 
+class _PageDetailDraft(_PageDraft):
+    """One authored destination per locked item; silent panels need no entries."""
+
+    content: tuple[_PanelCompositionDraft, ...] = Field(min_length=1)
+    lettering_placements: dict[str, Annotated[int, Field(strict=True, ge=1)]]
+
+
+class _BookDetailDraft(_BookPlanDraft):
+    pages: tuple[_PageDetailDraft, ...] = Field(min_length=1)
+
+
+def _plan_response_schema(
+    references: ApprovedVisualReferenceInventory,
+    target_pages: tuple[_PageMapEntry, ...] | None = None,
+) -> dict:
+    """Limit authored citations to Cast's actual entity/state pairs."""
+    schema = (_BookDetailDraft if target_pages is not None else _BookPlanDraft).model_json_schema()
+    panel_type = "_PanelCompositionDraft" if target_pages is not None else "_PageContentDraft"
+    content = schema["$defs"][panel_type]["properties"]
+    entities = sorted({r.entity_id for r in references.references})
+    if entities:
+        content["entity_ids"]["items"] = {"type": "string", "enum": entities}
+    else:
+        content["entity_ids"]["maxItems"] = 0
+    states: dict[str, list[str]] = {}
+    for entity_id, state_id in sorted(_approved_state_pairs(references)):
+        states.setdefault(entity_id, []).append(state_id)
+    if states:
+        schema["$defs"]["_AppearanceStateBinding"] = {"anyOf": [
+            {"type": "object", "additionalProperties": False,
+             "required": ["entity_id", "state_id"],
+             "properties": {
+                 "entity_id": {"type": "string", "enum": [entity_id]},
+                 "state_id": {"type": "string", "enum": state_ids},
+             }} for entity_id, state_ids in states.items()
+        ]}
+    else:
+        content["appearance_states"]["maxItems"] = 0
+    if target_pages is not None:
+        variants = []
+        for page in target_pages:
+            variant = deepcopy(schema["$defs"]["_PageDetailDraft"])
+            variant["properties"]["page_number"] = {"type": "integer", "enum": [page.page_number]}
+            panel = deepcopy(schema["$defs"][panel_type])
+            panel["properties"]["beat_ids"]["items"] = {"type": "string", "enum": list(page.beat_ids)}
+            variant["properties"]["lettering_placements"] = {
+                "type": "object", "additionalProperties": False,
+                "properties": {item_id: {"type": "integer", "minimum": 1}
+                               for item_id in page.lettering_ids},
+                "required": list(page.lettering_ids),
+            }
+            variant["properties"]["content"]["items"] = panel
+            variants.append(variant)
+        schema["$defs"]["_PageDetailDraft"] = {"anyOf": variants}
+        schema["properties"]["pages"].update(minItems=len(target_pages), maxItems=len(target_pages))
+    return schema
+
+
 class _PageMapEntry(BaseModel):
     """Compact global rhythm decision; local panel detail is authored later."""
 
@@ -153,6 +215,8 @@ class _PageMapEntry(BaseModel):
 
     page_number: int = 1
     beat_ids: tuple[str, ...] = Field(min_length=1)
+    # Global ownership prevents parallel detail batches from replaying lettering.
+    lettering_ids: tuple[str, ...]
     page_turn_role: Literal[
         "none", "setup", "reveal", "cliffhanger", "release", "transition"
     ] = "none"
@@ -195,24 +259,6 @@ def _normalize_book_plan_draft(
     if not isinstance(pages, (list, tuple)):
         return normalized
     normalized_pages = list(pages)
-    lettering_by_beat = {
-        beat.id: tuple(item.id for item in beat.lettering) for beat in adaptation.beats
-    }
-    lettering_order = {
-        item.id: position
-        for position, item in enumerate(
-            item for beat in adaptation.beats for item in beat.lettering
-        )
-    }
-    explicitly_placed = {
-        lettering_id
-        for page in normalized_pages
-        if isinstance(page, Mapping)
-        for content in page.get("content", ())
-        if isinstance(content, Mapping)
-        for lettering_id in content.get("lettering_ids", ())
-    }
-    allocated_lettering: set[str] = set()
     for local_page_number, page in enumerate(normalized_pages, 1):
         if not isinstance(page, Mapping):
             continue
@@ -232,103 +278,17 @@ def _normalize_book_plan_draft(
             content_id = f"page_{page_number:03d}_content_{order:03d}"
             normalized_item["id"] = content_id
             normalized_item["order"] = order
-            cited = list(
-                dict.fromkeys(normalized_item.get("lettering_ids") or ())
-            )
-            cited = [
-                lettering_id
-                for lettering_id in cited
-                if lettering_id not in allocated_lettering
-            ]
-            for beat_id in normalized_item.get("beat_ids") or ():
-                for lettering_id in lettering_by_beat.get(beat_id, ()):
-                    if (
-                        lettering_id not in allocated_lettering
-                        and lettering_id not in explicitly_placed
-                        and lettering_id not in cited
-                    ):
-                        cited.append(lettering_id)
-            cited.sort(
-                key=lambda lettering_id: lettering_order.get(
-                    lettering_id,
-                    len(lettering_order),
-                )
-            )
-            normalized_item["lettering_ids"] = cited
-            allocated_lettering.update(cited)
+            # Placement is an authored narrative decision. Do not fill omissions,
+            # deduplicate, or move words between visual moments to pass validation.
+            cited = list(normalized_item.get("lettering_ids") or ())
             reading_order.extend((content_id, *cited))
             normalized_content.append(normalized_item)
         normalized_page["content"] = normalized_content
         normalized_page["reading_order"] = reading_order
         normalized_pages[local_page_number - 1] = normalized_page
-    _canonicalize_lettering_placement_order(normalized_pages, lettering_by_beat)
     normalized["pages"] = normalized_pages
     return normalized
 
-
-def _canonicalize_lettering_placement_order(
-    pages: list[Any],
-    lettering_by_beat: Mapping[str, tuple[str, ...]],
-) -> None:
-    """Keep each beat's lettering in Adapt order across repeated panels.
-
-    A repeated beat may legitimately span multiple adjacent content items. The
-    model can therefore cite that beat's lettering on different items, but it
-    must not be able to reverse the canonical records between those items. The
-    slots are kept where the model placed them; only IDs owned by the same beat
-    are redistributed in Adapt order. If a malformed response is missing a
-    slot, leave it for the existing invariant path to attribute and report.
-    """
-
-    owner_by_lettering = {
-        lettering_id: beat_id
-        for beat_id, lettering_ids in lettering_by_beat.items()
-        for lettering_id in lettering_ids
-    }
-    for beat_id, canonical_ids in lettering_by_beat.items():
-        if not canonical_ids:
-            continue
-        slots: list[tuple[list[Any], int]] = []
-        for page in pages:
-            if not isinstance(page, Mapping):
-                continue
-            content_items = page.get("content")
-            if not isinstance(content_items, list):
-                continue
-            for content in content_items:
-                if not isinstance(content, Mapping):
-                    continue
-                ids = content.get("lettering_ids")
-                if not isinstance(ids, list):
-                    continue
-                for index, lettering_id in enumerate(ids):
-                    if owner_by_lettering.get(lettering_id) == beat_id:
-                        slots.append((ids, index))
-        if len(slots) != len(canonical_ids):
-            continue
-        for (ids, index), lettering_id in zip(slots, canonical_ids, strict=True):
-            ids[index] = lettering_id
-    for page in pages:
-        if not isinstance(page, Mapping):
-            continue
-        content_items = page.get("content")
-        if not isinstance(content_items, list):
-            continue
-        reading_order: list[str] = []
-        for content in content_items:
-            if not isinstance(content, Mapping):
-                continue
-            content_id = content.get("id")
-            if isinstance(content_id, str):
-                reading_order.append(content_id)
-            lettering_ids = content.get("lettering_ids")
-            if isinstance(lettering_ids, list):
-                reading_order.extend(
-                    lettering_id
-                    for lettering_id in lettering_ids
-                    if isinstance(lettering_id, str)
-                )
-        page["reading_order"] = reading_order
 
 
 StructuredGenerator = Callable[
@@ -380,11 +340,10 @@ def _reference_view(
     references: ApprovedVisualReferenceInventory,
     entity_ids: set[str] | None = None,
 ) -> list[dict[str, str | None]]:
-    """Keep the identity mapping Plan needs while excluding approval metadata."""
+    """Expose entity/state citations, not Draw's reference-storage identifiers."""
 
     return [
         {
-            "id": reference.id,
             "entity_id": reference.entity_id,
             "appearance_state_id": reference.appearance_state_id,
             "label": reference.label,
@@ -407,7 +366,11 @@ _SEMANTIC_PAGE_CONTRACT = (
     'state_id, for example [{"entity_id":"character_1","state_id":"injured"}]. '
     "Bind each visible entity at most once to its approved entity-scoped state ID; "
     "different entities may share the same state ID. Omit base appearances from "
-    "the list and use [] when no explicit bindings are needed. "
+    "the list and use [] when no explicit bindings are needed. An inventory entry "
+    "with appearance_state_id=null is the main reference: cite its entity_id in "
+    "entity_ids and do not invent a state named 'base', 'default', or 'normal'. "
+    "Copy only non-null state IDs approved for that same entity; reference IDs "
+    "and labels are not state IDs. "
     "Explicit Adapt appearance changes own activation timing "
     "and persist until changed. visual_intent and continuity_intent must agree with "
     "that state, including time of day: do not introduce dusk before its activation. "
@@ -415,9 +378,10 @@ _SEMANTIC_PAGE_CONTRACT = (
     "constraints. Describe relative composition, narrative emphasis, and panel roles; "
     "do not prescribe templates, fixed positions, exact boxes or coordinates, or "
     "provider prompts. Only explicit author geometry pins own exact placement. "
-    "Code assigns each beat's complete exact lettering to its first occurrence. "
-    "Supply lettering_ids only to move items to another adjacent occurrence of "
-    "the same beat; each item must occur once, in Adapt order, without rewriting. "
+    "Explicitly place each assigned canonical lettering ID on the panel whose "
+    "visual moment it belongs to. Every item must occur exactly once, in Adapt "
+    "order, without rewriting. Code "
+    "derives reading_order from this placement but never moves or fills words. "
     "Stage on-screen speakers visibly; off-screen speech must not point at a visible "
     "character. Silent sequences are valid when action, causality, and transitions "
     "remain self-explanatory; otherwise regroup complete beats or report missing "
@@ -457,6 +421,7 @@ def build_book_plan_prompt(
         "visual submoment supported by that beat and its source; never return to a "
         "beat after advancing beyond it. "
         + _SEMANTIC_PAGE_CONTRACT
+        + "Author lettering_ids on each panel; use lettering_ids=[] for a silent panel. "
         + "Pages may bridge "
         "source-scene boundaries. Group adjacent story beats into varied multi-panel "
         "pages when that preserves action, reaction, detail, causality, and rhythm. "
@@ -496,11 +461,20 @@ def _build_page_map_prompt(
         "earlier beat after advancing. Own book-wide page count, page turns, "
         "spreads, emphasis, density, and rhythm. The target range is advisory, "
         "not a floor or ceiling. Use fewer or more pages when the story requires. "
+        "Check each proposed page-turn reveal against the exact lettering on both "
+        "sides: words can reveal an arrival or discovery before the image does. "
+        "Place the revealing words with the intended reveal, or describe the later "
+        "page honestly as aftermath or escalation. Do not claim to hold a threshold "
+        "when the preceding page already narrates crossing it. "
         "Never pad a closing beat to meet a minimum. Preserve investigation, causality, reactions, and "
         "aftermath rather than compressing toward the maximum. A repeated beat "
         "is allowed only on an immediately adjacent page when decompression "
-        "creates a distinct visual submoment. Do not author panels, visual "
-        "intent, entity placement, lettering allocation, or geometry yet. Page "
+        "creates a distinct visual submoment. Allocate every canonical lettering ID "
+        "exactly once across the map, in Adapt reading order, to a page that cites "
+        "its owning beat. A repeated beat may spread its lettering across adjacent "
+        "pages, but must never repeat the words. Use lettering_ids=[] for a silent "
+        "page. This allocation is fixed before parallel panel detail begins. "
+        "Do not author panels, visual intent, entity placement, or geometry yet. Page "
         "numbers are canonicalized by code. Return only the page-map JSON. "
         + PLAN_DEPICTION_GUIDANCE
         + "\n"
@@ -563,6 +537,21 @@ def _validate_page_map(
                 ],
             )
         )
+    canonical_lettering = tuple(item.id for beat in adaptation.beats for item in beat.lettering)
+    placed_lettering = tuple(item_id for page in page_map.pages for item_id in page.lettering_ids)
+    owner = {item.id: beat.id for beat in adaptation.beats for item in beat.lettering}
+    misplaced = tuple(
+        item_id for page in page_map.pages for item_id in page.lettering_ids
+        if owner.get(item_id) not in page.beat_ids
+    )
+    if placed_lettering != canonical_lettering or misplaced:
+        failures.append(InvariantFailure(
+            id="plan_map_failure_lettering_allocation", owner_stage="plan",
+            code="lettering_allocation",
+            message="The page map must place every lettering ID once in Adapt order on a page carrying its beat.",
+            artifact_ids=canonical_lettering,
+            evidence=[f"Expected {list(canonical_lettering)!r}; allocated {list(placed_lettering)!r}; wrong owner {list(misplaced)!r}."],
+        ))
     return PlanValidation(invariant_failures=tuple(failures))
 
 
@@ -615,11 +604,24 @@ def _detail_batch_prompt(
         "panels. The global page count, beat allocation, page turns, emphasis, "
         "density, and rhythm are fixed authority. Return exactly the target pages, "
         "not the neighboring context pages. Each target page's panels must jointly "
-        "carry exactly that page-map entry's beat_ids in order. Group or repeat a "
+        "carry exactly that page-map entry's beat_ids in order and its lettering_ids "
+        "exactly once in the assigned order. Allocate those words to the visual "
+        "moments they describe; words assigned to another page are read-only context. "
+        "Do not repeat or borrow them, even when the same beat spans pages. Group or repeat a "
         "beat within the page only for distinct supported visual submoments. Author "
         "panel_role, visual_intent, continuity_intent, visible entity_ids, and layout_intent. "
         "Code canonicalizes page numbers, content IDs/order, and reading order. "
         + _SEMANTIC_PAGE_CONTRACT
+        + "Detail response format: panels contain visual decisions only, with no lettering_ids field. "
+        "Each page has lettering_placements: an object with exactly one required key for each "
+        "of that page's locked lettering IDs. Its value is the destination panel's 1-based "
+        "position in content, not a panel ID. For example, {\"lettering_A\":1,\"lettering_B\":3} "
+        "places A in the first panel, leaves the second silent, and places B in the third. "
+        "Multiple items may share a panel. Destinations must be nondecreasing in locked "
+        "lettering order and must refer to existing panels carrying the item's beat. "
+        "Choose each destination together with the matching visual moment. Code copies "
+        "the locked items to those exact destinations in their established order; it "
+        "does not choose placements. A silent page has lettering_placements: {}. "
         + "Reserve one-panel pages for exceptional moments."
         + concern_text
         + " "
@@ -685,6 +687,7 @@ def estimate_book_plan_cost(
             _PageMapEntry(
                 page_number=index + 1,
                 beat_ids=tuple(beat.id for beat in carried),
+                lettering_ids=tuple(item.id for beat in carried for item in beat.lettering),
                 emphasis=authority.narrative_function,
                 density_intent="standard",
                 rhythm_intent=authority.summary,
@@ -713,13 +716,18 @@ def estimate_book_plan_cost(
                 start=start,
                 stop=stop,
             )
-            + instruction_suffix,
+            + story_instruction_section(story_instruction, stage="plan", fixed_page_map=True),
             output_chars=max(4_000, (stop - start) * 1_600),
         )
     return total + review_allowance
 
 
 def _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat):
+    reference_failures = _reference_authority_failures(draft.pages, references)
+    if reference_failures:
+        # Validate authored citations before Adapt-derived state activation can
+        # overwrite them, including in the one-shot path.
+        return (), PlanValidation(invariant_failures=reference_failures)
     pages = _canonical_pages(adaptation, draft, pin_by_beat, references)
     validation = validate_book_plan(adaptation, references, target_range, pages)
     return pages, PlanValidation(
@@ -751,6 +759,7 @@ def _write_valid_plan(*, artifacts, adaptation, target_range, pages, rhythm_summ
     for page in pages:
         artifacts.write_page(page)
     artifacts.write_plan(plan)
+    artifacts.plan_review_draft_path.unlink(missing_ok=True)
     return plan
 
 
@@ -779,9 +788,6 @@ async def _produce_book_plan_one_shot(
         attempt_prompt = prompt
         pages: tuple[ComicPage, ...] = ()
         validation = PlanValidation()
-        valid_fallback: (
-            tuple[_BookPlanDraft, tuple[ComicPage, ...], PlanValidation] | None
-        ) = None
         history: list[ValidationAttempt] = []
         for attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
             with ai_source_context("book", tuple(dict.fromkeys(
@@ -793,7 +799,7 @@ async def _produce_book_plan_one_shot(
                     ),
                     user_content=attempt_prompt,
                     feature="plan.book",
-                    json_schema=_BookPlanDraft.model_json_schema(),
+                    json_schema=_plan_response_schema(references),
                 )
             # A retried attempt was still paid for, so its usage is recorded
             # without counting a completed item.
@@ -808,10 +814,6 @@ async def _produce_book_plan_one_shot(
                 )
             except ValidationError as error:
                 if attempt == _MAX_PLAN_ATTEMPTS:
-                    if valid_fallback is not None:
-                        draft, pages, validation = valid_fallback
-                        ctx.record_item_done()
-                        break
                     raise
                 attempt_prompt = _schema_repair_prompt(prompt, result.value, error)
                 continue
@@ -822,30 +824,14 @@ async def _produce_book_plan_one_shot(
             except ValidationError as error:
                 validation = _canonical_page_validation(error)
             if not validation.invariant_failures:
+                artifacts.write_plan_review_draft(PlanReviewDraft(adaptation_sha256=adaptation.content_sha256, rhythm_summary=draft.rhythm_summary, pages=pages))
                 review_failures = await review_narrative(
                     planning_context(adaptation, pages), generate=generate, ctx=ctx,
                     artifacts=artifacts, model=model, instruction=story_instruction,
                 )
-                validation = validation.model_copy(update={"invariant_failures": review_failures})
+                validation = reviewed_validation(validation, review_failures, artifacts=artifacts, phase="plan", context=planning_context(adaptation, pages))
             history.append(_attempt_record(attempt, validation))
             if not validation.invariant_failures:
-                retryable_issues = tuple(
-                    issue
-                    for issue in validation.editorial_issues
-                    if issue.code
-                    in {
-                        "repetitive_page_composition",
-                        "density_mismatch",
-                    }
-                )
-                if retryable_issues and attempt < _MAX_PLAN_ATTEMPTS:
-                    valid_fallback = (draft, pages, validation)
-                    attempt_prompt = _editorial_repair_prompt(
-                        prompt,
-                        result.value,
-                        retryable_issues,
-                    )
-                    continue
                 ctx.record_item_done()
                 break
             if any(f.code == "narrative_review_invalid" for f in validation.invariant_failures):
@@ -859,17 +845,8 @@ async def _produce_book_plan_one_shot(
                 break
             if attempt < _MAX_PLAN_ATTEMPTS:
                 attempt_prompt = _repair_prompt(prompt, result.value, validation)
-        if validation.invariant_failures and valid_fallback is not None:
-            draft, pages, validation = valid_fallback
-            ctx.record_item_done()
         ctx.progress(1, 1)
 
-        if not validation.invariant_failures:
-            review_failures = await review_narrative(
-                planning_context(adaptation, pages), generate=generate, ctx=ctx,
-                artifacts=artifacts, model=model, instruction=story_instruction,
-            )
-            validation = validation.model_copy(update={"invariant_failures": review_failures})
         _persist_validation(
             artifacts, validation, attempts=attempt, history=tuple(history)
         )
@@ -906,39 +883,44 @@ async def _generate_page_map(
     history: list[ValidationAttempt] = []
     page_map: _BookPageMap | None = None
     for attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
-        with ai_source_context("page_map", tuple(dict.fromkeys(
-            unit_id for beat in adaptation.beats for unit_id in beat.source_unit_ids
-        ))):
-            result = await generate(
-                system_prompt=(
-                    "You are the global rhythm architect for a complete comic book."
-                ),
-                user_content=attempt_prompt,
-                feature="plan.map",
-                json_schema=_BookPageMap.model_json_schema(),
-            )
-        _record_plan_usage(ctx, result)
-        try:
-            page_map = _canonicalize_page_map(result.value)
-        except ValidationError as error:
-            if attempt == _MAX_PLAN_ATTEMPTS:
-                raise
-            attempt_prompt = _schema_repair_prompt(prompt, result.value, error)
-            continue
+        candidate_prompt = attempt_prompt
+        # Formatting repair is not a narrative revision. Each map candidate
+        # gets one schema correction before its editorial judgment is evaluated.
+        for schema_attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
+            with ai_source_context("page_map", tuple(dict.fromkeys(
+                unit_id for beat in adaptation.beats for unit_id in beat.source_unit_ids
+            ))):
+                result = await generate(
+                    system_prompt=(
+                        "You are the global rhythm architect for a complete comic book."
+                    ),
+                    user_content=attempt_prompt,
+                    feature="plan.map",
+                    json_schema=_BookPageMap.model_json_schema(),
+                )
+            _record_plan_usage(ctx, result)
+            try:
+                page_map = _canonicalize_page_map(result.value)
+            except ValidationError as error:
+                if schema_attempt == _MAX_PLAN_ATTEMPTS:
+                    raise
+                attempt_prompt = _schema_repair_prompt(candidate_prompt, result.value, error)
+                continue
+            break
         validation = _validate_page_map(adaptation, target_range, page_map)
         if not validation.invariant_failures:
             review_failures = await review_narrative(
                 planning_context(adaptation, page_map.pages, phase="plan_map"),
                 generate=generate, ctx=ctx, artifacts=artifacts, model=model, instruction=story_instruction if review_instruction is None else review_instruction,
             )
-            validation = validation.model_copy(update={"invariant_failures": review_failures})
+            validation = reviewed_validation(validation, review_failures, artifacts=artifacts, phase="plan_map", context=planning_context(adaptation, page_map.pages, phase="plan_map"))
         history.append(_attempt_record(attempt, validation))
         if not validation.invariant_failures:
             return page_map, history
         if any(f.owner_stage != "plan" or f.code == "narrative_review_invalid" for f in validation.invariant_failures):
-            raise PlanInvariantError(validation)
+            raise PlanInvariantError(validation, history=tuple(history))
         if attempt == _MAX_PLAN_ATTEMPTS:
-            raise PlanInvariantError(validation)
+            raise PlanInvariantError(validation, history=tuple(history))
         attempt_prompt = (
             prompt
             + "\n\nRepair the compact page map. Return a complete corrected map, "
@@ -964,6 +946,13 @@ def _detail_matches_map(
         )
         return tuple(errors)
     for page, mapped in zip(draft.pages, target_pages, strict=True):
+        placed = tuple(item_id for content in page.content for item_id in content.lettering_ids)
+        if placed != mapped.lettering_ids:
+            errors.append(
+                f"Page {mapped.page_number} must place lettering {list(mapped.lettering_ids)!r} "
+                f"exactly once in order; detail placed {list(placed)!r}."
+            )
+
         actual = tuple(
             beat_id for content in page.content for beat_id in content.beat_ids
         )
@@ -991,6 +980,87 @@ def _detail_matches_map(
     return tuple(errors)
 
 
+def _compile_detail_response(
+    value: Mapping[str, Any], target_pages: tuple[_PageMapEntry, ...],
+    adaptation: BookAdaptation,
+) -> _BookPlanDraft:
+    """Compile authored destinations and their known Adapt provenance.
+
+    A panel can bridge two beats: its captions already determine both owning
+    beat citations. Requiring the writer to repeat those links independently
+    made corrections alternate between two individually incomplete citations.
+    Visual citations remain authored; no words or visual decisions are moved.
+    """
+    response = _BookDetailDraft.model_validate(value)
+    if len(response.pages) != len(target_pages):
+        raise ValueError(f"Expected {len(target_pages)} pages; received {len(response.pages)}.")
+    owners = {item.id: beat.id for beat in adaptation.beats for item in beat.lettering}
+    pages = []
+    for page, mapped in zip(response.pages, target_pages, strict=True):
+        placements = page.lettering_placements
+        missing = set(mapped.lettering_ids) - placements.keys()
+        unknown = placements.keys() - set(mapped.lettering_ids)
+        if missing or unknown:
+            raise ValueError(
+                f"Page {mapped.page_number} lettering_placements must assign every locked item "
+                f"exactly once: missing {sorted(missing)!r}; out-of-page {sorted(unknown)!r}."
+            )
+        panels = [panel.model_dump(mode="json") | {"lettering_ids": []} for panel in page.content]
+        positions = {beat_id: index for index, beat_id in enumerate(mapped.beat_ids)}
+        visual_ids = [beat_id for panel in panels for beat_id in panel["beat_ids"]]
+        foreign_visual_ids = set(visual_ids) - positions.keys()
+        if foreign_visual_ids:
+            raise ValueError(
+                f"Page {mapped.page_number}: out-of-page visual beats {sorted(foreign_visual_ids)!r}."
+            )
+        visual_positions = [positions[beat_id] for beat_id in visual_ids]
+        if visual_positions != sorted(visual_positions):
+            raise ValueError(
+                f"Page {mapped.page_number}: visual beat citations must preserve mapped order; "
+                f"received {visual_ids!r}."
+            )
+        previous_destination = 1
+        for item_id in mapped.lettering_ids:
+            destination = placements[item_id]
+            if destination > len(panels):
+                raise ValueError(
+                    f"Page {mapped.page_number}: {item_id} targets panel {destination}, "
+                    f"but only {len(panels)} panels exist."
+                )
+            if destination < previous_destination:
+                raise ValueError(
+                    f"Page {mapped.page_number}: {item_id} targets panel {destination} "
+                    f"before the preceding item's panel {previous_destination}; "
+                    "destinations must preserve locked lettering order."
+                )
+            panels[destination - 1]["lettering_ids"].append(item_id)
+            previous_destination = destination
+        for panel in panels:
+            # These links follow the writer's exact word placement; they do
+            # not assert that every caption is literally depicted in the image.
+            carried = set(panel["beat_ids"]) | {owners[item_id] for item_id in panel["lettering_ids"]}
+            if carried - positions.keys():
+                raise ValueError(f"Page {mapped.page_number}: lettering owner is outside its page map.")
+            panel["beat_ids"] = sorted(carried, key=positions.__getitem__)
+        pages.append(page.model_dump(mode="json", exclude={"lettering_placements", "content"})
+                     | {"content": panels})
+    return _BookPlanDraft.model_validate(response.model_dump(mode="json") | {"pages": pages})
+
+
+def _detail_response_view(draft: _BookPlanDraft) -> dict:
+    """Render accepted detail in the writer's contract for a later local repair."""
+    value = draft.model_dump(mode="json")
+    for page in value["pages"]:
+        placements = {}
+        for number, panel in enumerate(page["content"], 1):
+            for item_id in panel.pop("lettering_ids"):
+                if item_id in placements:
+                    raise ValueError(f"Cannot serialize repeated lettering placement: {item_id}.")
+                placements[item_id] = number
+        page["lettering_placements"] = placements
+    return value
+
+
 async def _generate_detail_batch(
     adaptation: BookAdaptation,
     references: ApprovedVisualReferenceInventory,
@@ -1002,6 +1072,7 @@ async def _generate_detail_batch(
     ctx: StageRuntime,
     concerns: tuple[InvariantFailure | EditorialIssue, ...] = (),
     story_instruction: str = "",
+    previous_draft: _BookPlanDraft | None = None,
 ) -> _BookPlanDraft:
     base_prompt = _detail_batch_prompt(
         adaptation,
@@ -1010,7 +1081,15 @@ async def _generate_detail_batch(
         start=start,
         stop=stop,
         concerns=concerns,
-    ) + story_instruction_section(story_instruction, stage="plan")
+    ) + story_instruction_section(story_instruction, stage="plan", fixed_page_map=True)
+    if previous_draft is not None:
+        base_prompt += (
+            "\n\nRepair only the cited staging/composition defects in this existing detail. "
+            "Preserve unaffected panels and all fixed page allocations. If the concern "
+            "requires moving lettering between pages, retain that allocation unchanged; "
+            "the global-map pass owns such changes. Return the complete target batch. "
+            "\nPREVIOUS DETAIL:\n" + json.dumps(_detail_response_view(previous_draft), ensure_ascii=False)
+        )
     attempt_prompt = base_prompt
     target_beat_ids = {
         beat_id for page in page_map.pages[start:stop] for beat_id in page.beat_ids
@@ -1029,11 +1108,11 @@ async def _generate_detail_batch(
                 ),
                 user_content=attempt_prompt,
                 feature="plan.detail",
-                json_schema=_BookPlanDraft.model_json_schema(),
+                json_schema=_plan_response_schema(references, page_map.pages[start:stop]),
             )
         _record_plan_usage(ctx, result)
         try:
-            draft = _BookPlanDraft.model_validate(result.value)
+            draft = _compile_detail_response(result.value, page_map.pages[start:stop], adaptation)
         except ValidationError as error:
             if attempt == _MAX_PLAN_ATTEMPTS:
                 raise
@@ -1043,34 +1122,39 @@ async def _generate_detail_batch(
                 error,
             )
             continue
-        errors = _detail_matches_map(draft, page_map.pages[start:stop])
-        if not errors:
+        except ValueError as error:
+            errors = (str(error),)
+            reference_failures = ()
+        else:
+            errors = _detail_matches_map(draft, page_map.pages[start:stop])
+            reference_failures = _reference_authority_failures(
+                draft.pages, references, page_number_offset=start,
+            )
+        if not errors and not reference_failures:
             return draft
         if attempt == _MAX_PLAN_ATTEMPTS:
-            raise PlanInvariantError(
-                PlanValidation(
-                    invariant_failures=(
-                        InvariantFailure(
-                            id=f"plan_detail_failure_{start + 1}_{stop}",
-                            owner_stage="plan",
-                            code="beat_allocation",
-                            message=(
-                                "Page detail must preserve its fixed global "
-                                "page-map allocation."
-                            ),
-                            artifact_ids=[
-                                f"page_{number:03d}"
-                                for number in range(start + 1, stop + 1)
-                            ],
-                            evidence=errors,
-                        ),
-                    )
-                )
-            )
+            failures = list(reference_failures)
+            if errors:
+                failures.append(InvariantFailure(
+                    id=f"plan_detail_failure_{start + 1}_{stop}",
+                    owner_stage="plan",
+                    code="beat_allocation",
+                    message="Page detail must preserve its fixed global page-map allocation.",
+                    artifact_ids=[f"page_{number:03d}" for number in range(start + 1, stop + 1)],
+                    evidence=errors,
+                ))
+            raise PlanInvariantError(PlanValidation(invariant_failures=failures))
         attempt_prompt = (
             base_prompt
-            + "\n\nYour previous detail changed the fixed page map. Return only "
-            "corrected target-page detail.\nERRORS:\n" + "\n".join(errors)
+            + "\n\nYour previous detail violated the fixed page map or approved references. Return only "
+            "corrected target-page detail. Preserve unaffected panels and their "
+            "word placements. Correct affected visual intentions together with "
+            "their lettering; never restage an event to accommodate a repeated ID. "
+            "\nPREVIOUS DETAIL:\n" + json.dumps(result.value, ensure_ascii=False, separators=(",", ":"))
+            + "\nERRORS:\n" + "\n".join([
+                *errors, *(f"[{f.code}] {f.message} " + " ".join(f.evidence)
+                           for f in reference_failures),
+            ])
         )
     raise AssertionError("detail loop must return or raise")
 
@@ -1155,42 +1239,106 @@ async def _produce_book_plan_two_pass(
         story_instruction=story_instruction,
     )
     with ctx.execute(total=0, estimated_cost_usd=estimate):
-        prior_history: list[ValidationAttempt] = []
-        for global_attempt in range(1, 3):
-            try:
-                page_map, history = await _generate_page_map(
-                    adaptation,
-                    target_range,
-                    generate=generate,
-                    ctx=ctx,
-                    artifacts=artifacts,
-                    model=model,
-                    review_instruction=author_instruction,
-                    story_instruction=story_instruction,
-                )
-            except PlanInvariantError as error:
-                _persist_validation(
-                    artifacts,
-                    error.validation,
-                    attempts=1,
-                )
-                raise
-            ranges = [
-                (start, min(start + _PLAN_DETAIL_BATCH_PAGES, len(page_map.pages)))
-                for start in range(0, len(page_map.pages), _PLAN_DETAIL_BATCH_PAGES)
-            ]
-            # One step is reserved for canonicalization, validation, and artifact
-            # persistence so the stage cannot report completion while that work is
-            # still running.
-            total_steps = ctx.stage_state.items_done + 2 + len(ranges)
-            ctx.set_progress_total(total_steps)
-            ctx.record_item_done()
-            ctx.progress(ctx.stage_state.items_done, total_steps)
+        try:
+            page_map, history = await _generate_page_map(
+                adaptation,
+                target_range,
+                generate=generate,
+                ctx=ctx,
+                artifacts=artifacts,
+                model=model,
+                review_instruction=author_instruction,
+                story_instruction=story_instruction,
+            )
+        except PlanInvariantError as error:
+            _persist_validation(
+                artifacts,
+                error.validation,
+                attempts=len(error.history) or 1,
+                history=error.history,
+            )
+            raise
+        ranges = [
+            (start, min(start + _PLAN_DETAIL_BATCH_PAGES, len(page_map.pages)))
+            for start in range(0, len(page_map.pages), _PLAN_DETAIL_BATCH_PAGES)
+        ]
+        # One step is reserved for canonicalization, validation, and artifact
+        # persistence so the stage cannot report completion while that work is
+        # still running.
+        total_steps = ctx.stage_state.items_done + 2 + len(ranges)
+        ctx.set_progress_total(total_steps)
+        ctx.record_item_done()
+        ctx.progress(ctx.stage_state.items_done, total_steps)
 
-            async def generate_batch(
-                start: int, stop: int
-            ) -> tuple[int, int, _BookPlanDraft]:
-                draft = await _generate_detail_batch(
+        async def generate_batch(
+            start: int, stop: int
+        ) -> tuple[int, int, _BookPlanDraft]:
+            draft = await _generate_detail_batch(
+                adaptation,
+                references,
+                page_map,
+                start=start,
+                stop=stop,
+                generate=generate,
+                ctx=ctx,
+                story_instruction=story_instruction,
+            )
+            ctx.record_item_done()
+            return start, stop, draft
+
+        try:
+            batches = await run_paid_shards(
+                [lambda start=start, stop=stop: generate_batch(start, stop)
+                 for start, stop in ranges],
+                limit=4,
+            )
+        except PlanInvariantError as error:
+            _persist_validation(
+                artifacts,
+                error.validation,
+                attempts=_MAX_PLAN_ATTEMPTS,
+            )
+            raise
+        draft = _merge_detail_drafts(
+            adaptation,
+            references,
+            page_map,
+            batches,
+        )
+        pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat)
+        if not validation.invariant_failures:
+            artifacts.write_plan_review_draft(PlanReviewDraft(adaptation_sha256=adaptation.content_sha256, rhythm_summary=draft.rhythm_summary, pages=pages))
+            review_failures = await review_narrative(
+                planning_context(adaptation, pages), generate=generate, ctx=ctx,
+                artifacts=artifacts, model=model, instruction=author_instruction,
+            )
+            validation = reviewed_validation(validation, review_failures, artifacts=artifacts, phase="plan", context=planning_context(adaptation, pages))
+
+
+        narrative_repaired = any(
+            any(code.startswith("narrative_review_") for code in attempt.invariant_codes)
+            for attempt in history
+        )
+        repairable = tuple(
+            f for f in validation.invariant_failures if f.owner_stage == "plan"
+            and f.code != "narrative_review_invalid"
+            and (not f.code.startswith("narrative_review_") or not narrative_repaired)
+        )
+        grouped = _concern_batch_indexes(
+            tuple(repairable),
+            page_count=len(page_map.pages),
+        )
+        if grouped:
+            history.append(_attempt_record(1, validation))
+            total_steps += len(grouped)
+            ctx.set_progress_total(total_steps)
+            by_index = {
+                start // _PLAN_DETAIL_BATCH_PAGES: (start, stop, batch)
+                for start, stop, batch in batches
+            }
+            for index, concerns in grouped.items():
+                start, stop, previous_draft = by_index[index]
+                repaired = await _generate_detail_batch(
                     adaptation,
                     references,
                     page_map,
@@ -1198,24 +1346,14 @@ async def _produce_book_plan_two_pass(
                     stop=stop,
                     generate=generate,
                     ctx=ctx,
+                    concerns=tuple(concerns),
                     story_instruction=story_instruction,
+                    previous_draft=previous_draft,
                 )
                 ctx.record_item_done()
-                return start, stop, draft
-
-            try:
-                batches = await run_paid_shards(
-                    [lambda start=start, stop=stop: generate_batch(start, stop)
-                     for start, stop in ranges],
-                    limit=4,
-                )
-            except PlanInvariantError as error:
-                _persist_validation(
-                    artifacts,
-                    error.validation,
-                    attempts=_MAX_PLAN_ATTEMPTS,
-                )
-                raise
+                ctx.progress(ctx.stage_state.items_done, total_steps)
+                by_index[index] = (start, stop, repaired)
+            batches = list(by_index.values())
             draft = _merge_detail_drafts(
                 adaptation,
                 references,
@@ -1223,96 +1361,48 @@ async def _produce_book_plan_two_pass(
                 batches,
             )
             pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat)
-            if not validation.invariant_failures:
-                review_failures = await review_narrative(
-                    planning_context(adaptation, pages), generate=generate, ctx=ctx,
-                    artifacts=artifacts, model=model, instruction=author_instruction,
-                )
-                validation = validation.model_copy(update={"invariant_failures": review_failures})
 
-
-            repairable = (
-                *(f for f in validation.invariant_failures if f.owner_stage == "plan"
-                  and not f.code.startswith("narrative_review_")),
-                *(
-                    issue
-                    for issue in validation.editorial_issues
-                    if issue.code
-                    in {
-                        "repetitive_page_composition",
-                        "density_mismatch",
-                    }
-                ),
+        if grouped and not validation.invariant_failures:
+            artifacts.write_plan_review_draft(PlanReviewDraft(adaptation_sha256=adaptation.content_sha256, rhythm_summary=draft.rhythm_summary, pages=pages))
+            review_failures = await review_narrative(
+                planning_context(adaptation, pages), generate=generate, ctx=ctx,
+                artifacts=artifacts, model=model, instruction=author_instruction,
             )
-            grouped = _concern_batch_indexes(
-                tuple(repairable),
-                page_count=len(page_map.pages),
-            )
-            if grouped:
-                total_steps += len(grouped)
-                ctx.set_progress_total(total_steps)
-                by_index = {
-                    start // _PLAN_DETAIL_BATCH_PAGES: (start, stop, batch)
-                    for start, stop, batch in batches
-                }
-                for index, concerns in grouped.items():
-                    start, stop, _ = by_index[index]
-                    repaired = await _generate_detail_batch(
-                        adaptation,
-                        references,
-                        page_map,
-                        start=start,
-                        stop=stop,
-                        generate=generate,
-                        ctx=ctx,
-                        concerns=tuple(concerns),
-                        story_instruction=story_instruction,
-                    )
-                    ctx.record_item_done()
-                    ctx.progress(ctx.stage_state.items_done, total_steps)
-                    by_index[index] = (start, stop, repaired)
-                batches = list(by_index.values())
-                draft = _merge_detail_drafts(
-                    adaptation,
-                    references,
-                    page_map,
-                    batches,
-                )
-                pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat)
-
-            if not validation.invariant_failures:
-                review_failures = await review_narrative(
-                    planning_context(adaptation, pages), generate=generate, ctx=ctx,
-                    artifacts=artifacts, model=model, instruction=author_instruction,
-                )
-                validation = validation.model_copy(update={"invariant_failures": review_failures})
-            history.append(_attempt_record(1 + bool(grouped), validation))
-            if (global_attempt == 1 and validation.invariant_failures
-                    and any(f.owner_stage == "plan" and f.code.startswith("narrative_review_")
-                            and f.code != "narrative_review_invalid" for f in validation.invariant_failures)):
-                # A structural defect must be allowed to change the global map,
-                # not merely add panels inside the already defective allocation.
-                prior_history.extend(history)
-                story_instruction += "\nRepair the global narrative allocation, including page count and beat distribution:\n" + "\n".join(
-                    " ".join(f.evidence) for f in validation.invariant_failures
-                )
-                continue
-            history = [*prior_history, *history]
-            _persist_validation(
-                artifacts,
-                validation,
-                attempts=1 + bool(grouped),
-                history=tuple(history),
-            )
-            if validation.invariant_failures:
-                raise PlanInvariantError(validation)
-            plan = _write_valid_plan(artifacts=artifacts, adaptation=adaptation,
-                target_range=target_range, pages=pages, rhythm_summary=page_map.rhythm_summary,
-                validation=validation)
-            ctx.record_item_done()
-            ctx.progress(total_steps, total_steps)
-            break
+            validation = reviewed_validation(validation, review_failures, artifacts=artifacts, phase="plan", context=planning_context(adaptation, pages))
+        validation = reviewed_validation(validation, validation.invariant_failures, artifacts=artifacts, phase="plan_map", context=planning_context(adaptation, page_map.pages, phase="plan_map"))
+        history.append(_attempt_record(1 + bool(grouped), validation))
+        _persist_validation(
+            artifacts,
+            validation,
+            attempts=1 + bool(grouped),
+            history=tuple(history),
+        )
+        if validation.invariant_failures:
+            raise PlanInvariantError(validation)
+        plan = _write_valid_plan(artifacts=artifacts, adaptation=adaptation,
+            target_range=target_range, pages=pages, rhythm_summary=page_map.rhythm_summary,
+            validation=validation)
+        ctx.record_item_done()
+        ctx.progress(total_steps, total_steps)
     return plan
+
+
+def _default_plan_call_limit(adaptation: BookAdaptation, target_range: ApprovedPageRange) -> int:
+    """Allow a full plan, bounded corrections, and explicit resume headroom.
+
+    Page targets are advisory. Budget for one page per beat or the upper target,
+    rather than assuming every pair of beats will share a page. The conservative
+    allowance leaves room for structural corrections and explicit resumes; it
+    does not authorize extra narrative repairs or whole-book regeneration.
+    """
+    projected_pages = max(target_range.maximum, len(adaptation.beats))
+    windows = (projected_pages + 11) // 12
+    if len(adaptation.beats) < _TWO_PASS_PLAN_MIN_BEATS:
+        clean_calls = 1 + windows
+    else:
+        batches = (projected_pages + _PLAN_DETAIL_BATCH_PAGES - 1) // _PLAN_DETAIL_BATCH_PAGES
+        clean_calls = 1 + batches + 2 * windows
+    return max(_MIN_PLAN_GENERATION_CALLS, 4 * clean_calls)
 
 
 async def produce_book_plan(
@@ -1327,9 +1417,21 @@ async def produce_book_plan(
     generate: StructuredGenerator,
     author_pins: tuple[AuthorGeometryPin, ...] | list[AuthorGeometryPin] = (),
     story_instruction: str = "",
+    max_generation_calls: int | None = None,
 ) -> BookPlan:
     """Produce one canonical plan through the cheapest quality-safe workflow."""
 
+    from novel_to_comic.generation_budget import budgeted_generator
+    generate = budgeted_generator(
+        generate, artifacts=artifacts, stage="plan", model=model,
+        inputs={"adaptation": adaptation.model_dump(mode="json"),
+                "references": references.model_dump(mode="json"),
+                "range": target_range.model_dump(mode="json"),
+                "pins": [p.model_dump(mode="json") for p in author_pins],
+                "instruction": story_instruction},
+        override_limit=max_generation_calls is not None,
+        max_calls=max_generation_calls if max_generation_calls is not None else _default_plan_call_limit(adaptation, target_range),
+    )
     from novel_to_comic.generation_checkpoints import checkpointed_generator
     generate = checkpointed_generator(generate, artifacts=artifacts, stage="plan", model=model)
 
@@ -1379,40 +1481,22 @@ def _repair_prompt(
         f"- [{failure.code}] {failure.message} " + " ".join(failure.evidence)
         for failure in validation.invariant_failures
     )
+    scope = (
+        "Repair only the cited narrative defect and its immediately affected sequence. "
+        "Preserve unaffected pages, their lettering placements, and their visual decisions. "
+        "Do not rebuild the book or polish pacing preferences. "
+        if any(f.code.startswith("narrative_review_") for f in validation.invariant_failures)
+        else "Correct the invalid allocation while preserving unaffected story decisions. "
+    )
     return (
         f"{prompt}\n\nYour previous global page plan violated these blocking "
         "contract requirements. Return one complete corrected JSON object that "
-        "resolves every failure. Redistribute beats and lettering across the whole book, "
-        "remove padding, and change page count when needed. Preserve exact words, "
-        "story order, and source-supported events, not the defective allocation.\n\n"
+        "resolves every failure. " + scope + "Preserve exact words, story order, "
+        "and source-supported events.\n\n"
         "YOUR PREVIOUS JSON:\n"
         f"{json.dumps(raw, indent=2, default=str)}\n\n"
         "BLOCKING CONTRACT FAILURES:\n"
         f"{failures}"
-    )
-
-
-def _editorial_repair_prompt(
-    prompt: str,
-    raw: object,
-    issues: tuple[EditorialIssue, ...],
-) -> str:
-    concerns = "\n".join(
-        f"- [{issue.code}] {issue.message} " + " ".join(issue.evidence)
-        for issue in issues
-    )
-    return (
-        f"{prompt}\n\nYour previous global page plan is contract-valid but its "
-        "page grammar has these evidence-backed editorial concerns. Return one "
-        "complete corrected JSON object that preserves all story content, exact "
-        "lettering allocation, page order, and valid rhythm decisions while "
-        "introducing purposeful semantic panel variety. Do not add panels merely "
-        "to satisfy a count; each added panel must depict a distinct visual "
-        "submoment supported by its cited beat and source.\n\n"
-        "YOUR PREVIOUS JSON:\n"
-        f"{json.dumps(raw, indent=2, default=str)}\n\n"
-        "EDITORIAL CONCERNS:\n"
-        f"{concerns}"
     )
 
 
@@ -1526,6 +1610,43 @@ def _approved_state_pairs(
         for reference in references.references
         if reference.appearance_state_id is not None
     }
+
+
+def _reference_authority_failures(
+    pages: tuple[ComicPage, ...] | tuple[_PageDraft, ...],
+    references: ApprovedVisualReferenceInventory,
+    *,
+    page_number_offset: int | None = None,
+) -> tuple[InvariantFailure, ...]:
+    """Check raw batches and canonical pages with actionable panel locations."""
+    known_entities = {r.entity_id for r in references.references}
+    known_states = _approved_state_pairs(references)
+    failures = []
+    for index, page in enumerate(pages, 1):
+        number = page.page_number if page_number_offset is None else page_number_offset + index
+        for order, content in enumerate(page.content, 1):
+            states = (content.appearance_states if isinstance(content, PageContent) else
+                      {b.entity_id: b.state_id for b in content.appearance_states})
+            unknown_entities = sorted(set(content.entity_ids) - known_entities)
+            unknown_states = sorted(f"{entity}:{state}" for entity, state in states.items()
+                                    if (entity, state) not in known_states)
+            if not unknown_entities and not unknown_states:
+                continue
+            content_id = f"page_{number:03d}_content_{order:03d}"
+            failures.append(InvariantFailure(
+                id=f"plan_failure_reference_authority_{content_id}",
+                owner_stage="plan", code="reference_authority",
+                message="Page-scoped references must resolve in the approved inventory.",
+                artifact_ids=[content_id, *unknown_entities, *unknown_states],
+                evidence=[
+                    f"{content_id}: unknown entity IDs: {unknown_entities!r}; "
+                    f"unknown entity/state pairs: {unknown_states!r}.",
+                    "Use only approved entity/state pairs. For a main reference with "
+                    "appearance_state_id=null, keep its entity_id and omit the state binding; "
+                    "do not invent 'base' or substitute another entity's state.",
+                ],
+            ))
+    return tuple(failures)
 
 
 def _derived_state_citations(
@@ -2153,40 +2274,7 @@ def validate_book_plan(
                 )
             )
 
-    known_entities = {reference.entity_id for reference in references.references}
-    known_states = _approved_state_pairs(references)
-    unknown_entities = sorted(
-        {
-            entity_id
-            for page in pages
-            for content in page.content
-            for entity_id in content.entity_ids
-            if entity_id not in known_entities
-        }
-    )
-    unknown_states = sorted(
-        {
-            f"{entity_id}:{state_id}"
-            for page in pages
-            for content in page.content
-            for entity_id, state_id in content.appearance_states.items()
-            if (entity_id, state_id) not in known_states
-        }
-    )
-    if unknown_entities or unknown_states:
-        failures.append(
-            InvariantFailure(
-                id="plan_failure_reference_authority",
-                owner_stage="plan",
-                code="reference_authority",
-                message="Page-scoped references must resolve in the approved inventory.",
-                artifact_ids=unknown_entities + unknown_states,
-                evidence=[
-                    f"Unknown entity IDs: {unknown_entities!r}.",
-                    f"Unknown appearance-state IDs: {unknown_states!r}.",
-                ],
-            )
-        )
+    failures.extend(_reference_authority_failures(pages, references))
 
     beat_by_id = {beat.id: beat for beat in adaptation.beats}
     for page in pages:

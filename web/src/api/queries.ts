@@ -201,10 +201,10 @@ export function useApproveStage() {
   });
 }
 
-export function useStageEstimate(project: string | undefined, stage: string | undefined, enabled = true) {
+export function useStageEstimate(project: string | undefined, stage: string | undefined, enabled = true, rerun = false) {
   return useQuery({
-    queryKey: ["project", project, "estimate", stage],
-    queryFn: () => fetchStageEstimate(project!, stage!),
+    queryKey: ["project", project, "estimate", stage, ...(rerun ? ["restart"] : [])],
+    queryFn: () => fetchStageEstimate(project!, stage!, rerun),
     enabled: !!project && !!stage && enabled,
     staleTime: 60_000,
   });

@@ -37,6 +37,7 @@ from novel_to_comic.usage import ApiResult
 from .credits import (
     assert_reservation_active,
     debit_model_usage,
+    estimate_adaptation_restart,
     estimate_stage_credit_reservation,
     release_reservation,
     reserve_credits,
@@ -84,6 +85,7 @@ async def run_credited_stage(
     state: PipelineState,
     stage: str,
     run: Callable[[], Awaitable[None]],
+    fresh_adaptation: bool = False,
 ) -> str:
     """Reserve credits for a stage, run it inside an ai_request_context, release the hold.
 
@@ -93,7 +95,12 @@ async def run_credited_stage(
     classify_operations(stage_operations(config, stage))
     db = get_db()
     try:
-        reservation_credits = estimate_stage_credit_reservation(config, project_dir, state, stage)
+        if fresh_adaptation:
+            if stage != "adapt":
+                raise ValueError("Only Adapt supports a fresh adaptation reservation")
+            reservation_credits = estimate_adaptation_restart(config, project_dir, state)["reserved_credits"] or 0
+        else:
+            reservation_credits = estimate_stage_credit_reservation(config, project_dir, state, stage)
         reservation_id, job_id = reserve_credits(db, user_id, project_id, stage, reservation_credits)
     except Exception as exc:
         detail = getattr(exc, "detail", None)

@@ -173,6 +173,8 @@ class Config(BaseModel):
     brief_model: str = GATEWAY_LUNA
     adapt_model: str = GATEWAY_TERRA
     plan_model: str = GATEWAY_TERRA
+    # Explicit override of the input-derived cumulative Adapt/Plan call limit.
+    narrative_max_calls: int | None = Field(default=None, ge=1)
     prompt_model: str = GATEWAY_LUNA
     page_ocr_model: str = GATEWAY_PAGE_OCR
     visual_review_model: str = GATEWAY_PAGE_OCR

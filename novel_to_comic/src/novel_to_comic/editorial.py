@@ -204,13 +204,22 @@ def validate_story_instruction(instruction: str) -> str:
     return cleaned
 
 
-def story_instruction_section(instruction: str, *, stage: str) -> str:
+def story_instruction_section(instruction: str, *, stage: str, fixed_page_map: bool = False) -> str:
     """Format the approved author revision appended to owning-stage prompts."""
 
     cleaned = (instruction or "").strip()
     if not cleaned:
         return ""
-    if stage == "plan":
+    if stage == "plan" and fixed_page_map:
+        guardrails = (
+            "The approved page map has already resolved global allocation. Apply "
+            "this request through panel composition, staging, and approved appearance "
+            "states within each target page. Preserve each page's assigned beat and "
+            "lettering IDs exactly; do not move words between pages or change page "
+            "count. Earlier instructions to reallocate pages apply to the map pass, "
+            "not this detail pass. Never rewrite Adapt's lettering."
+        )
+    elif stage == "plan":
         guardrails = (
             "Reallocate pages, panels, rhythm, and emphasis to honor this "
             "request. Never rewrite, shorten, reorder, or reassign Adapt's "

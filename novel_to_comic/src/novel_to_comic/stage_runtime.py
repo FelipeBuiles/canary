@@ -189,6 +189,7 @@ class StageRuntime:
                 from novel_to_comic.server.diagnostics import local_diagnostics_enabled
 
                 from novel_to_comic.ai.errors import AIRefusalError
+                from novel_to_comic.generation_budget import GenerationWorkLimitError
 
                 error_detail = None
                 if local_diagnostics_enabled():
@@ -199,7 +200,8 @@ class StageRuntime:
                         )
                 self.fail(
                     clean_exception_message(exc),
-                    error_code="model_refusal" if isinstance(exc, AIRefusalError) else None,
+                    error_code=("model_refusal" if isinstance(exc, AIRefusalError)
+                                else "generation_work_limit" if isinstance(exc, GenerationWorkLimitError) else None),
                     error_detail=error_detail,
                 )
                 raise

@@ -159,8 +159,8 @@ def test_credit_confidence_recognizes_only_target_stage_names() -> None:
         "brief": "usually_within_estimate",
         "style": "usually_within_estimate",
         "cast": "variable",
-        "adapt": "usually_within_estimate",
-        "plan": "usually_within_estimate",
+        "adapt": "variable",
+        "plan": "variable",
         "draw": "variable",
         "finish": "low_variance",
     }

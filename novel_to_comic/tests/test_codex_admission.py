@@ -164,7 +164,8 @@ def test_dev_draw_allows_either_or_both_codex_selections(select_routes):
     select_routes(images=("image-gemini-pro",), text=(config.effective_page_ocr_model(),))
     assert codex_dev.classify_operations(draw_operations(config)) == "codex_subscription"
     select_routes(images=("image-gemini-pro",))
-    assert codex_dev.classify_operations(draw_operations(config)) == "api"
+    assert codex_dev.classify_operations(draw_operations(config)) == "codex_subscription"
+    assert codex_dev.classify_operations(draw_operations(config, ocr=True)) == "api"
     select_routes(text=(config.effective_page_ocr_model(),))
     assert codex_dev.classify_operations(draw_operations(config)) == "api"
     select_routes(images=("image-gpt-2",))
@@ -198,7 +199,8 @@ def test_draw_estimates_include_only_api_operations(select_routes, monkeypatch, 
     select_routes(images=(config.draw_model,) if codex_image else (),
                   text=(config.effective_page_ocr_model(),) if codex_ocr else ())
     monkeypatch.setattr(page_drawing, "PAGE_OCR_ESTIMATED_COST_USD", 0.02)
-    assert page_drawing.estimate_draw_api_cost(config, 0.50) == pytest.approx(expected)
+    assert page_drawing.estimate_draw_api_cost(config, 0.50, ocr=True) == pytest.approx(expected)
+    assert page_drawing.estimate_draw_api_cost(config, 0.50) == (0.0 if codex_image else 0.50)
     assert page_drawing.estimate_draw_api_cost(config, 0.50, ocr=False) == (0 if codex_image else 0.50)
 
 

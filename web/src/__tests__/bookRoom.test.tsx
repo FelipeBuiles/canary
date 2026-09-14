@@ -115,7 +115,8 @@ describe("BookRoom edition decisions", () => {
     }));
     renderRoom();
     expect(screen.getAllByText("Saved artwork needs text evidence")).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Recover missing text checks" })).toBeTruthy();
+    fireEvent.click(screen.getByText("Optional text review"));
+    expect(screen.getByRole("button", { name: "CHECK UNCHECKED PAGES" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
     expect(screen.getByRole("link", { name: "Open page checks · Page 1" })).toBeTruthy();
   });
@@ -134,8 +135,9 @@ describe("BookRoom edition decisions", () => {
     renderRoom();
     expect(screen.getAllByText("Saved artwork needs text evidence")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
-    fireEvent.click(screen.getByRole("button", { name: "Recover missing text checks" }));
-    await screen.findByText(/Retained evidence needs parser repair/);
+    fireEvent.click(screen.getByText("Optional text review"));
+    fireEvent.click(screen.getByRole("button", { name: "CHECK UNCHECKED PAGES" }));
+    await screen.findByText(/Not checked — export is still available/);
     await waitFor(() => expect(finishChecks).toHaveBeenCalledWith("demo"));
     expect(recoverChecks).toHaveBeenCalledOnce();
     expect(recoverChecks).toHaveBeenCalledWith("demo", false, {});
@@ -319,7 +321,7 @@ describe("Book reader", () => {
     renderRoom();
     fireEvent.click(screen.getByRole("button", { name: "Read your book" }));
     const reader = screen.getByRole("dialog", { name: "Book reader" });
-    expect(within(reader).getByAltText("Page 1 — Page 1").getAttribute("src")).toBe("/api/projects/demo/pages/1/renders/1/preview/reader");
+    expect(within(reader).getByAltText("Page 1 — Page 1").getAttribute("src")).toBe("/api/projects/demo/pages/1/renders/1/preview/reader?delivery=2");
     fireEvent.keyDown(window, { key: "ArrowRight" });
     expect(within(reader).getByText("End of book")).toBeTruthy();
     fireEvent.click(within(reader).getByRole("button", { name: "Back to edition" }));

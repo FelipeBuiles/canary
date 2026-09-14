@@ -24,6 +24,7 @@ let briefApproved = true;
 type TestStageInfo = {
   status: StageStatus;
   stale: boolean;
+  error?: string;
   items_done?: number;
   items_total?: number;
 };
@@ -51,6 +52,7 @@ let planValidation: {
 } | undefined;
 let generationJobResults: Array<{
   id: string;
+  is_current_page?: boolean;
   status: "queued" | "running" | "complete" | "failed";
   classification?: string;
   user_message?: string;
@@ -67,6 +69,7 @@ const retryEstimate = vi.fn();
 const cost: CostEstimate = { estimate_credits: 7, reserved_credits: 10, reservation_multiplier: 1.4, confidence: "variable" };
 
 vi.mock("../api/queries", () => ({
+  useCompletePage: () => ({ data: undefined }),
   useProjectStatus: () => ({
     data: {
       stages: { ...stageStatuses, brief: { status: briefApproved ? "complete" : "awaiting_review", approved: briefApproved } },
@@ -308,14 +311,14 @@ describe("PagesRoom", () => {
   it("offers an adaptation rerun after drawing has begun, with explicit impact and consent", () => {
     stageStatuses.draw = { status: "running", stale: true };
     renderRoom();
-    expect(screen.getByRole("button", { name: /Rerun adaptation/ }).closest("footer")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Rerun adaptation/ }));
+    expect(screen.getByRole("button", { name: /Start adaptation over/ }).closest("footer")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Start adaptation over/ }));
     const dialog = screen.getByRole("alertdialog");
-    expect(within(dialog).getByText(/drawn pages, revisions, and exports will be cleared/)).toBeTruthy();
-    expect(within(dialog).getByText(/Drawing starts only when you choose/)).toBeTruthy();
+    expect(within(dialog).getByText(/archived and replaced/)).toBeTruthy();
+    expect(within(dialog).getByText(/Drawing waits for you/)).toBeTruthy();
     expect(within(dialog).getByText(/~7/)).toBeTruthy();
     expect(runPipeline).not.toHaveBeenCalled();
-    fireEvent.click(within(dialog).getByRole("button", { name: /Rerun adaptation/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /Start adaptation over/ }));
     expect(runPipeline).toHaveBeenCalledWith(
       { project: "demo", stage: "adapt", rerun: true, retryFailed: undefined }, expect.any(Object),
     );
@@ -326,7 +329,7 @@ describe("PagesRoom", () => {
   it("keeps adaptation rerun available when the saved page plan cannot load", () => {
     completePagesUnavailable = true;
     renderRoom();
-    expect((screen.getByRole("button", { name: /Rerun adaptation/ }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: /Start adaptation over/ }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it.each(["project", "page", "loading"])("disables adaptation rerun while %s work is active or unknown", (kind) => {
@@ -334,17 +337,17 @@ describe("PagesRoom", () => {
     generationJobsLoading = kind === "loading";
     if (kind === "page") generationJobResults = [{ id: "queued-page", status: "queued" }];
     renderRoom();
-    expect((screen.getByRole("button", { name: /Rerun adaptation/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /Start adaptation over/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it.each(["loading", "failed"])("blocks rerun confirmation when the estimate is %s", (state) => {
     stageEstimateFetching = state === "loading";
     if (state === "failed") estimateError = new Error("Offline");
     renderRoom();
-    expect(screen.getByRole("button", { name: /Rerun adaptation/ }).closest("footer")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Rerun adaptation/ }));
+    expect(screen.getByRole("button", { name: /Start adaptation over/ }).closest("footer")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Start adaptation over/ }));
     const dialog = screen.getByRole("alertdialog");
-    expect((within(dialog).getByRole("button", { name: /Rerun adaptation/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(dialog).getByRole("button", { name: /Start adaptation over/ }) as HTMLButtonElement).disabled).toBe(true);
     if (state === "failed") {
       fireEvent.click(within(dialog).getByRole("button", { name: "Retry estimate" }));
       expect(retryEstimate).toHaveBeenCalledOnce();
@@ -356,8 +359,8 @@ describe("PagesRoom", () => {
   it("keeps a rejected rerun visible in the confirmation so it can be retried", () => {
     runPipeline.mockImplementation((_variables, options) => options?.onError?.(new Error("Wait for all project jobs to finish.")));
     renderRoom();
-    fireEvent.click(screen.getByRole("button", { name: /Rerun adaptation/ }));
-    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: /Rerun adaptation/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Start adaptation over/ }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: /Start adaptation over/ }));
     expect(within(screen.getByRole("alertdialog")).getByRole("alert").textContent).toContain("Wait for all project jobs to finish.");
   });
 
@@ -377,7 +380,7 @@ describe("PagesRoom", () => {
     fireEvent.click(screen.getByRole("button", { name: "REVIEW FLAGGED PAGES (1)" }));
 
     const dialog = screen.getByRole("dialog", { name: "Page 1 review" });
-    expect(within(dialog).getByRole("button", { name: "Checks" }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(dialog).getByRole("button", { name: "Text & findings" }).getAttribute("aria-pressed")).toBe("true");
     expect(generatePage).not.toHaveBeenCalled();
     expect(analyzePage).not.toHaveBeenCalled();
     expect(reviewVisuals).not.toHaveBeenCalled();
@@ -426,6 +429,23 @@ describe("PagesRoom", () => {
     expect(within(confirmation).getByLabelText("10 credits")).toBeTruthy();
     expect(runPipeline).not.toHaveBeenCalled();
     fireEvent.click(within(confirmation).getByRole("button", { name: "Resume adaptation" }));
+    expect(runPipeline).toHaveBeenCalledWith(
+      { project: "demo", stage: "adapt", rerun: false, retryFailed: undefined },
+      expect.any(Object),
+    );
+  });
+
+  it("offers a non-destructive Adapt resume when Plan is blocked by a stale review", () => {
+    stageStatuses = {
+      adapt: { status: "complete", stale: false },
+      plan: { status: "failed", stale: false, error: "Narrative review is failed or stale. Rerun Adapt before drawing." },
+      draw: { status: "pending", stale: false },
+    };
+    completePagesUnavailable = true;
+    renderRoom();
+    expect(runPipeline).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Resume adaptation" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Resume adaptation" }));
     expect(runPipeline).toHaveBeenCalledWith(
       { project: "demo", stage: "adapt", rerun: false, retryFailed: undefined },
       expect.any(Object),
@@ -506,16 +526,13 @@ describe("PagesRoom", () => {
     expect(screen.getByText("The story needs more visual moments to fill the planned pages.")).toBeTruthy();
     expect(screen.getByText("Check details").closest("details")?.open).toBe(false);
     expect(screen.queryByText("These contract failures block the book and cannot be accepted.")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Restart this step" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start adaptation over" }));
     const confirmation = screen.getByRole("alertdialog");
-    expect(within(confirmation).getByText(/clear all downstream work/i)).toBeTruthy();
-    expect(within(confirmation).getByText("PLAN")).toBeTruthy();
-    expect(within(confirmation).getByText("DRAW")).toBeTruthy();
-    expect(within(confirmation).getByText("FINISH")).toBeTruthy();
+    expect(confirmation.textContent).toContain("archived and replaced");
     expect(within(confirmation).getByLabelText("about 7 credits")).toBeTruthy();
     expect(within(confirmation).getByLabelText("10 credits")).toBeTruthy();
     expect(runPipeline).not.toHaveBeenCalled();
-    fireEvent.click(within(confirmation).getByRole("button", { name: "Restart this step" }));
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Start adaptation over" }));
     expect(runPipeline).toHaveBeenCalledWith(
       { project: "demo", stage: "adapt", rerun: true, retryFailed: undefined },
       expect.any(Object),
@@ -825,15 +842,15 @@ describe("PagesRoom", () => {
     renderRoom();
 
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
-    fireEvent.click(screen.getByRole("button", { name: "Checks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Text & findings" }));
 
-    expect(screen.getByText("Some lettering does not match")).toBeTruthy();
+    expect(screen.getByText("Possible wording difference")).toBeTruthy();
     expect(screen.getByText("Open the door. · Run!")).toBeTruthy();
     expect(screen.getByText("Open the dor. · Run!")).toBeTruthy();
-    expect(screen.getByText("EXACT DIFFERENCES", { exact: false })).toBeTruthy();
+    expect(screen.getByText("POSSIBLE DIFFERENCES", { exact: false })).toBeTruthy();
     // No implicit per-issue redraw: fixes wait in the draft until previewed and submitted.
     expect(screen.queryByRole("button", { name: "CORRECT PAGE FINDINGS" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "DISMISS FALSE POSITIVE" }));
+    fireEvent.click(screen.getByRole("button", { name: "TEXT LOOKS CORRECT" }));
     expect(dismissIssue).toHaveBeenCalledWith({
       project: "demo",
       pageNumber: 1,
@@ -842,7 +859,7 @@ describe("PagesRoom", () => {
     // Redraws route through the draft: on the Page tab the finding waits selected once editing is opened.
     fireEvent.click(screen.getByRole("button", { name: "Page" }));
     fireEvent.click(screen.getByRole("button", { name: "MAKE CHANGES" }));
-    expect(screen.getByRole("checkbox", { name: /OCR lettering does not exactly match/ })).toHaveProperty("checked", true);
+    expect(screen.getByRole("checkbox", { name: /OCR lettering does not exactly match/ })).toHaveProperty("checked", false);
   });
 
   it("summarizes insertions, deletions and reorders across every differing segment", () => {
@@ -865,9 +882,9 @@ describe("PagesRoom", () => {
     renderRoom();
 
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
-    fireEvent.click(screen.getByRole("button", { name: "Checks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Text & findings" }));
 
-    expect(screen.getByText("EXACT DIFFERENCES · 3")).toBeTruthy();
+    expect(screen.getByText("POSSIBLE DIFFERENCES · 3")).toBeTruthy();
     expect(screen.getByText(/Moved:/)).toBeTruthy();
     expect(screen.getByText(/Missing:/)).toBeTruthy();
     expect(screen.getByText(/Extra:/)).toBeTruthy();
@@ -888,6 +905,22 @@ describe("PagesRoom", () => {
       expect.any(Object),
     );
     expect(screen.getByRole("button", { name: "DRAWING PAGE…" })).toHaveProperty("disabled", true);
+  });
+
+  it.each(["failed", "running"] as const)("ignores %s jobs from an earlier page plan", async (jobStatus) => {
+    includeUndrawnPage = true;
+    generationJobResults = [{
+      id: "old-edition-job", status: jobStatus, is_current_page: false,
+      classification: "generation_error", recoverable: true,
+      error: "Server stopped before this job started.",
+    }];
+    renderRoom();
+    // Let terminal-job reconciliation run as well as the initial page cards.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Failed (0)" })).toBeTruthy());
+    expect(screen.queryByText("IMAGE GENERATION FAILED")).toBeNull();
+    expect(screen.getByRole("button", { name: "Drawing (0)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "GENERATE COMPLETE PAGE" })).toBeTruthy();
+    expect(generatePage).not.toHaveBeenCalled();
   });
 
   it("explains when the image provider blocks a complete page", () => {
@@ -978,7 +1011,9 @@ describe("PagesRoom", () => {
 
     renderRoom();
 
-    fireEvent.click(screen.getByRole("button", { name: "RETRY TEXT CHECK" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Text & findings" }));
+    fireEvent.click(screen.getByRole("button", { name: "CHECK PAGE TEXT" }));
     expect(analyzePage).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "CONFIRM TEXT CHECK" }));
     expect(analyzePage).toHaveBeenCalledWith({
@@ -988,30 +1023,16 @@ describe("PagesRoom", () => {
     expect(generatePage).not.toHaveBeenCalled();
   });
 
-  it("recovers missing evidence before seeking explicit OCR-only consent on Continue", async () => {
+  it("continues to Book with unchecked artwork without running or charging for OCR", () => {
     analysisChecked = false;
     pageIssues = [];
-    const imageHash = "c".repeat(64);
-    recoverChecks.mockResolvedValueOnce({ pages: [{ page_number: 1, status: "requires_ocr" }] })
-      .mockImplementationOnce(async () => {
-        analysisChecked = true;
-    briefApproved = true;
-        return { pages: [{ page_number: 1, status: "checked" }] };
-      });
-    estimateChecks.mockResolvedValue({ ...cost, paid_pages: 1, pages: [{
-      page_number: 1, status: "requires_ocr", requires_paid_call: true, render_image_sha256: imageHash,
-    }] });
     renderRoom();
     fireEvent.click(screen.getByRole("button", { name: "CONTINUE TO BOOK" }));
-    await screen.findByRole("alertdialog");
-    expect(recoverChecks).toHaveBeenCalledOnce();
-    expect(recoverChecks).toHaveBeenCalledWith("demo", false, {});
-    expect(continueToBook).not.toHaveBeenCalled();
-    expect(generatePage).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "CONFIRM TEXT CHECK" }));
-    await waitFor(() => expect(recoverChecks).toHaveBeenLastCalledWith("demo", true, { 1: imageHash }));
-    await waitFor(() => expect(finishChecks).toHaveBeenCalledTimes(2));
-    expect(generatePage).not.toHaveBeenCalled();
+    expect(continueToBook).toHaveBeenCalledWith({ project: "demo", stage: "draw" }, expect.any(Object));
+    expect(recoverChecks).not.toHaveBeenCalled();
+    expect(estimateChecks).not.toHaveBeenCalled();
+    expect(analyzePage).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
   it("does not let a historical generation failure mask recoverable evidence or recovered analysis", () => {
@@ -1025,7 +1046,7 @@ describe("PagesRoom", () => {
       recoverable: true, error: "Old generic failure", payload: { page_number: 1 },
     }];
     const room = renderRoom();
-    expect(screen.getByRole("button", { name: "RETRY TEXT CHECK" })).toBeTruthy();
+    expect(screen.getByText("Artwork saved · Text not checked")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "TRY AGAIN" })).toBeNull();
     room.unmount();
     analysisChecked = true;
@@ -1053,7 +1074,7 @@ describe("PagesRoom", () => {
     const reviseTab = screen.getByRole("button", { name: "Page" });
     expect(reviseTab.getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Visual review" }).getAttribute("aria-pressed")).toBe("false");
-    expect(screen.getByRole("button", { name: "Checks" }).getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button", { name: "Text & findings" }).getAttribute("aria-pressed")).toBe("false");
     // Artwork and the opt-in editing entry render in the first viewport, not behind reading overlays.
     expect(screen.getByAltText("Complete page 1, render revision 2")).toBeTruthy();
     expect(screen.getByRole("button", { name: "MAKE CHANGES" })).toBeTruthy();
@@ -1085,7 +1106,7 @@ describe("PagesRoom", () => {
     expect(screen.getByText("VISUAL REVIEW")).toBeTruthy();
     expect(screen.queryByText("ISSUE HISTORY")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Checks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Text & findings" }));
     expect(screen.getByText("ISSUE HISTORY")).toBeTruthy();
 
     // Unsaved draft state survives tab switches: the draft stays mounted hidden.
@@ -1203,7 +1224,7 @@ describe("PagesRoom", () => {
     includeUndrawnPage = true;
     renderRoom("/project/demo/pages?page=1&review=checks&filter=needs-review");
     const dialog = screen.getByRole("dialog", { name: "Page 1 review" });
-    expect(within(dialog).getByRole("button", { name: "Checks" }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(dialog).getByRole("button", { name: "Text & findings" }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(within(dialog).getByRole("button", { name: "NEXT PAGE" }));
     expect(screen.getByRole("dialog", { name: "Page 2 review" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "NEXT UNRESOLVED" }));
@@ -1217,7 +1238,7 @@ describe("PagesRoom", () => {
     window.sessionStorage.setItem("page-review:v2:signed-out:demo", "page=1&review=checks&filter=needs-review");
     const first = renderRoom();
     expect(screen.getByRole("dialog", { name: "Page 1 review" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Checks" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Text & findings" }).getAttribute("aria-pressed")).toBe("true");
     first.unmount();
     renderRoom("/project/demo/pages?page=1&review=visual&filter=all");
     expect(screen.getByRole("button", { name: "Visual review" }).getAttribute("aria-pressed")).toBe("true");

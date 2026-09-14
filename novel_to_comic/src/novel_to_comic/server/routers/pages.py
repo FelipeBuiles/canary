@@ -344,7 +344,7 @@ def enqueue_all_undrawn_pages(
             adapter=adapter,
             artifacts=target,
             page=page,
-            ocr=GatewayPageOCRAdapter(config, page_number=page_number),
+            ocr=None,
             on_success=_draw_success_callback(
                 request,
                 pkey=pkey,
@@ -418,12 +418,9 @@ def get_page_render(
     return FileResponse(
         path,
         media_type="image/png",
-        # A render revision is immutable — a correction writes a new revision
-        # rather than overwriting this file. Caching it hard is what lets the
-        # book reader page through a whole book with no network at all, off
-        # the bytes the Panels grid already fetched. Private: project renders
-        # are per-user and must not land in a shared proxy cache.
-        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+        # Restarting Adapt/Plan can reuse this page/revision URL for new art.
+        # These URLs must revalidate; immutability applies only within an edition.
+        headers={"Cache-Control": "private, no-cache"},
     )
 
 
@@ -523,7 +520,7 @@ def get_page_render_preview(
     return FileResponse(
         path,
         media_type="image/webp",
-        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+        headers={"Cache-Control": "private, no-cache"},
     )
 
 
@@ -654,7 +651,7 @@ def generate_page(
         adapter=adapter,
         artifacts=target,
         page=page,
-        ocr=GatewayPageOCRAdapter(config, page_number=page_number),
+        ocr=None,
         on_success=_draw_success_callback(
             request,
             pkey=pkey,
@@ -1194,7 +1191,7 @@ def submit_page_correction(
         adapter=adapter,
         artifacts=target,
         page=target.read_page(page_number),
-        ocr=GatewayPageOCRAdapter(config, page_number=page_number),
+        ocr=None,
         parent_render_revision=correction.parent_render_revision,
         issue=primary_issue,
         on_success=_draw_success_callback(

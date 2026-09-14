@@ -215,9 +215,10 @@ export function regenExtract(
 export function fetchStageEstimate(
   project: string,
   stage: string,
+  rerun = false,
 ): Promise<StageCostEstimate> {
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/estimate?stage=${encodeURIComponent(stage)}`,
+    `/projects/${encodeURIComponent(project)}/estimate?stage=${encodeURIComponent(stage)}${rerun ? "&rerun=true" : ""}`,
   );
 }
 

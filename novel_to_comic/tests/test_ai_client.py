@@ -744,6 +744,94 @@ def _mock_transport(monkeypatch, handler) -> None:
     )
 
 
+def _timed_chat_stream(monkeypatch, events):
+    clock = [0.0]
+    monkeypatch.setattr(client.time, "perf_counter", lambda: clock[0])
+
+    class TimedStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for at, event in events:
+                clock[0] = at
+                yield (event if isinstance(event, str) else f"data: {json.dumps(event)}\n\n").encode()
+
+    _mock_transport(monkeypatch, lambda request: httpx.Response(200, stream=TimedStream()))
+
+
+@pytest.mark.parametrize("reasoning", [
+    {"reasoning_content": "private reasoning"},
+    {"reasoning": "private reasoning"},
+    {"reasoning_details": [{"type": "reasoning.text", "text": "private reasoning"}]},
+    {"reasoning_details": [{"type": "reasoning.summary", "summary": "private reasoning"}]},
+    {"reasoning_details": [{"type": "reasoning.encrypted", "data": "private reasoning"}]},
+])
+def test_reasoning_progress_does_not_restart_a_healthy_text_stream(monkeypatch, caplog, reasoning):
+    _timed_chat_stream(monkeypatch, [
+        (100, {"choices": [{"delta": reasoning}]}),
+        (910, {"choices": [{"delta": reasoning}]}),
+        (1000, {"choices": [{"delta": {"content": '{"ok":true}'}, "finish_reason": "stop"}]}),
+    ])
+    observed = []
+    with caplog.at_level("INFO"), stream_observer(observed.append):
+        data, _ = asyncio.run(client._read_chat_stream(
+            "http://gw/v1/x", headers={"X-Canary-AI-Event-ID": "test-event"},
+            payload={"model": "glm-5.3-flash"},
+        ))
+    assert data["choices"][0]["message"] == {"role": "assistant", "content": '{"ok":true}'}
+    assert observed == [0, 0, 0, 11]  # Reasoning is activity, never completed answer copy.
+    assert data["_canary_stream"]["reasoning_events"] == 2
+    assert "event_id=test-event model=glm-5.3-flash" in caplog.text
+    assert "Stream first reasoning after 100.0s" in caplog.text
+    assert "Stream first content after 1000.0s" in caplog.text
+    assert "private reasoning" not in caplog.text
+
+
+@pytest.mark.parametrize("metadata", [
+    {"role": "assistant"}, {"reasoning_content": ""}, {"reasoning": "   "},
+    {"reasoning_details": [{"id": "metadata-only", "type": "reasoning.text"}]},
+])
+def test_metadata_cannot_hide_a_text_stream_stall(monkeypatch, metadata):
+    _timed_chat_stream(monkeypatch, [(910, {"choices": [{"delta": metadata}]})])
+    with pytest.raises(httpx.ReadTimeout, match="0 reasoning events"):
+        asyncio.run(client._read_chat_stream("http://gw/v1/x", headers={}, payload={}))
+
+
+def test_reasoning_then_comment_only_stall_still_times_out(monkeypatch):
+    _timed_chat_stream(monkeypatch, [
+        (100, {"choices": [{"delta": {"reasoning_content": "thinking"}}]}),
+        (900, ": keepalive without a blank separator\n"),
+        (1001, ": still stalled\n"),
+    ])
+    with pytest.raises(httpx.ReadTimeout, match="1 reasoning events"):
+        asyncio.run(client._read_chat_stream("http://gw/v1/x", headers={}, payload={}))
+
+
+def test_reasoning_does_not_disable_the_stream_total_deadline(monkeypatch):
+    monkeypatch.setattr(client, "_STREAM_TOTAL_TIMEOUT", 0.01)
+
+    class ThinkingStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            while True:
+                yield b'data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}\n\n'
+                await asyncio.sleep(0.001)
+
+    _mock_transport(monkeypatch, lambda request: httpx.Response(200, stream=ThinkingStream()))
+    with pytest.raises(httpx.ReadTimeout, match="total budget"):
+        asyncio.run(client._read_chat_stream("http://gw/v1/x", headers={}, payload={}))
+
+
+def test_reasoning_without_an_answer_is_not_a_success(monkeypatch, _patch_events):
+    _mock_transport(monkeypatch, lambda request: httpx.Response(200, content=_sse_body(
+        {"choices": [{"delta": {"reasoning_content": "thinking"}}]},
+    )))
+    from novel_to_comic.ai.errors import AIEmptyResponseError
+    with pytest.raises(AIEmptyResponseError) as error:
+        asyncio.run(client.generate_structured_object(
+            config=Config(), model="glm-5.3-flash", system_prompt="JSON", user_content="story",
+            retry_invalid_json=False,
+        ))
+    assert error.value.diagnostics["stream"]["reasoning_events"] == 1
+
+
 class TestPostWithRetry:
     def test_preserves_form_data_when_no_files_are_present(self, monkeypatch):
         captured: dict[str, str] = {}
@@ -865,6 +953,88 @@ def _sse_body(*events: dict) -> bytes:
 
 
 class TestStreamingChatCompletion:
+    @pytest.mark.parametrize("format", ["sse", "sse_after_json", "buffered"])
+    def test_http_200_provider_errors_are_not_empty_answers_or_success(self, monkeypatch, _patch_events, format):
+        calls = []
+        error = {"id": "failed-generation", "error": {"code": "server_error", "message": "Provider disconnected"},
+                 "usage": {"prompt_tokens": 12, "completion_tokens": 3}}
+        def handler(request):
+            calls.append(request)
+            if format == "buffered":
+                return httpx.Response(200, json=error)
+            chunks = ([{"choices": [{"delta": {"content": '{"ok":true}'}}]}]
+                      if format == "sse_after_json" else [])
+            return httpx.Response(200, content=_sse_body(*chunks, error))
+        _mock_transport(monkeypatch, handler)
+        with pytest.raises(AITransportError, match="Provider disconnected") as caught:
+            asyncio.run(client.generate_structured_object(
+                config=Config(), model="glm-5.3-flash", system_prompt="JSON", user_content="PRIVATE STORY", feature="plan.detail",
+            ))
+        assert len(calls) == 1
+        assert caught.value.phase == "provider_response"
+        assert caught.value.diagnostics["provider_response_id"] == "failed-generation"
+        assert "PRIVATE STORY" not in json.dumps(caught.value.diagnostics)
+        assert client._error_json(caught.value)["transport_diagnostics"] == caught.value.diagnostics
+        event = _patch_events[-1][1]
+        assert event["status"] == "failed"
+        assert event["usage"].output_tokens == 3
+        assert event["response_data"]["id"] == "failed-generation"
+
+    @pytest.mark.parametrize("retry_enabled,succeeds,expected_calls", [(True, True, 2), (True, False, 2), (False, False, 1)])
+    @pytest.mark.parametrize("reported_usage", [True, False])
+    def test_empty_response_recovery_is_bounded_and_preserves_usage(self, monkeypatch, _patch_events, retry_enabled, succeeds, expected_calls, reported_usage):
+        from novel_to_comic.ai.errors import AIEmptyResponseError
+        calls = []
+        def handler(request):
+            calls.append(request)
+            if succeeds and len(calls) == 2:
+                return httpx.Response(200, content=_sse_body(
+                    {"choices": [{"delta": {"content": '{"ok":true}'}, "finish_reason": "stop"}],
+                     "usage": {"prompt_tokens": 10, "completion_tokens": 4}},
+                ))
+            empty = {"choices": []}
+            if reported_usage:
+                empty["usage"] = {"prompt_tokens": 12, "completion_tokens": 1}
+            return httpx.Response(200, content=_sse_body(empty))
+        _mock_transport(monkeypatch, handler)
+        async def run():
+            return await client.generate_structured_object(
+                config=Config(), model="glm-5.3-flash", system_prompt="JSON", user_content="story",
+                feature="plan.detail", retry_invalid_json=retry_enabled,
+            )
+        if succeeds:
+            result = asyncio.run(run())
+            assert result.value == {"ok": True}
+            assert result.usage.output_tokens == 4
+            assert [u.output_tokens for u in result.additional_usage] == ([1] if reported_usage else [])
+            first, second = (json.loads(call.content) for call in calls)
+            assert {k: first[k] for k in ("messages", "model", "response_format")} == {
+                k: second[k] for k in ("messages", "model", "response_format")
+            }
+        else:
+            with pytest.raises(AIEmptyResponseError) as caught:
+                asyncio.run(run())
+            assert caught.value.diagnostics["finish_reason"] is None
+            assert caught.value.diagnostics["stream"] == {"events": 1, "dropped": 0, "reasoning_events": 0}
+        assert len(calls) == expected_calls
+        assert len([kind for kind, _ in _patch_events if kind == "finalize"]) == expected_calls
+        failed = [event for kind, event in _patch_events if kind == "finalize" and event["status"] == "failed"]
+        assert all((event["usage"] is not None) == reported_usage for event in failed)
+
+    def test_empty_answer_at_output_cap_is_not_retried(self, monkeypatch, _patch_events):
+        calls = []
+        def handler(request):
+            calls.append(request)
+            return httpx.Response(200, content=_sse_body({"choices": [{"delta": {}, "finish_reason": "length"}]}))
+        _mock_transport(monkeypatch, handler)
+        with pytest.raises(AITransportError) as caught:
+            asyncio.run(client.generate_structured_object(
+                config=Config(), model="glm-5.3-flash", system_prompt="JSON", user_content="story",
+            ))
+        assert caught.value.phase == "provider_response"
+        assert caught.value.diagnostics["finish_reason"] == "length"
+        assert len(calls) == 1
+
     def test_collapse_joins_deltas_and_keeps_terminal_usage(self):
         collapsed = client._collapse_chat_chunks(
             [
@@ -931,7 +1101,7 @@ class TestStreamingChatCompletion:
             return httpx.Response(200, content=b": keepalive\n\n" * 4)
 
         _mock_transport(monkeypatch, handler)
-        with pytest.raises(httpx.ReadTimeout, match="no content in the first"):
+        with pytest.raises(httpx.ReadTimeout, match="no answer or reasoning progress"):
             asyncio.run(
                 client._read_chat_stream("http://gw/v1/x", headers={}, payload={})
             )
@@ -1049,7 +1219,7 @@ class TestStreamingChatCompletion:
             client._read_chat_stream("http://gw/v1/x", headers={}, payload={})
         )
         assert data["choices"][0]["message"]["content"] == "abcd"
-        assert data["_canary_stream"] == {"events": 2, "dropped": 0}
+        assert data["_canary_stream"] == {"events": 2, "dropped": 0, "reasoning_events": 0}
 
     def test_parses_a_payload_split_across_data_lines(self, monkeypatch):
         body = (
@@ -1679,3 +1849,19 @@ def test_anthropic_unknown_category_stays_unknown():
     )
     assert error.diagnostics['stop_details'] == details
     assert 'provider_explanation' not in str(error)
+
+
+def test_glm_receives_complete_locked_lettering_schema(monkeypatch, _patch_events):
+    from novel_to_comic.book_adaptation import _LetteringResponse, _lettering_response_schema
+    from novel_to_comic.ai.codex_schema import strict_output_schema
+    schema = _lettering_response_schema(_LetteringResponse, {"char_001"}, source_unit_ids=("source_000001",))
+    _patch_http(monkeypatch, {"id": "glm-lettering", "model": "z-ai/glm-5.3-flash",
+        "choices": [{"message": {"content": '{"beats":[]}'}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13}})
+    asyncio.run(client.generate_structured_object(config=Config(), model="glm-5.3-flash",
+        system_prompt="Return the lettering JSON.", user_content="Locked beats.",
+        feature="adapt.lettering", json_schema=schema))
+    sent = _FakeAsyncClient.last_request["json"]["response_format"]
+    assert sent["type"] == "json_schema"
+    assert sent["json_schema"]["strict"] is True
+    assert sent["json_schema"]["schema"] == strict_output_schema(schema)

@@ -615,6 +615,14 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `revision` | `int` | `Field(ge=1)` |
 | `content_sha256` | `str` | `Field(min_length=64, max_length=64)` |
 
+## PlanReviewDraft _(page.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `adaptation_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `rhythm_summary` | `str` |  |
+| `pages` | `tuple[ComicPage, ...]` | `Field(min_length=1)` |
+
 ## SourceUnit _(source.py)_
 
 | Field | Type | Default |
