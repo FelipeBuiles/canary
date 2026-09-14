@@ -627,11 +627,16 @@ class PageIssue(BaseModel):
 
     @property
     def requires_resolution(self) -> bool:
-        """Unproven OCR ordering is advisory, not an export approval gate."""
-        return not (
-            self.classification == "editorial_issue"
-            and self.issue_type == "unverified_lettering_order"
-        )
+        """Automated transcription is a suggestion, never proof of a defect."""
+        return not (self.is_text_check or (self.classification == "editorial_issue"
+                    and self.issue_type == "unverified_lettering_order"))
+
+    @property
+    def is_text_check(self) -> bool:
+        return self.id.startswith("page-issue-draw-page-") and self.issue_type in {
+            "misspelled_lettering", "missing_lettering", "duplicated_lettering",
+            "invented_lettering", "reordered_lettering", "unverified_lettering_order",
+        }
 
     @model_validator(mode="after")
     def _validate_resolution(self) -> "PageIssue":

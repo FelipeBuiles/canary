@@ -1,6 +1,6 @@
 # Stage contracts
 
-**Status: Current, September 9, 2026.** Implementation and tests are authoritative.
+**Status: Current, September 13, 2026.** Implementation and tests are authoritative.
 Each stage owns its file boundary. Server orchestration runs the explicit chain;
 stages do not call one another. The CLI has only `init` and `serve`.
 
@@ -122,10 +122,94 @@ identity authority, including species/anatomy; there is no separate species DTO.
 
 ### Adaptation and state authority
 
+Adapt's bounded source requests keep complete scenes together when they fit the
+unit and projected output limits. Oversized scenes may split; each authoring
+prompt identifies the supplied opening/middle/closing fragment, full scene bounds,
+and a read-only book scene outline. Whole-scene summaries are context, not a demand
+to recreate the scene in each fragment. Prompts distinguish mentions, testimony,
+recollections, and enacted events, and require only source-supported reactions;
+scene participants do not imply mandatory dialogue.
+
+Blueprint and story-repair request schemas express ledger exceptions as separate
+closed alternatives for each disposition. Compression and visual motifs require
+nonempty `adapted_beat_ids`; intentional omission requires an empty destination
+array. Compression and omission require a nonempty reason. Prompts distinguish
+literal destination IDs from prose ranges such as “beat_030 onward”; prose is
+never parsed to invent destination links. Python validation additionally checks
+whether a blueprint destination exists in the response before accepting its
+checkpoint. Corrections retain unaffected beats and accounting decisions.
+
+Locked-lettering generation has a separate authoring contract: the writer returns
+copy, kind, speaker identity, source citations, and `presentation`. It does not
+invent lettering IDs. The application validates complete locked-beat membership,
+orders responses by the blueprint, and assigns unique local lettering IDs before
+canonical validation; the book merge supplies final global IDs. It copies text,
+provenance, and speaker decisions without rewriting them. The authoring field
+`presentation` explicitly means onscreen/offscreen/narration/quoted_text/display,
+never performance direction such as “listless” or “quiet, sincere”; it maps to the
+canonical `delivery` field. Invalid presentation choices still require an authored
+correction. Canonical checkpoints remain distinct from writer responses.
+
+Adapt's lettering and story-repair request schemas constrain kind/delivery
+pairs before generation: dialogue/thought use onscreen or offscreen, captions
+use narration or quoted text, and SFX uses display. Onscreen speakers require
+a known Story Bible character ID. Canonical validation still checks returned
+and cached responses; invalid metadata is never silently reinterpreted.
+Exhausted locked-lettering attempts retain their last parseable rejection under
+`.checkpoints/adapt/lettering/<shard>/rejected.json`. Explicit Resume repairs that
+exact payload within the existing request allowance; valid lettering checkpoints
+keep their input keys and remain reusable. A successful repair removes the rejection.
+Blueprint, locked lettering, and scoped story repair constrain source citations
+to the assigned source IDs in their request schemas. Locked lettering retains
+its blueprint structure; provenance is checked before its checkpoint is accepted.
+Scoped story repair constrains beat, lettering, and ledger-exception citations. Both newly generated
+and cached repair drafts pass that scope check inside the bounded correction loop,
+before caching or splicing. An invalid cached batch keeps the reviewed candidate
+active; Resume corrects invalid responses and reuses valid siblings. Neighbor
+citations are never stripped or relabeled. Compression may still target retained
+external beats while accounting only for source units owned by the repair.
+Repairs must account for their complete source scope and retain requirement IDs
+whose only realizing beats they replace. Missing citation/accounting metadata is
+corrected without authoring duplicate events. Partial repairs receive the replaced
+beats' exclusive requirement ownership, rather than the whole shard's obligations.
+
 Adapt owns exact lettering. Plan assigns it to `ComicPage.content` and records
-reading order and optional geometry. Each content item declares visible
+reading order and optional geometry. The two-pass global page map assigns every
+lettering ID exactly once, in Adapt order, to a page carrying its owning beat.
+Detail batches must preserve each page's exact lettering allocation, even when
+one beat spans a batch boundary. The detail writer returns visual panels and a
+page-level `lettering_placements` object: each locked lettering ID is one required
+key with an authored 1-based destination panel number. Panels cannot return
+lettering ID lists. Closed page-specific schemas require all assigned IDs and
+forbid other pages' IDs; silent pages require an empty object. Compilation copies
+canonical items to those exact destinations in locked order, rejecting missing
+or foreign keys, nonexistent panels, and backward destinations. Canonical panel
+beat citations combine the authored visual beats with the known Adapt owners of
+its assigned lettering. A panel bridging two beats need not redundantly restate
+both caption-owner links: they follow its exact authored word placement. This
+does not claim that captions must be literally depicted. Foreign or backward
+visual citations remain invalid, and the combined provenance still undergoes
+the fixed-map ordering checks. Compilation never chooses a destination. Local repairs
+receive the previous panels in the same writer format. Canonical page artifacts
+retain their existing lettering contract; changed request schemas invalidate
+only the corresponding response checkpoints. Map/whole-book author instructions may change global allocation; detail
+instructions apply the same intent within the already fixed map and do not
+authorize moving words between pages. A failed detail response is corrected with its
+previous panels and explicit allocation errors before canonicalization. Plan
+normalization derives identifiers and reading order; it never fills missing words,
+deduplicates placements, or moves lettering between authored visual moments.
+Each content item declares visible
 `entity_ids` and an `appearance_states` map from entity ID to state ID. State
 IDs are entity-scoped. Characters, locations, and props share state catalogs.
+Plan's authoring inventory exposes entity IDs and nullable appearance-state IDs,
+omitting Draw's storage identifiers such as `char_001:base`. A null state denotes
+the main reference: retain the entity citation and omit its state binding.
+Both whole-book and detail request schemas constrain entity citations and explicit
+entity/state pairs to the approved inventory. Detail batches validate these
+citations locally before merge and use the existing bounded correction attempt
+for invalid output. Reference failures include canonical page/panel locations,
+so final validation can route concerns to their owning batch. No unknown state is
+silently dropped or mapped to a different approved appearance.
 State conditioning uses explicit `changed_facets` and `replaces_identity`.
 Preserve `visual_anchor` and `continuity_guard` verbatim through Cast and Draw.
 
@@ -144,19 +228,81 @@ capacity, and protected language remain enforced.
 
 Before publishing Adapt, a separate structured editorial call reviews source
 windows, including omitted units, alongside global beat summaries and neighboring
-beats. It checks reader-visible context, repeated events, unsupported additions,
-and essential development. Plan reviews the global map before detail in its
+beats. Supporting source units accompany the exact beat and lettering provenance
+in each detailed window. Identical ledger decisions are grouped losslessly for
+transport. Review contract `narrative_v4` also supplies the exact lettering outside
+the detailed window as compact `reader_context`, with no duplicate local copy.
+Together these contain the full adapted text in global story order. Reviewers
+must check earlier publishable words before requesting a repeated date, identity,
+or causal explanation; later reveals do not automatically excuse earlier gaps.
+Plan must also check when its page allocation presents those words. This adds
+text to existing review calls, not another review/repair loop. Changes to distant
+lettering invalidate affected review requests because reader knowledge is part
+of their evidence; a content-hash change alone does not. Each silence/concentration signal
+has one review-window owner with its complete sequence supplied. Lettering IDs
+are valid evidence anchors and map to their own source units. Exact essential-event
+and character-turn IDs supplied by the treatment are also valid citations. They
+map to the source of beats claiming the requirement only when the finding has no
+concrete beat, lettering, page, or source citation. Supplemental requirement IDs
+do not broaden a concrete finding's repair scope. A wholly unclaimed requirement
+without concrete evidence remains a book-wide concern. Invented IDs remain invalid
+and diagnostics list them.
+It checks
+reader-visible context, repeated events, unsupported additions, and essential
+development. Plan reviews the global map before detail in its
 larger-book workflow and reviews actual canonical page candidates before
 publication. Silence/SFX-only runs and disproportionate reuse of a beat are
 computed questions that the reviewer must assess, not numerical quality scores
 or automatic bans on silent comics. Defects cite known artifacts and carry
 repair ownership; Plan cannot repair missing Adapt wording by inventing copy.
 
-Findings enter bounded stage repair. Plan may change global allocation and page
-count rather than only editing panels inside a defective map. Failed or malformed
-review blocks publication and persists evidence. Text review calls are metered
-through StageRuntime and exact-input checkpoints; estimates include a review
-allowance. These are model judgments, not guaranteed story-quality measurements.
+The review request schema scopes signal IDs, assessment count, evidence IDs, and
+repair-stage ownership to the supplied window. Plan page citations use the absolute page IDs actually
+supplied in the detailed window (including pages added for owned signals), not
+window-relative numbers; other global pages are context and have their own
+review windows. Incorrect citations receive a protocol correction before they
+can route a story repair. With no signals, the assessment
+array must be empty; the reviewer still checks the story and reports defects in
+`findings`. Checklist entries for arbitrary beats, pages, or the ledger are not
+substitutes for the detected signals. Duplicate assessments remain checked in
+Python, with explicit missing, unexpected, and duplicate ID diagnostics.
+
+Review contract `narrative_v4` separates advisory preferences from substantiated
+blockers. Padding, pacing, emphasis, panel variety, and weak page turns never
+block or trigger automatic polishing. Negative signal assessments are advisory;
+they cannot manufacture a missing-context blocker. Advisory findings are saved
+in the review record, stage validation, and accepted Adapt/Plan editorial notes,
+and shown as optional notes in their reading views.
+
+A substantive finding must state a concrete consequence and reader impact and
+quote exact passages from their cited supplied artifacts. Contradictions and
+invented events require at least two distinct cited artifacts; an indispensable
+context gap requires at least one passage. An explicit requirement violation
+must also name an approved requirement. A missing or unverifiable evidence claim
+remains advisory. This raises the admission bar for blocking judgments without
+claiming automated literary certainty. Structural invariants and malformed or
+stale review checks remain blocking.
+
+When a published Adapt script has an outdated or missing review, **Resume
+adaptation** revalidates current source/Brief/Cast constraints and refreshes the
+review of that exact script. It does not rewrite or renumber the script, change
+its content hash, clear Plan checkpoints, or reset the cumulative work budget.
+Review notes are saved in the review receipt and stage validation without
+changing the published artifact. The Pages failure view offers this resume
+action alongside the separate, destructive **Start adaptation over** action.
+After refreshing Adapt, an already failed Plan requires an explicit retry;
+the normal auto-chain starts only pending stages.
+
+A stage attempt permits at most one narrative repair pass. Adapt repairs the
+cited source scope. Plan repairs the compact map before detail, or the affected
+detail batches after composition; a narrative map revision consumes that
+allowance. It never escalates an unresolved detail finding into whole-book
+regeneration. Schema corrections retain their separate bounded allowance.
+Unresolved blockers stop with evidence and preserve the draft for explicit
+review. Structurally valid Plan pages are retained in `plan/review_draft.json`
+before narrative review, readable through `GET /plan/review-draft`; they never
+become Draw authority. Successful publication removes that temporary draft.
+The cumulative work ceiling still bounds all requests.
 
 `TargetArtifacts` stores `adapt/adapt_review.json`, `plan/plan_map_review.json`,
 and `plan/plan_review.json`. Required successful reviews are keyed by version and
@@ -261,6 +407,10 @@ keyword overlap. Explicit beat entity scopes allow bounded Plan context.
 
 OCR is blind to canonical copy. It checks visible lettering and observed order;
 it does not establish visual identity, object fidelity, or scene correctness.
+Page-render and preview HTTP responses use `private, no-cache`: an Adapt/Plan
+restart can reuse page and render revision numbers in a new edition. The client
+uses `delivery=2` URLs to bypass responses previously cached as immutable for a
+year. Derived previews remain cached on disk within the active edition.
 An optional reference-aware visual check records up to eight editorial findings
 and uncertainty independently of OCR; it does not certify a page as correct.
 A saved visual report is reusable only while the canonical page, exact render
@@ -344,17 +494,51 @@ delimiters remain blocking. Warnings preserve the exact lettering and cited IDs.
 A valid recovered candidate with current successful narrative-review evidence
 is persisted without a model call; structural validity alone does not waive review.
 Changed source/brief identities or a new story instruction prevent this reuse.
-If validation still fails, an explicit resume reuses initial generation
-checkpoints. An interrupted repair batch reuses its completed siblings only when
+A structurally valid candidate with a completed failed editorial review can also
+resume as repair input, without publication. Its exact review digest, instruction,
+and completed review-request receipts under the original review model must match
+the current source/Brief/Story Bible work lineage. Selecting a different model
+preserves this story progress; subsequent review requests remain keyed to the
+selected model and cannot reuse another model's verdicts. Resume retains that improved candidate
+instead of reconstructing the original draft. Its unchanged review windows remain
+cacheable. Missing/stale receipts fall back to the existing generation checkpoints;
+no old review is promoted to successful evidence. A typed candidate checkpoint
+also binds the unpublished candidate, its source partition, and any pending repair
+batch to these exact authorities. It is saved before review so transport failures
+or an exhausted work limit do not force a return to initial generation. Completed
+unchecked repairs can be reconstructed from exact original-model prompt hashes
+before the next model reviews them. Resume estimates omit initial story generation
+when this saved work is eligible; repair and re-review remain uncertain scenarios.
+Repair inputs use the same
+global beat and lettering IDs cited by the reviewer, and repartitioning rejects
+cross-shard literal provenance or reordered shard intervals. Explicit compression
+may cite another shard's globally identified beat.
+An interrupted repair batch reuses its completed siblings only when
 every existing sibling matches the exact model and prompt hash. Only the missing
-sections generate again. A fully completed repair batch gets a fresh namespace
-on explicit retry, so a cached failed repair cannot trap subsequent attempts.
+sections generate again. A complete response batch interrupted before candidate
+validation also remains reusable. A separate receipt records the exact batch's
+completed validation outcome, including narrative review when structural checks
+pass. Only checked complete batches require a fresh repair namespace, so saved
+responses survive a splice crash without trapping retries in a rejected answer.
 Repair scope starts from affected source scenes, then includes all source units
 and literal ledger claims carried by any beat being replaced, including its
-lettering. Overlapping beats expand that scope until stable. The splice rejects
+lettering. Overlapping beats and intervening beats in authored order expand that
+scope until stable, producing one contiguous replacement interval. Repair
+prompts include up to three retained beats on either side with their exact
+lettering, including neighbors across shard boundaries. This read-only context
+establishes which events already occur outside the replacement; it grants no
+additional source ownership or permission to rewrite those neighbors. The splice
+preserves the repair's authored sequence and the untouched prefix/suffix; earliest
+source citation is not used to sort narrative order. StageRuntime logs cited and
+closed source counts per shard before repair generation. The splice rejects
 a partial scope before replacing anything; it must not keep a caption claim
-while deleting the caption that realized it. Compression-only links may still
-redirect to replacement beats and remain subject to narrative review.
+while deleting the caption that realized it. All sibling repairs are applied to
+the book together before any identifiers are rebased. Compression-only links
+resolve to retained or replacement beats across shards; replacement identity
+must be supported by source provenance or the repair's explicit ledger decisions.
+Unknown destinations, cycles, and deletion of a referenced beat without a
+supported replacement are rejected. A nearby beat is never an invented fallback.
+Resolved compression remains subject to narrative review.
 The Pages error screen offers Resume adaptation with the existing estimate and
 confirmation, plain-language checks, and collapsed technical evidence.
 
@@ -378,6 +562,10 @@ Do not reuse another account's cached project, balance, job, or action state.
 account/project, optionally filtered by repeated `ids` query parameters. It
 combines live jobs with persisted observations. After restart, previously
 queued/running observations become failed/recoverable, not automatically queued.
+Complete-page Draw jobs include `is_current_page`: true only when their request
+hash matches a retained frozen request for the current page revision and content
+hash. Pages ignores jobs marked false for failure badges and drawing status;
+the job history remains available after Adapt/Plan restarts.
 Pipeline status and saved artifacts remain recovery authority. Pipeline and
 style SSE broadcast to independent bounded subscribers: 128 events of in-process
 reconnect history and a 256-event queue per subscriber, dropping oldest overflow.
@@ -402,6 +590,10 @@ operator reconciliation, not global startup/reset release. Ledger settlement
 may replay its identical idempotent database operation; this is not a retry of
 the paid provider request.
 
+Project-lookup connection failures may retry the read once on the shared live
+database pool. Request recovery must not close or replace that client: admitted
+credit jobs and the reservation-renewal thread retain it across browser requests.
+
 Rejected reruns (including missing style or reservation denial) preserve state
 and artifacts. Admitted non-Draw replacements still use stage-owned cleanup:
 there is no general rollback on later failure. Draw replacements retain render
@@ -409,6 +601,63 @@ revisions and recover the original unfinished action before accepting new input.
 
 Adapt and Plan retain input-keyed paid responses outside stage cleanup. Keys
 include model and generation input; reused responses still undergo validation.
+Adapt/Plan also keep a typed cumulative work journal under `.checkpoints/<stage>/work`.
+Every admitted structured request consumes a slot, including interrupted or
+unresolved work; matching checkpoint hits consume none. Source/approved-intent
+and stage-authority identities scope the journal across resumes. A model change
+or a fresh repair namespace cannot reset it. Adapt defaults to twice its projected
+clean call graph (treatment, blueprint, lettering and reviews). Plan defaults to
+at least 64 structured requests, or four times its projected map/detail and review
+call graph if larger. Plan projects the greater of one page per adapted beat and
+the upper advisory page target, leaving room for bounded corrections and explicit
+resumes. These are cumulative work allowances, not retry counts or cost
+estimates; the existing per-request and global repair-attempt bounds still apply.
+An explicit positive
+`Config.narrative_max_calls` overrides the ceiling. Changing that configured
+limit retains the prior call count. Exhaustion reports `generation_work_limit`
+and preserves completed checkpoints; ordinary Resume cannot grant more slots.
+The explicit **Start adaptation over** action (`POST /run?stage=adapt&rerun=true`)
+archives Adapt and downstream outputs, exports, and Adapt/Plan checkpoints and
+work journals under `.checkpoints/restarts/<attempt-id>/`, with the prior state.
+It preserves source, approved Brief, selected Style, Cast, and retained editorial
+directives. Credits must be reserved before archiving; archive failures restore
+moved files. The new attempt receives the configured/default work allowance;
+past usage and charges remain recorded. `GET /estimate?stage=adapt&rerun=true`
+quotes fresh Adapt work without cached-output discounts. This quote covers Adapt
+only: Plan is estimated and reserved after the new script passes validation,
+then runs automatically. Draw still requires a separate user action.
+This counts structured requests, not exact provider submissions or dollars:
+JSON repair and transport recovery retain their own existing bounds. Journaling
+starts with newly admitted work; historical calls are not retroactively imported.
+Reported/estimated costs, unknown outcomes, and subscription funding remain
+separate in this journal; it does not debit user credits.
+
+Text streaming preserves provider error events even when HTTP status is 200 or
+an error follows syntactically complete JSON. Such responses fail before parsing
+or checkpoint publication, with request ID, source scope, finish reason, bounded
+provider diagnostics, and stream counters retained. Failed text calls preserve
+reported usage; missing usage remains unknown under the default billing policy.
+Before the first answer, substantive reasoning deltas count as generation
+progress for the 900-second inactivity guard. Role metadata, empty reasoning
+fields, and SSE comments do not. The 1,800-second total stream ceiling still
+applies, including continuous reasoning. Reasoning never becomes answer text or
+completed-answer character counts; a response with reasoning but no answer still
+fails. Timing logs identify the event, model, and source scope and count reasoning
+events without logging their text. This follows the provider's separate
+[reasoning stream fields](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens).
+Structured generation can retry a genuinely empty answer once, sharing its
+existing JSON-recovery attempt allowance and retaining known prior usage.
+Explicit provider errors, refusals, and empty output at the token cap do not
+enter that retry path. `retry_invalid_json=False` also disables empty-answer
+recovery for callers that own durable raw-response recovery. Image submission
+retry policy is unchanged.
+
+Adapt estimates use the lettering prompt and known blueprint content, exclude
+matching clean-generation checkpoints, and price a full scoped repair scenario
+plus re-review instead of a flat percentage. Unknown outputs and future review
+cache hits remain estimates. Adapt/Plan credit confidence is `variable`; quotes
+and reservations are not a hard provider-spend ceiling.
+
 Draw durably saves paid image bytes/provenance in `.pending`, then publishes
 the render with an `.unfinished` identity marker. Recovery retains the original
 frozen request, parent revision, and usage call IDs through publication/OCR
@@ -457,7 +706,7 @@ bytes must match render lineage. None of these actions redraws, verifies visual
 identity, or guarantees provider success; an OCR failure leaves the saved image
 available for inspection and recovery.
 
-Stage estimates include page references and OCR; Cast estimates include state
+Stage estimates include page references but exclude optional OCR; Cast estimates include state
 references. Provider usage and credit settlement remain distinct from estimates
 and stage-progress totals. Missing usage is not evidence of zero provider cost.
 
@@ -465,9 +714,9 @@ Read-only immediate quotes are distinct from the full-stage rerun estimate:
 
 | GET route | Quoted work |
 |---|---|
-| `/pages/{page_number}/generate/estimate?depiction=canonical` | One undrawn page, compiled references and OCR; `less_graphic` is also supported |
+| `/pages/{page_number}/generate/estimate?depiction=canonical` | One undrawn page and compiled references, without OCR; `less_graphic` is also supported |
 | `/pages/{page_number}/analyze/estimate` | Text-check recovery of an existing render: zero for cached evidence, otherwise OCR only; never redraws |
-| `/pages/generate/estimate` | Only pages without saved render provenance, including references and OCR |
+| `/pages/generate/estimate` | Only pages without saved render provenance, including references but not OCR |
 | `/pages/checks/estimate` | Per-page readiness and total OCR-only quote for missing checks on saved pages |
 
 These routes validate prerequisites but neither submit jobs, reserve credits,
@@ -507,9 +756,13 @@ packages saved pages without generating artwork or spending credits. Book
 distinguishes technical blockers, unresolved review issues, and accepted
 editorial decisions, with links back to Pages.
 
-Missing, stale, or invalid OCR evidence is a text-check readiness blocker, not
-proof that saved artwork needs replacement. Preflight may revalidate cached
-evidence but never buys OCR; explicit Pages check recovery handles that boundary.
+Text review is optional and advisory. Missing, stale, invalid or mismatched OCR
+evidence does not block Draw approval or export and never proves that saved
+artwork needs replacement. Draw and correction jobs do not run OCR. Preflight
+only reads retained analysis and never repairs or buys OCR; explicit Pages text
+review handles that boundary. Automatic text findings remain reviewable, are not
+preselected for redraw, and do not require acceptance before export. A missing
+check stays unchecked; successful packaging does not verify wording.
 
 Book's persisted package list supports “ready to download” across refreshes;
 the edition-ready cue reports package creation, never browser download

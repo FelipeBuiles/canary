@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .plan_detail_support import detail_response
+
 import asyncio
 from datetime import datetime, timezone
 import json
@@ -148,7 +150,7 @@ def test_detail_batch_retains_completed_transitions_before_its_first_page():
         rhythm_summary="Arrival followed by response.",
         pages=[
             _PageMapEntry(
-                page_number=index, beat_ids=(beat.id,), emphasis="initial",
+                page_number=index, beat_ids=(beat.id,), lettering_ids=tuple(item.id for item in beat.lettering), emphasis="initial",
                 density_intent="standard", rhythm_intent="Advance the scene.",
             )
             for index, beat in enumerate(adaptation.beats, 1)
@@ -348,6 +350,7 @@ def test_detail_validation_rejects_a_rewound_beat_sequence() -> None:
     page_map = _PageMapEntry(
         page_number=1,
         beat_ids=("beat_0035", "beat_0036"),
+        lettering_ids=(),
         emphasis="initial",
         density_intent="standard",
         rhythm_intent="The action advances.",
@@ -359,12 +362,19 @@ def test_detail_validation_rejects_a_rewound_beat_sequence() -> None:
     assert "monotonic" in " ".join(errors)
 
 
-def test_two_pass_detail_retry_repairs_a_rewound_page_at_the_detail_boundary(
-    tmp_path: Path,
+@pytest.mark.parametrize("defect", ["rewound_beats", "base_state", "cross_entity_state", "unknown_entity"])
+def test_two_pass_detail_retry_repairs_invalid_detail_at_the_batch_boundary(
+    tmp_path: Path, defect: str,
 ) -> None:
     adaptation = _long_adaptation()
     calls: list[dict] = []
     detail_attempts: dict[tuple[int, ...], int] = {}
+    inventory = ApprovedVisualReferenceInventory(references=[
+        *_inventory().references,
+        ApprovedVisualReference(id="wet_reference", entity_id="character_johansen",
+                                appearance_state_id="wet", visual_anchor="soaked coat"),
+    ])
+    invalid_batch_start = 1 if defect == "rewound_beats" else 9
 
     async def generate(**request):
         calls.append(request)
@@ -378,6 +388,7 @@ def test_two_pass_detail_retry_repairs_a_rewound_page_at_the_detail_boundary(
                                 f"beat_{index:04d}",
                                 f"beat_{index + 1:04d}",
                             ],
+                            "lettering_ids": [f"lettering_{index:04d}", f"lettering_{index + 1:04d}"],
                             "emphasis": "initial",
                             "density_intent": "standard",
                             "rhythm_intent": f"Advance events {index} and {index + 1}.",
@@ -398,6 +409,10 @@ def test_two_pass_detail_retry_repairs_a_rewound_page_at_the_detail_boundary(
         )
         attempt = detail_attempts.get(page_numbers, 0)
         detail_attempts[page_numbers] = attempt + 1
+        if attempt and defect != "rewound_beats":
+            assert "reference_authority" in request["user_content"]
+            assert "page_009_content_001" in request["user_content"]
+            assert "PREVIOUS DETAIL" in request["user_content"]
         pages = []
         for page_number in page_numbers:
             first_beat = (page_number - 1) * 2 + 1
@@ -405,7 +420,7 @@ def test_two_pass_detail_retry_repairs_a_rewound_page_at_the_detail_boundary(
                 f"beat_{first_beat:04d}",
                 f"beat_{first_beat + 1:04d}",
             )
-            if page_numbers[0] == 1 and attempt == 0 and page_number == 1:
+            if defect == "rewound_beats" and attempt == 0 and page_number == 1:
                 content_beats = [
                     (beat_ids[0], "The first beat begins."),
                     (beat_ids[1], "The second beat advances the action."),
@@ -420,12 +435,27 @@ def test_two_pass_detail_retry_repairs_a_rewound_page_at_the_detail_boundary(
             content = [
                 {
                     "beat_ids": beats.split("|"),
+                    "lettering_ids": [beats.replace("beat_", "lettering_")],
                     "panel_role": "standard",
                     "visual_intent": visual_intent,
                     "entity_ids": [],
                 }
                 for beats, visual_intent in content_beats
             ]
+            if defect == "rewound_beats":
+                for panel in content[2:]:
+                    panel["lettering_ids"] = []
+            if defect != "rewound_beats":
+                content[0]["entity_ids"] = ["character_johansen", "location_alert"]
+                content[0]["appearance_states"] = [{"entity_id": "character_johansen", "state_id": "wet"}]
+                if attempt == 0 and page_number == 9:
+                    if defect == "unknown_entity":
+                        content[0]["entity_ids"].append("invented_character")
+                    else:
+                        content[0]["appearance_states"] = [{
+                            "entity_id": "location_alert" if defect == "cross_entity_state" else "character_johansen",
+                            "state_id": "wet" if defect == "cross_entity_state" else "base",
+                        }]
             pages.append(
                 {
                     "emphasis": "initial",
@@ -436,14 +466,14 @@ def test_two_pass_detail_retry_repairs_a_rewound_page_at_the_detail_boundary(
                 }
             )
         return ApiResult(
-            value={"rhythm_summary": "Local detail.", "pages": pages},
+            value=detail_response({"rhythm_summary": "Local detail.", "pages": pages}),
             usage=None,
         )
 
     plan = asyncio.run(
         produce_book_plan(
             adaptation,
-            ApprovedVisualReferenceInventory(),
+            inventory,
             ApprovedPageRange(minimum=12, maximum=12),
             artifacts=TargetArtifacts(tmp_path),
             ctx=StageRuntime(
@@ -461,13 +491,142 @@ def test_two_pass_detail_retry_repairs_a_rewound_page_at_the_detail_boundary(
     )
 
     assert len(plan.pages) == 12
-    assert detail_attempts[tuple(range(1, 9))] == 2
-    assert detail_attempts[tuple(range(9, 13))] == 1
+    assert detail_attempts[tuple(range(1, 9))] == (2 if invalid_batch_start == 1 else 1)
+    assert detail_attempts[tuple(range(9, 13))] == (2 if invalid_batch_start == 9 else 1)
     assert [call["feature"] for call in calls].count("plan.map") == 1
     assert [call["feature"] for call in calls].count("plan.detail") == 3
+    if defect != "rewound_beats":
+        page = TargetArtifacts(tmp_path).read_page(9)
+        assert page.content[0].appearance_states == {"character_johansen": "wet"}
+        assert page.content[0].lettering == (adaptation.beats[16].lettering[0],)
 
 
-def test_long_plan_uses_global_map_bounded_detail_and_local_repair(
+@pytest.mark.parametrize("beat_count,upper_target,expected", [(2, 2, 64), (42, 34, 64), (120, 34, 144), (24, 120, 144)])
+def test_default_plan_budget_covers_review_and_repairs_and_scales_with_book(beat_count, upper_target, expected):
+    from novel_to_comic.page_planning import _default_plan_call_limit
+
+    assert _default_plan_call_limit(_long_adaptation(beat_count),
+                                   ApprovedPageRange(minimum=1, maximum=upper_target)) == expected
+
+
+@pytest.mark.parametrize("unresolved", [False, True])
+def test_map_schema_corrections_do_not_consume_narrative_revision(tmp_path, monkeypatch, unresolved):
+    from novel_to_comic.models.validation import InvariantFailure
+    from novel_to_comic.page_planning import _generate_page_map
+
+    adaptation = _long_adaptation(24)
+    target = TargetArtifacts(tmp_path)
+    ctx = StageRuntime("plan", PipelineState(project_name="map-revision", novel_path="novel.txt",
+                       created_at=datetime.now(timezone.utc)), tmp_path)
+    calls, reviews = [], []
+    async def generate(**request):
+        calls.append(request)
+        assert request["feature"] == "plan.map"
+        if len(calls) >= 3:
+            assert "Move the revealing words" in request["user_content"]
+        raw = {"rhythm_summary": "A reveal.", "pages": [
+            {"beat_ids": [b.id], "lettering_ids": [i.id for i in b.lettering],
+             "emphasis": "initial", "density_intent": "standard", "rhythm_intent": b.summary}
+            for b in adaptation.beats
+        ]}
+        if len(calls) in (1, 3):
+            raw["pages"][0]["placeholder_removed"] = False
+        return ApiResult(value=raw)
+    async def review(context, **kwargs):
+        reviews.append(context)
+        if len(reviews) == 1 or unresolved:
+            return (InvariantFailure(id="reveal", owner_stage="plan", code="narrative_review_rushed_sequence",
+                                     message="Reveal precedes its page turn.", artifact_ids=["page_001", "page_002"],
+                                     evidence=["Move the revealing words to the reveal page."]),)
+        return ()
+    monkeypatch.setattr("novel_to_comic.page_planning.review_narrative", review)
+    if unresolved:
+        with pytest.raises(PlanInvariantError):
+            asyncio.run(produce_book_plan(adaptation, _inventory(), ApprovedPageRange(minimum=24, maximum=24),
+                artifacts=target, ctx=ctx, model="test", generate=generate))
+        saved = target.read_validation("plan")
+        assert saved.attempts == 2 and len(saved.attempt_history) == 2
+        assert not target.plan_path.exists()
+    else:
+        _, history = asyncio.run(_generate_page_map(adaptation, ApprovedPageRange(minimum=24, maximum=24),
+            generate=generate, ctx=ctx, artifacts=target, model="test"))
+        assert history[0].invariant_codes == ("narrative_review_rushed_sequence",)
+        assert history[1].invariant_codes == ()
+    assert len(calls) == 4 and len(reviews) == 2
+
+
+def test_invalid_reference_detail_stops_after_bounded_correction_with_page_location(tmp_path):
+    from novel_to_comic.page_planning import _generate_detail_batch, _concern_batch_indexes
+
+    adaptation = _long_adaptation(10)
+    page_map = _BookPageMap.model_validate({"rhythm_summary": "One event per page.", "pages": [
+        {"page_number": n, "beat_ids": [b.id], "lettering_ids": [i.id for i in b.lettering],
+         "emphasis": "initial", "density_intent": "standard", "rhythm_intent": "Advance."}
+        for n, b in enumerate(adaptation.beats, 1)
+    ]})
+    calls = []
+    async def generate(**request):
+        calls.append(request)
+        assert "The approved page map has already resolved global allocation" in request["user_content"]
+        assert "Reallocate pages, panels, rhythm" not in request["user_content"]
+        variants = request["json_schema"]["$defs"]["_PageDetailDraft"]["anyOf"]
+        assert variants[0]["properties"]["page_number"]["enum"] == [9]
+        return ApiResult(value=detail_response({"rhythm_summary": "Page nine.", "pages": [{
+            "page_number": 1, "emphasis": "initial", "density_intent": "standard",
+            "rhythm_intent": "Advance.", "layout_intent": "One event.",
+            "content": [{"beat_ids": ["beat_0009"], "lettering_ids": ["lettering_0009"],
+                         "visual_intent": "Johansen watches.", "entity_ids": ["character_johansen"],
+                         "appearance_states": [{"entity_id": "character_johansen", "state_id": "base"}]}],
+        }]}))
+    with pytest.raises(PlanInvariantError) as exc:
+        asyncio.run(_generate_detail_batch(
+            adaptation, _inventory(), page_map, start=8, stop=9, generate=generate,
+            ctx=StageRuntime("plan", PipelineState(project_name="invalid-reference", novel_path="novel.txt",
+                             created_at=datetime.now(timezone.utc)), tmp_path),
+            story_instruction="Keep the sailor's earlier appearance in this recollection.",
+        ))
+    assert len(calls) == 2
+    failures = exc.value.validation.invariant_failures
+    assert [f.code for f in failures] == ["reference_authority"]
+    assert "page_009_content_001" in failures[0].artifact_ids
+    assert "character_johansen:base" in failures[0].artifact_ids
+    assert _concern_batch_indexes(failures, page_count=10) == {1: [failures[0]]}
+    assert not TargetArtifacts(tmp_path).plan_path.exists()
+
+
+def test_draft_reference_validation_precedes_derived_state_activation():
+    from novel_to_comic.page_planning import _validate_plan_draft
+
+    adaptation = _adaptation()
+    beat = adaptation.beats[0].model_copy(update={"appearance_changes": (
+        AppearanceChange(entity_id="character_johansen", to_state_id="wet", description="Spray soaks his coat."),
+    )})
+    adaptation = adaptation.model_copy(update={"beats": (beat, adaptation.beats[1])})
+    inventory = ApprovedVisualReferenceInventory(references=[
+        *_inventory().references,
+        ApprovedVisualReference(id="wet_reference", entity_id="character_johansen",
+                                appearance_state_id="wet", visual_anchor="soaked coat"),
+    ])
+    raw = {"rhythm_summary": "Approach and escape.", "pages": [{
+        "emphasis": "release", "density_intent": "sparse", "rhythm_intent": "Escape.",
+        "layout_intent": "The escape.", "content": [{
+            "beat_ids": [b.id for b in adaptation.beats],
+            "lettering_ids": [i.id for b in adaptation.beats for i in b.lettering],
+            "visual_intent": "Johansen escapes through spray.", "entity_ids": ["character_johansen"],
+            "appearance_states": [{"entity_id": "character_johansen", "state_id": "base"}],
+        }],
+    }]}
+    target = ApprovedPageRange(minimum=1, maximum=1)
+    pages, validation = _validate_plan_draft(adaptation, inventory, target, _BookPlanDraft.model_validate(raw), {})
+    assert pages == ()
+    assert [f.code for f in validation.invariant_failures] == ["reference_authority"]
+    raw["pages"][0]["content"][0]["appearance_states"] = []
+    pages, validation = _validate_plan_draft(adaptation, inventory, target, _BookPlanDraft.model_validate(raw), {})
+    assert not any(f.code == "reference_authority" for f in validation.invariant_failures)
+    assert pages[0].content[0].appearance_states == {"character_johansen": "wet"}
+
+
+def test_long_plan_retains_composition_warnings_without_automatic_polishing(
     tmp_path: Path,
 ) -> None:
     adaptation = _long_adaptation()
@@ -489,6 +648,7 @@ def test_long_plan_uses_global_map_bounded_detail_and_local_repair(
                     "pages": [
                         {
                             "beat_ids": [f"beat_{index:04d}"],
+                            "lettering_ids": [item.id for item in adaptation.beats[index - 1].lettering],
                             "emphasis": "initial",
                             "density_intent": "standard",
                             "rhythm_intent": f"Advance event {index}.",
@@ -525,6 +685,7 @@ def test_long_plan_uses_global_map_bounded_detail_and_local_repair(
                             "beat_ids": [f"beat_{page_number:04d}"],
                             "panel_role": ("standard" if panel == 1 else "reaction"),
                             "visual_intent": (f"Visual moment {page_number}.{panel}."),
+                            "lettering_ids": [f"lettering_{page_number:04d}"] if panel == 1 else [],
                             "entity_ids": [],
                         }
                         for panel in range(1, panel_count + 1)
@@ -532,7 +693,7 @@ def test_long_plan_uses_global_map_bounded_detail_and_local_repair(
                 }
             )
         return ApiResult(
-            value={"rhythm_summary": "Local detail.", "pages": pages},
+            value=detail_response({"rhythm_summary": "Local detail.", "pages": pages}),
             usage=None,
         )
 
@@ -550,23 +711,24 @@ def test_long_plan_uses_global_map_bounded_detail_and_local_repair(
     )
 
     assert [call["feature"] for call in calls].count("plan.map") == 1
-    assert [call["feature"] for call in calls].count("plan.detail") == 4
-    assert detail_targets.count(tuple(range(1, 9))) == 2
+    assert [call["feature"] for call in calls].count("plan.detail") == 3
+    assert detail_targets.count(tuple(range(1, 9))) == 1
     assert detail_targets.count(tuple(range(9, 17))) == 1
     assert detail_targets.count(tuple(range(17, 25))) == 1
     assert all("json_schema" in call for call in calls)
     assert len(plan.pages) == 24
-    assert len(artifacts.read_page(1).content) == 2
+    assert len(artifacts.read_page(1).content) == 1
     assert artifacts.read_page(1).content[0].lettering[0].id == "lettering_0001"
-    assert progress_at_repair == [(4, 6)]
-    assert state.stages["plan"].items_done == state.stages["plan"].items_total == 6
+    assert progress_at_repair == []
+    assert state.stages["plan"].items_done == state.stages["plan"].items_total == 5
 
 
-def test_two_pass_plan_canonicalizes_explicit_lettering_order(
+def test_two_pass_plan_corrects_explicit_lettering_order_at_detail_boundary(
     tmp_path: Path,
 ) -> None:
     adaptation = _long_adaptation_with_multiple_lettering_items()
     calls: list[dict] = []
+    detail_attempts: dict[tuple[int, ...], int] = {}
 
     async def generate(**request):
         calls.append(request)
@@ -577,6 +739,7 @@ def test_two_pass_plan_canonicalizes_explicit_lettering_order(
                     "pages": [
                         {
                             "beat_ids": [f"beat_{index:04d}"],
+                            "lettering_ids": [item.id for item in adaptation.beats[index - 1].lettering],
                             "emphasis": "initial",
                             "density_intent": "standard",
                             "rhythm_intent": f"Advance event {index}.",
@@ -595,13 +758,19 @@ def test_two_pass_plan_canonicalizes_explicit_lettering_order(
         page_numbers = tuple(
             int(value) for value in match.group(1).split(",") if value
         )
+        attempt = detail_attempts.get(page_numbers, 0)
+        detail_attempts[page_numbers] = attempt + 1
         pages = []
         for page_number in page_numbers:
             panel_count = (page_number % 3) + 1
             lettering_ids_by_panel = [[] for _ in range(panel_count)]
+            lettering_ids_by_panel[0] = [item.id for item in adaptation.beats[page_number - 1].lettering]
             if page_number == 1:
-                lettering_ids_by_panel[0] = ["lettering_0001_second"]
-                lettering_ids_by_panel[1] = ["lettering_0001"]
+                ids = ["lettering_0001", "lettering_0001_second"]
+                if attempt == 0:
+                    ids.reverse()
+                lettering_ids_by_panel[0] = [ids[0]]
+                lettering_ids_by_panel[1] = [ids[1]]
             pages.append(
                 {
                     "emphasis": "initial",
@@ -631,7 +800,7 @@ def test_two_pass_plan_canonicalizes_explicit_lettering_order(
                 }
             )
         return ApiResult(
-            value={"rhythm_summary": "Local detail.", "pages": pages},
+            value=detail_response({"rhythm_summary": "Local detail.", "pages": pages}),
             usage=None,
         )
 
@@ -658,7 +827,8 @@ def test_two_pass_plan_canonicalizes_explicit_lettering_order(
 
     assert len(plan.pages) == 24
     assert [call["feature"] for call in calls].count("plan.map") == 1
-    assert [call["feature"] for call in calls].count("plan.detail") == 3
+    assert [call["feature"] for call in calls].count("plan.detail") == 4
+    assert detail_attempts[tuple(range(1, 9))] == 2
     assert [
         item.id
         for content in artifacts.read_page(1).content
@@ -677,7 +847,7 @@ def test_two_pass_plan_canonicalizes_explicit_lettering_order(
     ) == tuple(item for beat in adaptation.beats for item in beat.lettering)
 
 
-def test_plan_canonicalizes_lettering_order_across_repeated_beat_panels(
+def test_plan_corrects_lettering_with_visual_intent_across_repeated_beat_panels(
     tmp_path: Path,
 ) -> None:
     payload = _adaptation().model_dump(mode="json")
@@ -738,7 +908,14 @@ def test_plan_canonicalizes_lettering_order_across_repeated_beat_panels(
 
     async def generate(**request):
         calls.append(request)
-        return ApiResult(value=response)
+        value = json.loads(json.dumps(response))
+        if len(calls) == 2:
+            panels = value["pages"][0]["content"]
+            panels[0]["lettering_ids"] = ["lettering_0001"]
+            panels[0]["visual_intent"] = "Johansen first sights the reef."
+            panels[1]["lettering_ids"] = ["lettering_0001_second"]
+            panels[1]["visual_intent"] = "The reef rises again beyond the yacht."
+        return ApiResult(value=value)
 
     artifacts = TargetArtifacts(tmp_path)
     plan = asyncio.run(
@@ -761,7 +938,8 @@ def test_plan_canonicalizes_lettering_order_across_repeated_beat_panels(
         )
     )
 
-    assert len(calls) == 1
+    assert len(calls) == 2
+    assert response["pages"][0]["content"][0]["lettering_ids"] == ["lettering_0001_second"]
     assert [
         item.id
         for page in plan.pages
@@ -770,7 +948,7 @@ def test_plan_canonicalizes_lettering_order_across_repeated_beat_panels(
     ] == ["lettering_0001", "lettering_0001_second", "lettering_0002"]
 
 
-def test_producer_retries_repetitive_single_panel_grammar_once(
+def test_producer_keeps_repetitive_composition_advisory(
     tmp_path: Path,
 ) -> None:
     adaptation = _adaptation()
@@ -865,13 +1043,10 @@ def test_producer_retries_repetitive_single_panel_grammar_once(
         )
     )
 
-    assert len(calls) == 2
-    assert "repetitive_page_composition" in calls[1]["user_content"]
-    assert plan.rhythm_summary == "varied panel rhythm before release"
-    assert len(artifacts.read_page(1).content) == 2
-    assert "repetitive_page_composition" not in {
-        issue.code for issue in plan.editorial_issues
-    }
+    assert len(calls) == 1
+    assert plan.rhythm_summary == repetitive["rhythm_summary"]
+    assert len(artifacts.read_page(1).content) == 1
+    assert "repetitive_page_composition" in {issue.code for issue in plan.editorial_issues}
 
 
 def test_validation_separates_changed_lettering_from_broken_global_allocation() -> None:
@@ -3091,7 +3266,7 @@ def test_detail_context_prunes_only_explicit_scopes_and_keeps_speakers():
     inventory = _inventory().model_copy(update={'references': (*_inventory().references,
         ApprovedVisualReference(id='unrelated', entity_id='unrelated', visual_anchor='unrelated distant mansion'))})
     mapping = _BookPageMap(rhythm_summary='Two beats.', pages=(
-        _PageMapEntry(page_number=1, beat_ids=tuple(beat.id for beat in beats), emphasis='release', density_intent='standard', rhythm_intent='Two beats.'),
+        _PageMapEntry(page_number=1, beat_ids=tuple(beat.id for beat in beats), lettering_ids=tuple(item.id for beat in beats for item in beat.lettering), emphasis='release', density_intent='standard', rhythm_intent='Two beats.'),
     ))
     prompt = _detail_batch_prompt(adaptation, inventory, mapping, start=0, stop=1)
     assert 'unrelated distant mansion' not in prompt
@@ -3106,7 +3281,7 @@ def test_all_plan_prompts_preserve_restrained_depiction_and_exact_lettering():
     adaptation = _adaptation()
     target = ApprovedPageRange(minimum=1, maximum=2)
     page_map = _BookPageMap(rhythm_summary='One moment per page.', pages=[
-        _PageMapEntry(page_number=index, beat_ids=(beat.id,), emphasis='initial',
+        _PageMapEntry(page_number=index, beat_ids=(beat.id,), lettering_ids=tuple(item.id for item in beat.lettering), emphasis='initial',
                       density_intent='standard', rhythm_intent='Advance the scene.')
         for index, beat in enumerate(adaptation.beats, 1)
     ])
@@ -3120,3 +3295,265 @@ def test_all_plan_prompts_preserve_restrained_depiction_and_exact_lettering():
         for planned in context['planning_view']['beats']:
             original = next(beat for beat in adaptation.beats if beat.id == planned['id'])
             assert [item['text'] for item in planned['lettering']] == [item.text for item in original.lettering]
+
+
+@pytest.mark.parametrize("placement", ["missing", "duplicate", "reversed", "wrong_page"])
+def test_page_map_rejects_invalid_lettering_ownership_before_detail(placement):
+    from novel_to_comic.page_planning import _validate_page_map
+
+    adaptation = _adaptation()
+    pages = [
+        _PageMapEntry(
+            beat_ids=(beat.id,), lettering_ids=tuple(item.id for item in beat.lettering),
+            emphasis="initial", density_intent="standard", rhythm_intent="Advance.",
+        )
+        for beat in adaptation.beats
+    ]
+    if placement == "missing":
+        pages[0] = pages[0].model_copy(update={"lettering_ids": ()})
+    elif placement == "duplicate":
+        pages[1] = pages[1].model_copy(update={"lettering_ids": (*pages[0].lettering_ids, *pages[1].lettering_ids)})
+    elif placement == "reversed":
+        pages[0], pages[1] = (
+            pages[0].model_copy(update={"lettering_ids": pages[1].lettering_ids}),
+            pages[1].model_copy(update={"lettering_ids": pages[0].lettering_ids}),
+        )
+    else:
+        # The global order is correct, but one page does not carry the owning beat.
+        pages[0] = pages[0].model_copy(update={"lettering_ids": (*pages[0].lettering_ids, *pages[1].lettering_ids)})
+        pages[1] = pages[1].model_copy(update={"lettering_ids": ()})
+    validation = _validate_page_map(
+        adaptation, ApprovedPageRange(minimum=1, maximum=2),
+        _BookPageMap(rhythm_summary="Two pages.", pages=pages),
+    )
+    assert [failure.code for failure in validation.invariant_failures] == ["lettering_allocation"]
+
+
+def test_normalization_never_moves_fills_or_discards_authored_words():
+    from copy import deepcopy
+    from novel_to_comic.page_planning import _normalize_book_plan_draft
+
+    raw = {"pages": [{"content": [
+        {"beat_ids": ["beat_0001"], "visual_intent": "First action.", "lettering_ids": []},
+        {"beat_ids": ["beat_0002"], "visual_intent": "Second action.", "lettering_ids": ["lettering_0002", "lettering_0002"]},
+        {"beat_ids": ["beat_0001"], "visual_intent": "Wrong return.", "lettering_ids": ["lettering_0001"]},
+    ]}]}
+    original = deepcopy(raw)
+    normalized = _normalize_book_plan_draft(raw, _adaptation())
+    assert raw == original
+    for actual, authored in zip(normalized["pages"][0]["content"], raw["pages"][0]["content"], strict=True):
+        assert actual["lettering_ids"] == authored["lettering_ids"]
+        assert actual["visual_intent"] == authored["visual_intent"]
+
+
+def test_repeated_beat_across_parallel_detail_batches_has_one_lettering_owner(tmp_path):
+    adaptation = _long_adaptation_with_multiple_lettering_items()
+    map_pages = []
+    for index, beat in enumerate(adaptation.beats, 1):
+        ids = [item.id for item in beat.lettering]
+        allocations = [[ids[0]], [ids[1]]] if index == 8 else [ids]
+        for allocation in allocations:
+            map_pages.append({
+                "beat_ids": [beat.id], "lettering_ids": allocation,
+                "emphasis": "initial", "density_intent": "standard",
+                "rhythm_intent": "Continue the source event without replaying it.",
+            })
+    attempts = {}
+
+    async def generate(**request):
+        if request["feature"] == "plan.map":
+            return ApiResult(value={"rhythm_summary": "One event spans the batch boundary.", "pages": map_pages})
+        context, _ = json.JSONDecoder().raw_decode(request["user_content"].split("\n", 1)[1])
+        numbers = tuple(context["target_page_numbers"])
+        attempts[numbers] = attempts.get(numbers, 0) + 1
+        pages = []
+        for number in numbers:
+            mapped = map_pages[number - 1]
+            ids = mapped["lettering_ids"]
+            # The second worker sees the same beat, but cannot reallocate its earlier words.
+            if number == 9 and attempts[numbers] == 1:
+                ids = ["lettering_0008", "lettering_0008_second"]
+            pages.append({
+                **{key: mapped[key] for key in ("emphasis", "density_intent", "rhythm_intent")},
+                "layout_intent": "A source-supported action followed by a silent detail.",
+                "content": [
+                    {"beat_ids": mapped["beat_ids"], "visual_intent": "The assigned action.", "lettering_ids": ids},
+                    {"beat_ids": mapped["beat_ids"], "visual_intent": "A distinct silent detail.", "lettering_ids": [], "panel_role": "detail"},
+                ],
+            })
+        return ApiResult(value=detail_response({"rhythm_summary": "Local detail.", "pages": pages}))
+
+    artifacts = TargetArtifacts(tmp_path)
+    plan = asyncio.run(produce_book_plan(
+        adaptation, ApprovedVisualReferenceInventory(), ApprovedPageRange(minimum=25, maximum=25),
+        artifacts=artifacts, ctx=StageRuntime("plan", PipelineState(
+            project_name="batch-boundary", novel_path="novel.txt", created_at=datetime.now(timezone.utc),
+        ), tmp_path), model="test-planner", generate=generate,
+    ))
+    assert len(plan.pages) == 25
+    assert attempts[tuple(range(1, 9))] == 1
+    assert attempts[tuple(range(9, 17))] == 2
+    assert tuple(item for page in plan.pages for content in artifacts.read_page(page.page_number).content for item in content.lettering) == tuple(
+        item for beat in adaptation.beats for item in beat.lettering
+    )
+
+
+def _assigned_detail_fixture():
+    adaptation = _long_adaptation_with_multiple_lettering_items()
+    first, second = adaptation.beats[:2]
+    ids = tuple(item.id for beat in (first, second) for item in beat.lettering)
+    mapped = _PageMapEntry(
+        page_number=30, beat_ids=(first.id, second.id), lettering_ids=ids,
+        emphasis="initial", density_intent="standard", rhythm_intent="Two events.",
+    )
+    raw = {"rhythm_summary": "Ordered moments.", "pages": [{
+        "page_number": 30, "emphasis": "initial", "density_intent": "standard",
+        "rhythm_intent": "Two events.", "layout_intent": "Three voiced moments and a silent reaction.",
+        "content": [
+            {"beat_ids": [first.id], "visual_intent": "Establish the first event."},
+            {"beat_ids": [second.id], "visual_intent": "The second event begins."},
+            {"beat_ids": [second.id], "visual_intent": "The second event continues."},
+            {"beat_ids": [second.id], "visual_intent": "A silent reaction."},
+        ],
+        # Object key order is immaterial; destinations and locked order are authoritative.
+        "lettering_placements": {ids[3]: 3, ids[1]: 1, ids[0]: 1, ids[2]: 2},
+    }]}
+    return adaptation, mapped, raw
+
+
+def test_detail_assignments_compile_once_without_changing_authored_destinations():
+    from copy import deepcopy
+    from novel_to_comic.page_planning import _compile_detail_response, _detail_response_view
+
+    adaptation, mapped, raw = _assigned_detail_fixture()
+    original = deepcopy(raw)
+    draft = _compile_detail_response(raw, (mapped,), adaptation)
+    assert raw == original
+    assert _detail_matches_map(draft, (mapped,)) == ()
+    assert [panel.lettering_ids for panel in draft.pages[0].content] == [
+        mapped.lettering_ids[:2], mapped.lettering_ids[2:3], mapped.lettering_ids[3:], (),
+    ]
+    assert [panel.visual_intent for panel in draft.pages[0].content] == [
+        panel["visual_intent"] for panel in raw["pages"][0]["content"]
+    ]
+    repair_view = _detail_response_view(draft)
+    assert repair_view["pages"][0]["lettering_placements"] == raw["pages"][0]["lettering_placements"]
+    assert all("lettering_ids" not in panel for panel in repair_view["pages"][0]["content"])
+    assert _compile_detail_response(repair_view, (mapped,), adaptation) == draft
+
+
+@pytest.mark.parametrize("defect, expected", [
+    ("missing", "missing"), ("foreign", "out-of-page"),
+    ("nonexistent", "only 4 panels exist"), ("backward", "preserve locked lettering order"),
+    ("wrong_beat", "visual beat citations must preserve mapped order"), ("zero", "greater than or equal to 1"),
+    ("boolean", "valid integer"), ("list", "valid integer"),
+    ("repeated_panel_copy", "Extra inputs are not permitted"),
+])
+def test_invalid_detail_assignments_require_authored_correction(defect, expected):
+    from copy import deepcopy
+    from novel_to_comic.page_planning import _compile_detail_response
+
+    adaptation, mapped, raw = _assigned_detail_fixture()
+    placements = raw["pages"][0]["lettering_placements"]
+    last = mapped.lettering_ids[-1]
+    if defect == "missing":
+        del placements[last]
+    elif defect == "foreign":
+        placements["lettering_other_page"] = 4
+    elif defect == "repeated_panel_copy":
+        raw["pages"][0]["content"][-1]["lettering_ids"] = [mapped.lettering_ids[2]]
+    else:
+        placements[last] = {"nonexistent": 5, "backward": 1, "zero": 0,
+                            "boolean": True, "list": [3, 4], "wrong_beat": 3}[defect]
+        if defect == "wrong_beat":
+            raw["pages"][0]["content"][2]["beat_ids"] = [mapped.beat_ids[0]]
+    original = deepcopy(raw)
+    with pytest.raises(ValueError, match=expected):
+        _compile_detail_response(raw, (mapped,), adaptation)
+    assert raw == original
+
+
+@pytest.mark.parametrize("visual_beat", [0, 1])
+def test_panel_bridging_two_beats_derives_both_lettering_owners(visual_beat):
+    """Reproduce the page-42 correction alternating beat 38 and beat 39."""
+    from copy import deepcopy
+    from novel_to_comic.page_planning import _compile_detail_response
+
+    adaptation, mapped, raw = _assigned_detail_fixture()
+    page = raw["pages"][0]
+    page["content"][0]["beat_ids"] = [mapped.beat_ids[visual_beat]]
+    page["lettering_placements"][mapped.lettering_ids[2]] = 1
+    original = deepcopy(raw)
+    draft = _compile_detail_response(raw, (mapped,), adaptation)
+    assert raw == original
+    assert draft.pages[0].content[0].beat_ids == mapped.beat_ids
+    assert _detail_matches_map(draft, (mapped,)) == ()
+    for number, panel in enumerate(draft.pages[0].content, 1):
+        assert panel.visual_intent == page["content"][number - 1]["visual_intent"]
+        assert panel.lettering_ids == tuple(
+            item_id for item_id in mapped.lettering_ids
+            if page["lettering_placements"][item_id] == number
+        )
+
+
+def test_provenance_compilation_does_not_accept_foreign_visual_citations():
+    from novel_to_comic.page_planning import _compile_detail_response
+
+    adaptation, mapped, raw = _assigned_detail_fixture()
+    raw["pages"][0]["content"][0]["beat_ids"] = ["invented_beat"]
+    with pytest.raises(ValueError, match="out-of-page visual beats"):
+        _compile_detail_response(raw, (mapped,), adaptation)
+
+
+def test_derived_provenance_still_rejects_a_backward_page_sequence():
+    from novel_to_comic.page_planning import _compile_detail_response
+
+    adaptation, mapped, raw = _assigned_detail_fixture()
+    for panel in raw["pages"][0]["content"]:
+        panel["beat_ids"] = [mapped.beat_ids[1]]
+    raw["pages"][0]["lettering_placements"] = {item_id: 2 for item_id in mapped.lettering_ids}
+    draft = _compile_detail_response(raw, (mapped,), adaptation)
+    # An unlettered later-beat visual precedes the earlier-beat captions.
+    # Deriving owners cannot make that backward story sequence valid.
+    assert _detail_matches_map(draft, (mapped,))
+
+
+def test_silent_detail_page_requires_an_explicit_empty_assignment():
+    from novel_to_comic.page_planning import _compile_detail_response
+
+    adaptation, mapped, raw = _assigned_detail_fixture()
+    mapped = mapped.model_copy(update={"lettering_ids": ()})
+    raw["pages"][0]["lettering_placements"] = {}
+    draft = _compile_detail_response(raw, (mapped,), adaptation)
+    assert all(not panel.lettering_ids for panel in draft.pages[0].content)
+    del raw["pages"][0]["lettering_placements"]
+    with pytest.raises(ValidationError, match="lettering_placements"):
+        _compile_detail_response(raw, (mapped,), adaptation)
+
+
+def test_invalid_detail_destination_gets_one_bounded_correction(tmp_path):
+    from copy import deepcopy
+    from novel_to_comic.page_planning import _generate_detail_batch
+
+    adaptation, mapped, raw = _assigned_detail_fixture()
+    page_map = _BookPageMap(rhythm_summary="Two events.", pages=(mapped,))
+    calls = []
+
+    async def generate(**request):
+        calls.append(request)
+        value = deepcopy(raw)
+        value["pages"][0]["lettering_placements"][mapped.lettering_ids[-1]] = 5
+        if len(calls) == 2:
+            assert "targets panel 5" in request["user_content"]
+            assert "PREVIOUS DETAIL:" in request["user_content"]
+        return ApiResult(value=value)
+
+    with pytest.raises(PlanInvariantError) as error:
+        asyncio.run(_generate_detail_batch(
+            adaptation, _inventory(), page_map, start=0, stop=1, generate=generate,
+            ctx=StageRuntime("plan", PipelineState(project_name="assignment", novel_path="novel.txt",
+                             created_at=datetime.now(timezone.utc)), tmp_path),
+        ))
+    assert len(calls) == 2
+    assert error.value.validation.invariant_failures[0].code == "beat_allocation"
+    assert "targets panel 5" in error.value.validation.invariant_failures[0].evidence[0]

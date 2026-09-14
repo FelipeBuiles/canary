@@ -181,6 +181,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
         ctx=ctx,
         model=model,
         generate=generate,
+        max_generation_calls=config.narrative_max_calls,
         story_instruction=instruction,
     )
     if directive is not None:

@@ -702,7 +702,7 @@ def prepare_page_correction(
 
 
 def estimate_draw_api_cost(
-    config: Config, image_cost: float, *, ocr: bool = True,
+    config: Config, image_cost: float, *, ocr: bool = False,
     compiled: CompiledPageGeneration | None = None,
 ) -> float:
     """Include only the API portions of a page render and optional readback."""
@@ -727,7 +727,7 @@ def estimate_draw_api_cost(
 
 
 def correction_credit_estimate(compiled: CompiledPageGeneration, *, config: Config, reserve: bool):
-    """Credit estimate for one compiled correction, including its text check."""
+    """Credit estimate for one compiled artwork correction."""
     from novel_to_comic.server.credits import credit_estimate_for_provider_cost
     from novel_to_comic.codex_dev import classify_operations
     from novel_to_comic.server.codex_admission import draw_operations

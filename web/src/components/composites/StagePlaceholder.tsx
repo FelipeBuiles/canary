@@ -6,6 +6,7 @@ import { useProjectConfig, useUpdateProjectConfig, useStageEstimate } from "../.
 import { STATIONS } from "../../lib/stations";
 import { CreditAmount } from "../ui/CreditAmount";
 import { ConfirmDrawer } from "./ConfirmDrawer";
+import { AdaptRestartDrawer } from "./AdaptRestartDrawer";
 import { RerunDrawer } from "./RerunDrawer";
 import { RERUN_IMPACT } from "../../lib/rerunImpact";
 import { usePipelineStore } from "../../store/pipeline";
@@ -152,41 +153,52 @@ interface StagePendingProps {
   allowStart: boolean;
 }
 
-function StageStartAction({
+export function StageStartAction({
   project,
   stage,
   retry = false,
   rerun = false,
   disabled = false,
+  allowRestart = true,
 }: {
   project: string;
   stage: StageName;
   retry?: boolean;
   rerun?: boolean;
   disabled?: boolean;
+  allowRestart?: boolean;
 }) {
   const { t } = useI18n();
   const { handleRun, isPending } = useRunAction();
-  const estimate = useStageEstimate(project, stage);
+  const [restartOpen, setRestartOpen] = useState(false);
+  const freshStart = stage === "adapt" && (rerun || restartOpen);
+  const estimate = useStageEstimate(project, stage, true, freshStart);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
-  const actionLabel = rerun
+  const actionLabel = freshStart ? t("Start adaptation over") : rerun
     ? t("Restart this step")
     : retry
       ? stage === "adapt" ? t("Resume adaptation") : t("Retry stage")
       : stage === "extract" ? t("Start Story analysis") : t("Start this step");
   const unavailable = disabled || isPending || !estimate.data || estimate.isError || estimate.isFetching;
 
+  function closeConfirmation() {
+    if (isPending) return;
+    setConfirmOpen(false);
+    setRestartOpen(false);
+  }
+
   function confirmStart() {
     if (unavailable) return;
     setStartError(null);
     handleRun(project, stage, {
-      rerun,
+      rerun: rerun || freshStart,
       actionLabel,
-      onSuccess: () => setConfirmOpen(false),
+      onSuccess: () => { setConfirmOpen(false); setRestartOpen(false); },
       onError: (error) => {
         setStartError(error.message);
         setConfirmOpen(false);
+        setRestartOpen(false);
       },
     });
   }
@@ -209,10 +221,31 @@ function StageStartAction({
         </p>
       ) : <p role="status" className="font-body text-sm">{t("Loading estimate…")}</p>}
       <Button disabled={unavailable} onClick={() => setConfirmOpen(true)}>
-        {isPending ? t("Starting…") : actionLabel}
+        {isPending ? t("Starting…") : restartOpen ? t("Resume adaptation") : actionLabel}
       </Button>
+      {retry && stage === "adapt" && !rerun && allowRestart && (
+        <div className="border-t border-ink-black/20 pt-4">
+          <p className="mb-3 font-body text-sm text-ink-muted">{t("Prefer a fresh script? Start over from your approved inputs.")}</p>
+          <Button variant="outline" disabled={disabled || isPending} onClick={() => { setRestartOpen(true); setConfirmOpen(true); }}>
+            {t("Start adaptation over")}
+          </Button>
+        </div>
+      )}
       {startError && <p role="alert" className="font-body text-sm text-hero-red">{startError}</p>}
-      {rerun ? (
+      {freshStart ? (
+        <AdaptRestartDrawer
+          open={confirmOpen}
+          cost={estimate.isError ? undefined : estimate.data}
+          busy={isPending}
+          disabled={unavailable}
+          onClose={closeConfirmation}
+          onConfirm={confirmStart}
+          extraBody={estimate.isError ? <div role="alert">
+            <p>{t("The estimate could not be loaded. No work has started.")}</p>
+            <Button variant="outline" onClick={() => void estimate.refetch()} disabled={estimate.isFetching}>{t("Retry estimate")}</Button>
+          </div> : (!estimate.data || estimate.isFetching) && <p role="status">{t("Loading estimate…")}</p>}
+        />
+      ) : rerun ? (
         <RerunDrawer
           open={confirmOpen}
           stageName={t(STAGE_META[stage].title)}
@@ -220,7 +253,7 @@ function StageStartAction({
           cost={estimate.data}
           confirmLabel={actionLabel}
           busy={unavailable}
-          onClose={() => setConfirmOpen(false)}
+          onClose={closeConfirmation}
           onConfirm={confirmStart}
         />
       ) : (
@@ -235,7 +268,7 @@ function StageStartAction({
           cost={estimate.data}
           confirmLabel={actionLabel}
           busy={unavailable}
-          onClose={() => setConfirmOpen(false)}
+          onClose={closeConfirmation}
           onConfirm={confirmStart}
         />
       )}

@@ -1,3 +1,4 @@
+import { isOcrIssue } from "./lettering";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../i18n";
 import type { PageIssue } from "../../types/api";
@@ -127,7 +128,7 @@ function changeFromIssue(issue: PageIssue): DraftChange {
     id: `issue:${issue.id}`,
     issueId: issue.id,
     instruction: issue.requested_correction,
-    selected: true,
+    selected: !isOcrIssue(issue),
     annotations: [],
   };
 }

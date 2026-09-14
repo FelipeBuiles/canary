@@ -215,7 +215,7 @@ export function BookRoom() {
         <SectionHeader
           variant="underline"
           title={t("EDITION CHECKS")}
-          description={t("File and lettering checks do not verify visual quality. Review artwork in Pages; nothing here changes it.")}
+          description={t("Export checks cover files and page versions. Review artwork and wording in Pages; optional text checks do not block export.")}
         />
 
         {isLoading || isFetching || retryPreflight.isPending ? (
@@ -263,10 +263,11 @@ export function BookRoom() {
         {retryPreflight.error && <p role="alert" className="mt-3 font-body text-sm text-hero-red">{retryPreflight.error.message}</p>}
       </section>
       {completePages?.pages.some((page) => page.active_render && page.analysis_recovery?.status !== "checked") && (
-        <section className="space-y-3">
-          <p className="text-sm font-bold">{t("Artwork saved · Text check incomplete")}</p>
+        <details className="space-y-3">
+          <summary className="cursor-pointer py-3 font-meta text-sm font-bold">{t("Optional text review")}</summary>
+          <p className="text-sm text-ink-muted">{t("Look for possible wording differences. You can export without running this check.")}</p>
           <PageCheckRecovery project={id} onRecovered={() => void refetch()} />
-        </section>
+        </details>
       )}
 
       {unresolvedIssues > 0 && (

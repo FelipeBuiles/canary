@@ -21,9 +21,11 @@ from novel_to_comic.book_adaptation import (
     _repair_source_scope,
     _closed_repair_scope,
     _repair_checkpoint_names,
+    _record_repair_batch_outcome,
     _checkpoint_key,
     _write_checkpoint,
     _splice_draft_repair,
+    _splice_draft_repairs,
     _story_bible_view,
     _validate_blueprint_scope,
     _validate_locked_lettering,
@@ -314,7 +316,8 @@ def _lettering_response(
             {
                 "beat_id": beat.id,
                 "lettering": [
-                    item.model_dump(mode="json") for item in beat.lettering
+                    {**item.model_dump(mode="json", exclude={"id", "delivery"}), "presentation": item.delivery}
+                    for item in beat.lettering
                 ],
             }
             for beat in beats
@@ -785,8 +788,12 @@ def test_interrupted_repairs_reuse_completed_siblings_only(tmp_path: Path) -> No
     assert all(n.startswith("repairs/new/") for n in names(model="different-model"))
     asyncio.run(resume())
     assert calls == ["repair second"]
-    # A complete batch may have failed global validation: a new explicit repair
-    # must remain possible, rather than returning the same rejected draft forever.
+    # All responses arrived, but splicing/review may still have crashed. Reuse
+    # them until the complete candidate has a recorded validation outcome.
+    assert names() == recovered
+    _record_repair_batch_outcome(artifacts, recovered, prompts, "gpt-4o-mini",
+                                 _book_adaptation(), AdaptationValidation())
+    # A checked batch must not trap a subsequent repair in the same response.
     assert all(n.startswith("repairs/new/") for n in names())
 
 
@@ -1186,6 +1193,125 @@ def test_cross_scene_repair_cannot_drop_a_caption_outside_initial_scope() -> Non
             assert any(entry.source_unit_id in i.source_unit_ids and i.kind == entry.disposition
                        for b in spliced.beats for i in b.lettering)
     assert [i.text for b in spliced.beats for i in b.lettering] == [i.text for i in beat.lettering]
+
+
+def _three_visual_beats() -> _BookDraft:
+    template = _book_adaptation().beats[0]
+    beats = tuple(template.model_copy(update={
+        "id": f"beat_{n:04d}", "order": n, "source_unit_ids": (f"source_{n:06d}",),
+        "summary": f"Event {n}", "lettering": (),
+    }) for n in range(1, 4))
+    return _materialize_draft_ledger(_BookDraft(beats=beats), tuple(b.source_unit_ids[0] for b in beats))
+
+
+def test_repair_prompt_contains_bounded_retained_neighbor_words():
+    from novel_to_comic.book_adaptation import _repair_boundary_context, _repair_prompt
+    a = _book_adaptation()
+    template = a.beats[0]
+    beats = tuple(template.model_copy(update={
+        "id": f"beat_{n:04d}", "order": n, "source_unit_ids": (f"source_{n:06d}",),
+        "lettering": (template.lettering[0].model_copy(update={
+            "id": f"lettering_{n:04d}", "source_unit_ids": (f"source_{n:06d}",),
+            "text": f"Event {n} occurs exactly once.",
+        }),),
+    }) for n in range(1, 9))
+    a = a.model_copy(update={"beats": beats})
+    neighbors = _repair_boundary_context(a, ("source_000004",))
+    assert [b["id"] for b in neighbors["before"]] == [b.id for b in beats[:3]]
+    assert [b["id"] for b in neighbors["after"]] == [b.id for b in beats[4:7]]
+    prompt = _repair_prompt("Source-owned repair", _BookDraft(beats=(beats[3],)),
+        AdaptationValidation(), shard_index=1, beat_to_shard={b.id: 1 for b in beats},
+        retained_neighbors=neighbors)
+    assert "READ-ONLY RETAINED NEIGHBORS" in prompt
+    assert "Do not include them in your output" in prompt
+    for beat in beats[:7]:
+        assert beat.lettering[0].text in prompt
+    assert beats[7].lettering[0].text not in prompt
+    assert _repair_boundary_context(a, ("source_000001",))["before"] == []
+    assert _repair_boundary_context(a, ("source_000008",))["after"] == []
+
+
+@pytest.mark.parametrize("target_repaired", [False, True])
+@pytest.mark.parametrize("renamed", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_repair_batch_resolves_compression_across_shards(target_repaired, renamed, reverse):
+    from novel_to_comic.book_adaptation import _partition_reviewed_candidate, _merged_draft
+    original = _three_visual_beats()
+    origin, target = (2, 0) if reverse else (0, 2)
+    first = _BookDraft(beats=(original.beats[origin],), ledger=(
+        original.ledger[origin].model_copy(update={
+            "disposition": "compressed_into", "adapted_beat_ids": (original.beats[target].id,),
+            "reason": "This connection is disclosed with the other event.",
+        }),
+    ))
+    repairs = [(first, original.beats[origin].source_unit_ids)]
+    if target_repaired:
+        beat = original.beats[target].model_copy(update={
+            "id": "replacement" if renamed else original.beats[target].id,
+            "summary": "Repaired destination",
+        })
+        repairs.append((_BookDraft(beats=(beat,), ledger=(original.ledger[target].model_copy(
+            update={"adapted_beat_ids": (beat.id,)},
+        ),)), beat.source_unit_ids))
+    spliced = _splice_draft_repairs(original, repairs,
+        {e.source_unit_id: n for n, e in enumerate(original.ledger)})
+    assert spliced.ledger[origin].adapted_beat_ids == (spliced.beats[target].id,)
+    assert spliced.beats[1] == original.beats[1]
+    assert len(spliced.ledger) == 3
+    # Repartitioning for the next repair/review must preserve global crosslinks.
+    candidate = BookAdaptation.model_validate({**_book_adaptation().model_dump(),
+        "content_sha256": "", "beats": spliced.beats, "ledger": spliced.ledger})
+    partitions = _partition_reviewed_candidate(candidate, tuple(b.source_unit_ids for b in spliced.beats))
+    merged, _ = _merged_draft(partitions)
+    assert merged.beats == spliced.beats
+    assert merged.ledger == spliced.ledger
+
+
+@pytest.mark.parametrize(("target", "disposition", "error"), [
+    ("beat_9999", "compressed_into", "unknown external"),
+    ("beat_0003", "depicted", "Only compression"),
+])
+def test_repair_batch_rejects_unsupported_external_destinations(target, disposition, error):
+    original = _three_visual_beats()
+    repair = _BookDraft(beats=(original.beats[0],), ledger=(original.ledger[0].model_copy(update={
+        "disposition": disposition, "adapted_beat_ids": (target,), "reason": "Retimed claim",
+    }),))
+    with pytest.raises(ValueError, match=error):
+        _splice_draft_repairs(original, [(repair, original.beats[0].source_unit_ids)],
+            {e.source_unit_id: n for n, e in enumerate(original.ledger)})
+
+
+def test_repair_batch_does_not_redirect_deleted_evidence_to_nearest_beat():
+    original = _three_visual_beats()
+    original = original.model_copy(update={"ledger": (
+        original.ledger[0].model_copy(update={"disposition": "compressed_into",
+            "adapted_beat_ids": ("beat_0002",), "reason": "Claim carried by the second event"}),
+        *original.ledger[1:],
+    )})
+    repair = _BookDraft(beats=(original.beats[2],), ledger=(
+        original.ledger[1].model_copy(update={"disposition": "intentionally_omitted",
+            "adapted_beat_ids": (), "reason": "Event omitted"}), original.ledger[2],
+    ))
+    with pytest.raises(ValueError, match="without a supported destination"):
+        _splice_draft_repairs(original, [(repair, ("source_000002", "source_000003"))],
+            {e.source_unit_id: n for n, e in enumerate(original.ledger)})
+
+
+def test_repair_batch_rejects_cyclic_compression_and_overlapping_scopes():
+    original = _three_visual_beats()
+    repairs = []
+    for n in range(2):
+        beat = original.beats[n].model_copy(update={"id": f"replacement_{n}"})
+        repair = _BookDraft(beats=(beat,), ledger=(original.ledger[n].model_copy(update={
+            "disposition": "compressed_into", "adapted_beat_ids": (original.beats[1 - n].id,),
+            "reason": "Claim carried by the other event",
+        }),))
+        repairs.append((repair, beat.source_unit_ids))
+    order = {e.source_unit_id: n for n, e in enumerate(original.ledger)}
+    with pytest.raises(ValueError, match="cyclic destination"):
+        _splice_draft_repairs(original, repairs, order)
+    with pytest.raises(ValueError, match="scopes overlap"):
+        _splice_draft_repairs(original, [repairs[0], repairs[0]], order)
 
 
 def test_repair_scope_closes_transitively_over_shared_beats() -> None:
@@ -1952,8 +2078,9 @@ def test_producer_writes_one_book_artifact_and_records_model_usage(
         "adapt.lettering",
     ]
     assert all(call["json_schema"]["type"] == "object" for call in calls)
-    item_schema = calls[2]["json_schema"]["$defs"]["LetteringItem"]
-    assert {"speaker", "speaker_entity_id", "delivery"} <= set(item_schema["required"])
+    item_schema = calls[2]["json_schema"]["$defs"]["_LetteringCopy"]
+    assert all({"speaker", "speaker_entity_id", "presentation"} <= set(variant["required"])
+               for variant in item_schema["anyOf"])
     assert "Third-person narration" in calls[2]["user_content"]
     assert "ledger" not in calls[1]["json_schema"]["properties"]
     assert state.stages["adapt"].items_done == 3
@@ -2288,7 +2415,7 @@ def test_large_book_adaptation_is_written_in_bounded_internal_shards(
     assert all("ledger" not in call["json_schema"]["properties"] for call in book_calls)
     assert shard_attempts == {
         "source_000001": 2,
-        "source_000181": 1,
+        "source_000061": 1,
     }
     assert "VALIDATION ERRORS" in book_calls[-1]["user_content"]
 
@@ -2342,7 +2469,7 @@ def test_adaptation_shards_use_model_output_budget_and_fit_cthulhu_in_three() ->
 
     shards = _adaptation_shards(source, model="gpt-5.6-terra")
 
-    assert [len(shard) for shard in shards] == [180, 180, 98]
+    assert [len(shard) for shard in shards] == [153, 153, 152]
     assert max(map(len, shards)) <= 180
     assert tuple(source_id for shard in shards for source_id in shard) == tuple(
         unit.id for unit in source.units
@@ -2728,7 +2855,7 @@ def test_book_prompt_uses_compact_ledger_exceptions_under_strict_schema() -> Non
         _book_adaptation().treatment,
     )
 
-    assert "ledger=[]" in prompt
+    assert "ledger=[]" not in prompt
     assert "ledger_exceptions" in prompt
     assert "<AdaptedBeat>" not in prompt
     assert "<AdaptationLedgerEntry>" not in prompt
@@ -3284,3 +3411,504 @@ def test_refused_lettering_reports_its_source_scope_without_retry(tmp_path):
     assert calls[-1][1] == 'lettering/shard_001'
     assert calls[-1][2] == tuple(unit.id for unit in source.units)
     assert current_ai_request_context().source_scope is None
+
+
+def test_repair_preserves_authored_flashback_order_instead_of_sorting_citations():
+    # Captured raid repair: conference (151), raid (135), aftermath (126).
+    # Earliest citations are summaries, not the desired order of dramatization.
+    template = _book_adaptation().beats[0].model_copy(update={"lettering": ()})
+    ids = ("source_000001", "source_000126", "source_000135", "source_000151", "source_000200")
+    original = _materialize_draft_ledger(_BookDraft(beats=tuple(
+        template.model_copy(update={"id": f"old_{n}", "order": n,
+                                    "summary": f"old {n}", "source_unit_ids": (u,)})
+        for n, u in enumerate(ids, 1)
+    )), ids)
+    scope = ids[1:4]
+    repair = _materialize_draft_ledger(_BookDraft(beats=tuple(
+        template.model_copy(update={"id": f"new_{n}", "order": n,
+                                    "summary": label, "source_unit_ids": (u,)})
+        for n, (u, label) in enumerate(zip(reversed(scope), ("conference", "raid", "aftermath")), 1)
+    )), scope)
+    spliced = _splice_draft_repair(original, repair, scope, dict(zip(ids, range(5))))
+    assert [b.summary for b in spliced.beats] == ["old 1", "conference", "raid", "aftermath", "old 5"]
+    assert {e.source_unit_id for e in spliced.ledger} == set(ids)
+    assert [b.order for b in spliced.beats] == list(range(1, 6))
+
+
+def test_repair_closes_over_intervening_authored_beats():
+    template = _book_adaptation().beats[0].model_copy(update={"lettering": ()})
+    draft = _BookDraft(beats=tuple(
+        template.model_copy(update={"id": f"b{n}", "order": n, "source_unit_ids": (u,)})
+        for n, u in enumerate(("a", "c", "b", "d"), 1)
+    ))
+    assert _closed_repair_scope(draft, ("a", "b"), ("a", "b", "c", "d")) == ("a", "b", "c")
+    with pytest.raises(ValueError, match="out-of-scope"):
+        _splice_draft_repair(draft, draft, ("a", "b"), dict(zip("abcd", range(4))))
+
+
+def test_adaptation_estimate_uses_lettering_contract_and_matching_checkpoints(tmp_path, monkeypatch):
+    import novel_to_comic.book_adaptation as module
+    source, bible, brief, adaptation = _source_document(), _story_bible(), _approved_brief(), _book_adaptation()
+    treatment = module._canonicalize_treatment_requirements(adaptation.treatment, brief)
+    ids = tuple(u.id for u in source.units)
+    requirements = partition_requirements_by_shard(source, brief, (ids,))[0]
+    blueprint = _BlueprintDraft.model_validate(_blueprint_response(adaptation.beats))
+    lettering = _LetteringDraft(beats=[{"beat_id": beat.id, "lettering": beat.lettering} for beat in adaptation.beats])
+    target = TargetArtifacts(tmp_path)
+    prompts = []
+
+    def price(model, prompt, output_chars=0):
+        prompts.append(prompt)
+        return 1.0
+
+    monkeypatch.setattr(module, "estimate_text_cost", price)
+    module.estimate_book_adaptation_cost(source, bible, brief, model="test", artifacts=target)
+    assert any(isinstance(p, str) and p.startswith("Write complete publishable lettering") for p in prompts)
+    treatment_prompt = build_narrative_treatment_prompt(source, bible, brief)
+    blueprint_prompt = module.build_adaptation_blueprint_prompt(source, bible, brief, treatment,
+        primary_source_unit_ids=ids, owned_requirement_ids=requirements, shard_index=1, shard_count=1)
+    lettering_prompt = module.build_locked_lettering_prompt(source, bible, brief, treatment, blueprint,
+        primary_source_unit_ids=ids, shard_index=1, shard_count=1)
+    for name, feature, prompt, value in [
+        ("treatment", "adapt.narrative_treatment", treatment_prompt, treatment),
+        ("blueprint/shard_001", "adapt.blueprint", blueprint_prompt, blueprint),
+        ("lettering/shard_001", "adapt.lettering", lettering_prompt, lettering),
+    ]:
+        _write_checkpoint(target, name=name, input_sha256=_checkpoint_key(model="test",feature=feature,prompt=prompt), payload=value)
+    prompts.clear()
+    module.estimate_book_adaptation_cost(source, bible, brief, model="test", artifacts=target)
+    assert blueprint_prompt not in prompts
+    assert lettering_prompt not in prompts
+    assert treatment_prompt not in prompts
+    prompts.clear()
+    module.estimate_book_adaptation_cost(source, bible, brief, model="changed", artifacts=target)
+    assert any(isinstance(p, str) and p.startswith("Write complete publishable lettering") for p in prompts)
+
+
+def test_adapt_work_limit_survives_resume_and_preserves_treatment(tmp_path):
+    from novel_to_comic.generation_budget import GenerationWorkLimitError
+    calls = []
+    async def generate(**request):
+        calls.append(request["feature"])
+        return ApiResult(value=_book_adaptation().treatment.model_dump(mode="json"))
+    target = TargetArtifacts(tmp_path)
+    for _ in range(2):
+        state = PipelineState(project_name="bounded", novel_path="source.txt", created_at=datetime.now(timezone.utc))
+        ctx = StageRuntime("adapt", state, tmp_path)
+        with pytest.raises(GenerationWorkLimitError):
+            asyncio.run(produce_book_adaptation(_source_document(), _story_bible(), _approved_brief(),
+                artifacts=target, ctx=ctx, model="test", generate=generate, max_generation_calls=1))
+        assert ctx.stage_state.error_code == "generation_work_limit"
+    assert calls == ["adapt.narrative_treatment"]
+    assert target.adapt_checkpoint_path("treatment").exists()
+
+
+def test_partition_for_repair_retains_the_reviewers_global_identifiers():
+    from novel_to_comic.book_adaptation import _partition_reviewed_candidate, _merged_draft
+    a = _book_adaptation()
+    template = a.beats[0]
+    beats = tuple(template.model_copy(update={
+        "id": f"beat_{n:04d}", "order": n, "source_unit_ids": (f"source_{n:06d}",),
+        "lettering": (template.lettering[0].model_copy(update={
+            "id": f"lettering_{n:04d}", "source_unit_ids": (f"source_{n:06d}",),
+        }),),
+    }) for n in range(1, 4))
+    ledger = tuple(AdaptationLedgerEntry(source_unit_id=b.source_unit_ids[0], disposition="caption",
+        adapted_beat_ids=(b.id,), preserved_function="Narrative continuity") for b in beats)
+    candidate = a.model_copy(update={"beats": beats, "ledger": ledger})
+    shards = (("source_000001",), ("source_000002", "source_000003"))
+    drafts = _partition_reviewed_candidate(candidate, shards)
+    assert drafts[1].beats[0].id == "beat_0002"
+    assert drafts[1].beats[0].lettering[0].id == "lettering_0002"
+    merged, _ = _merged_draft(drafts)
+    assert merged.beats == candidate.beats
+    assert merged.ledger == candidate.ledger
+    with pytest.raises(ValueError, match="ownership"):
+        _partition_reviewed_candidate(candidate, (("source_000001",), ("source_000002",)))
+
+
+def test_locked_lettering_resume_repairs_saved_rejection_and_reuses_completed_work(tmp_path):
+    from novel_to_comic.book_adaptation import _generate_locked_lettering
+
+    expected = _book_adaptation()
+    blueprint = _BlueprintDraft.model_validate(_blueprint_response(expected.beats))
+    invalid = _lettering_response(expected.beats)
+    invalid['beats'][0]['lettering'][0].update(
+        kind='thought', presentation='display', speaker='Gregor Samsa', speaker_entity_id='char_001',
+    )
+    valid = json.loads(json.dumps(invalid))
+    valid['beats'][0]['lettering'][0]['presentation'] = 'onscreen'
+    calls = []
+    responses = [invalid, invalid, valid]
+    target = TargetArtifacts(tmp_path)
+    state = PipelineState(project_name='lettering', novel_path='novel.txt', created_at=datetime.now(timezone.utc))
+    ctx = StageRuntime('adapt', state, tmp_path)
+
+    async def generate(**request):
+        calls.append(request)
+        return ApiResult(value=responses.pop(0))
+
+    async def run():
+        return await _generate_locked_lettering(prompt='locked blueprint', blueprint=blueprint,
+            known_speaker_ids={'char_001'}, checkpoint_name='lettering/shard_002', model='test',
+            artifacts=target, generate=generate, ctx=ctx)
+
+    with pytest.raises(ValueError, match="'thought' lettering requires delivery"):
+        asyncio.run(run())
+    assert len(calls) == 2  # Exhaustion remains bounded; no hidden extra requests.
+    assert not target.adapt_checkpoint_path('lettering/shard_002').exists()
+    rejected = target.adapt_checkpoint_path('lettering/shard_002/rejected')
+    assert rejected.exists()
+    draft = asyncio.run(run())
+    assert 'YOUR PREVIOUS JSON' in calls[2]['user_content']
+    assert 'VALIDATION ERRORS' in calls[2]['user_content']
+    assert invalid['beats'][0]['lettering'][0]['text'] in calls[2]['user_content']
+    assert draft.beats[0].lettering[0].delivery == 'onscreen'
+    assert [b.id for b in draft.beats] == [b.id for b in expected.beats]
+    assert [i.text for b in draft.beats for i in b.lettering] == [i.text for b in expected.beats for i in b.lettering]
+    assert not rejected.exists()
+    assert asyncio.run(run()) == draft
+    assert len(calls) == 3  # Successful resume is cached with the original prompt key.
+
+
+def test_repair_scope_revalidates_cached_payload_and_reuses_valid_sibling(tmp_path):
+    from novel_to_comic.book_adaptation import _generate_book_drafts
+
+    template = _book_adaptation().beats[0]
+    scopes = [('source_000001',), ('source_000002',)]
+    drafts = [_BookDraft(beats=(template.model_copy(update={
+        'id': f'beat_{index}', 'source_unit_ids': scope,
+        'lettering': (template.lettering[0].model_copy(update={'source_unit_ids': scope}),),
+    }),)) for index, scope in enumerate(scopes)]
+    invalid = drafts[1].model_copy(update={'beats': (drafts[1].beats[0].model_copy(update={
+        'source_unit_ids': ('source_000001', 'source_000002'),
+    }),)})
+    target = TargetArtifacts(tmp_path)
+    prompts = ['repair one', 'repair two']
+    names = ['repairs/shard_001', 'repairs/shard_002']
+    for prompt, name, payload in zip(prompts, names, [drafts[0], invalid]):
+        _write_checkpoint(target, name=name, input_sha256=_checkpoint_key(
+            model='test', feature='adapt.book', prompt=prompt), payload=payload)
+    calls = []
+
+    async def generate(**request):
+        calls.append(request)
+        return ApiResult(value=drafts[1].model_dump(mode='json'))
+
+    state = PipelineState(project_name='scope', novel_path='novel.txt', created_at=datetime.now(timezone.utc))
+    result = asyncio.run(_generate_book_drafts(prompts=prompts, source_scopes=scopes,
+        generate=generate, ctx=StageRuntime('adapt', state, tmp_path), progress_offset=0,
+        progress_total=2, record_progress=False, checkpoint_names=names, artifacts=target,
+        model='test', known_speaker_ids={'char_001'}))
+    assert result == drafts
+    assert len(calls) == 1
+    assert calls[0]['user_content'].startswith('repair two')
+    assert 'out-of-scope literal provenance' in calls[0]['user_content']
+    assert 'beat beat_1' in calls[0]['user_content']
+    assert 'source_000001' in calls[0]['user_content']
+
+
+@pytest.mark.parametrize('owner', ['beat', 'lettering', 'exception'])
+def test_repair_rejects_outside_source_before_saving_success(tmp_path, owner):
+    from novel_to_comic.book_adaptation import _generate_book_draft
+
+    beat = _book_adaptation().beats[0]
+    scope = ('source_000001', 'source_000002')
+    bad = _BookDraft(beats=(beat,))
+    if owner == 'beat':
+        bad = bad.model_copy(update={'beats': (beat.model_copy(update={'source_unit_ids': (*scope, 'outside')}),)})
+    elif owner == 'lettering':
+        bad = bad.model_copy(update={'beats': (beat.model_copy(update={'lettering': (
+            beat.lettering[0].model_copy(update={'source_unit_ids': ('outside',)}),
+        )}),)})
+    else:
+        bad = bad.model_copy(update={'ledger_exceptions': (_LedgerException(
+            source_unit_ids=('outside',), disposition='compressed_into', adapted_beat_ids=('neighbor',),
+            reason='A neighbor covers it', preserved_function='Context',
+        ),)})
+    calls = []
+
+    async def generate(**request):
+        calls.append(request)
+        return ApiResult(value=bad.model_dump(mode='json'))
+
+    state = PipelineState(project_name='scope', novel_path='novel.txt', created_at=datetime.now(timezone.utc))
+    target = TargetArtifacts(tmp_path)
+    with pytest.raises(ValueError, match='out-of-scope literal provenance'):
+        asyncio.run(_generate_book_draft(prompt='repair', source_unit_ids=scope,
+            generate=generate, ctx=StageRuntime('adapt', state, tmp_path), checkpoint_name='repairs/test',
+            artifacts=target, model='test', known_speaker_ids={'char_001'}))
+    assert len(calls) == 2
+    assert not target.adapt_checkpoint_path('repairs/test').exists()
+
+
+def test_resume_keeps_reviewed_candidate_when_cached_repair_crosses_scope(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import novel_to_comic.book_adaptation as module
+
+    source, bible, brief, candidate = _source_document(), _story_bible(), _approved_brief(), _book_adaptation()
+    target = TargetArtifacts(tmp_path)
+    target.write_failed_adaptation_candidate(candidate)
+    review = SimpleNamespace(model='test', failures=(InvariantFailure(
+        id='finding', owner_stage='adapt', code='narrative_review_padding', message='Revise this beat',
+        source_unit_ids=('source_000001',), evidence=('The beat repeats the preceding action.',),
+    ),))
+    monkeypatch.setattr(module, '_reviewed_candidate_for_resume', lambda *args, **kwargs: candidate)
+    monkeypatch.setattr(target, 'read_narrative_review', lambda stage: review)
+    monkeypatch.setattr(module, '_repair_prompts_for_candidate', lambda *args: ['repair'])
+    monkeypatch.setattr(module, '_repair_checkpoint_names', lambda *args, **kwargs: ['repairs/test'])
+    invalid = _BookDraft(beats=(candidate.beats[0].model_copy(update={
+        'source_unit_ids': (*candidate.beats[0].source_unit_ids, 'outside'),
+    }),))
+    _write_checkpoint(target, name='repairs/test', input_sha256=_checkpoint_key(
+        model='test', feature='adapt.book', prompt='repair'), payload=invalid)
+    work = module._resume_adaptation_work(source, bible, brief, artifacts=target, model='test', instruction='')
+    assert work.candidate == candidate
+    assert work.pending_repair is None
+    assert target.read_failed_adaptation_candidate() == candidate
+
+
+@pytest.mark.parametrize('missing', ['source_accounting', 'requirement'])
+def test_repair_corrects_missing_metadata_before_checkpointing(tmp_path, missing):
+    from novel_to_comic.book_adaptation import _generate_book_draft
+
+    template = _book_adaptation().beats[0]
+    beat = template.model_copy(update={
+        'source_unit_ids': ('source_000001',), 'brief_requirement_ids': ('essential_event_001',),
+        'lettering': (template.lettering[0].model_copy(update={'source_unit_ids': ('source_000001',)}),),
+    })
+    omission = _LedgerException(source_unit_ids=('source_000002',), disposition='intentionally_omitted',
+        reason='Repetitive background description is omitted.', preserved_function='The discovery remains explicit.')
+    valid = _BookDraft(beats=(beat,), ledger_exceptions=(omission,))
+    invalid = valid.model_copy(update={'ledger_exceptions': ()}) if missing == 'source_accounting' else (
+        valid.model_copy(update={'beats': (beat.model_copy(update={'brief_requirement_ids': ()}),)})
+    )
+    responses = [invalid, valid]
+    calls = []
+
+    async def generate(**request):
+        calls.append(request)
+        return ApiResult(value=responses.pop(0).model_dump(mode='json'))
+
+    state = PipelineState(project_name='metadata', novel_path='novel.txt', created_at=datetime.now(timezone.utc))
+    target = TargetArtifacts(tmp_path)
+    result = asyncio.run(_generate_book_draft(prompt='repair', source_unit_ids=('source_000001', 'source_000002'),
+        required_requirement_ids=('essential_event_001',), generate=generate,
+        ctx=StageRuntime('adapt', state, tmp_path), checkpoint_name='repairs/metadata', artifacts=target,
+        model='test', known_speaker_ids={'char_001'}))
+    assert result == valid
+    assert len(calls) == 2
+    assert ('missing source accounting' if missing == 'source_accounting' else 'dropped required event') in calls[1]['user_content']
+    assert result.beats[0].lettering == invalid.beats[0].lettering
+
+
+def test_repair_preserves_exclusive_requirements_without_requiring_retained_ones():
+    from novel_to_comic.book_adaptation import _repair_required_requirements
+
+    candidate = _book_adaptation()
+    beat = candidate.beats[0]
+    scoped = beat.model_copy(update={'id': 'scoped', 'source_unit_ids': ('source_000001',),
+        'brief_requirement_ids': ('essential_event_001', 'essential_event_002')})
+    retained = beat.model_copy(update={'id': 'retained', 'source_unit_ids': ('source_000002',),
+        'brief_requirement_ids': ('essential_event_001',)})
+    candidate = candidate.model_copy(update={'beats': (scoped, retained)})
+    assert _repair_required_requirements(candidate, ('source_000001',)) == ('essential_event_002',)
+
+
+@pytest.mark.parametrize("limit", ["units", "output"])
+def test_shards_keep_scenes_whole_and_identify_unavoidable_fragments(monkeypatch, limit):
+    import novel_to_comic.book_adaptation as module
+
+    units = [SourceUnit(id=f"source_{index:06d}", ordinal=index,
+                        start_offset=(index - 1) * 10, end_offset=index * 10,
+                        text=f"Event {index}.  ") for index in range(1, 10)]
+    source = SourceDocument(text="".join(unit.text for unit in units), units=units, scenes=[
+        SourceScene(id=f"scene_{index:03d}", title=f"Scene {index}",
+                    first_unit_id=f"source_{start:06d}", last_unit_id=f"source_{stop:06d}")
+        for index, (start, stop) in enumerate(((1, 3), (4, 8), (9, 9)), 1)
+    ])
+    monkeypatch.setattr(module, "_ADAPT_SHARD_MAX_UNITS", 4 if limit == "units" else 180)
+    monkeypatch.setattr(module, "_ADAPT_OUTPUT_BUDGET_RATIO", 1)
+    monkeypatch.setattr(module, "_ADAPT_OUTPUT_TOKENS_PER_SOURCE_CHAR", 1)
+    class Resolver:
+        def model_output_token_limit(self, model):
+            return 40 if limit == "output" else 10000
+    monkeypatch.setattr(module, "get_pricing_resolver", lambda: Resolver())
+    shards = module._adaptation_shards(source, model="test")
+    assert [len(shard) for shard in shards] == [3, 4, 2]
+    assert tuple(unit_id for shard in shards for unit_id in shard) == tuple(unit.id for unit in units)
+    contexts = [module._scoped_source_scenes(source, set(shard)) for shard in shards]
+    assert [[scene["scope"] for scene in context] for context in contexts] == [["complete"], ["opening"], ["closing", "complete"]]
+    assert contexts[1][0]["full_scene_last_unit_id"] == "source_000008"
+    assert contexts[1][0]["last_unit_id"] == "source_000007"
+
+
+def test_structural_and_repair_prompts_share_scene_framing_without_forcing_speech():
+    import novel_to_comic.book_adaptation as module
+
+    source = _source_document()
+    for prompt in (
+        module.build_book_adaptation_prompt(source, _story_bible(), _approved_brief(), _book_adaptation().treatment,
+                                            primary_source_unit_ids=("source_000001",), shard_index=1, shard_count=2),
+        module.build_adaptation_blueprint_prompt(source, _story_bible(), _approved_brief(), _book_adaptation().treatment,
+                                                primary_source_unit_ids=("source_000001",), owned_requirement_ids=(), shard_index=1, shard_count=2),
+    ):
+        context = json.loads(prompt.split("\n", 1)[1])
+        assert context["source_scenes"][0]["scope"] == "opening"
+        assert context["book_scene_outline"][0]["last_unit_id"] == "source_000002"
+        assert "required_speaker_entity_ids" not in prompt
+        assert module._SCENE_SCOPE_CONTRACT in prompt
+        assert "ledger=[]" not in prompt
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_locked_lettering_corrects_foreign_source_citations_before_publication(tmp_path, cached):
+    from novel_to_comic.book_adaptation import _generate_locked_lettering, _LetteringDraft
+
+    expected = _book_adaptation()
+    blueprint = _BlueprintDraft.model_validate(_blueprint_response(expected.beats))
+    valid = _lettering_response(expected.beats)
+    invalid = json.loads(json.dumps(valid))
+    invalid["beats"][0]["lettering"][0]["source_unit_ids"] = ["source_999999"]
+    target = TargetArtifacts(tmp_path)
+    if cached:
+        _write_checkpoint(target, name="lettering/test", input_sha256=_checkpoint_key(
+            model="test", feature="adapt.lettering", prompt="source-scoped lettering"),
+            payload=_LetteringDraft(beats=[{"beat_id": beat["beat_id"], "lettering": [
+                {**{k: v for k, v in item.items() if k != "presentation"}, "id": f"lettering_{i:04d}", "delivery": item["presentation"]}
+                for i, item in enumerate(beat["lettering"], 1)]} for beat in invalid["beats"]]))
+    responses = [valid] if cached else [invalid, valid]
+    calls = []
+
+    async def generate(**request):
+        calls.append(request)
+        assert "source_999999" not in request["json_schema"]["$defs"]["_ScopedSourceUnitId"]["enum"]
+        return ApiResult(value=responses.pop(0))
+
+    result = asyncio.run(_generate_locked_lettering(
+        prompt="source-scoped lettering", blueprint=blueprint, known_speaker_ids={"char_001"},
+        checkpoint_name="lettering/test", model="test", artifacts=target, generate=generate,
+        ctx=StageRuntime("adapt", PipelineState(project_name="scope", novel_path="novel.txt",
+                        created_at=datetime.now(timezone.utc)), tmp_path),
+    ))
+    assert len(calls) == (1 if cached else 2)
+    assert "out-of-scope literal provenance" in calls[-1]["user_content"]
+    assert result.beats == expected.beats
+
+
+@pytest.mark.parametrize("writer", ["blueprint", "repair"])
+@pytest.mark.parametrize("missing_field", [True, False])
+def test_compression_explanation_cannot_replace_destination_ids(tmp_path, writer, missing_field):
+    from copy import deepcopy
+    from novel_to_comic.book_adaptation import _generate_blueprint, _generate_book_draft
+
+    expected = _book_adaptation()
+    beat = expected.beats[0]
+    valid = (_blueprint_response((beat,)) if writer == "blueprint" else
+             {"beats": [beat.model_dump(mode="json")]})
+    valid["ledger_exceptions"] = [{
+        "source_unit_ids": ["source_000002"], "disposition": "compressed_into",
+        "adapted_beat_ids": [beat.id], "reason": "The reaction is condensed into the discovery.",
+        "preserved_function": "The reaction remains in the discovery sequence (beat_0001 onward).",
+    }]
+    invalid = deepcopy(valid)
+    if missing_field:
+        del invalid["ledger_exceptions"][0]["adapted_beat_ids"]
+    else:
+        invalid["ledger_exceptions"][0]["adapted_beat_ids"] = []
+    responses = [invalid, valid]
+    calls = []
+    target = TargetArtifacts(tmp_path)
+    checkpoint = f"{writer}/compression"
+    ctx = StageRuntime("adapt", PipelineState(project_name="compression", novel_path="novel.txt",
+                      created_at=datetime.now(timezone.utc)), tmp_path)
+
+    async def generate(**request):
+        calls.append(request)
+        # A malformed exception must never be accepted as a completed checkpoint.
+        assert not target.adapt_checkpoint_path(checkpoint).exists()
+        branches = request["json_schema"]["$defs"]["_LedgerException"]["anyOf"]
+        compressed = next(branch for branch in branches
+                          if branch["properties"]["disposition"]["enum"] == ["compressed_into"])
+        assert compressed["properties"]["adapted_beat_ids"]["minItems"] == 1
+        if len(calls) == 2:
+            assert "nonempty adapted_beat_ids" in request["user_content"]
+            assert "A destination described only in reason" in request["user_content"]
+        return ApiResult(value=responses.pop(0))
+
+    kwargs = dict(prompt="Return the complete draft.", generate=generate, ctx=ctx,
+                  checkpoint_name=checkpoint, artifacts=target, model="test",
+                  source_unit_ids=("source_000001", "source_000002"))
+    if writer == "blueprint":
+        result = asyncio.run(_generate_blueprint(**kwargs, brief=_approved_brief(), owned_requirement_ids=()))
+        assert result.beats == _BlueprintDraft.model_validate(valid).beats
+    else:
+        result = asyncio.run(_generate_book_draft(**kwargs, known_speaker_ids={"char_001"}))
+        assert result.beats == expected.beats
+    assert len(calls) == 2
+    assert result.ledger_exceptions[0].adapted_beat_ids == (beat.id,)
+    assert result.ledger_exceptions[0].preserved_function == valid["ledger_exceptions"][0]["preserved_function"]
+    assert target.adapt_checkpoint_path(checkpoint).exists()
+
+
+def test_blueprint_and_repair_prompts_explain_literal_ledger_destinations():
+    from novel_to_comic.book_adaptation import _LEDGER_EXCEPTION_CONTRACT, build_adaptation_blueprint_prompt
+
+    args = (_source_document(), _story_bible(), _approved_brief(), _book_adaptation().treatment)
+    for prompt in (
+        build_book_adaptation_prompt(*args),
+        build_adaptation_blueprint_prompt(*args, primary_source_unit_ids=("source_000001", "source_000002"),
+                                         owned_requirement_ids=(), shard_index=1, shard_count=1),
+    ):
+        assert _LEDGER_EXCEPTION_CONTRACT in prompt
+        assert "does not populate adapted_beat_ids" in prompt
+        assert "Never change the disposition" in prompt
+
+
+def test_locked_lettering_assigns_ids_without_rewriting_or_reordering_copy():
+    from copy import deepcopy
+    from novel_to_comic.book_adaptation import _compile_locked_lettering
+    first = _book_adaptation().beats[0]
+    second = first.model_copy(update={"id": "beat_0002", "order": 2})
+    blueprint = _BlueprintDraft.model_validate(_blueprint_response((first, second)))
+    value = _lettering_response((first, second))
+    # Receipt ordering must not redefine the locked blueprint order.
+    value["beats"].reverse()
+    original = deepcopy(value)
+    compiled = _compile_locked_lettering(value, blueprint)
+    assert value == original
+    assert [beat.beat_id for beat in compiled.beats] == [first.id, second.id]
+    items = [item for beat in compiled.beats for item in beat.lettering]
+    assert [item.id for item in items] == [f"lettering_{i:04d}" for i in range(1, 5)]
+    assert [item.text for item in items] == [item.text for beat in (first, second) for item in beat.lettering]
+    assert _compile_locked_lettering(value, blueprint) == compiled
+
+
+@pytest.mark.parametrize("tone", ["listless", "quiet, sincere", "hesitant, abstracted", "poetic, distant", "half-mental whisper"])
+def test_locked_lettering_corrects_tone_without_guessing_presentation(tmp_path, tone):
+    from copy import deepcopy
+    from novel_to_comic.book_adaptation import _generate_locked_lettering
+    expected = _book_adaptation()
+    blueprint = _BlueprintDraft.model_validate(_blueprint_response(expected.beats))
+    valid = _lettering_response(expected.beats)
+    invalid = deepcopy(valid)
+    invalid["beats"][0]["lettering"][0]["presentation"] = tone
+    calls = []
+    async def generate(**request):
+        calls.append(request)
+        if len(calls) == 1:
+            return ApiResult(value=invalid)
+        assert tone in request["user_content"]
+        assert "presentation" in request["user_content"]
+        assert "Field required" not in request["user_content"]
+        return ApiResult(value=valid)
+    result = asyncio.run(_generate_locked_lettering(
+        prompt="Write lettering; presentation is page delivery, never tone.", blueprint=blueprint,
+        known_speaker_ids={"char_001"}, checkpoint_name="lettering/test", model="test",
+        artifacts=TargetArtifacts(tmp_path), generate=generate,
+        ctx=StageRuntime("adapt", PipelineState(project_name="presentation", novel_path="novel.txt",
+                        created_at=datetime.now(timezone.utc)), tmp_path),
+    ))
+    assert len(calls) == 2
+    assert result.beats == expected.beats
+    assert invalid["beats"][0]["lettering"][0]["presentation"] == tone

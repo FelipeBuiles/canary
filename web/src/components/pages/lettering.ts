@@ -6,6 +6,7 @@ export const OCR_ISSUE_TYPES = new Set([
   "duplicated_lettering",
   "invented_lettering",
   "reordered_lettering",
+  "unverified_lettering_order",
 ]);
 
 export function isOcrIssue(issue: PageIssue): boolean {
@@ -237,10 +238,10 @@ export function cropMiddleContext(text: string, edge: number = DIFFERENCE_CONTEX
 }
 
 const OCR_TITLES: Record<string, string> = {
-  misspelled_lettering: "Some lettering does not match",
-  missing_lettering: "Some lettering is missing or unreadable",
+  misspelled_lettering: "Possible wording difference",
+  missing_lettering: "Some lettering was not recognized",
   duplicated_lettering: "Some lettering appears more than once",
-  invented_lettering: "The page contains unexpected lettering",
+  invented_lettering: "The checker found unexpected lettering",
   reordered_lettering: "The lettering may be in the wrong reading order",
 };
 

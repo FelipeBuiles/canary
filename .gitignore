@@ -181,3 +181,5 @@ graphify-out/manifest.json
 
 # local token tracking, not useful to share
 graphify-out/cost.json
+# Playwright CLI output (may contain credentials)
+.playwright-cli/

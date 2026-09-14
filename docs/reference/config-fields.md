@@ -27,6 +27,7 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `brief_model` | `str` | `GATEWAY_LUNA` |  |
 | `adapt_model` | `str` | `GATEWAY_TERRA` |  |
 | `plan_model` | `str` | `GATEWAY_TERRA` |  |
+| `narrative_max_calls` | `int | None` | `Field(default=None, ge=1)` |  |
 | `prompt_model` | `str` | `GATEWAY_LUNA` |  |
 | `page_ocr_model` | `str` | `GATEWAY_PAGE_OCR` |  |
 | `visual_review_model` | `str` | `GATEWAY_PAGE_OCR` |  |

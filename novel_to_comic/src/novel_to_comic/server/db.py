@@ -11,6 +11,11 @@ _httpx_client: httpx.Client | None = None
 
 
 def reset_db() -> None:
+    """Close the shared client only after every borrower has stopped using it.
+
+    Request-level connection recovery must retry on the live pool instead;
+    credit jobs and the lease manager retain this client across requests.
+    """
     global _client, _httpx_client
     if _httpx_client is not None:
         _httpx_client.close()

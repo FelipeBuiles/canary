@@ -35,7 +35,7 @@ def visual_review_operations(config: Config) -> Operations:
     return (("text", config.effective_visual_review_model()),)
 
 
-def draw_operations(config: Config, *, ocr: bool = True) -> Operations:
+def draw_operations(config: Config, *, ocr: bool = False) -> Operations:
     return (("complete_page", config.draw_model), *(page_check_operations(config) if ocr else ()))
 
 

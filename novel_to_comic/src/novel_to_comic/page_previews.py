@@ -31,8 +31,9 @@ def ensure_page_render_preview(
     """Return a cached WebP rendition, creating it atomically when absent.
 
     Draw masters are immutable PNGs and remain the source of truth. A new
-    render revision owns a distinct preview filename, so its delivery response
-    can be cached forever without stale-art risk.
+    render revision owns a distinct preview filename within an edition. A stage
+    restart removes those previews and may reuse the filenames, so HTTP delivery
+    must revalidate even though files are immutable within an edition.
     """
 
     try:

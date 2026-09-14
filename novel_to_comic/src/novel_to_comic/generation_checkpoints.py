@@ -12,6 +12,29 @@ from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import ApiResult
 
 
+def _checkpoint_location(artifacts, stage, model, request):
+    if stage not in {"adapt", "plan"}:
+        raise ValueError("unsupported structured generation stage")
+    encoded = json.dumps(
+        {"version": 1, "model": model, "request": request},
+        ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    )
+    key = hashlib.sha256(encoded.encode()).hexdigest()
+    return artifacts.project_dir / ".checkpoints" / stage / "responses" / f"{key}.json", encoded
+
+
+def read_checkpointed_response(*, artifacts, stage, model, request) -> ApiResult[Any] | None:
+    """Read exact saved output without submitting work on a cache miss."""
+    path, encoded = _checkpoint_location(artifacts, stage, model, request)
+    try:
+        saved = json.loads(path.read_text())
+        if saved["input"] == encoded:
+            return ApiResult(value=saved["value"])
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return None
+
+
 def checkpointed_generator(
     generate: Callable[..., Awaitable[ApiResult[Any]]],
     *,
@@ -29,23 +52,10 @@ def checkpointed_generator(
         raise ValueError("unsupported structured generation stage")
 
     async def run(**kwargs: Any) -> ApiResult[Any]:
-        encoded = json.dumps(
-            {"version": 1, "model": model, "request": kwargs},
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        key = hashlib.sha256(encoded.encode()).hexdigest()
-        path = (
-            artifacts.project_dir / ".checkpoints" / stage / "responses" / f"{key}.json"
-        )
-        if path.exists():
-            try:
-                saved = json.loads(path.read_text())
-                if saved["input"] == encoded:
-                    return ApiResult(value=saved["value"])
-            except (OSError, ValueError, KeyError):
-                pass
+        path, encoded = _checkpoint_location(artifacts, stage, model, kwargs)
+        saved = read_checkpointed_response(artifacts=artifacts, stage=stage, model=model, request=kwargs)
+        if saved is not None:
+            return saved
         result = await generate(**kwargs)
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(f".{uuid.uuid4().hex}.tmp")

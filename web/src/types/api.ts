@@ -212,6 +212,7 @@ export interface GenerationJob {
   user_message?: string | null;
   recoverable?: boolean | null;
   phase?: "generation" | "analysis" | null;
+  is_current_page?: boolean;
 }
 
 export const STAGE_ORDER: StageName[] = [
@@ -502,6 +503,9 @@ export interface CompletePageDetail {
 }
 
 export interface RenderAnalysis {
+  render_image_sha256?: string;
+  ocr_observations?: Array<{ id: string; text: string }>;
+  observed_regions?: Array<{ id: string; polygon: Array<[number, number]> }>;
   page_number: number;
   render_revision: number;
   recognized_lettering: Record<string, string>;

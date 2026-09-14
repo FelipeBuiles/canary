@@ -19,7 +19,7 @@ Validation ownership is:
   lettering;
 - `plan`: global page rhythm, page-turn reveals, reading order, acceptable
   density, complete beat allocation, and unchanged lettering;
-- `draw`: requested page structure, exact OCR, reference identity, appearance
+- `draw`: requested page structure, optional text-check evidence, reference identity, appearance
   state, and generation-request fidelity;
 - `finish`: cross-page consistency, unresolved issue status, production
   dimensions, bleed, color, ordering, packaging, and export integrity.
@@ -43,8 +43,7 @@ or weighted retry threshold. A result is either:
   affected source and artifact IDs.
 
 Examples of invariant failures include a source range ending mid-sentence,
-unaccounted source units, lettering changed by Plan, and OCR that differs from
-canonical copy. Examples of editorial issues include rushed aftermath, weak
+unaccounted source units and lettering changed by Plan. Examples of editorial issues include rushed aftermath, weak
 reveal timing, questionable omission, redundant image and narration, or
 confusing composition. Creative judgment is not represented as a synthetic
 numeric score.
@@ -57,3 +56,23 @@ overridden through that path.
 This prevents late detection of source corruption, missing adaptation beats,
 lettering truncation, page-density failures, or generation drift while keeping
 Finish focused on the completed book and production export.
+
+
+## Optional text review (2026-09-14)
+
+Automated OCR is advisory. On the reviewed 44-page edition, 36 checks did not
+complete and the five pages flagged by completed checks contained OCR word
+substitutions rather than the reported artwork mistakes. Exact transcription
+agreement is therefore not a proven artwork invariant.
+
+Draw and correction jobs produce artwork without automatic OCR or its credit
+hold. Readers can explicitly check saved pages, inspect the disputed image
+regions and script, and dismiss suggestions. An unavailable check remains
+unchecked. Existing OCR findings remain recorded but cannot block Draw approval
+or Finish; they are not automatically selected for redraw. Finish reads retained
+analysis without running or repairing it. File integrity, active artifact lineage,
+production requirements and non-OCR review decisions remain enforced. Packaging
+never certifies text accuracy or visual quality.
+
+A replacement OCR engine requires a small, manually reviewed comic benchmark;
+changing the model alone does not restore a mandatory verification gate.

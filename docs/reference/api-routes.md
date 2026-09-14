@@ -98,6 +98,7 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/projects/{project}/brief` | `get_brief` | `stages.py` |
 | `PUT` | `/api/projects/{project}/brief` | `update_brief` | `stages.py` |
 | `GET` | `/api/projects/{project}/validation/{stage}` | `get_stage_validation` | `stages.py` |
+| `GET` | `/api/projects/{project}/plan/review-draft` | `get_plan_review_draft` | `stages.py` |
 | `GET` | `/api/projects/{project}/adaptation` | `get_book_adaptation` | `stages.py` |
 | `GET` | `/api/projects/{project}/book-plan` | `get_book_plan` | `stages.py` |
 | `GET` | `/api/projects/{project}/comic-pages` | `list_comic_pages` | `stages.py` |

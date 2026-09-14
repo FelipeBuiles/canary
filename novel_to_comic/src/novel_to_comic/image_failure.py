@@ -54,6 +54,9 @@ def classify_image_failure(
         return "shape_mismatch"
     if any(token in text for token in (
         "image_prohibited",
+        "moderation_blocked",
+        "content_policy_violation",
+        "rejected by the safety system",
         "prohibited_content",
         "responsible ai",
         "filtered out",

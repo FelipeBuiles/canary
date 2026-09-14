@@ -55,6 +55,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
         ctx=ctx,
         model=model,
         generate=generate,
+        max_generation_calls=config.narrative_max_calls,
         story_instruction=instruction,
     )
     if directive is not None:
@@ -63,7 +64,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
     return result
 
 
-def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
+def estimate_cost(config: Config, project_dir: Path, state: PipelineState, *, fresh: bool = False) -> float:
     target = TargetArtifacts(project_dir)
     if not all(
         path.exists()
@@ -83,6 +84,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
         bible,
         brief,
         model=config.effective_adapt_model(),
+        artifacts=None if fresh else target,
         story_instruction=directive.instruction if directive is not None else "",
     )
 

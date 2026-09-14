@@ -9,9 +9,13 @@ const reloadEstimate = vi.fn();
 let estimate: StageCostEstimate | undefined;
 let estimateError = false;
 let estimateFetching = false;
+const estimateCalls = vi.fn();
 
 vi.mock("../api/queries", () => ({
-  useStageEstimate: () => ({ data: estimate, isError: estimateError, isFetching: estimateFetching, refetch: reloadEstimate }),
+  useStageEstimate: (...args: unknown[]) => {
+    estimateCalls(...args);
+    return { data: estimate, isError: estimateError, isFetching: estimateFetching, refetch: reloadEstimate };
+  },
 }));
 vi.mock("../hooks/useRunAction", () => ({ useRunAction: () => ({ handleRun: run, isPending: false }) }));
 vi.mock("../hooks/useNeedsCredits", () => ({ useNeedsCredits: () => ({ blocked: false }) }));
@@ -21,6 +25,7 @@ import { StagePending, StagePlaceholder } from "../components/composites/StagePl
 beforeEach(() => {
   run.mockReset();
   reloadEstimate.mockReset();
+  estimateCalls.mockReset();
   estimate = { stage: "extract", estimate_credits: 12, reserved_credits: 18, reservation_multiplier: 1.5, confidence: "usually_within_estimate" };
   estimateError = false;
   estimateFetching = false;
@@ -164,6 +169,43 @@ describe("Failed stage recovery consent", () => {
 
 
 describe("Readable adaptation failures", () => {
+  it("quotes a fresh attempt separately and only restarts after confirmation", () => {
+    render(<I18nProvider><StagePlaceholder project="demo" stage="adapt" status="failed" /></I18nProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Start adaptation over" }));
+    expect(estimateCalls).toHaveBeenLastCalledWith("demo", "adapt", true, true);
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog.textContent).toContain("archived");
+    expect(dialog.textContent).toContain("Previous charges remain");
+    expect(dialog.textContent).toContain("Page planning follows automatically");
+    expect(run).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Start adaptation over" }));
+    expect(run).toHaveBeenCalledWith("demo", "adapt", expect.objectContaining({ rerun: true }));
+  });
+
+  it("cancels a fresh start and returns to the resume estimate", () => {
+    render(<I18nProvider><StagePlaceholder project="demo" stage="adapt" status="failed" /></I18nProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Start adaptation over" }));
+    fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "Escape" });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(run).not.toHaveBeenCalled();
+    expect(estimateCalls).toHaveBeenLastCalledWith("demo", "adapt", true, false);
+    fireEvent.click(screen.getByRole("button", { name: "Resume adaptation" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Resume adaptation" }));
+    expect(run).toHaveBeenCalledWith("demo", "adapt", expect.objectContaining({ rerun: false }));
+  });
+
+  it("allows requesting a fresh estimate when resume estimation fails, but blocks unquoted work", () => {
+    estimate = undefined;
+    estimateError = true;
+    render(<I18nProvider><StagePlaceholder project="demo" stage="adapt" status="failed" /></I18nProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Start adaptation over" }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).getByRole("button", { name: "Start adaptation over" })).toHaveProperty("disabled", true);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Retry estimate" }));
+    expect(reloadEstimate).toHaveBeenCalledOnce();
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("keeps internal errors collapsed and resumes with saved work after consent", () => {
     render(<I18nProvider><StagePlaceholder project="demo" stage="adapt" status="failed"
       error="Book adaptation has invariant failures: invalid_lettering_speaker"

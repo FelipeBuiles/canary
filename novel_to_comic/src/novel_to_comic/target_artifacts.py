@@ -9,6 +9,7 @@ import os
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
+from uuid import uuid4
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
@@ -24,7 +25,7 @@ from novel_to_comic.models.draw import (
     OCRProviderResponse,
 )
 from novel_to_comic.models.finish import FinishPreflight
-from novel_to_comic.models.page import BookPlan, ComicPage
+from novel_to_comic.models.page import BookPlan, ComicPage, PlanReviewDraft
 from novel_to_comic.models.source import SourceDocument
 from novel_to_comic.models.validation import StageValidation
 
@@ -90,6 +91,40 @@ class TargetArtifacts:
     def __init__(self, project_dir: Path) -> None:
         self.project_dir = Path(project_dir)
 
+    def archive_adaptation_work(self) -> Path:
+        """Start a new attempt while retaining outputs, checkpoints and budgets.
+
+        The caller must admit the action and reserve credits first. Restore
+        moved files if archiving fails; upstream inputs and editorial directives
+        stay active. Archives are outside every generation checkpoint lookup.
+        """
+        from novel_to_comic.stages import clean_cascade
+
+        archive = self.project_dir / ".checkpoints" / "restarts" / uuid4().hex
+        archive.mkdir(parents=True)
+        moved: list[tuple[Path, Path]] = []
+        try:
+            state_path = self.project_dir / "state.json"
+            if state_path.exists():
+                shutil.copy2(state_path, archive / "state.json")
+            paths = [
+                *clean_cascade(self.project_dir, "adapt"),
+                *(self.project_dir / ".checkpoints" / stage for stage in ("adapt", "plan", "draw", "finish")),
+            ]
+            for source in paths:
+                if not source.exists():
+                    continue
+                destination = archive / source.relative_to(self.project_dir)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                source.rename(destination)
+                moved.append((source, destination))
+        except BaseException:
+            for source, destination in reversed(moved):
+                destination.rename(source)
+            shutil.rmtree(archive)
+            raise
+        return archive
+
     def narrative_review_path(self, phase: str) -> Path:
         if phase not in {"adapt", "plan", "plan_map"}:
             raise ValueError("unknown narrative review phase")
@@ -101,6 +136,18 @@ class TargetArtifacts:
 
     def write_narrative_review(self, phase: str, review) -> None:
         self._write_model(self.narrative_review_path(phase), review)
+
+    def generation_budget_path(self, stage: str, lineage: str) -> Path:
+        if stage not in {"adapt", "plan"} or len(lineage) != 64 or any(c not in "0123456789abcdef" for c in lineage):
+            raise ValueError("invalid generation budget identity")
+        return self.project_dir / ".checkpoints" / stage / "work" / f"{lineage}.json"
+
+    def read_generation_budget(self, stage: str, lineage: str):
+        from novel_to_comic.generation_budget import GenerationBudget
+        return self._read_model("generation_budget", self.generation_budget_path(stage, lineage), GenerationBudget)
+
+    def write_generation_budget(self, stage: str, lineage: str, budget) -> None:
+        self._write_model(self.generation_budget_path(stage, lineage), budget)
 
     @property
     def source_path(self) -> Path:
@@ -139,6 +186,16 @@ class TargetArtifacts:
     @property
     def plan_path(self) -> Path:
         return self.project_dir / "plan" / "book.json"
+
+    @property
+    def plan_review_draft_path(self) -> Path:
+        return self.project_dir / "plan" / "review_draft.json"
+
+    def write_plan_review_draft(self, draft: PlanReviewDraft) -> None:
+        self._write_model(self.plan_review_draft_path, draft)
+
+    def read_plan_review_draft(self) -> PlanReviewDraft:
+        return self._read_model("plan_review_draft", self.plan_review_draft_path, PlanReviewDraft)
 
     def validation_path(self, stage: str) -> Path:
         if stage not in {"adapt", "plan"}:

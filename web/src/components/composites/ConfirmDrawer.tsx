@@ -17,6 +17,7 @@ export interface ConfirmDrawerProps {
   onConfirm: () => void;
   onClose: () => void;
   busy?: boolean;
+  disabled?: boolean;
 }
 
 export function ConfirmDrawer({
@@ -29,6 +30,7 @@ export function ConfirmDrawer({
   onConfirm,
   onClose,
   busy = false,
+  disabled = false,
 }: ConfirmDrawerProps) {
   const drawerRef = useRef<HTMLDivElement | null>(null);
 
@@ -97,7 +99,7 @@ export function ConfirmDrawer({
             <Button
               size="md"
               onClick={onConfirm}
-              disabled={busy}
+              disabled={busy || disabled}
             >
               {busy ? "Starting…" : confirmLabel}
             </Button>
