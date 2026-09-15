@@ -2,7 +2,11 @@
 
 import pytest
 
-from novel_to_comic.stages.s1_extract import _parse_extraction
+from novel_to_comic.stages.s1_extract import (
+    _ParticipationQuoteMismatch,
+    _parse_extraction,
+    _participation_quote_correction,
+)
 
 
 SOURCE = (
@@ -76,14 +80,8 @@ def test_extraction_accepts_whitespace_differences_without_rewriting_evidence():
     )
 
 
-@pytest.mark.parametrize("quote", [
-    "Ari closed the gate.",
-    "Ari opened the gate!",
-    "ari opened the gate.",
-    " \t\r\n ",
-    "",
-])
-def test_extraction_rejects_non_whitespace_evidence_changes_or_empty_quotes(quote):
+@pytest.mark.parametrize("quote", [" \t\r\n ", ""])
+def test_extraction_rejects_empty_participation_evidence(quote):
     payload = _payload()
     payload["character_participation"][0]["source_quote"] = quote
 
@@ -91,15 +89,87 @@ def test_extraction_rejects_non_whitespace_evidence_changes_or_empty_quotes(quot
         _parse_extraction(payload, SOURCE.replace(" ", "\n\t"))
 
 
+@pytest.mark.parametrize("quote", [
+    "Ari closed the gate.",
+    "Ari opened the gate!",
+    "ari opened the gate.",
+])
+def test_extraction_recovers_nonempty_paraphrased_evidence_from_its_scene_anchor(quote):
+    payload = _payload()
+    payload["character_participation"][0]["source_quote"] = quote
+
+    bible = _parse_extraction(payload, SOURCE)
+
+    assert [character.id for character in bible.characters] == ["Ari", "Ren", "keeper"]
+
+
+def test_extraction_adds_a_staged_participant_omitted_from_the_scene_roster():
+    payload = _payload()
+    payload["character_participation"].append({
+        "character_id": "Ari",
+        "scene_id": "memory",
+        "classification": "staged_recollection",
+        "source_quote": "Ren pulled the injured sailor aboard and wrapped him in a blanket.",
+    })
+
+    bible = _parse_extraction(payload, SOURCE)
+
+    memory = next(scene for scene in bible.scenes if scene.id == "memory")
+    assert memory.character_ids == ["Ren", "Ari"]
+
+
+def test_extraction_recovers_missing_evidence_for_a_rostered_participant():
+    payload = _payload()
+    payload["character_participation"].pop(0)
+
+    bible = _parse_extraction(payload, SOURCE)
+
+    now = next(scene for scene in bible.scenes if scene.id == "now")
+    assert now.character_ids == ["Ari"]
+
+
 def test_extraction_rejects_ungrounded_or_missing_participation():
     payload = _payload()
+    payload["scenes"][0]["source_start_quote"] = "Not a source sentence."
     payload["character_participation"][1]["source_quote"] = "Jo walked into the room."
-    with pytest.raises(ValueError, match="verbatim"):
+    with pytest.raises(_ParticipationQuoteMismatch, match="verbatim") as error:
         _parse_extraction(payload, SOURCE)
+    assert error.value.pair == ("Jo", "now")
+    assert error.value.source_quote == "Jo walked into the room."
+    correction = _participation_quote_correction(error.value)
+    assert "character_id='Jo'" in correction
+    assert "scene_id='now'" in correction
+    assert "source_quote='Jo walked into the room.'" in correction
+    assert "Do not reconstruct, normalize, or paraphrase it." in correction
+    assert "entire corrected Story Bible JSON object" in correction
+    assert "never return a character_participation entry or field by itself" in correction
     payload = _payload()
+    payload["scenes"][0]["source_start_quote"] = "Not a source sentence."
     payload["character_participation"].pop(1)
     with pytest.raises(ValueError, match="Missing participation evidence"):
         _parse_extraction(payload, SOURCE)
+
+
+def test_extraction_reports_all_invalid_participation_quotes_for_one_repair():
+    payload = _payload()
+    payload["scenes"][0]["source_start_quote"] = "Not a source sentence."
+    payload["scenes"][1]["source_start_quote"] = "Another missing source sentence."
+    payload["character_participation"][0]["source_quote"] = "Ari opened the gate!"
+    payload["character_participation"][3]["source_quote"] = "Ren abandoned the sailor."
+
+    with pytest.raises(_ParticipationQuoteMismatch) as error:
+        _parse_extraction(payload, SOURCE)
+
+    assert [(pair, quote) for pair, quote, _ in error.value.mismatches] == [
+        (("Ari", "now"), "Ari opened the gate!"),
+        (("Ren", "memory"), "Ren abandoned the sailor."),
+    ]
+    assert error.value.mismatches[0][2] == "Ari opened the gate."
+    assert error.value.mismatches[1][2] is None
+    correction = _participation_quote_correction(error.value)
+    assert "source_quote='Ari opened the gate!'" in correction
+    assert "source_quote='Ren abandoned the sailor.'" in correction
+    assert "exact_source_replacement='Ari opened the gate.'" in correction
 
 
 def test_extraction_preserves_nonhuman_anchor_verbatim_despite_adult_gender_metadata():

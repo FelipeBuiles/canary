@@ -7,6 +7,7 @@ narrative arcs.
 
 import json
 import re
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Literal
 
@@ -50,6 +51,90 @@ class _CharacterParticipation(BaseModel):
 
 class _ExtractionParticipation(BaseModel):
     character_participation: list[_CharacterParticipation]
+
+
+class _ParticipationQuoteMismatch(ValueError):
+    """A participation quote differs from the source beyond whitespace."""
+
+    def __init__(self, mismatches: list[tuple[tuple[str, str], str, str | None]]) -> None:
+        self.mismatches = tuple(mismatches)
+        self.pair, self.source_quote, _ = self.mismatches[0]
+        if len(self.mismatches) == 1:
+            message = (
+                "Participation quote must occur verbatim in the source "
+                f"(ignoring whitespace): {self.pair}"
+            )
+        else:
+            pairs = ", ".join(str(pair) for pair, _, _ in self.mismatches)
+            message = (
+                "Participation quotes must occur verbatim in the source "
+                f"(ignoring whitespace): {pairs}"
+            )
+        super().__init__(message)
+
+
+def _participation_quote_correction(error: Exception) -> str:
+    """Return targeted repair guidance without exposing source text in stage errors."""
+    if not isinstance(error, _ParticipationQuoteMismatch):
+        return ""
+    invalid_evidence = "\n".join(
+        f"- character_id={pair[0]!r}, scene_id={pair[1]!r}, source_quote={source_quote!r}"
+        + (f", exact_source_replacement={candidate!r}" if candidate else "")
+        for pair, source_quote, candidate in error.mismatches
+    )
+    return (
+        "\nThe participation source_quote below is not an exact source substring. "
+        "In the complete corrected Story Bible JSON, replace that field with a nonempty passage copied character-for-character "
+        "from NOVEL TEXT (including punctuation and Unicode characters; whitespace may vary). Use a short, sufficient 2-8 word "
+        "source fragment so it can be copied exactly. Use exact_source_replacement verbatim when it is supplied. "
+        "Do not reconstruct, normalize, or paraphrase it. Keep every other entry from YOUR PREVIOUS JSON. "
+        "Return the entire corrected Story Bible JSON object, including title, author, characters, locations, scenes, "
+        "narrative_arcs, props, and character_participation; never return a character_participation entry or field by itself.\n"
+        f"INVALID PARTICIPATION EVIDENCE:\n{invalid_evidence}\n"
+    )
+
+
+def _nearest_source_quote(novel_text: str, source_quote: str) -> str | None:
+    """Find one high-confidence exact source sentence to show in repair feedback."""
+    quote = clean(source_quote).casefold()
+    if len(quote) < 12:
+        return None
+    candidates = [
+        clean(sentence)
+        for sentence in re.split(r"(?<=[.!?…])(?:[\"'”’»)]*)\s+|\n+", novel_text)
+        if clean(sentence)
+    ]
+    scored = sorted(
+        (
+            SequenceMatcher(None, quote, candidate.casefold(), autojunk=False).ratio(),
+            candidate,
+        )
+        for candidate in candidates
+        if len(candidate) >= max(12, len(quote) // 2)
+    )
+    if not scored:
+        return None
+    score, candidate = scored[-1]
+    runner_up = scored[-2][0] if len(scored) > 1 else 0.0
+    if score < 0.88 or score - runner_up < 0.02:
+        return None
+    return candidate
+
+
+def _resolved_scene_anchor_quotes(result: dict, novel_text: str) -> dict[str, str]:
+    """Resolve exact, scene-scoped source text for private evidence recovery."""
+    draft = json.loads(json.dumps(result))
+    draft.pop("character_participation", None)
+    try:
+        bible = StoryBible.model_validate(draft)
+    except Exception:
+        return {}
+    unresolved = set(align_scene_anchors(bible, novel_text))
+    return {
+        scene.id: scene.source_start_quote
+        for scene in bible.scenes
+        if scene.id not in unresolved
+    }
 
 
 
@@ -239,33 +324,54 @@ def _parse_extraction(raw: object, novel_text: str) -> StoryBible:
     scenes = {scene["id"]: scene for scene in result.get("scenes", [])}
     classified: set[tuple[str, str]] = set()
     visible: set[tuple[str, str]] = set()
+    mismatches: list[tuple[tuple[str, str], str, str | None]] = []
     normalized_source = clean(novel_text)
+    scene_anchor_quotes = _resolved_scene_anchor_quotes(result, novel_text)
     for evidence in participation:
         pair = (evidence.character_id, evidence.scene_id)
         if evidence.character_id not in characters or evidence.scene_id not in scenes:
             raise ValueError("Participation evidence must reference existing characters and scenes")
         if pair in classified:
             raise ValueError(f"Duplicate participation evidence: {pair}")
-        normalized_quote = clean(evidence.source_quote)
-        if not normalized_quote or normalized_quote not in normalized_source:
-            raise ValueError(
-                f"Participation quote must occur verbatim in the source "
-                f"(ignoring whitespace): {pair}"
-            )
+        source_quote = clean(evidence.source_quote)
+        if not source_quote or source_quote not in normalized_source:
+            # Participation evidence is private and discarded after this
+            # boundary. When the model paraphrases a quote, retain the model's
+            # classification but ground its evidence in this scene's resolved,
+            # exact opening sentence rather than retrying a transcription task.
+            if source_quote and evidence.scene_id in scene_anchor_quotes:
+                evidence.source_quote = scene_anchor_quotes[evidence.scene_id]
+            else:
+                mismatches.append((
+                    pair,
+                    evidence.source_quote,
+                    _nearest_source_quote(novel_text, evidence.source_quote),
+                ))
         classified.add(pair)
         if evidence.classification != "background_only":
             visible.add(pair)
+    if mismatches:
+        raise _ParticipationQuoteMismatch(mismatches)
     for scene in scenes.values():
         for character_id in scene["character_ids"]:
             if (character_id, scene["id"]) not in classified:
-                raise ValueError(f"Missing participation evidence: {character_id} / {scene['id']}")
+                # The roster is the model's other explicit visual-membership
+                # signal. Complete its private evidence from this scene's
+                # resolved source sentence instead of retrying redundant data.
+                if scene["id"] not in scene_anchor_quotes:
+                    raise ValueError(f"Missing participation evidence: {character_id} / {scene['id']}")
+                classified.add((character_id, scene["id"]))
+                visible.add((character_id, scene["id"]))
         scene["character_ids"] = [
             character_id for character_id in scene["character_ids"]
             if (character_id, scene["id"]) in visible
         ]
-    for character_id, scene_id in visible:
+    for character_id, scene_id in sorted(visible):
         if character_id not in scenes[scene_id]["character_ids"]:
-            raise ValueError(f"Staged participant missing from scene roster: {character_id} / {scene_id}")
+            # Participation is the explicit per-character/scene visual
+            # classification. Make it authoritative when the model omitted a
+            # directly staged participant from the redundant scene roster.
+            scenes[scene_id]["character_ids"].append(character_id)
     if characters - {character_id for character_id, _ in classified}:
         raise ValueError("Every candidate character requires participation evidence")
     excluded = characters - {character_id for character_id, _ in visible}
@@ -321,6 +427,7 @@ async def _extract_with_retry(
 
     def correction(raw: object, error: Exception) -> str:
         result = raw[0] if isinstance(raw, list) else raw
+        quote_instruction = _participation_quote_correction(error)
         # Feed the errors back so the model can fix just the broken fields
         return (
             f"Your previous response had schema validation errors. "
@@ -329,6 +436,7 @@ async def _extract_with_retry(
             f"NOVEL TEXT:\n{novel_text}\n\n"
             f"YOUR PREVIOUS JSON:\n{json.dumps(result, indent=2)}\n\n"
             f"VALIDATION ERRORS:\n{error}\n\n"
+            f"{quote_instruction}\n"
             f"Output corrected JSON only, no explanation."
         )
 

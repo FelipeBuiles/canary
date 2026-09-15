@@ -170,12 +170,12 @@ def _serialize_openai_image(wire: ProviderWireRequest) -> dict[str, Any]:
 
 
 def _serialize_openrouter_image(wire: ProviderWireRequest) -> dict[str, Any]:
-    """Serialize the OpenAI-shaped request accepted by LiteLLM's OpenRouter adapter.
+    """Serialize the gateway envelope consumed by the OpenRouter image handler.
 
-    LiteLLM translates this image request to OpenRouter's image-capable chat
-    route. Muse has no advertised quality control, so its compiled profile
-    normally supplies no controls; keep this serializer generic for future
-    OpenRouter image aliases that do expose the shared quality field.
+    The handler maps it to OpenRouter's native Images API. Muse has no
+    advertised quality control, so its compiled profile normally supplies no
+    controls; keep this serializer generic for future OpenRouter image aliases
+    that do expose the shared quality field.
     """
     controls = dict(wire.controls)
     quality = controls.get("quality")

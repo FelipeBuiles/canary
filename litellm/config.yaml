@@ -62,6 +62,12 @@ model_list:
     extra_body:
       provider:
         require_parameters: true
+        # Wafer dropped Adapt streams and Venice exceeded its 15-minute
+        # streaming wall-clock limit during Plan. Keep the model alias and
+        # the other OpenRouter providers available.
+        ignore:
+        - wafer
+        - venice
 - model_name: image-gemini-flash-lite
   litellm_params:
     model: vertex-multimodal/gemini-3.1-flash-lite-image
@@ -90,7 +96,9 @@ model_list:
     api_key: os.environ/OPENAI_API_KEY
 - model_name: image-muse
   litellm_params:
-    model: openrouter/meta/muse-image
+    # LiteLLM's OpenAI-compatible Images route has no OpenRouter image-model
+    # adapter. This custom provider calls OpenRouter's native /api/v1/images.
+    model: openrouter-image/meta/muse-image
     api_key: os.environ/OPENROUTER_API_KEY
 litellm_settings:
   set_verbose: false
@@ -101,5 +109,7 @@ litellm_settings:
     custom_handler: litellm_handlers.fal_provider.fal_queue_llm
   - provider: vertex-multimodal
     custom_handler: litellm_handlers.vertex_multimodal.vertex_multimodal_llm
+  - provider: openrouter-image
+    custom_handler: litellm_handlers.openrouter_image.openrouter_image_llm
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

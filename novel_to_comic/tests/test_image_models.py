@@ -54,7 +54,7 @@ from novel_to_comic.image_models import (
         (
             "image-muse",
             ImageRoute.MUSE_IMAGE,
-            "openrouter/meta/muse-image",
+            "openrouter-image/meta/muse-image",
             "openrouter",
             "Muse Image",
         ),
@@ -111,7 +111,10 @@ def test_literal_gpt_image_2_models_are_classified(model: str):
     assert description.display_name == "GPT Image 2"
 
 
-@pytest.mark.parametrize("model", ["meta/muse-image", "openrouter/meta/muse-image"])
+@pytest.mark.parametrize(
+    "model",
+    ["meta/muse-image", "openrouter/meta/muse-image", "openrouter-image/meta/muse-image"],
+)
 def test_literal_muse_models_are_classified(model: str):
     description = describe_image_model(model)
 

@@ -1,8 +1,10 @@
 # Product
 
-## Register
+<!-- impeccable:product-schema 1 -->
 
-product
+## Platform
+
+web
 
 ## Users
 
@@ -15,7 +17,7 @@ not "diffusion model" or "prompt".
 
 ## Product Purpose
 
-PULP turns a novel into a comic book through an 8-stage pipeline (extract →
+Scenewright turns a novel into a comic book through an 8-stage pipeline (extract →
 brief → style → cast → adapt → plan → draw → finish), each stage resumable.
 The web app is the studio, presented as four user-facing stations (Story →
 Look → Pages → Book): the user makes four decisions — approve the story brief,
@@ -28,17 +30,46 @@ spend (Stripe top-ups) and Book preflight/export handle exact lettering and
 final PDF/CBZ output. Success = a user ships an issue they're proud to show,
 and trusts the cost meter enough to run the next one.
 
-## Brand Personality
+## Positioning
 
-"The Living Ink" (see DESIGN.md): a Golden-Age print-shop tribute, not a SaaS
-template and not a comic parody. Three words: **crafted, mechanical, theatrical**.
-The interface behaves like a working pressroom — things stamp, press, and
-register; statuses read like a production floor (CASTING CALL, ALL PAGES
-DRAWN, PAGE BENCH). Voice is a confident studio foreman: warm, specific,
-lightly dramatic at checkpoints, never wacky during errors or billing. The
-flavor lives in type treatment and stagecraft, never in renaming familiar
-concepts — characters are Characters, places are Places, and internal
-vocabulary (entity IDs, telemetry, prompts) stays behind Dev Content.
+Scenewright is a guided production pipeline rather than an image-generation
+canvas: it carries a manuscript from structured story understanding through
+style and cast continuity, complete-page drawing with authored lettering, and
+print-ready export. The author retains creative control at meaningful
+checkpoints while intermediate machine artifacts run automatically and remain
+inspectable.
+
+## Operating Context
+
+Work happens in long studio sessions: authors upload a manuscript, wait for
+generation stages, review checkpoints, request bounded corrections, and export
+the finished issue. The web app communicates with a FastAPI backend over REST
+and server-sent events; project work may involve manuscript files, visual
+references, generated page images, and PDF/CBZ exports.
+
+## Capabilities and Constraints
+
+- The active pipeline stages are `extract → brief → style → cast → adapt →
+  plan → draw → finish`. It presents them as Story, Look, Pages, and Book.
+- Story brief, selected style, cast, page review, and book preflight are the
+  author-facing decision points. Adaptation and planning artifacts auto-run,
+  remain inspectable, and do not independently block progress.
+- Draw produces complete, lettered comic pages. Corrections are complete-page
+  revisions, with pages accepted by default unless an author flags an issue.
+- AI spending is estimated in credits; Stripe supports top-ups. Credit
+  estimates, usage, and charges must remain distinct and intelligible.
+- The UI is available in English, Spanish, and French. Comic-output language is
+  configured per project independently of the UI language.
+- The product is a React, TypeScript, and Vite web app backed by a Python
+  FastAPI pipeline engine.
+
+## Brand Commitments
+
+The visual identity is "The Living Ink": a Golden-Age print-shop tribute, not
+a generic SaaS interface or comic-book parody. Its voice is crafted,
+mechanical, and theatrical—warm and specific at real checkpoints, but clear
+and calm for errors and billing. Familiar terms remain familiar to authors;
+internal vocabulary stays behind Dev Content.
 
 ## Anti-references
 
@@ -46,13 +77,23 @@ vocabulary (entity IDs, telemetry, prompts) stays behind Dev Content.
 - Rounded, glassy, gradient-text "AI tool" aesthetic.
 - Comic-book parody: novelty lettering everywhere, BAM!/POW! on every surface,
   Comic Sans energy. The system is a tribute to print craft, not a costume.
-- Material-style soft shadows and 1px gray hairline borders (forbidden by
-  DESIGN.md — depth comes from offset "mechanical" shadows and tonal stacking).
+- Material-style soft shadows and 1px gray hairline borders.
 
-## Design Principles
+## Evidence on Hand
+
+- The implemented web client is under `web/`; its primary rooms are
+  `web/src/pages/rooms/StoryRoom.tsx`, `StyleRoom.tsx`, `CastRoom.tsx`,
+  `PagesRoom.tsx`, and `BookRoom.tsx`.
+- The engine is the `novel_to_comic/` Python package. API and stage contracts
+  are documented in `docs/reference/api-routes.md` and
+  `docs/reference/stage-contracts.md`.
+- `DESIGN.md` records the existing interface design system. It is visual-system
+  documentation, not a source of product claims.
+
+## Product Principles
 
 1. **The tool disappears into the task.** Rooms are dense, consistent work
-   surfaces; familiarity over novelty (product register).
+   surfaces; familiarity over novelty.
 2. **Print physics, not digital chrome.** Feedback is pressed, stamped, offset,
    screened (Ben-Day) — never glowing, bouncing, or floating.
 3. **Delight at checkpoints, calm in between.** Celebration belongs to real

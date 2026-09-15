@@ -11,6 +11,9 @@ import json
 import pytest
 
 from novel_to_comic.narrative_review import (
+    NarrativeFinding,
+    NarrativePassage,
+    _finding_identity,
     adaptation_context,
     narrative_signals,
     planning_context,
@@ -56,6 +59,25 @@ def runtime(tmp_path, stage):
         ),
         tmp_path,
     )
+
+
+def test_same_cited_finding_has_one_identity_across_overlapping_windows():
+    first = NarrativeFinding(
+        code="repeated_event", repair_stage="adapt",
+        artifact_ids=("beat_0017", "lettering_0056", "beat_0018", "lettering_0058"),
+        evidence="The event is repeated.", repair="Stage it once.",
+        consequence="unintelligible_sequence", reader_impact="Chronology appears to reset.",
+        passages=(
+            NarrativePassage(artifact_id="lettering_0056", quote="The door opens."),
+            NarrativePassage(artifact_id="lettering_0058", quote=" The   door opens. "),
+        ),
+    )
+    second = first.model_copy(update={
+        "artifact_ids": ("beat_0018", "lettering_0058", "lettering_0056", "beat_0017"),
+        "evidence": "A second reviewer described the same defect differently.",
+    })
+
+    assert _finding_identity(first) == _finding_identity(second)
 
 
 def draft_for(adaptation, padding=0):

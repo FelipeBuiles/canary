@@ -27,7 +27,9 @@ IMAGE_MODEL_ALIASES = (
 _GEMINI_FLASH_LITE_MODEL = "vertex-multimodal/gemini-3.1-flash-lite-image"
 _GEMINI_PRO_IMAGE_MODEL = "vertex-multimodal/gemini-3-pro-image"
 _GPT_IMAGE_2_MODEL = "openai/gpt-image-2"
-_MUSE_IMAGE_MODEL = "openrouter/meta/muse-image"
+# This is the gateway-side custom-provider route.  Its handler strips the
+# transport prefix before calling OpenRouter with the actual model slug.
+_MUSE_IMAGE_MODEL = "openrouter-image/meta/muse-image"
 _SEEDREAM_V5_LITE_MODEL = "fal-queue/bytedance/seedream/v5/lite/edit"
 _SEEDREAM_V5_PRO_MODEL = "fal-queue/bytedance/seedream/v5/pro/edit"
 
@@ -122,7 +124,7 @@ def describe_image_model(model: str) -> ImageModelDescription:
             provider_model=normalized,
             provider_key=IMAGE_PROVIDER_OPENAI,
         )
-    if normalized.removeprefix("openrouter/") == "meta/muse-image":
+    if normalized.removeprefix("openrouter-image/").removeprefix("openrouter/") == "meta/muse-image":
         return ImageModelDescription(
             route=ImageRoute.MUSE_IMAGE,
             display_name="Muse Image",

@@ -59,6 +59,34 @@ def test_selected_style_reconciliation_removes_failure_from_status_payload(tmp_p
     assert payload["items_failed"] == []
 
 
+def test_selected_style_recovers_failed_batch_for_cast(tmp_path):
+    state = create_initial_state("demo", "novel.txt")
+    style_state = state.stages["style"]
+    style_state.status = StageStatus.FAILED
+    style_state.error = "gateway route unavailable"
+    style_state.error_detail = "bounded diagnostic"
+    style_state.error_code = "model_refusal"
+    style_state.balance_credits = 3
+    style_state.required_credits = 7
+    style_state.shortfall_credits = 4
+    save_suggestions(
+        tmp_path,
+        [{"label": "Ink", "template": "bold ink wash"}],
+        "Demo",
+    )
+    config = Config(style_template="bold ink wash")
+
+    assert is_style_selected(tmp_path, config) is True
+    assert clear_style_failures_after_selection(state) is True
+    assert style_state.status is StageStatus.COMPLETE
+    assert style_state.error is None
+    assert style_state.error_detail is None
+    assert style_state.error_code is None
+    assert style_state.balance_credits is None
+    assert style_state.required_credits is None
+    assert style_state.shortfall_credits is None
+
+
 def test_unselected_style_does_not_clear_failures(tmp_path):
     state = create_initial_state("demo", "novel.txt")
     state.stages["style"].status = StageStatus.COMPLETE
