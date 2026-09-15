@@ -446,8 +446,8 @@ def test_annotations_and_novel_context_reach_prompt_and_provenance(tmp_path: Pat
     assert prepared.correction.context_source_unit_ids == ("source-1",)
     assert prepared.correction.context_digest == prepared.context.digest
     assert prepared.correction.context_adaptation_revision == 1
-    # Exact lettering survives the correction path.
-    assert prepared.compiled.request.lettering == page.content[0].lettering
+    # Art corrections do not ask the provider to regenerate lettering.
+    assert prepared.compiled.request.lettering == ()
     estimate = correction_credit_estimate(prepared.compiled, config=Config(), reserve=True)
     assert estimate["estimate_credits"] > 0
     assert estimate["reserved_credits"] is not None and estimate["reserved_credits"] >= estimate["estimate_credits"]

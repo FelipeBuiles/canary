@@ -300,7 +300,7 @@ def prepare_undrawn_pages(*, project_dir, config, rerun: bool = False):
         compiled = compile_page_generation_request(
             page, edition, inventory, reference_files,
             retry=_generation_retry(target, page_number),
-            style_template=config.style_template,
+            style_template=config.style_template, reservations=target.page_reservations(page_number),
         )
         adapter.prepare(compiled)
         prepared.append((page_number, page, compiled))
@@ -356,6 +356,15 @@ def enqueue_all_undrawn_pages(
     return tuple(jobs)
 
 
+def _lettering_summary(target, page_number):
+    if not target.book_edition_path.exists():
+        return None
+    mode = "baked" if target.read_book_edition().capability_profile.exact_visible_lettering else "editable"
+    saved = target.read_lettering(page_number) if target.lettering_path(page_number).exists() else None
+    return {"mode": mode, "sha256": saved.content_sha256 if saved else None,
+            "revision": saved.revision if saved else 0}
+
+
 @router.get("/pages")
 def list_pages(project=Depends(get_project)):
     project_dir, _config, _state = project
@@ -373,6 +382,7 @@ def list_pages(project=Depends(get_project)):
                 "issues": _issues(target, selected.page_number),
                 "failure": _page_failure(target, selected.page_number),
                 "analysis_recovery": _analysis_recovery(target, selected.page_number),
+                "lettering": _lettering_summary(target, selected.page_number),
             }
             for selected in plan.pages
         ],
@@ -575,7 +585,7 @@ def _prepare_initial_generation(
             approved_reference_files(project_dir),
             retry=_generation_retry(target, page_number),
             depiction=depiction,
-            style_template=config.style_template,
+            style_template=config.style_template, reservations=target.page_reservations(page_number),
         )
         complete_page_adapter(config).prepare(compiled)
     except (ArtifactMissing, ValueError) as exc:
@@ -993,7 +1003,7 @@ def _prepare_explicit_correction(
             note=body.note,
             context_source_unit_ids=tuple(body.context_source_unit_ids),
             artifacts=target,
-            style_template=config.style_template,
+            style_template=config.style_template, reservations=target.page_reservations(page_number),
         )
         complete_page_adapter(config).prepare(prepared.compiled)
         return prepared
@@ -1255,15 +1265,14 @@ def visual_review_estimate(page_number: int, project=Depends(get_project)):
     if _latest_provenance(target, page_number) is None:
         raise HTTPException(409, "Page has no render to review")
     try:
-        compiled = compile_page_generation_request(
+        compile_page_generation_request(
             target.read_page(page_number),
-            ensure_current_page_edition(target, target.read_book_edition(), config),
+            target.read_book_edition(),
             approved_visual_inventory(project_dir),
             approved_reference_files(project_dir),
             retry=RetryProvenance(attempt=1),
-            style_template=config.style_template,
+            style_template=config.style_template, reservations=target.page_reservations(page_number), retained_review=True,
         )
-        complete_page_adapter(config).prepare(compiled)
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
     return credit_estimate_for_provider_cost(
@@ -1287,10 +1296,9 @@ async def visual_review_page(page_number: int, project_id: str,
     try:
         page = target.read_page(page_number)
         compiled = compile_page_generation_request(
-            page, ensure_current_page_edition(target, target.read_book_edition(), config), approved_visual_inventory(project_dir),
-            approved_reference_files(project_dir), retry=RetryProvenance(attempt=1), style_template=config.style_template,
+            page, target.read_book_edition(), approved_visual_inventory(project_dir),
+            approved_reference_files(project_dir), retry=RetryProvenance(attempt=1), style_template=config.style_template, reservations=target.page_reservations(page_number), retained_review=True,
         )
-        complete_page_adapter(config).prepare(compiled)
         result = await run_credited_page_check(
             user_id=user_id, project_id=project_id, project_dir=project_dir, page_number=page_number,
             estimated_cost_usd=float(PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD),
@@ -1337,11 +1345,10 @@ def read_saved_visual_review(page_number: int, project=Depends(get_project)):
         page = target.read_page(page_number)
         image = target.read_render(page_number, active.render.revision)
         compiled = compile_page_generation_request(
-            page, ensure_current_page_edition(target, target.read_book_edition(), config), approved_visual_inventory(project_dir),
+            page, target.read_book_edition(), approved_visual_inventory(project_dir),
             approved_reference_files(project_dir), retry=RetryProvenance(attempt=1),
-            style_template=config.style_template,
+            style_template=config.style_template, reservations=target.page_reservations(page_number), retained_review=True,
         )
-        complete_page_adapter(config).prepare(compiled)
         try:
             report = validated_saved_visual_review(
                 page=page, render=active.render, image=image, compiled=compiled,

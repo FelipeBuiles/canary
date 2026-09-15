@@ -70,6 +70,8 @@ def test_old_stage_state_is_rejected(old_stage: str) -> None:
 def test_clean_cascade_uses_only_target_artifact_roots(
     tmp_path, start: str, expected: list[str]
 ) -> None:
+    if start in {"source", "brief", "adapt", "plan"}:
+        expected = [*expected, "lettering"]
     assert clean_cascade(tmp_path, start) == [tmp_path / name for name in expected]
 
 

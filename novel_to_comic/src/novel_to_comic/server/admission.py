@@ -21,6 +21,7 @@ from .deps import project_key
 
 _PROJECT = re.compile(r"^/api/projects/([^/]+)(/.*)?$")
 _PAID = re.compile(r"^/(?:run|regen-[^/]+|cover|approve/(?:brief|cast)|styles/(?:direction|suggest|generate-samples|validation)|pages/\d+/(?:generate|analyze|visual-review|corrections)|(?:characters|locations)/[^/]+/states/[^/]+/(?:regenerate|regenerate-instructed)|story-changes/[^/]+/apply)$")
+_LETTERING = re.compile(r"^/(?:pages/\d+/lettering(?:/(?:preview|reset))?|lettering/style)$")
 _TARGETED = re.compile(r"^/(?:regen-(?!extract)[^/]+|cover|pages/\d+/(?:generate|analyze|visual-review|corrections)|(?:characters|locations)/[^/]+/states/[^/]+/(?:regenerate|regenerate-instructed))$")
 
 
@@ -84,6 +85,8 @@ async def admission_middleware(request, call_next):
     if project_id in {"import-story", "short-stories"}:
         return await call_next(request)
     admission = request.app.state.admission
+    provider_free_lettering = bool(_LETTERING.fullmatch(suffix)) and request.method in {"POST", "PUT"}
+    targeted = bool(_TARGETED.fullmatch(suffix)) or provider_free_lettering
     try:
         auth = request.app.dependency_overrides.get(get_current_user, get_current_user)
         if auth is get_current_user:
@@ -132,14 +135,14 @@ async def admission_middleware(request, call_next):
             if admission.draining:
                 raise HTTPException(503, {"code": "server_draining", "message": "Generation is paused for deployment."})
             from .credits import reservation_leases_healthy
-            if hasattr(request.app.state, "credit_leases_ready") and (
+            if not provider_free_lettering and hasattr(request.app.state, "credit_leases_ready") and (
                 not request.app.state.credit_leases_ready or not reservation_leases_healthy()
             ):
                 raise HTTPException(503, {"code": "credits_unavailable", "message": "Credit authorization is temporarily unavailable. Try again when service is ready."})
             pkey = project_key(account, project_id)
-            if not _TARGETED.fullmatch(suffix) and project_busy(request.app, pkey):
+            if not targeted and project_busy(request.app, pkey):
                 raise HTTPException(409, "Wait for all project jobs to finish before changing this project.")
-            if _TARGETED.fullmatch(suffix):
+            if targeted:
                 for name in ("running_tasks", "style_tasks"):
                     task = getattr(request.app.state, name, {}).get(pkey)
                     if task is not None and not task.done():

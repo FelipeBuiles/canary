@@ -131,7 +131,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `provider` | `str` | `Field(min_length=1)` |
 | `model` | `str` | `Field(min_length=1)` |
 | `complete_page_generation` | `Literal[True]` | `True` |
-| `exact_visible_lettering` | `Literal[True]` | `True` |
+| `exact_visible_lettering` | `bool` | `True` |
 | `max_image_references` | `int` | `Field(ge=0)` |
 | `reference_ordering` | `Literal['ordered']` |  |
 | `editing_modes` | `tuple[Literal['instructed', 'region_targeted'], ...]` | `()` |
@@ -464,6 +464,9 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `trim_height` | `int | None` | `Field(default=None, gt=0)` |
 | `bleed_px` | `int` | `Field(default=0, ge=0)` |
 | `color_profile` | `str | None` | `None` |
+| `lettering_sha256` | `str | None` | `None` |
+| `composite_sha256` | `str | None` | `None` |
+| `lettering_locale` | `str | None` | `None` |
 | `normalized_image_sha256` | `str | None` | `Field(default=None, min_length=64, max_length=64)` |
 | `invariant_failures` | `tuple[InvariantFailure, ...]` | `()` |
 | `diagnostics` | `tuple[PreflightDiagnostic, ...]` | `()` |

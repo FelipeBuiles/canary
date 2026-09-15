@@ -38,7 +38,11 @@ _CLEAN_CASCADE: tuple[str, ...] = (
 
 def clean_cascade(project_dir: Path, start: str) -> list[Path]:
     """Return the artifact directories from *start* to the end of the pipeline."""
-    return [project_dir / name for name in _CLEAN_CASCADE[_CLEAN_CASCADE.index(start):]]
+    paths = [project_dir / name for name in _CLEAN_CASCADE[_CLEAN_CASCADE.index(start):]]
+    # Draw reruns retain user lettering. Upstream semantic reruns invalidate it.
+    if _CLEAN_CASCADE.index(start) <= _CLEAN_CASCADE.index("plan"):
+        paths.append(project_dir / "lettering")
+    return paths
 
 
 # Deferred to avoid circular import: stage modules import Stage from here,

@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import base64
+import fcntl
+from contextlib import contextmanager
 import hashlib
 import json
 import os
 import shutil
+import threading
+from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 from uuid import uuid4
@@ -24,6 +28,7 @@ from novel_to_comic.models.draw import (
     RawOCRObservation,
     OCRProviderResponse,
 )
+from novel_to_comic.models.lettering import PageLettering, PageReservations, LetteringStyle
 from novel_to_comic.models.finish import FinishPreflight
 from novel_to_comic.models.page import BookPlan, ComicPage, PlanReviewDraft
 from novel_to_comic.models.source import SourceDocument
@@ -83,6 +88,17 @@ class ArtifactInvalid(Exception):
         self.path = path
         self.validation_error = validation_error
         self.owner_stage = owner_stage
+
+
+_LETTERING_LOCK_STATE = threading.local()
+
+
+def _serialized_publication(method):
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with self.lettering_lock():
+            return method(self, *args, **kwargs)
+    return locked
 
 
 class TargetArtifacts:
@@ -288,6 +304,92 @@ class TargetArtifacts:
             / "failure.json"
         )
 
+    @contextmanager
+    def lettering_lock(self):
+        """Cross-process lock outside invalidated derived-output directories."""
+        path = self.project_dir / ".lettering.lock"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        active = getattr(_LETTERING_LOCK_STATE, "active", None)
+        if active is None:
+            active = _LETTERING_LOCK_STATE.active = set()
+        key = str(path.resolve())
+        if key in active:
+            yield
+            return
+        with path.open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            active.add(key)
+            try:
+                yield
+            finally:
+                active.remove(key)
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+    def reservations_path(self, page_number: int) -> Path:
+        return self.project_dir / "plan" / "lettering_reservations" / f"page_{page_number:03d}.json"
+
+    def read_reservations(self, page_number: int) -> PageReservations:
+        return self._read_model("lettering_reservations", self.reservations_path(page_number), PageReservations)
+
+    def page_reservations(self, page_number: int) -> PageReservations:
+        try:
+            return self.read_reservations(page_number)
+        except ArtifactMissing:
+            from novel_to_comic.page_lettering import reservations_for_page
+            return reservations_for_page(self.read_page(page_number))
+
+    def write_reservations(self, value: PageReservations) -> None:
+        self._write_model(self.reservations_path(value.page_number), value)
+
+    def lettering_path(self, page_number: int) -> Path:
+        return self.project_dir / "lettering" / "pages" / f"page_{page_number:03d}.json"
+
+    @property
+    def lettering_style_path(self) -> Path:
+        return self.project_dir / "lettering" / "style.json"
+
+    def read_lettering(self, page_number: int) -> PageLettering:
+        return self._read_model("page_lettering", self.lettering_path(page_number), PageLettering)
+
+    def read_lettering_style(self) -> LetteringStyle:
+        return self._read_model("lettering_style", self.lettering_style_path, LetteringStyle)
+
+    @_serialized_publication
+    def write_lettering_style(self, style: LetteringStyle) -> None:
+        self._write_model(self.lettering_style_path, style)
+        self.invalidate_finish()
+
+    def next_lettering_revision(self, page_number: int) -> int:
+        # An interrupted publication may have archived a revision before moving
+        # the current pointer. Never overwrite that history or strand future saves.
+        path = self.lettering_path(page_number)
+        revisions = [self.read_lettering(page_number).revision] if path.exists() else [0]
+        directory = path.parent.parent / "revisions" / f"page_{page_number:03d}"
+        revisions.extend(int(p.stem.removeprefix("revision_")) for p in directory.glob("revision_*.json")
+                         if p.stem.removeprefix("revision_").isdigit())
+        return max(revisions) + 1
+
+    @_serialized_publication
+    def write_lettering(self, state: PageLettering, *, expected_sha256: str | None) -> None:
+        """CAS inside lettering_lock; callers resolve/validate before this boundary."""
+        path = self.lettering_path(state.page_number)
+        current = self.read_lettering(state.page_number) if path.exists() else None
+        if (current.content_sha256 if current else None) != expected_sha256:
+            raise ValueError("Lettering changed in another session. Reload before saving; your draft has not been overwritten.")
+        if state.revision != self.next_lettering_revision(state.page_number):
+            raise ValueError("lettering revision must use the next unused revision")
+        if state.comic_page_sha256 != self.read_page(state.page_number).content_sha256:
+            raise ValueError("Plan changed while editing; reload and explicitly reseed lettering")
+        revision_path = path.parent.parent / "revisions" / f"page_{state.page_number:03d}" / f"revision_{state.revision:06d}.json"
+        self._write_immutable_model(revision_path, state, PageLettering)
+        self._write_model(path, state)
+        self.invalidate_finish()
+
+    def composite_path(self, identity: str, rendition: str) -> Path:
+        if rendition not in {"reader", "thumbnail", "full"} or len(identity) != 64 or any(c not in "0123456789abcdef" for c in identity):
+            raise ValueError("invalid composite identity")
+        return self.project_dir / "finish" / "composites" / f"{identity}-{rendition}.png"
+
     @property
     def preflight_path(self) -> Path:
         return self.project_dir / "finish" / "preflight.json"
@@ -366,6 +468,7 @@ class TargetArtifacts:
             self.project_dir / "adapt",
             self.project_dir / "plan",
             self.project_dir / "draw",
+            self.project_dir / "lettering",
             self.project_dir / "finish",
             self.exports_dir,
         ):
@@ -374,6 +477,7 @@ class TargetArtifacts:
             elif path.exists():
                 path.unlink()
 
+    @_serialized_publication
     def invalidate_finish(self) -> None:
         """Discard a preflight and packages derived from superseded inputs.
 
@@ -389,6 +493,7 @@ class TargetArtifacts:
             elif path.exists():
                 path.unlink()
 
+    @_serialized_publication
     def write_adaptation(self, adaptation: BookAdaptation) -> None:
         self._write_model(self.adaptation_path, adaptation)
         self.invalidate_finish()
@@ -439,6 +544,7 @@ class TargetArtifacts:
             # failure.
             return None
 
+    @_serialized_publication
     def write_page(self, page: ComicPage) -> None:
         # The canonical path always holds the latest revision; each revision is
         # also archived so a render citing a superseded ComicPage revision stays
@@ -472,6 +578,7 @@ class TargetArtifacts:
             StageValidation,
         )
 
+    @_serialized_publication
     def write_plan(self, plan: BookPlan) -> None:
         self._write_model(self.plan_path, plan)
         self.invalidate_finish()
@@ -479,10 +586,12 @@ class TargetArtifacts:
     def read_plan(self) -> BookPlan:
         return self._read_model("book_plan", self.plan_path, BookPlan)
 
+    @_serialized_publication
     def write_book_edition(self, edition: BookEdition) -> None:
         self._write_immutable_model(self.book_edition_path, edition, BookEdition)
         self.invalidate_finish()
 
+    @_serialized_publication
     def replace_book_edition(self, edition: BookEdition) -> None:
         """Advance the active edition while preserving prior request provenance."""
 
@@ -517,6 +626,7 @@ class TargetArtifacts:
             "page_generation_request", path, FrozenPageGenerationRequest
         )
 
+    @_serialized_publication
     def write_render(
         self,
         *,
@@ -543,6 +653,7 @@ class TargetArtifacts:
             raise ArtifactMissing("page_render", path)
         return path.read_bytes()
 
+    @_serialized_publication
     def write_provenance(self, provenance: PageGenerationProvenance) -> None:
         path = self.provenance_path(
             provenance.render.page_number,
@@ -720,6 +831,7 @@ class TargetArtifacts:
             "raw_ocr", self.raw_ocr_path(page_number, render_revision), RawOCRObservation
         )
 
+    @_serialized_publication
     def write_issues(self, page_number: int, issues: tuple[PageIssue, ...]) -> None:
         path = self.issues_path(page_number)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -807,8 +919,6 @@ class TargetArtifacts:
         os.replace(temporary, path)
 
     def write_story_change(self, proposal: StoryChangeProposal) -> None:
-        from novel_to_comic.editorial import StoryChangeProposal
-
         self._write_model(self.story_change_path(proposal.id), proposal)
 
     def read_story_change(self, proposal_id: str) -> StoryChangeProposal:

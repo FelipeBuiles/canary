@@ -69,6 +69,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
         compiled = compile_page_generation_request(
             page, edition, inventory, reference_files,
             retry=RetryProvenance(attempt=1), style_template=config.style_template,
+            reservations=target.page_reservations(page.page_number),
         )
         total += estimate_draw_api_cost(
             config,

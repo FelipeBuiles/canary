@@ -72,3 +72,15 @@ def style_template_for_suggestion(suggestion: dict) -> str:
         lettering=normalize_production_standard(suggestion.get("lettering"), kind="lettering"),
         page_framing=normalize_production_standard(suggestion.get("page_framing"), kind="page_framing"),
     )
+
+
+def page_art_style_template(visual_style: str) -> str:
+    """Keep rendering and framing, never generated-lettering directions."""
+    framing = visual_style.split(FRAMING_MARKER, 1)[1].strip() if FRAMING_MARKER in visual_style else DEFAULT_PAGE_FRAMING_STANDARD
+    return rendering_style_template(visual_style) + "\n" + FRAMING_MARKER + " " + framing
+
+
+def postproduction_lettering_direction(visual_style: str) -> str:
+    if LETTERING_MARKER not in visual_style:
+        return DEFAULT_LETTERING_STANDARD
+    return visual_style.split(LETTERING_MARKER, 1)[1].split(FRAMING_MARKER, 1)[0].strip()

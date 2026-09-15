@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from novel_to_comic.models.lettering import ReservationIntent
+
 import json
 import re
 from copy import deepcopy
@@ -119,6 +121,10 @@ class _PageContentDraft(_PanelCompositionDraft):
     lettering_ids: tuple[str, ...] = ()
 
 
+class _ReservationDraft(ReservationIntent):
+    lettering_item_id: str = Field(min_length=1)
+
+
 class _PageDraft(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -140,6 +146,14 @@ class _PageDraft(BaseModel):
     layout_intent: str = Field(min_length=1)
     content: tuple[_PageContentDraft, ...] = Field(min_length=1)
     reading_order: tuple[str, ...] = ()
+    lettering_reservations: tuple[_ReservationDraft, ...] | None = None
+
+    @model_validator(mode="after")
+    def _unique_reservations(self):
+        ids = [r.lettering_item_id for r in self.lettering_reservations or ()]
+        if len(ids) != len(set(ids)):
+            raise ValueError("lettering reservations must cite each item exactly once")
+        return self
 
 
 class _BookPlanDraft(BaseModel):
@@ -211,6 +225,19 @@ def _plan_response_schema(
             variants.append(variant)
         schema["$defs"]["_PageDetailDraft"] = {"anyOf": variants}
         schema["properties"]["pages"].update(minItems=len(target_pages), maxItems=len(target_pages))
+    # New authoring uses the existing Plan call, never an extra lettering model call.
+    variants = schema["$defs"]["_PageDetailDraft"]["anyOf"] if target_pages is not None else [schema["$defs"]["_PageDraft"]]
+    for index, variant in enumerate(variants):
+        item = deepcopy(schema["$defs"]["_ReservationDraft"])
+        reservation_schema = {"type": "array", "items": item}
+        if target_pages is not None:
+            ids = target_pages[index].lettering_ids
+            reservation_schema.update(minItems=len(ids), maxItems=len(ids))
+            if ids:
+                item["properties"]["lettering_item_id"] = {"type": "string", "enum": list(ids)}
+        variant["properties"]["lettering_reservations"] = reservation_schema
+        if "lettering_reservations" not in variant.setdefault("required", []):
+            variant["required"].append("lettering_reservations")
     return schema
 
 
@@ -361,6 +388,11 @@ def _reference_view(
     ]
 
 _SEMANTIC_PAGE_CONTRACT = (
+    "HYBRID LETTERING: For every exact lettering ID provide a lettering_reservations array with one object per lettering_item_id. "
+    "Use preferred_zone, footprint, line_budget, optional normalized page bounds, and optional tail_target "
+    "and speaker_entity_id only for a visible onscreen speaker. Reserve quiet space, not painted boxes "
+    "or words. Preserve reading order and give Draw artistic freedom. "
+
     "For each panel author continuity_intent as non-lettering direction: the established "
     "start and resulting end scene, actor staging, and important held-object ownership, "
     "using only the ordered Adapt summaries and transitions. Carry completed arrivals, "
@@ -738,14 +770,31 @@ def _validate_plan_draft(adaptation, references, target_range, draft, pin_by_bea
         return (), PlanValidation(invariant_failures=reference_failures)
     pages = _canonical_pages(adaptation, draft, pin_by_beat, references)
     validation = validate_book_plan(adaptation, references, target_range, pages)
+    failures = list(validation.invariant_failures)
+    if not failures:
+        from novel_to_comic.page_lettering import reservations_for_page
+        for page, authored in zip(pages, draft.pages, strict=True):
+            if authored.lettering_reservations is None:
+                continue  # Retained pre-hybrid plans get deterministic suggestions.
+            try:
+                reservations_for_page(page, {
+                    r.lettering_item_id: ReservationIntent(**r.model_dump(exclude={"lettering_item_id"}))
+                    for r in authored.lettering_reservations
+                })
+            except ValueError as exc:
+                failures.append(InvariantFailure(
+                    id=f"plan-reservations-{page.page_number}", owner_stage="plan",
+                    code="lettering_reservations", message=str(exc),
+                    evidence=(f"page={page.page_number}",),
+                ))
     return pages, PlanValidation(
-        invariant_failures=validation.invariant_failures,
+        invariant_failures=failures,
         editorial_issues=_merged_editorial_issues(validation.editorial_issues,
             draft.editorial_issues, adaptation=adaptation, pages=pages),
     )
 
 
-def _write_valid_plan(*, artifacts, adaptation, target_range, pages, rhythm_summary, validation) -> BookPlan:
+def _write_valid_plan(*, artifacts, adaptation, target_range, pages, rhythm_summary, validation, draft) -> BookPlan:
     """Publish the same canonical contract for small and batched books."""
     plan = BookPlan(
         revision=1,
@@ -764,8 +813,19 @@ def _write_valid_plan(*, artifacts, adaptation, target_range, pages, rhythm_summ
         ],
         editorial_issues=validation.editorial_issues,
     )
+    from novel_to_comic.page_lettering import reservations_for_page
+    by_number = {p.page_number: p for p in draft.pages}
+    # Validate all reservations before publishing any of this plan.
+    reservations = []
     for page in pages:
+        hints = by_number[page.page_number].lettering_reservations
+        intents = None if hints is None else {
+            r.lettering_item_id: ReservationIntent(**r.model_dump(exclude={"lettering_item_id"})) for r in hints
+        }
+        reservations.append(reservations_for_page(page, intents))
+    for page, reserved in zip(pages, reservations, strict=True):
         artifacts.write_page(page)
+        artifacts.write_reservations(reserved)
     artifacts.write_plan(plan)
     artifacts.plan_review_draft_path.unlink(missing_ok=True)
     return plan
@@ -863,7 +923,7 @@ async def _produce_book_plan_one_shot(
 
         plan = _write_valid_plan(artifacts=artifacts, adaptation=adaptation,
             target_range=target_range, pages=pages, rhythm_summary=draft.rhythm_summary,
-            validation=validation)
+            validation=validation, draft=draft)
     return plan
 
 
@@ -1390,7 +1450,7 @@ async def _produce_book_plan_two_pass(
             raise PlanInvariantError(validation)
         plan = _write_valid_plan(artifacts=artifacts, adaptation=adaptation,
             target_range=target_range, pages=pages, rhythm_summary=page_map.rhythm_summary,
-            validation=validation)
+            validation=validation, draft=draft)
         ctx.record_item_done()
         ctx.progress(total_steps, total_steps)
     return plan

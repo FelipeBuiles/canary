@@ -410,3 +410,10 @@ export function getProviderUsage(project: string): Promise<ProviderUsageSummary>
 export function getVisualReviewEstimate(project: string, pageNumber: number): Promise<CostEstimate> {
   return apiFetch(`${projectPath(project)}/pages/${pageNumber}/visual-review/estimate`);
 }
+
+
+/** Final previews follow independent lettering identity; artwork-review URLs stay raw. */
+export function pageDisplayPreviewUrl(project: string, pageNumber: number, revision: number, rendition: "thumbnail" | "reader", lettering?: { mode: "editable" | "baked"; sha256: string | null } | null): string {
+  if (lettering?.mode !== "editable") return pageRenderPreviewUrl(project, pageNumber, revision, rendition);
+  return `/api/projects/${encodeURIComponent(project)}/pages/${pageNumber}/composite/${revision}/${rendition}?lettering=${encodeURIComponent(lettering.sha256 ?? "default")}`;
+}

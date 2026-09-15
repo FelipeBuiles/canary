@@ -3,7 +3,7 @@ import { ArrowUpRight, BookOpen, Layers, ChevronLeft as ReviewChevronLeft, Chevr
 import { TextCheckArtwork } from "../../components/pages/TextCheckArtwork";
 import { PageThumbnail } from "../../components/pages/PageThumbnail";
 import { accountIdentity } from "../../lib/accountEpoch";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   useAcceptPageIssue,
@@ -21,7 +21,7 @@ import {
   usePageAnalysisEstimate,
   useStyles,
 } from "../../api/queries";
-import { pageRenderPreviewUrl } from "../../api/pages";
+import { pageDisplayPreviewUrl } from "../../api/pages";
 import { ReadingWorkspace } from "../../components/pages/ReadingWorkspace";
 import {
   ApprovalBar,
@@ -54,6 +54,7 @@ import {
   ResolvedIssueHistory,
 } from "../../components/pages/LetteringEvidence";
 import { isOcrIssue } from "../../components/pages/lettering";
+import { LetteringWorkspace } from "../../components/lettering/LetteringWorkspace";
 import { RevisionDraft } from "../../components/pages/RevisionDraft";
 import { PageCheckRecovery } from "../../components/pages/PageCheckRecovery";
 import { VisualReviewPanel, type VisualReviewDraftSeed } from "../../components/pages/VisualReviewPanel";
@@ -62,7 +63,7 @@ import { BottomBarPortal } from "../../layout/TopBarSlot";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 
-type ReviewView = "page" | "visual" | "checks";
+type ReviewView = "page" | "visual" | "checks" | "lettering";
 type PageFilter = "all" | "needs-review" | "drawing" | "failed";
 type PaidPageIntent =
   | { kind: "batch"; retry?: boolean }
@@ -106,7 +107,7 @@ function PageSpendConsent({
           ? t("Run the text check again on this render. This does not redraw the page.")
           : intent.depiction === "less_graphic"
             ? t("Draw a less graphic version of this page while keeping required identity references.")
-            : t("Draw one complete page now, including its lettering.")}
+            : t("Draw one complete page of artwork now. Lettering is added afterward and stays editable.")}
       cost={estimate.data}
       confirmLabel={intent.kind === "batch" ? retryBatch ? t("CONFIRM RETRY") : t("CONFIRM QUEUE") : intent.kind === "analysis" ? t("CONFIRM TEXT CHECK") : t("CONFIRM DRAW")}
       busy={busy || estimate.isFetching || !estimate.data || !!estimate.error}
@@ -250,7 +251,7 @@ function IssueHistory({
 function PageReview({
   project,
   item,
-  onClose,
+  onClose: closeReview,
   onJobQueued,
   pageIsDrawing,
   view,
@@ -258,7 +259,7 @@ function PageReview({
   previousPage,
   nextPage,
   nextUnresolved,
-  onNavigate,
+  onNavigate: navigateReview,
   onCheckText,
   checkingText,
   checkError,
@@ -289,9 +290,16 @@ function PageReview({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
+  const letteringDirty = useRef(false);
+  const [letteringOpened, setLetteringOpened] = useState(view === "lettering");
+  const reportLetteringDirty = useCallback((dirty: boolean) => { letteringDirty.current = dirty; }, []);
+  function allowLeave() { return !letteringDirty.current || window.confirm("Leave with unsaved lettering edits? Save first to keep them in the book."); }
+  function onClose() { if (allowLeave()) closeReview(); }
+  function onNavigate(number: number) { if (allowLeave()) navigateReview(number); }
   useDialogFocus(panelRef, { onClose });
 
-  function selectView(next: "page" | "visual" | "checks") {
+  function selectView(next: ReviewView) {
+    if (next === "lettering") setLetteringOpened(true);
     onViewChange(next);
     // Each view starts at the top of the modal body; the header stays put.
     const scroller = bodyRef.current;
@@ -349,6 +357,7 @@ function PageReview({
             ariaLabel={`${t("Page")} ${item.page.page_number} ${t("sections")}`}
             className="min-w-0 max-w-full gap-1 py-2 [&>button]:border-0 [&>button]:px-3 [&>button]:tracking-normal sm:[&>button]:px-4"
             tabs={[
+              { key: "lettering", label: t("Lettering"), active: view === "lettering", onClick: () => selectView("lettering") },
               {
                 key: "page",
                 label: t("Page"),
@@ -376,6 +385,10 @@ function PageReview({
         </div>
         <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto">
           <div className="space-y-7 p-4 lg:p-6">
+            <div hidden={view !== "lettering"}>
+              {(letteringOpened || view === "lettering") && editSourceRevision != null && <LetteringWorkspace project={project} pageNumber={item.page.page_number} onDirtyChange={reportLetteringDirty} />}
+              {view === "lettering" && editSourceRevision == null && <p>Draw this page before editing its lettering.</p>}
+            </div>
             {/* Revision draft stays mounted while hidden so unsaved changes survive tab switches. */}
             <div hidden={view !== "page"} role="region" aria-label={t("Page")}>
               {editSourceRevision != null ? (
@@ -471,7 +484,7 @@ export function PagesRoom() {
   const pageParam = searchParams.get("page") ?? "";
   const selected = /^[1-9]\d*$/.test(pageParam) && Number.isSafeInteger(Number(pageParam)) ? Number(pageParam) : null;
   const reviewParam = searchParams.get("review");
-  const review: ReviewView = reviewParam === "visual" || reviewParam === "checks" ? reviewParam : "page";
+  const review: ReviewView = reviewParam === "visual" || reviewParam === "checks" || reviewParam === "lettering" ? reviewParam : "page";
   const filterParam = searchParams.get("filter");
   const filter: PageFilter = filterParam === "needs-review" || filterParam === "drawing" || filterParam === "failed" ? filterParam : "all";
   const readingParam = searchParams.get("reading");
@@ -907,7 +920,7 @@ export function PagesRoom() {
             <div className="mt-3 flex gap-3 overflow-x-auto">
               {pages.filter((item) => item.active_render).map((item) => (
                 <button key={item.page.page_number} type="button" className="w-20 shrink-0 p-1 text-center text-xs font-bold" onClick={() => updateContext({ page: String(item.page.page_number), review: "page" })} aria-label={`${t("Inspect completed page")} ${item.page.page_number}`}>
-                  <img src={pageRenderPreviewUrl(id, item.page.page_number, item.active_render!.render.revision, "thumbnail")} alt="" className="mb-2 aspect-[2/3] w-full object-contain" />
+                  <img src={pageDisplayPreviewUrl(id, item.page.page_number, item.active_render!.render.revision, "thumbnail", item.lettering)} alt="" className="mb-2 aspect-[2/3] w-full object-contain" />
                   {t("Page")} {item.page.page_number}
                 </button>
               ))}
@@ -976,7 +989,7 @@ export function PagesRoom() {
                       />
                     ) : revision ? (
                       <PageThumbnail
-                        src={pageRenderPreviewUrl(id, item.page.page_number, revision, "thumbnail")}
+                        src={pageDisplayPreviewUrl(id, item.page.page_number, revision, "thumbnail", item.lettering)}
                         alt={`${t("Complete page thumbnail")} ${item.page.page_number}, ${t("revision")} ${revision}`}
                         reveal={revealedPage === item.page.page_number}
                         onRevealEnd={() => setRevealedPage(null)}

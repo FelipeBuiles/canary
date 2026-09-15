@@ -3,6 +3,10 @@
 **Status:** Accepted  
 **Date:** 2026-07-25
 
+**Partially superseded:** [ADR 0017](0017-hybrid-full-page-lettering.md) replaces
+the baked-lettering requirement for new hybrid profiles. The full-page-only
+artwork decision and retained-edition identities remain in force.
+
 ## Decision
 
 Draw generates complete lettered comic pages as the only production rendering

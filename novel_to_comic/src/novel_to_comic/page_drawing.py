@@ -117,7 +117,8 @@ def production_page_capability_profile() -> PageCapabilityProfile:
     """Return the single evaluated complete-page production profile."""
 
     return PageCapabilityProfile(
-        id=COMPLETE_PAGE_PROFILE_ID,
+        id=COMPLETE_PAGE_PROFILE_ID + "-hybrid-v1",
+        exact_visible_lettering=False,
         provider=COMPLETE_PAGE_PROVIDER,
         model=COMPLETE_PAGE_MODEL,
         max_image_references=COMPLETE_PAGE_MAX_REFERENCES,
@@ -137,7 +138,7 @@ def openai_page_capability_profile(model: str) -> PageCapabilityProfile:
     if model not in {"gpt-image-2.5-sunburst", "gpt-image-2.5-flare"}:
         raise ValueError("Unsupported complete-page OpenAI model")
     return PageCapabilityProfile(
-        id=f"{model}-complete-page-high-v1", provider="openai", model=model,
+        id=f"{model}-complete-page-high-v1-hybrid-v1", exact_visible_lettering=False, provider="openai", model=model,
         max_image_references=16, reference_ordering="ordered",
         editing_modes=("instructed", "region_targeted"),
         output_width=1024, output_height=1536, max_prompt_characters=32_000,
@@ -154,7 +155,7 @@ def muse_page_capability_profile() -> PageCapabilityProfile:
         # Its native documented image output is 1920×1280 (3:2), so a complete
         # comic-page edition must freeze that supported geometry rather than
         # claiming the portrait dimensions supported by other Draw models.
-        id="muse-image-complete-page-v2", provider="openrouter", model="meta/muse-image",
+        id="muse-image-complete-page-v2-hybrid-v1", exact_visible_lettering=False, provider="openrouter", model="meta/muse-image",
         max_image_references=10, reference_ordering="ordered",
         editing_modes=("instructed", "region_targeted"),
         output_width=1920, output_height=1280, max_prompt_characters=32_000,
@@ -204,7 +205,8 @@ def current_page_capability_profile(config: Config | None = None) -> PageCapabil
         separators=(",", ":"), ensure_ascii=False,
     )
     return PageCapabilityProfile(
-        id=_CODEX_PAGE_PROFILE_PREFIX + hashlib.sha256(binding.encode()).hexdigest(),
+        id=_CODEX_PAGE_PROFILE_PREFIX + hashlib.sha256(binding.encode()).hexdigest() + "-hybrid-v1",
+        exact_visible_lettering=False,
         provider="codex-dev",
         model=route.image_model,
         max_image_references=5,
@@ -225,7 +227,7 @@ def page_profile_uses_native_dimensions(profile: PageCapabilityProfile) -> bool:
     return (
         profile.provider == "codex-dev"
         and profile.model == "gpt-image-2"
-        and re.fullmatch(re.escape(_CODEX_PAGE_PROFILE_PREFIX) + r"[0-9a-f]{64}", profile.id) is not None
+        and re.fullmatch(re.escape(_CODEX_PAGE_PROFILE_PREFIX) + r"[0-9a-f]{64}(?:-hybrid-v1)?", profile.id) is not None
     )
 
 
@@ -339,6 +341,7 @@ def _compile_prompt(
     style_template: str = "",
     correction_context: "PageCorrectionContext | None" = None,
     cast_art_direction: Mapping[str, str] | None = None,
+    *, exact_visible_lettering: bool = True, reservations=None,
 ) -> str:
     # Identity is independent of state labels and reference traversal order.
     entity_ids = sorted({
@@ -505,6 +508,35 @@ def _compile_prompt(
                 "continuity": list(correction_context.beat_transitions),
                 "sources": list(correction_context.source_texts),
             }
+    if not exact_visible_lettering:
+        from novel_to_comic.page_lettering import reservations_for_page
+        from novel_to_comic.style_contract import page_art_style_template
+        reserved = reservations or reservations_for_page(page)
+        if reserved.comic_page_sha256 != page.content_sha256:
+            raise ValueError("lettering reservations are stale; rerun Plan")
+        payload.pop("exact_lettering")
+        payload["project_style_direction"] = page_art_style_template(style_template)
+        by_id = {item.id: item for panel in page.content for item in panel.lettering}
+        payload["lettering_reading_order"] = [reading_labels[key] for key in page.reading_order]
+        payload["lettering_reservations"] = [
+            {**r.model_dump(exclude={"speaker_entity_id"}),
+             "kind": by_id[r.lettering_item_id].kind,
+             "delivery": by_id[r.lettering_item_id].delivery,
+             "speaker": handles.get(r.speaker_entity_id)} for r in reserved.elements
+        ]
+        payload["style_reference_scope"] = (
+            "Style proof is rendering authority only. Do not copy its words, balloons, "
+            "caption boxes or layout. Preserve quiet space, not blank balloon shapes."
+        )
+        # User-supplied correction/source prose is read-only context, never visible copy.
+        payload["lettering_policy"] = (
+            "Final dialogue, thought, captions and SFX are added by Canary AFTER illustration. "
+            "Draw NO speech/thought balloons, narration/caption boxes, SFX glyphs, subtitles, "
+            "placeholder text, lorem ipsum or pseudo-writing for these reservations. "
+            "Preserve visually quiet negative space; no faces, hands, focal props or indispensable "
+            "details there. Keep clean tail corridors toward named onscreen speakers. "
+            "Do not draw the balloon/box itself. Incidental in-world writing is distinct."
+        )
     depiction_direction = (
         "Use framing, shadow, reaction, or aftermath for graphic details. Preserve "
         "approved identity, costume, story events, exact lettering, and page layout. "
@@ -522,6 +554,17 @@ def _compile_prompt(
         "This page is unlettered: no visible text, captions, speech or thought balloons, or SFX. "
         "Style lettering guidance cannot introduce text.\n"
     )
+    if not exact_visible_lettering:
+        return (
+            "Render exactly one complete comic page of BASE ART, never separate panel images.\n"
+            "LETTERING POLICY: " + str(payload["lettering_policy"]) + "\n"
+            "AUTHORITY: approved subject/state references, verbatim physical anchors and guards, "
+            "selected visual rendering/framing and author pins. Never print these instructions. "
+            "Keep original story events and reading rhythm.\n"
+            + ("Use framing, shadow, reaction or aftermath for graphic details; retain approved identities.\n" if depiction == "less_graphic" else "")
+            + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+            + "\nOUTPUT: one full-page image of art; no publishable lettering or metadata."
+        )
     return (
         "Render exactly one complete comic page, never a panel artifact or reference sheet.\n"
         "AUTHORITY: exact canonical copy and reading order, current approved subject/state "
@@ -554,10 +597,12 @@ def compile_page_generation_request(
     edit_source_bytes: bytes | None = None,
     depiction: Literal["canonical", "less_graphic"] = "canonical",
     style_template: str = "",
+    reservations=None,
+    retained_review: bool = False,
 ) -> CompiledPageGeneration:
     """Compile one immutable request from canonical Plan and Cast authority."""
 
-    selected_edition = select_book_edition(
+    selected_edition = edition if retained_review else select_book_edition(
         edition_id=edition.id,
         profile=edition.capability_profile,
         existing=edition,
@@ -642,6 +687,8 @@ def compile_page_generation_request(
         style_template,
         correction_context,
         cast_art_direction,
+        exact_visible_lettering=selected_edition.capability_profile.exact_visible_lettering,
+        reservations=reservations,
     )
     request = FrozenPageGenerationRequest.compile(
         page=page,
@@ -679,6 +726,7 @@ def prepare_page_correction(
     context_source_unit_ids: tuple[str, ...] = (),
     artifacts: TargetArtifacts,
     style_template: str = "",
+    reservations=None,
 ) -> PreparedPageCorrection:
     """Validate and compile one explicit correction set, without spending.
 
@@ -718,6 +766,7 @@ def prepare_page_correction(
         correction_context=context,
         edit_source_bytes=artifacts.read_render(page.page_number, parent.revision),
         style_template=style_template,
+        reservations=reservations or artifacts.page_reservations(page.page_number),
         depiction=correction.depiction,
     )
     return PreparedPageCorrection(correction=correction, compiled=compiled, context=context)

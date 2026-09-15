@@ -6,6 +6,7 @@ export interface ReaderPage {
   pageNumber: number;
   revision: number;
   spreadRole: SpreadRole;
+  lettering?: { mode: "editable" | "baked"; sha256: string | null } | null;
 }
 
 /**
@@ -32,6 +33,7 @@ export function readerPages(data: CompletePagesResponse | undefined): ReaderPage
       pageNumber: item.page.page_number,
       revision: item.active_render!.render.revision,
       spreadRole: item.page.spread_role,
+      ...(item.lettering ? { lettering: item.lettering } : {}),
     }))
     .sort((a, b) => a.pageNumber - b.pageNumber);
 }

@@ -177,7 +177,7 @@ def test_compiler_freezes_exact_page_authority_and_selected_reference_order(
     prepared = _compile(tmp_path)
     request = prepared.request
 
-    assert request.lettering == _page().content[0].lettering
+    assert request.lettering == ()  # Copy stays in Adapt, not the art provider request.
     assert [reference.id for reference in request.references] == [
         "ward-bloodied-ref",
         "idol-ref",
@@ -197,7 +197,7 @@ def test_compiler_freezes_exact_page_authority_and_selected_reference_order(
     assert request.output_height == 2528
     assert request.output_media_type == "image/png"
     assert request.retry == RetryProvenance(attempt=1)
-    assert "It was the same face." in request.prompt
+    assert "It was the same face." not in request.prompt
     assert "Ward’s torn left sleeve; blood below the right eye" in request.prompt
     assert "ward-bloodied" not in request.prompt
     assert "idol-ref" not in request.prompt
@@ -247,11 +247,11 @@ def test_provider_subject_binding_separates_identity_from_state_and_speaker_name
             expected = "Ward — bloodied" if canonical.appearance_states else "Ward"
             assert refs[ward["references"][0]["image"]]["appearance"] == expected
         assert ward_handles[0] == ward_handles[1]
-        speakers = next(panel["lettering"] for panel in brief["exact_lettering"]["panels"] if panel["lettering"])
-        assert speakers[0]["speaker"] == speakers[1]["speaker"]
-        assert speakers[0]["speaker_entity_id"] != speakers[1]["speaker_entity_id"]
-        assert speakers[0]["speaker_entity_id"] == ward_handles[0]
-        assert [item["text"] for item in speakers] == ["Stay.", "Stay."]
+        speakers = brief["lettering_reservations"]
+        assert speakers[0]["speaker"] != speakers[1]["speaker"]
+        assert speakers[0]["speaker"] == ward_handles[0]
+        assert all("text" not in item for item in speakers)
+        assert "Stay." not in request.prompt
         assert brief["canonical_staging_and_layout"] == (
             f"{ward_handles[0]} is already inside; the arrival is complete."
         )
@@ -283,7 +283,10 @@ def test_compiler_freezes_selected_lettering_and_framing_style_across_pages(
     )
     unstyled = _compile(tmp_path)
 
-    assert _provider_brief(styled.request.prompt)["project_style_direction"] == style
+    from novel_to_comic.style_contract import page_art_style_template
+
+    assert _provider_brief(styled.request.prompt)["project_style_direction"] == page_art_style_template(style)
+    assert "one condensed sans" not in styled.request.prompt
     assert styled.request.request_sha256 != unstyled.request.request_sha256
 
 
@@ -387,7 +390,7 @@ def test_less_graphic_depiction_preserves_authority_and_softens_visual_treatment
 
     assert len(compiled.request.references) == 2
     assert len(compiled.reference_bytes) == 2
-    assert "It was the same face." in compiled.request.prompt
+    assert "It was the same face." not in compiled.request.prompt
     assert "Ward’s torn left sleeve; blood below the right eye" in compiled.request.prompt
 
 
@@ -1452,7 +1455,7 @@ def test_final_page_prompt_preserves_geometry_reading_order_and_state_guard(tmp_
     )})
     request = compile_page_generation_request(page, _edition(), inventory, _reference_files(tmp_path), retry=RetryProvenance(attempt=1)).request
     brief = _provider_brief(request.prompt)
-    assert brief["exact_lettering"]["reading_order"] == ["Panel 1", "Panel 1 lettering 1"]
+    assert brief["lettering_reading_order"] == ["Panel 1", "Panel 1 lettering 1"]
     assert brief["canonical_comic_page"]["content"][0]["pinned_geometry"] == {
         "x": 0, "y": 0, "width": 1, "height": 0.5,
     }
@@ -1495,7 +1498,6 @@ def test_visual_review_route_compiles_current_authority_without_redrawing(tmp_pa
 def test_draw_estimate_is_read_only_and_excludes_optional_lettering_check(tmp_path: Path) -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from novel_to_comic.config import PAGE_OCR_ESTIMATED_COST_USD
     from novel_to_comic.server.credits import credit_estimate_for_provider_cost
     from novel_to_comic.server.deps import get_project
     from novel_to_comic.server.routers.pages import router
@@ -1720,7 +1722,7 @@ def test_region_only_correction_changes_native_content_without_shifting_referenc
         contents = _exact_complete_page_contents(request.model_dump(mode="json"), images)
         for index, reference in enumerate(brief["approved_page_references"]):
             assert reference["image"] in contents[3 + index * 2]
-        assert request.lettering == page.content[0].lettering
+        assert request.lettering == ()
         provider_contents.append(contents)
     assert provider_contents[0][:-1] == provider_contents[1][:-1]
     assert provider_contents[0][-1] != provider_contents[1][-1]

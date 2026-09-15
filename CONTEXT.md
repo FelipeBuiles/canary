@@ -61,7 +61,8 @@ rewritten or shortened.
 
 **Finish stage** — The final pipeline stage, which checks book readiness,
 performs production-safe normalization, and packages the book for export.
-It does not generate or correct artwork or lettering.
+It does not generate or correct artwork. For hybrid editions it deterministically
+composites saved post-production lettering over the full-page base art.
 _Avoid_: Compose stage
 
 **Story Bible** — The shared story understanding used by later pipeline work:
@@ -134,7 +135,19 @@ revision. Text embedded in a page render is not canonical copy.
 detected panel boundaries, reading order, and recognized lettering. It is
 validation evidence, not author intent.
 
-**Lettering comparison policy** — The single named rule for comparing canonical
+**Lettering reservation** — Plan-owned intent for visually quiet space in a
+complete-page illustration. It describes a footprint and speaker corridor, not
+publishable words, generated balloon shapes or measured typography.
+
+**Page lettering** — Independently editable display copy, locale variants,
+normalized geometry and style linked to immutable canonical lettering IDs.
+Changing this presentation does not change Adapt or create a Draw revision.
+
+**Final composite** — A derived page made from immutable complete-page artwork
+and deterministic software lettering. Its identity changes with either layer;
+retained baked-text editions need no additional lettering layer.
+
+**Lettering comparison policy (baked-text editions)** — The single named rule for comparing canonical
 lettering with recognized lettering. It folds representation differences that
 carry no meaning — quote and dash forms, ellipses, line breaks introduced by
 the letterer, repeated whitespace — and nothing else. Case and wording

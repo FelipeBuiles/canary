@@ -334,6 +334,7 @@ def _page_identity(preflight: FinishPreflight) -> tuple:
                 page.comic_page_sha256,
                 page.render_revision,
                 page.render_image_sha256,
+                page.lettering_sha256, page.composite_sha256, page.lettering_locale,
             )
             for page in preflight.pages
         ),
@@ -462,7 +463,7 @@ def _package_exports(
     return tuple(packages)
 
 
-def finish_book(
+def _finish_book(
     artifacts: TargetArtifacts,
     *,
     production: FinishProductionSpec | None = None,
@@ -832,6 +833,16 @@ def finish_book(
             )
 
         normalized_sha256 = None
+        lettering_sha256 = composite_sha256 = lettering_locale = None
+        if not edition.capability_profile.exact_visible_lettering and image is not None and not failures:
+            try:
+                from novel_to_comic.lettering_service import saved_composite
+                image, lettering, composite_sha256 = saved_composite(artifacts, selected.page_number, image)
+                lettering_sha256, lettering_locale = lettering.content_sha256, lettering.locale
+            except Exception as exc:
+                failures.append(_failure(page_number=selected.page_number, owner_stage="finish",
+                    code="lettering_layout", message="Fix lettering in Pages before exporting; artwork does not need regeneration.",
+                    artifact_ids=(f"lettering_page_{selected.page_number}",), evidence=(str(exc),)))
         if not failures and not unresolved and image is not None and page_production is not None:
             normalized_path = artifacts.normalized_page_path(selected.page_number)
             try:
@@ -875,6 +886,8 @@ def finish_book(
                     page_production.color_profile if normalized_sha256 is not None else None
                 ),
                 normalized_image_sha256=normalized_sha256,
+                lettering_sha256=lettering_sha256, composite_sha256=composite_sha256,
+                lettering_locale=lettering_locale,
                 invariant_failures=tuple(failures),
                 diagnostics=tuple(diagnostics),
                 unresolved_editorial_issue_ids=unresolved,
@@ -933,3 +946,10 @@ def finish_book(
     )
     artifacts.write_preflight(preflight)
     return FinishResult(preflight=preflight, packages=packages)
+
+
+def finish_book(artifacts: TargetArtifacts, **kwargs):
+    # Serializes Finish publication with all lettering mutations and previews.
+    # No request can publish a stale package after a successful lettering save.
+    with artifacts.lettering_lock():
+        return _finish_book(artifacts, **kwargs)

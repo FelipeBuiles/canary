@@ -1,5 +1,5 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { pageRenderPreviewUrl } from "../api/pages";
+import { pageDisplayPreviewUrl } from "../api/pages";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/cn";
 import { useDialogFocus } from "../hooks/useDialogFocus";
@@ -68,7 +68,7 @@ function ReaderImage({
         </>
       )}
       <img
-        src={pageRenderPreviewUrl(project, page.pageNumber, page.revision, "reader")}
+        src={pageDisplayPreviewUrl(project, page.pageNumber, page.revision, "reader", page.lettering)}
         alt={alt}
         decoding="async"
         onLoad={() => setLoaded(true)}
@@ -180,7 +180,7 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
       for (const step of [safeIndex + offset, safeIndex - offset]) {
         views[step]?.pages.forEach((page) => {
           const image = new Image();
-          image.src = pageRenderPreviewUrl(project, page.pageNumber, page.revision, "reader");
+          image.src = pageDisplayPreviewUrl(project, page.pageNumber, page.revision, "reader", page.lettering);
         });
       }
     }

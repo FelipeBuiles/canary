@@ -894,7 +894,6 @@ def test_a_drawn_page_reaches_export_without_hand_written_analysis(
     from novel_to_comic.models.draw import (
         CompletePageProviderResult,
         OCRExtraction,
-        OCRTextObservation,
         RetryProvenance,
     )
     from novel_to_comic.models.page import ApprovedVisualReferenceInventory
@@ -959,9 +958,7 @@ def test_a_drawn_page_reaches_export_without_hand_written_analysis(
         async def extract(self, image_bytes: bytes):
             assert image_bytes == image
             return ApiResult(
-                value=OCRExtraction(
-                    lettering=[OCRTextObservation(id="ocr-1", text="The door opened.")]
-                ),
+                value=OCRExtraction(lettering=[]),
                 usage=UsageRecord(
                     provider="gemini",
                     model="gemini-3.8-flash",

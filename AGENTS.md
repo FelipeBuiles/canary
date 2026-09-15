@@ -20,8 +20,11 @@ resources, not a mandatory onboarding sequence; reuse context already loaded.
   orchestration owns the explicit auto-chain.
 - Preserve visual anchors and continuity guards verbatim. State IDs are
   entity-scoped; Plan maps each visible entity to its state explicitly.
-- Full-page Draw includes exact lettering authored by Adapt. Do not revive
-  text-free panel generation, legacy panel stages, or compose-editor contracts.
+- New full-page Draw profiles generate base art with Plan-owned lettering
+  reservations, never Canary's publishable copy or balloon/box shapes. Pages
+  lettering owns editable presentation; Finish uses the same canonical SVG.
+  Retained baked-text profiles remain readable/reviewable/exportable without
+  overlays or hash migration. Do not revive panel generation or a Compose stage.
 - `TargetArtifacts` owns current full-page paths and typed reads/writes.
   Breaking schema changes are acceptable. Reject incompatible artifacts with
   a rerun instruction; do not add compatibility hash exceptions or shims.
@@ -46,7 +49,8 @@ resources, not a mandatory onboarding sequence; reuse context already loaded.
 
 Python source root: `novel_to_comic/src/novel_to_comic/`. The page pipeline is
 implemented by `book_adaptation.py`, `page_planning.py`, `page_drawing.py`,
-`page_review.py`, and `page_finishing.py`. Cast state conditioning is in
+`page_review.py`, and `page_finishing.py`. Provider-free lettering lives in
+`page_lettering.py`, `lettering_service.py`, and the Pages lettering workspace. Cast state conditioning is in
 `state_assets.py`; gateway serialization is in root
 `litellm_handlers/vertex_multimodal.py`. Frontend rooms live in
 `web/src/pages/rooms/`.

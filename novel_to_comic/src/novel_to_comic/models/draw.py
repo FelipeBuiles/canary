@@ -39,7 +39,7 @@ class PageCapabilityProfile(BaseModel):
     provider: str = Field(min_length=1)
     model: str = Field(min_length=1)
     complete_page_generation: Literal[True] = True
-    exact_visible_lettering: Literal[True] = True
+    exact_visible_lettering: bool = True
     max_image_references: int = Field(ge=0)
     reference_ordering: Literal["ordered"]
     editing_modes: tuple[Literal["instructed", "region_targeted"], ...] = ()
@@ -156,7 +156,7 @@ class FrozenPageGenerationRequest(BaseModel):
             prompt=prompt,
             lettering=[
                 lettering for item in page.content for lettering in item.lettering
-            ],
+            ] if profile.exact_visible_lettering else [],
             references=references,
             output_width=profile.output_width,
             output_height=profile.output_height,
@@ -635,7 +635,7 @@ class PageIssue(BaseModel):
     def is_text_check(self) -> bool:
         return self.id.startswith("page-issue-draw-page-") and self.issue_type in {
             "misspelled_lettering", "missing_lettering", "duplicated_lettering",
-            "invented_lettering", "reordered_lettering", "unverified_lettering_order",
+            "invented_lettering", "reordered_lettering", "unverified_lettering_order", "unexpected_generated_lettering",
         }
 
     @model_validator(mode="after")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from novel_to_comic.config import Config
@@ -24,7 +25,7 @@ async def run(
 ):
     profile = TargetArtifacts(project_dir).read_book_edition().capability_profile
     with ctx.execute(total=1, estimated_cost_usd=0):
-        result = finish_book(
+        result = await asyncio.to_thread(finish_book,
             TargetArtifacts(project_dir),
             production=FinishProductionSpec(
                 canvas_width=profile.output_width,

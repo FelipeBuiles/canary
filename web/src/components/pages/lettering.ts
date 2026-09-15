@@ -7,6 +7,7 @@ export const OCR_ISSUE_TYPES = new Set([
   "invented_lettering",
   "reordered_lettering",
   "unverified_lettering_order",
+  "unexpected_generated_lettering",
 ]);
 
 export function isOcrIssue(issue: PageIssue): boolean {

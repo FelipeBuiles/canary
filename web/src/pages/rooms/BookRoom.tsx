@@ -9,7 +9,7 @@ import {
   useProviderUsage,
   useRunFinishPreflight,
 } from "../../api/queries";
-import { pageRenderPreviewUrl } from "../../api/pages";
+import { pageDisplayPreviewUrl } from "../../api/pages";
 import { BookExportPanel } from "../../components/book/BookExportPanel";
 import { PageThumbnail } from "../../components/pages/PageThumbnail";
 import { BookReader } from "../../components/BookReader";
@@ -191,7 +191,7 @@ export function BookRoom() {
           <p className="mt-4 font-body text-xs leading-6 text-bristol/75">{t("Reading does not generate artwork or use credits.")}</p>
         </div>
         {bookPages.length > 0 && <button type="button" onClick={() => setReaderOpen(true)} aria-label={t("Open the book reader")} className="mx-auto h-80 w-full max-w-[240px] bg-surface-container text-ink-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-narrator-gold md:h-96 md:max-w-[280px]">
-          <PageThumbnail reveal={false} onRevealEnd={() => {}} src={pageRenderPreviewUrl(id, bookPages[0].pageNumber, bookPages[0].revision, "reader")} alt={t("First page of the book")} />
+          <PageThumbnail reveal={false} onRevealEnd={() => {}} src={pageDisplayPreviewUrl(id, bookPages[0].pageNumber, bookPages[0].revision, "reader", bookPages[0].lettering)} alt={t("First page of the book")} />
         </button>}
       </section>
 

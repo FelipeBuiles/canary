@@ -37,6 +37,7 @@ from .routers import (
     labs,
     operator_billing,
     pages,
+    lettering,
     pipeline,
     projects,
     stages,
@@ -538,6 +539,7 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         prefix="/api/projects/{project_id}",
         tags=["pipeline"],
     )
+    app.include_router(lettering.router, prefix="/api/projects/{project_id}", tags=["lettering"])
     app.include_router(
         pages.router,
         prefix="/api/projects/{project_id}",

@@ -470,6 +470,7 @@ export interface PageAnalysisRecovery {
 }
 
 export interface CompletePageSummary {
+  lettering?: { mode: "editable" | "baked"; sha256: string | null; revision: number; overflow?: boolean } | null;
   page: ComicPage;
   active_render: PageGenerationProvenance | null;
   issues: PageIssue[];

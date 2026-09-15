@@ -68,7 +68,11 @@ export async function apiFetch<T>(
   const { data: { session } } = await supabase.auth.getSession();
   assertAccountEpoch(epoch);
   const method = options?.method?.toUpperCase() ?? "GET";
-  const action = session && !["GET", "HEAD", "OPTIONS"].includes(method) && path.startsWith("/projects/")
+  // These endpoints cannot submit providers. CAS protects their writes; they
+  // must not depend on credit receipts or durable paid-action browser storage.
+  const providerFreeLettering = ["POST", "PUT"].includes(method)
+    && /^\/projects\/[^/]+\/(?:pages\/\d+\/lettering(?:\/(?:preview|reset))?|lettering\/style)$/.test(path);
+  const action = session && !providerFreeLettering && !["GET", "HEAD", "OPTIONS"].includes(method) && path.startsWith("/projects/")
     ? await pendingAction(session.user.id, method, path, options?.body)
     : null;
   assertAccountEpoch(epoch);

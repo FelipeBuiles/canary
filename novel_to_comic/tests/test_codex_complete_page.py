@@ -85,11 +85,16 @@ def test_production_profile_and_old_serialized_hashes_remain_compatible(monkeypa
         return hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True,
                                          separators=(",", ":")).encode()).hexdigest()
     profile = page_drawing.production_page_capability_profile()
-    assert profile.model_dump(mode="json") == legacy_profile
-    assert profile.content_sha256 == digest(legacy_profile)
+    assert not profile.exact_visible_lettering
+    assert profile.id == legacy_profile["id"] + "-hybrid-v1"
+    assert profile.model_dump(mode="json", exclude={"id", "exact_visible_lettering"}) == {
+        k: v for k, v in legacy_profile.items() if k not in {"id", "exact_visible_lettering"}
+    }
     legacy_edition = {"revision": 1, "id": "old-edition", "capability_profile": legacy_profile}
     legacy_edition["content_sha256"] = digest(legacy_edition)
     edition = BookEdition.model_validate(legacy_edition)
+    profile = edition.capability_profile
+    assert profile.content_sha256 == digest(legacy_profile)
     assert edition.model_dump(mode="json") == legacy_edition
     legacy_request = {
         "page_number": 7, "comic_page_revision": 2, "comic_page_sha256": "a" * 64,
@@ -136,7 +141,7 @@ def test_five_references_preserve_exact_authority_and_six_reject(tmp_path, dev_r
     prepared = page_drawing.complete_page_adapter(Config()).prepare(compiled)
     assert tuple(ref.id for ref in prepared.references) == tuple(ref.id for ref in inventory.references)
     assert prepared.reference_bytes == tuple(files[ref.id].path.read_bytes() for ref in inventory.references)
-    assert compiled.request.lettering == page.content[0].lettering
+    assert compiled.request.lettering == ()
     for ref in inventory.references:
         assert ref.visual_anchor in prepared.prompt
     assert compiled.request.estimated_cost_usd == 0
@@ -164,7 +169,7 @@ def test_correction_parent_consumes_one_of_five_image_inputs(tmp_path, dev_route
         prepared = page_drawing.complete_page_adapter(Config()).prepare(compiled)
         assert prepared.edit_source_bytes == parent
         assert prepared.reference_bytes == tuple(files[ref.id].path.read_bytes() for ref in inventory.references)
-        assert compiled.request.lettering == page.content[0].lettering
+        assert compiled.request.lettering == ()
 
 
 def test_queue_all_later_reference_overflow_has_no_enqueue_or_credit_hold(tmp_path, monkeypatch, dev_routes):

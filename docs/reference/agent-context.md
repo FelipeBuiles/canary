@@ -1,6 +1,6 @@
 # Canary agent context
 
-**Status: Current, September 9, 2026.** Canary generates complete lettered comic
+**Status: Current, September 15, 2026.** Canary generates complete lettered comic
 pages from novels through an eight-stage Python/FastAPI and React application.
 
 | # | Stage | Checkpoint? |
@@ -17,7 +17,7 @@ pages from novels through an eight-stage Python/FastAPI and React application.
 See [stage contracts](stage-contracts.md) for authority, recovery, and validation.
 Use [documentation policy](../README.md) to resolve source status and
 [the glossary](../../CONTEXT.md) for unfamiliar terms; read only relevant sections.
-ADRs 0003–0016 record the full-page architecture; historical panel plans are not
+ADRs 0003–0017 record the full-page architecture; historical panel plans are not
 implementation instructions.
 The optional local [Codex adapter guide](codex-dev-capabilities.md) distinguishes
 process routing/funding controls from scoped live evidence, including experimental Draw.
@@ -41,8 +41,14 @@ process routing/funding controls from scoped live evidence, including experiment
   approvals. URL parameters preserve page, review, filter, and reading context;
   Book links directly to affected reviews. Drawn and text-checked counts are
   distinct; current artifacts/failure phase outrank historical job failure.
-  Missing/stale OCR evidence blocks Finish but is not a redraw request. See
+  OCR evidence is optional and advisory, not an export gate. Hybrid lettering
+  edits are provider-free; overflow blocks export without requesting a redraw. See
   [stage contracts](stage-contracts.md) for recovery and estimate contracts.
+- Pages Lettering edits copy, normalized placement, locale variants and role
+  styles over immutable base art. New Draw profiles reserve quiet space without
+  rendering text/balloons; retained baked-text editions do not get overlays.
+  `page_lettering.py` is the single SVG/layout/compositor authority for editor,
+  final previews and exports. `lettering_service.py` owns CAS save orchestration.
 - Immediate estimates and temporary holds are distinct and rounded per job.
   Keep the full Draw-stage estimate for reruns, not remaining-page queues.
   Balance refresh after top-up never substitutes for explicit Resume.

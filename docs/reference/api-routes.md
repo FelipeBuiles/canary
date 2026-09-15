@@ -54,6 +54,13 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/labs/runs/{run_id}` | `get_run` | `labs.py` |
 | `DELETE` | `/api/labs/runs/{run_id}` | `delete_run` | `labs.py` |
 | `GET` | `/api/labs/runs/{run_id}/cells/{image_idx}/{variant}/{model_id}/image` | `get_cell_image` | `labs.py` |
+| `GET` | `/api/lettering/lettering/presets` | `presets` | `lettering.py` |
+| `GET` | `/api/lettering/pages/{page_number}/lettering` | `get_lettering` | `lettering.py` |
+| `POST` | `/api/lettering/pages/{page_number}/lettering/preview` | `preview_lettering` | `lettering.py` |
+| `PUT` | `/api/lettering/pages/{page_number}/lettering` | `put_lettering` | `lettering.py` |
+| `POST` | `/api/lettering/pages/{page_number}/lettering/reset` | `reset_lettering` | `lettering.py` |
+| `PUT` | `/api/lettering/lettering/style` | `put_book_style` | `lettering.py` |
+| `GET` | `/api/lettering/pages/{page_number}/composite/{render_revision}/{rendition}` | `composite_preview` | `lettering.py` |
 | `POST` | `/api/operator_billing/refunds` | `refund_unused_credit_grant` | `operator_billing.py` |
 | `GET` | `/api/projects/{project}/pages` | `list_pages` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_number}` | `get_page` | `pages.py` |

@@ -87,3 +87,21 @@ describe("paid action receipts", () => {
     expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
   });
 });
+
+describe("provider-free lettering requests", () => {
+  it("does not require paid receipts or local storage, while retaining authentication", async () => {
+    const fetcher = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ ok: true }))));
+    vi.stubGlobal("fetch", fetcher);
+    const denied = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("Storage denied"); });
+    try {
+      for (const [method, path] of [["POST", "/projects/demo/pages/1/lettering/preview"], ["PUT", "/projects/demo/pages/1/lettering"], ["POST", "/projects/demo/pages/1/lettering/reset"], ["PUT", "/projects/demo/lettering/style"]]) {
+        await expect(apiFetch(path, { method, body: "{}" })).resolves.toEqual({ ok: true });
+      }
+      for (const call of fetcher.mock.calls) {
+        expect(call[1].headers["Idempotency-Key"]).toBeUndefined();
+        expect(call[1].headers.Authorization).toBe("Bearer account-a");
+      }
+      expect(denied).not.toHaveBeenCalled();
+    } finally { denied.mockRestore(); }
+  });
+});

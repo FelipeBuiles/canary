@@ -17,6 +17,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from novel_to_comic import artifacts
+from novel_to_comic.models.lettering import LetteringStyle
 from novel_to_comic.clients import text as text_client
 from novel_to_comic.config import Config
 from novel_to_comic.generation_input import GenerationPromptInput
@@ -81,6 +82,7 @@ class StyleSuggestion(BaseModel):
     line_rendering: str
     lighting_value: str
     lettering: str
+    lettering_style: LetteringStyle | None = None
     page_framing: str
     sequential_art_strengths: str
     story_fit: str
@@ -174,7 +176,16 @@ _SYSTEM_PROMPT = (
     "(photographic, realistic_illustration, stylized, or graphic), portfolio_role, "
     "palette, line_rendering, lighting_value, lettering, page_framing, "
     "sequential_art_strengths, story_fit, risk, and template. All production standards "
-    "must be concise prose strings, never objects or arrays. Template is 40-70 words."
+    "lettering and page_framing must remain concise prose strings. Additionally include "
+    "lettering_style: a structured book-wide post-production system with preset "
+    "(literary/noir/manga/vintage), and caption, dialogue, thought, sfx roles. Choose "
+    "role fonts only from ComicNeue-Bold, EBGaramond-SemiBold, Bangers-Regular, "
+    "MPLUS1p-Bold, SpecialElite-Regular, Exo2-SemiBold, Creepster-Regular. Each role "
+    "uses min_size/max_size in design units per 1000 page width, line_height, padding, "
+    "align, hex color/fill/outline, border, radius, letter_spacing and stroke. "
+    "Translate the prose lettering system into these executable tokens; avoid unreadable "
+    "sizes. This is software typography after illustration, not new image generation. "
+    "Template is 40-70 words."
 )
 
 
@@ -187,6 +198,8 @@ def _stable_suggestion_id(suggestion: dict) -> str:
         suggestion.get("page_framing") or DEFAULT_PAGE_FRAMING_STANDARD,
     )
     material = "\n".join(str(value or "").strip() for value in values)
+    if suggestion.get("lettering_style") is not None:
+        material += json.dumps(LetteringStyle.model_validate(suggestion["lettering_style"]).model_dump(mode="json"), sort_keys=True)
     return f"style_{hashlib.sha256(material.encode('utf-8')).hexdigest()[:16]}"
 
 
@@ -214,6 +227,8 @@ def normalize_suggestion(
         "risk": suggestion.get("risk") or "",
         "template": suggestion.get("template") or "",
     }
+    if suggestion.get("lettering_style") is not None:
+        normalized["lettering_style"] = LetteringStyle.model_validate(suggestion["lettering_style"]).model_dump()
     if suggestion.get("direction_id"):
         normalized["direction_id"] = suggestion["direction_id"]
     return normalized
