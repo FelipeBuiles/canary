@@ -55,14 +55,14 @@ def test_old_stage_state_is_rejected(old_stage: str) -> None:
     [
         (
             "source",
-            ["source", "brief", "samples", "refs", "plates", "adapt", "plan", "draw", "finish", "exports"],
+            ["source", "brief", "samples", "refs", "plates", "adapt", "plan", "lettering", "draw", "finish", "exports"],
         ),
         (
             "brief",
-            ["brief", "samples", "refs", "plates", "adapt", "plan", "draw", "finish", "exports"],
+            ["brief", "samples", "refs", "plates", "adapt", "plan", "lettering", "draw", "finish", "exports"],
         ),
-        ("adapt", ["adapt", "plan", "draw", "finish", "exports"]),
-        ("plan", ["plan", "draw", "finish", "exports"]),
+        ("adapt", ["adapt", "plan", "lettering", "draw", "finish", "exports"]),
+        ("plan", ["plan", "lettering", "draw", "finish", "exports"]),
         ("draw", ["draw", "finish", "exports"]),
         ("finish", ["finish", "exports"]),
     ],
@@ -108,7 +108,7 @@ def test_rerun_resets_exact_target_dependency_graph(rerun: str, reset: set[str])
 
 
 def test_rerun_removes_only_the_stage_target_artifacts_and_dependants(tmp_path) -> None:
-    for root in ("source", "brief", "samples", "refs", "plates", "adapt", "plan", "draw", "finish", "exports"):
+    for root in ("source", "brief", "samples", "refs", "plates", "adapt", "plan", "lettering", "draw", "finish", "exports"):
         directory = tmp_path / root
         directory.mkdir()
         (directory / "marker").write_text(root)
@@ -116,7 +116,7 @@ def test_rerun_removes_only_the_stage_target_artifacts_and_dependants(tmp_path) 
     pipeline._clear_outputs_for_rerun(tmp_path, "plan")
 
     assert all((tmp_path / root / "marker").exists() for root in ("source", "brief", "samples", "refs", "plates", "adapt"))
-    assert all(not (tmp_path / root).exists() for root in ("plan", "draw", "finish", "exports"))
+    assert all(not (tmp_path / root).exists() for root in ("plan", "lettering", "draw", "finish", "exports"))
 
 
 @pytest.mark.parametrize("old_stage", ["storyboard", "direct", "compose"])

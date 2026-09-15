@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .plan_detail_support import with_reservations
+
 import asyncio
 import hashlib
 from pathlib import Path
@@ -149,7 +151,7 @@ def _adaptation(source: SourceDocument) -> BookAdaptation:
 
 
 def _page() -> ComicPage:
-    return ComicPage(
+    return with_reservations(ComicPage(
         revision=1,
         page_number=1,
         adaptation_revision=1,
@@ -173,7 +175,7 @@ def _page() -> ComicPage:
             )
         ],
         reading_order=["content-1", "letter-1"],
-    )
+    ))
 
 
 def _profile() -> PageCapabilityProfile:
@@ -436,7 +438,7 @@ def test_annotations_and_novel_context_reach_prompt_and_provenance(tmp_path: Pat
     assert "drenched" in prompt
     assert "harbor" in prompt
     # Full prose is limited to the page's adapted units.
-    assert "The door opened." in prompt
+    assert "The door opened." not in prompt  # Canonical copy is withheld from hybrid Draw.
     assert prepared.context.treatment_spine[:1] == ("The door opens, then stillness.",)
     assert prepared.context.appearance_chronology != ()
     assert prepared.context.beat_transitions != ()
@@ -446,8 +448,8 @@ def test_annotations_and_novel_context_reach_prompt_and_provenance(tmp_path: Pat
     assert prepared.correction.context_source_unit_ids == ("source-1",)
     assert prepared.correction.context_digest == prepared.context.digest
     assert prepared.correction.context_adaptation_revision == 1
-    # Exact lettering survives the correction path.
-    assert prepared.compiled.request.lettering == page.content[0].lettering
+    # Source copy remains canonical; hybrid provider requests carry reservations only.
+    assert prepared.compiled.request.lettering == ()
     estimate = correction_credit_estimate(prepared.compiled, config=Config(), reserve=True)
     assert estimate["estimate_credits"] > 0
     assert estimate["reserved_credits"] is not None and estimate["reserved_credits"] >= estimate["estimate_credits"]

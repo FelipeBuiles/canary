@@ -2150,7 +2150,6 @@ async def _generate_blueprint(
         model_type=_BlueprintDraft,
     )
     attempt_prompt = prompt
-    repairing_cached_blueprint = False
     if isinstance(cached, _BlueprintDraft):
         try:
             _validate_blueprint_scope(
@@ -2161,7 +2160,6 @@ async def _generate_blueprint(
             )
             return cached
         except ValueError as error:
-            repairing_cached_blueprint = True
             # A validator added after the checkpoint was written can cheaply
             # repair the compact cached structure instead of discarding every
             # paid stage result or crashing before a model call.

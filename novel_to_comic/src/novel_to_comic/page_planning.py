@@ -6,7 +6,7 @@ import json
 import re
 from copy import deepcopy
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -22,6 +22,8 @@ from novel_to_comic.models.page import (
     ComicPage,
     PageContent,
     PinnedGeometry,
+    LetteringReservation,
+    LetteringReservationIntent,
     PlannedPageRevision,
     PlanReviewDraft,
 )
@@ -117,6 +119,13 @@ class _PageContentDraft(_PanelCompositionDraft):
     """Internal placement cites canonical Adapt copy without restating it."""
 
     lettering_ids: tuple[str, ...] = ()
+    lettering_reservations: tuple[LetteringReservation, ...] = ()
+
+    @model_validator(mode="after")
+    def _reservation_membership(self):
+        if tuple(item.lettering_item_id for item in self.lettering_reservations) != self.lettering_ids:
+            raise ValueError("Each assigned lettering ID requires exactly one reservation.")
+        return self
 
 
 class _PageDraft(BaseModel):
@@ -156,11 +165,15 @@ class _BookPlanDraft(BaseModel):
         return self
 
 
+class _LetteringPlacementDraft(LetteringReservationIntent):
+    panel_number: int = Field(strict=True, ge=1)
+
+
 class _PageDetailDraft(_PageDraft):
     """One authored destination per locked item; silent panels need no entries."""
 
     content: tuple[_PanelCompositionDraft, ...] = Field(min_length=1)
-    lettering_placements: dict[str, Annotated[int, Field(strict=True, ge=1)]]
+    lettering_placements: dict[str, _LetteringPlacementDraft]
 
 
 class _BookDetailDraft(_BookPlanDraft):
@@ -203,7 +216,7 @@ def _plan_response_schema(
             panel["properties"]["beat_ids"]["items"] = {"type": "string", "enum": list(page.beat_ids)}
             variant["properties"]["lettering_placements"] = {
                 "type": "object", "additionalProperties": False,
-                "properties": {item_id: {"type": "integer", "minimum": 1}
+                "properties": {item_id: {"$ref": "#/$defs/_LetteringPlacementDraft"}
                                for item_id in page.lettering_ids},
                 "required": list(page.lettering_ids),
             }
@@ -428,6 +441,12 @@ def build_book_plan_prompt(
         "beat after advancing beyond it. "
         + _SEMANTIC_PAGE_CONTRACT
         + "Author lettering_ids on each panel; use lettering_ids=[] for a silent panel. "
+        "Also author lettering_reservations as an ordered array, each with lettering_item_id matching those exact IDs; empty for silence. "
+        "Each reservation needs preferred_zone (top-left/top-center/top-right/middle-left/middle-right/"
+        "bottom-left/bottom-center/bottom-right), footprint (compact/standard/wide/tall), line_budget (1-30). "
+        "Optional bounds and tail_target use normalized PAGE space, never panel-local pixels. "
+        "Reserve quiet space for later software lettering; do not typeset or change wording. "
+        "speaker_entity_id may cite only that item's visible onscreen speaker; otherwise null. "
         + "Pages may bridge "
         "source-scene boundaries. Group adjacent story beats into varied multi-panel "
         "pages when that preserves action, reaction, detail, causality, and rhythm. "
@@ -622,9 +641,9 @@ def _detail_batch_prompt(
         + _SEMANTIC_PAGE_CONTRACT
         + "Detail response format: panels contain visual decisions only, with no lettering_ids field. "
         "Each page has lettering_placements: an object with exactly one required key for each "
-        "of that page's locked lettering IDs. Its value is the destination panel's 1-based "
-        "position in content, not a panel ID. For example, {\"lettering_A\":1,\"lettering_B\":3} "
-        "places A in the first panel, leaves the second silent, and places B in the third. "
+        "of that page's locked lettering IDs. Each value has panel_number (1-based position in content), "
+        "preferred_zone, footprint and line_budget; optional bounds/speaker_entity_id/tail_target. "
+        "For example lettering_A can reserve top-left standard space with line_budget=3 in panel_number=1. "
         "Multiple items may share a panel. Destinations must be nondecreasing in locked "
         "lettering order and must refer to existing panels carrying the item's beat. "
         "Choose each destination together with the matching visual moment. Code copies "
@@ -1014,7 +1033,7 @@ def _compile_detail_response(
                 f"Page {mapped.page_number} lettering_placements must assign every locked item "
                 f"exactly once: missing {sorted(missing)!r}; out-of-page {sorted(unknown)!r}."
             )
-        panels = [panel.model_dump(mode="json") | {"lettering_ids": []} for panel in page.content]
+        panels = [panel.model_dump(mode="json") | {"lettering_ids": [], "lettering_reservations": []} for panel in page.content]
         positions = {beat_id: index for index, beat_id in enumerate(mapped.beat_ids)}
         visual_ids = [beat_id for panel in panels for beat_id in panel["beat_ids"]]
         foreign_visual_ids = set(visual_ids) - positions.keys()
@@ -1030,7 +1049,7 @@ def _compile_detail_response(
             )
         previous_destination = 1
         for item_id in mapped.lettering_ids:
-            destination = placements[item_id]
+            destination = placements[item_id].panel_number
             if destination > len(panels):
                 raise ValueError(
                     f"Page {mapped.page_number}: {item_id} targets panel {destination}, "
@@ -1043,6 +1062,9 @@ def _compile_detail_response(
                     "destinations must preserve locked lettering order."
                 )
             panels[destination - 1]["lettering_ids"].append(item_id)
+            panels[destination - 1]["lettering_reservations"].append({"lettering_item_id": item_id, **placements[item_id].model_dump(
+                mode="json", exclude={"panel_number"},
+            )})
             previous_destination = destination
         for panel in panels:
             # These links follow the writer's exact word placement; they do
@@ -1062,10 +1084,12 @@ def _detail_response_view(draft: _BookPlanDraft) -> dict:
     for page in value["pages"]:
         placements = {}
         for number, panel in enumerate(page["content"], 1):
+            reservations = {item["lettering_item_id"]: {k: v for k, v in item.items() if k != "lettering_item_id"}
+                            for item in panel.pop("lettering_reservations")}
             for item_id in panel.pop("lettering_ids"):
                 if item_id in placements:
                     raise ValueError(f"Cannot serialize repeated lettering placement: {item_id}.")
-                placements[item_id] = number
+                placements[item_id] = {"panel_number": number, **reservations[item_id]}
         page["lettering_placements"] = placements
     return value
 
@@ -1091,6 +1115,14 @@ async def _generate_detail_batch(
         stop=stop,
         concerns=concerns,
     ) + story_instruction_section(story_instruction, stage="plan", fixed_page_map=True)
+    base_prompt += (
+        "\nLETTERING RESERVATIONS: each lettering_placements value is an OBJECT, not an integer. "
+        "Use panel_number (1-based), preferred_zone, footprint, line_budget; optional normalized PAGE "
+        "bounds, speaker_entity_id and tail_target. Reserve visually quiet negative space and a clear "
+        "tail corridor for software-added lettering; do not draw balloons or typeset the copy. "
+        "Speaker IDs must be that item's visible onscreen speaker, otherwise null. Bounds must fit "
+        "the full page, not the local panel. Keep all existing exact-ID and locked-order constraints."
+    )
     if previous_draft is not None:
         base_prompt += (
             "\n\nRepair only the cited staging/composition defects in this existing detail. "
@@ -1744,6 +1776,7 @@ def _canonical_pages(
     pages: list[ComicPage] = []
     for page in draft.pages:
         content_items: list[PageContent] = []
+        reservations: list[LetteringReservation] = []
         for content in page.content:
             lettering: list[LetteringItem] = []
             for lettering_id in content.lettering_ids:
@@ -1815,6 +1848,9 @@ def _canonical_pages(
                     )
                 claimed.add(lettering_id)
                 lettering.append(item)
+            if tuple(r.lettering_item_id for r in content.lettering_reservations) != content.lettering_ids:
+                raise ValueError("Every assigned lettering ID needs exactly one reservation; rerun Plan.")
+            reservations.extend(content.lettering_reservations)
             entity_ids, states, unapproved = _derived_state_citations(
                 content,
                 beat_by_id,
@@ -1840,7 +1876,7 @@ def _canonical_pages(
                     states.setdefault(entity_id, active_state_by_entity[entity_id])
             unapproved_changes.extend(unapproved)
             payload = content.model_dump(
-                exclude={"lettering_ids", "entity_ids", "appearance_states", "continuity_intent"}
+                exclude={"lettering_ids", "lettering_reservations", "entity_ids", "appearance_states", "continuity_intent"}
             )
             content_items.append(
                 PageContent(
@@ -1875,6 +1911,7 @@ def _canonical_pages(
                 rhythm_intent=page.rhythm_intent,
                 layout_intent=layout_intent,
                 content=content_items,
+                lettering_reservations=tuple(reservations),
                 reading_order=_canonical_reading_order(
                     page.reading_order,
                     content_items,

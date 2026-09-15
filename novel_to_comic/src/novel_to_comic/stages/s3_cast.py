@@ -17,7 +17,6 @@ from novel_to_comic.config import Config
 from novel_to_comic.generation_input import GenerationPromptInput
 from novel_to_comic.image_ref_strategy import RefStrategy
 from novel_to_comic.events import make_progress
-from novel_to_comic.models.appearance import AppearanceState
 from novel_to_comic.models.generation import PromptAnchor, PromptSubject
 from novel_to_comic.models.story_bible import Character, Prop, StoryBible
 from novel_to_comic.asset_versions import record_asset_version

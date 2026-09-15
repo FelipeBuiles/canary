@@ -6,6 +6,8 @@ export interface ReaderPage {
   pageNumber: number;
   revision: number;
   spreadRole: SpreadRole;
+  hybrid?: boolean;
+  letteringRevision?: number | null;
 }
 
 /**
@@ -32,6 +34,7 @@ export function readerPages(data: CompletePagesResponse | undefined): ReaderPage
       pageNumber: item.page.page_number,
       revision: item.active_render!.render.revision,
       spreadRole: item.page.spread_role,
+      ...(item.lettering_mode === "hybrid" ? {hybrid:true,letteringRevision:item.lettering_revision} : {}),
     }))
     .sort((a, b) => a.pageNumber - b.pageNumber);
 }
@@ -52,7 +55,7 @@ export function buildReaderViews(
   for (let index = 0; index < pages.length; index += 1) {
     const page = pages[index];
     const next = pages[index + 1];
-    const key = `page-${page.pageNumber}-rev-${page.revision}`;
+    const key = `page-${page.pageNumber}-rev-${page.revision}${page.hybrid ? `-lettering-${page.letteringRevision ?? 0}` : ""}`;
 
     if (page.spreadRole === "spread") {
       views.push({ key, kind: "wide", pages: [page] });

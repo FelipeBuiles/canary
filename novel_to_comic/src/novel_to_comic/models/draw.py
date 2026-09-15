@@ -39,7 +39,7 @@ class PageCapabilityProfile(BaseModel):
     provider: str = Field(min_length=1)
     model: str = Field(min_length=1)
     complete_page_generation: Literal[True] = True
-    exact_visible_lettering: Literal[True] = True
+    exact_visible_lettering: bool = True
     max_image_references: int = Field(ge=0)
     reference_ordering: Literal["ordered"]
     editing_modes: tuple[Literal["instructed", "region_targeted"], ...] = ()
@@ -154,9 +154,8 @@ class FrozenPageGenerationRequest(BaseModel):
             provider=profile.provider,
             model=profile.model,
             prompt=prompt,
-            lettering=[
-                lettering for item in page.content for lettering in item.lettering
-            ],
+            lettering=([lettering for item in page.content for lettering in item.lettering]
+                       if profile.exact_visible_lettering else []),
             references=references,
             output_width=profile.output_width,
             output_height=profile.output_height,

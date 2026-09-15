@@ -75,9 +75,32 @@ class PinnedGeometry(BaseModel):
 
     @model_validator(mode="after")
     def _fits_page(self) -> "PinnedGeometry":
-        if self.x + self.width > 1 or self.y + self.height > 1:
+        if self.x + self.width > 1 + 1e-9 or self.y + self.height > 1 + 1e-9:
             raise ValueError("pinned geometry must fit within the page")
         return self
+
+
+class NormalizedPoint(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+
+
+class LetteringReservationIntent(BaseModel):
+    """Coarse negative-space direction, not a typesetting/layout authority."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+    preferred_zone: Literal["top-left", "top-center", "top-right", "middle-left",
+                            "middle-right", "bottom-left", "bottom-center", "bottom-right"]
+    footprint: Literal["compact", "standard", "wide", "tall"]
+    line_budget: int = Field(ge=1, le=30)
+    bounds: PinnedGeometry | None = None
+    speaker_entity_id: str | None = None
+    tail_target: NormalizedPoint | None = None
+
+
+class LetteringReservation(LetteringReservationIntent):
+    lettering_item_id: str = Field(min_length=1)
 
 
 class AuthorGeometryPin(BaseModel):
@@ -145,6 +168,11 @@ class ComicPage(RevisionedArtifact):
     layout_intent: str = ""
     content: tuple[PageContent, ...] = Field(min_length=1)
     reading_order: tuple[str, ...] = Field(min_length=1)
+    # Absent on retained baked pages: omission preserves their original canonical
+    # serialization/hash. New Plan responses always supply the complete tuple.
+    lettering_reservations: tuple[LetteringReservation, ...] | None = Field(
+        default=None, exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def _validate_page(self) -> "ComicPage":
@@ -169,6 +197,22 @@ class ComicPage(RevisionedArtifact):
             raise ValueError(
                 "reading_order must contain every page content and lettering ID"
             )
+        if self.lettering_reservations is not None:
+            expected = [item.id for part in sorted(self.content, key=lambda c: c.order)
+                        for item in part.lettering]
+            if [r.lettering_item_id for r in self.lettering_reservations] != expected:
+                raise ValueError("reservations must match every lettering ID exactly once in locked order")
+            by_id = {item.id: (part, item) for part in self.content for item in part.lettering}
+            for reservation in self.lettering_reservations:
+                part, item = by_id[reservation.lettering_item_id]
+                if reservation.speaker_entity_id is not None and (
+                    reservation.speaker_entity_id not in part.entity_ids
+                    or reservation.speaker_entity_id != item.speaker_entity_id
+                    or item.delivery != "onscreen"
+                ):
+                    raise ValueError("reservation speaker must be the item's visible onscreen speaker")
+                if reservation.tail_target is not None and reservation.speaker_entity_id is None:
+                    raise ValueError("a tail target requires a visible speaker")
         return self
 
 

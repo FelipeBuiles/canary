@@ -54,6 +54,12 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/labs/runs/{run_id}` | `get_run` | `labs.py` |
 | `DELETE` | `/api/labs/runs/{run_id}` | `delete_run` | `labs.py` |
 | `GET` | `/api/labs/runs/{run_id}/cells/{image_idx}/{variant}/{model_id}/image` | `get_cell_image` | `labs.py` |
+| `GET` | `/api/lettering/pages/{page_number}/lettering` | `get_lettering` | `lettering.py` |
+| `PUT` | `/api/lettering/pages/{page_number}/lettering` | `put_lettering` | `lettering.py` |
+| `POST` | `/api/lettering/pages/{page_number}/lettering/reset` | `reset_page_lettering` | `lettering.py` |
+| `GET` | `/api/lettering/lettering/style` | `get_lettering_style` | `lettering.py` |
+| `PUT` | `/api/lettering/lettering/style` | `put_lettering_style` | `lettering.py` |
+| `GET` | `/api/lettering/pages/{page_number}/composite/{rendition}` | `get_page_composite` | `lettering.py` |
 | `POST` | `/api/operator_billing/refunds` | `refund_unused_credit_grant` | `operator_billing.py` |
 | `GET` | `/api/projects/{project}/pages` | `list_pages` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_number}` | `get_page` | `pages.py` |

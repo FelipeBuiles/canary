@@ -131,7 +131,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `provider` | `str` | `Field(min_length=1)` |
 | `model` | `str` | `Field(min_length=1)` |
 | `complete_page_generation` | `Literal[True]` | `True` |
-| `exact_visible_lettering` | `Literal[True]` | `True` |
+| `exact_visible_lettering` | `bool` | `True` |
 | `max_image_references` | `int` | `Field(ge=0)` |
 | `reference_ordering` | `Literal['ordered']` |  |
 | `editing_modes` | `tuple[Literal['instructed', 'region_targeted'], ...]` | `()` |
@@ -464,6 +464,9 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `trim_height` | `int | None` | `Field(default=None, gt=0)` |
 | `bleed_px` | `int` | `Field(default=0, ge=0)` |
 | `color_profile` | `str | None` | `None` |
+| `lettering_revision` | `int | None` | `None` |
+| `lettering_sha256` | `str | None` | `None` |
+| `composite_identity` | `str | None` | `None` |
 | `normalized_image_sha256` | `str | None` | `Field(default=None, min_length=64, max_length=64)` |
 | `invariant_failures` | `tuple[InvariantFailure, ...]` | `()` |
 | `diagnostics` | `tuple[PreflightDiagnostic, ...]` | `()` |
@@ -551,6 +554,70 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `appearance_locked` | `bool` | `False` |
 | `appearance_guard` | `str | None` | `None` |
 
+## RoleStyle _(lettering.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `font` | `FontName` | `'Comic Neue'` |
+| `font_weight` | `Literal[400, 700]` | `400` |
+| `min_font_size` | `float` | `Field(default=17, ge=12, le=100)` |
+| `max_font_size` | `float` | `Field(default=25, ge=12, le=180)` |
+| `line_height` | `float` | `Field(default=1.12, ge=0.9, le=2)` |
+| `align` | `Literal['left', 'center', 'right']` | `'center'` |
+| `color` | `Color` | `'#181818'` |
+| `fill` | `Color` | `'#ffffff'` |
+| `stroke` | `Color` | `'#181818'` |
+| `stroke_width` | `float` | `Field(default=1.8, ge=0, le=12)` |
+| `padding` | `float` | `Field(default=9, ge=0, le=40)` |
+| `corner_radius` | `float` | `Field(default=12, ge=0, le=80)` |
+| `shape` | `Literal['box', 'round', 'ellipse', 'cloud', 'none']` | `'round'` |
+| `letter_spacing` | `float` | `Field(default=0, ge=-1, le=12)` |
+| `text_stroke` | `Color` | `'transparent'` |
+| `text_stroke_width` | `float` | `Field(default=0, ge=0, le=12)` |
+
+## LetteringRoles _(lettering.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `caption` | `RoleStyle` | `Field(default_factory=lambda: RoleStyle(font='E...` |
+| `speech` | `RoleStyle` | `Field(default_factory=RoleStyle)` |
+| `thought` | `RoleStyle` | `Field(default_factory=lambda: RoleStyle(shape='...` |
+| `sfx` | `RoleStyle` | `Field(default_factory=lambda: RoleStyle(font='B...` |
+
+## ResolvedLettering _(lettering.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `engine_version` | `str` |  |
+| `locale` | `str` |  |
+| `text` | `str` | `Field(max_length=10000)` |
+| `lines` | `tuple[str, ...]` | `Field(max_length=500)` |
+| `font_size` | `float` | `Field(ge=12, le=180)` |
+| `line_height` | `float` | `Field(gt=0, le=360)` |
+| `height` | `float` | `Field(gt=0, le=1)` |
+| `overflow` | `bool` |  |
+| `warnings` | `tuple[str, ...]` | `()` |
+
+## LetteringElement _(lettering.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(min_length=1, max_length=100, pattern='^[...` |
+| `source_lettering_item_id` | `str | None` | `Field(default=None, max_length=100)` |
+| `role` | `RoleName` |  |
+| `text_by_locale` | `dict[Locale, Annotated[str, Field(max_length=10000)]]` |  |
+| `suggested_placement` | `PinnedGeometry` |  |
+| `placement` | `PinnedGeometry` |  |
+| `hidden` | `bool` | `False` |
+| `style_override` | `RoleStyle | None` | `None` |
+| `tail_target` | `NormalizedPoint | None` | `None` |
+| `suggested_tail_target` | `NormalizedPoint | None` | `None` |
+| `rotation` | `float` | `Field(default=0, ge=-180, le=180)` |
+| `scale` | `float` | `Field(default=1, ge=0.25, le=3)` |
+| `z_index` | `int` | `Field(default=0, ge=-1000, le=1000)` |
+| `tight_box` | `bool` | `True` |
+| `resolved` | `ResolvedLettering | None` | `None` |
+
 ## ApprovedPageRange _(page.py)_
 
 | Field | Type | Default |
@@ -585,6 +652,24 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `y` | `float` | `Field(ge=0, le=1)` |
 | `width` | `float` | `Field(gt=0, le=1)` |
 | `height` | `float` | `Field(gt=0, le=1)` |
+
+## NormalizedPoint _(page.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `x` | `float` | `Field(ge=0, le=1)` |
+| `y` | `float` | `Field(ge=0, le=1)` |
+
+## LetteringReservationIntent _(page.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `preferred_zone` | `Literal['top-left', 'top-center', 'top-right', 'middle-left', 'middle-right', 'bottom-left', 'bottom-center', 'bottom-right']` |  |
+| `footprint` | `Literal['compact', 'standard', 'wide', 'tall']` |  |
+| `line_budget` | `int` | `Field(ge=1, le=30)` |
+| `bounds` | `PinnedGeometry | None` | `None` |
+| `speaker_entity_id` | `str | None` | `None` |
+| `tail_target` | `NormalizedPoint | None` | `None` |
 
 ## AuthorGeometryPin _(page.py)_
 

@@ -53,7 +53,7 @@ from novel_to_comic.models.page import (
     ApprovedVisualReferenceInventory,
     ComicPage,
 )
-from novel_to_comic.style_contract import page_style_template
+from novel_to_comic.style_contract import page_style_template, page_art_style_template
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import ApiResult, UsageRecord, calculate_cost, calculate_cost_breakdown
 
@@ -117,7 +117,8 @@ def production_page_capability_profile() -> PageCapabilityProfile:
     """Return the single evaluated complete-page production profile."""
 
     return PageCapabilityProfile(
-        id=COMPLETE_PAGE_PROFILE_ID,
+        id=COMPLETE_PAGE_PROFILE_ID + "-hybrid-v1",
+        exact_visible_lettering=False,
         provider=COMPLETE_PAGE_PROVIDER,
         model=COMPLETE_PAGE_MODEL,
         max_image_references=COMPLETE_PAGE_MAX_REFERENCES,
@@ -137,7 +138,7 @@ def openai_page_capability_profile(model: str) -> PageCapabilityProfile:
     if model not in {"gpt-image-2.5-sunburst", "gpt-image-2.5-flare"}:
         raise ValueError("Unsupported complete-page OpenAI model")
     return PageCapabilityProfile(
-        id=f"{model}-complete-page-high-v1", provider="openai", model=model,
+        id=f"{model}-complete-page-high-hybrid-v1", exact_visible_lettering=False, provider="openai", model=model,
         max_image_references=16, reference_ordering="ordered",
         editing_modes=("instructed", "region_targeted"),
         output_width=1024, output_height=1536, max_prompt_characters=32_000,
@@ -154,7 +155,7 @@ def muse_page_capability_profile() -> PageCapabilityProfile:
         # Its native documented image output is 1920×1280 (3:2), so a complete
         # comic-page edition must freeze that supported geometry rather than
         # claiming the portrait dimensions supported by other Draw models.
-        id="muse-image-complete-page-v2", provider="openrouter", model="meta/muse-image",
+        id="muse-image-complete-page-hybrid-v1", exact_visible_lettering=False, provider="openrouter", model="meta/muse-image",
         max_image_references=10, reference_ordering="ordered",
         editing_modes=("instructed", "region_targeted"),
         output_width=1920, output_height=1280, max_prompt_characters=32_000,
@@ -178,7 +179,8 @@ def _supported_page_profile(profile: PageCapabilityProfile) -> bool:
     )
 
 
-_CODEX_PAGE_PROFILE_PREFIX = "codex-dev-complete-page-v1-"
+_CODEX_PAGE_PROFILE_PREFIX = "codex-dev-complete-page-hybrid-v1-"
+_LEGACY_CODEX_PAGE_PROFILE_PREFIX = "codex-dev-complete-page-v1-"
 
 
 def current_page_capability_profile(config: Config | None = None) -> PageCapabilityProfile:
@@ -205,6 +207,7 @@ def current_page_capability_profile(config: Config | None = None) -> PageCapabil
     )
     return PageCapabilityProfile(
         id=_CODEX_PAGE_PROFILE_PREFIX + hashlib.sha256(binding.encode()).hexdigest(),
+        exact_visible_lettering=False,
         provider="codex-dev",
         model=route.image_model,
         max_image_references=5,
@@ -225,7 +228,8 @@ def page_profile_uses_native_dimensions(profile: PageCapabilityProfile) -> bool:
     return (
         profile.provider == "codex-dev"
         and profile.model == "gpt-image-2"
-        and re.fullmatch(re.escape(_CODEX_PAGE_PROFILE_PREFIX) + r"[0-9a-f]{64}", profile.id) is not None
+        and any(re.fullmatch(re.escape(prefix) + r"[0-9a-f]{64}", profile.id) is not None
+                for prefix in (_CODEX_PAGE_PROFILE_PREFIX, _LEGACY_CODEX_PAGE_PROFILE_PREFIX))
     )
 
 
@@ -241,6 +245,20 @@ def complete_page_adapter(config: Config) -> CompletePageAdapter:
         return CodexCompletePageAdapter(config)
     return VertexCompletePageAdapter(GoogleVertexCompletePageTransport(config))
 
+
+
+def retained_baked_profile(profile: PageCapabilityProfile) -> bool:
+    """Recognize saved editions for inspection, never select them for new spend."""
+    if not profile.exact_visible_lettering:
+        return False
+    return (
+        (profile.id == COMPLETE_PAGE_PROFILE_ID and profile.provider == COMPLETE_PAGE_PROVIDER and profile.model == COMPLETE_PAGE_MODEL)
+        or (profile.provider == "openai" and profile.model in {"gpt-image-2.5-sunburst", "gpt-image-2.5-flare"}
+            and profile.id == f"{profile.model}-complete-page-high-v1")
+        or (profile.provider == "openrouter" and profile.model == "meta/muse-image" and profile.id == "muse-image-complete-page-v2")
+        or (profile.provider == "codex-dev" and profile.model == "gpt-image-2"
+            and re.fullmatch(re.escape(_LEGACY_CODEX_PAGE_PROFILE_PREFIX) + r"[0-9a-f]{64}", profile.id) is not None)
+    )
 
 def select_book_edition(
     *,
@@ -258,7 +276,7 @@ def select_book_edition(
         )
     ):
         raise ValueError("one model and capability profile are fixed for the edition")
-    if not _supported_page_profile(profile):
+    if not _supported_page_profile(profile) and not (existing is not None and retained_baked_profile(profile)):
         raise ValueError(
             "provider/model does not satisfy the current complete-page capability profile; "
             "existing editions cannot change profiles"
@@ -277,8 +295,11 @@ def ensure_current_page_edition(
     artifacts: TargetArtifacts,
     edition: BookEdition,
     config: Config | None = None,
+    *, allow_retained_review: bool = False,
 ) -> BookEdition:
-    """Reject incompatible editions without rewriting their fixed selection."""
+    """New spend is strict; retained baked art remains inspectable without rebinding."""
+    if allow_retained_review and retained_baked_profile(edition.capability_profile):
+        return edition
     if edition.capability_profile != current_page_capability_profile(config):
         raise ValueError(
             "This edition uses a different page profile. Existing editions cannot "
@@ -339,6 +360,7 @@ def _compile_prompt(
     style_template: str = "",
     correction_context: "PageCorrectionContext | None" = None,
     cast_art_direction: Mapping[str, str] | None = None,
+    exact_visible_lettering: bool = True,
 ) -> str:
     # Identity is independent of state labels and reference traversal order.
     entity_ids = sorted({
@@ -505,6 +527,22 @@ def _compile_prompt(
                 "continuity": list(correction_context.beat_transitions),
                 "sources": list(correction_context.source_texts),
             }
+    if not exact_visible_lettering:
+        if page.lettering_reservations is None:
+            raise ValueError("This Plan predates lettering reservations. Rerun Plan before drawing a hybrid edition.")
+        payload.pop("exact_lettering")
+        payload["project_style_direction"] = page_art_style_template(style_template)
+        assignment = {item.id: (part, item) for part in ordered_content for item in part.lettering}
+        payload["lettering_reservations"] = [
+            {"id": reservation.lettering_item_id,
+             "panel": assignment[reservation.lettering_item_id][0].order,
+             "kind": assignment[reservation.lettering_item_id][1].kind,
+             "delivery": assignment[reservation.lettering_item_id][1].delivery,
+             **reservation.model_dump(mode="json", exclude={"lettering_item_id", "speaker_entity_id"}),
+             "speaker_subject": handles.get(reservation.speaker_entity_id)}
+            for reservation in page.lettering_reservations
+        ]
+        return _hybrid_prompt(payload, page, depiction)
     depiction_direction = (
         "Use framing, shadow, reaction, or aftermath for graphic details. Preserve "
         "approved identity, costume, story events, exact lettering, and page layout. "
@@ -541,6 +579,52 @@ def _compile_prompt(
         "no visible metadata, asset handles, subject labels or reference callouts."
     )
 
+
+
+def _hybrid_prompt(payload: dict, page: ComicPage, depiction: str) -> str:
+    copy = sorted({item.text for content in page.content for item in content.lettering}, key=len, reverse=True)
+
+    # Remove quoted publishable phrases from editorial/context prose without
+    # corrupting identifiers or verbatim reference authorities. Short utterances
+    # can also be ordinary English ("I", "No"); their occurrence in visual prose
+    # is not a lettering payload. Canonical text fields are absent altogether.
+    authority_fields = {"visual_anchor", "continuity_guard"}
+
+    def without_copy(value, field=""):
+        if field in authority_fields:
+            return value
+        if isinstance(value, str):
+            for text in copy:
+                if text and len(text.strip()) >= 12:
+                    value = value.replace(text, "[story copy omitted; reserve its space]")
+            return value
+        if isinstance(value, list):
+            return [without_copy(item, field) for item in value]
+        if isinstance(value, dict):
+            return {key: without_copy(item, key) for key, item in value.items()}
+        return value
+
+    payload = without_copy(payload)
+    policy = (
+        "Render exactly one COMPLETE COMIC PAGE of base artwork, never per-panel assets.\n"
+        "LETTERING POLICY: Final dialogue, thoughts, narration, captions and sound effects are added "
+        "after illustration by Canary. Draw NO speech or thought balloons, caption/narration boxes, "
+        "SFX glyphs, subtitles, words, placeholder text, lorem ipsum or pseudo-writing for these elements. "
+        "Do not draw the balloon or box itself. For every reservation preserve quiet negative space: "
+        "no faces, hands, focal props or indispensable details inside it. Keep a clean tail corridor "
+        "to the named speaker. Reservation IDs and panel numbers are off-canvas bindings. "
+        "Legitimate in-world signage is distinct; never substitute it for publishable copy.\n"
+        "AUTHORITY: preserve approved subject/state references, physical anchors and continuity guards "
+        "verbatim in meaning, current staging, selected art direction, page framing and author pins. "
+        "Compose around reservations while retaining artistic freedom outside them. "
+        "Style proof images are RENDERING/STYLE authority only: do not copy their words, balloons, "
+        "captions or page content. The parent-edit-base is immutable art, not a lettered proof.\n"
+    )
+    if depiction == "less_graphic":
+        policy += "Use framing, shadow, reaction or aftermath for graphic details; preserve identity, story and references.\n"
+    return policy + json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + (
+        "\nOUTPUT: one complete page of artwork with quiet lettering reservations. NO generated comic lettering."
+    )
 
 def compile_page_generation_request(
     page: ComicPage,
@@ -642,6 +726,7 @@ def compile_page_generation_request(
         style_template,
         correction_context,
         cast_art_direction,
+        exact_visible_lettering=selected_edition.capability_profile.exact_visible_lettering,
     )
     request = FrozenPageGenerationRequest.compile(
         page=page,

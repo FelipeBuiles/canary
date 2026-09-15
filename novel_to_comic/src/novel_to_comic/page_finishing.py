@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from novel_to_comic.artifact_lock import locked_mutation
+
 import hashlib
 import io
 import os
@@ -334,6 +336,8 @@ def _page_identity(preflight: FinishPreflight) -> tuple:
                 page.comic_page_sha256,
                 page.render_revision,
                 page.render_image_sha256,
+                page.lettering_sha256,
+                page.composite_identity,
             )
             for page in preflight.pages
         ),
@@ -462,6 +466,7 @@ def _package_exports(
     return tuple(packages)
 
 
+@locked_mutation
 def finish_book(
     artifacts: TargetArtifacts,
     *,
@@ -496,6 +501,17 @@ def finish_book(
             dpi=dpi,
         )
     pages = tuple(artifacts.read_page(item.page_number) for item in plan.pages)
+    # Seed every missing presentation before creating any normalized output.
+    # Initial lettering writes invalidate Finish, so lazy seeding inside the
+    # loop would delete earlier pages during a book's first multi-page export.
+    lettering_setup_errors: dict[int, str] = {}
+    if not edition.capability_profile.exact_visible_lettering:
+        from novel_to_comic.lettering.service import ensure_lettering
+        for page in pages:
+            try:
+                ensure_lettering(artifacts, page.page_number)
+            except (OSError, ValueError, ArtifactMissing, ArtifactInvalid) as exc:
+                lettering_setup_errors[page.page_number] = str(exc)
     # Optional OCR evidence is read-only here. Export never runs or repairs a checker.
     analyses: dict[int, RenderAnalysis] = {}
     for page in pages:
@@ -831,6 +847,26 @@ def finish_book(
                 )
             )
 
+        lettering_revision = None
+        lettering_sha256 = None
+        composite_key = None
+        if (not failures and not unresolved and image is not None and render is not None
+                and not edition.capability_profile.exact_visible_lettering):
+            from novel_to_comic.lettering.service import composite_page
+            try:
+                if selected.page_number in lettering_setup_errors:
+                    raise ValueError(lettering_setup_errors[selected.page_number])
+                composite_path, composite_key = composite_page(artifacts, selected.page_number,
+                                                              expected_render_revision=render.revision)
+                state = artifacts.read_lettering(selected.page_number)
+                lettering_revision, lettering_sha256 = state.revision, state.content_sha256
+                image = composite_path.read_bytes()
+            except (OSError, ValueError) as exc:
+                failures.append(_failure(
+                    page_number=selected.page_number, owner_stage="finish", code="lettering_layout",
+                    message="Open Lettering to resolve this page's layout. No artwork redraw is required.",
+                    artifact_ids=(f"lettering/page_{selected.page_number:03d}",), evidence=(str(exc),),
+                ))
         normalized_sha256 = None
         if not failures and not unresolved and image is not None and page_production is not None:
             normalized_path = artifacts.normalized_page_path(selected.page_number)
@@ -875,6 +911,8 @@ def finish_book(
                     page_production.color_profile if normalized_sha256 is not None else None
                 ),
                 normalized_image_sha256=normalized_sha256,
+                lettering_revision=lettering_revision, lettering_sha256=lettering_sha256,
+                composite_identity=composite_key,
                 invariant_failures=tuple(failures),
                 diagnostics=tuple(diagnostics),
                 unresolved_editorial_issue_ids=unresolved,

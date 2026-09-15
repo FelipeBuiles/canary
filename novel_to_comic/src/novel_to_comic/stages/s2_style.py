@@ -81,6 +81,7 @@ class StyleSuggestion(BaseModel):
     line_rendering: str
     lighting_value: str
     lettering: str
+    lettering_preset: Literal["literary", "classic", "pulp", "minimal"] = "literary"
     page_framing: str
     sequential_art_strengths: str
     story_fit: str
@@ -173,7 +174,10 @@ _SYSTEM_PROMPT = (
     "never narrows medium. Every style needs label, medium, visual_logic "
     "(photographic, realistic_illustration, stylized, or graphic), portfolio_role, "
     "palette, line_rendering, lighting_value, lettering, page_framing, "
-    "sequential_art_strengths, story_fit, risk, and template. All production standards "
+    "sequential_art_strengths, story_fit, risk, and template. Also choose lettering_preset: literary "
+    "(serif captions/comic speech), classic (comic type), pulp (typewriter captions/bold effects), "
+    "or minimal (quiet modern). This is the editable post-production style, consistent with lettering prose. "
+    "All production standards "
     "must be concise prose strings, never objects or arrays. Template is 40-70 words."
 )
 
@@ -186,6 +190,8 @@ def _stable_suggestion_id(suggestion: dict) -> str:
         suggestion.get("lettering") or DEFAULT_LETTERING_STANDARD,
         suggestion.get("page_framing") or DEFAULT_PAGE_FRAMING_STANDARD,
     )
+    if suggestion.get("lettering_preset"):
+        values += (suggestion["lettering_preset"],)
     material = "\n".join(str(value or "").strip() for value in values)
     return f"style_{hashlib.sha256(material.encode('utf-8')).hexdigest()[:16]}"
 
@@ -214,6 +220,8 @@ def normalize_suggestion(
         "risk": suggestion.get("risk") or "",
         "template": suggestion.get("template") or "",
     }
+    if suggestion.get("lettering_preset") in {"literary", "classic", "pulp", "minimal"}:
+        normalized["lettering_preset"] = suggestion["lettering_preset"]
     if suggestion.get("direction_id"):
         normalized["direction_id"] = suggestion["direction_id"]
     return normalized

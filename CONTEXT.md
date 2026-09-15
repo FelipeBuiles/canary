@@ -33,15 +33,17 @@ approval before the pipeline advances.
 concept; they do not rename or merge backend stages.
 
 **Pages station** — Station 03, where the book adaptation is planned into
-pages, complete pages are generated, and page revisions are reviewed.
+pages, complete pages are generated, page revisions are reviewed, and hybrid
+lettering is edited without regenerating the artwork.
 _Avoid_: Panels station
 
 **Auto step** — Pipeline work that runs without an approval decision and is
 presented for inspection when useful.
 
 **Draw stage** — The pipeline stage that exclusively generates complete comic
-page revisions. It does not generate independently assembled production
-panels.
+page revisions. Hybrid editions request base art composed around lettering
+reservations; retained baked editions already contain lettering. It does not
+generate independently assembled production panels.
 
 **Brief stage** — The pipeline stage that proposes the adaptation brief and
 turns it into an authoritative contract through user approval or editing. Its
@@ -57,11 +59,13 @@ and book adaptation into canonical ComicPages, including page allocation,
 spread rhythm, page-turn intent, reading order, and semantic layout intent.
 It allocates Adapt's complete lettering by citing lettering IDs; the wording
 itself is copied from the adaptation and is never restated, so it cannot be
-rewritten or shortened.
+rewritten or shortened. It also assigns coarse space reservations for the
+post-production lettering, not exact typesetting.
 
 **Finish stage** — The final pipeline stage, which checks book readiness,
-performs production-safe normalization, and packages the book for export.
-It does not generate or correct artwork or lettering.
+deterministically composites saved lettering over hybrid base art, performs
+production-safe normalization, and packages the book for export. It does not
+author copy or generate or correct artwork.
 _Avoid_: Compose stage
 
 **Story Bible** — The shared story understanding used by later pipeline work:
@@ -128,13 +132,37 @@ are optional author constraints, not mandatory planned structure. Universal
 panel-count and word-count caps are not part of the canonical page model.
 
 **Page render** — A derived visual realization of a specific ComicPage
-revision. Text embedded in a page render is not canonical copy.
+revision. Its stored artwork bytes are immutable. Text accidentally embedded
+in hybrid base art is not the publishable lettering layer.
+
+**Hybrid edition** — A Draw edition that keeps full-page base art separate from
+editable software-rendered lettering. A retained baked edition still reads and
+exports its original raster, without an additional lettering overlay.
+
+**Lettering reservation** — Plan-owned negative-space and speaker-corridor
+intent for a source lettering item. A reservation is a composition suggestion,
+not proof that the generated artwork left that region empty.
+
+**Page lettering** — An independently revisioned presentation linked to a
+canonical page. It holds normalized placement, display wording, language,
+style overrides, and resolved lines without changing the source adaptation.
+
+**Display copy** — Edition-local wording or translation rendered on the page.
+Reset copy restores canonical Adapt text; reset placement separately restores
+the original layout suggestion.
+
+**Lettering style** — The book-wide defaults for captions, speech, thought,
+and sound effects, with optional local element overrides.
+
+**Composite** — The derived finished image of immutable base art plus resolved
+lettering. Its identity includes artwork, copy, language, style, and renderer
+version; changing it is not an image-generation event.
 
 **Render analysis** — Derived observations about a page render, such as
 detected panel boundaries, reading order, and recognized lettering. It is
 validation evidence, not author intent.
 
-**Lettering comparison policy** — The single named rule for comparing canonical
+**Lettering comparison policy** — The retained baked-edition rule for comparing canonical
 lettering with recognized lettering. It folds representation differences that
 carry no meaning — quote and dash forms, ellipses, line breaks introduced by
 the letterer, repeated whitespace — and nothing else. Case and wording
@@ -155,7 +183,8 @@ canonical input to page assembly.
 
 **Page issue** — An evidence-backed user or validator concern attached to a
 page-render revision. It may target a detected panel region or lettering item,
-but correction always produces a complete new page revision.
+but an artwork correction always produces a complete new page revision.
+Display-copy and placement fixes use independent lettering edits instead.
 
 **Primary ref** — The user's chosen canonical character reference used to
 support consistent depiction.

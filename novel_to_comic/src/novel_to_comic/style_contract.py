@@ -21,7 +21,7 @@ FRAMING_MARKER = "PAGE FRAMING STANDARD —"
 def rendering_style_template(visual_style: str) -> str:
     """Extract art direction without page lettering or framing contracts."""
     rendering = visual_style or ""
-    for marker in (LETTERING_MARKER, FRAMING_MARKER):
+    for marker in (LETTERING_MARKER, FRAMING_MARKER, "POST-PRODUCTION LETTERING PRESET —"):
         rendering = rendering.split(marker, 1)[0]
     return rendering.strip()
 
@@ -67,8 +67,29 @@ def normalize_production_standard(
 
 def style_template_for_suggestion(suggestion: dict) -> str:
     """Return the complete selected style authority for samples and pages."""
-    return page_style_template(
+    template = page_style_template(
         str(suggestion.get("template") or ""),
         lettering=normalize_production_standard(suggestion.get("lettering"), kind="lettering"),
         page_framing=normalize_production_standard(suggestion.get("page_framing"), kind="page_framing"),
     )
+    preset = suggestion.get("lettering_preset")
+    if preset in {"literary", "classic", "pulp", "minimal"}:
+        template += f"\n\nPOST-PRODUCTION LETTERING PRESET — {preset}"
+    return template
+
+
+POST_LETTERING_MARKER = "POST-PRODUCTION LETTERING PRESET —"
+
+
+def page_art_style_template(visual_style: str) -> str:
+    """Visual rendering and framing, never typesetting instructions."""
+    rendering = rendering_style_template(visual_style).split(POST_LETTERING_MARKER)[0].strip()
+    framing = (visual_style.split(FRAMING_MARKER, 1)[1].split(POST_LETTERING_MARKER)[0].strip()
+               if FRAMING_MARKER in visual_style else DEFAULT_PAGE_FRAMING_STANDARD)
+    return f"{rendering}\n\n{FRAMING_MARKER} {framing}"
+
+
+def post_production_lettering_direction(template: str) -> str:
+    if LETTERING_MARKER not in template:
+        return DEFAULT_LETTERING_STANDARD
+    return template.split(LETTERING_MARKER, 1)[1].split(FRAMING_MARKER)[0].split(POST_LETTERING_MARKER)[0].strip()
