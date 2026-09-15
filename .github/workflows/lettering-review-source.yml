@@ -1,0 +1,22 @@
+name: Lettering regression source
+# Temporary, read-only branch fixture. Removed before review is complete.
+on:
+  push:
+    branches: [feat-lettering-desk-20260915]
+    paths: [.github/workflows/lettering-review-source.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: git archive --format=tar.gz --output=/tmp/lettering-source.tar.gz HEAD
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lettering-regression-source
+          path: /tmp/lettering-source.tar.gz
+          retention-days: 1
+          if-no-files-found: error
