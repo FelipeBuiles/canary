@@ -46,12 +46,24 @@ from novel_to_comic.usage import ApiResult, estimate_text_cost
 
 
 _MAX_ADAPT_ATTEMPTS = 2
+# A normal adaptation gets one bounded repair.  Editorial review happens after
+# that repair, however, so the repaired prose can expose a *different* reader
+# facing defect.  Allow one final, review-only correction in that narrow case
+# instead of making the author manually restart the stage.
+_MAX_ADAPT_VALIDATION_ATTEMPTS = _MAX_ADAPT_ATTEMPTS + 1
 _ADAPT_SHARD_MAX_UNITS = 180
 _ADAPT_MAX_CONCURRENCY = 4
 _ADAPT_OUTPUT_BUDGET_RATIO = 0.65
 # Beats plus compact ledger exceptions are materially smaller than the source;
 # the canonical per-unit ledger is expanded locally after generation.
 _ADAPT_OUTPUT_TOKENS_PER_SOURCE_CHAR = 0.5
+# A blueprint is structural JSON, not the final script.  Its output needs room
+# for a large source shard, but leaving OpenRouter's 131k model ceiling in
+# place lets mandatory low-effort GLM reasoning consume roughly 26k tokens
+# before it starts the compact object.  That produced fragile 15-minute
+# streams and repeated mid-stream disconnects.  This leaves ample room for
+# the largest observed blueprint while bounding its reasoning stream.
+_BLUEPRINT_MAX_OUTPUT_TOKENS = 24_000
 _MISSING_LEDGER_EXCEPTION = "missing_model_authored_omission_exception"
 _ADAPT_CHECKPOINT_VERSION = 2
 
@@ -379,6 +391,97 @@ def _constrain_source_schema(schema: dict, source_unit_ids: tuple[str, ...]) -> 
     constrain_sources(schema)
 
 
+def _approved_appearance_states(story_bible: StoryBible) -> dict[str, tuple[str, ...]]:
+    """Return the only visual-state IDs Adapt may activate for each entity.
+
+    A base appearance deliberately has no state ID. Any named appearance
+    change therefore needs a Story-owned state that Cast can either render as a
+    distinct reference or explicitly mark canonical-equivalent.
+    """
+
+    return {
+        entity.id: tuple(state.id for state in entity.appearance_states)
+        for entity in (*story_bible.characters, *story_bible.locations, *story_bible.props)
+    }
+
+
+def _constrain_appearance_state_schema(schema: dict, story_bible: StoryBible) -> None:
+    """Make invented appearance-state IDs impossible in Adapt JSON output."""
+
+    state_ids_by_entity = _approved_appearance_states(story_bible)
+    change_schema = schema.get("$defs", {}).get("AppearanceChange")
+    if not isinstance(change_schema, dict):
+        return
+    variants: list[dict[str, Any]] = []
+    for entity_id, state_ids in state_ids_by_entity.items():
+        if not state_ids:
+            continue
+        variant = deepcopy(change_schema)
+        properties = variant["properties"]
+        properties["entity_id"] = {"type": "string", "enum": [entity_id]}
+        properties["to_state_id"] = {"type": "string", "enum": list(state_ids)}
+        properties["from_state_id"] = {
+            "anyOf": [
+                {"type": "null"},
+                {"type": "string", "enum": list(state_ids)},
+            ]
+        }
+        variants.append(variant)
+
+    def constrain_changes(node: Any) -> None:
+        if isinstance(node, dict):
+            changes = node.get("properties", {}).get("appearance_changes")
+            if isinstance(changes, dict):
+                if variants:
+                    changes["items"] = {"anyOf": deepcopy(variants)}
+                else:
+                    changes["maxItems"] = 0
+            for child in node.values():
+                constrain_changes(child)
+        elif isinstance(node, list):
+            for child in node:
+                constrain_changes(child)
+
+    constrain_changes(schema)
+
+
+def _appearance_state_authority_failures(
+    adaptation: BookAdaptation,
+    story_bible: StoryBible,
+) -> list[InvariantFailure]:
+    """Report each missing visual authority once, at its owning Adapt beat."""
+
+    approved = _approved_appearance_states(story_bible)
+    failures: list[InvariantFailure] = []
+    seen: set[tuple[str, str]] = set()
+    for beat in adaptation.beats:
+        for change in beat.appearance_changes:
+            pair = (change.entity_id, change.to_state_id)
+            if pair in seen or change.to_state_id in approved.get(change.entity_id, ()):
+                continue
+            seen.add(pair)
+            failures.append(InvariantFailure(
+                id=(
+                    "adapt_failure_unapproved_appearance_state_"
+                    f"{beat.id}_{change.to_state_id}"
+                ),
+                owner_stage="adapt",
+                code="unapproved_appearance_state",
+                message=(
+                    "An appearance change must use a Story Bible state that Cast "
+                    "can reference. Base appearances have no state ID."
+                ),
+                source_unit_ids=beat.source_unit_ids,
+                artifact_ids=[beat.id, change.entity_id, change.to_state_id],
+                evidence=[
+                    f"Beat {beat.id!r} changes {change.entity_id!r} into "
+                    f"{change.to_state_id!r}, but that entity's Story Bible "
+                    "appearance_states does not declare it."
+                ],
+            ))
+    return failures
+
+
 class _AdaptCheckpoint(BaseModel):
     """Hash-keyed cache entry for one paid Adapt response."""
 
@@ -607,7 +710,9 @@ def _canonicalize_candidate_requirements(
             ).model_dump(mode="json"),
             "beats": [
                 beat.model_dump(mode="json")
-                for beat in _canonicalize_prior_states(beats)
+                for beat in _canonicalize_reveal_responses(
+                    _canonicalize_prior_states(beats)
+                )
             ],
             "ledger": [entry.model_dump(mode="json") for entry in draft.ledger],
         }
@@ -615,6 +720,47 @@ def _canonicalize_candidate_requirements(
     return _materialize_protected_lettering(
         canonical, source, brief, story_bible=story_bible
     )
+
+
+def _has_explicit_reveal_response(beat: AdaptedBeat) -> bool:
+    """Whether this reveal already shows a source-backed response on the page."""
+    return "character_turn" in beat.story_functions or any(
+        item.kind == "thought"
+        and item.speaker_entity_id in beat.entity_ids
+        and bool(set(item.source_unit_ids).intersection(beat.source_unit_ids))
+        for item in beat.lettering
+    )
+
+
+def _canonicalize_reveal_responses(beats: list[AdaptedBeat]) -> list[AdaptedBeat]:
+    """Derive a reaction tag from an explicit reader-visible response.
+
+    A structural label should not erase what the canonical script already
+    proves. When a reveal includes either a declared character turn or an
+    on-beat, source-cited thought by a visible participant, the reader has
+    received the response before the transition. Canonicalizing that fact
+    makes the invariant deterministic and gives Plan an honest story function.
+    This deliberately does not infer a reaction from a neutral caption,
+    summary, or an unrelated later beat.
+    """
+    canonical: list[AdaptedBeat] = []
+    for beat in beats:
+        functions = set(beat.story_functions)
+        if (
+            "reveal" in functions
+            and not functions.intersection({"reaction", "aftermath"})
+            and _has_explicit_reveal_response(beat)
+        ):
+            # Preserve the author's original ordering; only add the derived
+            # structural truth that downstream validation and planning use.
+            canonical.append(
+                beat.model_copy(
+                    update={"story_functions": (*beat.story_functions, "reaction")}
+                )
+            )
+        else:
+            canonical.append(beat)
+    return canonical
 
 
 def _canonicalize_prior_states(beats: list[AdaptedBeat]) -> list[AdaptedBeat]:
@@ -776,11 +922,16 @@ def _closest_requirement_beat(
 
 
 def _protected_language_key(text: str) -> str:
-    return re.sub(
+    wording = re.sub(
         r"\s+/\s+",
         " ",
         normalize_display_text(text),
     )
+    # Briefs frequently preserve dialogue with source quotation marks, while
+    # a comic balloon correctly carries only the spoken words.  Those wrappers
+    # are presentation, not protected wording; retain every interior character
+    # (including Spanish opening/closing punctuation) for the verbatim check.
+    return wording.strip().strip('"“”«»').strip()
 
 
 def _quoted_source_wording(text: str) -> tuple[str, ...]:
@@ -1462,7 +1613,11 @@ def build_adaptation_blueprint_prompt(
     }
     faithful = (
         "For this faithful adaptation, preserve every causal step and each "
-        "source-supported consequence or reaction before a transition. "
+        "source-supported consequence or reaction before a transition. For every "
+        "beat tagged reveal, before its next transition tag reaction or aftermath "
+        "on the source-backed response beat; if the reveal itself contains the "
+        "character's realization, tag that same beat reaction as well as reveal. "
+        "Do not invent a response solely to satisfy the tag. "
         if brief.transformation_level == "faithful"
         else ""
     )
@@ -1486,7 +1641,10 @@ def build_adaptation_blueprint_prompt(
         "(time, place, knowledge, or emotional_state), scope_id (a stable entity "
         "or narrative-thread ID), from_state, to_state, and description; from_state "
         "and to_state must differ and describe a source-supported change. "
-        "Record appearance changes using stable Story Bible IDs. "
+        "Record an appearance change only when the Story Bible declares its "
+        "entity-scoped state ID. Base appearances have no state ID: do not turn "
+        "an ordinary description, first sighting, or default outfit into a named "
+        "appearance change. "
         "Do not write dialogue, captions, thoughts, SFX, "
         "pages, panels, or layouts: another locked expansion pass writes the final "
         "words without changing this structure. Do not return a canonical ledger. "
@@ -1636,7 +1794,7 @@ def estimate_book_adaptation_cost(
     story_instruction: str = "",
     artifacts: TargetArtifacts | None = None,
 ) -> float:
-    """Estimate remaining clean work, one full repair scenario and re-review.
+    """Estimate remaining clean work, two potential repair scenarios and re-review.
 
     Known matching checkpoints cost nothing. Unknown output lengths remain
     projections; this quote is not a spend ceiling. In particular a semantic
@@ -1650,7 +1808,7 @@ def estimate_book_adaptation_cost(
         try:
             require_narrative_review(artifacts, "adapt", context)
         except ValueError:
-            return estimate_narrative_review(model, context)
+            return estimate_narrative_review(model, context, passes=1)
         return 0.0
     resume_work = (_resume_adaptation_work(
         source, story_bible, brief, artifacts=artifacts, model=model, instruction=story_instruction,
@@ -1724,8 +1882,15 @@ def estimate_book_adaptation_cost(
             source, story_bible, brief, treatment, primary_source_unit_ids=ids,
             owned_requirement_ids=requirements[index], shard_index=index + 1, shard_count=len(shards),
         ) + instruction_suffix
-        repair += estimate_text_cost(model, repair_prompt, output_chars=projected_chars)
-        repair += estimate_text_cost(model, projected_chars)  # previous scoped draft in repair input
+        # A normal validation failure gets one repair. A repaired draft can
+        # expose a distinct, evidence-backed narrative fault during review, so
+        # include the one additional bounded narrative correction too.
+        repair += _MAX_ADAPT_ATTEMPTS * estimate_text_cost(
+            model, repair_prompt, output_chars=projected_chars,
+        )
+        repair += _MAX_ADAPT_ATTEMPTS * estimate_text_cost(
+            model, projected_chars,  # previous scoped draft in repair input
+        )
 
     from novel_to_comic.narrative_review import estimate_narrative_review
     candidate = resume_work.candidate if resume_work else None
@@ -1735,15 +1900,16 @@ def estimate_book_adaptation_cost(
             and candidate.brief_sha256 == brief.content_sha256):
         review = estimate_narrative_review(model, {
             **adaptation_context(source, brief, candidate), "approved_story_instruction": story_instruction,
-        })
+        }, passes=_MAX_ADAPT_VALIDATION_ATTEMPTS)
     else:
         # Unknown candidate: each future source window carries global treatment,
         # source evidence and projected beat context. Two reviews, including the
-        # repaired candidate, are an explicit scenario rather than a percentage.
+        # repaired candidate, plus the narrowly permitted final narrative
+        # correction, are an explicit scenario rather than a percentage.
         review = estimate_text_cost(
             model, source.text + brief.model_dump_json() + treatment.model_dump_json(),
             output_chars=5_000,
-        ) * _adapt_review_window_count(source) * 2
+        ) * _adapt_review_window_count(source) * _MAX_ADAPT_VALIDATION_ATTEMPTS
     return clean + repair + review
 
 
@@ -1853,6 +2019,7 @@ def _validate_blueprint_scope(
     *,
     source_unit_ids: tuple[str, ...],
     owned_requirement_ids: tuple[str, ...],
+    require_reveal_follow_through: bool = False,
 ) -> None:
     """Fail compact structure before paying to write its final prose."""
 
@@ -1893,6 +2060,30 @@ def _validate_blueprint_scope(
         )
         and not beat.transitions
     ]
+    rushed_reveals = []
+    if require_reveal_follow_through:
+        for index, beat in enumerate(blueprint.beats):
+            if "reveal" not in beat.story_functions:
+                continue
+            follow_through = [beat]
+            for later in blueprint.beats[index + 1 :]:
+                follow_through.append(later)
+                if "transition" in later.story_functions:
+                    break
+            # At an open shard boundary the response may legitimately be in
+            # the next shard; only reject a sequence that has already reached
+            # its own transition without a labeled response.
+            reaches_transition = any(
+                "transition" in candidate.story_functions
+                for candidate in follow_through
+            )
+            carried = {
+                function
+                for candidate in follow_through
+                for function in candidate.story_functions
+            }
+            if reaches_transition and carried.isdisjoint({"reaction", "aftermath"}):
+                rushed_reveals.append(beat.id)
     errors = []
     if unknown:
         errors.append(f"unknown source_unit_ids: {unknown}")
@@ -1906,6 +2097,11 @@ def _validate_blueprint_scope(
         errors.append(
             "transition beats missing continuity transitions: "
             f"{incomplete_transitions}"
+        )
+    if rushed_reveals:
+        errors.append(
+            "faithful reveal(s) need reaction or aftermath before their next "
+            f"transition: {rushed_reveals}"
         )
     if errors:
         raise ValueError("; ".join(errors))
@@ -1937,6 +2133,7 @@ async def _generate_blueprint(
     *,
     prompt: str,
     brief: AdaptationBrief,
+    story_bible: StoryBible | None = None,
     source_unit_ids: tuple[str, ...],
     owned_requirement_ids: tuple[str, ...],
     checkpoint_name: str,
@@ -1960,6 +2157,7 @@ async def _generate_blueprint(
                 cached,
                 source_unit_ids=source_unit_ids,
                 owned_requirement_ids=owned_requirement_ids,
+                require_reveal_follow_through=(brief.transformation_level == "faithful"),
             )
             return cached
         except ValueError as error:
@@ -1974,6 +2172,8 @@ async def _generate_blueprint(
             )
     response_schema = _ledger_response_schema(_BlueprintDraft)
     _constrain_source_schema(response_schema, source_unit_ids)
+    if story_bible is not None:
+        _constrain_appearance_state_schema(response_schema, story_bible)
     # Require an explicit model decision for fields with semantic coverage rules.
     # Empty arrays remain valid for individual beats; scope validation below
     # still enforces complete requirement coverage and transition detail.
@@ -1988,6 +2188,7 @@ async def _generate_blueprint(
             ),
             user_content=attempt_prompt,
             feature="adapt.blueprint",
+            max_output_tokens=_BLUEPRINT_MAX_OUTPUT_TOKENS,
             json_schema=response_schema,
         )
         _record_result_usage(ctx, result)
@@ -2000,6 +2201,7 @@ async def _generate_blueprint(
                 blueprint,
                 source_unit_ids=source_unit_ids,
                 owned_requirement_ids=owned_requirement_ids,
+                require_reveal_follow_through=(brief.transformation_level == "faithful"),
             )
         except (ValidationError, ValueError) as error:
             if attempt == _MAX_ADAPT_ATTEMPTS:
@@ -3171,8 +3373,9 @@ async def produce_book_adaptation(
     total_steps = 1 + (2 * len(shards))
     from novel_to_comic.generation_budget import budgeted_generator
     # Clean graph: treatment, blueprint+lettering per shard, source-window
-    # reviews. Two passes match the existing bounded repair policy. In the
-    # captured 458-unit book this is 20 calls (17 were used by the failed pass).
+    # reviews. A third pass is reserved for a changed narrative-review finding
+    # after the ordinary repair. In the captured 458-unit book this is 20 calls
+    # before that narrowly conditional pass.
     review_windows = _adapt_review_window_count(source)
     generate = budgeted_generator(
         generate, artifacts=artifacts, stage="adapt", model=model,
@@ -3293,6 +3496,7 @@ async def produce_book_adaptation(
                     blueprint = await _generate_blueprint(
                         prompt=blueprint_prompts[index],
                         brief=brief,
+                        story_bible=story_bible,
                         source_unit_ids=shards[index],
                         owned_requirement_ids=shard_requirements[index],
                         checkpoint_name=f"blueprint/shard_{index + 1:03d}",
@@ -3371,7 +3575,7 @@ async def produce_book_adaptation(
             ]
         history: list[ValidationAttempt] = []
         pending_repair_batch = resume_work.pending_repair if resume_work else None
-        for validation_attempt in range(1, _MAX_ADAPT_ATTEMPTS + 1):
+        for validation_attempt in range(1, _MAX_ADAPT_VALIDATION_ATTEMPTS + 1):
             draft, beat_to_shard = _merged_draft(drafts)
             candidate = BookAdaptation(
                 revision=1,
@@ -3417,8 +3621,9 @@ async def produce_book_adaptation(
                 break
             artifacts.write_failed_adaptation_candidate(candidate)
             _persist_validation(artifacts, validation, attempts=validation_attempt, history=tuple(history))
-            if validation_attempt == _MAX_ADAPT_ATTEMPTS or any(
-                f.code == "narrative_review_invalid" for f in validation.invariant_failures
+            if (
+                not _may_repair_validation_attempt(validation_attempt, history)
+                or any(f.code == "narrative_review_invalid" for f in validation.invariant_failures)
             ):
                 # Malformed editorial evidence cannot justify rewriting story.
                 break
@@ -3599,7 +3804,15 @@ def _repair_prompt(
         "foreshadowing with explicit reader-visible time framing rather than "
         "silently moving knowledge earlier or deleting the source fact. Preserve "
         "date exceptions in montages; do not fold later echoes into an earlier "
-        "synchronized event. Beat and lettering IDs below are the exact global "
+        "synchronized event. Treat structural validation failures as structural "
+        "edits, not just prose edits: for unknown_entity, remove each named unknown "
+        "ID from entity_ids and use only visible Story Bible entity IDs; for "
+        "faithful_rushed_reaction_or_aftermath, retain the cited reveal and mark its "
+        "source-backed response beat with story_functions=reaction or aftermath. "
+        "An on-beat source-cited thought or realization is that response: preserve it "
+        "and add reaction rather than deleting the reveal or inventing a new event. "
+        "Otherwise add a source-backed response beat before the next transition. "
+        "Beat and lettering IDs below are the exact global "
         "IDs used by the findings:\n"
         f"{failures}\n\nREAD-ONLY RETAINED NEIGHBORS:\n"
         "These beats remain outside your replacement. Preserve their exact words "
@@ -3622,6 +3835,32 @@ def _attempt_record(
             failure.code for failure in validation.invariant_failures
         ),
         editorial_codes=tuple(issue.code for issue in validation.editorial_issues),
+    )
+
+
+def _may_repair_validation_attempt(
+    attempt: int,
+    history: list[ValidationAttempt],
+) -> bool:
+    """Keep repair bounded while handling a newly exposed review defect.
+
+    The first repair is available to every blocking validation failure.  A
+    second repair is reserved for a changed set of evidence-backed narrative
+    review failures: it prevents a repair that fixes one story problem but
+    reveals another from requiring a manual Resume.  Repeating the same review
+    result cannot consume another provider call.
+    """
+    if attempt < _MAX_ADAPT_ATTEMPTS:
+        return True
+    if attempt != _MAX_ADAPT_ATTEMPTS or len(history) < 2:
+        return False
+    current = set(history[-1].invariant_codes)
+    previous = set(history[-2].invariant_codes)
+    return (
+        current != previous
+        and bool(current)
+        and all(code.startswith("narrative_review_") for code in current)
+        and current != {"narrative_review_invalid"}
     )
 
 
@@ -3684,12 +3923,27 @@ def validate_book_adaptation(
         known_entities = {entity.id for entity in (*story_bible.characters, *story_bible.locations, *story_bible.props)}
         unknown_entities = {entity_id for beat in adaptation.beats for entity_id in beat.entity_ids} - known_entities
         if unknown_entities:
+            citing_beats = tuple(
+                beat for beat in adaptation.beats
+                if unknown_entities.intersection(beat.entity_ids)
+            )
             failures.append(InvariantFailure(
                 id="adapt_failure_unknown_entity", owner_stage="adapt", code="unknown_entity",
                 message="Visible entity citations must resolve in the Story Bible.",
-                artifact_ids=tuple(sorted(unknown_entities)),
+                # Preserve the bad IDs for an actionable diagnostic, but also
+                # cite their beats and source.  Repair routing understands beat
+                # IDs and source IDs; entity IDs alone previously left this
+                # failure with no shard to correct.
+                source_unit_ids=tuple(dict.fromkeys(
+                    source_id for beat in citing_beats for source_id in beat.source_unit_ids
+                )),
+                artifact_ids=tuple([
+                    *(beat.id for beat in citing_beats),
+                    *sorted(unknown_entities),
+                ]),
                 evidence=(f"Unknown entity IDs: {sorted(unknown_entities)!r}",),
             ))
+        failures.extend(_appearance_state_authority_failures(adaptation, story_bible))
     if adaptation.source_sha256 != source.source_sha256:
         failures.append(
             InvariantFailure(
@@ -4128,6 +4382,14 @@ def validate_book_adaptation(
             for candidate in follow_through
             for function in candidate.story_functions
         }
+        # A reveal can itself contain the character's supported internal
+        # response.  An explicit character_turn on that same beat is a
+        # reaction with its own narrative weight; do not require a redundant
+        # extra beat merely because the response and revelation are inseparable.
+        # A character turn that appears only after the next transition remains
+        # insufficient, preserving the guard against rushed aftermath.
+        if _has_explicit_reveal_response(beat):
+            carried_functions.add("reaction")
         if carried_functions.isdisjoint({"reaction", "aftermath"}):
             evidence = [
                 "The reveal sequence has no explicit reaction or "

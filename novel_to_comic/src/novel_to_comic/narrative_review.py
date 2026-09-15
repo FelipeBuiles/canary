@@ -365,13 +365,14 @@ def _prompt(context):
     )
 
 
-def estimate_narrative_review(model: str, context: dict) -> float:
+def estimate_narrative_review(model: str, context: dict, *, passes: int = 2) -> float:
+    """Estimate a bounded number of complete review passes for this context."""
     return (
         sum(
             estimate_text_cost(model, p, output_chars=5000)
             for p in _review_prompts(context)
         )
-        * 2
+        * passes
     )
 
 
@@ -484,6 +485,25 @@ def _substantiated_blocker(finding: NarrativeFinding, window: dict) -> bool:
     return len({p.artifact_id for p in finding.passages}) >= minimum
 
 
+def _finding_identity(finding: NarrativeFinding) -> tuple:
+    """Identify one cited defect when neighboring review windows overlap.
+
+    A boundary beat is intentionally present in both source windows.  Separate
+    reviewers can therefore report the same defect with slightly different
+    prose.  The code, repair owner, cited artifacts, and exact passages—not the
+    model's editorial wording—identify whether that is one defect.
+    """
+    return (
+        finding.code,
+        finding.repair_stage,
+        tuple(sorted(set(finding.artifact_ids))),
+        tuple(sorted(
+            (passage.artifact_id, " ".join(passage.quote.split()))
+            for passage in finding.passages
+        )),
+    )
+
+
 def reviewed_validation(validation, failures, *, artifacts, phase, context):
     """Publish advisory review findings through the existing stage validation API."""
     from novel_to_comic.target_artifacts import ArtifactMissing, ArtifactInvalid
@@ -528,6 +548,7 @@ async def review_narrative(context, *, generate, ctx, artifacts, model, instruct
             source_by_anchor[requirement] = [u["id"] for u in context["units"]]
     signals = {s["id"]: s for s in narrative_signals(context)}
     verdicts, failures, editorial_issues = [], [], []
+    reported_finding_identities = set()
     # Invalid provider output remains inspectable, but an explicit later stage
     # run may obtain a fresh review rather than replaying malformed JSON forever.
     from novel_to_comic.target_artifacts import ArtifactMissing, ArtifactInvalid
@@ -609,6 +630,10 @@ async def review_narrative(context, *, generate, ctx, artifacts, model, instruct
             concrete_anchors = [a for a in finding.artifact_ids if a not in _requirement_anchors(context)]
             repair_anchors = concrete_anchors or finding.artifact_ids
             blocking = _substantiated_blocker(finding, window)
+            identity = _finding_identity(finding)
+            if identity in reported_finding_identities:
+                continue
+            reported_finding_identities.add(identity)
             destination = failures if blocking else editorial_issues
             result_type = InvariantFailure if blocking else EditorialIssue
             destination.append(

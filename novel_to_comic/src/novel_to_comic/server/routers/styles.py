@@ -98,19 +98,48 @@ def _active_suggestion(suggestions: list[dict], config: Config) -> tuple[int | N
 
 
 def clear_style_failures_after_selection(state) -> bool:
-    """A selected style resolves partial style-sample failures for navigation.
+    """Finalize Style when the user has explicitly selected a usable sample.
 
-    Failed sample attempts can leave ``items_failed`` on an otherwise completed
-    style stage. Once the user chooses an active style, those failures are no
-    longer blocking for downstream stages.
+    A batch can fail after producing a sample the user can select (for example
+    if earlier requests used an unavailable provider route). Selection is the
+    Style checkpoint approval, so that selected, usable sample must unblock
+    Cast even when the batch's last terminal status was ``failed``.
     """
     style_state = state.stages["style"]
-    if style_state.status not in (StageStatus.COMPLETE, StageStatus.AWAITING_REVIEW):
+    if style_state.status not in (
+        StageStatus.COMPLETE,
+        StageStatus.AWAITING_REVIEW,
+        StageStatus.FAILED,
+    ):
         return False
-    if not style_state.items_failed:
-        return False
-    style_state.items_failed = []
-    return True
+    changed = False
+    if style_state.items_failed:
+        style_state.items_failed = []
+        changed = True
+    if style_state.status != StageStatus.COMPLETE:
+        # Style selection is the explicit checkpoint approval; do not leave
+        # its lifecycle in awaiting_review or failed after it is approved.
+        style_state.status = StageStatus.COMPLETE
+        changed = True
+    if style_state.error is not None:
+        style_state.error = None
+        changed = True
+    if style_state.error_detail is not None:
+        style_state.error_detail = None
+        changed = True
+    if style_state.error_code is not None:
+        style_state.error_code = None
+        changed = True
+    if style_state.balance_credits is not None:
+        style_state.balance_credits = None
+        changed = True
+    if style_state.required_credits is not None:
+        style_state.required_credits = None
+        changed = True
+    if style_state.shortfall_credits is not None:
+        style_state.shortfall_credits = None
+        changed = True
+    return changed
 
 
 def _get_bible(project_dir):

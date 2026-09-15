@@ -113,8 +113,13 @@ mention alone does not authorize inventing one.
 
 Each character/scene pair has one classification and a nonempty `source_quote`
 found in the source with whitespace normalized only: words, punctuation, and
-case remain significant. Missing, duplicate, or invalid evidence fails
-validation. Scene rosters contain visual participants, not everyone mentioned;
+case remain significant. A malformed nonempty model quote is replaced at this
+private boundary with that scene's resolved exact opening sentence; if no
+scene-scoped source sentence can be resolved, validation fails. Missing or
+duplicate evidence also fails validation. When the model's redundant roster
+and participation fields disagree, a resolved scene sentence grounds the
+rostered participant or adds an explicitly staged participant to the roster.
+Scene rosters contain visual participants, not everyone mentioned;
 background-only candidates and references are removed while relevant summary
 facts remain. This evidence is discarded at the extraction boundary, not added
 to the canonical Story Bible. `visual_anchor` remains the shared physical

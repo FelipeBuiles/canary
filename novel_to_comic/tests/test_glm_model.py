@@ -15,6 +15,7 @@ def test_glm_route_and_structured_output_routing():
     assert route["model"] == "openrouter/z-ai/glm-5.3-flash"
     assert route["api_key"] == "os.environ/OPENROUTER_API_KEY"
     assert route["extra_body"]["provider"]["require_parameters"] is True
+    assert route["extra_body"]["provider"]["ignore"] == ["wafer", "venice"]
     assert provider_for_model("glm-5.3-flash") == "openrouter"
     for stage in ("extract", "brief", "adapt", "plan", "prompt", "ocr", "visual_review"):
         assert "glm-5.3-flash" in allowed_models(stage)

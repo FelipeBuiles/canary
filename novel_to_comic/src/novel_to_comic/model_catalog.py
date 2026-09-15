@@ -43,7 +43,7 @@ TEXT_MODELS = (
     {"id": "deepseek-v4.1-flash", "label": "DeepSeek V4.1 Flash", "provider": "OpenRouter"},
     {"id": "glm-5.3-flash", "label": "GLM 5.3 Flash", "provider": "OpenRouter"},
 )
-DRAW_MODELS = ("image-gemini-pro", "image-sunburst", "image-flare")
+DRAW_MODELS = ("image-gemini-pro", "image-sunburst", "image-flare", "image-muse")
 
 
 def codex_models() -> list[dict]:

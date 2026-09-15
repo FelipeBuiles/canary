@@ -42,6 +42,12 @@ _MAX_PLAN_ATTEMPTS = 2
 _TWO_PASS_PLAN_MIN_BEATS = 24
 _PLAN_DETAIL_BATCH_PAGES = 8
 _MIN_PLAN_GENERATION_CALLS = 64
+# A page map is ID-heavy structural JSON, rather than panel prose.  Leaving
+# GLM's full context ceiling available lets its mandatory reasoning stream run
+# for many minutes before producing this small object, which is vulnerable to
+# provider wall-clock limits.  Sixteen thousand tokens still leaves ample room
+# for a long book map while keeping the reasoning phase bounded.
+_PAGE_MAP_MAX_OUTPUT_TOKENS = 16_000
 
 
 class PlanValidation(BaseModel):
@@ -475,7 +481,9 @@ def _build_page_map_prompt(
         "pages, but must never repeat the words. Use lettering_ids=[] for a silent "
         "page. This allocation is fixed before parallel panel detail begins. "
         "Do not author panels, visual intent, entity placement, or geometry yet. Page "
-        "numbers are canonicalized by code. Return only the page-map JSON. "
+        "numbers are canonicalized by code. Keep rhythm_summary and each "
+        "rhythm_intent to a short phrase; use the supplied IDs rather than "
+        "recapping beat summaries or lettering. Return only the page-map JSON. "
         + PLAN_DEPICTION_GUIDANCE
         + "\n"
         + json.dumps(
@@ -896,6 +904,7 @@ async def _generate_page_map(
                     ),
                     user_content=attempt_prompt,
                     feature="plan.map",
+                    max_output_tokens=_PAGE_MAP_MAX_OUTPUT_TOKENS,
                     json_schema=_BookPageMap.model_json_schema(),
                 )
             _record_plan_usage(ctx, result)
@@ -1668,6 +1677,13 @@ def _derived_state_citations(
     states = {
         binding.entity_id: binding.state_id for binding in content.appearance_states
     }
+    # A state binding is itself an explicit assertion that the entity is in the
+    # image.  Treat it as the authoritative visibility citation rather than
+    # making a harmless duplicated fact fail PageContent's entity/state
+    # contract later during canonicalization.
+    for entity_id in states:
+        if entity_id not in entity_ids:
+            entity_ids.append(entity_id)
     unapproved: list[tuple[str, str, str]] = []
     for beat_id in content.beat_ids:
         beat = beat_by_id.get(beat_id)

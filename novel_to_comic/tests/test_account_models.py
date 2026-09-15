@@ -56,6 +56,16 @@ def test_rejects_unsupported_or_wrong_modality_models(client, changes):
     assert client.patch("/api/account/model-settings", json={"selections": changes}).status_code == 400
 
 
+def test_muse_is_selectable_for_style_cast_and_draw(client):
+    catalog = client.get("/api/account/model-settings").json()
+    stages = {stage["id"]: stage["model_ids"] for stage in catalog["stages"]}
+    assert "image-muse" in stages["image"]
+    assert "image-muse" in stages["draw"]
+    assert client.patch(
+        "/api/account/model-settings", json={"selections": {"image": "image-muse", "draw": "image-muse"}},
+    ).status_code == 200
+
+
 @pytest.mark.parametrize("original", [{"CANARY_ENV": "production"}, {"FLY_APP_NAME": "hosted"}, {"ENV": "production"}])
 def test_gate_uses_original_process_not_project_env(client, monkeypatch, original):
     values = dict(codex_dev._PROCESS)

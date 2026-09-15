@@ -80,6 +80,7 @@ PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD = "0.02"
 # Conservative reservation allowances, not measured provider prices.
 GPT25_PAGE_ESTIMATED_COST_USD = "0.25"
 GPT25_REFERENCE_ESTIMATED_COST_USD = "0.01"
+MUSE_PAGE_ESTIMATED_COST_USD = "0.01"
 
 
 def is_gpt_image_2(model: str) -> bool:

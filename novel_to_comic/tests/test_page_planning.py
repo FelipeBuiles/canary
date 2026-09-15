@@ -36,6 +36,7 @@ from novel_to_comic.page_planning import (
     _BookPlanDraft,
     _BookPageMap,
     _detail_batch_prompt,
+    _PAGE_MAP_MAX_OUTPUT_TOKENS,
     _PageMapEntry,
     _detail_matches_map,
     _merged_editorial_issues,
@@ -494,6 +495,8 @@ def test_two_pass_detail_retry_repairs_invalid_detail_at_the_batch_boundary(
     assert detail_attempts[tuple(range(1, 9))] == (2 if invalid_batch_start == 1 else 1)
     assert detail_attempts[tuple(range(9, 13))] == (2 if invalid_batch_start == 9 else 1)
     assert [call["feature"] for call in calls].count("plan.map") == 1
+    map_call = next(call for call in calls if call["feature"] == "plan.map")
+    assert map_call["max_output_tokens"] == _PAGE_MAP_MAX_OUTPUT_TOKENS
     assert [call["feature"] for call in calls].count("plan.detail") == 3
     if defect != "rewound_beats":
         page = TargetArtifacts(tmp_path).read_page(9)
@@ -3090,6 +3093,30 @@ def test_plan_preserves_explicit_state_bindings_and_exact_lettering(tmp_path: Pa
         for content in artifacts.read_page(page_number).content
         for item in content.lettering
     ) == tuple(item for beat in adaptation.beats for item in beat.lettering)
+
+
+def test_plan_derives_visibility_from_an_explicit_state_binding(tmp_path: Path) -> None:
+    # A planner can omit an entity from entity_ids while still naming one of
+    # its approved appearance states. The state binding is an unambiguous
+    # declaration that the entity is depicted, so canonicalization should
+    # repair the redundant omission without buying a retry.
+    artifacts, calls, plan = _run_plan(
+        _adaptation(),
+        _soaked_inventory(),
+        _two_page_response({
+            "entity_ids": ["location_alert"],
+            "appearance_states": [
+                {"entity_id": "character_johansen", "state_id": "johansen_soaked"},
+            ],
+        }),
+        tmp_path,
+    )
+
+    assert isinstance(plan, BookPlan)
+    assert len(calls) == 1
+    content = artifacts.read_page(1).content[0]
+    assert content.entity_ids == ("location_alert", "character_johansen")
+    assert content.appearance_states == {"character_johansen": "johansen_soaked"}
 
 
 @pytest.mark.parametrize("second_state", ["johansen_soaked", "johansen_dry"])

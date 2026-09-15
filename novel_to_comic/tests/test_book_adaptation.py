@@ -20,6 +20,7 @@ from novel_to_comic.book_adaptation import (
     _materialize_draft_ledger,
     _repair_source_scope,
     _closed_repair_scope,
+    _constrain_appearance_state_schema,
     _repair_checkpoint_names,
     _record_repair_batch_outcome,
     _checkpoint_key,
@@ -31,6 +32,7 @@ from novel_to_comic.book_adaptation import (
     _validate_locked_lettering,
     AdaptationValidation,
     AdaptationInvariantError,
+    build_adaptation_blueprint_prompt,
     build_book_adaptation_prompt,
     build_narrative_treatment_prompt,
     normalize_treatment,
@@ -185,6 +187,51 @@ def test_story_bible_view_preserves_extracted_appearance_transitions():
         "henry_delirious",
         "henry_recovered",
     ]
+
+
+def test_adapt_rejects_appearance_changes_without_story_bible_authority():
+    character = Character(
+        id="witness",
+        name="Witness",
+        visual_anchor="1person, raincoat",
+        age_range="adult",
+        gender="unspecified",
+        distinguishing_features=[],
+        default_outfit="raincoat",
+        first_appearance_scene="scene_001",
+    )
+    bible = StoryBible(
+        title="The Door", author="A. Witness", total_scenes=0,
+        characters=[character], locations=[], scenes=[], narrative_arcs=[],
+    )
+    adaptation = _book_adaptation().model_copy(update={
+        "beats": (
+            _book_adaptation().beats[0].model_copy(update={
+                "appearance_changes": (
+                    AppearanceChange(
+                        entity_id="witness", to_state_id="witness_soaked",
+                        description="The witness is soaked by rain.",
+                    ),
+                ),
+            }),
+        ),
+    })
+
+    validation = validate_book_adaptation(
+        _source_document(), _approved_brief(), adaptation, story_bible=bible,
+    )
+
+    failure = next(
+        item for item in validation.invariant_failures
+        if item.code == "unapproved_appearance_state"
+    )
+    assert failure.owner_stage == "adapt"
+    assert failure.artifact_ids == ("beat_0001", "witness", "witness_soaked")
+
+    schema = _BlueprintDraft.model_json_schema()
+    _constrain_appearance_state_schema(schema, bible)
+    changes = schema["$defs"]["_BlueprintBeat"]["properties"]["appearance_changes"]
+    assert changes["maxItems"] == 0
 
 
 def _approved_brief() -> AdaptationBrief:
@@ -1224,6 +1271,8 @@ def test_repair_prompt_contains_bounded_retained_neighbor_words():
         retained_neighbors=neighbors)
     assert "READ-ONLY RETAINED NEIGHBORS" in prompt
     assert "Do not include them in your output" in prompt
+    assert "for unknown_entity, remove each named unknown ID from entity_ids" in prompt
+    assert "story_functions=reaction or aftermath" in prompt
     for beat in beats[:7]:
         assert beat.lettering[0].text in prompt
     assert beats[7].lettering[0].text not in prompt
@@ -1574,6 +1623,20 @@ def test_shard_prompt_states_which_requirements_it_owns() -> None:
     assert "only if this shard's own source plainly realizes it" in prompt
 
 
+def test_faithful_blueprint_prompt_requires_labeled_reveal_follow_through() -> None:
+    brief = AdaptationBrief.model_validate({
+        **_approved_brief().model_dump(), "transformation_level": "faithful", "content_sha256": "",
+    })
+    prompt = build_adaptation_blueprint_prompt(
+        _source_document(), _story_bible(), brief, _book_adaptation().treatment,
+        primary_source_unit_ids=("source_000001", "source_000002"),
+        owned_requirement_ids=(), shard_index=1, shard_count=1,
+    )
+
+    assert "tag reaction or aftermath on the source-backed response beat" in prompt
+    assert "Do not invent a response solely to satisfy the tag" in prompt
+
+
 def test_transition_story_function_requires_explicit_continuity_change() -> None:
     payload = _book_adaptation().model_dump()
     payload["content_sha256"] = ""
@@ -1594,6 +1657,23 @@ def test_transition_story_function_requires_explicit_continuity_change() -> None
     assert "incomplete_transition" in {
         failure.code for failure in result.invariant_failures
     }
+
+
+def test_unknown_entity_routes_repair_to_its_citing_beat() -> None:
+    payload = _book_adaptation().model_dump(mode="json")
+    payload["content_sha256"] = ""
+    for beat in payload["beats"]:
+        beat["entity_ids"] = []
+    payload["beats"][0]["entity_ids"] = ["invented_entity"]
+    candidate = BookAdaptation.model_validate(payload)
+
+    result = validate_book_adaptation(
+        _source_document(), _approved_brief(), candidate, story_bible=_story_bible(),
+    )
+
+    failure = next(item for item in result.invariant_failures if item.code == "unknown_entity")
+    assert failure.artifact_ids == (candidate.beats[0].id, "invented_entity")
+    assert failure.source_unit_ids == candidate.beats[0].source_unit_ids
 
 
 def test_faithful_cthulhu_missing_reaction_or_aftermath_blocks_adaptation() -> None:
@@ -1643,6 +1723,82 @@ def test_faithful_cthulhu_missing_reaction_or_aftermath_blocks_adaptation() -> N
     assert result.editorial_issues[0].source_unit_ids == ("source_000001",)
     assert result.editorial_issues[0].artifact_ids == ("beat_0001",)
     assert "score" not in result.editorial_issues[0].model_dump()
+
+
+def test_character_turn_on_the_reveal_beat_is_explicit_follow_through() -> None:
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "cthulhu_adapt_missing_aftermath.json").read_text()
+    )
+    source = build_source_document(
+        fixture["source_text"],
+        [SourceSceneAnchor(id="scene_001", title=fixture["title"], opening_quote=fixture["opening_quote"])],
+    )
+    brief = AdaptationBrief.model_validate({
+        **_approved_brief().model_dump(),
+        "protected_language": (), "transformation_level": "faithful",
+        "content_sha256": "",
+    })
+    beats = fixture["beats"]
+    beats[0]["story_functions"] = [*beats[0]["story_functions"], "character_turn"]
+    candidate = BookAdaptation(
+        revision=1, source_sha256=source.source_sha256,
+        brief_revision=brief.revision, brief_sha256=brief.content_sha256,
+        treatment=fixture["treatment"], beats=beats, ledger=fixture["ledger"],
+    )
+
+    result = validate_book_adaptation(source, brief, candidate)
+
+    assert "faithful_rushed_reaction_or_aftermath" not in {
+        failure.code for failure in result.invariant_failures
+    }
+    assert "rushed_reaction_or_aftermath" not in {
+        issue.code for issue in result.editorial_issues
+    }
+
+
+def test_source_cited_thought_on_reveal_is_canonicalized_as_reaction() -> None:
+    payload = _book_adaptation().model_dump(mode="json")
+    payload["content_sha256"] = ""
+    beat = payload["beats"][0]
+    beat["story_functions"] = ["reveal"]
+    beat["entity_ids"] = ["char_001"]
+    beat["lettering"] = [{
+        "id": "lettering_reaction", "kind": "thought", "text": "I have to get away.",
+        "speaker": "Witness", "speaker_entity_id": "char_001", "delivery": "onscreen",
+        "source_unit_ids": ["source_000002"],
+    }]
+    brief = AdaptationBrief.model_validate({
+        **_approved_brief().model_dump(), "transformation_level": "faithful", "content_sha256": "",
+    })
+    payload["brief_sha256"] = brief.content_sha256
+    candidate = _canonicalize_candidate_requirements(
+        BookAdaptation.model_validate(payload), _source_document(), brief,
+    )
+
+    assert candidate.beats[0].story_functions == ("reveal", "reaction")
+    assert "faithful_rushed_reaction_or_aftermath" not in {
+        failure.code
+        for failure in validate_book_adaptation(_source_document(), brief, candidate).invariant_failures
+    }
+
+
+def test_faithful_blueprint_retries_a_reveal_without_follow_through() -> None:
+    beat = _book_adaptation().beats[0].model_copy(update={
+        "story_functions": ("reveal", "transition"),
+        "transitions": (ContinuityTransition(
+            dimension="knowledge", scope_id="char_001", from_state="unaware",
+            to_state="knows the door opened", description="The reveal changes what the witness knows.",
+        ),),
+    })
+    blueprint = _BlueprintDraft.model_validate(_blueprint_response([beat]))
+
+    with pytest.raises(ValueError, match=r"faithful reveal\(s\) need reaction or aftermath"):
+        _validate_blueprint_scope(
+            blueprint,
+            source_unit_ids=("source_000001", "source_000002"),
+            owned_requirement_ids=(),
+            require_reveal_follow_through=True,
+        )
 
 
 def test_ledger_dialogue_must_be_realized_by_source_linked_lettering() -> None:
@@ -1893,6 +2049,29 @@ def test_protected_language_survives_typographic_variance() -> None:
     ] == []
 
 
+def test_protected_language_survives_spanish_quote_wrappers_in_a_dialogue_balloon() -> None:
+    payload = _book_adaptation().model_dump()
+    payload["content_sha256"] = ""
+    payload["beats"][0]["lettering"][0]["text"] = (
+        "Antes de eso, I saw the door open. Después de eso."
+    )
+    brief = _approved_brief().model_dump()
+    brief["content_sha256"] = ""
+    brief["protected_language"] = ["«I saw the door open.»"]
+    approved = AdaptationBrief.model_validate(brief)
+    payload["brief_sha256"] = approved.content_sha256
+
+    result = validate_book_adaptation(
+        _source_document(),
+        approved,
+        BookAdaptation.model_validate(payload),
+    )
+
+    assert "protected_language_missing" not in [
+        failure.code for failure in result.invariant_failures
+    ]
+
+
 def test_paraphrased_protected_language_still_blocks() -> None:
     payload = _book_adaptation().model_dump()
     payload["content_sha256"] = ""
@@ -2078,6 +2257,7 @@ def test_producer_writes_one_book_artifact_and_records_model_usage(
         "adapt.lettering",
     ]
     assert all(call["json_schema"]["type"] == "object" for call in calls)
+    assert calls[1]["max_output_tokens"] == 24_000
     item_schema = calls[2]["json_schema"]["$defs"]["_LetteringCopy"]
     assert all({"speaker", "speaker_entity_id", "presentation"} <= set(variant["required"])
                for variant in item_schema["anyOf"])
@@ -2554,6 +2734,30 @@ def test_a_blocked_adaptation_gets_one_repair_pass_with_its_failures(
     assert artifacts.read_validation("adapt").attempts == 1
 
 
+def test_new_narrative_review_failure_gets_one_additional_bounded_repair() -> None:
+    from novel_to_comic.book_adaptation import _may_repair_validation_attempt
+    from novel_to_comic.models.validation import ValidationAttempt
+
+    history = [
+        ValidationAttempt(
+            attempt=1,
+            invariant_codes=("narrative_review_missing_context",),
+        ),
+        ValidationAttempt(
+            attempt=2,
+            invariant_codes=("narrative_review_repeated_event",),
+        ),
+    ]
+
+    assert _may_repair_validation_attempt(1, history[:1])
+    assert _may_repair_validation_attempt(2, history)
+    assert not _may_repair_validation_attempt(3, history)
+    assert not _may_repair_validation_attempt(2, [
+        history[0],
+        history[0].model_copy(update={"attempt": 2}),
+    ])
+
+
 def test_a_failed_adaptation_preserves_the_last_candidate(
     tmp_path: Path,
 ) -> None:
@@ -2568,7 +2772,8 @@ def test_a_failed_adaptation_preserves_the_last_candidate(
     reveal = expected.beats[0].model_copy(
         update={
             "source_unit_ids": ("source_000001",),
-            "story_functions": ("reveal",),
+            "story_functions": ("reveal", "reaction"),
+            "entity_ids": ("unknown_entity",),
 
             "brief_requirement_ids": ("essential_event_001",),
             "lettering": (expected.beats[0].lettering[0],),
@@ -2661,7 +2866,7 @@ def test_a_failed_adaptation_preserves_the_last_candidate(
     assert resumed_features == ["adapt.book", "adapt.book"]
 
     candidate = artifacts.read_failed_adaptation_candidate()
-    assert candidate.beats[0].story_functions == ("reveal",)
+    assert candidate.beats[0].entity_ids == ("unknown_entity",)
     assert not artifacts.adaptation_path.exists()
 
 
