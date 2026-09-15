@@ -1669,10 +1669,14 @@ def test_ambiguous_paid_submission_retains_credit_hold(monkeypatch, failure):
     calls = []
     def handler(request):
         calls.append(request)
-        if failure == "cancel": raise asyncio.CancelledError()
-        if failure == "server_error": return httpx.Response(503)
-        if failure == "protocol": raise httpx.RemoteProtocolError("disconnected", request=request)
-        if failure == "decoding": raise httpx.DecodingError("invalid encoding", request=request)
+        if failure == "cancel":
+            raise asyncio.CancelledError()
+        if failure == "server_error":
+            return httpx.Response(503)
+        if failure == "protocol":
+            raise httpx.RemoteProtocolError("disconnected", request=request)
+        if failure == "decoding":
+            raise httpx.DecodingError("invalid encoding", request=request)
         raise httpx.ReadTimeout("lost response", request=request)
     _mock_transport(monkeypatch, handler)
     async def run():

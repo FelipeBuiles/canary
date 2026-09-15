@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .plan_detail_support import detail_response
+from .plan_detail_support import detail_response, plan_response, reservation
 
 import asyncio
 from datetime import datetime, timezone
@@ -215,7 +215,7 @@ def test_producer_allocates_global_book_once_and_persists_canonical_artifacts(
 
     async def generate(**_kwargs):
         return ApiResult(
-            value=response,
+            value=plan_response(response),
             usage=UsageRecord(
                 provider="test",
                 model="test-planner",
@@ -318,7 +318,7 @@ def _long_adaptation_with_multiple_lettering_items() -> BookAdaptation:
 
 def test_detail_validation_rejects_a_rewound_beat_sequence() -> None:
     draft = _BookPlanDraft.model_validate(
-        {
+        plan_response({
             "rhythm_summary": "A two-beat page.",
             "pages": [
                 {
@@ -346,7 +346,7 @@ def test_detail_validation_rejects_a_rewound_beat_sequence() -> None:
                     ],
                 }
             ],
-        }
+        })
     )
     page_map = _PageMapEntry(
         page_number=1,
@@ -381,7 +381,7 @@ def test_two_pass_detail_retry_repairs_invalid_detail_at_the_batch_boundary(
         calls.append(request)
         if request["feature"] == "plan.map":
             return ApiResult(
-                value={
+                value=plan_response({
                     "rhythm_summary": "Twelve measured story pages.",
                     "pages": [
                         {
@@ -396,7 +396,7 @@ def test_two_pass_detail_retry_repairs_invalid_detail_at_the_batch_boundary(
                         }
                         for index in range(1, 25, 2)
                     ],
-                },
+                }),
                 usage=None,
             )
 
@@ -534,7 +534,7 @@ def test_map_schema_corrections_do_not_consume_narrative_revision(tmp_path, monk
         ]}
         if len(calls) in (1, 3):
             raw["pages"][0]["placeholder_removed"] = False
-        return ApiResult(value=raw)
+        return ApiResult(value=plan_response(raw))
     async def review(context, **kwargs):
         reviews.append(context)
         if len(reviews) == 1 or unresolved:
@@ -620,11 +620,11 @@ def test_draft_reference_validation_precedes_derived_state_activation():
         }],
     }]}
     target = ApprovedPageRange(minimum=1, maximum=1)
-    pages, validation = _validate_plan_draft(adaptation, inventory, target, _BookPlanDraft.model_validate(raw), {})
+    pages, validation = _validate_plan_draft(adaptation, inventory, target, _BookPlanDraft.model_validate(plan_response(raw)), {})
     assert pages == ()
     assert [f.code for f in validation.invariant_failures] == ["reference_authority"]
     raw["pages"][0]["content"][0]["appearance_states"] = []
-    pages, validation = _validate_plan_draft(adaptation, inventory, target, _BookPlanDraft.model_validate(raw), {})
+    pages, validation = _validate_plan_draft(adaptation, inventory, target, _BookPlanDraft.model_validate(plan_response(raw)), {})
     assert not any(f.code == "reference_authority" for f in validation.invariant_failures)
     assert pages[0].content[0].appearance_states == {"character_johansen": "wet"}
 
@@ -646,7 +646,7 @@ def test_long_plan_retains_composition_warnings_without_automatic_polishing(
         calls.append(request)
         if request["feature"] == "plan.map":
             return ApiResult(
-                value={
+                value=plan_response({
                     "rhythm_summary": "Twenty-four measured story pages.",
                     "pages": [
                         {
@@ -658,7 +658,7 @@ def test_long_plan_retains_composition_warnings_without_automatic_polishing(
                         }
                         for index in range(1, 25)
                     ],
-                },
+                }),
                 usage=None,
             )
 
@@ -737,7 +737,7 @@ def test_two_pass_plan_corrects_explicit_lettering_order_at_detail_boundary(
         calls.append(request)
         if request["feature"] == "plan.map":
             return ApiResult(
-                value={
+                value=plan_response({
                     "rhythm_summary": "Twenty-four measured story pages.",
                     "pages": [
                         {
@@ -749,7 +749,7 @@ def test_two_pass_plan_corrects_explicit_lettering_order_at_detail_boundary(
                         }
                         for index in range(1, 25)
                     ],
-                },
+                }),
                 usage=None,
             )
 
@@ -918,7 +918,7 @@ def test_plan_corrects_lettering_with_visual_intent_across_repeated_beat_panels(
             panels[0]["visual_intent"] = "Johansen first sights the reef."
             panels[1]["lettering_ids"] = ["lettering_0001_second"]
             panels[1]["visual_intent"] = "The reef rises again beyond the yacht."
-        return ApiResult(value=value)
+        return ApiResult(value=plan_response(value))
 
     artifacts = TargetArtifacts(tmp_path)
     plan = asyncio.run(
@@ -1023,7 +1023,7 @@ def test_producer_keeps_repetitive_composition_advisory(
 
     async def generate(**request):
         calls.append(request)
-        return ApiResult(value=responses[len(calls) - 1])
+        return ApiResult(value=plan_response(responses[len(calls) - 1]))
 
     artifacts = TargetArtifacts(tmp_path)
     plan = asyncio.run(
@@ -1111,7 +1111,7 @@ def test_plan_can_expand_one_adapted_beat_across_adjacent_planned_panels(
     async def generate(**request):
         calls.append(request)
         return ApiResult(
-            value={
+            value=plan_response({
                 "rhythm_summary": "approach expands before escape",
                 "pages": [
                     {
@@ -1187,7 +1187,7 @@ def test_plan_can_expand_one_adapted_beat_across_adjacent_planned_panels(
                         ],
                     },
                 ],
-            }
+            })
         )
 
     artifacts = TargetArtifacts(tmp_path)
@@ -1379,7 +1379,7 @@ def test_plan_copies_adapt_lettering_from_the_cited_ids(tmp_path: Path) -> None:
 
     async def generate(**_kwargs):
         return ApiResult(
-            value=response,
+            value=plan_response(response),
             usage=UsageRecord(
                 provider="test",
                 model="test-planner",
@@ -1468,7 +1468,7 @@ def test_lettering_cited_by_the_wrong_content_item_cannot_be_planned(
 
     async def generate(**_kwargs):
         return ApiResult(
-            value=unknown,
+            value=plan_response(unknown),
             usage=UsageRecord(
                 provider="test",
                 model="test-planner",
@@ -1541,7 +1541,7 @@ def test_plan_persists_reviewed_allocation_above_target(
 
     async def generate(**_kwargs):
         return ApiResult(
-            value=response,
+            value=plan_response(response),
             usage=UsageRecord(
                 provider="test",
                 model="test-planner",
@@ -1623,7 +1623,7 @@ def test_coordinates_are_absent_unless_the_author_explicitly_pins_a_beat(
 
     async def generate(**_kwargs):
         return ApiResult(
-            value=response,
+            value=plan_response(response),
             usage=UsageRecord(
                 provider="test",
                 model="test-planner",
@@ -1982,7 +1982,7 @@ def test_cthulhu_plan_preserves_approach_peak_escape_release_and_aftermath_rhyth
 
     async def generate(**_kwargs):
         return ApiResult(
-            value=fixture["plan_response"],
+            value=plan_response(fixture["plan_response"]),
             usage=UsageRecord(
                 provider="test",
                 model="test-planner",
@@ -2478,7 +2478,7 @@ def test_a_schema_slip_in_the_plan_draft_is_repaired_not_fatal(tmp_path: Path) -
     async def generate(**request):
         calls.append(request)
         return ApiResult(
-            value=responses[len(calls) - 1],
+            value=plan_response(responses[len(calls) - 1]),
             usage=UsageRecord(
                 provider="test",
                 model="test-planner",
@@ -2569,7 +2569,7 @@ def test_plan_authored_issue_ownership_is_canonicalized_without_a_retry(
 
     async def generate(**request):
         calls.append(request)
-        return ApiResult(value=response)
+        return ApiResult(value=plan_response(response))
 
     plan = asyncio.run(
         produce_book_plan(
@@ -2724,7 +2724,7 @@ def test_mechanical_allocation_and_reference_ids_are_canonicalized(
 
     async def generate(**request):
         calls.append(request)
-        return ApiResult(value=response)
+        return ApiResult(value=plan_response(response))
 
     artifacts = TargetArtifacts(tmp_path)
     plan = asyncio.run(
@@ -2825,7 +2825,7 @@ def test_an_adapted_beat_may_expand_across_adjacent_planned_panels(
 
     async def generate(**request):
         calls.append(request)
-        return ApiResult(value=responses[len(calls) - 1])
+        return ApiResult(value=plan_response(responses[len(calls) - 1]))
 
     artifacts = TargetArtifacts(tmp_path)
     plan = asyncio.run(
@@ -2892,7 +2892,7 @@ def test_missing_lettering_ids_are_derived_into_reading_order(
 
     async def generate(**request):
         calls.append(request)
-        return ApiResult(value=response)
+        return ApiResult(value=plan_response(response))
 
     artifacts = TargetArtifacts(tmp_path)
     asyncio.run(
@@ -2938,7 +2938,6 @@ def test_planning_view_excludes_the_source_ledger_and_provenance() -> None:
 
 
 def test_plan_prompt_makes_both_page_targets_advisory() -> None:
-    from novel_to_comic.page_planning import build_book_plan_prompt
 
     prompt = build_book_plan_prompt(
         _adaptation(),
@@ -3038,7 +3037,7 @@ def _run_plan(
 
     async def generate(**request):
         calls.append(request)
-        return ApiResult(value=response)
+        return ApiResult(value=plan_response(response))
 
     artifacts = TargetArtifacts(tmp_path)
     ctx = StageRuntime(
@@ -3129,7 +3128,7 @@ def test_plan_draft_rejects_duplicate_entity_state_bindings(second_state: str) -
     })
 
     with pytest.raises(ValidationError) as caught:
-        _BookPlanDraft.model_validate(response)
+        _BookPlanDraft.model_validate(plan_response(response))
 
     assert any(
         error["loc"][:4] == ("pages", 0, "content", 0)
@@ -3303,7 +3302,7 @@ def test_detail_context_prunes_only_explicit_scopes_and_keeps_speakers():
 
 def test_all_plan_prompts_preserve_restrained_depiction_and_exact_lettering():
     from novel_to_comic.narrative_instructions import PLAN_DEPICTION_GUIDANCE
-    from novel_to_comic.page_planning import build_book_plan_prompt, _build_page_map_prompt
+    from novel_to_comic.page_planning import _build_page_map_prompt
 
     adaptation = _adaptation()
     target = ApprovedPageRange(minimum=1, maximum=2)
@@ -3389,7 +3388,7 @@ def test_repeated_beat_across_parallel_detail_batches_has_one_lettering_owner(tm
 
     async def generate(**request):
         if request["feature"] == "plan.map":
-            return ApiResult(value={"rhythm_summary": "One event spans the batch boundary.", "pages": map_pages})
+            return ApiResult(value=plan_response({"rhythm_summary": "One event spans the batch boundary.", "pages": map_pages}))
         context, _ = json.JSONDecoder().raw_decode(request["user_content"].split("\n", 1)[1])
         numbers = tuple(context["target_page_numbers"])
         attempts[numbers] = attempts.get(numbers, 0) + 1
@@ -3443,7 +3442,7 @@ def _assigned_detail_fixture():
             {"beat_ids": [second.id], "visual_intent": "A silent reaction."},
         ],
         # Object key order is immaterial; destinations and locked order are authoritative.
-        "lettering_placements": {ids[3]: 3, ids[1]: 1, ids[0]: 1, ids[2]: 2},
+        "lettering_placements": {ids[3]: reservation(3), ids[1]: reservation(1), ids[0]: reservation(1), ids[2]: reservation(2)},
     }]}
     return adaptation, mapped, raw
 
@@ -3486,11 +3485,11 @@ def test_invalid_detail_assignments_require_authored_correction(defect, expected
     if defect == "missing":
         del placements[last]
     elif defect == "foreign":
-        placements["lettering_other_page"] = 4
+        placements["lettering_other_page"] = reservation(4)
     elif defect == "repeated_panel_copy":
         raw["pages"][0]["content"][-1]["lettering_ids"] = [mapped.lettering_ids[2]]
     else:
-        placements[last] = {"nonexistent": 5, "backward": 1, "zero": 0,
+        placements[last]["panel_number"] = {"nonexistent": 5, "backward": 1, "zero": 0,
                             "boolean": True, "list": [3, 4], "wrong_beat": 3}[defect]
         if defect == "wrong_beat":
             raw["pages"][0]["content"][2]["beat_ids"] = [mapped.beat_ids[0]]
@@ -3509,7 +3508,7 @@ def test_panel_bridging_two_beats_derives_both_lettering_owners(visual_beat):
     adaptation, mapped, raw = _assigned_detail_fixture()
     page = raw["pages"][0]
     page["content"][0]["beat_ids"] = [mapped.beat_ids[visual_beat]]
-    page["lettering_placements"][mapped.lettering_ids[2]] = 1
+    page["lettering_placements"][mapped.lettering_ids[2]]["panel_number"] = 1
     original = deepcopy(raw)
     draft = _compile_detail_response(raw, (mapped,), adaptation)
     assert raw == original
@@ -3519,7 +3518,7 @@ def test_panel_bridging_two_beats_derives_both_lettering_owners(visual_beat):
         assert panel.visual_intent == page["content"][number - 1]["visual_intent"]
         assert panel.lettering_ids == tuple(
             item_id for item_id in mapped.lettering_ids
-            if page["lettering_placements"][item_id] == number
+            if page["lettering_placements"][item_id]["panel_number"] == number
         )
 
 
@@ -3538,7 +3537,7 @@ def test_derived_provenance_still_rejects_a_backward_page_sequence():
     adaptation, mapped, raw = _assigned_detail_fixture()
     for panel in raw["pages"][0]["content"]:
         panel["beat_ids"] = [mapped.beat_ids[1]]
-    raw["pages"][0]["lettering_placements"] = {item_id: 2 for item_id in mapped.lettering_ids}
+    raw["pages"][0]["lettering_placements"] = {item_id: reservation(2) for item_id in mapped.lettering_ids}
     draft = _compile_detail_response(raw, (mapped,), adaptation)
     # An unlettered later-beat visual precedes the earlier-beat captions.
     # Deriving owners cannot make that backward story sequence valid.
@@ -3569,11 +3568,11 @@ def test_invalid_detail_destination_gets_one_bounded_correction(tmp_path):
     async def generate(**request):
         calls.append(request)
         value = deepcopy(raw)
-        value["pages"][0]["lettering_placements"][mapped.lettering_ids[-1]] = 5
+        value["pages"][0]["lettering_placements"][mapped.lettering_ids[-1]]["panel_number"] = 5
         if len(calls) == 2:
             assert "targets panel 5" in request["user_content"]
             assert "PREVIOUS DETAIL:" in request["user_content"]
-        return ApiResult(value=value)
+        return ApiResult(value=plan_response(value))
 
     with pytest.raises(PlanInvariantError) as error:
         asyncio.run(_generate_detail_batch(

@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 make g++ pkg-config libcairo2-dev libpango1.0-dev \
     libjpeg-dev libgif-dev librsvg2-dev \
     && rm -rf /var/lib/apt/lists/*
-WORKDIR /build
+WORKDIR /build/web
 ARG CANARY_VERSION=unknown
 ARG CANARY_BUILD_TIMESTAMP=unknown
 ARG VITE_SUPABASE_URL
@@ -33,6 +33,7 @@ RUN if [ -z "$VITE_SUPABASE_URL" ]; then \
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
+COPY novel_to_comic/src/novel_to_comic/lettering/ /build/novel_to_comic/src/novel_to_comic/lettering/
 # Export the build args into the shell environment so Vite inlines them into
 # the bundle. Supabase URL/key are required and validated before compilation;
 # optional values such as VITE_SENTRY_DSN may remain empty.
@@ -135,7 +136,7 @@ COPY litellm/recovery.py /app/recovery.py
 RUN chmod +x /app/entrypoint.sh
 
 # Copy built frontend so FastAPI can serve it as static files
-COPY --from=frontend /build/dist ./web/dist
+COPY --from=frontend /build/web/dist ./web/dist
 
 ENV PYTHONPATH=/app:/app/litellm_handlers
 

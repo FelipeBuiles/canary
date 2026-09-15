@@ -1,9 +1,11 @@
 /// <reference types="vitest" />
+import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
+  resolve: { alias: { '@lettering-engine': fileURLToPath(new URL('../novel_to_comic/src/novel_to_comic/lettering/engine.mjs', import.meta.url)) } },
   plugins: [react(), tailwindcss()],
   build: {
     rolldownOptions: {
@@ -31,6 +33,7 @@ export default defineConfig({
     },
   },
   server: {
+    fs: { allow: ['..'] },
     proxy: {
       '/api': 'http://localhost:8000',
       '/static': 'http://localhost:8000',

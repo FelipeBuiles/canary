@@ -470,6 +470,8 @@ export interface PageAnalysisRecovery {
 }
 
 export interface CompletePageSummary {
+  lettering_mode?: "hybrid" | "baked";
+  lettering_revision?: number | null;
   page: ComicPage;
   active_render: PageGenerationProvenance | null;
   issues: PageIssue[];

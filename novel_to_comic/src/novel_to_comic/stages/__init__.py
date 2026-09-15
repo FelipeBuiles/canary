@@ -30,6 +30,7 @@ _CLEAN_CASCADE: tuple[str, ...] = (
     "plates",
     "adapt",
     "plan",
+    "lettering",
     "draw",
     "finish",
     "exports",

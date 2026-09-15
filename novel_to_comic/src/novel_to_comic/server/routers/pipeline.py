@@ -22,7 +22,6 @@ from novel_to_comic.state import (
     StageStatus,
     approve_stage,
     fail_stage,
-    get_stale_stages,
     reset_stale_stages,
     save_state,
 )
@@ -302,17 +301,20 @@ def _reset_stage_and_downstream(state, stage: str) -> None:
 
 
 def _clear_outputs_for_rerun(project_dir, stage: str) -> None:
-    if stage == "adapt":
-        TargetArtifacts(project_dir).archive_adaptation_work()
-        return
-    stage_obj = REGISTRY.get(stage)
-    if stage_obj is None:
-        return
-    for path in stage_obj.clean_paths(project_dir):
-        if path.is_dir():
-            shutil.rmtree(path)
-        elif path.exists():
-            path.unlink()
+    from novel_to_comic.artifact_lock import production_lock
+
+    with production_lock(project_dir):
+        if stage == "adapt":
+            TargetArtifacts(project_dir).archive_adaptation_work()
+            return
+        stage_obj = REGISTRY.get(stage)
+        if stage_obj is None:
+            return
+        for path in stage_obj.clean_paths(project_dir):
+            if path.is_dir():
+                shutil.rmtree(path)
+            elif path.exists():
+                path.unlink()
 
 
 def _require_previous_stage(state, stage: str) -> None:

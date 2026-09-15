@@ -75,6 +75,18 @@ class PageGenerationCreate(BaseModel):
     depiction: Literal["canonical", "less_graphic"] = "canonical"
 
 
+
+def _hybrid_lettering(target):
+    from novel_to_comic.lettering.service import is_hybrid
+    return is_hybrid(target)
+
+
+def _lettering_revision(target, number):
+    try:
+        return target.read_lettering(number).revision
+    except (ArtifactMissing, ArtifactInvalid):
+        return None
+
 def _latest_provenance(target: TargetArtifacts, page_number: int):
     revisions = target.provenance_revisions(page_number)
     if not revisions:
@@ -373,6 +385,8 @@ def list_pages(project=Depends(get_project)):
                 "issues": _issues(target, selected.page_number),
                 "failure": _page_failure(target, selected.page_number),
                 "analysis_recovery": _analysis_recovery(target, selected.page_number),
+                "lettering_mode": "hybrid" if _hybrid_lettering(target) else "baked",
+                "lettering_revision": _lettering_revision(target, selected.page_number),
             }
             for selected in plan.pages
         ],
@@ -1257,7 +1271,7 @@ def visual_review_estimate(page_number: int, project=Depends(get_project)):
     try:
         compiled = compile_page_generation_request(
             target.read_page(page_number),
-            ensure_current_page_edition(target, target.read_book_edition(), config),
+            ensure_current_page_edition(target, target.read_book_edition(), config, allow_retained_review=True),
             approved_visual_inventory(project_dir),
             approved_reference_files(project_dir),
             retry=RetryProvenance(attempt=1),
@@ -1287,7 +1301,7 @@ async def visual_review_page(page_number: int, project_id: str,
     try:
         page = target.read_page(page_number)
         compiled = compile_page_generation_request(
-            page, ensure_current_page_edition(target, target.read_book_edition(), config), approved_visual_inventory(project_dir),
+            page, ensure_current_page_edition(target, target.read_book_edition(), config, allow_retained_review=True), approved_visual_inventory(project_dir),
             approved_reference_files(project_dir), retry=RetryProvenance(attempt=1), style_template=config.style_template,
         )
         complete_page_adapter(config).prepare(compiled)
@@ -1337,7 +1351,7 @@ def read_saved_visual_review(page_number: int, project=Depends(get_project)):
         page = target.read_page(page_number)
         image = target.read_render(page_number, active.render.revision)
         compiled = compile_page_generation_request(
-            page, ensure_current_page_edition(target, target.read_book_edition(), config), approved_visual_inventory(project_dir),
+            page, ensure_current_page_edition(target, target.read_book_edition(), config, allow_retained_review=True), approved_visual_inventory(project_dir),
             approved_reference_files(project_dir), retry=RetryProvenance(attempt=1),
             style_template=config.style_template,
         )
@@ -1376,3 +1390,8 @@ def read_saved_visual_review(page_number: int, project=Depends(get_project)):
             project_dir, reference_display_for_render(target, page_number, active.render),
         ),
     }
+
+
+# Independent presentation endpoints, not a ninth pipeline stage.
+from .lettering import router as lettering_router  # noqa: E402
+router.include_router(lettering_router)

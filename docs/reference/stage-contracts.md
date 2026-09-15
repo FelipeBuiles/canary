@@ -1,6 +1,6 @@
 # Stage contracts
 
-**Status: Current, September 13, 2026.** Implementation and tests are authoritative.
+**Status: Current, September 15, 2026.** Implementation and tests are authoritative.
 Each stage owns its file boundary. Server orchestration runs the explicit chain;
 stages do not call one another. The CLI has only `init` and `serve`.
 
@@ -11,9 +11,9 @@ stages do not call one another. The CLI has only `init` and `serve`.
 | 3 | `style` | Yes | Select visual style |
 | 4 | `cast` | Yes | Approve character, location, and prop references |
 | 5 | `adapt` | No | Book adaptation, source coverage, exact lettering |
-| 6 | `plan` | No | Canonical complete pages and lettering allocation |
-| 7 | `draw` | Yes | Complete lettered images, OCR, issue review |
-| 8 | `finish` | No | Provider-free preflight and PDF/CBZ packaging |
+| 6 | `plan` | No | Canonical complete pages, copy allocation and space reservations |
+| 7 | `draw` | Yes | Complete base-art images and issue review; optional base-art OCR |
+| 8 | `finish` | No | Provider-free lettering composition, preflight and PDF/CBZ packaging |
 
 `state.py` and `stages/__init__.py` define ordering and gates. All routes below
 serve under `/api/projects/{project_id}`: pipeline operations live in
@@ -21,13 +21,15 @@ serve under `/api/projects/{project_id}`: pipeline operations live in
 correction, visual review, and render history live in `server/routers/pages.py`;
 editorial decisions and story changes live in `server/routers/editorial.py`.
 
-`TargetArtifacts` owns the active source, brief, adaptation, plan, Draw, and
-Finish paths. `artifacts.py` owns Story Bible and Cast reference paths. Never
+`TargetArtifacts` owns the active source, brief, adaptation, plan, Draw,
+lettering, and Finish paths. `artifacts.py` owns Story Bible and Cast reference paths. Never
 introduce alternate readers for legacy output shapes. Provider wire v3 is a
 breaking cutover; current profiles and the local Codex runtime v6 execution
 fingerprint reject incompatible saved requests rather than translating old wire.
 Re-extract/regenerate affected output, or use a new project when an existing
-edition is incompatible. There is no generated-artifact migration.
+edition is incompatible. There is no generated-artifact migration. Known retained baked-lettering
+editions remain readable, reviewable, and exportable without rehashing saved
+requests, rebinding their profiles, or placing another lettering layer over them.
 
 ## User gates
 
@@ -184,7 +186,12 @@ lettering ID exactly once, in Adapt order, to a page carrying its owning beat.
 Detail batches must preserve each page's exact lettering allocation, even when
 one beat spans a batch boundary. The detail writer returns visual panels and a
 page-level `lettering_placements` object: each locked lettering ID is one required
-key with an authored 1-based destination panel number. Panels cannot return
+key with an authored object containing a 1-based `panel_number` and a
+reservation intent: zone, footprint, line budget, optional normalized bounds,
+and valid visible speaker/tail anchor. The whole-book writer carries equivalent
+ordered reservation arrays (closed items, no arbitrary-key schema). Every
+canonical lettering ID has exactly one reservation in locked reading order.
+These extend the existing calls, not another planning stage. Panels cannot return
 lettering ID lists. Closed page-specific schemas require all assigned IDs and
 forbid other pages' IDs; silent pages require an empty object. Compilation copies
 canonical items to those exact destinations in locked order, rejecting missing
@@ -336,8 +343,11 @@ the compiler supplies each selected canonical `visual_anchor` exactly.
 The v5 brief cache fingerprints the selected evidence, model, and prompt;
 stale cache entries are not reused. Candidate styles render the same selection.
 
-Full-page style samples and Draw retain the selected lettering and page-framing
-standards. Cast reference prompts use only the art-rendering projection, not
+Full-page style samples retain the selected lettering and page-framing
+standards. Hybrid Draw uses a separate art-plus-framing projection, excluding
+typesetting directions. The existing style selection supplies the book-wide
+post-production preset and creative lettering direction. Style images are
+rendering-only references: copy neither their words nor their balloons. Cast reference prompts use only the art-rendering projection, not
 page lettering, borders, or gutters. Style and reference authority are not
 disposable scene prose: approved style imagery owns rendering, not depicted
 people, objects, text, or layout. Canonical subject references own compatible
@@ -387,17 +397,25 @@ reader for the old location-state artifact layout.
 ### Frozen pages and corrections
 
 Draw compiles selected references, distinct subject labels, panel assignments,
-geometry, reading order, and exact lettering into one frozen request. Excess
+geometry, reading order, and lettering reservations into one frozen request.
+New versioned profiles set `exact_visible_lettering=false`: their wire lettering
+array is empty and their prompt forbids balloons, caption boxes, SFX glyphs,
+placeholder words, and pseudo-writing. They retain quiet negative space and
+speaker corridors, not raster text. Canonical copy remains in Adapt/Plan; it
+is not a typesetting payload for the image provider. Excess
 references fail before submission. Less-graphic framing retains identity
 references. An edition keeps its selected model/profile; a different current
-profile rejects without rewriting the existing edition. No reset or migration
-action is provided. Request hashes identify input but do not guarantee
+profile rejects new spend without rewriting the existing edition. Retained
+baked profiles are accepted for read/review only. Use the explicit upstream
+Plan restart/new-edition lifecycle for hybrid generation from an old allocation;
+there is no raster-text removal or silent conversion. Request hashes identify input but do not guarantee
 provider deduplication. Ambiguous image submissions are not automatically retried.
 
 Local Codex development routing can bind a first Draw edition to a separate
 experimental complete-page profile when its image route and OCR are both
 subscription-selected. It permits five total ordered image inputs, including a
-correction parent; all required authorities and authored lettering remain intact.
+correction parent; all required visual authorities remain intact. Hybrid copy
+stays outside the image request.
 Queue all prepares every page before any hold or enqueue. Subscription quotes,
 holds and debits are zero; observed cost and actual image backend remain unknown.
 This does not relax the production Vertex profile; both use current wire contracts.
@@ -410,8 +428,12 @@ Adapt beats cite Brief requirement IDs without repeated requirement prose.
 Missing citations remain validation failures rather than being inferred from
 keyword overlap. Explicit beat entity scopes allow bounded Plan context.
 
-OCR is blind to canonical copy. It checks visible lettering and observed order;
-it does not establish visual identity, object fidelity, or scene correctness.
+OCR is blind to expected copy and runs only on raw saved art. Retained baked
+profiles compare canonical lettering and observed order. Hybrid profiles instead
+record `unexpected_generated_lettering`, including its detected region, for
+comic text that should not have been drawn; incidental signs/documents remain
+distinct. It never checks a software-composited image and does not establish
+visual identity, object fidelity, or scene correctness.
 Page-render and preview HTTP responses use `private, no-cache`: an Adapt/Plan
 restart can reuse page and render revision numbers in a new edition. The client
 uses `delivery=2` URLs to bypass responses previously cached as immutable for a
@@ -421,9 +443,10 @@ and uncertainty independently of OCR; it does not certify a page as correct.
 A saved visual report is reusable only while the canonical page, exact render
 bytes, approved reference bytes, review model, prompt, and schema still digest
 identically; otherwise the report is null until a matching paid review lands.
-Canonical lettering is immutable for Draw: wording changes return to
-Adapt/Plan, never image correction. Missing or stale OCR evidence blocks Finish
-but is not an artwork defect or an instruction to redraw. Recover checks on
+Canonical lettering is immutable for Draw: story-source wording changes return
+to Adapt/Plan, never image correction. Display wording/translation changes use
+Pages Lettering, leaving Adapt and base art unchanged. Missing or stale OCR is
+unchecked advisory evidence, not an export blocker or instruction to redraw. Recover checks on
 saved pixels; paid artwork correction is a separate action for an identified
 change. A correction is one explicit
 author-selected batch — linked tracked issues and/or new manual
@@ -431,8 +454,10 @@ instructions — where each change carries an editable instruction plus
 normalized page-fraction marks (origin top-left), an optional author note, and
 explicitly selected source passages. Bookwide beat summaries, treatment spine,
 appearance chronology, and continuity travel with every correction;
-author-selected passages always arrive in full and only auto-gathered page
-units are budget-truncated. Preview compiles, validates lineage (canonical
+author-selected passages retain their source context and only auto-gathered
+page units are budget-truncated. Hybrid image prompts redact long exact
+publishable phrases from this read-only context rather than reintroducing them
+as typesetting instructions. Preview compiles, validates lineage (canonical
 revision/SHA, parent render revision/bytes), and estimates cost without
 spending or mutating issues; manual issues are created deterministically
 inside the reserved job. Submit enqueues exactly one full-page job; stale
@@ -440,7 +465,7 @@ lineage is rejected, unselected open issues remain, and the exact submitted
 correction (edited instructions, annotation notes, manual note) is served back
 per render revision — null for initial draws. A generated visual fix stays
 `revised` (visually unverified) until a person confirms; only OCR-proven text
-fixes may resolve by OCR. Finish checks artifact and render lineage, OCR,
+fixes may resolve by OCR. Finish checks artifact and render lineage,
 state citations, unresolved issues, dimensions, and packaging. It does not
 invoke a creative model.
 
@@ -752,7 +777,8 @@ requires a current validator version and saved package files whose resolved
 paths remain inside the project, byte sizes match, and SHA-256 digests match.
 Missing, unsafe, or damaged packages require a preflight refresh; an old
 download URL is not readiness evidence. Package reuse also requires matching
-edition, production settings, canonical page, and render identities.
+edition, production settings, canonical page, render, lettering, locale, style,
+and compositor identities.
 
 `POST /export/preflight` retries provider-free checks without creating packages,
 retaining valid packages when their inputs still match. Explicit export/rebuild
@@ -766,10 +792,77 @@ evidence does not block Draw approval or export and never proves that saved
 artwork needs replacement. Draw and correction jobs do not run OCR. Preflight
 only reads retained analysis and never repairs or buys OCR; explicit Pages text
 review handles that boundary. Automatic text findings remain reviewable, are not
-preselected for redraw, and do not require acceptance before export. A missing
+preselected for redraw. Existing advisory text findings do not require acceptance
+before export; a detected hybrid `unexpected_generated_lettering` issue is an
+explicit review concern, handled through normal issue resolution. A missing
 check stays unchecked; successful packaging does not verify wording.
 
 Book's persisted package list supports “ready to download” across refreshes;
 the edition-ready cue reports package creation, never browser download
 completion. Neither successful preflight nor packaging guarantees model
 output quality.
+
+
+## Hybrid page lettering
+
+There are still eight stages. **Lettering** is a Pages-room editing mode, not
+Compose. Adapt is semantic/canonical copy authority; Plan supplies placement
+reservations; Draw stores immutable full-page base art. Pages owns mutable
+presentation and Finish uses deterministic software composition.
+
+`lettering/style.json` stores book-wide role defaults, preset, creative direction,
+revision, and hash. `lettering/pages/page_001.json` stores canonical-page hash,
+locale variants, source-linked/custom elements, suggested and edited normalized
+geometry, tails, transforms, per-element overrides, resolved lines/font sizes,
+and the last reviewed base-render identity. Immutable saved revisions live under
+`lettering/revisions/`. Presentation never lives beneath `draw/`.
+
+Source-backed elements retain their original identity, kind, allocation, and
+reading order. Hiding or editing display copy does not change Adapt. Reset copy
+and reset placement are separate. Custom post-production captions, speech,
+thought, and SFX elements have no source ID. A changed canonical allocation is
+shown as stale, not silently reseeded; an explicit rebuild archives the previous
+saved state. Draw regeneration preserves lettering and asks for placement review
+against the new pixels. Full upstream restarts invalidate the presentation.
+
+Authenticated provider-free routes (under `/api/projects/{project_id}`):
+
+- `GET/PUT /pages/{page_number}/lettering`: read/edit with expected lettering
+  revision, current artwork SHA, and style SHA. Conflicts return 409 without
+  overwriting either version. The server validates source links and recomputes
+  typography instead of trusting browser-supplied resolved layout.
+- `POST /pages/{page_number}/lettering/reset`: explicitly rebuild from current
+  Plan while keeping saved historical revisions.
+- `GET/PUT /lettering/style`: inspect presets/change book defaults. Inheriting
+  pages reflow; full per-element style overrides remain independent.
+- `GET /pages/{page_number}/composite/{full|reader|thumbnail}`: cached finished
+  PNG/WebP views. The ordinary render endpoint always serves raw artwork for QA.
+
+Every save invalidates Finish/preflight/packages and composition caches only.
+The composite key hashes base-image SHA, lettering state, locale, style, and
+`lettering-svg-v1`. Relevant mutations/composition serialize under a reentrant
+project filesystem lock, outside directories that invalidation removes. First
+book export seeds all missing lettering before building any normalized pages,
+so initializing page two cannot remove page one's newly prepared output.
+
+`lettering/engine.mjs` is imported unchanged by the editor and executed by
+backend Playwright. It measures bundled fonts, balances explicit lines, respects
+hard breaks, fits only within readable limits, and draws SVG boxes, balloons,
+thought puffs, tails and SFX. Finish renders the saved resolved lines; it does not
+silently reflow approved copy. No fonts download at runtime and the compositor
+makes no network or provider requests. Unsupported scripts, missing language
+copy, out-of-page transforms and overflow are visible; unresolved layouts block
+composition with a `lettering_layout` repair link, not a paid Draw suggestion.
+The bundled fonts do not provide universal language coverage.
+
+The desk offers fit/zoom/pan, direct move/resize/tail handles, keyboard nudging,
+reading-order selection, display copy, locale switching and role controls.
+A drag is one undo action; save retains undo history. Account/project/page-scoped
+local recovery never overwrites the server or applies a stale source/style draft
+silently. A failed save retains the draft. Fonts must load before editing;
+missing artwork permits saving copy but cannot stamp a placement review.
+
+Gallery/reader/Book use composites for hybrid profiles and original previews for
+baked profiles. Book packaging uses the same composite, normalization and archive
+path rather than a second renderer. Suggested positions are coarse starting
+points, not inferred image geometry or proof of artistic quality; review them.

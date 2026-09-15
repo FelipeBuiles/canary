@@ -9,6 +9,7 @@ import {
   useProviderUsage,
   useRunFinishPreflight,
 } from "../../api/queries";
+import { pageCompositePreviewUrl } from "../../api/lettering";
 import { pageRenderPreviewUrl } from "../../api/pages";
 import { BookExportPanel } from "../../components/book/BookExportPanel";
 import { PageThumbnail } from "../../components/pages/PageThumbnail";
@@ -150,7 +151,7 @@ export function BookRoom() {
       : t("No editorial issues");
   const title = status?.project_name ?? t("Your book");
   const packages = preflight?.packages ?? [];
-  const reviewUrl = (pageNumber: number, review: "checks" | "visual") =>
+  const reviewUrl = (pageNumber: number, review: "checks" | "visual" | "lettering") =>
     `/project/${encodeURIComponent(id)}/pages?page=${pageNumber}&review=${review}`;
   const pageIssues = new Map(completePages?.pages.flatMap((page) => (page.issues ?? []).map((issue) => [issue.id, issue] as const)));
 
@@ -191,7 +192,7 @@ export function BookRoom() {
           <p className="mt-4 font-body text-xs leading-6 text-bristol/75">{t("Reading does not generate artwork or use credits.")}</p>
         </div>
         {bookPages.length > 0 && <button type="button" onClick={() => setReaderOpen(true)} aria-label={t("Open the book reader")} className="mx-auto h-80 w-full max-w-[240px] bg-surface-container text-ink-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-narrator-gold md:h-96 md:max-w-[280px]">
-          <PageThumbnail reveal={false} onRevealEnd={() => {}} src={pageRenderPreviewUrl(id, bookPages[0].pageNumber, bookPages[0].revision, "reader")} alt={t("First page of the book")} />
+          <PageThumbnail reveal={false} onRevealEnd={() => {}} src={(bookPages[0].hybrid ? pageCompositePreviewUrl(id, bookPages[0].pageNumber, bookPages[0].revision, "reader", bookPages[0].letteringRevision) : pageRenderPreviewUrl(id, bookPages[0].pageNumber, bookPages[0].revision, "reader"))} alt={t("First page of the book")} />
         </button>}
       </section>
 
@@ -322,7 +323,7 @@ export function BookRoom() {
                   </details>
                 )}
                 {finding.pageNumber !== null ? (
-                  <div className="mt-2 flex flex-wrap gap-x-5 gap-y-2">{Array.from(new Set(finding.pageNumbers ?? [finding.pageNumber])).map((pageNumber) => <Link key={pageNumber} className="inline-flex min-h-11 items-center font-meta text-xs font-bold text-hero-red underline underline-offset-4" to={reviewUrl(pageNumber, "checks")}>
+                  <div className="mt-2 flex flex-wrap gap-x-5 gap-y-2">{Array.from(new Set(finding.pageNumbers ?? [finding.pageNumber])).map((pageNumber) => <Link key={pageNumber} className="inline-flex min-h-11 items-center font-meta text-xs font-bold text-hero-red underline underline-offset-4" to={reviewUrl(pageNumber, finding.key.includes("lettering_layout") ? "lettering" : "checks")}>
                     {t("Open page checks")} · {t("Page")} {pageNumber}
                   </Link>)}</div>
                 ) : (

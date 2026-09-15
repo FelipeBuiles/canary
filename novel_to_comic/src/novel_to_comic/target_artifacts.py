@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from novel_to_comic.artifact_lock import locked_mutation
+from novel_to_comic.models.lettering import LetteringStyle, PageLettering
+
 import base64
+import re
+import uuid
 import hashlib
 import json
 import os
@@ -359,12 +364,14 @@ class TargetArtifacts:
     def read_brief(self) -> AdaptationBrief:
         return self._read_model("adaptation_brief", self.brief_path, AdaptationBrief)
 
+    @locked_mutation
     def invalidate_after_brief(self) -> None:
         """Remove target artifacts whose authority depends on Brief content."""
 
         for path in (
             self.project_dir / "adapt",
             self.project_dir / "plan",
+            self.project_dir / "lettering",
             self.project_dir / "draw",
             self.project_dir / "finish",
             self.exports_dir,
@@ -374,6 +381,58 @@ class TargetArtifacts:
             elif path.exists():
                 path.unlink()
 
+    @property
+    def lettering_style_path(self) -> Path:
+        return self.project_dir / "lettering" / "style.json"
+
+    def lettering_path(self, page_number: int) -> Path:
+        if page_number < 1:
+            raise ValueError("page number must be positive")
+        return self.project_dir / "lettering" / "pages" / f"page_{page_number:03d}.json"
+
+    def lettering_revision_path(self, state: PageLettering) -> Path:
+        return self.project_dir / "lettering" / "revisions" / (
+            f"page_{state.page_number:03d}_{state.revision:05d}_{state.content_sha256}.json"
+        )
+
+    def composite_path(self, page_number: int, identity: str, rendition: str = "full") -> Path:
+        if page_number < 1 or not re.fullmatch(r"[a-f0-9]{64}", identity):
+            raise ValueError("invalid composite identity")
+        if rendition not in {"full", "reader", "thumbnail"}:
+            raise ValueError("invalid composite rendition")
+        suffix = "png" if rendition == "full" else "webp"
+        return self.project_dir / "finish" / "composites" / f"page_{page_number:03d}_{identity}_{rendition}.{suffix}"
+
+    def read_lettering_style(self) -> LetteringStyle:
+        return self._read_model("lettering_style", self.lettering_style_path, LetteringStyle)
+
+    @locked_mutation
+    def write_lettering_style(self, style: LetteringStyle) -> None:
+        self._write_model(self.lettering_style_path, style)
+        self.invalidate_finish()
+
+    def read_lettering(self, page_number: int) -> PageLettering:
+        return self._read_model("page_lettering", self.lettering_path(page_number), PageLettering)
+
+    @locked_mutation
+    def write_lettering(self, state: PageLettering) -> None:
+        # Preserve each approved state for recovery; Draw regeneration never
+        # deletes this tree. SHA filenames also survive page-number reuse.
+        self._write_immutable_model(self.lettering_revision_path(state), state, PageLettering)
+        self._write_model(self.lettering_path(state.page_number), state)
+        self.invalidate_finish()
+
+    @locked_mutation
+    def write_composite(self, page_number: int, identity: str, data: bytes,
+                        rendition: str = "full") -> Path:
+        path = self.composite_path(page_number, identity, rendition)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+        temporary.write_bytes(data)
+        os.replace(temporary, path)
+        return path
+
+    @locked_mutation
     def invalidate_finish(self) -> None:
         """Discard a preflight and packages derived from superseded inputs.
 
@@ -389,6 +448,7 @@ class TargetArtifacts:
             elif path.exists():
                 path.unlink()
 
+    @locked_mutation
     def write_adaptation(self, adaptation: BookAdaptation) -> None:
         self._write_model(self.adaptation_path, adaptation)
         self.invalidate_finish()
@@ -439,6 +499,7 @@ class TargetArtifacts:
             # failure.
             return None
 
+    @locked_mutation
     def write_page(self, page: ComicPage) -> None:
         # The canonical path always holds the latest revision; each revision is
         # also archived so a render citing a superseded ComicPage revision stays
@@ -472,6 +533,7 @@ class TargetArtifacts:
             StageValidation,
         )
 
+    @locked_mutation
     def write_plan(self, plan: BookPlan) -> None:
         self._write_model(self.plan_path, plan)
         self.invalidate_finish()
@@ -479,6 +541,7 @@ class TargetArtifacts:
     def read_plan(self) -> BookPlan:
         return self._read_model("book_plan", self.plan_path, BookPlan)
 
+    @locked_mutation
     def write_book_edition(self, edition: BookEdition) -> None:
         self._write_immutable_model(self.book_edition_path, edition, BookEdition)
         self.invalidate_finish()
@@ -517,6 +580,7 @@ class TargetArtifacts:
             "page_generation_request", path, FrozenPageGenerationRequest
         )
 
+    @locked_mutation
     def write_render(
         self,
         *,
@@ -543,6 +607,7 @@ class TargetArtifacts:
             raise ArtifactMissing("page_render", path)
         return path.read_bytes()
 
+    @locked_mutation
     def write_provenance(self, provenance: PageGenerationProvenance) -> None:
         path = self.provenance_path(
             provenance.render.page_number,
@@ -669,6 +734,7 @@ class TargetArtifacts:
         from novel_to_comic.page_visual_review import PageVisualReview
         return self._read_model("visual_review", self.visual_review_path(page_number, render_revision, input_sha256), PageVisualReview)
 
+    @locked_mutation
     def write_analysis(self, analysis: RenderAnalysis) -> None:
         path = self.analysis_path(analysis.page_number, analysis.render_revision)
         identity = hashlib.sha256(
@@ -720,6 +786,7 @@ class TargetArtifacts:
             "raw_ocr", self.raw_ocr_path(page_number, render_revision), RawOCRObservation
         )
 
+    @locked_mutation
     def write_issues(self, page_number: int, issues: tuple[PageIssue, ...]) -> None:
         path = self.issues_path(page_number)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -807,7 +874,6 @@ class TargetArtifacts:
         os.replace(temporary, path)
 
     def write_story_change(self, proposal: StoryChangeProposal) -> None:
-        from novel_to_comic.editorial import StoryChangeProposal
 
         self._write_model(self.story_change_path(proposal.id), proposal)
 

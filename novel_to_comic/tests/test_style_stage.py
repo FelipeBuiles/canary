@@ -34,7 +34,6 @@ from novel_to_comic.stages.s2_style import (
 from novel_to_comic.style_contract import (
     DEFAULT_LETTERING_STANDARD,
     DEFAULT_PAGE_FRAMING_STANDARD,
-    style_template_for_suggestion,
 )
 from novel_to_comic.usage import ApiResult
 

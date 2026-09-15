@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 
 from novel_to_comic.server.env import bool_env
-from novel_to_comic.server.sentry import configure_sentry
+from novel_to_comic.server.sentry import configure_sentry as configure_sentry
 from novel_to_comic.server.telemetry import configure_telemetry
 from novel_to_comic.server.metrics import increment, observe
 
