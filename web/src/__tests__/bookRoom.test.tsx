@@ -100,6 +100,21 @@ beforeEach(() => {
 });
 
 describe("BookRoom edition decisions", () => {
+  it("shows outstanding lettering acceptance outside developer mode without blocking export", () => {
+    preflight.pages[0].lettering_placement_review_needed = true;
+    renderRoom();
+    expect(screen.getByRole("region", { name: "LETTERING VISUAL REVIEW" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Review lettering placement · Page 1" }).getAttribute("href"))
+      .toBe("/project/demo/pages?page=1&review=lettering");
+    expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", false);
+    expect(screen.queryByRole("region", { name: "TECHNICAL DIAGNOSTICS" })).toBeNull();
+  });
+
+  it("does not warn about placement for accepted or retained baked pages", () => {
+    renderRoom();
+    expect(screen.queryByRole("region", { name: "LETTERING VISUAL REVIEW" })).toBeNull();
+  });
+
   it("offers grouped check recovery when Finish is ready before Draw approval", () => {
     finishStageStatus = "pending";
     drawStageStatus = "awaiting_review";

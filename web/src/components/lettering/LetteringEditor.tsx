@@ -18,7 +18,8 @@ const errors: Record<string, string> = {
   missing_translation: "This language still uses the source wording. Add its translation before exporting.",
   outside_page: "Part of this lettering is outside the page. Move it inward or reduce its rotation or scale.",
   unsupported_script: "The bundled typefaces do not support this writing system. This page cannot be exported with missing glyphs.",
-  font_script_mismatch: "Choose M PLUS 1p for Japanese or Chinese lettering.",
+  font_script_mismatch: "Choose M PLUS 1p for supported Japanese or Chinese characters.",
+  missing_glyphs: "This font lacks some characters. Choose a supported bundled font or change the copy; system font fallback cannot be exported.",
   empty_copy: "Write some words or hide this element before exporting.",
 };
 function message(error: unknown): string { return error instanceof Error ? error.message : "The change could not be saved. Your local draft is still here."; }

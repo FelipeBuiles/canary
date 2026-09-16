@@ -11,7 +11,7 @@ from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 from novel_to_comic.models.lettering import LetteringStyle, PageLettering
 
-ENGINE_VERSION = "lettering-svg-v2"
+ENGINE_VERSION = "lettering-svg-v3"
 _ROOT = Path(__file__).parent
 _FONT_ROOT = _ROOT.parent / "fonts"
 # Every call runs outside any caller's asyncio loop. Each isolated browser is
@@ -21,7 +21,12 @@ _POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="canary-lettering")
 
 @lru_cache(maxsize=1)
 def _source() -> str:
-    return (_ROOT / "engine.mjs").read_text()
+    # The server executes the same local module and coverage table as Vite,
+    # inlined because its isolated browser deliberately disallows all requests.
+    engine = (_ROOT / "engine.mjs").read_text().replace(
+        'import { FONT_COVERAGE } from "./font-coverage.mjs";', ""
+    )
+    return (_ROOT / "font-coverage.mjs").read_text() + "\n" + engine
 
 
 @lru_cache(maxsize=1)

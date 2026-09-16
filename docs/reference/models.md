@@ -466,6 +466,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `color_profile` | `str | None` | `None` |
 | `lettering_revision` | `int | None` | `None` |
 | `lettering_sha256` | `str | None` | `None` |
+| `lettering_placement_review_needed` | `bool` | `False` |
 | `composite_identity` | `str | None` | `None` |
 | `normalized_image_sha256` | `str | None` | `Field(default=None, min_length=64, max_length=64)` |
 | `invariant_failures` | `tuple[InvariantFailure, ...]` | `()` |

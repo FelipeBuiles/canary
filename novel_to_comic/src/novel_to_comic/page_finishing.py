@@ -847,12 +847,13 @@ def finish_book(
                 )
             )
 
+        lettering_placement_review_needed = False
         lettering_revision = None
         lettering_sha256 = None
         composite_key = None
         if (not failures and not unresolved and image is not None and render is not None
                 and not edition.capability_profile.exact_visible_lettering):
-            from novel_to_comic.lettering.service import composite_page
+            from novel_to_comic.lettering.service import composite_page, placement_review_needed
             try:
                 if selected.page_number in lettering_setup_errors:
                     raise ValueError(lettering_setup_errors[selected.page_number])
@@ -860,6 +861,7 @@ def finish_book(
                                                               expected_render_revision=render.revision)
                 state = artifacts.read_lettering(selected.page_number)
                 lettering_revision, lettering_sha256 = state.revision, state.content_sha256
+                lettering_placement_review_needed = placement_review_needed(state, render)
                 image = composite_path.read_bytes()
             except (OSError, ValueError) as exc:
                 failures.append(_failure(
@@ -913,6 +915,7 @@ def finish_book(
                 normalized_image_sha256=normalized_sha256,
                 lettering_revision=lettering_revision, lettering_sha256=lettering_sha256,
                 composite_identity=composite_key,
+                lettering_placement_review_needed=lettering_placement_review_needed,
                 invariant_failures=tuple(failures),
                 diagnostics=tuple(diagnostics),
                 unresolved_editorial_issue_ids=unresolved,

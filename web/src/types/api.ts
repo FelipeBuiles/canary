@@ -579,6 +579,7 @@ export interface FinishPreflight {
   edition_revision: number;
   validator_version?: number;
   pages: Array<{
+    lettering_placement_review_needed?: boolean;
     page_number: number;
     comic_page_revision: number;
     render_revision: number;

@@ -145,7 +145,7 @@ def test_versioned_layout_is_required_before_export_and_composes_real_pixels(typ
     retained = PageLettering.model_validate(old)
     with pytest.raises(ValueError, match="Open Lettering and save"):
         render_lettered_page(retained, style, image, 1000, 1350)
-    assert ENGINE_VERSION == "lettering-svg-v2"
+    assert ENGINE_VERSION == "lettering-svg-v3"
 
 
 @pytest.mark.parametrize("number", [float("inf"), float("nan"), -float("inf")])
@@ -161,3 +161,13 @@ def test_fixture_and_literary_preset_use_the_same_role_defaults():
     assert style.roles.speech.font == style.roles.caption.font == "EB Garamond"
     assert style.roles.speech.shape == "balloon"
     assert preset_style("classic").roles.speech.font == "Comic Neue"
+
+
+def test_bundled_font_coverage_table_matches_the_actual_font_files():
+    """Changing a font must deliberately regenerate client/server glyph coverage."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    subprocess.run([sys.executable, str(root / "scripts/update_lettering_fonts.py"), "--check"], check=True)
