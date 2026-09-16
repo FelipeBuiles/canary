@@ -106,6 +106,7 @@ def _batch(*, restriction: str = "", count: int = 8) -> dict:
             "line_rendering": f"finish {index}",
             "lighting_value": f"lighting {index}",
             "lettering": DEFAULT_LETTERING_STANDARD,
+            "lettering_preset": "literary",
             "page_framing": DEFAULT_PAGE_FRAMING_STANDARD,
             "sequential_art_strengths": "Readable action and recurring identities.",
             "story_fit": "Supports the story.",
@@ -604,3 +605,65 @@ def test_overfull_scene_does_not_leak_unanchored_subjects_into_fallback():
         assert name not in brief
         assert name not in source
         assert name not in request.compiled.final_prompt
+
+
+def test_preset_is_required_per_candidate_not_allowed_at_batch_root():
+    batch = _batch()
+    schema = StyleSuggestionBatch.model_json_schema()
+    assert schema['additionalProperties'] is False
+    assert 'lettering_preset' not in schema['properties']
+    assert 'lettering_preset' in schema['$defs']['StyleSuggestion']['required']
+    batch['lettering_preset'] = 'literary'
+    with pytest.raises(ValueError, match='Extra inputs'):
+        StyleSuggestionBatch.model_validate(batch)
+    del batch['lettering_preset']
+    del batch['styles'][0]['lettering_preset']
+    with pytest.raises(ValueError, match='lettering_preset'):
+        StyleSuggestionBatch.model_validate(batch)
+
+
+def test_root_level_preset_gets_one_schema_correction_without_losing_variants():
+    wrong = _batch()
+    wrong['lettering_preset'] = 'literary'
+    for candidate in wrong['styles']:
+        del candidate['lettering_preset']
+    corrected = _batch()
+    for i, candidate in enumerate(corrected['styles']):
+        candidate['lettering_preset'] = ('literary', 'classic', 'pulp', 'minimal')[i % 4]
+    expected = {s['label']: s['lettering_preset'] for s in corrected['styles']}
+    mock = AsyncMock(side_effect=[ApiResult(value=wrong, usage=None), ApiResult(value=corrected, usage=None)])
+    with patch('novel_to_comic.clients.text.generate_json', new=mock):
+        suggestions, _ = asyncio.run(generate_suggestions(Config(), _bible()))
+    assert mock.await_count == 2
+    second = mock.await_args_list[1].kwargs
+    assert 'INSIDE EACH style' in second['user_content']
+    assert 'extra_forbidden' in second['user_content']
+    assert second['json_schema']['additionalProperties'] is False
+    assert all(s['lettering_preset'] == expected[s['label']] for s in suggestions)
+    assert 'lettering_preset' in mock.await_args_list[0].kwargs['system_prompt']
+
+
+def test_repeated_invalid_style_response_stops_and_does_not_ignore_extra_fields():
+    wrong = _batch() | {'lettering_preset': 'literary'}
+    mock = AsyncMock(return_value=ApiResult(value=wrong, usage=None))
+    with patch('novel_to_comic.clients.text.generate_json', new=mock):
+        with pytest.raises(RuntimeError, match='after 2 attempts'):
+            asyncio.run(generate_suggestions(Config(), _bible()))
+    assert mock.await_count == 2
+
+
+def test_style_schema_correction_shares_the_portfolio_completion_budget():
+    wrong = _batch() | {'lettering_preset': 'literary'}
+    mock = AsyncMock(side_effect=[ApiResult(value=wrong, usage=None), ApiResult(value=_batch(count=1), usage=None)])
+    with patch('novel_to_comic.clients.text.generate_json', new=mock):
+        with pytest.raises(RuntimeError, match='usable directions'):
+            asyncio.run(generate_suggestions(Config(), _bible()))
+    assert mock.await_count == 2
+
+
+def test_style_provider_failure_is_not_automatically_resubmitted():
+    mock = AsyncMock(side_effect=RuntimeError('provider transport failure'))
+    with patch('novel_to_comic.clients.text.generate_json', new=mock):
+        with pytest.raises(RuntimeError, match='provider transport failure'):
+            asyncio.run(generate_suggestions(Config(), _bible()))
+    assert mock.await_count == 1

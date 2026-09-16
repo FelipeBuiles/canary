@@ -63,6 +63,9 @@ def preset_style(
     }
     if name not in labels:
         name = "literary"
+    if name != "literary":
+        for role in ("speech", "thought"):
+            roles[role].update(font="Comic Neue", min_font_size=17, max_font_size=21)
     if name == "classic":
         roles["caption"].update(font="Comic Neue", min_font_size=17, max_font_size=25)
     elif name == "pulp":

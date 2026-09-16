@@ -62,3 +62,31 @@ do not establish that an image provider consistently honors reservations or that
 finished pages match the supplied artistic references; that requires explicit
 live generation and human visual review. No paid provider calls are part of this
 implementation verification.
+
+
+## Typography acceptance correction (2026-09-15)
+
+The first interaction/export checks did not establish an acceptable lettering
+appearance. The supplied reference pages call for compact typography, smoothly
+shaped speech balloons, and integrated tails, rather than generic rounded UI
+rectangles. The v2 engine replaces the body/tail geometry and typesetting together.
+It partitions words against per-line contour widths, uses measured glyph extents
+for vertical centering, fits both dimensions, and persists the exact line positions.
+The Literary classic preset now pairs serif narration with serif speech. Existing
+saved styles require explicit preset selection; previous resolved layouts require
+explicit reflow/save, not silent export changes.
+
+`tests/test_lettering_typography.py` checks the real bundled fonts in Chromium:
+short/two-line and longer/four-line speech, glyph containment in the actual SVG
+contour, shared browser/server resolved metrics, 288 direction/rotation/scale tail
+cases, and versioned export. Frontend tests cover fitted-edge resize/undo, continuous
+transparent/colored silhouettes, readable floors, and layout-cache invalidation.
+A local visual proof uses only unlettered crops from the supplied reference pages,
+with the actual compositor. It does not remove raster lettering or pretend to be
+a newly generated full page. Artistic parity and future generated-art reservation
+adherence remain visual acceptance decisions, not consequences of passing tests.
+
+Style suggestions also receive a regression correction: `lettering_preset` is a
+required property of each candidate, and prompt wording explicitly forbids placing
+it at the batch root. Invalid parsed responses can be corrected within the same
+two-call budget used for portfolio completion; validation is not loosened.

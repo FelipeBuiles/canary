@@ -3,7 +3,7 @@
  * and executed unchanged in Chromium by the server. No network or model calls.
  * Geometry is normalized; typography uses a 1000-unit vector page width.
  */
-export const ENGINE_VERSION = "lettering-svg-v1";
+export const ENGINE_VERSION = "lettering-svg-v2";
 export const FONT_FILES = Object.freeze({
   "Comic Neue": "ComicNeue-Bold.ttf",
   "EB Garamond": "EBGaramond-SemiBold.ttf",
@@ -38,16 +38,23 @@ export function canvasMeasure() {
   const context = document.createElement("canvas").getContext("2d");
   if (!context) throw new Error("Text measurement is unavailable in this browser.");
   const cache = new Map();
-  return (text, font, size, spacing = 0, weight = 400) => {
+  const metrics = (text, font, size, spacing = 0, weight = 400) => {
     const key = `${font}\0${size}\0${spacing}\0${weight}\0${text}`;
     if (cache.has(key)) return cache.get(key);
     context.font = `${weight} ${size}px "${font}"`;
-    const value = context.measureText(text).width + Math.max(0, [...text].length - 1) * spacing;
-    // Bound memory during a long editing session.
+    const measured = context.measureText(text);
+    const value = {
+      width: measured.width + Math.max(0, [...text].length - 1) * spacing,
+      ascent: Math.max(0, measured.actualBoundingBoxAscent),
+      descent: Math.max(0, measured.actualBoundingBoxDescent),
+    };
     if (cache.size > 12000) cache.clear();
     cache.set(key, value);
     return value;
   };
+  const measure = (...args) => metrics(...args).width;
+  measure.metrics = metrics;
+  return measure;
 }
 
 /** Word units preserve unbreakable words; CJK can break at grapheme boundaries.
@@ -115,6 +122,7 @@ export function textFor(element, locale) {
 }
 export function elementRect(element) {
   return { ...element.placement,
+    width: element.tight_box && element.resolved?.width ? element.resolved.width : element.placement.width,
     height: element.tight_box && element.resolved ? element.resolved.height : element.placement.height };
 }
 export function transformedBounds(element, aspect) {
@@ -137,98 +145,341 @@ function validateEditableState(state, style) {
     if (!rect(element.placement) || !rect(element.suggested_placement) || ![element.rotation,element.scale,element.z_index].every(finite) || element.scale<.25 || element.scale>3 || Math.abs(element.rotation)>180) throw new Error("Invalid lettering placement.");
     if (!element.text_by_locale || typeof element.text_by_locale.source!=="string" || Object.values(element.text_by_locale).some(text=>typeof text!=="string"||text.length>10000)) throw new Error("Invalid lettering copy.");
     if (element.tail_target && (![element.tail_target.x,element.tail_target.y].every(finite) || element.tail_target.x<0 || element.tail_target.x>1 || element.tail_target.y<0 || element.tail_target.y>1)) throw new Error("Invalid lettering tail.");
-    if (!role || !Object.hasOwn(FONT_FILES,role.font) || !["box","round","ellipse","cloud","none"].includes(role.shape) || !["left","center","right"].includes(role.align)) throw new Error("Invalid lettering style.");
+    if (!role || !Object.hasOwn(FONT_FILES,role.font) || !["box","round","balloon","ellipse","cloud","none"].includes(role.shape) || !["left","center","right"].includes(role.align)) throw new Error("Invalid lettering style.");
     if ([role.color,role.fill,role.stroke,role.text_stroke].some(color=>typeof color!=="string"||!/^(#[0-9a-fA-F]{6}|transparent)$/.test(color))) throw new Error("Invalid lettering ink.");
     if (![role.min_font_size,role.max_font_size,role.line_height,role.stroke_width,role.padding,role.corner_radius,role.letter_spacing,role.text_stroke_width].every(finite) || role.min_font_size<12 || role.max_font_size>180 || role.min_font_size>role.max_font_size || role.line_height<=0 || ![400,700].includes(role.font_weight??400)) throw new Error("Invalid typography settings.");
   }
 }
+// Optical text extents, not em-box guesses. Tests can inject a width-only
+// measurer; production records Chromium's actual glyph ascent and descent.
+function inkMetrics(text, role, size, measure) {
+  const width = measure(text, role.font, size, role.letter_spacing, role.font_weight ?? 400);
+  const ink = measure.metrics?.(text, role.font, size, role.letter_spacing, role.font_weight ?? 400);
+  return { width, ascent: ink?.ascent ?? size * .74, descent: ink?.descent ?? size * .2 };
+}
+const curved = (shape) => ["balloon", "ellipse", "cloud"].includes(shape);
+const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+const mix = (a, b, t) => [a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t];
+function splitCurve(c, t) {
+  const a=mix(c[0],c[1],t), b=mix(c[1],c[2],t), d=mix(c[2],c[3],t);
+  const e=mix(a,b,t), f=mix(b,d,t), p=mix(e,f,t);
+  return [[c[0],a,e,p],[p,f,d,c[3]]];
+}
+function curvePoint(c, t) { return splitCurve(c,t)[0][3]; }
+function curvePart(c, start, end) {
+  const left = end < 1 ? splitCurve(c,end)[0] : c;
+  return start > 0 ? splitCurve(left,start/end)[1] : left;
+}
+// The rounded oval uses four smooth cubics. Layout queries this SAME curve,
+// rather than reserving an arbitrary rectangular 30% inset for all lines.
+function ovalFactor(distance, shape) {
+  if (distance >= 1) return 0;
+  if (shape === "cloud") return .9 * Math.sqrt(Math.max(0, 1-(distance/.9)**2));
+  const k=shape === "ellipse" ? .5522847498 : .68;
+  const c=[[0,-1],[k,-1],[1,-k],[1,0]];
+  let lo=0, hi=1;
+  for (let i=0;i<18;i++) {
+    const t=(lo+hi)/2;
+    if (-curvePoint(c,t)[1]>distance) lo=t; else hi=t;
+  }
+  return curvePoint(c,(lo+hi)/2)[0];
+}
+function rowSpace(role, height, top, bottom) {
+  const distance=Math.max(Math.abs(top-height/2),Math.abs(bottom-height/2));
+  if (curved(role.shape)) return { factor: ovalFactor(distance/(height/2),role.shape), inset: 0 };
+  const radius=Math.min(role.corner_radius,height/2);
+  const edge=Math.min(top,height-bottom);
+  const inset=role.shape !== "none" && radius>0 && edge<radius
+    ? radius-Math.sqrt(Math.max(0,radius*radius-(radius-edge)**2)) : 0;
+  return { factor: 1, inset };
+}
+function rowGeometry(role, height, count, ascent, descent, leading) {
+  const baseline=(height-(ascent+descent+(count-1)*leading))/2+ascent;
+  return Array.from({length:count},(_,i)=>{
+    const y=baseline+i*leading;
+    return { baseline:y, ...rowSpace(role,height,y-ascent,y+descent) };
+  });
+}
+/** Exact-count word partitioning: minimize the body width needed to contain
+ * every row in its curved band. The first/last lines naturally shorten while
+ * the middle can open out. No character stretching, word splitting or case changes.
+ */
+function contourLines(tokens, separator, rows, padding, measure, size, locale) {
+  const n=tokens.length, count=rows.length;
+  let costs=Array(n+1).fill(Infinity), penalties=Array(n+1).fill(0); costs[0]=0;
+  const cuts=[];
+  for (let row=0;row<count;row++) {
+    const next=Array(n+1).fill(Infinity), quality=Array(n+1).fill(0), prev=Array(n+1).fill(-1);
+    const {factor,inset}=rows[row];
+    if (factor<=0) return null;
+    for (let start=row;start<n;start++) {
+      if (!Number.isFinite(costs[start])) continue;
+      for (let end=start+1;end<=n-(count-row-1);end++) {
+        const width=(measure(tokens.slice(start,end).join(separator).trim())+2*(padding+inset))/factor;
+        const needed=Math.max(costs[start],width);
+        const weakEnd=end<n && safeLocale(locale).startsWith("en")
+          && /^(a|an|the|my|your|his|her|our|their|of|to|and|or|with)$/i.test(tokens[end-1]);
+        const penalty=penalties[start]+(weakEnd ? size*.6 : 0);
+        if (needed+penalty < next[end]+quality[end]-1e-7) {
+          next[end]=needed; quality[end]=penalty; prev[end]=start;
+        }
+      }
+    }
+    costs=next; penalties=quality; cuts.push(prev);
+  }
+  if (!Number.isFinite(costs[n])) return null;
+  const lines=[];
+  for (let row=count-1,end=n;row>=0;row--) {
+    const start=cuts[row][end];
+    if (start<0) return null;
+    lines.unshift(tokens.slice(start,end).join(separator).trim()); end=start;
+  }
+  return {lines,width:costs[n]};
+}
+function composeLayout(lines, role, size, width, height, measure) {
+  const ink=lines.map(line=>inkMetrics(line,role,size,measure));
+  const ascent=Math.max(...ink.map(m=>m.ascent)), descent=Math.max(...ink.map(m=>m.descent));
+  const leading=size*role.line_height;
+  const rows=rowGeometry(role,height,lines.length,ascent,descent,leading);
+  const padding=role.padding+role.stroke_width/2+role.text_stroke_width/2;
+  const line_metrics=ink.map((m,i)=>{
+    const row=rows[i], inset=width*(1-row.factor)/2+padding+row.inset;
+    const x=role.align==="left" ? inset : role.align==="right" ? width-inset-m.width : (width-m.width)/2;
+    return { x:number(x), baseline:number(row.baseline), width:number(m.width), ascent:number(m.ascent), descent:number(m.descent) };
+  });
+  const overflow=ink.some((m,i)=>m.width+2*(padding+rows[i].inset)>width*rows[i].factor+.05)
+    || ascent+descent+(lines.length-1)*leading+2*padding>height+.05;
+  return {lines,width,height,line_metrics,overflow};
+}
+function fitBalloon(text, role, size, maxWidth, maxHeight, measure, locale, tight) {
+  const padding=role.padding+role.stroke_width/2+role.text_stroke_width/2;
+  const all=inkMetrics(text.replace(/\n/g," "),role,size,measure), leading=size*role.line_height;
+  const clearance=role.shape==="cloud" ? size : curved(role.shape) ? size*.55 : 0;
+  const naturalHeight=count=>all.ascent+all.descent+(count-1)*leading+2*padding+clearance;
+  const tokenized=unitsFor(text,locale);
+  const widths=new Map();
+  const widthOf=line=>{
+    if (!widths.has(line)) widths.set(line,measure(line,role.font,size,role.letter_spacing,role.font_weight??400));
+    return widths.get(line);
+  };
+  const candidates=[];
+  // Hard breaks are editorial decisions. Keep them, including blank lines.
+  if (/[\r\n]/.test(text) || (tokenized.units?.length ?? 0)>100) {
+    for (let step=5;step<=16;step++) {
+      const result=balancedLines(text,Math.max(1,maxWidth*step/16-2*padding),widthOf,locale);
+      if (result.overflow) continue;
+      const height=tight ? naturalHeight(result.lines.length) : maxHeight;
+      const rows=rowGeometry(role,height,result.lines.length,all.ascent,all.descent,leading);
+      const width=Math.max(...result.lines.map((line,i)=>(widthOf(line)+2*(padding+rows[i].inset))/Math.max(.001,rows[i].factor)));
+      candidates.push({lines:result.lines,width,height});
+    }
+  } else {
+    const {units=[],separator=" "}=tokenized;
+    const maxLines=Math.min(24,units.length,Math.max(1,Math.floor((maxHeight-naturalHeight(1))/leading)+1));
+    for (let count=1;count<=maxLines;count++) {
+      const height=tight ? naturalHeight(count) : maxHeight;
+      const rows=rowGeometry(role,height,count,all.ascent,all.descent,leading);
+      const candidate=contourLines(units,separator,rows,padding,widthOf,size,locale);
+      if (candidate) candidates.push({...candidate,height});
+    }
+  }
+  let best=null, bestScore=Infinity;
+  for (const candidate of candidates) {
+    // A tiny tolerance avoids changing wraps because of floating-point rounding.
+    const width=tight ? Math.min(maxWidth,candidate.width+.08) : maxWidth;
+    if (candidate.width>maxWidth || candidate.height>maxHeight) continue;
+    const layout=composeLayout(candidate.lines,role,size,width,candidate.height,measure);
+    if (layout.overflow) continue;
+    const natural=naturalHeight(candidate.lines.length), ratio=candidate.width/natural;
+    const loneEnding=candidate.lines.length>1 && text.trim().split(/\s+/).length>4
+      && candidate.lines.at(-1).trim().split(/\s+/).length===1 ? .45 : 0;
+    const score=candidate.width*natural*(1+loneEnding+Math.max(0,ratio-3.7)**2*.25+Math.max(0,2.3-ratio)**2*2);
+    if (score<bestScore) { bestScore=score; best=layout; }
+  }
+  return best;
+}
+function fitText(element, role, text, size, pageHeight, measure, locale) {
+  const w=element.placement.width*1000,h=element.placement.height*pageHeight;
+  if (["speech","thought"].includes(element.role) && text.trim()) {
+    const result=fitBalloon(text,role,size,w,h,measure,locale,element.tight_box);
+    if (result) return result;
+    return null;
+  }
+  const padding=role.padding+role.stroke_width/2+role.text_stroke_width/2;
+  const result=balancedLines(text,w-2*padding,line=>measure(line,role.font,size,role.letter_spacing,role.font_weight??400),locale);
+  const ink=result.lines.map(line=>inkMetrics(line,role,size,measure));
+  const height=Math.max(...ink.map(m=>m.ascent))+Math.max(...ink.map(m=>m.descent))+(result.lines.length-1)*size*role.line_height+2*padding;
+  const width=Math.max(.1,...ink.map(m=>m.width))+2*padding;
+  if (result.overflow || height>h+.01 || width>w+.01) return null;
+  const layout=composeLayout(result.lines,role,size,element.tight_box?width:w,element.tight_box?Math.max(1,height):h,measure);
+  return layout.overflow ? null : layout;
+}
+// Move/tail/selection changes must not rerun word partitioning on every frame.
+// Per-measurer caches cannot outlive an editor session or cross font-load contexts.
+const layoutCaches = new WeakMap();
 export function resolvePage(state, style, measure) {
   validateEditableState(state,style);
   const pageHeight = 1000 / state.canvas_aspect_ratio;
+  if (!layoutCaches.has(measure)) layoutCaches.set(measure, new Map());
+  const cache = layoutCaches.get(measure);
   return { ...state, elements: state.elements.map((element) => {
     const role = roleFor(element, style), text = textFor(element, state.locale);
     const warnings = [];
     if (!text.trim()) warnings.push("empty_copy");
     if (element.text_by_locale[state.locale] === undefined && state.locale !== "source") warnings.push("missing_translation");
-    // Reserve curvature clearance as well as actual padding.
-    const curve = ["ellipse", "cloud"].includes(role.shape) ? 0.30 : 0;
-    const innerWidth = element.placement.width * 1000 * (1 - curve) - 2 * role.padding;
-    const innerHeight = element.placement.height * pageHeight * (1 - curve) - 2 * role.padding;
-    let result, size;
-    for (size = role.max_font_size; size >= role.min_font_size; size -= 0.5) {
-      result = balancedLines(text, innerWidth,
-        (line) => measure(line, role.font, size, role.letter_spacing, role.font_weight ?? 400), state.locale);
-      if (!result.overflow && result.lines.length * size * role.line_height <= innerHeight + 0.01) break;
+    const key=JSON.stringify([role,element.role,text,state.locale,element.placement.width,
+      element.placement.height,element.tight_box,pageHeight]);
+    let cached=cache.get(key);
+    if (!cached) {
+      let result=null, size=role.max_font_size;
+      while (true) {
+        result=fitText(element,role,text,size,pageHeight,measure,state.locale);
+        if (result || size===role.min_font_size) break;
+        size=Math.max(role.min_font_size,size-.5);
+      }
+      if (!result) {
+        // Preserve every word, visibly flag overflow, and stop at the readable floor.
+        const width=element.placement.width*1000, height=element.placement.height*pageHeight;
+        const broken=balancedLines(text,Math.max(1,width*.75-2*role.padding),line=>measure(line,role.font,size,role.letter_spacing,role.font_weight??400),state.locale);
+        result={...composeLayout(broken.lines,role,size,width,height,measure),overflow:true};
+      }
+      if (cache.size>=256) cache.clear();
+      cached={result,size}; cache.set(key,cached);
     }
-    if (size < role.min_font_size) {
-      size = role.min_font_size;
-      result = balancedLines(text, innerWidth,
-        (line) => measure(line, role.font, size, role.letter_spacing, role.font_weight ?? 400), state.locale);
-    }
-    const required = (result.lines.length * size * role.line_height + 2 * role.padding) / (1 - curve);
-    const overflow = innerWidth <= 0 || result.overflow || required > element.placement.height * pageHeight + 0.01;
+    const {result,size}=cached;
     const resolved = {
       engine_version: ENGINE_VERSION, locale: state.locale, text,
-      lines: result.lines, font_size: number(size), line_height: number(size * role.line_height),
-      height: number(Math.max(0.001, Math.min(element.placement.height, required / pageHeight))),
-      overflow, warnings,
+      lines:[...result.lines], font_size:number(size), line_height:number(size*role.line_height),
+      width:result.width/1000, height:result.height/pageHeight,
+      line_metrics:result.line_metrics.map(line=>({...line})), overflow:result.overflow, warnings,
     };
     const next = { ...element, resolved };
     const bounds = transformedBounds(next, state.canvas_aspect_ratio);
     if (bounds.x < -0.0001 || bounds.y < -0.0001 || bounds.x + bounds.width > 1.0001 || bounds.y + bounds.height > 1.0001) {
       resolved.overflow = true; warnings.push("outside_page");
     }
-    // Unsupported scripts must be explicit: bundled fonts cover Latin and
-    // Japanese, not all writing systems. Never claim fallback glyphs are a proof.
     if (/\p{Script=Arabic}|\p{Script=Hebrew}|\p{Script=Devanagari}|\p{Script=Thai}/u.test(text)) {
-      warnings.push("unsupported_script");
-      resolved.overflow = true;
+      warnings.push("unsupported_script"); resolved.overflow = true;
     }
     if (/\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}/u.test(text) && role.font !== "M PLUS 1p") warnings.push("font_script_mismatch");
     return next;
   }) };
 }
-function cloudPath(x, y, w, h) {
-  // Twelve outward scallops, bounded by the element rectangle. The inner
-  // ellipse and 30% text clearance keep lettering away from the cloud's valleys.
-  const cx = x + w / 2, cy = y + h / 2, steps = 12;
-  const point = (angle, radius) => [cx + Math.cos(angle) * w / 2 * radius,
-    cy + Math.sin(angle) * h / 2 * radius];
-  let path = `M${point(-Math.PI / 2, .91).join(",")}`;
-  for (let i = 0; i < steps; i++) {
-    const angle = -Math.PI / 2 + i * Math.PI * 2 / steps;
-    path += `Q${point(angle + Math.PI / steps, 1.04).join(",")} ${point(angle + Math.PI * 2 / steps, .91).join(",")}`;
+function contour(role,w,h) {
+  const rx=w/2,ry=h/2,k=role.shape==="ellipse"?.5522847498:.68;
+  if (["ellipse","balloon"].includes(role.shape)) return [
+    [[rx,0],[rx+k*rx,0],[w,ry-k*ry],[w,ry]],
+    [[w,ry],[w,ry+k*ry],[rx+k*rx,h],[rx,h]],
+    [[rx,h],[rx-k*rx,h],[0,ry+k*ry],[0,ry]],
+    [[0,ry],[0,ry-k*ry],[rx-k*rx,0],[rx,0]],
+  ];
+  if (role.shape==="cloud") {
+    const point=(a,r)=>[rx+Math.cos(a)*rx*r,ry+Math.sin(a)*ry*r];
+    return Array.from({length:12},(_,i)=>{
+      const a=-Math.PI/2+i*Math.PI/6,p=point(a,.91),q=point(a+Math.PI/12,1.04),r=point(a+Math.PI/6,.91);
+      return [p,mix(p,q,2/3),mix(r,q,2/3),r];
+    });
   }
-  return path + "Z";
+  const r=clamp(role.corner_radius,0,Math.min(rx,ry)), e=.5522847498*r;
+  const line=(a,b)=>[a,mix(a,b,1/3),mix(a,b,2/3),b];
+  return [line([r,0],[w-r,0]),[[w-r,0],[w-r+e,0],[w,r-e],[w,r]],
+    line([w,r],[w,h-r]),[[w,h-r],[w,h-r+e],[w-r+e,h],[w-r,h]],
+    line([w-r,h],[r,h]),[[r,h],[r-e,h],[0,h-r+e],[0,h-r]],
+    line([0,h-r],[0,r]),[[0,r],[0,r-e],[r-e,0],[r,0]]];
 }
-function bodySVG(role, x, y, w, h) {
-  const attrs = `fill="${role.fill}" stroke="${role.stroke}" stroke-width="${role.stroke_width}" stroke-linejoin="round"`;
-  if (role.shape === "none") return "";
-  if (role.shape === "ellipse") return `<ellipse cx="${x+w/2}" cy="${y+h/2}" rx="${w/2}" ry="${h/2}" ${attrs}/>`;
-  if (role.shape === "cloud") return `<path d="${cloudPath(x,y,w,h)}" ${attrs}/>`;
-  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${role.shape === "box" ? role.corner_radius : Math.min(role.corner_radius, h/2)}" ${attrs}/>`;
+const pointText=p=>p.map(number).join(",");
+const curveText=c=>`C${pointText(c[1])} ${pointText(c[2])} ${pointText(c[3])}`;
+function contourTable(curves) {
+  const table=[{length:0,param:0,point:curves[0][0]}];
+  let length=0, previous=curves[0][0];
+  curves.forEach((c,index)=>{
+    for (let i=1;i<=24;i++) {
+      const point=curvePoint(c,i/24);
+      length+=Math.hypot(point[0]-previous[0],point[1]-previous[1]);
+      table.push({length,param:index+i/24,point}); previous=point;
+    }
+  });
+  return table;
 }
-function tailSVG(element, role, x, y, w, h, pageHeight) {
-  if (!element.tail_target || !["speech","thought"].includes(element.role)) return "";
-  const cx=x+w/2, cy=y+h/2;
-  // The tail target is world/page space, even when its balloon rotates/scales.
-  const wx=element.tail_target.x*1000-cx, wy=element.tail_target.y*pageHeight-cy;
-  const angle=-element.rotation*Math.PI/180;
-  const tx=cx+(wx*Math.cos(angle)-wy*Math.sin(angle))/element.scale;
-  const ty=cy+(wx*Math.sin(angle)+wy*Math.cos(angle))/element.scale;
-  const dx=tx-cx, dy=ty-cy;
-  if (Math.abs(dx)<=w/2 && Math.abs(dy)<=h/2) return "";
-  const ratio = ["ellipse","cloud"].includes(role.shape) ? 1/Math.sqrt((dx/(w/2))**2+(dy/(h/2))**2) : Math.min(w/2/Math.abs(dx),h/2/Math.abs(dy));
-  const ax=cx+dx*ratio, ay=cy+dy*ratio;
-  const common=`fill="${role.fill}" stroke="${role.stroke}" stroke-width="${role.stroke_width}"`;
-  if (element.role === "thought") {
-    return [0.22,0.53,0.8].map((t,i)=>`<ellipse cx="${ax+(tx-ax)*t}" cy="${ay+(ty-ay)*t}" rx="${7-i*2}" ry="${5-i*1.4}" ${common}/>`).join("");
+function paramAtLength(table,length) {
+  const total=table.at(-1).length;
+  length=((length%total)+total)%total;
+  const end=table.findIndex(p=>p.length>=length);
+  if (end<=0) return 0;
+  const a=table[end-1],b=table[end];
+  return a.param+(b.param-a.param)*(length-a.length)/(b.length-a.length);
+}
+function attachPoint(curves,table,target,w,h) {
+  const center=[w/2,h/2], d=[target[0]-center[0],target[1]-center[1]];
+  const cross=p=>(p[0]-center[0])*d[1]-(p[1]-center[1])*d[0];
+  for (let i=1;i<table.length;i++) {
+    const a=table[i-1],b=table[i];
+    if (cross(a.point)*cross(b.point)>0) continue;
+    const index=Math.min(curves.length-1,Math.floor(a.param+1e-8));
+    let lo=a.param-index,hi=b.param-index;
+    for (let j=0;j<20;j++) {
+      const mid=(lo+hi)/2;
+      if (cross(curvePoint(curves[index],lo))*cross(curvePoint(curves[index],mid))<=0) hi=mid; else lo=mid;
+    }
+    const t=(lo+hi)/2,p=curvePoint(curves[index],t);
+    if ((p[0]-center[0])*d[0]+(p[1]-center[1])*d[1]<=0) continue;
+    if (Math.hypot(...d)<=Math.hypot(p[0]-center[0],p[1]-center[1])+1) return null;
+    const fraction=(t+index-a.param)/(b.param-a.param);
+    return {point:p,length:a.length+(b.length-a.length)*fraction};
   }
-  const bottomTop = Math.abs(ax-cx)/(w/2) < Math.abs(ay-cy)/(h/2);
-  const half = Math.min(10,w*.07,h*.15);
-  const bx=bottomTop?half:0, by=bottomTop?0:half;
-  return `<path d="M${ax-bx},${ay-by} Q${(ax+tx)/2},${(ay+ty)/2} ${tx},${ty} L${ax+bx},${ay+by} Z" ${common} stroke-linejoin="round"/>`+
-    `<path d="M${ax-bx*.82},${ay-by*.82} L${ax+bx*.82},${ay+by*.82}" stroke="${role.fill}" stroke-width="${role.stroke_width+1.5}"/>`;
+  return null;
+}
+function outlinePath(curves,table,attach,target,fontSize,w,h) {
+  if (!attach) return `M${pointText(curves[0][0])}`+curves.map(curveText).join("")+"Z";
+  const distance=Math.hypot(target[0]-attach.point[0],target[1]-attach.point[1]);
+  const half=Math.min(fontSize*.48,w*.12,h*.22,distance*.45);
+  const a=paramAtLength(table,attach.length-half),b=paramAtLength(table,attach.length+half);
+  const count=curves.length, end=a<=b?a+count:a;
+  let cursor=b, path="",startPoint,endPoint;
+  // Walk the actual body cubics, except for the short tail-root arc.
+  while(cursor<end-1e-8) {
+    const index=Math.floor(cursor+1e-9), stop=Math.min(index+1,end);
+    const part=curvePart(curves[index%count],cursor-index,stop-index);
+    if (!path) {startPoint=part[0];path=`M${pointText(startPoint)}`;}
+    path+=curveText(part); endPoint=part[3]; cursor=stop;
+  }
+  const tangent=(parameter)=>{
+    const index=Math.floor(parameter)%count,t=parameter-Math.floor(parameter),c=curves[index];
+    const dx=3*(1-t)**2*(c[1][0]-c[0][0])+6*(1-t)*t*(c[2][0]-c[1][0])+3*t*t*(c[3][0]-c[2][0]);
+    const dy=3*(1-t)**2*(c[1][1]-c[0][1])+6*(1-t)*t*(c[2][1]-c[1][1])+3*t*t*(c[3][1]-c[2][1]);
+    const length=Math.hypot(dx,dy)||1;return [dx/length,dy/length];
+  };
+  const ta=tangent(a),tb=tangent(b),ease=Math.min(half*.65,distance*.12);
+  const c1=[endPoint[0]+ta[0]*ease,endPoint[1]+ta[1]*ease];
+  const c2=[startPoint[0]-tb[0]*ease,startPoint[1]-tb[1]*ease];
+  // One continuous silhouette, including both tail edges: no triangle laid on
+  // a stroked body, no white seam-cover line, and no opaque-fill assumption.
+  return path+curveText([endPoint,c1,mix(target,endPoint,.16),target])
+    +curveText([target,mix(target,startPoint,.16),c2,startPoint])+"Z";
+}
+function bodySVG(element,role,x,y,w,h,pageHeight) {
+  if (role.shape==="none") return "";
+  const curves=contour(role,w,h),table=contourTable(curves);
+  let target=null,attach=null;
+  if (element.tail_target && ["speech","thought"].includes(element.role)) {
+    // Tail targets stay in page space when the body is scaled or rotated.
+    const wx=element.tail_target.x*1000-(x+w/2),wy=element.tail_target.y*pageHeight-(y+h/2);
+    const angle=-element.rotation*Math.PI/180;
+    target=[w/2+(wx*Math.cos(angle)-wy*Math.sin(angle))/element.scale,
+      h/2+(wx*Math.sin(angle)+wy*Math.cos(angle))/element.scale];
+    attach=attachPoint(curves,table,target,w,h);
+  }
+  const attrs=`fill="${role.fill}" stroke="${role.stroke}" stroke-width="${role.stroke_width}" stroke-linejoin="round"`;
+  const path=outlinePath(curves,table,element.role==="speech"?attach:null,target,element.resolved.font_size,w,h);
+  let puffs="";
+  if (element.role==="thought" && attach) {
+    const distance=Math.hypot(target[0]-attach.point[0],target[1]-attach.point[1]);
+    puffs=[.28,.59,.86].map((t,i)=>{
+      const p=mix(attach.point,target,t),r=Math.min(element.resolved.font_size*(.29-i*.075),distance*.11);
+      return `<ellipse cx="${p[0]}" cy="${p[1]}" rx="${r}" ry="${r*.77}" ${attrs}/>`;
+    }).join("");
+  }
+  return `<g transform="translate(${number(x)} ${number(y)})"><path data-balloon-body="${element.role}" d="${path}" ${attrs}/>${puffs}</g>`;
 }
 export function renderOverlay(state, style) {
   validateEditableState(state,style);
@@ -240,13 +491,17 @@ export function renderOverlay(state, style) {
     }
     const role=roleFor(element,style), box=elementRect(element);
     const x=box.x*1000,y=box.y*pageHeight,w=box.width*1000,h=box.height*pageHeight;
-    const curve = ["ellipse", "cloud"].includes(role.shape) ? .15 : 0;
-    const textX = role.align==="left" ? x+role.padding+w*curve : role.align==="right" ? x+w-role.padding-w*curve : x+w/2;
-    const anchor=role.align==="left"?"start":role.align==="right"?"end":"middle";
-    const firstBaseline=y+(h-r.lines.length*r.line_height)/2+r.font_size*.82;
-    const lines=r.lines.map((line,index)=>`<text x="${textX}" y="${firstBaseline+index*r.line_height}" text-anchor="${anchor}" font-family="${escape(role.font)}" font-size="${r.font_size}" font-weight="${role.font_weight ?? 400}" letter-spacing="${role.letter_spacing}" fill="${role.color}" stroke="${role.text_stroke}" stroke-width="${role.text_stroke_width}" paint-order="stroke fill" stroke-linejoin="round" xml:space="preserve">${escape(line)}</text>`).join("");
+    if (!r.line_metrics || r.line_metrics.length!==r.lines.length ||
+        ![r.font_size,r.line_height,r.width,r.height].every(Number.isFinite) ||
+        r.line_metrics.some(m=>![m.x,m.baseline,m.width,m.ascent,m.descent].every(Number.isFinite))) {
+      throw new Error("Lettering needs measured line positions before it can be rendered.");
+    }
+    const lines=r.lines.map((line,index)=>{
+      const metric=r.line_metrics[index];
+      return `<text x="${number(x+metric.x)}" y="${number(y+metric.baseline)}" text-anchor="start" font-family="${escape(role.font)}" font-size="${r.font_size}" font-weight="${role.font_weight ?? 400}" letter-spacing="${role.letter_spacing}" fill="${role.color}" stroke="${role.text_stroke}" stroke-width="${role.text_stroke_width}" paint-order="stroke fill" stroke-linejoin="round" xml:space="preserve">${escape(line)}</text>`;
+    }).join("");
     return `<g data-lettering-id="${escape(element.id)}" transform="translate(${x+w/2} ${y+h/2}) rotate(${element.rotation}) scale(${element.scale}) translate(${-x-w/2} ${-y-h/2})">`+
-      bodySVG(role,x,y,w,h)+tailSVG(element,role,x,y,w,h,pageHeight)+lines+"</g>";
+      bodySVG(element,role,x,y,w,h,pageHeight)+lines+"</g>";
   }).join("");
   return `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 1000 ${pageHeight}" role="img" aria-label="Page lettering" style="overflow:visible">${content}</svg>`;
 }

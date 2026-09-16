@@ -31,19 +31,19 @@ Locale = Annotated[str, Field(pattern=r"^(source|[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8}
 
 class RoleStyle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
-    font: FontName = "Comic Neue"
+    font: FontName = "EB Garamond"
     font_weight: Literal[400, 700] = 400
-    min_font_size: float = Field(default=17, ge=12, le=100)
-    max_font_size: float = Field(default=25, ge=12, le=180)
-    line_height: float = Field(default=1.12, ge=0.9, le=2)
+    min_font_size: float = Field(default=16, ge=12, le=100)
+    max_font_size: float = Field(default=17, ge=12, le=180)
+    line_height: float = Field(default=1.05, ge=0.9, le=2)
     align: Literal["left", "center", "right"] = "center"
     color: Color = "#181818"
     fill: Color = "#ffffff"
     stroke: Color = "#181818"
-    stroke_width: float = Field(default=1.8, ge=0, le=12)
-    padding: float = Field(default=9, ge=0, le=40)
+    stroke_width: float = Field(default=1.6, ge=0, le=12)
+    padding: float = Field(default=11, ge=0, le=40)
     corner_radius: float = Field(default=12, ge=0, le=80)
-    shape: Literal["box", "round", "ellipse", "cloud", "none"] = "round"
+    shape: Literal["box", "round", "balloon", "ellipse", "cloud", "none"] = "balloon"
     letter_spacing: float = Field(default=0, ge=-1, le=12)
     text_stroke: Color = "transparent"
     text_stroke_width: float = Field(default=0, ge=0, le=12)
@@ -61,18 +61,18 @@ class LetteringRoles(BaseModel):
         default_factory=lambda: RoleStyle(
             font="EB Garamond",
             align="left",
-            fill="#fff9e9",
+            fill="#fff2d5",
             shape="box",
             corner_radius=0,
-            min_font_size=20,
-            max_font_size=28,
+            min_font_size=16,
+            max_font_size=18,
             padding=8,
-            line_height=1.08,
+            line_height=1.04,
         )
     )
     speech: RoleStyle = Field(default_factory=RoleStyle)
     thought: RoleStyle = Field(
-        default_factory=lambda: RoleStyle(shape="cloud", padding=14)
+        default_factory=lambda: RoleStyle(shape="cloud", padding=9)
     )
     sfx: RoleStyle = Field(
         default_factory=lambda: RoleStyle(
@@ -95,6 +95,16 @@ class LetteringStyle(RevisionedArtifact):
     roles: LetteringRoles = Field(default_factory=LetteringRoles)
 
 
+class ResolvedLineMetrics(BaseModel):
+    """Glyph geometry in 1000-unit page space, relative to the fitted body."""
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+    x: float
+    baseline: float
+    width: float = Field(ge=0)
+    ascent: float = Field(ge=0)
+    descent: float = Field(ge=0)
+
+
 class ResolvedLettering(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
     engine_version: str
@@ -104,6 +114,10 @@ class ResolvedLettering(BaseModel):
     font_size: float = Field(ge=12, le=180)
     line_height: float = Field(gt=0, le=360)
     height: float = Field(gt=0, le=1)
+    # v1 records remain readable, but engine-version checks require explicit
+    # reflow/save before v2 export. New records persist width and glyph baselines.
+    width: float | None = Field(default=None, gt=0, le=1)
+    line_metrics: tuple[ResolvedLineMetrics, ...] = Field(default=(), max_length=500)
     overflow: bool
     warnings: tuple[str, ...] = ()
 

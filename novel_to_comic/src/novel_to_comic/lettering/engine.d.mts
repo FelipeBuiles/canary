@@ -6,7 +6,7 @@ export interface RoleStyle {
   font: FontName; font_weight: 400 | 700; min_font_size: number; max_font_size: number; line_height: number;
   align: "left" | "center" | "right"; color: string; fill: string; stroke: string;
   stroke_width: number; padding: number; corner_radius: number;
-  shape: "box" | "round" | "ellipse" | "cloud" | "none";
+  shape: "box" | "round" | "balloon" | "ellipse" | "cloud" | "none";
   letter_spacing: number; text_stroke: string; text_stroke_width: number;
 }
 export interface LetteringStyle {
@@ -16,6 +16,8 @@ export interface LetteringStyle {
 export interface ResolvedLettering {
   engine_version: string; locale: string; text: string; lines: string[];
   font_size: number; line_height: number; height: number; overflow: boolean; warnings: string[];
+  width?: number | null;
+  line_metrics?: { x: number; baseline: number; width: number; ascent: number; descent: number }[];
 }
 export interface LetteringElement {
   id: string; source_lettering_item_id: string | null; role: RoleName;
@@ -29,7 +31,10 @@ export interface PageLettering {
   style_sha256: string; locale: string; canvas_aspect_ratio: number; elements: LetteringElement[];
   reviewed_against_render_revision: number | null; reviewed_against_image_sha256: string | null;
 }
-export type Measure = (text: string, font: FontName, size: number, spacing?: number, weight?: number) => number;
+export interface Measure {
+  (text: string, font: FontName, size: number, spacing?: number, weight?: number): number;
+  metrics?: (text: string, font: FontName, size: number, spacing?: number, weight?: number) => { width: number; ascent: number; descent: number };
+}
 export const ENGINE_VERSION: string;
 export const FONT_FILES: Readonly<Record<FontName,string>>;
 export function fontCSS(base?: string): string;
