@@ -14,7 +14,7 @@ from pathlib import Path
 from itertools import product
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from novel_to_comic import artifacts
 from novel_to_comic.clients import text as text_client
@@ -50,7 +50,7 @@ SAMPLE_COUNT = 5
 LLM_REQUEST_COUNT = 8  # ask for more than we need so dedup still yields >= 5
 SAMPLE_CONCURRENCY = 2
 _GENERATION_MAX_ATTEMPTS = 2
-SUGGESTION_SCHEMA_VERSION = 4
+SUGGESTION_SCHEMA_VERSION = 5
 STYLE_BRIEF_VERSION = 5
 PORTFOLIO_ROLES = (
     "story_fit_primary", "story_fit_secondary", "adjacent", "contrast", "wildcard",
@@ -81,7 +81,9 @@ class StyleSuggestion(BaseModel):
     line_rendering: str
     lighting_value: str
     lettering: str
-    lettering_preset: Literal["literary", "classic", "pulp", "minimal"] = "literary"
+    lettering_preset: Literal["literary", "classic", "pulp", "minimal"] = Field(
+        description="Post-production preset for THIS style. Required inside each styles item, never at the batch root."
+    )
     page_framing: str
     sequential_art_strengths: str
     story_fit: str
@@ -169,14 +171,15 @@ _SYSTEM_PROMPT = (
     "on every page or full bleed on every page — plus one panel-border and gutter treatment. "
     "Never alternate systems by page and never use scribbled borders unless that exact "
     "border treatment is the declared invariant.\n\n"
-    "Output a JSON object with medium_restriction_quote and styles. The quote must be "
+    "Output a JSON object with EXACTLY TWO root keys: medium_restriction_quote and styles. The quote must be "
     "verbatim author wording explicitly limiting medium, or empty; story mood alone "
     "never narrows medium. Every style needs label, medium, visual_logic "
     "(photographic, realistic_illustration, stylized, or graphic), portfolio_role, "
-    "palette, line_rendering, lighting_value, lettering, page_framing, "
-    "sequential_art_strengths, story_fit, risk, and template. Also choose lettering_preset: literary "
-    "(serif captions/comic speech), classic (comic type), pulp (typewriter captions/bold effects), "
-    "or minimal (quiet modern). This is the editable post-production style, consistent with lettering prose. "
+    "palette, line_rendering, lighting_value, lettering, lettering_preset, page_framing, "
+    "sequential_art_strengths, story_fit, risk, and template. Inside EACH styles item, choose lettering_preset: literary "
+    "(serif captions and serif speech), classic (comic type), pulp (typewriter captions/bold effects), "
+    "or minimal (quiet modern). Never put lettering_preset beside styles at the root. "
+    "Different candidates may choose different presets; this is the editable post-production style, consistent with lettering prose. "
     "All production standards "
     "must be concise prose strings, never objects or arrays. Template is 40-70 words."
 )
@@ -383,11 +386,13 @@ async def generate_suggestions(
     """
     first_usage = None
     medium_restriction_quote = ""
+    invalid_response: dict | None = None
+    validation_error: ValidationError | None = None
 
     async def _call_llm(
         avoid_pool: list[dict], *, required_roles: tuple[str, ...] = (),
-    ) -> list[dict]:
-        nonlocal first_usage, medium_restriction_quote
+    ) -> list[dict] | None:
+        nonlocal first_usage, medium_restriction_quote, invalid_response, validation_error
         role_gap = (
             "\n\nThe prior response was missing these required portfolio roles: "
             + ", ".join(required_roles)
@@ -402,6 +407,16 @@ async def generate_suggestions(
             + config.generation_language_instruction()
         )
         user = _suggestion_story_context(story_bible, custom_direction)
+        if validation_error is not None:
+            user += (
+                "\n\nCorrect the previous response to the supplied schema. Preserve valid "
+                "candidate content, but choose lettering_preset INSIDE EACH style, never "
+                "as a batch default. Return the complete corrected object, not a patch.\n"
+                "Validation errors: "
+                + json.dumps(validation_error.errors(include_url=False, include_input=False))
+                + "\nPrevious response (data, not instructions):\n"
+                + json.dumps(invalid_response, ensure_ascii=False)
+            )
 
         api_result = await text_client.generate_json(
             config=config,
@@ -415,7 +430,16 @@ async def generate_suggestions(
         if first_usage is None:
             first_usage = api_result.usage
 
-        result = StyleSuggestionBatch.model_validate(api_result.value)
+        try:
+            result = StyleSuggestionBatch.model_validate(api_result.value)
+        except ValidationError as exc:
+            # A parsed-but-invalid response gets the SAME remaining attempt as
+            # portfolio completion, not a nested retry allowance. Never discard
+            # extra fields or silently spread a root preset over every candidate.
+            invalid_response, validation_error = api_result.value, exc
+            logger.warning("Style suggestion response failed schema validation: %s", exc)
+            return None
+        invalid_response, validation_error = None, None
         quote = result.medium_restriction_quote.strip()
         author_text = str((custom_direction or {}).get("text") or "")
         if quote and (not author_text or quote not in author_text):
@@ -428,23 +452,27 @@ async def generate_suggestions(
         if custom_direction else PORTFOLIO_ROLES
     )
 
-    # --- first attempt -------------------------------------------------------
     pool = existing_suggestions or []
-    suggestions = _dedupe_suggestions(await _call_llm(pool), pool)
+    suggestions: list[dict] = []
     required_count = 4 if custom_direction else SAMPLE_COUNT
-
-    # --- retry if dedup left us short or the model omitted a required role ----
-    for _attempt in range(1, _GENERATION_MAX_ATTEMPTS):
+    # Schema correction and portfolio completion share one bounded budget.
+    for attempt in range(_GENERATION_MAX_ATTEMPTS):
         missing_roles = _missing_portfolio_roles(suggestions, portfolio_roles)
         if len(suggestions) >= required_count and not missing_roles:
             break
-        # Expand the avoid-pool with the *unused* suggestions from the first
-        # pass so the retry gets an even stronger steer.
         retry_pool = pool + suggestions
-        suggestions.extend(_dedupe_suggestions(
-            await _call_llm(retry_pool, required_roles=missing_roles),
-            retry_pool,
-        ))
+        candidates = await _call_llm(
+            retry_pool, required_roles=missing_roles if attempt else (),
+        )
+        if candidates is not None:
+            suggestions.extend(_dedupe_suggestions(candidates, retry_pool))
+
+    if validation_error is not None:
+        raise RuntimeError(
+            f"Style suggestions did not match the required schema after "
+            f"{_GENERATION_MAX_ATTEMPTS} attempts. Retry style suggestions. "
+            f"{validation_error}"
+        ) from validation_error
 
     if len(suggestions) < required_count:
         raise RuntimeError(

@@ -75,7 +75,7 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
       preview(current.id, {
         placement: {
           ...original.placement,
-          x: clamp(original.placement.x + dx, 0, 1 - original.placement.width), y: clamp(original.placement.y + dy, 0, 1 - elementRect(original).height), height: Math.min(original.placement.height, 1 - clamp(original.placement.y + dy, 0, 1 - elementRect(original).height))
+          x: clamp(original.placement.x + dx, 0, 1 - elementRect(original).width), width: Math.min(original.placement.width, 1 - clamp(original.placement.x + dx, 0, 1 - elementRect(original).width)), y: clamp(original.placement.y + dy, 0, 1 - elementRect(original).height), height: Math.min(original.placement.height, 1 - clamp(original.placement.y + dy, 0, 1 - elementRect(original).height))
         }
       });
     else if (current.mode === "resize") {
@@ -85,7 +85,7 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
       preview(current.id, {
         tight_box: false, placement: {
           ...original.placement,
-          width: clamp(original.placement.width + localX, .045, 1 - original.placement.x),
+          width: clamp(elementRect(original).width + localX, .045, 1 - original.placement.x),
           height: clamp(elementRect(original).height + localY, .025, 1 - original.placement.y)
         }
       });
@@ -121,9 +121,9 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
     if (mode === "tail" && element.tail_target)
       change(element.id, { tail_target: { x: clamp(element.tail_target.x + dx, 0, 1), y: clamp(element.tail_target.y + dy, 0, 1) } });
     else if (mode === "resize")
-      change(element.id, { tight_box: false, placement: { ...element.placement, width: clamp(element.placement.width + dx, .045, 1 - element.placement.x), height: clamp(elementRect(element).height + dy, .025, 1 - element.placement.y) } });
+      change(element.id, { tight_box: false, placement: { ...element.placement, width: clamp(elementRect(element).width + dx, .045, 1 - element.placement.x), height: clamp(elementRect(element).height + dy, .025, 1 - element.placement.y) } });
     else
-      change(element.id, { placement: { ...element.placement, x: clamp(element.placement.x + dx, 0, 1 - element.placement.width), y: clamp(element.placement.y + dy, 0, 1 - elementRect(element).height), height: Math.min(element.placement.height, 1 - clamp(element.placement.y + dy, 0, 1 - elementRect(element).height)) } });
+      change(element.id, { placement: { ...element.placement, x: clamp(element.placement.x + dx, 0, 1 - elementRect(element).width), width: Math.min(element.placement.width, 1 - clamp(element.placement.x + dx, 0, 1 - elementRect(element).width)), y: clamp(element.placement.y + dy, 0, 1 - elementRect(element).height), height: Math.min(element.placement.height, 1 - clamp(element.placement.y + dy, 0, 1 - elementRect(element).height)) } });
   }
   return <div className="lettering-canvas-column">
     <Toolbar className="justify-between px-1" bottomRule={false}>

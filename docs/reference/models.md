@@ -558,19 +558,19 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 
 | Field | Type | Default |
 |-------|------|---------|
-| `font` | `FontName` | `'Comic Neue'` |
+| `font` | `FontName` | `'EB Garamond'` |
 | `font_weight` | `Literal[400, 700]` | `400` |
-| `min_font_size` | `float` | `Field(default=17, ge=12, le=100)` |
-| `max_font_size` | `float` | `Field(default=25, ge=12, le=180)` |
-| `line_height` | `float` | `Field(default=1.12, ge=0.9, le=2)` |
+| `min_font_size` | `float` | `Field(default=16, ge=12, le=100)` |
+| `max_font_size` | `float` | `Field(default=17, ge=12, le=180)` |
+| `line_height` | `float` | `Field(default=1.05, ge=0.9, le=2)` |
 | `align` | `Literal['left', 'center', 'right']` | `'center'` |
 | `color` | `Color` | `'#181818'` |
 | `fill` | `Color` | `'#ffffff'` |
 | `stroke` | `Color` | `'#181818'` |
-| `stroke_width` | `float` | `Field(default=1.8, ge=0, le=12)` |
-| `padding` | `float` | `Field(default=9, ge=0, le=40)` |
+| `stroke_width` | `float` | `Field(default=1.6, ge=0, le=12)` |
+| `padding` | `float` | `Field(default=11, ge=0, le=40)` |
 | `corner_radius` | `float` | `Field(default=12, ge=0, le=80)` |
-| `shape` | `Literal['box', 'round', 'ellipse', 'cloud', 'none']` | `'round'` |
+| `shape` | `Literal['box', 'round', 'balloon', 'ellipse', 'cloud', 'none']` | `'balloon'` |
 | `letter_spacing` | `float` | `Field(default=0, ge=-1, le=12)` |
 | `text_stroke` | `Color` | `'transparent'` |
 | `text_stroke_width` | `float` | `Field(default=0, ge=0, le=12)` |
@@ -584,6 +584,16 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `thought` | `RoleStyle` | `Field(default_factory=lambda: RoleStyle(shape='...` |
 | `sfx` | `RoleStyle` | `Field(default_factory=lambda: RoleStyle(font='B...` |
 
+## ResolvedLineMetrics _(lettering.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `x` | `float` |  |
+| `baseline` | `float` |  |
+| `width` | `float` | `Field(ge=0)` |
+| `ascent` | `float` | `Field(ge=0)` |
+| `descent` | `float` | `Field(ge=0)` |
+
 ## ResolvedLettering _(lettering.py)_
 
 | Field | Type | Default |
@@ -595,6 +605,8 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `font_size` | `float` | `Field(ge=12, le=180)` |
 | `line_height` | `float` | `Field(gt=0, le=360)` |
 | `height` | `float` | `Field(gt=0, le=1)` |
+| `width` | `float | None` | `Field(default=None, gt=0, le=1)` |
+| `line_metrics` | `tuple[ResolvedLineMetrics, ...]` | `Field(default=(), max_length=500)` |
 | `overflow` | `bool` |  |
 | `warnings` | `tuple[str, ...]` | `()` |
 

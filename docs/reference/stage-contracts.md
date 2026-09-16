@@ -840,7 +840,7 @@ Authenticated provider-free routes (under `/api/projects/{project_id}`):
 
 Every save invalidates Finish/preflight/packages and composition caches only.
 The composite key hashes base-image SHA, lettering state, locale, style, and
-`lettering-svg-v1`. Relevant mutations/composition serialize under a reentrant
+`lettering-svg-v2`. Relevant mutations/composition serialize under a reentrant
 project filesystem lock, outside directories that invalidation removes. First
 book export seeds all missing lettering before building any normalized pages,
 so initializing page two cannot remove page one's newly prepared output.
@@ -854,6 +854,27 @@ makes no network or provider requests. Unsupported scripts, missing language
 copy, out-of-page transforms and overflow are visible; unresolved layouts block
 composition with a `lettering_layout` repair link, not a paid Draw suggestion.
 The bundled fonts do not provide universal language coverage.
+
+The v2 compositor uses one continuous cubic contour for each speech body and
+its tail, rather than a separate triangle and painted-over seam. Typesetting
+uses the same contour's available width per line and measured glyph baselines;
+fitted width, height, explicit lines and per-line ink metrics are persisted.
+Tight fitting preserves the editable reservation. Resizing begins at the visible
+fitted edge, not at the larger reservation. Layout work is cached per measurer
+through movement/tail gestures and invalidated for text, locale, size and style.
+
+New **Literary classic** defaults use serif captions and speech, compact cream
+narration boxes and rounded-oval balloons. Other presets remain distinct. Saved
+book styles and local overrides are not silently replaced. Reapply a preset to
+adopt its new defaults. Older v1 layouts remain readable but require reopening
+Lettering and saving their explicit v2 reflow before export; artwork is retained.
+
+Style suggestion schema v5 requires `lettering_preset` inside each `styles` item,
+not at the batch root. Parsed schema failures receive a complete-response
+correction using the existing two-call curation budget. This budget is shared
+with portfolio completion; it is not an additional nested retry loop. Extra
+fields remain forbidden, and a root-level preset is never propagated silently
+across candidates. Provider-call failures are not caught by this correction path.
 
 The desk offers fit/zoom/pan, direct move/resize/tail handles, keyboard nudging,
 reading-order selection, display copy, locale switching and role controls.

@@ -106,6 +106,17 @@ describe("Pages-room lettering", () => {
     expect(screen.queryByRole("button", { name: "Save lettering" })).toBeNull();
     expect(api.put).not.toHaveBeenCalled();
   });
+  it("starts keyboard resizing at the fitted edge, and undo restores snug sizing", async () => {
+    mount();
+    await ready();
+    const hit = document.querySelector<HTMLButtonElement>("[data-element-id]")!;
+    const before = parseFloat(hit.style.width) / 100;
+    expect(before).toBeLessThan(initial().state.elements[0].placement.width);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Resize selected lettering" }), { key: "ArrowRight" });
+    expect(parseFloat(hit.style.width) / 100).toBeCloseTo(before + .001, 5);
+    fireEvent.click(screen.getByRole("button", { name: /Undo/ }));
+    expect(parseFloat(hit.style.width) / 100).toBeCloseTo(before, 5);
+  });
   it("allows clearing a numeric field without snapping back on the first key", () => {
     const onChange = vi.fn();
     render(<I18nProvider><LetteringStyleControls value={initial().style.roles.caption} onChange={onChange} /></I18nProvider>);
