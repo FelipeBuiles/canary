@@ -1,0 +1,25 @@
+name: Lettering final proof source
+# Temporary, branch-only source packaging; removed after visual verification.
+on:
+  push:
+    branches: [feat-lettering-desk-20260915]
+    paths: [.github/workflows/lettering-final-proof-source.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Package exact corrected source
+        run: |
+          mkdir -p /tmp/lettering-proof
+          git archive --format=tar.gz --output=/tmp/lettering-proof/correction-source.tar.gz HEAD docs/adr/0021-hybrid-page-lettering.md docs/reference/models.md docs/reference/stage-contracts.md novel_to_comic/src/novel_to_comic/lettering novel_to_comic/src/novel_to_comic/models/lettering.py novel_to_comic/src/novel_to_comic/stages/s2_style.py novel_to_comic/tests/test_lettering_typography.py novel_to_comic/tests/test_style_stage.py web/src/__tests__/fixtures/lettering.json web/src/__tests__/letteringEditor.test.tsx web/src/__tests__/letteringTypography.test.ts web/src/components/lettering/LetteringCanvas.tsx web/src/components/lettering/LetteringStyleControls.tsx
+          git rev-parse HEAD > /tmp/lettering-proof/source-commit.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lettering-final-proof-source
+          path: /tmp/lettering-proof/
+          retention-days: 1
