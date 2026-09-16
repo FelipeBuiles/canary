@@ -360,6 +360,7 @@ def test_new_art_revision_preserves_words_but_requires_placement_review(book):
     view = service.editor_state(artifacts, 1)
     assert view["placement_review_needed"]
     assert view["state"] == initial
+    assert service.placement_review_needed(initial, render)
     assert artifacts.read_render(1, 1) == image
     with pytest.raises(service.LetteringConflict):
         service.composite_page(artifacts, 1, expected_render_revision=1)
@@ -523,3 +524,51 @@ def test_brief_change_invalidates_mutable_lettering_with_its_source(book):
     artifacts.invalidate_after_brief()
     assert not artifacts.lettering_path(1).exists()
     assert not artifacts.book_edition_path.exists()
+
+
+def test_unreviewed_placement_is_exportable_but_not_visually_accepted(book):
+    artifacts, _ = book
+    result = finish_book(artifacts)
+    assert result.preflight.ready_to_export
+    assert result.preflight.pages[0].lettering_placement_review_needed
+    assert not result.preflight.correction_requests
+    save(artifacts, service.ensure_lettering(artifacts, 1), reviewed=True)
+    accepted = finish_book(artifacts)
+    assert accepted.preflight.ready_to_export
+    assert not accepted.preflight.pages[0].lettering_placement_review_needed
+
+
+def test_unreviewed_copy_save_cannot_inherit_previous_visual_acceptance(book):
+    artifacts, _ = book
+    state = save(artifacts, service.ensure_lettering(artifacts, 1), reviewed=True)
+    # An unchanged save is not a new presentation, but changed copy is.
+    same = save(artifacts, state)
+    assert same.reviewed_against_image_sha256 == state.reviewed_against_image_sha256
+    changed = save(artifacts, copy_state(same), reviewed=False)
+    assert changed.reviewed_against_image_sha256 is None
+    assert changed.reviewed_against_render_revision is None
+    assert service.editor_state(artifacts, 1)["placement_review_needed"]
+
+
+def test_book_style_reflow_invalidates_visual_acceptance(book):
+    artifacts, _ = book
+    save(artifacts, service.ensure_lettering(artifacts, 1), reviewed=True)
+    style = service.ensure_style(artifacts)
+    roles = style.roles.model_dump()
+    roles["caption"]["max_font_size"] += 2
+    service.save_style(artifacts, update(style, roles=roles), expected_revision=style.revision)
+    state = artifacts.read_lettering(1)
+    assert state.reviewed_against_image_sha256 is None
+    assert state.reviewed_against_render_revision is None
+    assert service.editor_state(artifacts, 1)["placement_review_needed"]
+
+
+def test_missing_bundled_glyph_is_not_exported_with_a_system_fallback(book):
+    artifacts, _ = book
+    initial = service.ensure_lettering(artifacts, 1)
+    changed = save(artifacts, copy_state(initial, "Hello 🙂"))
+    assert "missing_glyphs" in changed.elements[0].resolved.warnings
+    result = finish_book(artifacts)
+    assert not result.preflight.ready_to_export
+    assert any(issue.code == "lettering_layout" for issue in result.preflight.pages[0].invariant_failures)
+    assert not result.preflight.correction_requests

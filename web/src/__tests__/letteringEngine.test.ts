@@ -66,3 +66,21 @@ describe("shared deterministic lettering engine", () => {
     expect(bounds.x + bounds.width).toBeGreaterThan(1);
   });
 });
+
+describe("exact bundled font coverage", () => {
+  it.each([
+    ["EB Garamond", "Hello 🙂", true],
+    ["Comic Neue", "Ж", true],
+    ["EB Garamond", "Ж", false],
+    ["M PLUS 1p", "こんにちは世界", false],
+    ["M PLUS 1p", "你", true],
+    ["M PLUS 1p", "한", true],
+    ["EB Garamond", "Café — “yes…”\nNext\tline", false],
+  ])("validates %s / %s without accepting OS fallback", (font, text, missing) => {
+    const input = state(), theme = structuredClone(style);
+    theme.roles.caption.font = font as typeof theme.roles.caption.font;
+    input.elements[0].text_by_locale.source = text;
+    const resolved = resolvePage(input, theme, measure);
+    expect(resolved.elements[0].resolved!.warnings.includes("missing_glyphs")).toBe(missing);
+  });
+});

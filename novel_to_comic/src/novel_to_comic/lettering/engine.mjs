@@ -3,7 +3,9 @@
  * and executed unchanged in Chromium by the server. No network or model calls.
  * Geometry is normalized; typography uses a 1000-unit vector page width.
  */
-export const ENGINE_VERSION = "lettering-svg-v2";
+import { FONT_COVERAGE } from "./font-coverage.mjs";
+
+export const ENGINE_VERSION = "lettering-svg-v3";
 export const FONT_FILES = Object.freeze({
   "Comic Neue": "ComicNeue-Bold.ttf",
   "EB Garamond": "EBGaramond-SemiBold.ttf",
@@ -14,6 +16,34 @@ export const FONT_FILES = Object.freeze({
   "Orbitron": "Orbitron-Bold.ttf",
   "Bungee": "Bungee-Regular.ttf",
 });
+// A font being loaded does not mean it owns the requested glyph. Browser
+// fallback is machine-dependent, so validate against the exact bundled cmaps.
+const coverage = new Map();
+function hasMissingGlyphs(font, text) {
+  if (!coverage.has(font)) {
+    let previous = -1;
+    const ranges = FONT_COVERAGE[font].split(",").map(pair => {
+      const [gap, length = "0"] = pair.split(".");
+      const start = previous + 1 + parseInt(gap, 36);
+      previous = start + parseInt(length, 36);
+      return [start, previous];
+    });
+    coverage.set(font, ranges);
+  }
+  const ranges = coverage.get(font);
+  return [...text].some(character => {
+    if (/^[\r\n\t]$/.test(character)) return false;
+    const cp = character.codePointAt(0);
+    let low = 0, high = ranges.length - 1;
+    while (low <= high) {
+      const mid = (low + high) >>> 1, [start, end] = ranges[mid];
+      if (cp < start) high = mid - 1;
+      else if (cp > end) low = mid + 1;
+      else return false;
+    }
+    return true;
+  });
+}
 const escape = (value) => String(value).replace(/[&<>"']/g, (c) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
 })[c]);
@@ -326,6 +356,7 @@ export function resolvePage(state, style, measure) {
     const role = roleFor(element, style), text = textFor(element, state.locale);
     const warnings = [];
     if (!text.trim()) warnings.push("empty_copy");
+    if (hasMissingGlyphs(role.font, text)) warnings.push("missing_glyphs");
     if (element.text_by_locale[state.locale] === undefined && state.locale !== "source") warnings.push("missing_translation");
     const key=JSON.stringify([role,element.role,text,state.locale,element.placement.width,
       element.placement.height,element.tight_box,pageHeight]);

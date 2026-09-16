@@ -11,6 +11,7 @@ from PIL import Image
 
 from novel_to_comic.artifact_lock import locked_mutation
 from novel_to_comic.config import load_config
+from novel_to_comic.models.draw import PageRenderRevision
 from novel_to_comic.models.lettering import (
     LetteringElement,
     LetteringRoles,
@@ -241,7 +242,11 @@ def editor_state(artifacts: TargetArtifacts, page_number: int) -> dict:
     state = saved
     if reflow and not source_stale:
         state = resolve_lettering(
-            _replace(saved, canvas_aspect_ratio=render.width / render.height), style
+            _replace(
+                saved, canvas_aspect_ratio=render.width / render.height,
+                reviewed_against_render_revision=None,
+                reviewed_against_image_sha256=None,
+            ), style
         )
     return {
         "mode": "hybrid",
@@ -252,8 +257,7 @@ def editor_state(artifacts: TargetArtifacts, page_number: int) -> dict:
         "render_image_sha256": render.image_sha256,
         "source_stale": source_stale,
         "needs_save": reflow,
-        "placement_review_needed": saved.reviewed_against_image_sha256
-        != render.image_sha256,
+        "placement_review_needed": source_stale or placement_review_needed(state, render),
         "canonical": {
             item.id: {
                 "text": item.text,
@@ -266,6 +270,14 @@ def editor_state(artifacts: TargetArtifacts, page_number: int) -> dict:
             for item in part.lettering
         },
     }
+
+
+def placement_review_needed(state: PageLettering, render: PageRenderRevision) -> bool:
+    """Visual acceptance belongs to this saved presentation and artwork only."""
+    return (
+        state.reviewed_against_render_revision != render.revision
+        or state.reviewed_against_image_sha256 != render.image_sha256
+    )
 
 
 @locked_mutation
@@ -346,18 +358,27 @@ def save_lettering(
         incoming,
         revision=saved.revision + 1,
         canvas_aspect_ratio=render.width / render.height,
-        reviewed_against_render_revision=(
-            render.revision if mark_reviewed else saved.reviewed_against_render_revision
-        ),
-        reviewed_against_image_sha256=(
-            render.image_sha256
-            if mark_reviewed
-            else saved.reviewed_against_image_sha256
-        ),
+        reviewed_against_render_revision=None,
+        reviewed_against_image_sha256=None,
     )
     state = resolve_lettering(
         state, style
-    )  # Never trust client-supplied resolved lines.
+    )  # Never trust client-supplied resolved lines or visual-review markers.
+    excluded = {
+        "revision", "content_sha256", "reviewed_against_render_revision",
+        "reviewed_against_image_sha256",
+    }
+    unchanged = state.model_dump(exclude=excluded) == saved.model_dump(exclude=excluded)
+    if mark_reviewed or unchanged:
+        state = _replace(
+            state,
+            reviewed_against_render_revision=(
+                render.revision if mark_reviewed else saved.reviewed_against_render_revision
+            ),
+            reviewed_against_image_sha256=(
+                render.image_sha256 if mark_reviewed else saved.reviewed_against_image_sha256
+            ),
+        )
     artifacts.write_lettering(state)
     return state
 
@@ -418,7 +439,11 @@ def save_style(
         ):
             continue  # Keep stale-source drafts recoverable, never silently reseed.
         updates.append(
-            resolve_lettering(_replace(state, revision=state.revision + 1), style)
+            resolve_lettering(_replace(
+                state, revision=state.revision + 1,
+                reviewed_against_render_revision=None,
+                reviewed_against_image_sha256=None,
+            ), style)
         )
     for state in updates:
         artifacts.write_lettering(state)

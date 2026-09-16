@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from novel_to_comic.models.validation import InvariantFailure, StageName
 
 
-FINISH_PREFLIGHT_VALIDATOR_VERSION = 5
+FINISH_PREFLIGHT_VALIDATOR_VERSION = 6
 
 
 class PreflightDiagnostic(BaseModel):
@@ -49,6 +49,8 @@ class PreflightPage(BaseModel):
     color_profile: str | None = None
     lettering_revision: int | None = None
     lettering_sha256: str | None = None
+    # Manual visual acceptance is separate from technical export invariants.
+    lettering_placement_review_needed: bool = False
     composite_identity: str | None = None
     normalized_image_sha256: str | None = Field(
         default=None, min_length=64, max_length=64

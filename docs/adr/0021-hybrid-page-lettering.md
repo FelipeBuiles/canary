@@ -90,3 +90,23 @@ Style suggestions also receive a regression correction: `lettering_preset` is a
 required property of each candidate, and prompt wording explicitly forbids placing
 it at the batch root. Invalid parsed responses can be corrected within the same
 two-call budget used for portfolio completion; validation is not loosened.
+
+## Merge-readiness corrections (2026-09-16)
+
+Visual acceptance is scoped to both the saved lettering presentation and its
+artwork. A copy/layout/locale change saved without explicit review, a book-style
+reflow, or an engine reflow cannot inherit an earlier approval. Finish records
+`lettering_placement_review_needed` separately from technical export invariants;
+Book exposes the outstanding review and a direct Lettering link outside developer
+mode. Unreviewed placement remains exportable for inspection, not certified as
+publication-quality. New artwork still needs review even when the words remain.
+
+The v3 engine retains v2's measured contours, tight line fitting and integrated
+tails, but rejects characters absent from the selected bundled font. Loaded fonts
+alone are insufficient: browsers silently substitute OS fonts for missing glyphs.
+The shared generated coverage table is derived from the actual TTF cmap tables
+with `python3 scripts/update_lettering_fonts.py` (check with `--check`), without
+runtime downloads or dependencies. Missing glyphs are recoverable lettering
+errors and prevent export, never trigger a Draw correction. Existing resolved
+layouts must be explicitly reflowed/saved; font coverage is not inferred from a
+script name or promised for all Japanese/Chinese characters.

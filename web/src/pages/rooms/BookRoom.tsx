@@ -142,6 +142,7 @@ export function BookRoom() {
     + (preflight?.pages.reduce((total, page) => total + page.invariant_failures.length, 0) ?? 0);
   const exportBlockers = technicalFindingCount + unresolvedIssues;
   const canExport = !!preflight && !isLoading && !isFetching && !preflightError && !retryPreflight.isPending && exportBlockers === 0;
+  const placementReviews = preflight?.pages.filter(page => page.lettering_placement_review_needed) ?? [];
   const finishFindings = groupFinishFindings(preflight);
   const finishDiagnostics = showDevContent ? groupFinishDiagnostics(preflight) : [];
   const editorialSummary = unresolvedIssues > 0
@@ -336,6 +337,23 @@ export function BookRoom() {
           </div>
         </section>
       ) : null}
+
+      {placementReviews.length > 0 && (
+        <section aria-label={t("LETTERING VISUAL REVIEW")}>
+          <SectionHeader variant="underline" title={t("LETTERING VISUAL REVIEW")}
+            description={t("Export is available, but these placements have not been reviewed against the current artwork. Check quiet spaces, faces, reading order and lettering before publishing.")} />
+          <div className="space-y-3">
+            {placementReviews.map(page => (
+              <Surface key={page.page_number} tone="gold" padding="md" border="soft" shadow="none">
+                <Link className="inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4"
+                  to={reviewUrl(page.page_number, "lettering")}>
+                  {t("Review lettering placement")} · {t("Page")} {page.page_number}
+                </Link>
+              </Surface>
+            ))}
+          </div>
+        </section>
+      )}
 
       {finishDiagnostics.length ? (
         <section aria-label={t("TECHNICAL DIAGNOSTICS")}>
