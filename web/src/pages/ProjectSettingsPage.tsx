@@ -1,16 +1,18 @@
 import { lazy, Suspense, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useProjectConfig, useProjectStatus, useUpdateProjectConfig, useDeleteProject } from "../api/queries";
+import { useProjectConfig, useProjectStatus, useUpdateProjectConfig, useDeleteProject, useRenameProject } from "../api/queries";
+import { ApiError } from "../api/client";
 import { SettingsLayout, SettingsRow } from "../components/ui/SettingsLayout";
 import { ConfirmModal, SectionHeader } from "../components/composites";
 import { Surface } from "../components/ui/Surface";
-import { SelectField, SwitchField } from "../components/ui/Field";
+import { FieldLabel, SelectField, SwitchField, TextField } from "../components/ui/Field";
 import { Button } from "../components/ui/Button";
 import { LANGUAGES, useI18n } from "../i18n";
 import type { LanguageCode } from "../i18n";
 import { useShowDevContent } from "../lib/devContent";
 
 const TABS = [
+  { id: "general", label: "General" },
   { id: "language", label: "Language" },
   ...(import.meta.env.DEV ? [{ id: "models", label: "Models (dev)" }] : []),
   { id: "dev", label: "Advanced" },
@@ -19,12 +21,100 @@ const TABS = [
 
 const ProjectModelControls = import.meta.env.DEV ? lazy(() => import("../components/wizard/ProjectModelControls")) : null;
 
+function ProjectNameForm({ project, projectName }: { project: string; projectName: string }) {
+  const { t } = useI18n();
+  const rename = useRenameProject();
+  const [draft, setDraft] = useState(projectName);
+  const [touched, setTouched] = useState(false);
+  const name = draft.trim();
+  const validationError = !name
+    ? t("Enter a project name.")
+    : Array.from(name).length > 200
+      ? t("Use 200 characters or fewer.")
+      : null;
+  const serverFieldError = rename.error instanceof ApiError && rename.error.status === 422
+    ? t("Enter a project name with 200 characters or fewer.")
+    : null;
+  const fieldError = (touched ? validationError : null) ?? serverFieldError;
+  const unchanged = name === projectName;
+
+  return (
+    <form
+      aria-label={t("Project name")}
+      aria-busy={rename.isPending}
+      noValidate
+      onSubmit={(event) => {
+        event.preventDefault();
+        setTouched(true);
+        if (rename.isPending || validationError || unchanged) return;
+        rename.mutate({ id: project, name }, {
+          onSuccess: (data) => {
+            setDraft(data.project_name);
+            setTouched(false);
+          },
+        });
+      }}
+    >
+      <Surface border="soft" shadow="none">
+        <SettingsRow
+          label={t("Project name")}
+          hint={t("Changes the name shown in your library and studio. Your story, artwork, and exports stay unchanged.")}
+        >
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <FieldLabel htmlFor="project-name" className="sr-only">{t("Project name")}</FieldLabel>
+              <TextField
+                id="project-name"
+                name="project_name"
+                value={draft}
+                required
+                disabled={rename.isPending}
+                aria-invalid={!!fieldError}
+                aria-describedby={`project-name-hint${fieldError ? " project-name-error" : ""}`}
+                onBlur={() => setTouched(true)}
+                onChange={(event) => {
+                  setDraft(event.target.value);
+                  rename.reset();
+                }}
+                className="bg-bristol font-body text-base"
+              />
+              <p id="project-name-hint" className="font-body text-sm leading-6 text-ink-muted">{t("Up to 200 characters. Leading and trailing spaces are removed.")}</p>
+              {fieldError && <p id="project-name-error" role="alert" className="text-sm text-hero-red">{fieldError}</p>}
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <Button type="submit" disabled={rename.isPending || !!validationError || unchanged}>
+                {rename.isPending ? t("Saving…") : t("Save name")}
+              </Button>
+              <Button
+                variant="outline"
+                disabled={rename.isPending}
+                onClick={() => {
+                  setDraft(projectName);
+                  setTouched(false);
+                  rename.reset();
+                }}
+              >
+                {t("Cancel")}
+              </Button>
+            </div>
+            <div aria-live="polite" aria-atomic="true">
+              {rename.isPending && <p className="text-sm">{t("Saving…")}</p>}
+              {rename.isError && !serverFieldError && <p role="alert" className="text-sm text-hero-red">{rename.error.message}</p>}
+              {rename.isSuccess && <p role="status" className="text-sm">{t("Project name saved.")}</p>}
+            </div>
+          </div>
+        </SettingsRow>
+      </Surface>
+    </form>
+  );
+}
+
 export function ProjectSettingsPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { language, setLanguage, t } = useI18n();
   const { data: config, error: configError } = useProjectConfig(id);
-  const { data: status } = useProjectStatus(id);
+  const { data: status, error: statusError } = useProjectStatus(id);
   const updateConfig = useUpdateProjectConfig();
   const deleteMutation = useDeleteProject();
   const [showDevContent, setShowDevContent] = useShowDevContent();
@@ -57,13 +147,23 @@ export function ProjectSettingsPage() {
         onTabChange={setActiveTab}
       >
         {configError && <p role="alert" className="text-sm text-hero-red">{configError.message}</p>}
-        {activeTab !== "delete" && (
+        {activeTab !== "delete" && activeTab !== "general" && (
           <div aria-live="polite" aria-atomic="true">
             {updateConfig.isPending && <p className="text-sm">{t("Saving…")}</p>}
             {updateConfig.isError && <p role="alert" className="text-sm text-hero-red">{updateConfig.error.message}</p>}
             {updateConfig.isSuccess && <p role="status" className="text-sm">{t("Settings saved.")}</p>}
           </div>
         )}
+        {activeTab === "general" && (<div>
+          <SectionHeader title="General" />
+          {id && status ? (
+            <ProjectNameForm key={id} project={id} projectName={status.project_name} />
+          ) : statusError ? (
+            <p role="alert" className="text-sm text-hero-red">{statusError.message}</p>
+          ) : (
+            <p role="status" className="text-sm">{t("Loading project…")}</p>
+          )}
+        </div>)}
         {activeTab === "language" && (<div>
           <SectionHeader title="Language" description="Choose the language you work in and the language your comic speaks." />
           <Surface border="soft" shadow="none">

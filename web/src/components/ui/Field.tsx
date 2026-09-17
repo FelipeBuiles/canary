@@ -1,5 +1,6 @@
 import {
   type InputHTMLAttributes,
+  type Ref,
   type LabelHTMLAttributes,
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
@@ -25,7 +26,7 @@ export function SelectField({ className, ...props }: SelectFieldProps) {
   return <select className={cn("ui-field", className)} {...props} />;
 }
 
-type TextAreaFieldProps = TextareaHTMLAttributes<HTMLTextAreaElement>;
+type TextAreaFieldProps = TextareaHTMLAttributes<HTMLTextAreaElement> & {ref?: Ref<HTMLTextAreaElement>};
 
 export function TextAreaField({ className, ...props }: TextAreaFieldProps) {
   return <textarea className={cn("ui-field min-h-[88px] resize-y", className)} {...props} />;

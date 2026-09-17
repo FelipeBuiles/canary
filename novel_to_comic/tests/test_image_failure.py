@@ -47,3 +47,16 @@ def test_classifies_openai_policy_violation():
     assert classify_image_failure(
         ValueError('{"error": {"code": "content_policy_violation"}}')
     ) == "provider_blocked"
+
+
+def test_classifies_openrouter_content_management_policy_refusal():
+    error = ValueError(
+        'AI gateway request failed for complete_page_draw '
+        '(model=meta/muse-image, endpoint=/v1/images/edits): 400 Bad Request — '
+        'litellm.APIError: OpenRouter image generation failed (400): '
+        '{"error":{"message":"The response was filtered due to the prompt '
+        'triggering our content management policy.","code":400,'
+        '"metadata":{"provider_name":"Meta"}}}'
+    )
+
+    assert classify_image_failure(error) == "provider_blocked"

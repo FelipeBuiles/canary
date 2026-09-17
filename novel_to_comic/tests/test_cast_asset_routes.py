@@ -656,6 +656,9 @@ def test_status_recognizes_individually_generated_cast_without_calibration_board
         app.state.generation_jobs["active"] = SimpleNamespace(project_name="test-user:demo", status="running")
     elif blocker == "unapproved_style":
         state.stages["style"].status = StageStatus.AWAITING_REVIEW
+        # A selected usable sample IS checkpoint approval. Model an unselected
+        # sample here rather than mocking contradictory approval evidence.
+        monkeypatch.setattr(projects, "is_style_selected", lambda *_: False)
     elif blocker == "unselected_style":
         monkeypatch.setattr(projects, "is_style_selected", lambda *_: False)
     request = SimpleNamespace(app=app)

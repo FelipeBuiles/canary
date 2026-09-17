@@ -58,7 +58,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "novel_to_comic" = [
   "prompts/*.txt",
-  "fonts/*.ttf",
+  "fonts/*.ttf", "lettering/*.mjs", "lettering/*.mts",
   "labs/*.yaml",
   "labs/fixtures/*.json",
   "labs/fixtures/reference_images/*.png",

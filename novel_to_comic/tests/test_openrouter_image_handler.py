@@ -1,11 +1,15 @@
 """Native OpenRouter Images API adapter contract."""
 
+import asyncio
 import base64
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import httpx
 
 from litellm_handlers.openrouter_image import (
+    ImageResponse,
+    OpenRouterImageLLM,
     _build_payload,
     _headers,
     _image_b64,
@@ -14,17 +18,31 @@ from litellm_handlers.openrouter_image import (
 
 
 def test_openrouter_image_payload_uses_native_images_api_shape():
-    payload = _build_payload(
-        "openrouter-image/meta/muse-image",
-        "A test image",
-        [("reference.jpg", b"reference-bytes", "image/jpeg")],
-        {"size": "1024x1280", "n": 1},
-    )
+    model_response = ImageResponse()
+    model_response._hidden_params = {}
+    post = AsyncMock(return_value=httpx.Response(
+        200, json={"data": [{"b64_json": "encoded"}]},
+        request=httpx.Request("POST", "https://openrouter.ai/api/v1/images"),
+    ))
+    with patch("litellm_handlers.openrouter_image.httpx.AsyncClient.post", post):
+        asyncio.run(OpenRouterImageLLM().aimage_edit(
+            model="openrouter-image/meta/muse-image",
+            prompt="A test image",
+            image=[("reference.jpg", b"reference-bytes", "image/jpeg")],
+            model_response=model_response,
+            api_key="test-key",
+            # LiteLLM custom edits retain aspect_ratio/moderation but drop named size/n.
+            optional_params={"aspect_ratio": "2:3", "moderation": "low"},
+        ))
+
+    assert post.await_count == 1
+    assert post.call_args.args == ("https://openrouter.ai/api/v1/images",)
+    payload = post.call_args.kwargs["json"]
 
     assert payload["model"] == "meta/muse-image"
     assert payload["prompt"] == "A test image"
-    assert payload["size"] == "1024x1280"
-    assert payload["n"] == 1
+    assert payload["aspect_ratio"] == "2:3"
+    assert payload["moderation"] == "low"
     assert payload["input_references"] == [{
         "type": "image_url",
         "image_url": {

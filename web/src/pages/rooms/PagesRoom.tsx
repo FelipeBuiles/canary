@@ -1,6 +1,8 @@
 import { createPortal } from "react-dom";
 import { ArrowUpRight, BookOpen, Layers, ChevronLeft as ReviewChevronLeft, ChevronRight as ReviewChevronRight, X as ReviewClose } from "lucide-react";
 import { TextCheckArtwork } from "../../components/pages/TextCheckArtwork";
+import { LetteringEditor } from "../../components/lettering/LetteringEditor";
+import { pageCompositePreviewUrl } from "../../api/lettering";
 import { PageThumbnail } from "../../components/pages/PageThumbnail";
 import { accountIdentity } from "../../lib/accountEpoch";
 import { useEffect, useRef, useState } from "react";
@@ -62,7 +64,7 @@ import { BottomBarPortal } from "../../layout/TopBarSlot";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 
-type ReviewView = "page" | "visual" | "checks";
+type ReviewView = "page" | "visual" | "checks" | "lettering";
 type PageFilter = "all" | "needs-review" | "drawing" | "failed";
 type PaidPageIntent =
   | { kind: "batch"; retry?: boolean }
@@ -106,7 +108,7 @@ function PageSpendConsent({
           ? t("Run the text check again on this render. This does not redraw the page.")
           : intent.depiction === "less_graphic"
             ? t("Draw a less graphic version of this page while keeping required identity references.")
-            : t("Draw one complete page now, including its lettering.")}
+            : t("Draw one complete page of artwork. Editable lettering is added without an image charge.")}
       cost={estimate.data}
       confirmLabel={intent.kind === "batch" ? retryBatch ? t("CONFIRM RETRY") : t("CONFIRM QUEUE") : intent.kind === "analysis" ? t("CONFIRM TEXT CHECK") : t("CONFIRM DRAW")}
       busy={busy || estimate.isFetching || !estimate.data || !!estimate.error}
@@ -291,7 +293,7 @@ function PageReview({
 
   useDialogFocus(panelRef, { onClose });
 
-  function selectView(next: "page" | "visual" | "checks") {
+  function selectView(next: ReviewView) {
     onViewChange(next);
     // Each view starts at the top of the modal body; the header stays put.
     const scroller = bodyRef.current;
@@ -356,6 +358,13 @@ function PageReview({
                 onClick: () => selectView("page"),
               },
               {
+                key: "lettering",
+                label: t("Lettering"),
+                active: view === "lettering",
+                onClick: () => selectView("lettering"),
+                disabled: editSourceRevision == null,
+              },
+              {
                 key: "visual",
                 label: t("Visual review"),
                 active: view === "visual",
@@ -401,6 +410,8 @@ function PageReview({
               )}
             </div>
 
+            {view === "lettering" && editSourceRevision != null && <LetteringEditor project={project} pageNumber={item.page.page_number} disabled={pageIsDrawing}/>}
+
             {view === "visual" && (
               <div role="region" aria-label={t("Visual review")}>
                 {editSourceRevision != null ? (
@@ -425,8 +436,8 @@ function PageReview({
             {view === "checks" && (
               <div role="region" aria-label={t("Checks")}>
                 <section className="space-y-4">
-                  <SectionHeader variant="underline" title={t("Optional text review")}
-                    description={t("The checker can misread words. Compare suggestions with the artwork; they do not block export.")} />
+                  <SectionHeader variant="underline" title={t(item.lettering_mode === "hybrid" ? "Base-art lettering check" : "Optional text review")}
+                    description={t(item.lettering_mode === "hybrid" ? "The artwork should not contain generated comic lettering. Inspect any detected regions; legitimate in-world signs remain separate." : "The checker can misread words. Compare suggestions with the artwork; they do not block export.")} />
                   {editSourceRevision != null && <Button variant="outline" onClick={onCheckText} disabled={checkingText || pageIsDrawing || item.analysis_recovery?.status === "checked"}>
                     {checkingText ? t("CHECKING TEXT…") : item.analysis_recovery?.status === "checked" ? t("TEXT CHECK COMPLETE") : t("CHECK PAGE TEXT")}
                   </Button>}
@@ -471,7 +482,7 @@ export function PagesRoom() {
   const pageParam = searchParams.get("page") ?? "";
   const selected = /^[1-9]\d*$/.test(pageParam) && Number.isSafeInteger(Number(pageParam)) ? Number(pageParam) : null;
   const reviewParam = searchParams.get("review");
-  const review: ReviewView = reviewParam === "visual" || reviewParam === "checks" ? reviewParam : "page";
+  const review: ReviewView = reviewParam === "visual" || reviewParam === "checks" || reviewParam === "lettering" ? reviewParam : "page";
   const filterParam = searchParams.get("filter");
   const filter: PageFilter = filterParam === "needs-review" || filterParam === "drawing" || filterParam === "failed" ? filterParam : "all";
   const readingParam = searchParams.get("reading");
@@ -907,7 +918,7 @@ export function PagesRoom() {
             <div className="mt-3 flex gap-3 overflow-x-auto">
               {pages.filter((item) => item.active_render).map((item) => (
                 <button key={item.page.page_number} type="button" className="w-20 shrink-0 p-1 text-center text-xs font-bold" onClick={() => updateContext({ page: String(item.page.page_number), review: "page" })} aria-label={`${t("Inspect completed page")} ${item.page.page_number}`}>
-                  <img src={pageRenderPreviewUrl(id, item.page.page_number, item.active_render!.render.revision, "thumbnail")} alt="" className="mb-2 aspect-[2/3] w-full object-contain" />
+                  <img src={item.lettering_mode === "hybrid" ? pageCompositePreviewUrl(id, item.page.page_number, item.active_render!.render.revision, "thumbnail", item.lettering_revision) : pageRenderPreviewUrl(id, item.page.page_number, item.active_render!.render.revision, "thumbnail")} alt="" className="mb-2 aspect-[2/3] w-full object-contain" />
                   {t("Page")} {item.page.page_number}
                 </button>
               ))}
@@ -976,7 +987,7 @@ export function PagesRoom() {
                       />
                     ) : revision ? (
                       <PageThumbnail
-                        src={pageRenderPreviewUrl(id, item.page.page_number, revision, "thumbnail")}
+                        src={item.lettering_mode === "hybrid" ? pageCompositePreviewUrl(id, item.page.page_number, revision, "thumbnail", item.lettering_revision) : pageRenderPreviewUrl(id, item.page.page_number, revision, "thumbnail")}
                         alt={`${t("Complete page thumbnail")} ${item.page.page_number}, ${t("revision")} ${revision}`}
                         reveal={revealedPage === item.page.page_number}
                         onRevealEnd={() => setRevealedPage(null)}

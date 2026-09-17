@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .plan_detail_support import with_reservations
+
 import asyncio
 import hashlib
 import io
@@ -89,7 +91,7 @@ def _adaptation() -> BookAdaptation:
 
 
 def _page(adaptation: BookAdaptation) -> ComicPage:
-    return ComicPage(
+    return with_reservations(ComicPage(
         revision=1,
         page_number=1,
         adaptation_revision=adaptation.revision,
@@ -106,7 +108,7 @@ def _page(adaptation: BookAdaptation) -> ComicPage:
             )
         ],
         reading_order=["content-1", "letter-1"],
-    )
+    ))
 
 
 def _edition() -> BookEdition:
@@ -894,7 +896,6 @@ def test_a_drawn_page_reaches_export_without_hand_written_analysis(
     from novel_to_comic.models.draw import (
         CompletePageProviderResult,
         OCRExtraction,
-        OCRTextObservation,
         RetryProvenance,
     )
     from novel_to_comic.models.page import ApprovedVisualReferenceInventory
@@ -960,7 +961,7 @@ def test_a_drawn_page_reaches_export_without_hand_written_analysis(
             assert image_bytes == image
             return ApiResult(
                 value=OCRExtraction(
-                    lettering=[OCRTextObservation(id="ocr-1", text="The door opened.")]
+                    lettering=[]
                 ),
                 usage=UsageRecord(
                     provider="gemini",
@@ -1037,6 +1038,7 @@ def _native_edition() -> BookEdition:
 
     profile = production_page_capability_profile().model_copy(update={
         "id": "codex-dev-complete-page-v1-" + "a" * 64,
+        "exact_visible_lettering": True,
         "provider": "codex-dev",
         "model": "gpt-image-2",
         "max_image_references": 5,

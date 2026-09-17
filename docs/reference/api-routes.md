@@ -54,6 +54,14 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/labs/runs/{run_id}` | `get_run` | `labs.py` |
 | `DELETE` | `/api/labs/runs/{run_id}` | `delete_run` | `labs.py` |
 | `GET` | `/api/labs/runs/{run_id}/cells/{image_idx}/{variant}/{model_id}/image` | `get_cell_image` | `labs.py` |
+| `GET` | `/api/lettering/pages/{page_number}/lettering` | `get_lettering` | `lettering.py` |
+| `PUT` | `/api/lettering/pages/{page_number}/lettering` | `put_lettering` | `lettering.py` |
+| `POST` | `/api/lettering/pages/{page_number}/lettering/reset` | `reset_page_lettering` | `lettering.py` |
+| `GET` | `/api/lettering/lettering/style` | `get_lettering_style` | `lettering.py` |
+| `PUT` | `/api/lettering/lettering/style` | `put_lettering_style` | `lettering.py` |
+| `GET` | `/api/lettering/pages/{page_number}/composite/{rendition}` | `get_page_composite` | `lettering.py` |
+| `GET` | `/api/lettering/lettering/translation-estimate` | `get_translation_estimate` | `lettering.py` |
+| `POST` | `/api/lettering/lettering/translate` | `post_translation` | `lettering.py` |
 | `POST` | `/api/operator_billing/refunds` | `refund_unused_credit_grant` | `operator_billing.py` |
 | `GET` | `/api/projects/{project}/pages` | `list_pages` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_number}` | `get_page` | `pages.py` |
@@ -86,6 +94,7 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/projects/{project}/stage-error/{stage}` | `get_stage_error` | `pipeline.py` |
 | `POST` | `/api/projects` | `create_project` | `projects.py` |
 | `GET` | `/api/projects` | `list_projects` | `projects.py` |
+| `PATCH` | `/api/projects/{project_id}` | `rename_project` | `projects.py` |
 | `GET` | `/api/projects/{project_id}/status` | `project_status` | `projects.py` |
 | `GET` | `/api/projects/{project_id}/cover-estimate` | `project_cover_estimate` | `projects.py` |
 | `POST` | `/api/projects/{project_id}/cover` | `generate_cover` | `projects.py` |

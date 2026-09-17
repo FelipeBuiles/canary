@@ -170,13 +170,15 @@ def test_lease_readiness_tracks_renewal_failure_and_recovery(monkeypatch):
         failing = False
         def rpc(self, *args): return self
         def execute(self):
-            if self.failing: raise RuntimeError("lease RPC down")
+            if self.failing:
+                raise RuntimeError("lease RPC down")
     db = LeaseDB()
     credits.renew_reservation_leases(db)
     assert credits.reservation_leases_healthy()
     db.failing = True
     import pytest
-    with pytest.raises(RuntimeError): credits.renew_reservation_leases(db)
+    with pytest.raises(RuntimeError):
+        credits.renew_reservation_leases(db)
     assert not credits.reservation_leases_healthy()
     db.failing = False
     credits.renew_reservation_leases(db)

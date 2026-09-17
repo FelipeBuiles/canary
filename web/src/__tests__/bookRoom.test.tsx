@@ -20,6 +20,7 @@ const recoverChecks = vi.fn();
 const finishChecks = vi.fn();
 let finishStageStatus = "complete";
 let drawStageStatus = "complete";
+let providerUsage: { data: PagesApi.ProviderUsageSummary | undefined; isLoading: boolean; error: Error | null };
 
 function drawnPage(pageNumber: number, spreadRole: "single" | "left" | "right" = "single", revision: number | null = 1) {
   return {
@@ -31,8 +32,9 @@ function drawnPage(pageNumber: number, spreadRole: "single" | "left" | "right" =
 }
 let drawnPages = [drawnPage(1)];
 
+
 vi.mock("../api/queries", () => ({
-  useProviderUsage: () => ({ data: undefined }),
+  useProviderUsage: () => providerUsage,
   useProjectStatus: () => ({ data: {
     project_name: "The Lantern Keeper",
     finish_ready: true,
@@ -84,6 +86,7 @@ beforeEach(() => {
   exportError = null;
   pendingFormat = null;
   devDiagnostics = false;
+  providerUsage = { data: undefined, isLoading: false, error: null };
   finishStageStatus = "complete";
   drawStageStatus = "complete";
   rerunPreflight.mockReset();
@@ -100,6 +103,38 @@ beforeEach(() => {
 });
 
 describe("BookRoom edition decisions", () => {
+  it("labels incomplete provider totals without implying unknown calls were free", () => {
+    window.localStorage.setItem("canary.showDevContent", "1");
+    providerUsage.data = {
+      artifact_link_error: null, cost_sources: {}, known_cost_usd: 2.5,
+      call_count: 2, failed_call_count: 0, unknown_cost_count: 1,
+      artifact_calls_missing_from_events: 0, complete: false,
+      groups: [{ page_number: null, category: "ocr", call_count: 1, known_cost_usd: 0, unknown_cost_count: 1 }],
+    };
+    renderRoom();
+    expect(screen.getByText("Partial total (USD)")).toBeTruthy();
+    expect(screen.getByText("Project history across all editions and revisions. Not charged credits.")).toBeTruthy();
+    expect(screen.getByText("$2.5000")).toBeTruthy();
+    fireEvent.click(screen.getByText("Page-level details"));
+    expect(screen.getByText("Unknown")).toBeTruthy();
+    expect(screen.queryByText("0.0000 + ?")).toBeNull();
+  });
+
+  it("shows outstanding lettering acceptance outside developer mode without blocking export", () => {
+    preflight.pages[0].lettering_placement_review_needed = true;
+    renderRoom();
+    expect(screen.getByRole("region", { name: "LETTERING VISUAL REVIEW" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Review lettering placement · Page 1" }).getAttribute("href"))
+      .toBe("/project/demo/pages?page=1&review=lettering");
+    expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", false);
+    expect(screen.queryByRole("region", { name: "TECHNICAL DIAGNOSTICS" })).toBeNull();
+  });
+
+  it("does not warn about placement for accepted or retained baked pages", () => {
+    renderRoom();
+    expect(screen.queryByRole("region", { name: "LETTERING VISUAL REVIEW" })).toBeNull();
+  });
+
   it("offers grouped check recovery when Finish is ready before Draw approval", () => {
     finishStageStatus = "pending";
     drawStageStatus = "awaiting_review";

@@ -167,7 +167,7 @@ def _build_payload(
     model: str, prompt: str, images: list[Any], params: dict[str, Any],
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {"model": _model_slug(model), "prompt": prompt}
-    for key in ("n", "size", "resolution", "aspect_ratio", "quality", "output_format", "background", "seed"):
+    for key in ("n", "size", "resolution", "aspect_ratio", "moderation", "quality", "output_format", "background", "seed"):
         value = params.get(key)
         if value is not None:
             payload[key] = value

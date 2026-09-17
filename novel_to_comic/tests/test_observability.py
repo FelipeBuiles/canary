@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -61,6 +62,62 @@ def test_server_product_event_failure_never_escapes_customer_action():
         side_effect=RuntimeError("database unavailable"),
     ):
         capture_server_event("stage_started", user_id="user", properties={"stage": "draw"})
+
+
+@pytest.mark.parametrize(
+    ("stage", "status", "expected_job_id"),
+    [
+        ("draw", StageStatus.COMPLETE, None),
+        ("extract", StageStatus.AWAITING_REVIEW, "00000000-0000-0000-0000-000000000003"),
+    ],
+)
+def test_stage_success_is_accepted_with_nullable_uuid_job_id(
+    tmp_path, stage, status, expected_job_id
+):
+    state = create_initial_state("demo", "novel.txt")
+    accepted = []
+    table = MagicMock()
+    db = MagicMock()
+    db.table.return_value = table
+
+    def accept_event():
+        payload = table.insert.call_args.args[0]
+        # Match the database's nullable UUID contract, including capture's
+        # best-effort behavior when an invalid identity rejects the write.
+        if payload["job_id"] is not None:
+            UUID(payload["job_id"])
+        accepted.append(payload)
+
+    table.insert.return_value.execute.side_effect = accept_event
+
+    async def finish_stage(*_args):
+        state.stages[stage].status = status
+
+    async def run_credited_stage(**kwargs):
+        await kwargs["run"]()
+        return "00000000-0000-0000-0000-000000000003"
+
+    with (
+        patch.object(pipeline, "_run_stage", new=finish_stage),
+        patch.object(pipeline, "run_credited_stage", new=run_credited_stage),
+        patch("novel_to_comic.server.product_events.get_db", return_value=db),
+    ):
+        asyncio.run(
+            pipeline._run_stage_with_credits(
+                stage,
+                Config(),
+                tmp_path,
+                state,
+                asyncio.Queue(),
+                "00000000-0000-0000-0000-000000000001",
+                "00000000-0000-0000-0000-000000000002",
+            )
+        )
+
+    assert [event["event_name"] for event in accepted] == [
+        "stage_started", "stage_succeeded"
+    ]
+    assert accepted[-1]["job_id"] == expected_job_id
 
 
 def test_prometheus_metrics_are_aggregate_and_low_cardinality():

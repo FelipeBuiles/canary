@@ -15,7 +15,7 @@ import httpx
 from novel_to_comic.ai.errors import AIRefusalError, AITransportError
 from novel_to_comic.ai.providers.base import ProviderRawResult
 from novel_to_comic.config import Config, is_gpt_image_2
-from novel_to_comic.image_geometry import aspect_for_dimensions, generation_shape_for_aspect
+from novel_to_comic.image_geometry import aspect_for_dimensions
 from novel_to_comic.image_models import (
     IMAGE_PROVIDER_FAL_QUEUE,
     IMAGE_PROVIDER_OPENAI,

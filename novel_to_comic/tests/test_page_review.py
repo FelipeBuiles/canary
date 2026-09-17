@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from .plan_detail_support import with_reservations
+
 import asyncio
 import hashlib
 from pathlib import Path
@@ -46,7 +48,7 @@ from novel_to_comic.usage import ApiResult, UsageRecord
 
 
 def _page() -> ComicPage:
-    return ComicPage(
+    return with_reservations(ComicPage(
         revision=1,
         page_number=34,
         adaptation_revision=2,
@@ -81,7 +83,7 @@ def _page() -> ComicPage:
             )
         ],
         reading_order=["content-1", "letter-1", "letter-2"],
-    )
+    ))
 
 
 def _render(

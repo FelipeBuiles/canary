@@ -34,7 +34,7 @@ MAX_CORRECTION_NOTE_CHARACTERS = 1000
 MAX_CORRECTION_ANNOTATIONS = 24
 MAX_CORRECTION_CONTEXT_SOURCE_CHARACTERS = 6000
 MAX_CORRECTION_CONTEXT_SELECTED_UNITS = 32
-DRAW_VALIDATOR_VERSION = "panel_order_v3"
+DRAW_VALIDATOR_VERSION = "panel_order_v3_hybrid_v1"
 
 
 class StaleCorrectionError(ValueError):
@@ -431,7 +431,21 @@ def _validate_observations(
             or raw.render_image_sha256 != render.image_sha256):
         raise ValueError("saved OCR observations belong to different render bytes")
     extraction = raw.extraction
-    matches, failures, issues = _compare_lettering(page, render, extraction)
+    from novel_to_comic.lettering.service import is_hybrid
+    if is_hybrid(artifacts):
+        matches, failures = (), ()
+        issues = tuple(
+            EditorialIssue(
+                id=f"draw-page-{page.page_number:03d}-render-{render.revision:03d}-unexpected-{item.id}",
+                owner_stage="draw", code="unexpected_generated_lettering",
+                message="The base artwork contains possible generated comic lettering where quiet space was requested.",
+                artifact_ids=(item.detected_region_id,) if item.detected_region_id else (),
+                evidence=(f"Blind base-art observation: {item.text}",),
+            )
+            for item in extraction.lettering if item.role == "comic_lettering"
+        )
+    else:
+        matches, failures, issues = _compare_lettering(page, render, extraction)
     analysis = RenderAnalysis(
         page_number=page.page_number,
         render_revision=render.revision,
@@ -496,13 +510,16 @@ def record_analysis_issues(
             render_revision=analysis.render_revision,
             evidence=result.evidence,
             requested_correction=(
+                "Inspect this detected region on the base art. It may contain unwanted generated lettering; "
+                "dismiss a false positive or correct the artwork explicitly. Software lettering edits do not remove raster text."
+                if result.code == "unexpected_generated_lettering" else
                 "Review the page order visually if desired; no redraw is required."
                 if result.code == "unverified_lettering_order"
                 else "Possible text difference. Compare the saved artwork with the script; "
                 "the checker may have misread it. Redraw only if the artwork needs a correction."
             ),
-            lettering_item_ids=lettering_item_ids or result.artifact_ids,
-            detected_region_ids=(),
+            lettering_item_ids=() if result.code == "unexpected_generated_lettering" else (lettering_item_ids or result.artifact_ids),
+            detected_region_ids=result.artifact_ids if result.code == "unexpected_generated_lettering" else (),
             status="open",
         )
         try:
