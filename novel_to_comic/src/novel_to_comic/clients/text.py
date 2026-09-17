@@ -45,6 +45,7 @@ MODEL_REGISTRY: dict[str, str] = {
     "gpt-5.6-luna": "openai",
     "deepseek-v4.1-flash": "openrouter",
     "glm-5.3-flash": "openrouter",
+    "union-alpha": "openrouter",
 }
 
 
@@ -71,6 +72,7 @@ async def generate_json(
     image_attachments: tuple[tuple[bytes, str], ...] = (),
     response_sink: Callable[[ApiResult[str]], None] | None = None,
     retry_invalid_json: bool = True,
+    retry_transport: bool = True,
 ) -> ApiResult[dict]:
     """Generate structured JSON through the AI gateway."""
     return await generate_structured_object(
@@ -85,6 +87,7 @@ async def generate_json(
         image_attachments=image_attachments,
         response_sink=response_sink,
         retry_invalid_json=retry_invalid_json,
+        retry_transport=retry_transport,
     )
 
 

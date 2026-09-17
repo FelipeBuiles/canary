@@ -145,6 +145,20 @@ _OPENROUTER_MAX_TOKENS_ALIASES = frozenset(
         "openrouter/deepseek/deepseek-v4.1-flash",
         "glm-5.3-flash",
         "openrouter/z-ai/glm-5.3-flash",
+        "union-alpha",
+        "openrouter/stealth/union-alpha",
+    }
+)
+
+# OpenRouter's stealth/union-alpha endpoints advertise ``response_format`` but
+# not ``structured_outputs``, and the gateway requires every sent parameter to
+# be supported, so strict ``json_schema`` requests leave the model with no
+# eligible endpoints. Request plain ``json_object`` and carry the schema in
+# the system prompt instead.
+_UNION_ALPHA_JSON_OBJECT_ALIASES = frozenset(
+    {
+        "union-alpha",
+        "openrouter/stealth/union-alpha",
     }
 )
 
@@ -1034,8 +1048,31 @@ def _insert_event(
     except Exception as exc:
         logger.warning("ai_usage_events insert failed for %s: %s", event_id, exc)
 
-async def _insert_event_async(**kwargs: Any) -> None:
-    """Persist the started event off the event loop, but await completion."""
+async def _insert_event_async(
+    *,
+    started_at: datetime.datetime | None = None,
+    langfuse_input: Any = None,
+    **kwargs: Any,
+) -> None:
+    """Queue optional request telemetry before awaiting the durable started row."""
+    if started_at is not None:
+        try:
+            _log_langfuse_generation(
+                metadata=kwargs["metadata_json"],
+                feature=kwargs["feature"],
+                operation=kwargs["operation"],
+                model_alias=kwargs["model_alias"],
+                provider_model=kwargs["model_alias"],
+                status="running",
+                generation_id=kwargs["event_id"],
+                input_payload=langfuse_input,
+                output_payload=None,
+                usage=None,
+                cost_usd=None,
+                start_time=started_at,
+            )
+        except Exception as exc:
+            logger.warning("Langfuse export failed for %s: %s", kwargs["event_id"], exc)
     await asyncio.to_thread(_insert_event, **kwargs)
 
 
@@ -1176,7 +1213,7 @@ def _finalize_event(
         logger.warning("ai_usage_events update failed for %s: %s", event_id, exc)
     if event_persisted and usage is not None and billable and funding != "codex_subscription":
         _settle_event_usage(usage, feature=feature, status=status)
-    if status != "cancelled" and metadata is not None:
+    if metadata is not None:
         try:
             _log_langfuse_generation(
                 metadata=metadata,
@@ -1319,12 +1356,12 @@ def _log_langfuse_generation(
     usage: UsageRecord | None,
     cost_usd: float | None,
     start_time: datetime.datetime,
-    end_time: datetime.datetime,
+    end_time: datetime.datetime | None = None,
     pricing_estimate_drift_pct: float | None = None,
     error: BaseException | None = None,
     scheduler: Any = None,
 ) -> None:
-    """Queue one bounded generation observation for optional Langfuse export."""
+    """Queue a timestamped upsert of one optional generation observation."""
     endpoint = _langfuse_endpoint()
     if endpoint is None or metadata is None:
         return
@@ -1333,10 +1370,11 @@ def _log_langfuse_generation(
         output_payload = {"redacted": True}
     host, auth = endpoint
     trace_id = metadata.get("trace_id") or generation_id
+    running = status == "running"
     tags = [tag for tag in (metadata.get("tags") or []) if tag]
 
     usage_details: dict[str, int] = {}
-    if usage is not None:
+    if not running and usage is not None:
         usage_details = {
             "input": int(usage.input_tokens or 0),
             "output": int(usage.output_tokens or 0),
@@ -1346,14 +1384,14 @@ def _log_langfuse_generation(
             usage_details["images"] = int(usage.image_count)
 
     cost_details: dict[str, float] = {}
-    if cost_usd is not None:
+    if not running and cost_usd is not None:
         cost_details["total"] = float(cost_usd)
 
     obs_metadata = {
+        **(metadata.get("metadata") or {}),
         "operation": operation,
         "feature": feature,
         "status": status,
-        **(metadata.get("metadata") or {}),
     }
     if error is not None:
         obs_metadata["error_type"] = type(error).__name__
@@ -1361,12 +1399,14 @@ def _log_langfuse_generation(
     if pricing_estimate_drift_pct is not None:
         obs_metadata["pricing_estimate_drift_pct"] = pricing_estimate_drift_pct
 
-    now = datetime.datetime.now(datetime.UTC).isoformat()
+    # Langfuse merges upserts by event timestamp, not HTTP arrival order.
+    # A delayed start must never overwrite a terminal observation.
+    timestamp = (start_time if running else end_time or start_time).isoformat()
     batch = [
         {
             "id": str(uuid.uuid4()),
             "type": "trace-create",
-            "timestamp": now,
+            "timestamp": timestamp,
             "body": {
                 "id": trace_id,
                 "name": metadata.get("trace_name") or feature,
@@ -1376,38 +1416,40 @@ def _log_langfuse_generation(
                 "metadata": metadata.get("metadata") or {},
                 "timestamp": start_time.isoformat(),
                 "input": input_payload,
-                "output": output_payload,
+                **({"output": output_payload} if not running else {}),
             },
         },
         {
             "id": str(uuid.uuid4()),
             "type": "generation-create",
-            "timestamp": now,
+            "timestamp": timestamp,
             "body": {
                 "id": generation_id,
                 "traceId": trace_id,
                 "name": metadata.get("generation_name") or model_alias,
                 "model": provider_model or model_alias,
                 "input": input_payload,
-                "output": output_payload,
-                "usageDetails": usage_details,
-                "costDetails": cost_details,
+                **({
+                    "output": output_payload,
+                    "usageDetails": usage_details,
+                    "costDetails": cost_details,
+                } if not running else {}),
                 "metadata": obs_metadata,
                 "startTime": start_time.isoformat(),
-                "endTime": end_time.isoformat(),
-                "level": "DEFAULT" if status == "succeeded" else "ERROR",
+                **({"endTime": end_time.isoformat()} if end_time is not None and not running else {}),
+                "level": "DEFAULT" if status in {"running", "succeeded"} else "ERROR",
                 "statusMessage": (str(error)[:500] if error else None)
                 if status != "succeeded"
                 else None,
             },
         },
     ]
-    if pricing_estimate_drift_pct is not None:
+    if not running and pricing_estimate_drift_pct is not None:
         batch.append(
             {
                 "id": str(uuid.uuid4()),
                 "type": "score-create",
-                "timestamp": now,
+                "timestamp": timestamp,
                 "body": {
                     "traceId": trace_id,
                     "observationId": generation_id,
@@ -1559,6 +1601,7 @@ async def generate_structured_object(
     image_attachments: tuple[tuple[bytes, str], ...] = (),
     response_sink: Callable[[ApiResult[str]], None] | None = None,
     retry_invalid_json: bool = True,
+    retry_transport: bool = True,
 ) -> ApiResult[dict]:
     """Generate JSON, optionally retaining paid response bytes before parsing.
 
@@ -1591,6 +1634,7 @@ async def generate_structured_object(
                 json_schema=json_schema,
                 feature=feature,
                 image_attachments=image_attachments,
+                retry_transport=retry_transport,
             )
         except AIEmptyResponseError as exc:
             # Share the existing structured-recovery allowance, with at most
@@ -1696,6 +1740,7 @@ async def _chat_completion(
     feature: str,
     json_schema: dict[str, Any] | None = None,
     image_attachments: tuple[tuple[bytes, str], ...] = (),
+    retry_transport: bool = True,
 ) -> dict[str, Any]:
     route = route_for("text", model)
     if config.mock_mode and (route is not None or not mock_mode_active(config)):
@@ -1713,7 +1758,20 @@ async def _chat_completion(
             },
         })
     response_format: dict[str, Any] | None
-    if json_schema:
+    schema_in_system_prompt = (
+        route is None
+        and model in _UNION_ALPHA_JSON_OBJECT_ALIASES
+        and json_schema is not None
+    )
+    effective_system = system_prompt
+    if schema_in_system_prompt:
+        response_format = {"type": "json_object"}
+        effective_system += (
+            "\n\nYou must respond with a single JSON object that conforms to "
+            "the following JSON Schema:\n"
+            + _json_dumps(json_schema)
+        )
+    elif json_schema:
         schema_name = re.sub(r"[^a-zA-Z0-9_-]", "_", feature)[:64]
         response_format = {
             "type": "json_schema",
@@ -1731,7 +1789,6 @@ async def _chat_completion(
         response_format = {"type": "json_object"}
     else:
         response_format = None
-    effective_system = system_prompt
     if json_mode and "json" not in (system_prompt + user_content).lower():
         effective_system += "\n\nRespond with valid JSON."
     # An image-reading call keeps ``user_content`` as its text part so cost
@@ -1808,6 +1865,8 @@ async def _chat_completion(
             request_summary_json=_content_summary(effective_system, user_content),
             metadata_json=metadata,
             estimated_cost_usd=estimated_cost_usd,
+            started_at=started_at,
+            langfuse_input=langfuse_input,
         )
     )
     try:
@@ -1834,8 +1893,7 @@ async def _chat_completion(
         raise
     try:
         endpoint = "/v1/chat/completions"
-        # Breadcrumb before the request: Langfuse only records a call once it
-        # finishes, so an in-flight request leaves no trace there at all.
+        # Keep a local breadcrumb alongside the queued Langfuse observation.
         logger.info(
             "AI request issued feature=%s model=%s streaming=%s event_id=%s",
             feature,
@@ -1863,17 +1921,31 @@ async def _chat_completion(
                 if result.model != route.reasoning_model:
                     raise CodexRoutingError("Codex returned a different reasoning model than requested")
             elif streaming:
-                data, response = await _stream_with_retry(
-                    f"{_base_url(config)}{endpoint}",
-                    headers=_headers(config, event_id),
-                    payload=payload,
-                )
+                if retry_transport:
+                    data, response = await _stream_with_retry(
+                        f"{_base_url(config)}{endpoint}",
+                        headers=_headers(config, event_id),
+                        payload=payload,
+                    )
+                else:
+                    data, response = await _read_chat_stream(
+                        f"{_base_url(config)}{endpoint}",
+                        headers=_headers(config, event_id),
+                        payload=payload,
+                    )
             else:
-                response = await _post_with_retry(
-                    f"{_base_url(config)}{endpoint}",
-                    headers=_headers(config, event_id),
-                    json=payload,
-                )
+                if retry_transport:
+                    response = await _post_with_retry(
+                        f"{_base_url(config)}{endpoint}",
+                        headers=_headers(config, event_id),
+                        json=payload,
+                    )
+                else:
+                    response = await _http.post(
+                        f"{_base_url(config)}{endpoint}",
+                        headers=_headers(config, event_id),
+                        json=payload,
+                    )
                 data = {}
             if response is not None and response.status_code >= 400:
                 response.raise_for_status()

@@ -1,9 +1,9 @@
 import type { CastReferenceInput } from "../types/api";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { isNotFoundError } from "./client";
-import { listProjects, getProjectStatus, createProject, deleteProject, fetchProjectCoverEstimate, generateProjectCover, listShortStories, importStory } from "./projects";
+import { listProjects, getProjectStatus, createProject, renameProject, deleteProject, fetchProjectCoverEstimate, generateProjectCover, listShortStories, importStory } from "./projects";
 import { runPipeline, approveStage, regenRef, regenStateRef, regenLocationState, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchAssetRegenEstimate, getCastAssetVersions, restoreCastAssetVersion } from "./pipeline";
-import type { AdaptationBrief, ConfigOverrides, StoryBible, ProjectStatus } from "../types/api";
+import type { AdaptationBrief, ConfigOverrides, StoryBible, ProjectStatus, ProjectSummary } from "../types/api";
 import { reconcileStatusPoll } from "../lib/stageProgress";
 import { getBalance, getCreditHistory, getPricingReference } from "./credits";
 import { getPackages, createCheckout } from "./billing";
@@ -143,6 +143,31 @@ export function useDeleteProject() {
     onSuccess: (_data, { id }) => {
       qc.removeQueries({ queryKey: ["project", id] });
       qc.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+}
+
+export function useRenameProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => renameProject(id, name),
+    onSuccess: async (data, { id }) => {
+      const projectsKey = ["projects"];
+      const statusKey = ["project", id, "status"];
+      await Promise.all([
+        qc.cancelQueries({ queryKey: projectsKey, exact: true }),
+        qc.cancelQueries({ queryKey: statusKey, exact: true }),
+      ]);
+      qc.setQueryData<ProjectSummary[]>(projectsKey, (projects) => projects?.map((project) =>
+        project.id === id ? { ...project, project_name: data.project_name } : project
+      ));
+      qc.setQueryData<ProjectStatus>(statusKey, (status) =>
+        status ? { ...status, project_name: data.project_name } : status
+      );
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: projectsKey, exact: true }),
+        qc.invalidateQueries({ queryKey: statusKey, exact: true }),
+      ]);
     },
   });
 }

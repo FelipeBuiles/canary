@@ -24,7 +24,12 @@ from novel_to_comic.style_contract import (
     post_production_lettering_direction,
 )
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
-from .renderer import ENGINE_VERSION, render_lettered_page, resolve_lettering
+from .renderer import (
+    ENGINE_VERSION,
+    render_lettered_page,
+    resolve_lettering,
+    validate_lettering_render,
+)
 
 
 class LetteringConflict(ValueError):
@@ -146,7 +151,7 @@ def _suggestion(
 
 
 def seed_lettering(
-    page: ComicPage, render, style: LetteringStyle, *, revision: int = 1
+    page: ComicPage, render, style: LetteringStyle, *, revision: int = 1, locale: str = "source"
 ) -> PageLettering:
     if page.lettering_reservations is None:
         raise LetteringConflict(
@@ -185,6 +190,7 @@ def seed_lettering(
         page_number=page.page_number,
         comic_page_sha256=page.content_sha256,
         style_sha256=style.content_sha256,
+        locale=locale,
         canvas_aspect_ratio=render.width / render.height,
         elements=elements,
     )
@@ -205,6 +211,7 @@ def ensure_lettering(artifacts: TargetArtifacts, page_number: int) -> PageLetter
                 artifacts.read_page(page_number),
                 active_render(artifacts, page_number),
                 style,
+                locale=artifacts.read_lettering_settings().locale,
             ),
             style,
         )
@@ -229,9 +236,11 @@ def editor_state(artifacts: TargetArtifacts, page_number: int) -> dict:
     page = artifacts.read_page(page_number)
     style = ensure_style(artifacts)
     saved = ensure_lettering(artifacts, page_number)
+    settings = artifacts.read_lettering_settings()
     source_stale = saved.comic_page_sha256 != page.content_sha256
     reflow = (
-        saved.style_sha256 != style.content_sha256
+        saved.locale != settings.locale
+        or saved.style_sha256 != style.content_sha256
         or abs(saved.canvas_aspect_ratio - render.width / render.height) > 1e-8
         or any(
             element.resolved is None
@@ -243,7 +252,8 @@ def editor_state(artifacts: TargetArtifacts, page_number: int) -> dict:
     if reflow and not source_stale:
         state = resolve_lettering(
             _replace(
-                saved, canvas_aspect_ratio=render.width / render.height,
+                saved, locale=settings.locale,
+                canvas_aspect_ratio=render.width / render.height,
                 reviewed_against_render_revision=None,
                 reviewed_against_image_sha256=None,
             ), style
@@ -252,6 +262,7 @@ def editor_state(artifacts: TargetArtifacts, page_number: int) -> dict:
         "mode": "hybrid",
         "state": state,
         "style": style,
+        "settings": settings,
         "saved_revision": saved.revision,
         "render_revision": render.revision,
         "render_image_sha256": render.image_sha256,
@@ -295,6 +306,8 @@ def save_lettering(
     render = active_render(artifacts, page_number)
     page = artifacts.read_page(page_number)
     style = ensure_style(artifacts)
+    if incoming.locale != artifacts.read_lettering_settings().locale:
+        raise LetteringConflict("Lettering language belongs to the project. Use Translate project to change it.")
     if (
         saved.revision != expected_revision
         or render.image_sha256 != expected_image_sha256
@@ -407,6 +420,7 @@ def reset_lettering(
             render,
             style,
             revision=previous.revision + 1,
+            locale=artifacts.read_lettering_settings().locale,
         ),
         style,
     )
@@ -473,6 +487,7 @@ def composite_page(
     *,
     rendition: str = "full",
     expected_render_revision: int | None = None,
+    draft_preview: bool = False,
 ) -> tuple[Path, str | None]:
     render = active_render(artifacts, page_number)
     if rendition not in {"full", "reader", "thumbnail"}:
@@ -496,22 +511,32 @@ def composite_page(
             rendition=rendition,
         ), None
     state = ensure_lettering(artifacts, page_number)
+    if state.locale != artifacts.read_lettering_settings().locale:
+        raise LetteringConflict(
+            "Page locale differs from project lettering language. Open Lettering and save its reflow, or translate the project before exporting."
+        )
     style = ensure_style(artifacts)
     if state.comic_page_sha256 != artifacts.read_page(page_number).content_sha256:
         raise LetteringConflict(
             "Lettering belongs to an earlier plan. Open Lettering and rebuild it explicitly."
         )
+    # Publication must validate even when a draft preview already populated the cache.
+    validate_lettering_render(
+        state, style, render.width, render.height, draft_preview=draft_preview
+    )
     identity = composite_identity(render, state, style)
     path = artifacts.composite_path(page_number, identity, rendition)
-    if path.is_file():
-        return path, identity
     # Always validate/read raw art separately from lettering. Its bytes never change.
     image = artifacts.read_render(page_number, render.revision)
     if hashlib.sha256(image).hexdigest() != render.image_sha256:
         raise ValueError("Base artwork checksum does not match its provenance.")
+    if path.is_file():
+        return path, identity
     full = artifacts.composite_path(page_number, identity)
     if not full.is_file():
-        data = render_lettered_page(state, style, image, render.width, render.height)
+        data = render_lettered_page(
+            state, style, image, render.width, render.height, draft_preview=draft_preview
+        )
         artifacts.write_composite(page_number, identity, data)
     if rendition == "full":
         return full, identity

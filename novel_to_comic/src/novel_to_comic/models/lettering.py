@@ -95,6 +95,12 @@ class LetteringStyle(RevisionedArtifact):
     roles: LetteringRoles = Field(default_factory=LetteringRoles)
 
 
+class LetteringSettings(RevisionedArtifact):
+    """Project-owned display locale; page locales are projections of this setting."""
+
+    locale: Literal["source", "en", "es", "fr"] = "source"
+
+
 class ResolvedLineMetrics(BaseModel):
     """Glyph geometry in 1000-unit page space, relative to the fitted body."""
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)

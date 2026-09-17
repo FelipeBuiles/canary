@@ -297,6 +297,9 @@ async def generation_worker(app: FastAPI) -> None:
                 # not an image-provider failure to replace with generic prose.
                 job.user_message = str(exc)
                 job.recoverable = True
+            if job.kind == "lettering_translation":
+                job.user_message = "Lettering translation failed. Saved provider outputs are retained for inspection; completed calls may still be charged. " + job.error
+                job.recoverable = False
             logger.error(
                 "[bold red]Job failed[/] project=[white]%s[/] kind=[cyan]%s[/] "
                 "label=%s id=[dim]%s[/] elapsed=[bold]%.1fs[/] error=%s",

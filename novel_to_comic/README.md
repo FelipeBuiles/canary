@@ -18,6 +18,13 @@ It reuses healthy services that are already running. Processes started by the
 launcher stop on Ctrl-C; Docker dependencies remain running for the next
 session. Run `./scripts/dev.sh --help` for fixture and Docker controls.
 
+With Langfuse keys configured, the backend exports each AI call when it starts
+and updates the same generation on completion, failure, or cancellation. Running
+calls have no end time or final usage/cost yet; ingestion is asynchronous, so they
+may take a few seconds to appear. Prompt content remains opt-in through
+`CANARY_LOG_INCLUDE_PROMPTS`. `--observability` starts/checks the optional stack;
+restart the backend manually after code changes to load the new tracing behavior.
+
 ### Manual setup
 
 ```bash

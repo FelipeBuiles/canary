@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from novel_to_comic.artifact_lock import locked_mutation
-from novel_to_comic.models.lettering import LetteringStyle, PageLettering
+from novel_to_comic.models.lettering import LetteringSettings, LetteringStyle, PageLettering
 
 import base64
 import re
@@ -380,6 +380,59 @@ class TargetArtifacts:
                 shutil.rmtree(path)
             elif path.exists():
                 path.unlink()
+
+    @property
+    def lettering_settings_path(self) -> Path:
+        return self.project_dir / "lettering" / "settings.json"
+
+    def read_lettering_settings(self) -> LetteringSettings:
+        try:
+            return self._read_model("lettering_settings", self.lettering_settings_path, LetteringSettings)
+        except ArtifactMissing:
+            return LetteringSettings(revision=1)
+
+    @locked_mutation
+    def write_lettering_settings(self, settings: LetteringSettings) -> None:
+        history = self.project_dir / "lettering" / "revisions" / f"settings_{settings.revision:05d}_{settings.content_sha256}.json"
+        self._write_immutable_model(history, settings, LetteringSettings)
+        self._write_model(self.lettering_settings_path, settings)
+        self.invalidate_finish()
+
+    @locked_mutation
+    def write_lettering_translation_evidence(self, attempt: str, name: str, payload: dict) -> None:
+        if not re.fullmatch(r"[a-f0-9]{32}", attempt) or not re.fullmatch(r"[a-z0-9_-]+", name):
+            raise ValueError("Invalid translation evidence identity")
+        path = self.project_dir / "lettering" / "translations" / attempt / f"{name}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(f".{uuid4().hex}.tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temporary, path)
+
+    @locked_mutation
+    def publish_lettering_translation(self, states: list[PageLettering], style: LetteringStyle,
+                                      settings: LetteringSettings) -> None:
+        """Resolve before calling; roll back current pointers on ordinary write failure.
+
+        Immutable revisions/evidence remain. Like other artifact publication this
+        cannot promise crash atomicity across multiple filesystem replacements.
+        """
+        paths = [*(self.lettering_path(state.page_number) for state in states),
+                 self.lettering_style_path, self.lettering_settings_path]
+        previous = {path: path.read_bytes() if path.exists() else None for path in paths}
+        try:
+            for state in states:
+                self.write_lettering(state)
+            self.write_lettering_style(style)
+            self.write_lettering_settings(settings)
+        except Exception:
+            for path, data in previous.items():
+                if data is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    temporary = path.with_suffix(f".{uuid4().hex}.tmp")
+                    temporary.write_bytes(data)
+                    os.replace(temporary, path)
+            raise
 
     @property
     def lettering_style_path(self) -> Path:

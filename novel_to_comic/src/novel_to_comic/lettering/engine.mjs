@@ -5,7 +5,7 @@
  */
 import { FONT_COVERAGE } from "./font-coverage.mjs";
 
-export const ENGINE_VERSION = "lettering-svg-v3";
+export const ENGINE_VERSION = "lettering-svg-v4";
 export const FONT_FILES = Object.freeze({
   "Comic Neue": "ComicNeue-Bold.ttf",
   "EB Garamond": "EBGaramond-SemiBold.ttf",
@@ -195,16 +195,64 @@ function splitCurve(c, t) {
   const e=mix(a,b,t), f=mix(b,d,t), p=mix(e,f,t);
   return [[c[0],a,e,p],[p,f,d,c[3]]];
 }
-function curvePoint(c, t) { return splitCurve(c,t)[0][3]; }
+function curvePoint(c, t) {
+  const u=1-t, a=u*u*u, b=3*u*u*t, d=3*u*t*t, e=t*t*t;
+  return [a*c[0][0]+b*c[1][0]+d*c[2][0]+e*c[3][0],
+    a*c[0][1]+b*c[1][1]+d*c[2][1]+e*c[3][1]];
+}
 function curvePart(c, start, end) {
   const left = end < 1 ? splitCurve(c,end)[0] : c;
   return start > 0 ? splitCurve(left,start/end)[1] : left;
+}
+// Four Hermite cubics per scallop preserve the radial curve's tangent at
+// both crests and valleys. The same normalized cubics drive drawing and fit.
+const cloudCurves=Array.from({length:32},(_,i)=>{
+  const step=Math.PI/16;
+  const at=index=>{
+    const wrapped=index%32, angle=-Math.PI/2+wrapped*step, phase=wrapped*Math.PI/2;
+    const radius=.96+.04*Math.cos(phase), derivative=-.32*Math.sin(phase);
+    const x=Math.cos(angle), y=Math.sin(angle);
+    return {point:[radius*x,radius*y], tangent:[derivative*x-radius*y,derivative*y+radius*x]};
+  };
+  const a=at(i), b=at(i+1);
+  return [a.point,a.point.map((v,j)=>v+a.tangent[j]*step/3),
+    b.point.map((v,j)=>v-b.tangent[j]*step/3),b.point];
+});
+function curveExtrema(c, axis) {
+  const [p,q,r,s]=c.map(point=>point[axis]);
+  const a=-p+3*q-3*r+s, b=2*(p-2*q+r), d=q-p;
+  if (Math.abs(a)<1e-12) return Math.abs(b)<1e-12 ? [] : [-d/b].filter(t=>t>0 && t<1);
+  const discriminant=b*b-4*a*d;
+  return discriminant<0 ? [] : [(-b-Math.sqrt(discriminant))/(2*a),(-b+Math.sqrt(discriminant))/(2*a)].filter(t=>t>0 && t<1);
+}
+// A scallop can turn in both x and y. Split at every extremum once, so row
+// bands test their entire boundary, not just their corners or an inset ellipse.
+const cloudBands=cloudCurves.slice(0,16).flatMap(c=>{
+  const cuts=[0,...curveExtrema(c,0),...curveExtrema(c,1),1].sort((a,b)=>a-b);
+  return cuts.slice(1).flatMap((end,i)=>end-cuts[i]>1e-10 ? [curvePart(c,cuts[i],end)] : []);
+});
+function cloudFactor(top,bottom) {
+  if (top<=-1 || bottom>=1) return 0;
+  let factor=1;
+  for (const c of cloudBands) {
+    const low=Math.max(top,Math.min(c[0][1],c[3][1])), high=Math.min(bottom,Math.max(c[0][1],c[3][1]));
+    if (low>high) continue;
+    for (const y of [low,high]) {
+      let lo=0,hi=1;
+      const ascending=c[3][1]>=c[0][1];
+      for (let i=0;i<20;i++) {
+        const t=(lo+hi)/2;
+        if ((curvePoint(c,t)[1]<y)===ascending) lo=t; else hi=t;
+      }
+      factor=Math.min(factor,curvePoint(c,(lo+hi)/2)[0]);
+    }
+  }
+  return Math.max(0,factor-1e-6);
 }
 // The rounded oval uses four smooth cubics. Layout queries this SAME curve,
 // rather than reserving an arbitrary rectangular 30% inset for all lines.
 function ovalFactor(distance, shape) {
   if (distance >= 1) return 0;
-  if (shape === "cloud") return .9 * Math.sqrt(Math.max(0, 1-(distance/.9)**2));
   const k=shape === "ellipse" ? .5522847498 : .68;
   const c=[[0,-1],[k,-1],[1,-k],[1,0]];
   let lo=0, hi=1;
@@ -215,6 +263,7 @@ function ovalFactor(distance, shape) {
   return curvePoint(c,(lo+hi)/2)[0];
 }
 function rowSpace(role, height, top, bottom) {
+  if (role.shape==="cloud") return {factor:cloudFactor(top/(height/2)-1,bottom/(height/2)-1),inset:0};
   const distance=Math.max(Math.abs(top-height/2),Math.abs(bottom-height/2));
   if (curved(role.shape)) return { factor: ovalFactor(distance/(height/2),role.shape), inset: 0 };
   const radius=Math.min(role.corner_radius,height/2);
@@ -225,9 +274,10 @@ function rowSpace(role, height, top, bottom) {
 }
 function rowGeometry(role, height, count, ascent, descent, leading) {
   const baseline=(height-(ascent+descent+(count-1)*leading))/2+ascent;
+  const padding=["ellipse","cloud"].includes(role.shape) ? role.padding+role.stroke_width/2+role.text_stroke_width/2 : 0;
   return Array.from({length:count},(_,i)=>{
     const y=baseline+i*leading;
-    return { baseline:y, ...rowSpace(role,height,y-ascent,y+descent) };
+    return { baseline:y, ...rowSpace(role,height,y-ascent-padding,y+descent+padding) };
   });
 }
 /** Exact-count word partitioning: minimize the body width needed to contain
@@ -284,8 +334,20 @@ function composeLayout(lines, role, size, width, height, measure) {
 function fitBalloon(text, role, size, maxWidth, maxHeight, measure, locale, tight) {
   const padding=role.padding+role.stroke_width/2+role.text_stroke_width/2;
   const all=inkMetrics(text.replace(/\n/g," "),role,size,measure), leading=size*role.line_height;
-  const clearance=role.shape==="cloud" ? size : curved(role.shape) ? size*.55 : 0;
+  const optimizeOval=["ellipse","cloud"].includes(role.shape);
+  const clearance=curved(role.shape) && !optimizeOval ? size*.55 : 0;
   const naturalHeight=count=>all.ascent+all.descent+(count-1)*leading+2*padding+clearance;
+  const heightsFor=count=>{
+    if (!tight) return [maxHeight];
+    const natural=naturalHeight(count);
+    if (!optimizeOval) return [natural];
+    if (natural>=maxHeight) return [];
+    // The area optimum of an ellipse around a rectangular ink block is at
+    // sqrt(2) times its height. Nearby bounded candidates allow different
+    // wraps and cloud valleys to compete without forcing a wide, flat oval.
+    return [...new Set([1.12,1.25,Math.SQRT2,1.6,1.85,2.2].map(factor=>Math.min(maxHeight,natural*factor))),maxHeight]
+      .filter((height,index,heights)=>heights.indexOf(height)===index);
+  };
   const tokenized=unitsFor(text,locale);
   const widths=new Map();
   const widthOf=line=>{
@@ -298,19 +360,22 @@ function fitBalloon(text, role, size, maxWidth, maxHeight, measure, locale, tigh
     for (let step=5;step<=16;step++) {
       const result=balancedLines(text,Math.max(1,maxWidth*step/16-2*padding),widthOf,locale);
       if (result.overflow) continue;
-      const height=tight ? naturalHeight(result.lines.length) : maxHeight;
-      const rows=rowGeometry(role,height,result.lines.length,all.ascent,all.descent,leading);
-      const width=Math.max(...result.lines.map((line,i)=>(widthOf(line)+2*(padding+rows[i].inset))/Math.max(.001,rows[i].factor)));
-      candidates.push({lines:result.lines,width,height});
+      for (const height of heightsFor(result.lines.length)) {
+        const rows=rowGeometry(role,height,result.lines.length,all.ascent,all.descent,leading);
+        if (rows.some(row=>row.factor<=0)) continue;
+        const width=Math.max(...result.lines.map((line,i)=>(widthOf(line)+2*(padding+rows[i].inset))/rows[i].factor));
+        candidates.push({lines:result.lines,width,height});
+      }
     }
   } else {
     const {units=[],separator=" "}=tokenized;
     const maxLines=Math.min(24,units.length,Math.max(1,Math.floor((maxHeight-naturalHeight(1))/leading)+1));
     for (let count=1;count<=maxLines;count++) {
-      const height=tight ? naturalHeight(count) : maxHeight;
-      const rows=rowGeometry(role,height,count,all.ascent,all.descent,leading);
-      const candidate=contourLines(units,separator,rows,padding,widthOf,size,locale);
-      if (candidate) candidates.push({...candidate,height});
+      for (const height of heightsFor(count)) {
+        const rows=rowGeometry(role,height,count,all.ascent,all.descent,leading);
+        const candidate=contourLines(units,separator,rows,padding,widthOf,size,locale);
+        if (candidate) candidates.push({...candidate,height});
+      }
     }
   }
   let best=null, bestScore=Infinity;
@@ -320,17 +385,20 @@ function fitBalloon(text, role, size, maxWidth, maxHeight, measure, locale, tigh
     if (candidate.width>maxWidth || candidate.height>maxHeight) continue;
     const layout=composeLayout(candidate.lines,role,size,width,candidate.height,measure);
     if (layout.overflow) continue;
-    const natural=naturalHeight(candidate.lines.length), ratio=candidate.width/natural;
+    const natural=optimizeOval ? candidate.height : naturalHeight(candidate.lines.length), ratio=candidate.width/natural;
     const loneEnding=candidate.lines.length>1 && text.trim().split(/\s+/).length>4
       && candidate.lines.at(-1).trim().split(/\s+/).length===1 ? .45 : 0;
-    const score=candidate.width*natural*(1+loneEnding+Math.max(0,ratio-3.7)**2*.25+Math.max(0,2.3-ratio)**2*2);
+    const aspectPenalty=optimizeOval
+      ? Math.max(0,ratio-3)**2*.2+Math.max(0,(role.shape==="cloud" ? 1.8 : 1.3)-ratio)**2*(role.shape==="cloud" ? 2 : .5)
+      : Math.max(0,ratio-3.7)**2*.25+Math.max(0,2.3-ratio)**2*2;
+    const score=candidate.width*natural*(1+loneEnding+aspectPenalty);
     if (score<bestScore) { bestScore=score; best=layout; }
   }
   return best;
 }
 function fitText(element, role, text, size, pageHeight, measure, locale) {
   const w=element.placement.width*1000,h=element.placement.height*pageHeight;
-  if (["speech","thought"].includes(element.role) && text.trim()) {
+  if ((["speech","thought"].includes(element.role) || curved(role.shape)) && text.trim()) {
     const result=fitBalloon(text,role,size,w,h,measure,locale,element.tight_box);
     if (result) return result;
     return null;
@@ -404,13 +472,7 @@ function contour(role,w,h) {
     [[rx,h],[rx-k*rx,h],[0,ry+k*ry],[0,ry]],
     [[0,ry],[0,ry-k*ry],[rx-k*rx,0],[rx,0]],
   ];
-  if (role.shape==="cloud") {
-    const point=(a,r)=>[rx+Math.cos(a)*rx*r,ry+Math.sin(a)*ry*r];
-    return Array.from({length:12},(_,i)=>{
-      const a=-Math.PI/2+i*Math.PI/6,p=point(a,.91),q=point(a+Math.PI/12,1.04),r=point(a+Math.PI/6,.91);
-      return [p,mix(p,q,2/3),mix(r,q,2/3),r];
-    });
-  }
+  if (role.shape==="cloud") return cloudCurves.map(c=>c.map(([x,y])=>[rx+x*rx,ry+y*ry]));
   const r=clamp(role.corner_radius,0,Math.min(rx,ry)), e=.5522847498*r;
   const line=(a,b)=>[a,mix(a,b,1/3),mix(a,b,2/3),b];
   return [line([r,0],[w-r,0]),[[w-r,0],[w-r+e,0],[w,r-e],[w,r]],

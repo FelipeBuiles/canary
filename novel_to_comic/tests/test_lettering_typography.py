@@ -10,7 +10,6 @@ from playwright.sync_api import sync_playwright
 from pydantic import ValidationError
 
 from novel_to_comic.lettering.renderer import (
-    ENGINE_VERSION,
     _fonts,
     _source,
     render_lettered_page,
@@ -94,12 +93,42 @@ def test_real_glyph_layout_matches_server_and_fits_the_drawn_contour(typography,
     assert caption.resolved.height < caption.placement.height
 
 
+@pytest.mark.parametrize("shape", ["ellipse", "cloud"])
+def test_curved_shapes_contain_padded_ink_through_every_row_band(typography, browser_page, shape):
+    state, style = typography
+    value = browser_page.evaluate("""({state,style,shape})=>{
+      const e=window.engine, measure=e.canvasMeasure(), defects=[];
+      for(const role of ['caption','speech','thought']) for(const tight of [true,false])
+      for(const align of ['left','center','right']) {
+        const draft=structuredClone(state); draft.elements=[draft.elements[1]];
+        const element=draft.elements[0];
+        element.role=role; element.tight_box=tight; element.tail_target=null;
+        element.style_override={...style.roles.speech,shape,align};
+        const resolved=e.resolvePage(draft,style,measure), r=resolved.elements[0].resolved;
+        document.getElementById('out').innerHTML=e.renderOverlay(resolved,style);
+        const body=document.querySelector('[data-balloon-body]');
+        const s=element.style_override, padding=s.padding+s.stroke_width/2+s.text_stroke_width/2;
+        if(r.overflow || r.font_size<s.min_font_size) defects.push({role,tight,align,reason:'fit'});
+        for(const [line,m] of r.line_metrics.entries()) {
+          const top=m.baseline-m.ascent-padding, bottom=m.baseline+m.descent+padding;
+          // Concave cloud valleys can cross a row between its four corners.
+          // Check the whole padded rectangle, not the old inset-ellipse proxy.
+          for(let y=top+.01;y<bottom;y+=.5)
+          for(const x of [m.x-padding+.01,m.x+m.width+padding-.01])
+            if(!body.isPointInFill(new DOMPoint(x,y))) defects.push({role,tight,align,line,x,y});
+        }
+      }
+      return defects;
+    }""", {"state": state.model_dump(mode="json"), "style": style.model_dump(mode="json"), "shape": shape})
+    assert value == []
+
+
 def test_tail_is_part_of_one_contour_in_all_directions_and_transforms(typography, browser_page):
     state, style = typography
     value = browser_page.evaluate("""({state,style})=>{
       const e=window.engine, measure=e.canvasMeasure(), defects=[];
       let cases=0;
-      for(const shape of ['balloon','ellipse','box','round'])
+      for(const shape of ['balloon','ellipse','cloud','box','round'])
       for(const rotation of [0,35,-60]) for(const scale of [.8,1,1.4])
       for(let i=0;i<8;i++) {
         const draft=structuredClone(state); draft.elements=[draft.elements[0]];
@@ -122,7 +151,7 @@ def test_tail_is_part_of_one_contour_in_all_directions_and_transforms(typography
       }
       return {cases,defects};
     }""", {"state": state.model_dump(mode="json"), "style": style.model_dump(mode="json")})
-    assert value["cases"] == 288
+    assert value["cases"] == 360
     assert value["defects"] == []
 
 
@@ -145,7 +174,6 @@ def test_versioned_layout_is_required_before_export_and_composes_real_pixels(typ
     retained = PageLettering.model_validate(old)
     with pytest.raises(ValueError, match="Open Lettering and save"):
         render_lettered_page(retained, style, image, 1000, 1350)
-    assert ENGINE_VERSION == "lettering-svg-v3"
 
 
 @pytest.mark.parametrize("number", [float("inf"), float("nan"), -float("inf")])

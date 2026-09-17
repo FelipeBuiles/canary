@@ -162,6 +162,12 @@ function StoryEditor({ id, data, brief, stageStatus }: {
   const conflict = brief.revision > savedBrief.revision || (brief.revision === savedBrief.revision && brief.content_sha256 !== savedBrief.content_sha256);
   const invalidRange = !Number.isInteger(draft.target_page_min) || !Number.isInteger(draft.target_page_max) || draft.target_page_min < 1 || draft.target_page_max < draft.target_page_min;
   const busy = saving || approveBrief.isPending;
+  if (conflict && !dirty && !busy) {
+    setSavedBrief(brief);
+    // Reverted fields may still be present in changes; do not overlay the fresh brief.
+    setChanges({});
+    setRestored(false);
+  }
   useEffect(() => {
     if (!dirty) return;
     function beforeUnload(event: BeforeUnloadEvent) {

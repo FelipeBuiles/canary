@@ -409,20 +409,54 @@ export function BookRoom() {
 
       {showDevContent && (
         <Surface padding="md" border="soft" shadow="none">
-          <h2 className="font-meta font-bold">{t("PROVIDER COSTS")}</h2>
-          {providerUsage.error && <p role="alert">{t("Provider usage is unavailable.")}</p>}
-          {providerUsage.data && <>
-            <p>${providerUsage.data.known_cost_usd.toFixed(4)} {t("recorded provider cost; separate from charged credits")}</p>
-            {providerUsage.data.artifact_link_error && <p role="status">{providerUsage.data.artifact_link_error}</p>}
-            {!providerUsage.data.complete && <p>{t("Incomplete cost evidence")}: {providerUsage.data.unknown_cost_count} {t("unpriced calls")}, {providerUsage.data.artifact_calls_missing_from_events} {t("missing events")}</p>}
-            <p className="font-body text-xs">{Object.entries(providerUsage.data.cost_sources).map(([source, count]) => `${source}: ${count}`).join(" · ")}</p>
-            <table className="mt-3 w-full text-left font-body text-sm">
-              <thead><tr><th>{t("Page")}</th><th>{t("Operation")}</th><th>{t("Calls")}</th><th>USD</th></tr></thead>
-              <tbody>{providerUsage.data.groups.map((group) => <tr key={`${group.page_number}:${group.category}`}>
-                <td>{group.page_number ?? "—"}</td><td>{group.category}</td><td>{group.call_count}</td><td>{group.known_cost_usd.toFixed(4)}{group.unknown_cost_count ? " + ?" : ""}</td>
-              </tr>)}</tbody>
-            </table>
-          </>}
+          <SectionHeader variant="underline" title={t("PROVIDER COSTS")}
+            description={t("Project history across all editions and revisions. Not charged credits.")} />
+          {providerUsage.error ? (
+            <p role="alert">{t("Provider usage is unavailable.")}</p>
+          ) : providerUsage.data ? (
+            <>
+              <p className="font-body text-sm">
+                <span className="font-bold">{t(providerUsage.data.complete ? "Recorded total (USD)" : "Partial total (USD)")}</span>
+                {" "}· <span className="font-meta font-bold tabular-nums">${providerUsage.data.known_cost_usd.toFixed(4)}</span>
+              </p>
+              {!providerUsage.data.complete && (
+                <p role="status" className="font-body text-sm">
+                  {t("Only known costs are included. The final cost may be higher.")}{" "}
+                  {providerUsage.data.unknown_cost_count} {t("unpriced calls")} · {providerUsage.data.artifact_calls_missing_from_events} {t("missing events")}
+                </p>
+              )}
+              {providerUsage.data.artifact_link_error && <p role="status" className="font-body text-sm">{providerUsage.data.artifact_link_error}</p>}
+              <details className="mt-3">
+                <summary className="min-h-11 cursor-pointer py-3 font-meta text-sm font-bold">{t("Page-level details")}</summary>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left font-body text-sm tabular-nums">
+                    <thead><tr>
+                      <th scope="col" className="py-2 pr-4">{t("Page")}</th>
+                      <th scope="col" className="py-2 pr-4">{t("Operation")}</th>
+                      <th scope="col" className="py-2 pr-4 text-right">{t("Calls")}</th>
+                      <th scope="col" className="py-2 text-right">USD</th>
+                    </tr></thead>
+                    <tbody>{providerUsage.data.groups.map((group) => (
+                      <tr key={`${group.page_number}:${group.category}`}>
+                        <td className="py-2 pr-4">{group.page_number ?? t("Not assigned to a page")}</td>
+                      <td className="py-2 pr-4">{group.category.replaceAll("_", " ")}</td>
+                        <td className="py-2 pr-4 text-right">{group.call_count}</td>
+                        <td className="py-2 text-right">
+                          {group.unknown_cost_count === group.call_count && group.known_cost_usd === 0 ? t("Unknown") : group.known_cost_usd.toFixed(4)}
+                          {group.unknown_cost_count > 0 && <span className="block text-xs text-ink-muted">{group.unknown_cost_count} {t("unpriced calls")}</span>}
+                        </td>
+                    </tr>))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-3 break-words font-body text-xs leading-5">
+                  {Object.entries(providerUsage.data.cost_sources).map(([source, count]) => `${source}: ${count}`).join(" · ")}
+                </p>
+              </details>
+            </>
+          ) : (
+            <p role="status" className="font-body text-sm">{t("Loading provider costs…")}</p>
+          )}
         </Surface>
       )}
     </RoomShell>

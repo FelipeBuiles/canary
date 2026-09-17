@@ -835,12 +835,31 @@ Authenticated provider-free routes (under `/api/projects/{project_id}`):
   Plan while keeping saved historical revisions.
 - `GET/PUT /lettering/style`: inspect presets/change book defaults. Inheriting
   pages reflow; full per-element style overrides remain independent.
+- `GET /lettering/translation-estimate` and `POST /lettering/translate`:
+  explicit, estimated project-wide translation of saved lettering into the
+  chosen target language (en/es/fr). The estimate prices the exact prepared
+  prompts; the submit enqueues one reserved `lettering_translation` job that
+  fills only missing target-locale variants across all current pages, preserves
+  existing target wording including manual edits, and keeps artwork, geometry,
+  reading order, and Adapt canonical copy untouched. Stale snapshots return
+  412 before any spend; a job failure never silently republishes partial
+  results, and retained raw/validated/prepared evidence permits informed retry.
+  Baked editions, stale pages, or undrawn pages reject before spending. The
+  project locale persists through seeds/resets/saves; a language change still
+  requires visual review on every page before export.
 - `GET /pages/{page_number}/composite/{full|reader|thumbnail}`: cached finished
   PNG/WebP views. The ordinary render endpoint always serves raw artwork for QA.
 
-Every save invalidates Finish/preflight/packages and composition caches only.
+Opening a saved page whose locale differs from the project locale is not a paid
+operation. The editor presents an unsaved reflow in the project locale, retaining
+all saved wording variants, geometry, and the original revision. It does not
+publish on read. Save explicitly or translate the project before exporting;
+composition rejects a saved locale mismatch. Project translation remains
+accessible beside a page-loading error so recovery cannot depend on opening
+the failed editor first.
+
 The composite key hashes base-image SHA, lettering state, locale, style, and
-`lettering-svg-v2`. Relevant mutations/composition serialize under a reentrant
+`lettering-svg-v4`. Relevant mutations/composition serialize under a reentrant
 project filesystem lock, outside directories that invalidation removes. First
 book export seeds all missing lettering before building any normalized pages,
 so initializing page two cannot remove page one's newly prepared output.
