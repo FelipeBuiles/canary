@@ -1,5 +1,6 @@
 import { apiFetch } from "./client";
 import type { LetteringStyle, PageLettering } from "@lettering-engine";
+import type { CostEstimate, GenerationJob } from "../types/api";
 export type { LetteringStyle, PageLettering, LetteringElement, RoleStyle, RoleName, Rect, Point } from "@lettering-engine";
 export interface HybridLetteringResponse {
   mode: "hybrid";
@@ -51,4 +52,32 @@ export const putBookLetteringStyle = (project: string, style: LetteringStyle, re
 });
 export function pageCompositePreviewUrl(project: string, page: number, revision: number, rendition: "reader" | "thumbnail" | "full", letteringRevision?: number | null) {
   return `/api${root(project)}/pages/${page}/composite/${rendition}?render_revision=${revision}&lettering=${letteringRevision ?? 0}`;
+}
+
+export type LetteringLocale = "en" | "es" | "fr";
+
+export interface LetteringTranslationEstimate extends CostEstimate {
+  funding: "api" | "codex_subscription";
+  target_locale: LetteringLocale;
+  snapshot_sha256: string;
+  page_count: number;
+  element_count: number;
+  translate_count: number;
+  preserved_target_count: number;
+}
+
+export interface LetteringTranslationRequest {
+  target_locale: LetteringLocale;
+  expected_snapshot_sha256: string;
+}
+
+export function getLetteringTranslationEstimate(project: string, targetLocale: LetteringLocale) {
+  return apiFetch<LetteringTranslationEstimate>(`${root(project)}/lettering/translation-estimate?target_locale=${targetLocale}`);
+}
+
+export function translateProjectLettering(project: string, request: LetteringTranslationRequest) {
+  return apiFetch<{ job: GenerationJob }>(`${root(project)}/lettering/translate`, {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
 }

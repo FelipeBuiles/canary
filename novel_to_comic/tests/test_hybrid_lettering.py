@@ -26,7 +26,7 @@ from novel_to_comic.models.draw import (
     RawOCRObservation,
     RenderAnalysis,
 )
-from novel_to_comic.models.lettering import PageLettering, RoleStyle
+from novel_to_comic.models.lettering import LetteringSettings, PageLettering, RoleStyle
 from novel_to_comic.models.page import ComicPage, PlannedPageRevision
 from novel_to_comic.page_drawing import (
     ensure_current_page_edition,
@@ -209,16 +209,57 @@ def test_server_recomputes_forged_client_layout(book):
 
 def test_missing_translation_is_visible_and_cannot_be_exported(book):
     artifacts, image = book
-    state = save(artifacts, update(service.ensure_lettering(artifacts, 1), locale="es"))
+    artifacts.write_lettering_settings(LetteringSettings(revision=1, locale="fr"))
+    state = service.ensure_lettering(artifacts, 1)
     assert "missing_translation" in state.elements[0].resolved.warnings
     with pytest.raises(ValueError, match="missing_translation"):
         render_lettered_page(state, service.ensure_style(artifacts), image, 800, 1200)
     item = state.elements[0].model_dump()
-    item["text_by_locale"]["es"] = "La puerta se abrió."
+    item["text_by_locale"]["fr"] = "La porte s'est ouverte."
     state = save(artifacts, update(state, elements=[item]))
-    assert state.elements[0].resolved.text == "La puerta se abrió."
+    assert state.elements[0].resolved.text == "La porte s'est ouverte."
     assert state.elements[0].text_by_locale["source"] == "The door opened."
     assert state.elements[0].resolved.warnings == ()
+
+
+def test_http_draft_previews_preserve_missing_translation_and_cannot_bypass_finish(
+    book,
+):
+    artifacts, image = book
+    artifacts.write_lettering_settings(LetteringSettings(revision=1, locale="fr"))
+    state = service.ensure_lettering(artifacts, 1)
+    assert state.elements[0].resolved.text == state.elements[0].text_by_locale["source"]
+    assert "missing_translation" in state.elements[0].resolved.warnings
+    app = FastAPI()
+    app.include_router(router, prefix="/api/projects/{project_id}")
+    app.dependency_overrides[get_project] = lambda: (
+        artifacts.project_dir,
+        Config(),
+        None,
+    )
+    client = TestClient(app)
+    root = "/api/projects/test/pages/1/composite"
+    for rendition, size in (
+        ("thumbnail", (424, 636)),
+        ("reader", (800, 1200)),
+        ("full", (800, 1200)),
+    ):
+        response = client.get(f"{root}/{rendition}?render_revision=1")
+        assert response.status_code == 200, response.text
+        with Image.open(io.BytesIO(response.content)) as rendered:
+            assert rendered.size == size
+        assert client.get(f"{root}/{rendition}?render_revision=1").content == response.content
+        with pytest.raises(ValueError, match="missing_translation"):
+            service.composite_page(artifacts, 1, rendition=rendition)
+    assert artifacts.read_lettering(1) == state
+    result = finish_book(artifacts, formats=())
+    assert not result.preflight.ready_to_export
+    failures = result.preflight.pages[0].invariant_failures
+    assert {failure.code for failure in failures} == {"lettering_layout"}
+    assert any("missing_translation" in evidence for failure in failures for evidence in failure.evidence)
+    assert result.preflight.correction_requests == ()
+    assert artifacts.read_lettering(1) == state
+    assert artifacts.read_render(1, 1) == image
 
 
 def test_overflow_is_saved_but_blocks_finish_without_requesting_draw(book):
@@ -232,6 +273,10 @@ def test_overflow_is_saved_but_blocks_finish_without_requesting_draw(book):
         saved.elements[0].resolved.font_size
         == service.ensure_style(artifacts).roles.caption.min_font_size
     )
+    preview, _ = service.composite_page(artifacts, 1, draft_preview=True)
+    with Image.open(preview) as rendered:
+        assert rendered.size == (800, 1200)
+    assert artifacts.read_lettering(1) == saved
     result = finish_book(artifacts, formats=())
     assert not result.preflight.ready_to_export
     assert result.preflight.correction_requests == ()
@@ -501,6 +546,98 @@ def test_authenticated_free_routes_validate_revisions_and_serve_composites(
     paid.assert_not_called()
 
 
+@pytest.mark.parametrize("project_locale", [None, "fr"])
+def test_saved_locale_mismatch_opens_without_writes_and_requires_guarded_save(
+    book, monkeypatch, project_locale
+):
+    artifacts, image = book
+    initial = service.ensure_lettering(artifacts, 1)
+    element = initial.elements[0].model_dump()
+    element["text_by_locale"] = {
+        "source": "Edited source.", "es": "Editado.", "fr": "Modifié."
+    }
+    element["placement"] = {"x": 0.30, "y": 0.40, "width": 0.4, "height": 0.15}
+    custom = element | {
+        "id": "custom-hidden", "source_lettering_item_id": None,
+        "hidden": True, "rotation": 12,
+    }
+    persisted = service.resolve_lettering(
+        update(initial, revision=7, locale="es", elements=[element, custom]),
+        service.ensure_style(artifacts),
+    )
+    artifacts.write_lettering(persisted)
+    if project_locale is not None:
+        artifacts.write_lettering_settings(LetteringSettings(revision=2, locale=project_locale))
+    else:
+        assert not artifacts.lettering_settings_path.exists()
+    expected_locale = project_locale or "source"
+    before = {
+        path: path.read_bytes()
+        for path in (artifacts.project_dir / "lettering").rglob("*") if path.is_file()
+    }
+    paid = AsyncMock(side_effect=AssertionError("reopening must never call providers"))
+    monkeypatch.setattr("novel_to_comic.clients.text.generate_json", paid)
+    monkeypatch.setattr("novel_to_comic.lettering.translation.generate_json", paid)
+    app = FastAPI()
+    app.include_router(router, prefix="/api/projects/{project_id}")
+    app.dependency_overrides[get_project] = lambda: (artifacts.project_dir, Config(), None)
+    client = TestClient(app)
+    root = "/api/projects/test/pages/1"
+    response = client.get(root + "/lettering")
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["mode"] == "hybrid" and data["needs_save"]
+    assert not data["source_stale"]
+    assert data["saved_revision"] == data["state"]["revision"] == persisted.revision
+    assert data["state"]["locale"] == data["settings"]["locale"] == expected_locale
+    draft = PageLettering.model_validate(data["state"])
+    for old, current in zip(persisted.elements, draft.elements, strict=True):
+        assert old.model_dump(exclude={"resolved"}) == current.model_dump(exclude={"resolved"})
+        assert current.resolved.text == current.text_by_locale[expected_locale]
+    assert service.ensure_lettering(artifacts, 1) == persisted
+    for rendition in ("full", "reader", "thumbnail"):
+        with pytest.raises(service.LetteringConflict):
+            service.composite_page(artifacts, 1, rendition=rendition)
+    assert client.get(root + "/composite/thumbnail").status_code == 409
+    preflight = finish_book(artifacts, formats=()).preflight
+    assert not preflight.ready_to_export
+    assert "lettering_layout" in {
+        failure.code for failure in preflight.pages[0].invariant_failures
+    }
+    assert {
+        path: path.read_bytes()
+        for path in (artifacts.project_dir / "lettering").rglob("*") if path.is_file()
+    } == before
+    body = {
+        "state": data["state"],
+        "expected_revision": data["saved_revision"],
+        "expected_image_sha256": data["render_image_sha256"],
+        "expected_style_sha256": data["style"]["content_sha256"],
+    }
+    wrong_locale = update(draft, locale="es").model_dump(mode="json")
+    assert client.put(root + "/lettering", json=body | {"state": wrong_locale}).status_code == 409
+    for guard, value in (
+        ("expected_revision", persisted.revision - 1),
+        ("expected_image_sha256", "a" * 64),
+        ("expected_style_sha256", "b" * 64),
+    ):
+        assert client.put(root + "/lettering", json=body | {guard: value}).status_code == 409
+    assert artifacts.read_lettering(1) == persisted
+    saved = client.put(root + "/lettering", json=body)
+    assert saved.status_code == 200, saved.text
+    assert not saved.json()["needs_save"]
+    published = artifacts.read_lettering(1)
+    assert published.revision == persisted.revision + 1
+    assert published.locale == expected_locale
+    assert published.elements == draft.elements
+    assert artifacts.lettering_revision_path(persisted).read_bytes() == before[artifacts.lettering_revision_path(persisted)]
+    assert client.put(root + "/lettering", json=body).status_code == 409
+    assert service.composite_page(artifacts, 1)[0].is_file()
+    assert artifacts.read_render(1, 1) == image
+    assert artifacts.read_lettering_settings().locale == expected_locale
+    paid.assert_not_called()
+
+
 def test_models_reject_nonfinite_geometry_unsafe_styles_and_bad_reservation_anchors(
     book,
 ):
@@ -568,6 +705,10 @@ def test_missing_bundled_glyph_is_not_exported_with_a_system_fallback(book):
     initial = service.ensure_lettering(artifacts, 1)
     changed = save(artifacts, copy_state(initial, "Hello 🙂"))
     assert "missing_glyphs" in changed.elements[0].resolved.warnings
+    preview, _ = service.composite_page(artifacts, 1, draft_preview=True)
+    with Image.open(preview) as rendered:
+        assert rendered.size == (800, 1200)
+    assert artifacts.read_lettering(1) == changed
     result = finish_book(artifacts)
     assert not result.preflight.ready_to_export
     assert any(issue.code == "lettering_layout" for issue in result.preflight.pages[0].invariant_failures)

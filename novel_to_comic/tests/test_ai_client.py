@@ -216,8 +216,111 @@ def test_gateway_normalizes_narrative_treatment_schema(monkeypatch, _patch_event
     assert NarrativeTreatment.model_validate(result.value) == treatment
 
 
-def test_openrouter_structured_request_uses_supported_max_tokens_field(
+@pytest.mark.parametrize("stream", ["0", "1"])
+@pytest.mark.parametrize("model", ["union-alpha", "openrouter/stealth/union-alpha"])
+def test_union_alpha_treatment_uses_supported_json_mode(
+    monkeypatch, _patch_events, model, stream
+):
+    from copy import deepcopy
+
+    from novel_to_comic.models.adaptation import NarrativeTreatment
+
+    monkeypatch.setenv("CANARY_AI_STREAM_TEXT", stream)
+    schema = NarrativeTreatment.model_json_schema()
+    original = deepcopy(schema)
+    system_prompt = "Write an editorial treatment of the fictional story."
+
+    def handler(request):
+        payload = json.loads(request.content)
+        # Simulate OpenRouter's require_parameters filter: Union Alpha supports
+        # response_format but not the structured_outputs needed by json_schema.
+        if payload.get("response_format", {}).get("type") == "json_schema":
+            return httpx.Response(404, json={"error": {
+                "message": "No endpoints found that support all requested parameters.",
+                "code": 404,
+            }})
+        assert payload["response_format"] == {"type": "json_object"}
+        effective_system = payload["messages"][0]["content"]
+        assert effective_system.startswith(system_prompt)
+        # Decode the entire schema without pinning instruction wording or JSON
+        # whitespace. Defaults and optional fields must not be strict-normalized.
+        prompt_schema, _ = json.JSONDecoder().raw_decode(
+            effective_system[effective_system.index("{"):]
+        )
+        assert prompt_schema == original
+        assert payload.get("stream", False) is (stream == "1")
+        # A valid treatment may omit all defaulted fields: JSON-object mode does
+        # not replace the caller's NarrativeTreatment validation contract.
+        response = {
+            "model": "stealth/union-alpha",
+            "choices": [{"message": {"content":
+                '{"causal_spine":["A choice has consequences."]}'}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 3},
+        }
+        if payload.get("stream"):
+            return httpx.Response(200, content="\n".join(_sse_lines(response)))
+        return httpx.Response(200, json=response)
+
+    _mock_transport(monkeypatch, handler)
+    result = asyncio.run(client.generate_structured_object(
+        config=Config(), model=model, system_prompt=system_prompt,
+        user_content="Write a treatment.", json_schema=schema,
+        feature="adapt.narrative_treatment",
+    ))
+
+    assert schema == original
+    treatment = NarrativeTreatment.model_validate(result.value)
+    assert treatment.causal_spine == ("A choice has consequences.",)
+    assert treatment.character_arcs == ()
+
+
+def test_union_alpha_schemaless_json_preserves_image_input_and_max_tokens(
     monkeypatch, _patch_events
+):
+    _patch_http(monkeypatch, {
+        "model": "stealth/union-alpha",
+        "choices": [{"message": {"content": '{"text":"A choice."}'}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 3},
+    })
+    asyncio.run(client.generate_structured_object(
+        config=Config(), model="union-alpha",
+        system_prompt="Transcribe the image, then return JSON.",
+        user_content="Read the image.", max_output_tokens=128,
+        feature="ocr.page_lettering",
+        image_attachments=((b"not-a-real-png", "image/png"),),
+    ))
+
+    request = _FakeAsyncClient.last_request["json"]
+    assert request["max_tokens"] == 128
+    assert "max_completion_tokens" not in request
+    assert request["response_format"] == {"type": "json_object"}
+    assert request["messages"][0]["content"] == "Transcribe the image, then return JSON."
+    content = request["messages"][-1]["content"]
+    assert content[0] == {"type": "text", "text": "Read the image."}
+    assert content[1]["type"] == "image_url"
+    prefix, encoded = content[1]["image_url"]["url"].split(",", 1)
+    assert prefix == "data:image/png;base64"
+    assert base64.b64decode(encoded) == b"not-a-real-png"
+
+
+def test_union_alpha_plain_text_does_not_request_json(monkeypatch, _patch_events):
+    _patch_http(monkeypatch, {
+        "model": "stealth/union-alpha",
+        "choices": [{"message": {"content": "A choice has consequences."}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 3},
+    })
+    asyncio.run(client.generate_text(
+        config=Config(), model="union-alpha", system_prompt="Summarize the story.",
+        user_content="A character makes a choice.",
+    ))
+
+    request = _FakeAsyncClient.last_request["json"]
+    assert "response_format" not in request
+    assert request["messages"][0]["content"] == "Summarize the story."
+
+@pytest.mark.parametrize("model", ["glm-5.3-flash", "openrouter/z-ai/glm-5.3-flash"])
+def test_glm_structured_request_keeps_schema_and_supported_max_tokens(
+    monkeypatch, _patch_events, model
 ):
     _patch_http(
         monkeypatch,
@@ -229,12 +332,12 @@ def test_openrouter_structured_request_uses_supported_max_tokens_field(
         },
     )
 
-    result = asyncio.run(
+    asyncio.run(
         client.generate_structured_object(
             config=Config(),
-            model="glm-5.3-flash",
+            model=model,
             system_prompt="Return JSON.",
-            user_content="{}",
+            user_content="Read the image and return JSON.",
             max_output_tokens=128,
             feature="extract.story_bible",
             json_schema={
@@ -245,10 +348,16 @@ def test_openrouter_structured_request_uses_supported_max_tokens_field(
         )
     )
 
-    assert result.value == {"ok": True}
     request = _FakeAsyncClient.last_request["json"]
     assert request["max_tokens"] == 128
     assert "max_completion_tokens" not in request
+    assert request["response_format"]["type"] == "json_schema"
+    assert request["response_format"]["json_schema"]["strict"] is True
+    assert request["response_format"]["json_schema"]["schema"] == {
+        "type": "object", "properties": {"ok": {"type": "boolean"}},
+        "required": ["ok"], "additionalProperties": False,
+    }
+    assert request["messages"][0]["content"] == "Return JSON."
 
 
 def test_generate_structured_object_retries_then_succeeds_on_malformed_json(

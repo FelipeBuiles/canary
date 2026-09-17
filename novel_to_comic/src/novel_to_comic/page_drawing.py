@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
+from math import gcd
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Literal, Protocol
 
@@ -149,16 +150,14 @@ def openai_page_capability_profile(model: str) -> PageCapabilityProfile:
 
 
 def muse_page_capability_profile() -> PageCapabilityProfile:
-    """Return Muse's fixed native landscape complete-page profile."""
+    """Return Muse's empirically verified native portrait complete-page profile."""
     return PageCapabilityProfile(
-        # Muse's OpenRouter endpoint exposes no accepted size/aspect controls.
-        # Its native documented image output is 1920×1280 (3:2), so a complete
-        # comic-page edition must freeze that supported geometry rather than
-        # claiming the portrait dimensions supported by other Draw models.
-        id="muse-image-complete-page-hybrid-v1", exact_visible_lettering=False, provider="openrouter", model="meta/muse-image",
+        # OpenRouter's image endpoint returns native 1280×1920 portrait output
+        # when requested with size="1280x1920", as verified by live probes.
+        id="muse-image-complete-page-hybrid-v2", exact_visible_lettering=False, provider="openrouter", model="meta/muse-image",
         max_image_references=10, reference_ordering="ordered",
         editing_modes=("instructed", "region_targeted"),
-        output_width=1920, output_height=1280, max_prompt_characters=32_000,
+        output_width=1280, output_height=1920, max_prompt_characters=32_000,
         retry_semantics="bounded_submission", max_attempts=1,
         price_per_page_usd=Decimal(MUSE_PAGE_ESTIMATED_COST_USD),
         price_per_reference_usd=Decimal("0"),
@@ -1046,6 +1045,18 @@ class GoogleVertexCompletePageTransport:
             }
             if self._profile.provider == "openai":
                 request_data.update({"quality": "high", "output_format": "png"})
+            else:
+                # LiteLLM 1.83.14 drops named size on custom image edits but
+                # forwards aspect_ratio through optional_params to OpenRouter.
+                divisor = gcd(request.width, request.height)
+                request_data["aspect_ratio"] = f"{request.width // divisor}:{request.height // divisor}"
+                # Canary renders public-domain literature whose canonical
+                # content can include distress (e.g. The Gift of the Magi).
+                # Mirror the Vertex safety-off precedent: request Muse's
+                # documented relaxed moderation tier instead of retrying
+                # content-management-policy rejections that no other control
+                # can clear.
+                request_data["moderation"] = "low"
         feature = "complete_page_draw"
         ctx = await begin_image_call(
             config=self._config,
@@ -1121,7 +1132,10 @@ class GoogleVertexCompletePageTransport:
                     image.save(normalized, format="PNG")
                     image_bytes = normalized.getvalue()
             if (width, height) != (request.width, request.height):
-                raise ValueError("Complete-page output dimensions do not match frozen profile")
+                raise ValueError(
+                    "Complete-page output dimensions do not match frozen profile: "
+                    f"actual={width}x{height} expected={request.width}x{request.height}"
+                )
             latency_ms = int((time.perf_counter() - ctx.started) * 1000)
             usage = ai_client._extract_usage(
                 payload,

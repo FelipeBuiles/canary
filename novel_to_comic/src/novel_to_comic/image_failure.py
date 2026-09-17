@@ -56,6 +56,7 @@ def classify_image_failure(
         "image_prohibited",
         "moderation_blocked",
         "content_policy_violation",
+        "content management policy",
         "rejected by the safety system",
         "prohibited_content",
         "responsible ai",

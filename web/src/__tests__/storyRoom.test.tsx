@@ -69,15 +69,18 @@ vi.mock("../api/queries", () => ({
 import { StoryRoom } from "../pages/rooms/StoryRoom";
 
 function renderRoom() {
-  render(
-    <MemoryRouter initialEntries={["/project/demo/story"]}>
-      <I18nProvider>
-        <Routes>
-          <Route path="/project/:id/story" element={<StoryRoom />} />
-        </Routes>
-      </I18nProvider>
-    </MemoryRouter>,
-  );
+  const view = render(<StoryRoom />, {
+    wrapper: ({ children }) => (
+      <MemoryRouter initialEntries={["/project/demo/story"]}>
+        <I18nProvider>
+          <Routes>
+            <Route path="/project/:id/story" element={children} />
+          </Routes>
+        </I18nProvider>
+      </MemoryRouter>
+    ),
+  });
+  return { rerender: () => view.rerender(<StoryRoom />) };
 }
 
 function editStoryPromises() {
@@ -202,6 +205,93 @@ describe("StoryRoom", () => {
     renderRoom();
     expect(screen.getByText("Restored unsaved draft")).toBeTruthy();
     expect(editStoryPromises().value).toBe("Do not lose this\n");
+  });
+
+  it("adopts the fresh approval revision after opening a cached brief and saves subsequent edits against it", () => {
+    projectStages.brief = { status: "complete" };
+    const view = renderRoom();
+    storyState = { ...storyState, data: { ...storyDecision, brief: {
+      ...storyDecision.brief, revision: 4, status: "approved",
+    } } };
+    view.rerender();
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText("Brief approved")).toBeTruthy();
+    fireEvent.change(editStoryPromises(), { target: { value: "A promise after approval" } });
+    fireEvent.click(screen.getByRole("button", { name: "SAVE BRIEF" }));
+    expect(updateBrief).toHaveBeenCalledWith({
+      project: "demo", expectedRevision: 4,
+      changes: { story_promises: ["A promise after approval"] },
+    }, expect.any(Object));
+  });
+
+  it("adopts changed server content after a reverted edit without saving the obsolete no-op field", () => {
+    const view = renderRoom();
+    const promises = editStoryPromises();
+    fireEvent.change(promises, { target: { value: "A temporary promise" } });
+    fireEvent.change(promises, { target: { value: storyDecision.brief.story_promises[0] } });
+    storyState = { ...storyState, data: { ...storyDecision, brief: {
+      ...storyDecision.brief, content_sha256: "b".repeat(64), story_promises: ["The server's new promise"],
+    } } };
+    view.rerender();
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect((screen.getByLabelText("STORY PROMISES") as HTMLTextAreaElement).value).toBe("The server's new promise");
+    expect((screen.getByRole("button", { name: "SAVE BRIEF" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Page target: to"), { target: { value: "32" } });
+    fireEvent.click(screen.getByRole("button", { name: "SAVE BRIEF" }));
+    expect(updateBrief).toHaveBeenCalledWith({
+      project: "demo", expectedRevision: 3, changes: { target_page_max: 32 },
+    }, expect.any(Object));
+  });
+
+  it("preserves a dirty draft across refetch while blocking save and approval", () => {
+    const view = renderRoom();
+    const rawDraft = "Keep my ending\n\nAnd this detail\n";
+    fireEvent.change(editStoryPromises(), { target: { value: rawDraft } });
+    storyState = { ...storyState, data: { ...storyDecision, brief: {
+      ...storyDecision.brief, revision: 4, content_sha256: "b".repeat(64), story_promises: ["A different server ending"],
+    } } };
+    view.rerender();
+
+    expect(screen.getByRole("alert").textContent).toContain("This brief changed elsewhere");
+    expect((screen.getByLabelText("STORY PROMISES") as HTMLTextAreaElement).value).toBe(rawDraft);
+    const save = screen.getByRole("button", { name: "SAVE BRIEF" }) as HTMLButtonElement;
+    const approve = screen.getByRole("button", { name: "SAVE & APPROVE BRIEF — CONTINUE" }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    expect(approve.disabled).toBe(true);
+    fireEvent.click(save);
+    fireEvent.click(approve);
+    expect(updateBrief).not.toHaveBeenCalled();
+    expect(approveBrief).not.toHaveBeenCalled();
+
+    cleanup();
+    renderRoom();
+    expect(editStoryPromises().value).toBe("A different server ending");
+    fireEvent.click(screen.getByText("Unsaved draft from revision 3"));
+    expect((screen.getByLabelText("Unsaved draft from revision 3") as HTMLTextAreaElement).value).toContain(rawDraft);
+  });
+
+  it("does not roll a successful save back to an older cached brief", () => {
+    const view = renderRoom();
+    fireEvent.change(editStoryPromises(), { target: { value: "The saved promise" } });
+    fireEvent.click(screen.getByRole("button", { name: "SAVE BRIEF" }));
+    const saved = {
+      ...storyDecision.brief, revision: 4, content_sha256: "b".repeat(64), story_promises: ["The saved promise"],
+    };
+    act(() => updateBrief.mock.calls[0][1].onSuccess(saved));
+    storyState = { ...storyState, data: { ...storyDecision, brief: saved } };
+    view.rerender();
+    storyState = { ...storyState, data: storyDecision };
+    view.rerender();
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect((screen.getByLabelText("STORY PROMISES") as HTMLTextAreaElement).value).toBe("The saved promise");
+    fireEvent.change(screen.getByLabelText("Page target: to"), { target: { value: "32" } });
+    fireEvent.click(screen.getByRole("button", { name: "SAVE BRIEF" }));
+    expect(updateBrief).toHaveBeenLastCalledWith({
+      project: "demo", expectedRevision: 4, changes: { target_page_max: 32 },
+    }, expect.any(Object));
   });
 
   it("keeps a prior revision's raw draft accessible after reload without applying it to the newer brief", () => {

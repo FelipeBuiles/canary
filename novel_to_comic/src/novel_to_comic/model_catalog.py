@@ -42,6 +42,7 @@ TEXT_MODELS = (
     {"id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash", "provider": "Google Vertex AI"},
     {"id": "deepseek-v4.1-flash", "label": "DeepSeek V4.1 Flash", "provider": "OpenRouter"},
     {"id": "glm-5.3-flash", "label": "GLM 5.3 Flash", "provider": "OpenRouter"},
+    {"id": "union-alpha", "label": "Union Alpha", "provider": "OpenRouter"},
 )
 DRAW_MODELS = ("image-gemini-pro", "image-sunburst", "image-flare", "image-muse")
 

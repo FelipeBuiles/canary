@@ -10,6 +10,7 @@ aliases:
   gemini-3.8-flash: vertex_ai/gemini-3.8-flash
   deepseek-v4.1-flash: openrouter/deepseek/deepseek-v4.1-flash
   glm-5.3-flash: openrouter/z-ai/glm-5.3-flash
+  union-alpha: openrouter/stealth/union-alpha
   image-gemini-flash-lite: vertex_ai/gemini-3.1-flash-lite-image
   image-gemini-pro: vertex_ai/gemini-3-pro-image
   image-gpt-2: openai/gpt-image-2
@@ -176,6 +177,14 @@ model_overrides:
     cache_read_input_token_cost: 3.0e-08
     mode: chat
     max_input_tokens: 1048576
+    max_output_tokens: 131072
+  # OpenRouter endpoint catalog, verified 2026-09-16; currently zero-priced.
+  # Unprefixed key also covers the provider model returned in usage responses.
+  stealth/union-alpha:
+    input_cost_per_token: 0.0
+    output_cost_per_token: 0.0
+    mode: chat
+    max_input_tokens: 262144
     max_output_tokens: 131072
   gpt-image-2.5-sunburst:
     input_cost_per_token: 5.0e-06

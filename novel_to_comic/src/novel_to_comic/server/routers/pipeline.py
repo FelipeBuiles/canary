@@ -193,7 +193,7 @@ async def _run_stage_with_credits(
                     config=config,
                     rerun=rerun,
                 )
-            job_id = "draw-initialization"
+            job_id = None
         else:
             job_id = await run_credited_stage(
                 user_id=user_id,

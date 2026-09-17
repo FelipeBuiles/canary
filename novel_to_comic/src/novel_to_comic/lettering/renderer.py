@@ -11,7 +11,7 @@ from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 from novel_to_comic.models.lettering import LetteringStyle, PageLettering
 
-ENGINE_VERSION = "lettering-svg-v3"
+ENGINE_VERSION = "lettering-svg-v4"
 _ROOT = Path(__file__).parent
 _FONT_ROOT = _ROOT.parent / "fonts"
 # Every call runs outside any caller's asyncio loop. Each isolated browser is
@@ -132,9 +132,15 @@ def resolve_lettering(state: PageLettering, style: LetteringStyle) -> PageLetter
     return PageLettering.model_validate(value)
 
 
-def render_lettered_page(
-    state: PageLettering, style: LetteringStyle, image: bytes, width: int, height: int
-) -> bytes:
+def validate_lettering_render(
+    state: PageLettering,
+    style: LetteringStyle,
+    width: int,
+    height: int,
+    *,
+    draft_preview: bool = False,
+) -> None:
+    """Check render integrity for all uses, and copy/layout quality for publication."""
     if state.style_sha256 != style.content_sha256:
         raise ValueError(
             "Lettering style changed. Open Lettering and save the reflowed page."
@@ -151,11 +157,11 @@ def render_lettered_page(
             raise ValueError(
                 "Lettering needs layout. Open Lettering and save the page."
             )
-        if resolved.warnings:
+        if not draft_preview and resolved.warnings:
             raise ValueError(
                 f"Lettering {element.id} needs attention ({', '.join(resolved.warnings)}). Open Lettering to complete its copy or select a supported font."
             )
-        if resolved.overflow:
+        if not draft_preview and resolved.overflow:
             raise ValueError(
                 f"Lettering {element.id} does not fit. Widen its box or shorten its copy in Lettering."
             )
@@ -169,6 +175,20 @@ def render_lettered_page(
             raise ValueError(
                 "Lettering copy changed without a resolved layout. Save it in Lettering."
             )
+
+
+def render_lettered_page(
+    state: PageLettering,
+    style: LetteringStyle,
+    image: bytes,
+    width: int,
+    height: int,
+    *,
+    draft_preview: bool = False,
+) -> bytes:
+    validate_lettering_render(
+        state, style, width, height, draft_preview=draft_preview
+    )
     return _POOL.submit(
         _browser_call,
         "render",
