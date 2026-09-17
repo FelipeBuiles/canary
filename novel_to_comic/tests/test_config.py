@@ -3,7 +3,6 @@
 import tempfile
 from pathlib import Path
 
-import pytest
 import yaml
 
 from novel_to_comic.config import (

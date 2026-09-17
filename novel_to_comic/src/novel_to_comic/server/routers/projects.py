@@ -1,4 +1,4 @@
-"""Project listing, creation, and pipeline status."""
+"""Project listing, creation, display names, and pipeline status."""
 
 from __future__ import annotations
 
@@ -672,6 +672,28 @@ def list_projects(
             }
         )
     return results
+
+
+class RenameProjectRequest(BaseModel):
+    name: str
+
+
+@router.patch("/{project_id}")
+def rename_project(
+    project_id: str,
+    payload: RenameProjectRequest,
+    project=Depends(get_project),
+):
+    """Rename display metadata without changing the project's stable identity."""
+    name = payload.name.strip()
+    if not name or len(name) > 200:
+        raise HTTPException(422, "Project name must contain between 1 and 200 characters.")
+    project_dir, _config, state = project
+    # Admission rejects active jobs and serializes mutations and status reads
+    # before get_project loads state, so no stale writer can undo this rename.
+    state.project_name = name
+    save_state(state, project_dir)
+    return {"id": project_id, "project_name": name}
 
 
 @router.get("/{project_id}/status")

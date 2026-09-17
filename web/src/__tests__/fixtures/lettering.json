@@ -1,0 +1,124 @@
+{
+  "style": {
+    "revision": 1,
+    "content_sha256": "962a8f20b2a6d0a9b5be5325f65571a004241749257371f14ec8ee9a3f2f5a56",
+    "label": "Literary classic",
+    "source_direction": "",
+    "roles": {
+      "caption": {
+        "font": "EB Garamond",
+        "font_weight": 400,
+        "min_font_size": 16.0,
+        "max_font_size": 18.0,
+        "line_height": 1.04,
+        "align": "left",
+        "color": "#181818",
+        "fill": "#fff2d5",
+        "stroke": "#181818",
+        "stroke_width": 1.6,
+        "padding": 8.0,
+        "corner_radius": 0.0,
+        "shape": "box",
+        "letter_spacing": 0.0,
+        "text_stroke": "transparent",
+        "text_stroke_width": 0.0
+      },
+      "speech": {
+        "font": "EB Garamond",
+        "font_weight": 400,
+        "min_font_size": 16.0,
+        "max_font_size": 17.0,
+        "line_height": 1.05,
+        "align": "center",
+        "color": "#181818",
+        "fill": "#ffffff",
+        "stroke": "#181818",
+        "stroke_width": 1.6,
+        "padding": 11.0,
+        "corner_radius": 12.0,
+        "shape": "balloon",
+        "letter_spacing": 0.0,
+        "text_stroke": "transparent",
+        "text_stroke_width": 0.0
+      },
+      "thought": {
+        "font": "EB Garamond",
+        "font_weight": 400,
+        "min_font_size": 16.0,
+        "max_font_size": 17.0,
+        "line_height": 1.05,
+        "align": "center",
+        "color": "#181818",
+        "fill": "#ffffff",
+        "stroke": "#181818",
+        "stroke_width": 1.6,
+        "padding": 9.0,
+        "corner_radius": 12.0,
+        "shape": "cloud",
+        "letter_spacing": 0.0,
+        "text_stroke": "transparent",
+        "text_stroke_width": 0.0
+      },
+      "sfx": {
+        "font": "Bangers",
+        "font_weight": 400,
+        "min_font_size": 24.0,
+        "max_font_size": 68.0,
+        "line_height": 1.05,
+        "align": "center",
+        "color": "#fff2b5",
+        "fill": "transparent",
+        "stroke": "#181818",
+        "stroke_width": 1.6,
+        "padding": 4.0,
+        "corner_radius": 12.0,
+        "shape": "none",
+        "letter_spacing": 0.0,
+        "text_stroke": "#181818",
+        "text_stroke_width": 2.5
+      }
+    }
+  },
+  "state": {
+    "revision": 1,
+    "content_sha256": "32525f1e2b6de649449599126c2f8365704cc5730aa7ffa4ba4a9eeb8db70937",
+    "page_number": 1,
+    "comic_page_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "style_sha256": "962a8f20b2a6d0a9b5be5325f65571a004241749257371f14ec8ee9a3f2f5a56",
+    "locale": "source",
+    "canvas_aspect_ratio": 0.6666666666666666,
+    "elements": [
+      {
+        "id": "lettering-1",
+        "source_lettering_item_id": "source-1",
+        "role": "caption",
+        "text_by_locale": {
+          "source": "The door opened."
+        },
+        "suggested_placement": {
+          "x": 0.12,
+          "y": 0.08,
+          "width": 0.42,
+          "height": 0.15
+        },
+        "placement": {
+          "x": 0.12,
+          "y": 0.08,
+          "width": 0.42,
+          "height": 0.15
+        },
+        "hidden": false,
+        "style_override": null,
+        "tail_target": null,
+        "suggested_tail_target": null,
+        "rotation": 0.0,
+        "scale": 1.0,
+        "z_index": 0,
+        "tight_box": true,
+        "resolved": null
+      }
+    ],
+    "reviewed_against_render_revision": null,
+    "reviewed_against_image_sha256": null
+  }
+}

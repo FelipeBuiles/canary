@@ -9,6 +9,13 @@ export function getProjectStatus(id: string): Promise<ProjectStatus> {
   return apiFetch<ProjectStatus>(`/projects/${encodeURIComponent(id)}/status`);
 }
 
+export function renameProject(id: string, name: string): Promise<{ id: string; project_name: string }> {
+  return apiFetch(`/projects/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
 export function createProject(
   file: File,
   name: string,

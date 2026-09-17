@@ -1,6 +1,6 @@
 # Canary agent context
 
-**Status: Current, September 9, 2026.** Canary generates complete lettered comic
+**Status: Current, September 15, 2026.** Canary generates complete lettered comic
 pages from novels through an eight-stage Python/FastAPI and React application.
 
 | # | Stage | Checkpoint? |
@@ -41,7 +41,9 @@ process routing/funding controls from scoped live evidence, including experiment
   approvals. URL parameters preserve page, review, filter, and reading context;
   Book links directly to affected reviews. Drawn and text-checked counts are
   distinct; current artifacts/failure phase outrank historical job failure.
-  Missing/stale OCR evidence blocks Finish but is not a redraw request. See
+  OCR is optional evidence on base art, not an export prerequisite or redraw
+  request. Hybrid lettering has a separate free Pages editor, independent
+  revision/source/style/art checks, and a shared browser/server compositor. See
   [stage contracts](stage-contracts.md) for recovery and estimate contracts.
 - Immediate estimates and temporary holds are distinct and rounded per job.
   Keep the full Draw-stage estimate for reruns, not remaining-page queues.
@@ -74,7 +76,8 @@ process routing/funding controls from scoped live evidence, including experiment
   `allow_paid: true` plus a page-number/image-SHA `renders` map authorizes only
   missing OCR on saved pixels, with per-page outcomes, never a redraw.
   Cache presence does not promise parsability or successful recovery. OCR checks
-  lettering, not visual correctness; uncertain order is nonblocking editorial
+  generated comic text in hybrid art (canonical wording in baked art), not
+  visual correctness; uncertain order is nonblocking editorial
   evidence. Visual verification and paid artwork corrections remain separate.
 - Deployment is one uvicorn worker on one Fly Machine with persistent `/projects`
   journals. Authenticated drain must precede the idle check; timeout stays drained.
@@ -193,3 +196,13 @@ Follow [AGENTS.md verification guidance](../../AGENTS.md#debugging-and-verificat
 for targeted checks and when to broaden them. Model comparisons require
 separately recorded provider costs and human visual review; mocked tests cannot
 establish image quality.
+
+### Hybrid lettering navigation
+
+`models/lettering.py` and `lettering/service.py` own presentation authority;
+`lettering/engine.mjs` is the single measured layout/SVG renderer imported by
+React and executed by backend Chromium. `lettering/renderer.py` embeds bundled
+fonts and raw pixels without network requests. Routes are in
+`server/routers/lettering.py`; the Pages desk is in
+`web/src/components/lettering/`. `TargetArtifacts` owns `lettering/` and derived
+Finish caches. See [ADR 0021](../adr/0021-hybrid-page-lettering.md).

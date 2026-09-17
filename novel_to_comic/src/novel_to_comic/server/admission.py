@@ -20,7 +20,7 @@ from .auth import SESSION_COOKIE_NAME, get_current_user
 from .deps import project_key
 
 _PROJECT = re.compile(r"^/api/projects/([^/]+)(/.*)?$")
-_PAID = re.compile(r"^/(?:run|regen-[^/]+|cover|approve/(?:brief|cast)|styles/(?:direction|suggest|generate-samples|validation)|pages/\d+/(?:generate|analyze|visual-review|corrections)|(?:characters|locations)/[^/]+/states/[^/]+/(?:regenerate|regenerate-instructed)|story-changes/[^/]+/apply)$")
+_PAID = re.compile(r"^/(?:run|regen-[^/]+|cover|lettering/translate|approve/(?:brief|cast)|styles/(?:direction|suggest|generate-samples|validation)|pages/\d+/(?:generate|analyze|visual-review|corrections)|(?:characters|locations)/[^/]+/states/[^/]+/(?:regenerate|regenerate-instructed)|story-changes/[^/]+/apply)$")
 _TARGETED = re.compile(r"^/(?:regen-(?!extract)[^/]+|cover|pages/\d+/(?:generate|analyze|visual-review|corrections)|(?:characters|locations)/[^/]+/states/[^/]+/(?:regenerate|regenerate-instructed))$")
 
 
@@ -137,6 +137,9 @@ async def admission_middleware(request, call_next):
             ):
                 raise HTTPException(503, {"code": "credits_unavailable", "message": "Credit authorization is temporarily unavailable. Try again when service is ready."})
             pkey = project_key(account, project_id)
+            if any(job.project_name == pkey and getattr(job, "kind", None) == "lettering_translation" and job.status in {"queued", "running"}
+                   for job in getattr(request.app.state, "generation_jobs", {}).values()):
+                raise HTTPException(409, "Wait for project lettering translation to finish before changing this project.")
             if not _TARGETED.fullmatch(suffix) and project_busy(request.app, pkey):
                 raise HTTPException(409, "Wait for all project jobs to finish before changing this project.")
             if _TARGETED.fullmatch(suffix):

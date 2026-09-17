@@ -54,6 +54,7 @@ environment variables. Model aliases and pricing remain in configuration.
 | Claude Opus 5 | `claude-opus-5` | `anthropic/claude-opus-5` |
 | DeepSeek V4.1 Flash | `deepseek-v4.1-flash` | `openrouter/deepseek/deepseek-v4.1-flash` |
 | GLM 5.3 Flash | `glm-5.3-flash` | `openrouter/z-ai/glm-5.3-flash` |
+| Union Alpha | `union-alpha` | `openrouter/stealth/union-alpha` |
 | GPT Image 2.5 Sunburst | `image-sunburst` | `openai/gpt-image-2.5-sunburst` |
 | GPT Image 2.5 Flare | `image-flare` | `openai/gpt-image-2.5-flare` |
 | Muse Image | `image-muse` | `openrouter/meta/muse-image` |
@@ -65,6 +66,27 @@ $0.50/M output tokens, verified against the public OpenRouter model catalog on
 September 10, 2026; provider-reported charges still take precedence. The route
 requires parameter-compatible providers and does not select free or batch
 variants. [OpenRouter model details](https://openrouter.ai/z-ai/glm-5.3-flash).
+
+Union Alpha uses the same `OPENROUTER_API_KEY` and is available for all text
+settings, OCR, and visual review, not image generation. OpenRouter advertises
+text/image input, text output, a 262,144-token context, and a 131,072-token output
+limit. Its catalog input/output rates are currently zero (verified September 16,
+2026); provider-reported charges still take precedence. The route uses supported
+`max_tokens` and keeps `require_parameters: true`, without a reasoning override.
+The [OpenRouter endpoint metadata](https://openrouter.ai/api/v1/models/stealth/union-alpha/endpoints)
+advertises `response_format` but not `structured_outputs`, which OpenRouter
+[requires for JSON Schema output](https://openrouter.ai/docs/guides/features/structured-outputs).
+Union Alpha therefore uses JSON-object mode (`response_format: {"type": "json_object"}`)
+for schema-bearing gateway requests, not provider-enforced structured schemas.
+The client appends the complete original JSON schema to the system prompt with
+an instruction to follow it, preserving optional fields and defaults rather than
+applying strict-schema normalization. JSON parsing and existing caller-level
+Pydantic/domain validation (including Adapt's `NarrativeTreatment` validation)
+remain unchanged; JSON-object support does not guarantee schema compliance.
+Schema-less JSON requests also use JSON-object mode, while plain-text requests
+do not set `response_format`. This applies only to `union-alpha` and
+`openrouter/stealth/union-alpha` gateway requests; other models and Codex routes
+retain their existing schema handling.
 
 Start `scripts/dev.sh --codex` to enable the local Codex adaptor. The account
 panel offers explicit `codex-dev/text/<model>` choices and

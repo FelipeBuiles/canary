@@ -188,6 +188,8 @@ async def begin_image_call(
             },
             metadata_json=metadata,
             estimated_cost_usd=estimated_cost_usd,
+            started_at=started_at,
+            langfuse_input=langfuse_input,
         )
     )
     try:

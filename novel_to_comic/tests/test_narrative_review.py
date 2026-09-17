@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .plan_detail_support import detail_response
+from .plan_detail_support import detail_response, plan_response
 
 import asyncio
 from datetime import datetime, timezone
@@ -82,7 +82,7 @@ def test_same_cited_finding_has_one_identity_across_overlapping_windows():
 
 def draft_for(adaptation, padding=0):
     beats = list(adaptation.beats) + [adaptation.beats[-1]] * padding
-    return {
+    return plan_response({
         "rhythm_summary": "A story, followed by an atmospheric ending.",
         "pages": [
             {
@@ -105,7 +105,7 @@ def draft_for(adaptation, padding=0):
             }
             for n, b in enumerate(beats, 1)
         ],
-    }
+    })
 
 
 def canonical(adaptation, draft):
@@ -313,7 +313,6 @@ def test_fixed_validator_reuses_previously_rejected_response(tmp_path, monkeypat
     ["source_000002", "essential_event_001"],
 ])
 def test_supplemental_requirement_does_not_expand_concrete_repair_scope(tmp_path, anchors):
-    from novel_to_comic.book_adaptation import _affected_shards, AdaptationValidation
     context = adaptation_context(_source_document(), _approved_brief(), _book_adaptation())
     template = context["beats"][0]
     context["beats"] = [

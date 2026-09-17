@@ -20,8 +20,10 @@ resources, not a mandatory onboarding sequence; reuse context already loaded.
   orchestration owns the explicit auto-chain.
 - Preserve visual anchors and continuity guards verbatim. State IDs are
   entity-scoped; Plan maps each visible entity to its state explicitly.
-- Full-page Draw includes exact lettering authored by Adapt. Do not revive
-  text-free panel generation, legacy panel stages, or compose-editor contracts.
+- New hybrid Draw editions generate one full page of base art around Plan
+  lettering reservations, without comic text or balloons. Adapt owns canonical
+  copy; Pages owns independent editable display lettering. Retained baked
+  editions stay baked. Never revive panel generation or a Compose stage.
 - `TargetArtifacts` owns current full-page paths and typed reads/writes.
   Breaking schema changes are acceptable. Reject incompatible artifacts with
   a rerun instruction; do not add compatibility hash exceptions or shims.
@@ -29,7 +31,9 @@ resources, not a mandatory onboarding sequence; reuse context already loaded.
   fixed profile; do not silently upgrade existing pages to a different model.
 - Request hashes identify input, not guaranteed provider deduplication.
   Avoid automatic retries after ambiguous paid image submissions.
-- OCR proves only its lettering checks. Visual concerns require visual review;
+- OCR observes base art only: unwanted comic lettering for hybrid profiles,
+  canonical-copy checks for retained baked profiles. It is optional evidence.
+  Visual concerns require visual review;
   creating a revision alone must not mark them verified.
 - Stage `run()` receives `StageRuntime` as `ctx`; use its logging, progress,
   item accounting, and events rather than parallel lifecycle implementations.
@@ -49,7 +53,11 @@ implemented by `book_adaptation.py`, `page_planning.py`, `page_drawing.py`,
 `page_review.py`, and `page_finishing.py`. Cast state conditioning is in
 `state_assets.py`; gateway serialization is in root
 `litellm_handlers/vertex_multimodal.py`. Frontend rooms live in
-`web/src/pages/rooms/`.
+`web/src/pages/rooms/`. The shared lettering layout/SVG engine is
+`lettering/engine.mjs`; `lettering/service.py`, `server/routers/lettering.py`, and
+`web/src/components/lettering/` own its independent state, API, and editor.
+Lettering saves invalidate Finish, not Draw. Preserve the independent hashes
+and optimistic revision checks; never infer visual review from successful export.
 
 Use targeted `rg` searches; exclude generated outputs, dependencies, lockfiles,
 and logs unless directly relevant. Issues and PRDs live in GitHub

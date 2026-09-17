@@ -24,6 +24,8 @@ import tempfile
 from typing import Any
 import uuid
 
+from novel_to_comic.ai.errors import AIRefusalError
+
 SDK_VERSION = "0.147.0"
 RUNTIME_VERSION = "0.147.0"
 EXECUTION_VERSION = "canary-codex-subprocess-v6-image-tool-arguments"
@@ -99,7 +101,6 @@ class CodexImageResult:
     metadata: dict[str, Any]
 
 
-from novel_to_comic.ai.errors import AIRefusalError
 
 
 class CodexRuntimeError(RuntimeError):
