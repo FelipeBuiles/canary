@@ -44,10 +44,10 @@ retained as current reference.
   implemented local adapter configuration, restricted execution/funding contracts,
   and scoped live evidence, including experimental complete-page Draw. This is
   not a production deployment or model-quality guarantee.
-
 - [TypeSafe decision evaluation](reference/typesafe-decisions.md): native bounded
-  classifiers, read-only saved-review experiments, research and measured-promotion
-  criteria. Production review gates are unchanged; no live quality claim.
+  classifiers, read-only saved-review experiments, research and promotion criteria.
+  Production review gates are unchanged; quality, latency and savings require
+  a live, human-labeled evaluation before enabling a production cascade.
 
 ## Active future work
 
