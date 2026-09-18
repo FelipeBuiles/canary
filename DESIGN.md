@@ -133,3 +133,28 @@ Design tokens (`@theme` variables: `--color-*`, `--font-*`, `--shadow-*`, `--spa
 ### When the existing composite doesn't fit
 
 Don't fork. Change the composite. If you find yourself reinventing a card or section header in a room, that is a signal that either (a) the composite's API needs a new slot or variant, or (b) you should add a new composite. Discuss before forking.
+
+
+## Page change requests
+
+Change requests start with words, not drawing. A user may review and submit a
+text-only request directly; adding a request to the list first is not required.
+Pins, areas and highlights are optional context attached to one request. Their
+extra detail is optional, and never duplicates a required request-writing step.
+
+Keep only **Pin, Area and Highlight** in the primary location toolbar. History,
+zoom, freehand outlines, arrows and keyboard pin placement live under **More**.
+Finish each new mark in selection mode so the next click cannot accidentally
+create another location. Drawing supports cancellation and never creates a
+zero-area mark. Preserve existing geometry, request ownership and page lineage.
+
+Location labels are square, numbered ink-and-paper tags with a mechanical shadow
+and a paper keyline for contrast over artwork. Use CSS-pixel badges rather than
+stretching text in a square SVG viewBox. Geometry scales with the image's actual
+aspect ratio. User-facing location lists show names and optional detail, never
+coordinate dumps. Raw geometry remains in the provider request.
+
+Text-only correction remains available if an image fails to load. Any invalid
+stored location or request limit must be explained before cost review; never
+silently discard context. Cost review and an explicit generate confirmation
+remain separate, and editing anything submitted invalidates the reviewed draft.

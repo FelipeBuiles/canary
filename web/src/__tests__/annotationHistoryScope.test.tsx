@@ -89,6 +89,7 @@ describe("RevisionDraft focused-fix history scope", () => {
     // Mark the focused fix through the real annotator UI.
     fireEvent.click(screen.getByRole("button", { name: /mark on page/i }));
     expect(screen.getByRole("button", { name: /done marking/i }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByText("More"));
     fireEvent.click(screen.getByRole("button", { name: /without drawing/i }));
     expect(markFields(container)).toHaveLength(1);
     fireEvent.change(markFields(container)[0]!, { target: { value: "alpha mark on the face" } });
@@ -101,6 +102,7 @@ describe("RevisionDraft focused-fix history scope", () => {
     expect(screen.queryByDisplayValue("alpha mark on the face")).toBeNull();
 
     // Undo after the switch cannot pull the other fix's marks in.
+    fireEvent.click(screen.getByText("More"));
     expect((screen.getByRole("button", { name: /undo/i }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: /undo/i }));
     expect(markFields(container)).toHaveLength(0);
