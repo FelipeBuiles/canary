@@ -39,9 +39,10 @@ from novel_to_comic.style_contract import (
     DEFAULT_LETTERING_STANDARD,
     DEFAULT_PAGE_FRAMING_STANDARD,
     style_template_for_suggestion,
-    page_style_template,
+    page_art_style_template,
 )
 from novel_to_comic.style_contract import normalize_production_standard
+from novel_to_comic.models.lettering import LetteringDesign
 from novel_to_comic.stage_runtime import StageRuntime
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,9 @@ class StyleSuggestion(BaseModel):
     lettering: str
     lettering_preset: Literal["literary", "classic", "pulp", "minimal"] = Field(
         description="Post-production preset for THIS style. Required inside each styles item, never at the batch root."
+    )
+    lettering_design: LetteringDesign = Field(
+        description="Executable book lettering: label and explicit caption, speech, thought, sfx role tokens. Match the artwork and framing."
     )
     page_framing: str
     sequential_art_strengths: str
@@ -175,13 +179,25 @@ _SYSTEM_PROMPT = (
     "verbatim author wording explicitly limiting medium, or empty; story mood alone "
     "never narrows medium. Every style needs label, medium, visual_logic "
     "(photographic, realistic_illustration, stylized, or graphic), portfolio_role, "
-    "palette, line_rendering, lighting_value, lettering, lettering_preset, page_framing, "
+    "palette, line_rendering, lighting_value, lettering, lettering_preset, lettering_design, page_framing, "
     "sequential_art_strengths, story_fit, risk, and template. Inside EACH styles item, choose lettering_preset: literary "
     "(serif captions and serif speech), classic (comic type), pulp (typewriter captions/bold effects), "
     "or minimal (quiet modern). Never put lettering_preset beside styles at the root. "
     "Different candidates may choose different presets; this is the editable post-production style, consistent with lettering prose. "
-    "All production standards "
-    "must be concise prose strings, never objects or arrays. Template is 40-70 words."
+    "lettering_design is an OBJECT with label and roles: caption, speech, thought, sfx. "
+    "Design all four roles using the provided schema; the preset is only a starting point. "
+    "Choose only bundled fonts: Comic Neue, EB Garamond, Bangers, Special Elite, M PLUS 1p, "
+    "Fredoka, Orbitron, Bungee. Use 1000-unit page-width typography: normally 16-24 for body "
+    "copy and 36-72 for effects, readable floors >=12. Keep text/background contrast high. "
+    "Give narration intentional padding, fill and border; speech a balloon; thoughts a "
+    "rounded cloud; effects an intentional display font and contrasting text outline, "
+    "not the same generic loud font for every aesthetic. Shapes include box, round, "
+    "balloon, ellipse, cloud, whisper (dashed balloon), burst (shouting), and none. "
+    "Use six-digit hex colors or transparent, never CSS/font names outside the schema. "
+    "Match outline weights, ink palette, mood and framing without sacrificing legibility. "
+    "Keep lettering and page_framing as concise prose strings. The image model draws "
+    "ONLY art and framing; the software renderer owns all words and balloon contours. "
+    "Never put lettering_design or lettering_preset at the batch root. Template is 40-70 words."
 )
 
 
@@ -195,6 +211,8 @@ def _stable_suggestion_id(suggestion: dict) -> str:
     )
     if suggestion.get("lettering_preset"):
         values += (suggestion["lettering_preset"],)
+    if suggestion.get("lettering_design") is not None:
+        values += (json.dumps(suggestion["lettering_design"], sort_keys=True, separators=(",", ":")),)
     material = "\n".join(str(value or "").strip() for value in values)
     return f"style_{hashlib.sha256(material.encode('utf-8')).hexdigest()[:16]}"
 
@@ -203,6 +221,10 @@ def normalize_suggestion(
     suggestion: dict, *, role: str | None = None, origin: str = "generated",
 ) -> dict:
     """Retain production standards, declared rendering logic, and image authority."""
+    if suggestion.get("lettering_design") is not None:
+        suggestion = suggestion | {"lettering_design": LetteringDesign.model_validate(
+            suggestion["lettering_design"]
+        ).model_dump(mode="json")}
     normalized = {
         "id": _stable_suggestion_id(suggestion),
         "origin": suggestion.get("origin") or origin,
@@ -225,6 +247,10 @@ def normalize_suggestion(
     }
     if suggestion.get("lettering_preset") in {"literary", "classic", "pulp", "minimal"}:
         normalized["lettering_preset"] = suggestion["lettering_preset"]
+    if suggestion.get("lettering_design") is not None:
+        normalized["lettering_design"] = LetteringDesign.model_validate(
+            suggestion["lettering_design"]
+        ).model_dump(mode="json")
     if suggestion.get("direction_id"):
         normalized["direction_id"] = suggestion["direction_id"]
     return normalized
@@ -675,6 +701,19 @@ async def generate_sample_image(
     return submission.result
 
 
+STYLE_PROOF_ART_CONSTRAINTS = (
+    "Depict exactly the listed subjects and no additional people, animals, creatures, "
+    "or crowds, even if background context mentions them. Draw one complete art-only "
+    "comic page with the declared framing, borders, margins and gutters. "
+    "Do not draw any lettering, words, captions, speech balloons, thought clouds, "
+    "sound effects, empty boxes, logos, signatures or watermarks. Software adds them later. "
+    "Reserve low-detail natural background, not blank white boxes, in these normalized "
+    "page-space rectangles (x, y, width, height): narration (.05,.04,.47,.14), "
+    "speech (.54,.37,.40,.13), thought (.05,.53,.44,.16), effect (.58,.83,.36,.12). "
+    "Keep faces, hands and important action outside these four spaces."
+)
+
+
 def build_style_sample_request(
     config: Config,
     bible: StoryBible,
@@ -690,7 +729,7 @@ def build_style_sample_request(
     from novel_to_comic.image_geometry import style_proof_dimensions
 
     width, height = style_proof_dimensions()
-    selected_style = page_style_template(config.style_template)
+    selected_style = page_art_style_template(config.style_template)
     selection = style_sample_selection(bible)
     location = selection.location
     anchors = tuple(filter(None, (
@@ -722,16 +761,7 @@ def build_style_sample_request(
                 "margin, and gutter system."
             ),
             setting=None,
-            constraints=(
-                "Depict exactly the listed subjects and no additional people, animals, "
-                "creatures, or crowds, even if background context mentions them. "
-                "This is a production-design proof, not wordless concept art. Include exactly "
-                'these three lettering specimens once each: narration “The night held its '
-                'breath.”, dialogue “We keep moving.”, and SFX “KRAK”. Apply the declared '
-                "lettering standard consistently to all three. No other readable words, title, "
-                "logo, signature, or watermark. Show the declared page framing and panel-border "
-                "system clearly."
-            ),
+            constraints=STYLE_PROOF_ART_CONSTRAINTS,
             width=width,
             height=height,
             generation_width=width,
@@ -821,7 +851,7 @@ def style_validation_brief(bible: StoryBible) -> str:
         "each subject's own anatomy and preserving their species. Show readable "
         "full-body silhouettes, expressive details, layered environment depth, and "
         "distinct foreground and background materials across setup, action, and reaction "
-        "panels with the declared production lettering and framing."
+        "panels with the declared framing and quiet space for software lettering."
     )
 
 
@@ -1027,18 +1057,14 @@ def _style_sample_estimate(config: Config, project_dir: Path, bible: StoryBible,
                 "One complete portrait comic-page style proof with three clearly separated "
                 "panels using the invariant outer-page framing system."
             ),
-            constraints=(
-                "Include the narration “The night held its breath.”, dialogue “We keep "
-                "moving.”, and SFX “KRAK” exactly once each, using the declared lettering "
-                "standard. Show the declared borders, margins, and gutters. No other text."
-            ),
+            constraints=STYLE_PROOF_ART_CONSTRAINTS,
             width=width,
             height=height,
             generation_width=width,
             generation_height=height,
             generation_shape="portrait",
         ),
-        selected_style_text=template,
+        selected_style_text=page_art_style_template(template),
     )
     return estimate_non_panel_request(
         config.model_copy(update={"style_template": template}), input_data,

@@ -456,6 +456,23 @@ class TargetArtifacts:
         suffix = "png" if rendition == "full" else "webp"
         return self.project_dir / "finish" / "composites" / f"page_{page_number:03d}_{identity}_{rendition}.{suffix}"
 
+    def lettering_proof_path(self, identity: str) -> Path:
+        if not re.fullmatch(r"[a-f0-9]{64}", identity):
+            raise ValueError("invalid lettering proof identity")
+        return self.project_dir / "samples" / "lettering-proofs" / f"{identity}.png"
+
+    @locked_mutation
+    def write_lettering_proof(self, identity: str, data: bytes) -> Path:
+        path = self.lettering_proof_path(identity)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+        try:
+            temporary.write_bytes(data)
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return path
+
     def read_lettering_style(self) -> LetteringStyle:
         return self._read_model("lettering_style", self.lettering_style_path, LetteringStyle)
 

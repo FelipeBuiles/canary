@@ -8,10 +8,16 @@ import logging
 import shutil
 import warnings
 from pathlib import Path
+from typing import Literal
+from fastapi.responses import Response
+from novel_to_comic.lettering.proof import render_style_proof
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
 from novel_to_comic import artifacts
+from novel_to_comic.artifact_lock import production_lock
+from novel_to_comic.target_artifacts import TargetArtifacts, ArtifactMissing
+from novel_to_comic.lettering.service import style_from_template
 from novel_to_comic.ai import ai_request_context
 from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.config import Config, mock_mode_active, save_config
@@ -95,6 +101,15 @@ def _active_suggestion(suggestions: list[dict], config: Config) -> tuple[int | N
         if style_template_for_suggestion(suggestion) == active:
             return index, suggestion.get("id")
     return None, None
+
+
+def _proof_style(project_dir: Path, suggestion: dict, *, active: bool):
+    if active:
+        try:
+            return TargetArtifacts(project_dir).read_lettering_style()
+        except ArtifactMissing:
+            pass
+    return style_from_template(style_template_for_suggestion(suggestion))
 
 
 def clear_style_failures_after_selection(state) -> bool:
@@ -329,8 +344,16 @@ def get_styles(project_id: str, project=Depends(get_project)):
                 composition=STYLE_VALIDATION_COMPOSITION,
             )
             validation_fresh = asset_matches_request(validation_path, validation_request)
+        lettering_style = _proof_style(project_dir, s, active=i == active_index)
+        proof_base = f"/api/projects/{project_id}/styles/{s['id']}/proof"
+        proof_revision = lettering_style.content_sha256
         result.append({
             **s,
+            "sample_preview_url": (
+                f"{proof_base}/sample?style={proof_revision}"
+                if sample_exists and bible is not None and i not in stale_indices else None
+            ),
+            "lettering_source": "generated" if s.get("lettering_design") else "preset",
             "index": i,
             # Existence and freshness are separate UI concerns.  A proof made
             # under an older prompt contract is still valuable project work:
@@ -342,13 +365,41 @@ def get_styles(project_id: str, project=Depends(get_project)):
                 style_reference is not None and _supports_style_reference(config)
             ),
             "validation_url": (
-                f"/api/projects/{project_id}/files/samples/validations/{s['id']}.png"
+                f"{proof_base}/validation?style={proof_revision}"
                 if validation_fresh else None
             ),
             "is_active": i == active_index,
         })
 
     return {"suggestions": result, "active_index": active_index, "active_id": active_id}
+
+
+@router.get("/styles/{suggestion_id}/proof/{kind}")
+def get_style_lettering_proof(
+    project_id: str, suggestion_id: str, kind: Literal["sample", "validation"],
+    project=Depends(get_project),
+):
+    # Freshness is checked against the canonical *art-only* request under the
+    # artifact lock. An old baked proof never gets an accidental second overlay.
+    with production_lock(project[0]):
+        entries = get_styles(project_id, project)["suggestions"]
+        suggestion = next((entry for entry in entries if entry["id"] == suggestion_id), None)
+        if suggestion is None:
+            raise HTTPException(404, "Style direction not found.")
+        fresh = (bool(suggestion["sample_preview_url"]) if kind == "sample"
+                 else suggestion["has_validation"])
+        if not fresh:
+            raise HTTPException(409, "This proof predates clean reference art. Explicitly refresh the sample before previewing software lettering.")
+        source = (artifacts.style_sample_path(project[0], suggestion["index"]) if kind == "sample"
+                  else artifacts.style_validation_path(project[0], suggestion_id))
+        style = _proof_style(project[0], suggestion, active=suggestion["is_active"])
+        try:
+            data, identity = render_style_proof(TargetArtifacts(project[0]), style, source.read_bytes())
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return Response(data, media_type="image/png", headers={
+            "Cache-Control": "private, no-cache", "ETag": f'"{identity}"',
+        })
 
 
 @router.get("/styles/suggest-estimate")
@@ -1062,42 +1113,53 @@ def set_active_style(
 ):
     project_dir, config, state = project
 
-    suggestions = load_suggestions(project_dir)
-    if not suggestions:
-        raise HTTPException(404, "No style suggestions found — run suggest first.")
-    suggestion_id = body.get("id")
-    index = suggestion_index_by_id(suggestions, suggestion_id) if suggestion_id else body.get("index")
-    if index is None:
-        raise HTTPException(400, "Provide 'id' or 'index'")
+    with production_lock(project_dir):
+        suggestions = load_suggestions(project_dir)
+        if not suggestions:
+            raise HTTPException(404, "No style suggestions found — run suggest first.")
+        suggestion_id = body.get("id")
+        index = suggestion_index_by_id(suggestions, suggestion_id) if suggestion_id else body.get("index")
+        if index is None:
+            raise HTTPException(400, "Provide 'id' or 'index'")
 
-    if index < 1 or index > len(suggestions):
-        raise HTTPException(400, f"Index {index} out of range (1-{len(suggestions)})")
+        if index < 1 or index > len(suggestions):
+            raise HTTPException(400, f"Index {index} out of range (1-{len(suggestions)})")
 
-    template = style_template_for_suggestion(suggestions[index - 1])
-    changed = template.strip() != config.style_template.strip()
-    config = config.model_copy(update={"style_template": template})
-    save_config(config, project_dir)
-    if changed:
-        clear_style_failures_after_selection(state)
-        for stage in ("cast", "adapt", "plan", "draw", "finish"):
-            state.stages[stage] = StageState()
-        for path in REGISTRY["cast"].clean_paths(project_dir):
-            if path.is_dir():
-                shutil.rmtree(path)
-            elif path.exists():
-                path.unlink()
-        save_state(state, project_dir)
-    elif clear_style_failures_after_selection(state):
-        save_state(state, project_dir)
+        template = style_template_for_suggestion(suggestions[index - 1])
+        changed = template.strip() != config.style_template.strip()
+        target = TargetArtifacts(project_dir)
+        next_style = None
+        if changed:
+            try:
+                style_revision = target.read_lettering_style().revision + 1
+            except ArtifactMissing:
+                style_revision = 1
+            # Validate before changing selected authority or deleting derived work.
+            next_style = style_from_template(template, revision=style_revision)
+        config = config.model_copy(update={"style_template": template})
+        save_config(config, project_dir)
+        if changed:
+            clear_style_failures_after_selection(state)
+            for stage in ("cast", "adapt", "plan", "draw", "finish"):
+                state.stages[stage] = StageState()
+            for path in REGISTRY["cast"].clean_paths(project_dir):
+                if path.is_dir():
+                    shutil.rmtree(path)
+                elif path.exists():
+                    path.unlink()
+            target.write_lettering_style(next_style)
+            save_state(state, project_dir)
+        elif clear_style_failures_after_selection(state):
+            save_state(state, project_dir)
 
-    result = {"status": "updated", "index": index, "style_template": template}
-    if suggestion_id:
-        result["id"] = suggestions[index - 1].get("id")
-    if isinstance(user_id, str):
-        capture_server_event(
-            "style_selected",
-            user_id=user_id,
-            project_id=project_id,
-            properties={"style_id": str(result.get("id") or index)},
-        )
-    return result
+        result = {"status": "updated", "index": index, "style_template": template}
+        if suggestion_id:
+            result["id"] = suggestions[index - 1].get("id")
+        if isinstance(user_id, str):
+            capture_server_event(
+                "style_selected",
+                user_id=user_id,
+                project_id=project_id,
+                properties={"style_id": str(result.get("id") or index)},
+            )
+        return result

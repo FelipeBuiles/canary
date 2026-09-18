@@ -16,7 +16,6 @@ from novel_to_comic.lettering.service import (
     composite_page,
     editor_state,
     ensure_style,
-    is_hybrid,
     preset_style,
     reset_lettering,
     save_lettering,
@@ -103,14 +102,20 @@ def reset_page_lettering(
     return editor_state(target, page_number)
 
 
+def _require_editable_style(target: TargetArtifacts) -> None:
+    try:
+        edition = target.read_book_edition()
+    except ArtifactMissing:
+        return  # Before Draw: defining a book style is provider-free.
+    if edition.capability_profile.exact_visible_lettering:
+        raise LetteringConflict("This edition has baked lettering; its style is not editable.")
+
+
 @router.get("/lettering/style")
 @_errors
 def get_lettering_style(project=Depends(get_project)):
     target = TargetArtifacts(project[0])
-    if not is_hybrid(target):
-        raise LetteringConflict(
-            "Editable lettering is available for new hybrid editions only."
-        )
+    _require_editable_style(target)
     return {
         "style": ensure_style(target),
         "presets": {
@@ -124,10 +129,7 @@ def get_lettering_style(project=Depends(get_project)):
 @_errors
 def put_lettering_style(body: StyleSave, project=Depends(get_project)):
     target = TargetArtifacts(project[0])
-    if not is_hybrid(target):
-        raise LetteringConflict(
-            "This edition has baked lettering; its style is not editable."
-        )
+    _require_editable_style(target)
     return save_style(target, body.style, expected_revision=body.expected_revision)
 
 

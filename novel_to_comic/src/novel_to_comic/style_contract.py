@@ -1,11 +1,13 @@
 """Book-wide visual production standards selected by the Style stage."""
 
+import json
 from typing import Literal
 
 from novel_to_comic.rendering_fidelity import (
     RENDERING_FIDELITY_BLOCK,
     RENDERING_FIDELITY_MARKER,
 )
+from novel_to_comic.models.lettering import LetteringDesign
 
 DEFAULT_LETTERING_STANDARD = (
     "Preserve every canonical lettering string and its capitalization exactly. Use one "
@@ -21,13 +23,14 @@ DEFAULT_PAGE_FRAMING_STANDARD = (
 )
 LETTERING_MARKER = "LETTERING STANDARD —"
 FRAMING_MARKER = "PAGE FRAMING STANDARD —"
+DESIGN_MARKER = "POST-PRODUCTION LETTERING DESIGN —"
 
 
 def rendering_style_template(visual_style: str) -> str:
     """Extract art direction without page lettering or framing contracts."""
     rendering = visual_style or ""
     for marker in (LETTERING_MARKER, FRAMING_MARKER, "POST-PRODUCTION LETTERING PRESET —",
-                   RENDERING_FIDELITY_MARKER):
+                   DESIGN_MARKER, RENDERING_FIDELITY_MARKER):
         rendering = rendering.split(marker, 1)[0]
     return rendering.strip()
 
@@ -81,6 +84,11 @@ def style_template_for_suggestion(suggestion: dict) -> str:
     preset = suggestion.get("lettering_preset")
     if preset in {"literary", "classic", "pulp", "minimal"}:
         template += f"\n\nPOST-PRODUCTION LETTERING PRESET — {preset}"
+    if suggestion.get("lettering_design") is not None:
+        design = LetteringDesign.model_validate(suggestion["lettering_design"])
+        template += f"\n\n{DESIGN_MARKER} " + json.dumps(
+            design.model_dump(mode="json"), sort_keys=True, separators=(",", ":"),
+        )
     return template
 
 
@@ -89,6 +97,7 @@ POST_LETTERING_MARKER = "POST-PRODUCTION LETTERING PRESET —"
 
 def page_art_style_template(visual_style: str) -> str:
     """Visual rendering and framing, never typesetting instructions."""
+    visual_style = visual_style.split(DESIGN_MARKER, 1)[0]
     rendering = rendering_style_template(visual_style).split(POST_LETTERING_MARKER)[0].strip()
     framing = (visual_style.split(FRAMING_MARKER, 1)[1].split(POST_LETTERING_MARKER)[0].strip()
                if FRAMING_MARKER in visual_style else DEFAULT_PAGE_FRAMING_STANDARD)
@@ -99,6 +108,14 @@ def page_art_style_template(visual_style: str) -> str:
 
 
 def post_production_lettering_direction(template: str) -> str:
+    template = template.split(DESIGN_MARKER, 1)[0]
     if LETTERING_MARKER not in template:
         return DEFAULT_LETTERING_STANDARD
     return template.split(LETTERING_MARKER, 1)[1].split(FRAMING_MARKER)[0].split(POST_LETTERING_MARKER)[0].strip()
+
+
+def lettering_design_from_template(template: str) -> LetteringDesign | None:
+    """Decode the selected software-only design; corrupt designs are not ignored."""
+    if DESIGN_MARKER not in template:
+        return None
+    return LetteringDesign.model_validate_json(template.split(DESIGN_MARKER, 1)[1].strip())

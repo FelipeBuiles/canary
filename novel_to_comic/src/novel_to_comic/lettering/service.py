@@ -18,9 +18,11 @@ from novel_to_comic.models.lettering import (
     LetteringStyle,
     PageLettering,
 )
-from novel_to_comic.models.page import ComicPage, PinnedGeometry
+from novel_to_comic.models.page import ComicPage, NormalizedPoint, PinnedGeometry
 from novel_to_comic.style_contract import (
     POST_LETTERING_MARKER,
+    DESIGN_MARKER,
+    lettering_design_from_template,
     post_production_lettering_direction,
 )
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
@@ -93,20 +95,27 @@ def preset_style(
     )
 
 
+def style_from_template(template: str, *, revision: int = 1) -> LetteringStyle:
+    """Seed software tokens from the selected design, without a provider call."""
+    direction = post_production_lettering_direction(template)
+    design = lettering_design_from_template(template)
+    if design is not None:
+        return LetteringStyle(
+            revision=revision, label=design.label, source_direction=direction,
+            roles=design.roles.model_dump(),
+        )
+    # Existing/custom directions do not falsely claim to have a generated design.
+    prose = template.split(DESIGN_MARKER, 1)[0]
+    name = prose.split(POST_LETTERING_MARKER)[-1].strip() if POST_LETTERING_MARKER in prose else "literary"
+    return preset_style(name, direction=direction, revision=revision)
+
+
 @locked_mutation
 def ensure_style(artifacts: TargetArtifacts) -> LetteringStyle:
     try:
         return artifacts.read_lettering_style()
     except ArtifactMissing:
-        template = load_config(artifacts.project_dir)[0].style_template
-        name = (
-            template.split(POST_LETTERING_MARKER)[-1].strip()
-            if POST_LETTERING_MARKER in template
-            else "literary"
-        )
-        style = preset_style(
-            name, direction=post_production_lettering_direction(template)
-        )
+        style = style_from_template(load_config(artifacts.project_dir)[0].style_template)
         artifacts.write_lettering_style(style)
         return style
 
@@ -150,6 +159,24 @@ def _suggestion(
     )
 
 
+def default_tail_target(rect: PinnedGeometry) -> NormalizedPoint | None:
+    """Provisional pointer: page-bounded, never a claim about detected speakers.
+
+    Keep this insertion rule in parity with engine.mjs defaultTailTarget.
+    Existing saved targets, including intentional None, are left untouched.
+    """
+    x, y, w, h = rect.x, rect.y, rect.width, rect.height
+    if 1 - y - h > .025:
+        return NormalizedPoint(x=x + w * .28, y=y + h + min(.06, (1 - y - h) * .7))
+    if y > .025:
+        return NormalizedPoint(x=x + w * .28, y=y - min(.06, y * .7))
+    if 1 - x - w > .025:
+        return NormalizedPoint(x=x + w + min(.06, (1 - x - w) * .7), y=y + h * .6)
+    if x > .025:
+        return NormalizedPoint(x=x - min(.06, x * .7), y=y + h * .6)
+    return None
+
+
 def seed_lettering(
     page: ComicPage, render, style: LetteringStyle, *, revision: int = 1, locale: str = "source"
 ) -> PageLettering:
@@ -167,6 +194,9 @@ def seed_lettering(
             suggestion = _suggestion(
                 reservation, panel, index, len(panel.lettering), len(page.content)
             )
+            tail_target = reservation.tail_target
+            if tail_target is None and item.kind in {"dialogue", "thought"} and item.delivery == "onscreen":
+                tail_target = default_tail_target(suggestion)
             elements.append(
                 LetteringElement(
                     id=item.id,
@@ -180,8 +210,8 @@ def seed_lettering(
                     text_by_locale={"source": item.text},
                     suggested_placement=suggestion,
                     placement=suggestion,
-                    tail_target=reservation.tail_target,
-                    suggested_tail_target=reservation.tail_target,
+                    tail_target=tail_target,
+                    suggested_tail_target=tail_target,
                     z_index=len(elements),
                 )
             )
@@ -442,7 +472,11 @@ def save_style(
     )
     updates = []
     # Reflow all current pages first; a measurement failure publishes nothing.
-    for selected in artifacts.read_plan().pages:
+    try:
+        pages = artifacts.read_plan().pages
+    except ArtifactMissing:
+        pages = ()  # Style can be designed before Plan/Draw exist.
+    for selected in pages:
         try:
             state = artifacts.read_lettering(selected.page_number)
         except ArtifactMissing:

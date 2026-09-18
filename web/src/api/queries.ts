@@ -775,6 +775,8 @@ export function useSetActiveStyle() {
     onSuccess: (_data, { project }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "styles"] });
       qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+      qc.invalidateQueries({ queryKey: ["book-lettering-style", project] });
+      qc.invalidateQueries({ queryKey: ["lettering-presets", project] });
     },
   });
 }

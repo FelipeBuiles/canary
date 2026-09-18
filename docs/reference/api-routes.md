@@ -115,6 +115,7 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/projects/{project}/cast/primary-refs` | `get_primary_refs` | `stages.py` |
 | `PUT` | `/api/projects/{project}/cast/{char_id}/primary-ref` | `set_primary_ref` | `stages.py` |
 | `GET` | `/api/styles/styles` | `get_styles` | `styles.py` |
+| `GET` | `/api/styles/styles/{suggestion_id}/proof/{kind}` | `get_style_lettering_proof` | `styles.py` |
 | `GET` | `/api/styles/styles/suggest-estimate` | `suggest_estimate` | `styles.py` |
 | `GET` | `/api/styles/styles/sample-estimate` | `style_sample_estimate` | `styles.py` |
 | `GET` | `/api/styles/styles/direction-estimate` | `style_direction_estimate` | `styles.py` |

@@ -50,7 +50,8 @@ export function StyleProofCard({
   onRefresh: () => void;
 }) {
   const { t } = useI18n();
-  const sampleUrl = `/api/projects/${encodeURIComponent(projectName)}/files/samples/style_${suggestion.index}.png`;
+  const artUrl = `/api/projects/${encodeURIComponent(projectName)}/files/samples/style_${suggestion.index}.png`;
+  const sampleUrl = suggestion.sample_preview_url ?? artUrl;
   const [imgFailed, setImgFailed] = useState(!suggestion.has_sample);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [selectionError, setSelectionError] = useState<string | null>(null);
@@ -121,7 +122,7 @@ export function StyleProofCard({
               </div>
             ) : (
               <LazyImage
-                src={`${sampleUrl}?t=${timestamp}`}
+                src={`${sampleUrl}${sampleUrl.includes("?") ? "&" : "?"}t=${timestamp}`}
                 alt={suggestion.label}
                 loading="lazy"
                 width={320}
@@ -285,7 +286,7 @@ export function StyleProofCard({
         isOpen={isDetailsOpen}
         onClose={() => setIsDetailsOpen(false)}
         title={suggestion.label}
-        imageUrl={`${sampleUrl}?t=${timestamp}`}
+        imageUrl={`${artUrl}?t=${timestamp}`}
         metadata={meta}
         prompt={fallbackPrompt}
         parameters={fallbackParameters}
