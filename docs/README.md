@@ -45,6 +45,10 @@ retained as current reference.
   and scoped live evidence, including experimental complete-page Draw. This is
   not a production deployment or model-quality guarantee.
 
+- [TypeSafe decision evaluation](reference/typesafe-decisions.md): native bounded
+  classifiers, read-only saved-review experiments, research and measured-promotion
+  criteria. Production review gates are unchanged; no live quality claim.
+
 ## Active future work
 
 - [Self-service launch strategy](proposals/self-service-launch.md): September 9

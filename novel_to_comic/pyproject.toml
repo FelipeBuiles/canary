@@ -60,7 +60,7 @@ where = ["src"]
   "prompts/*.txt",
   "fonts/*.ttf", "lettering/*.mjs", "lettering/*.mts",
   "labs/*.yaml",
-  "labs/fixtures/*.json",
+  "labs/fixtures/*.json", "labs/fixtures/*.jsonl",
   "labs/fixtures/reference_images/*.png",
   "litellm_pricing_overrides.yaml",
   "litellm_model_prices.cached.json",

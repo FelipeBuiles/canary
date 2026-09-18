@@ -206,3 +206,10 @@ fonts and raw pixels without network requests. Routes are in
 `server/routers/lettering.py`; the Pages desk is in
 `web/src/components/lettering/`. `TargetArtifacts` owns `lettering/` and derived
 Finish caches. See [ADR 0021](../adr/0021-hybrid-page-lettering.md).
+
+### Experimental bounded decision evaluation
+
+`decision_models.py`, `typesafe_decisions.py` and `labs/decision_review.py` provide
+operator-run TypeSafe experiments against exact saved narrative evidence. They
+are not enabled in production stages and do not replace review, OCR, visual
+verification or paid admission. See [research and usage](typesafe-decisions.md).
