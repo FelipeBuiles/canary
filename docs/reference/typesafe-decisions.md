@@ -135,8 +135,11 @@ A request fingerprint covers model, actual evidence, questions and criteria.
 Gold labels and baseline predictions never enter that request. Replay additionally
 checks rubric version and book/case identity. Valid low-confidence responses are
 reused; repeatedly resampling until a favorable answer appears is prohibited.
-Completed attempts are journaled before the next batch. Failed submissions are
-not automatically retried on resume, and unknown prior spend stops further work.
+Each possible submission is journaled before its first network await, then its
+own slot is completed with the returned receipt before the next batch. Interrupted
+calls or failed completion checkpoints retain an incomplete, unknown-spend record
+that prevents automatic resubmission. Cancellation still propagates. Failed
+submissions are not automatically retried on resume, and unknown prior spend stops further work.
 An output-file lock prevents simultaneous paid runs sharing a receipt journal.
 
 `decide_case` can return an accepted narrow label, abstain, or invoke an explicitly
@@ -274,7 +277,9 @@ raw confusion counts, accepted-label errors and language/task slices. Vendor
 confidence is retained, but ECE is computed against the selected class probability,
 not relabeled vendor confidence. Unlabeled cases never count as correct. No
 accepted labeled cases means unknown selective error, not zero. All receipt costs
-and latency quantiles describe the saved run history, including failures; replay
+and latency quantiles describe the saved run history, including completed failures;
+interrupted attempts have unknown duration and are excluded from latency quantiles,
+not reported as zero-millisecond calls. Replay
 does not masquerade as a new live speed measurement.
 
 For intuition, with zero observed errors among n independent accepted cases, the

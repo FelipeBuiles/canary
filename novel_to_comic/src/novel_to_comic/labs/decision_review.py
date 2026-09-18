@@ -37,7 +37,7 @@ class CaseObservation(DecisionModel):
 class EvaluationRun(DecisionModel):
     version: str = REPORT_VERSION
     settings: TypeSafeSettings
-    # Append-only attempt history: a later retry must not erase an earlier bill.
+    # Each attempt has one durable slot; completing it must not erase earlier bills.
     history: list[CaseObservation] = Field(default_factory=list)
 
 
@@ -227,7 +227,9 @@ def summarize(cases: list[DecisionCase], run: EvaluationRun, policy: DecisionPol
               for row in run.history if row.observation.usage is not None}
     unknown = sum(row.observation.attempted and (row.observation.usage is None
                   or row.observation.usage.cost_usd is None) for row in run.history)
-    latencies = [row.observation.elapsed_ms for row in run.history if row.observation.attempted]
+    attempted = [row.observation for row in run.history if row.observation.attempted]
+    incomplete = sum(o.reason == "submission_incomplete" for o in attempted)
+    latencies = [o.elapsed_ms for o in attempted if o.reason != "submission_incomplete"]
     return {
         "version": REPORT_VERSION, "model": run.settings.model, "rubric_version": RUBRIC_VERSION,
         "dataset_sha256": content_digest([case.model_dump(mode="json") for case in cases]),
@@ -236,7 +238,7 @@ def summarize(cases: list[DecisionCase], run: EvaluationRun, policy: DecisionPol
                     for task in sorted({c.task for c in cases})},
         "by_language": {language: _metrics([c for c in cases if c.language == language], observations, policy)
                         for language in sorted({c.language for c in cases})},
-        "attempted_calls": len(latencies), "unknown_cost_attempts": unknown,
+        "attempted_calls": len(attempted), "incomplete_attempts": incomplete, "unknown_cost_attempts": unknown,
         "known_cost_usd": sum(u.cost_usd for u in usages.values() if u.cost_usd is not None),
         "total_cost_usd": None if unknown else sum(u.cost_usd or 0 for u in usages.values()),
         "input_tokens": sum(u.input_tokens for u in usages.values()),
@@ -275,13 +277,26 @@ async def run_cases(cases: list[DecisionCase], *, client: TypeSafeDecisionClient
     policy = DecisionPolicy(model=client.settings.model)  # shadow: always abstain
     history = list(run.history)
 
-    async def one(case):
-        result = await decide_case(case, client=client, policy=policy)
-        observation = DecisionObservation.model_validate(result.response_metadata["decision_observation"])
-        history.append(CaseObservation(case_id=case.id, group=case.group, observation=observation))
-        # Persist every completed call before proceeding; no source content is stored.
+    def checkpoint():
         snapshot = EvaluationRun(settings=client.settings, history=list(history))
         save_private(output, canonical_json(snapshot.model_dump(mode="json")) + "\n")
+
+    async def one(case):
+        # Write intent before any network await. Cancellation, process death, or
+        # a failed completion checkpoint must never make a possible paid call
+        # disappear. An incomplete receipt blocks automatic resubmission.
+        index = len(history)
+        history.append(CaseObservation(case_id=case.id, group=case.group,
+            observation=DecisionObservation(
+                request_sha256=content_digest(case_request(case, client.settings)),
+                requested_model=client.settings.model, attempted=True,
+                elapsed_ms=0, reason="submission_incomplete",
+            )))
+        checkpoint()
+        result = await decide_case(case, client=client, policy=policy)
+        observation = DecisionObservation.model_validate(result.response_metadata["decision_observation"])
+        history[index] = CaseObservation(case_id=case.id, group=case.group, observation=observation)
+        checkpoint()
         return observation
 
     for start in range(0, len(pending), client.settings.concurrency):
