@@ -87,6 +87,8 @@ describe("text-first page correction", () => {
     fireEvent.change(screen.getByLabelText("What would you like to change?"), { target: { value: "Change only the coat" } });
     fireEvent.click(screen.getByRole("button", { name: "Add location (optional)" }));
     expect(screen.getByRole("toolbar", { name: "Annotation tools" })).toBeTruthy();
+    expect(screen.queryByLabelText("What would you like to change?")).toBeNull();
+    expect(screen.getByLabelText("Request")).toHaveProperty("value", "Change only the coat");
     fireEvent.click(screen.getByText("More"));
     fireEvent.click(screen.getByRole("button", { name: /without drawing/i }));
     fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
@@ -106,6 +108,17 @@ describe("text-first page correction", () => {
     expect(screen.queryByRole("button", { name: "Generate revision" })).toBeNull();
     expect(screen.getByRole("button", { name: "Review changes" })).toBeTruthy();
     expect(mocks.submit).not.toHaveBeenCalled();
+  });
+  it("lets the author finish marking after excluding a request", () => {
+    saved([{ id: "pin", kind: "pin", points: [{ x: 0.5, y: 0.5 }] }]);
+    renderDraft();
+    fireEvent.click(screen.getByRole("button", { name: /mark on page/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /include fix/i }));
+    const done = screen.getByRole("button", { name: /done marking/i });
+    expect(done).toHaveProperty("disabled", false);
+    fireEvent.click(done);
+    expect(screen.queryByRole("toolbar", { name: "Annotation tools" })).toBeNull();
+    expect(screen.getByLabelText("What would you like to change?")).toBeTruthy();
   });
   it("explains invalid stored geometry before requesting an estimate", () => {
     saved([{ id: "bad", kind: "rectangle", points: [{ x: 0.5, y: 0.5 }, { x: 0.5, y: 0.5 }] }]);
@@ -138,10 +151,16 @@ function editor(initial: PageCorrectionAnnotation[] = []) {
 describe("optional location editor", () => {
   it("shows only three named drawing tools until More is opened", () => {
     editor();
-    expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual(["Pin", "Area", "Highlight"]);
-    expect(screen.queryByRole("button", { name: "Undo mark" })).toBeNull();
+    const toolbar = screen.getByRole("toolbar", { name: "Annotation tools" });
+    // jsdom's accessibility queries do not implement closed <details> visibility.
+    // Assert the native disclosure and the actual primary-toolbar boundary.
+    expect([...toolbar.children].filter((child) => child.tagName === "BUTTON")
+      .map((button) => button.textContent)).toEqual(["Pin", "Area", "Highlight"]);
+    const more = screen.getByText("More").closest("details")!;
+    expect(more.open).toBe(false);
+    expect(more.contains(screen.getByRole("button", { name: "Undo mark" }))).toBe(true);
     fireEvent.click(screen.getByText("More"));
-    expect(screen.getByRole("button", { name: "Undo mark" })).toBeTruthy();
+    expect(more.open).toBe(true);
   });
   it("keeps saved location names and optional detail, but never exposes coordinate dumps", () => {
     const { container } = editor([{ id: "old", kind: "freehand", points: [{ x: 0.1234, y: 0.5678 }, { x: 0.2222, y: 0.8888 }] }]);
@@ -172,6 +191,18 @@ describe("optional location editor", () => {
     fireEvent.pointerUp(canvas, { clientX: 50, clientY: 60, button: 0 });
     expect(changed).not.toHaveBeenCalled();
     expect(screen.getByRole("status").textContent).toMatch(/drag a little farther/i);
+  });
+  it("moves the keyboard-focused badge, not another selected location", () => {
+    const { changed } = editor([
+      { id: "first", kind: "pin", points: [{ x: 0.2, y: 0.2 }] },
+      { id: "second", kind: "pin", points: [{ x: 0.8, y: 0.8 }] },
+    ]);
+    const first = screen.getByRole("button", { name: "Select location 1: Pin" });
+    fireEvent.focus(first);
+    fireEvent.keyDown(first, { key: "ArrowRight" });
+    expect(changed.mock.lastCall![0].map((mark: PageCorrectionAnnotation) => mark.points[0])).toEqual([
+      { x: 0.21, y: 0.2 }, { x: 0.8, y: 0.8 },
+    ]);
   });
   it("offers keyboard pin placement, movement, and removal without showing numbers as coordinates", () => {
     const { canvas, changed } = editor();
