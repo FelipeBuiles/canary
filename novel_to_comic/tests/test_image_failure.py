@@ -21,6 +21,7 @@ def test_classifies_common_panel_failures():
         ),
         (ValueError("The image provider returned an empty response"), "empty_response"),
         (ValueError("FAL_KEY is not set"), "configuration_error"),
+        (ValueError('wire image transport failed ({"error_type":"HTTPStatusError","status_code":401,"reason":"Unauthorized"})'), "configuration_error"),
         (ValueError("unexpected provider response"), "generation_error"),
     ]
 

@@ -252,6 +252,24 @@ def test_an_accepted_addendum_is_normalized():
     assert patch_obj.addendum == "singe the sleeve"
 
 
+def test_addendum_longer_than_max_is_safely_truncated():
+    long_addendum = "x" * 750
+    patch_obj = parse_asset_instruction_patch(
+        {"status": "accepted", "addendum": long_addendum}
+    )
+    assert len(patch_obj.addendum) == 600
+    assert patch_obj.status == "accepted"
+
+
+def test_wrapped_and_loose_status_are_normalized():
+    patch_obj = parse_asset_instruction_patch(
+        {"patch": {"status": "Approved.", "addendum": "change outfit", "message": None}}
+    )
+    assert patch_obj.status == "accepted"
+    assert patch_obj.addendum == "change outfit"
+    assert patch_obj.message == ""
+
+
 # --- Instructed regeneration ----------------------------------------------
 
 
@@ -543,6 +561,28 @@ def test_a_repaired_asset_stops_being_listed_as_a_cast_failure(tmp_path: Path):
     assert reloaded.items_failed == []
     assert reloaded.items_done == 3
 
+
+def test_a_repaired_appearance_state_stops_being_listed_as_a_cast_failure(tmp_path: Path):
+    from novel_to_comic.cast_instructions import _clear_repaired_cast_failure
+    from novel_to_comic.state import PipelineState, load_state, save_state
+
+    project_dir = _project(tmp_path)
+    state = PipelineState(
+        project_name="Demo",
+        novel_path="input/demo.txt",
+        created_at="2026-01-01T00:00:00Z",
+    )
+    cast = state.stages["cast"]
+    cast.items_total = 3
+    cast.items_done = 2
+    cast.items_failed = ["char_001:burned"]
+    save_state(state, project_dir)
+
+    _clear_repaired_cast_failure(project_dir, "char_001:burned")
+
+    reloaded = load_state(project_dir).stages["cast"]
+    assert reloaded.items_failed == []
+    assert reloaded.items_done == 3
 
 # --- Entity id validation --------------------------------------------------
 
