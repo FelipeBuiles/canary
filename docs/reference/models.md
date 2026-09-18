@@ -571,7 +571,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `stroke_width` | `float` | `Field(default=1.6, ge=0, le=12)` |
 | `padding` | `float` | `Field(default=11, ge=0, le=40)` |
 | `corner_radius` | `float` | `Field(default=12, ge=0, le=80)` |
-| `shape` | `Literal['box', 'round', 'balloon', 'ellipse', 'cloud', 'none']` | `'balloon'` |
+| `shape` | `Literal['box', 'round', 'balloon', 'ellipse', 'cloud', 'whisper', 'burst', 'none']` | `'balloon'` |
 | `letter_spacing` | `float` | `Field(default=0, ge=-1, le=12)` |
 | `text_stroke` | `Color` | `'transparent'` |
 | `text_stroke_width` | `float` | `Field(default=0, ge=0, le=12)` |
@@ -584,6 +584,13 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `speech` | `RoleStyle` | `Field(default_factory=RoleStyle)` |
 | `thought` | `RoleStyle` | `Field(default_factory=lambda: RoleStyle(shape='...` |
 | `sfx` | `RoleStyle` | `Field(default_factory=lambda: RoleStyle(font='B...` |
+
+## LetteringDesign _(lettering.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `label` | `str` | `Field(min_length=1, max_length=100)` |
+| `roles` | `DesignedLetteringRoles` |  |
 
 ## ResolvedLineMetrics _(lettering.py)_
 

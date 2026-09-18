@@ -87,7 +87,7 @@ describe("contour-aware comic typography", () => {
     expect(resolved.width).toBe(element.placement.width);
     expect(resolved.height).toBe(element.placement.height);
   });
-  it("joins cloud scallops with continuous tangents, including the closing seam", () => {
+  it("joins twelve rounded cloud lobes at deliberate inward valleys with a closed seam", () => {
     const draft = speech();
     draft.elements[0].style_override = { ...style.roles.speech, shape: "cloud" };
     draft.elements[0].tail_target = null;
@@ -100,12 +100,19 @@ describe("contour-aware comic typography", () => {
       curves.push([...start, ...values.slice(i, i + 6)]);
       start = values.slice(i + 4, i + 6);
     }
+    expect(curves).toHaveLength(12);
     for (let i = 0; i < curves.length; i++) {
       const a = curves[i], b = curves[(i + 1) % curves.length];
       const incoming = [a[6] - a[4], a[7] - a[5]], outgoing = [b[2] - b[0], b[3] - b[1]];
       expect(a.slice(6)).toEqual(b.slice(0, 2));
       const cosine = (incoming[0] * outgoing[0] + incoming[1] * outgoing[1]) / (Math.hypot(...incoming) * Math.hypot(...outgoing));
-      expect(cosine).toBeGreaterThan(.9999);
+      // A classic thought cloud has visible concave valleys, unlike the old
+      // nearly-elliptical radial ripple. Each lobe is smooth, not each valley.
+      expect(Number.isFinite(cosine)).toBe(true);
+      expect(cosine).toBeGreaterThan(-1);
+      expect(cosine).toBeLessThan(.9999);
+      const cross = incoming[0] * outgoing[1] - incoming[1] * outgoing[0];
+      expect(cross).toBeLessThan(0);
     }
   });
   it("reuses layout during drags, but invalidates it for text, locale, size or style edits", () => {

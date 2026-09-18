@@ -17,6 +17,8 @@ export interface StyleSuggestion {
   template: string;
   visual_logic?: "photographic" | "realistic_illustration" | "stylized" | "graphic" | null;
   style_reference_mode?: "faithful" | "variation";
+  sample_preview_url?: string | null;
+  lettering_source?: "generated" | "preset";
   has_sample: boolean;
   sample_stale: boolean;
   has_style_reference: boolean;

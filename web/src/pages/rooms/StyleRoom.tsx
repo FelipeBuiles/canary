@@ -18,6 +18,7 @@ import {
   useProjects,
 } from "../../api/queries";
 import { Check, ArrowDownRight, Columns2, X } from "lucide-react";
+import { BookLetteringPanel } from "../../components/lettering/BookLetteringPanel";
 import { StyleProofCard } from "../../components/style/StyleProofCard";
 import { Button } from "../../components/ui/Button";
 import { LazyImage } from "../../components/ui/LazyImage";
@@ -99,6 +100,7 @@ export function StyleRoom() {
   const events = usePipelineStore((s) => s.events);
   const connect = usePipelineStore((s) => s.connect);
   const clearEvents = usePipelineStore((s) => s.clearEvents);
+  const [letteringOpen, setLetteringOpen] = useState(false);
   const [sampleError, setSampleError] = useState<string | null>(null);
   const [suggestionStatus, setSuggestionStatus] = useState<"idle" | "running" | "failed">("idle");
   const [suggestionError, setSuggestionError] = useState<string | null>(null);
@@ -131,7 +133,7 @@ export function StyleRoom() {
   const { data: coverEstimate } = useProjectCoverEstimate(id, styleSelected && castReady && needsCover);
 
   const isSuggesting = suggestionStatus === "running";
-  const styleActionsDisabled = isStageGenerating || isSuggesting || suggestStyles.isPending || createStyleDirection.isPending;
+  const styleActionsDisabled = letteringOpen || isStageGenerating || isSuggesting || suggestStyles.isPending || createStyleDirection.isPending;
   const { data: suggestEstimate, error: suggestEstimateError, refetch: refetchSuggestEstimate } = useSuggestStylesEstimate(id, !isSuggesting);
   const { data: directionEstimate, error: directionEstimateError, refetch: refetchDirectionEstimate } = useStyleDirectionEstimate(id, !createStyleDirection.isPending);
   const { data: sampleEstimate } = useStyleSampleEstimate(id, pendingRefresh.length > 0);
@@ -376,6 +378,9 @@ export function StyleRoom() {
         ) : undefined}
       />
 
+      {styleSelected && !letteringOpen && <div className="mt-5"><Button variant="outline" disabled={styleActionsDisabled} onClick={() => setLetteringOpen(true)}>{t("Edit book lettering")}</Button></div>}
+      {letteringOpen && <div className="mt-5"><BookLetteringPanel project={projectName} disabled={isStageGenerating} onClose={() => setLetteringOpen(false)} /></div>}
+
       {(isSuggesting || isStageGenerating || suggestionStatus === "failed") && (
         <div className={`mt-4 border-[2px] border-ink-black p-3 ${
           suggestionStatus === "failed" ? "bg-hero-red text-bristol" : "bg-narrator-gold text-ink-black"
@@ -511,7 +516,7 @@ export function StyleRoom() {
                     <LazyImage
                       src={comparingAction
                         ? suggestion.validation_url!
-                        : `/api/projects/${encodeURIComponent(id)}/files/samples/style_${suggestion.index}.png`}
+                        : suggestion.sample_preview_url ?? `/api/projects/${encodeURIComponent(id)}/files/samples/style_${suggestion.index}.png`}
                       alt={suggestion.label}
                       width={320}
                       height={400}
@@ -549,7 +554,7 @@ export function StyleRoom() {
                     projectName={id}
                     isGenerating={pendingSet.has(suggestion.index)}
                     generationDisabled={styleActionsDisabled}
-                    selectionDisabled={isStageGenerating}
+                    selectionDisabled={isStageGenerating || letteringOpen}
                     queueState={pendingSet.has(suggestion.index) ? styleJobStatuses[suggestion.index] ?? "queued" : null}
                     fallbackPrompt={buildFallbackStyleSamplePrompt(suggestion, storyBible)}
                     fallbackParameters={{
@@ -590,6 +595,7 @@ export function StyleRoom() {
         onPrimary={handleContinueToCast}
         primaryDisabled={
           !styleSelected
+          || letteringOpen
           || approveStage.isPending
           || isPipelineRunning
           || isStageGenerating
@@ -603,7 +609,7 @@ export function StyleRoom() {
             project={id}
             stage="style"
             label="styles"
-            disabled={isPipelineRunning || isStageGenerating || isSuggesting}
+            disabled={letteringOpen || isPipelineRunning || isStageGenerating || isSuggesting}
           />
         ) : undefined}
       />

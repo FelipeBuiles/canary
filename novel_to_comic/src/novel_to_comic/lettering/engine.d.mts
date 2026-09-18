@@ -6,7 +6,7 @@ export interface RoleStyle {
   font: FontName; font_weight: 400 | 700; min_font_size: number; max_font_size: number; line_height: number;
   align: "left" | "center" | "right"; color: string; fill: string; stroke: string;
   stroke_width: number; padding: number; corner_radius: number;
-  shape: "box" | "round" | "balloon" | "ellipse" | "cloud" | "none";
+  shape: "box" | "round" | "balloon" | "ellipse" | "cloud" | "whisper" | "burst" | "none";
   letter_spacing: number; text_stroke: string; text_stroke_width: number;
 }
 export interface LetteringStyle {
@@ -47,3 +47,5 @@ export function elementRect(element: LetteringElement): Rect;
 export function transformedBounds(element: LetteringElement, aspect: number): Rect;
 export function resolvePage(state: PageLettering, style: LetteringStyle, measure: Measure): PageLettering;
 export function renderOverlay(state: PageLettering, style: LetteringStyle): string;
+
+export function defaultTailTarget(rect: Rect): Point | null;

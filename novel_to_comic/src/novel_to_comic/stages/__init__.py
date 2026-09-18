@@ -39,7 +39,17 @@ _CLEAN_CASCADE: tuple[str, ...] = (
 
 def clean_cascade(project_dir: Path, start: str) -> list[Path]:
     """Return the artifact directories from *start* to the end of the pipeline."""
-    return [project_dir / name for name in _CLEAN_CASCADE[_CLEAN_CASCADE.index(start):]]
+    names = _CLEAN_CASCADE[_CLEAN_CASCADE.index(start):]
+    paths = []
+    for name in names:
+        if (name == "lettering" and start in {"refs", "plates", "adapt", "plan"}
+                and (project_dir / "lettering" / "style.json").exists()):
+            # The book style belongs to Style; page layouts belong to Plan/Pages.
+            paths.extend(child for child in sorted((project_dir / "lettering").iterdir())
+                         if child.name != "style.json")
+        else:
+            paths.append(project_dir / name)
+    return paths
 
 
 # Deferred to avoid circular import: stage modules import Stage from here,

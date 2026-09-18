@@ -110,3 +110,39 @@ runtime downloads or dependencies. Missing glyphs are recoverable lettering
 errors and prevent export, never trigger a Draw correction. Existing resolved
 layouts must be explicitly reflowed/saved; font coverage is not inferred from a
 script name or promised for all Japanese/Chinese characters.
+
+
+## Style design and proof separation (2026-09-18)
+
+Generated style candidates now carry a validated `lettering_design`, requiring
+all four role designs rather than delegating appearance to a preset name. Fonts,
+ink/fill, outlines, typography, padding and shape use the existing bounded
+software tokens. Art-plus-framing and art-only projections strip those tokens;
+software lettering is never an image-model instruction. Presets remain explicit
+fallbacks for existing/custom directions without generated tokens.
+
+The image model draws clean Style reference art with natural quiet areas. The
+Style room displays a distinct software-rendered derivative using the exact
+editor/export engine and bundled fonts. Its cache key covers raw art, style,
+engine and specimen version. Generation details and downstream conditioning keep
+the original art, never the derivative. Old baked proofs require explicit refresh;
+this implementation does not erase raster captions or automatically spend credits.
+
+Book style is editable before pages exist, with visible appearance controls,
+role samples, bounded undo/redo and guarded cancellation. Cast/Adapt/Plan cleanup
+preserves an existing book style while invalidating stale page presentation.
+Selecting a different visual direction seeds that direction's generated tokens
+under the production lock and advances the prior book-style revision.
+
+Engine v5 uses a twelve-lobe thought contour with a three-puff trail, retains
+integrated speech tails, and supports dashed whisper and burst-shaped shout
+variants. Missing onscreen/new custom pointers get editable provisional targets,
+not claimed face/speaker detection. Existing explicit/null pointers are not
+silently changed. Previously resolved layouts need explicit reflow/save; existing
+artwork bytes stay unchanged.
+
+New regression coverage exercises closed design schemas, token projection,
+pre-Plan saves and cleanup, provisional pointer boundaries, clean/raw versus
+software proof identity, stale-proof refusal, same-renderer cache behavior,
+expressive shape rendering, early book editing and undo/redo. Provider-free
+fixtures do not establish image-model quiet-space adherence or artistic parity.

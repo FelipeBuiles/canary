@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from novel_to_comic import artifacts
+from novel_to_comic.models.lettering import LetteringRoles
 from novel_to_comic.config import Config
 from novel_to_comic.models.story_bible import Character, Location, Scene, StoryBible
 from novel_to_comic.stages.s2_style import (
@@ -107,6 +108,7 @@ def _batch(*, restriction: str = "", count: int = 8) -> dict:
             "lighting_value": f"lighting {index}",
             "lettering": DEFAULT_LETTERING_STANDARD,
             "lettering_preset": "literary",
+            "lettering_design": {"label": "Literary", "roles": LetteringRoles().model_dump()},
             "page_framing": DEFAULT_PAGE_FRAMING_STANDARD,
             "sequential_art_strengths": "Readable action and recurring identities.",
             "story_fit": "Supports the story.",
@@ -454,8 +456,9 @@ def test_generate_sample_image_uses_brief_and_writes_meta(tmp_path):
     # Slice 06: style proof images use a portrait 4:5 frame.
     assert meta["parameters"]["width"] == 1024
     assert meta["parameters"]["height"] == 1280
-    assert "The night held its breath." in meta["prompt"]
-    assert "We keep moving." in meta["prompt"]
+    assert "The night held its breath." not in meta["prompt"]
+    assert "Software adds them later" in meta["prompt"]
+    assert "We keep moving." not in meta["prompt"]
     assert "1man, adult male, leather jacket" in meta["prompt"]
     assert "outdoors, snow, winter" in meta["prompt"]
 
@@ -520,7 +523,8 @@ def test_validation_request_uses_dynamic_structured_action_without_contradiction
     assert STYLE_VALIDATION_ACTION in request.compiled.final_prompt
     assert request.compiled.final_prompt.count(_bible().characters[0].visual_anchor) == 1
     assert "no lettering or borders" not in request.compiled.final_prompt.lower()
-    assert "The night held its breath." in request.compiled.final_prompt
+    assert "The night held its breath." not in request.compiled.final_prompt
+    assert "Software adds them later" in request.compiled.final_prompt
 
 
 def _mixed_bible() -> StoryBible:

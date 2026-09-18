@@ -5,7 +5,7 @@
  */
 import { FONT_COVERAGE } from "./font-coverage.mjs";
 
-export const ENGINE_VERSION = "lettering-svg-v4";
+export const ENGINE_VERSION = "lettering-svg-v5";
 export const FONT_FILES = Object.freeze({
   "Comic Neue": "ComicNeue-Bold.ttf",
   "EB Garamond": "EBGaramond-SemiBold.ttf",
@@ -155,6 +155,16 @@ export function elementRect(element) {
     width: element.tight_box && element.resolved?.width ? element.resolved.width : element.placement.width,
     height: element.tight_box && element.resolved ? element.resolved.height : element.placement.height };
 }
+/** Provisional pointer, outside the allocated body and inside the page.
+ * This is an editing affordance, NOT image-based speaker detection. */
+export function defaultTailTarget(rect) {
+  const {x,y,width:w,height:h}=rect;
+  if (1-y-h>.025) return {x:x+w*.28,y:y+h+Math.min(.06,(1-y-h)*.7)};
+  if (y>.025) return {x:x+w*.28,y:y-Math.min(.06,y*.7)};
+  if (1-x-w>.025) return {x:x+w+Math.min(.06,(1-x-w)*.7),y:y+h*.6};
+  if (x>.025) return {x:x-Math.min(.06,x*.7),y:y+h*.6};
+  return null;
+}
 export function transformedBounds(element, aspect) {
   const r = elementRect(element), h = 1000 / aspect;
   const width = r.width * 1000 * element.scale, height = r.height * h * element.scale;
@@ -175,7 +185,7 @@ function validateEditableState(state, style) {
     if (!rect(element.placement) || !rect(element.suggested_placement) || ![element.rotation,element.scale,element.z_index].every(finite) || element.scale<.25 || element.scale>3 || Math.abs(element.rotation)>180) throw new Error("Invalid lettering placement.");
     if (!element.text_by_locale || typeof element.text_by_locale.source!=="string" || Object.values(element.text_by_locale).some(text=>typeof text!=="string"||text.length>10000)) throw new Error("Invalid lettering copy.");
     if (element.tail_target && (![element.tail_target.x,element.tail_target.y].every(finite) || element.tail_target.x<0 || element.tail_target.x>1 || element.tail_target.y<0 || element.tail_target.y>1)) throw new Error("Invalid lettering tail.");
-    if (!role || !Object.hasOwn(FONT_FILES,role.font) || !["box","round","balloon","ellipse","cloud","none"].includes(role.shape) || !["left","center","right"].includes(role.align)) throw new Error("Invalid lettering style.");
+    if (!role || !Object.hasOwn(FONT_FILES,role.font) || !["box","round","balloon","ellipse","cloud","whisper","burst","none"].includes(role.shape) || !["left","center","right"].includes(role.align)) throw new Error("Invalid lettering style.");
     if ([role.color,role.fill,role.stroke,role.text_stroke].some(color=>typeof color!=="string"||!/^(#[0-9a-fA-F]{6}|transparent)$/.test(color))) throw new Error("Invalid lettering ink.");
     if (![role.min_font_size,role.max_font_size,role.line_height,role.stroke_width,role.padding,role.corner_radius,role.letter_spacing,role.text_stroke_width].every(finite) || role.min_font_size<12 || role.max_font_size>180 || role.min_font_size>role.max_font_size || role.line_height<=0 || ![400,700].includes(role.font_weight??400)) throw new Error("Invalid typography settings.");
   }
@@ -187,7 +197,7 @@ function inkMetrics(text, role, size, measure) {
   const ink = measure.metrics?.(text, role.font, size, role.letter_spacing, role.font_weight ?? 400);
   return { width, ascent: ink?.ascent ?? size * .74, descent: ink?.descent ?? size * .2 };
 }
-const curved = (shape) => ["balloon", "ellipse", "cloud"].includes(shape);
+const curved = (shape) => ["balloon", "ellipse", "cloud", "whisper", "burst"].includes(shape);
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 const mix = (a, b, t) => [a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t];
 function splitCurve(c, t) {
@@ -204,19 +214,16 @@ function curvePart(c, start, end) {
   const left = end < 1 ? splitCurve(c,end)[0] : c;
   return start > 0 ? splitCurve(left,start/end)[1] : left;
 }
-// Four Hermite cubics per scallop preserve the radial curve's tangent at
-// both crests and valleys. The same normalized cubics drive drawing and fit.
-const cloudCurves=Array.from({length:32},(_,i)=>{
-  const step=Math.PI/16;
-  const at=index=>{
-    const wrapped=index%32, angle=-Math.PI/2+wrapped*step, phase=wrapped*Math.PI/2;
-    const radius=.96+.04*Math.cos(phase), derivative=-.32*Math.sin(phase);
-    const x=Math.cos(angle), y=Math.sin(angle);
-    return {point:[radius*x,radius*y], tangent:[derivative*x-radius*y,derivative*y+radius*x]};
-  };
-  const a=at(i), b=at(i+1);
-  return [a.point,a.point.map((v,j)=>v+a.tangent[j]*step/3),
-    b.point.map((v,j)=>v-b.tangent[j]*step/3),b.point];
+// Twelve outward, quadratic lobes make a coherent cloud silhouette. Adjacent
+// lobes meet at deliberate inward valleys; each lobe is a smooth rounded arch.
+// Convert to cubics so rendering and padded-ink fitting use the SAME boundary.
+const cloudCurves=Array.from({length:12},(_,i)=>{
+  const mid=-Math.PI/2+i*Math.PI/6, half=Math.PI/12, inner=.86;
+  const a=[inner*Math.cos(mid-half),inner*Math.sin(mid-half)];
+  const b=[inner*Math.cos(mid+half),inner*Math.sin(mid+half)];
+  const radius=2-inner*Math.cos(half);
+  const q=[radius*Math.cos(mid),radius*Math.sin(mid)];
+  return [a,mix(a,q,2/3),mix(b,q,2/3),b];
 });
 function curveExtrema(c, axis) {
   const [p,q,r,s]=c.map(point=>point[axis]);
@@ -227,10 +234,10 @@ function curveExtrema(c, axis) {
 }
 // A scallop can turn in both x and y. Split at every extremum once, so row
 // bands test their entire boundary, not just their corners or an inset ellipse.
-const cloudBands=cloudCurves.slice(0,16).flatMap(c=>{
+const cloudBands=cloudCurves.flatMap(c=>{
   const cuts=[0,...curveExtrema(c,0),...curveExtrema(c,1),1].sort((a,b)=>a-b);
   return cuts.slice(1).flatMap((end,i)=>end-cuts[i]>1e-10 ? [curvePart(c,cuts[i],end)] : []);
-});
+}).filter(c=>curvePoint(c,.5)[0]>=-1e-10);
 function cloudFactor(top,bottom) {
   if (top<=-1 || bottom>=1) return 0;
   let factor=1;
@@ -263,6 +270,12 @@ function ovalFactor(distance, shape) {
   return curvePoint(c,(lo+hi)/2)[0];
 }
 function rowSpace(role, height, top, bottom) {
+  if (role.shape==="burst") {
+    // A conservative ellipse inside every spike valley, including the full
+    // padded row height. Never fit against the outer tips of a shout balloon.
+    const distance=Math.max(Math.abs(top-height/2),Math.abs(bottom-height/2));
+    return {factor:.78*ovalFactor(distance/(height*.39),"ellipse"),inset:0};
+  }
   if (role.shape==="cloud") return {factor:cloudFactor(top/(height/2)-1,bottom/(height/2)-1),inset:0};
   const distance=Math.max(Math.abs(top-height/2),Math.abs(bottom-height/2));
   if (curved(role.shape)) return { factor: ovalFactor(distance/(height/2),role.shape), inset: 0 };
@@ -274,7 +287,7 @@ function rowSpace(role, height, top, bottom) {
 }
 function rowGeometry(role, height, count, ascent, descent, leading) {
   const baseline=(height-(ascent+descent+(count-1)*leading))/2+ascent;
-  const padding=["ellipse","cloud"].includes(role.shape) ? role.padding+role.stroke_width/2+role.text_stroke_width/2 : 0;
+  const padding=["ellipse","cloud","burst"].includes(role.shape) ? role.padding+role.stroke_width/2+role.text_stroke_width/2 : 0;
   return Array.from({length:count},(_,i)=>{
     const y=baseline+i*leading;
     return { baseline:y, ...rowSpace(role,height,y-ascent-padding,y+descent+padding) };
@@ -334,7 +347,7 @@ function composeLayout(lines, role, size, width, height, measure) {
 function fitBalloon(text, role, size, maxWidth, maxHeight, measure, locale, tight) {
   const padding=role.padding+role.stroke_width/2+role.text_stroke_width/2;
   const all=inkMetrics(text.replace(/\n/g," "),role,size,measure), leading=size*role.line_height;
-  const optimizeOval=["ellipse","cloud"].includes(role.shape);
+  const optimizeOval=["ellipse","cloud","burst"].includes(role.shape);
   const clearance=curved(role.shape) && !optimizeOval ? size*.55 : 0;
   const naturalHeight=count=>all.ascent+all.descent+(count-1)*leading+2*padding+clearance;
   const heightsFor=count=>{
@@ -466,13 +479,23 @@ export function resolvePage(state, style, measure) {
 }
 function contour(role,w,h) {
   const rx=w/2,ry=h/2,k=role.shape==="ellipse"?.5522847498:.68;
-  if (["ellipse","balloon"].includes(role.shape)) return [
+  if (["ellipse","balloon","whisper"].includes(role.shape)) return [
     [[rx,0],[rx+k*rx,0],[w,ry-k*ry],[w,ry]],
     [[w,ry],[w,ry+k*ry],[rx+k*rx,h],[rx,h]],
     [[rx,h],[rx-k*rx,h],[0,ry+k*ry],[0,ry]],
     [[0,ry],[0,ry-k*ry],[rx-k*rx,0],[rx,0]],
   ];
   if (role.shape==="cloud") return cloudCurves.map(c=>c.map(([x,y])=>[rx+x*rx,ry+y*ry]));
+  if (role.shape==="burst") {
+    const points=Array.from({length:28},(_,i)=>{
+      const a=-Math.PI/2+i*Math.PI/14, r=i%2 ? .82 : 1;
+      return [rx+rx*r*Math.cos(a),ry+ry*r*Math.sin(a)];
+    });
+    return points.map((a,i)=>{
+      const b=points[(i+1)%points.length];
+      return [a,mix(a,b,1/3),mix(a,b,2/3),b];
+    });
+  }
   const r=clamp(role.corner_radius,0,Math.min(rx,ry)), e=.5522847498*r;
   const line=(a,b)=>[a,mix(a,b,1/3),mix(a,b,2/3),b];
   return [line([r,0],[w-r,0]),[[w-r,0],[w-r+e,0],[w,r-e],[w,r]],
@@ -562,14 +585,15 @@ function bodySVG(element,role,x,y,w,h,pageHeight) {
       h/2+(wx*Math.sin(angle)+wy*Math.cos(angle))/element.scale];
     attach=attachPoint(curves,table,target,w,h);
   }
-  const attrs=`fill="${role.fill}" stroke="${role.stroke}" stroke-width="${role.stroke_width}" stroke-linejoin="round"`;
+  const dash=role.shape==="whisper" ? ` stroke-dasharray="${number(Math.max(2,role.stroke_width*3))} ${number(Math.max(2,role.stroke_width*2))}"` : "";
+  const attrs=`fill="${role.fill}" stroke="${role.stroke}" stroke-width="${role.stroke_width}" stroke-linejoin="round"${dash}`;
   const path=outlinePath(curves,table,element.role==="speech"?attach:null,target,element.resolved.font_size,w,h);
   let puffs="";
   if (element.role==="thought" && attach) {
     const distance=Math.hypot(target[0]-attach.point[0],target[1]-attach.point[1]);
     puffs=[.28,.59,.86].map((t,i)=>{
       const p=mix(attach.point,target,t),r=Math.min(element.resolved.font_size*(.29-i*.075),distance*.11);
-      return `<ellipse cx="${p[0]}" cy="${p[1]}" rx="${r}" ry="${r*.77}" ${attrs}/>`;
+      return `<ellipse data-thought-puff="${i}" cx="${p[0]}" cy="${p[1]}" rx="${r}" ry="${r*.84}" ${attrs}/>`;
     }).join("");
   }
   return `<g transform="translate(${number(x)} ${number(y)})"><path data-balloon-body="${element.role}" d="${path}" ${attrs}/>${puffs}</g>`;

@@ -8,6 +8,7 @@ import { ApiError } from "../api/client";
 import { I18nProvider } from "../i18n";
 import fixture from "./fixtures/lettering.json";
 import { LetteringEditor } from "../components/lettering/LetteringEditor";
+import { BookLetteringPanel } from "../components/lettering/BookLetteringPanel";
 import { LetteringStyleControls } from "../components/lettering/LetteringStyleControls";
 import { letteringDraftKey, writeLetteringDraft } from "../lib/letteringHistory";
 import type { HybridLetteringResponse, LetteringTranslationEstimate } from "../api/lettering";
@@ -339,11 +340,14 @@ describe("Pages-room lettering", () => {
     const copy = screen.getByLabelText(/Words on the page/) as HTMLTextAreaElement;
     await waitFor(() => expect(document.activeElement).toBe(copy));
     expect(copy.value).toBe("");
+    expect(screen.getByRole("checkbox", { name: /Balloon tail/ })).toHaveProperty("checked", true);
+    expect(screen.getByRole("button", { name: "Reset pointer" })).toBeTruthy();
     fireEvent.change(copy, { target: { value: "Could it be?" } });
+    expect(document.querySelectorAll("[data-thought-puff]")).toHaveLength(3);
     fireEvent.blur(copy);
     fireEvent.click(screen.getByRole("button", { name: "Save lettering" }));
     await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
-    expect(api.put.mock.calls[0][2].elements[1]).toEqual(expect.objectContaining({ role: "thought", text_by_locale: { source: "Could it be?" } }));
+    expect(api.put.mock.calls[0][2].elements[1]).toEqual(expect.objectContaining({ role: "thought", text_by_locale: { source: "Could it be?" }, tail_target: expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }) }));
   });
   it("previews role changes without saving and discards them on cancel", async () => {
     mount();
@@ -353,12 +357,13 @@ describe("Pages-room lettering", () => {
     const preview = book.getByRole("img", { name: /^Live sample:/ });
     const size = initial().style.roles.caption.max_font_size + 10;
     fireEvent.change(book.getByRole("spinbutton", { name: "Size" }), { target: { value: String(size) } });
-    expect(Number(preview.querySelector("text")?.getAttribute("font-size"))).toBe(size);
+    await waitFor(() => expect(Number(preview.querySelector("text")?.getAttribute("font-size"))).toBe(size));
     expect(api.putStyle).not.toHaveBeenCalled();
     expect(api.put).not.toHaveBeenCalled();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     fireEvent.click(screen.getByRole("button", { name: "Book lettering style" }));
-    expect(Number(screen.getByRole("img", { name: /^Live sample:/ }).querySelector("text")?.getAttribute("font-size"))).toBe(initial().style.roles.caption.max_font_size);
+    await waitFor(() => expect(Number(screen.getByRole("img", { name: /^Live sample:/ }).querySelector("text")?.getAttribute("font-size"))).toBe(initial().style.roles.caption.max_font_size));
   });
   it("does not carry an unfinished size draft into another book role", async () => {
     mount();
@@ -393,4 +398,32 @@ describe("Pages-room lettering", () => {
     expect((screen.getByRole("button", { name: "Undo" }) as HTMLButtonElement).disabled).toBe(true);
     expect(api.put).not.toHaveBeenCalled();
   });
+  it("edits and saves book roles before pages exist, with undo and guarded cancel", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    clients.push(client);
+    const close = vi.fn();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    api.putStyle.mockImplementation(async (_project, value) => ({ ...value, revision: 2 }));
+    render(<QueryClientProvider client={client}><I18nProvider><BookLetteringPanel project="book" disabled={false} onClose={close} /></I18nProvider></QueryClientProvider>);
+    const book = within(await screen.findByRole("group", { name: "Book lettering style" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Apply to book" })).toHaveProperty("disabled", false));
+    expect(api.get).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Undo style" })).toHaveProperty("disabled", true);
+    const old = initial().style.roles.caption.max_font_size;
+    fireEvent.change(book.getByRole("spinbutton", { name: "Size" }), { target: { value: String(old + 2) } });
+    expect(screen.getByText("Unsaved style changes")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(close).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Undo style" }));
+    expect(book.getByRole("spinbutton", { name: "Size" })).toHaveProperty("value", String(old));
+    fireEvent.click(screen.getByRole("button", { name: "Redo style" }));
+    expect(book.getByRole("spinbutton", { name: "Size" })).toHaveProperty("value", String(old + 2));
+    fireEvent.click(screen.getByRole("button", { name: "Apply to book" }));
+    await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+    expect(api.putStyle).toHaveBeenCalledWith("book", expect.objectContaining({ roles: expect.objectContaining({ caption: expect.objectContaining({ max_font_size: old + 2 }) }) }), initial().style.revision);
+    expect(api.get).not.toHaveBeenCalled();
+    expect(api.put).not.toHaveBeenCalled();
+  });
+
 });

@@ -343,12 +343,22 @@ the compiler supplies each selected canonical `visual_anchor` exactly.
 The v5 brief cache fingerprints the selected evidence, model, and prompt;
 stale cache entries are not reused. Candidate styles render the same selection.
 
-Full-page style samples retain the selected lettering and page-framing
-standards. Hybrid Draw uses a separate art-plus-framing projection, excluding
-typesetting directions. The existing style selection supplies the book-wide
-post-production preset and creative lettering direction. Style images are
-rendering-only references: copy neither their words nor their balloons. Cast reference prompts use only the art-rendering projection, not
-page lettering, borders, or gutters. Style and reference authority are not
+New full-page style samples generate art and framing only, reserving four
+natural quiet areas without words, balloons, boxes or effects. The compiler and
+cost estimator share that same contract. Each generated candidate supplies a
+closed `lettering_design` with validated caption, speech, thought and SFX role
+tokens. Selection seeds `lettering/style.json`; existing/custom directions
+without generated tokens use an explicit preset baseline. Neither structured
+tokens nor post-production prose enter image-model style projections.
+
+Style cards show a separate cached software-lettered proof, composed by the same
+bundled-font SVG engine as finished pages. Raw sample bytes and their generation
+metadata remain the reference authority. `GET /styles/{suggestion_id}/proof/{kind}`
+serves the derivative, keyed by raw art, style, engine and specimen version.
+Legacy/stale proofs remain visible as raw images and require an explicit clean-art
+refresh; no overlay is added to an old baked proof. Hybrid Draw uses only art and
+framing directions. Cast reference prompts use only the art-rendering projection,
+not page lettering, borders, or gutters. Style and reference authority are not
 disposable scene prose: approved style imagery owns rendering, not depicted
 people, objects, text, or layout. Canonical subject references own compatible
 identity/state facets, not their original rendering style. Active-state anchors
@@ -823,7 +833,14 @@ and reset placement are separate. Custom post-production captions, speech,
 thought, and SFX elements have no source ID. A changed canonical allocation is
 shown as stale, not silently reseeded; an explicit rebuild archives the previous
 saved state. Draw regeneration preserves lettering and asks for placement review
-against the new pixels. Full upstream restarts invalidate the presentation.
+against the new pixels. Cast/Adapt/Plan reruns invalidate page presentation but
+preserve an existing book style. Upstream Story/Style resets may clear it, and
+selecting a different visual direction explicitly seeds that direction's design.
+Missing onscreen speech/thought pointers receive provisional page-bounded targets
+on insertion; explicit Plan targets, offscreen delivery and saved null targets
+remain authoritative. Default pointers are not detected speaker locations.
+The v5 engine adds rounded cloud lobes, dashed whispers and burst shouting shapes;
+these are presentation variants, not new canonical copy roles.
 
 Authenticated provider-free routes (under `/api/projects/{project_id}`):
 
@@ -833,8 +850,10 @@ Authenticated provider-free routes (under `/api/projects/{project_id}`):
   typography instead of trusting browser-supplied resolved layout.
 - `POST /pages/{page_number}/lettering/reset`: explicitly rebuild from current
   Plan while keeping saved historical revisions.
-- `GET/PUT /lettering/style`: inspect presets/change book defaults. Inheriting
-  pages reflow; full per-element style overrides remain independent.
+- `GET/PUT /lettering/style`: inspect/change book defaults, including before Plan
+  or Draw exist through Look's book-lettering panel. Inheriting pages reflow;
+  full per-element style overrides remain independent. Retained baked editions
+  remain non-editable. Editing lettering does not regenerate artwork.
 - `GET /lettering/translation-estimate` and `POST /lettering/translate`:
   explicit, estimated project-wide translation of saved lettering into the
   chosen target language (en/es/fr). The estimate prices the exact prepared
