@@ -2,12 +2,12 @@ name: Apply tested TypeSafe implementation
 on:
   push:
     branches: [fix/typesafe-confidence-review]
-    paths: [.github/typesafe-patch-3.b64]
+    paths: [.github/typesafe-patch-3.b64, .github/workflows/typesafe-source-checkout.yml]
 permissions:
   contents: write
 jobs:
   apply:
-    if: github.event.head_commit.message == 'chore: stage final TypeSafe patch segment'
+    if: "github.event.head_commit.message == 'chore: stage final TypeSafe patch segment'"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
