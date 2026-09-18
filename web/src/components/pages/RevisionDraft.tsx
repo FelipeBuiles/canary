@@ -17,8 +17,6 @@ import {
 import {
   pageRenderPreviewUrl,
   referenceFileUrl,
-  type PageAnnotationKind,
-  type PageCorrectionAnnotation,
   type PageCorrectionBody,
   type PageCorrectionChange,
 } from "../../api/pages";
@@ -27,7 +25,13 @@ import { FieldLabel, TextAreaField } from "../ui/Field";
 import { Surface } from "../ui/Surface";
 import { PageArtwork } from "./PageArtwork";
 import { AnnotationEditor, type EditorAnnotation } from "./AnnotationEditor";
-import { roundPoint } from "./annotationGeometry";
+import {
+  annotationProblem,
+  MAX_CORRECTION_CHANGES,
+  MAX_CORRECTION_INSTRUCTION,
+  MAX_CORRECTION_MARKS,
+  serializeAnnotation,
+} from "./correctionValidation";
 import type { VisualReviewDraftSeed } from "./VisualReviewPanel";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 
@@ -183,8 +187,8 @@ function scrollLocalIntoView(node: HTMLElement | null) {
 }
 
 /**
- * Image-first correction draft. The artwork leads; editable requests with
- * marks and an optional overall note submit as one correction after an
+ * Text-first correction draft. Locations are optional context attached to a
+ * request, never a second required writing task. Requests submit after an
  * explicit preview. Persisted per
  * project/page/canonical-revision/edit-source-render; queued drafts lock
  * until the target changes.
@@ -289,8 +293,9 @@ export function RevisionDraft({
     if (seeds.length > 0) onSeedsConsumed();
   }, [seeds, onSeedsConsumed]);
 
-  // Persist every edit under the exact target key.
+  // Persist every edit under the exact target key, but never resurrect a queued draft.
   useEffect(() => {
+    if (submittedJobId) return;
     saveRevisionDraft({
       project,
       pageNumber,
@@ -312,7 +317,7 @@ export function RevisionDraft({
       contextSourceUnitIds: [],
       updatedAt: new Date().toISOString(),
     });
-  }, [project, pageNumber, comicPageRevision, parentRenderRevision, comicPageSha256, changes, note, manualInput]);
+  }, [project, pageNumber, comicPageRevision, parentRenderRevision, comicPageSha256, changes, note, manualInput, submittedJobId]);
 
   useEffect(() => {
     onDraftKeysChange([
@@ -326,23 +331,27 @@ export function RevisionDraft({
   function buildBody(draftChanges = selectedChanges): { body: PageCorrectionBody; problems: string[] } {
     const problems: string[] = [];
     const bodyChanges: PageCorrectionChange[] = [];
+    if (draftChanges.length > MAX_CORRECTION_CHANGES) {
+      problems.push(t("Include at most 24 requests in one revision."));
+    }
+    if (draftChanges.reduce((total, change) => total + change.annotations.length, 0) > MAX_CORRECTION_MARKS) {
+      problems.push(t("Include at most 24 locations across all requests."));
+    }
     for (const change of draftChanges) {
       const instruction = change.instruction.trim();
       if (!instruction) {
         problems.push(t("One selected fix has no instruction yet."));
         continue;
       }
-      const submitted = change.annotations
-        .filter((mark) => mark.points.length >= (mark.kind === "pin" ? 1 : 2) && (mark.note ?? "").trim().length > 0)
-        .map((mark): PageCorrectionAnnotation => ({
-          id: mark.id,
-          kind: mark.kind as PageAnnotationKind,
-          points: mark.points.map(roundPoint),
-          note: (mark.note ?? "").trim(),
-        }));
-      if (submitted.length !== change.annotations.length) {
-        problems.push(t("Every mark needs a finished shape and a note so nothing is silently dropped."));
+      if (instruction.length > MAX_CORRECTION_INSTRUCTION) {
+        problems.push(t("Shorten each request to 1000 characters."));
       }
+      const invalidMark = change.annotations.find((mark) => annotationProblem(mark));
+      if (invalidMark) {
+        problems.push(`${t("Location")} ${change.annotations.indexOf(invalidMark) + 1}: ${t(annotationProblem(invalidMark)!)}`);
+        continue; // The problem blocks preview/submit; invalid context is never silently sent.
+      }
+      const submitted = change.annotations.map(serializeAnnotation);
       bodyChanges.push({
         id: change.id,
         ...(change.issueId ? { issue_id: change.issueId } : {}),
@@ -351,8 +360,11 @@ export function RevisionDraft({
       });
     }
     const trimmedNote = note.trim();
+    if (trimmedNote.length > MAX_CORRECTION_INSTRUCTION) {
+      problems.push(t("Shorten the overall note to 1000 characters."));
+    }
     if (bodyChanges.length === 0 && trimmedNote.length === 0 && problems.length === 0) {
-      problems.push(t("Select at least one fix or write an overall note."));
+      problems.push(t("Describe what you would like to change. Marking the page is optional."));
     }
     return {
       body: {
@@ -367,9 +379,10 @@ export function RevisionDraft({
   }
 
   // Recomputed every render so the preview-fresh gate can never go stale.
-  const bodyHash = JSON.stringify(buildBody().body);
+  const prepared = buildBody();
+  const bodyHash = JSON.stringify(prepared.body);
 
-  const previewFresh = preview.data != null && previewHash === bodyHash && !manualInput.trim();
+  const previewFresh = preview.data != null && previewHash === bodyHash && !manualInput.trim() && prepared.problems.length === 0;
   const previewResult = previewFresh ? preview.data : undefined;
 
   function runPreview() {
@@ -429,7 +442,7 @@ export function RevisionDraft({
 
   function addManual() {
     const instruction = manualInput.trim();
-    if (!instruction || locked) return;
+    if (!instruction || locked) return null;
     const change: DraftChange = {
       id: newChangeId(),
       instruction,
@@ -439,6 +452,14 @@ export function RevisionDraft({
     setChanges((current) => [...current, change]);
     setFocusId(change.id);
     setManualInput("");
+    return change.id;
+  }
+
+  function markPendingRequest() {
+    const id = addManual();
+    if (!id) return;
+    scrollIntentRef.current = "mark";
+    setMarking(true);
   }
 
   function rebaseStale(copy: boolean) {
@@ -529,8 +550,11 @@ export function RevisionDraft({
               </Button>
             </div>
           )}
-          {editing && marking && focused ? (
-            <div ref={markTopRef}>
+          {editing && focused && (marking || focused.annotations.length > 0) ? (
+            <div ref={markTopRef} className="space-y-3">
+              <p className="font-body text-sm leading-6 text-ink-muted">
+                <span className="font-meta text-xs font-bold">{t("Locations for")}: </span>{focused.instruction}
+              </p>
               <AnnotationEditor
                 key={`${comicPageRevision}:${parentRenderRevision}:${focused.id}`}
                 imageSrc={canvasSrc}
@@ -539,7 +563,11 @@ export function RevisionDraft({
                 onChange={(annotations) => setChanges((current) => current.map((candidate) => candidate.id === focused.id
                   ? { ...candidate, annotations }
                   : candidate))}
-                disabled={locked}
+                disabled={locked || !focused.selected}
+                readOnly={!marking}
+                maxMarks={Math.max(0, MAX_CORRECTION_MARKS - selectedChanges
+                  .filter((change) => change.id !== focused.id)
+                  .reduce((total, change) => total + change.annotations.length, 0))}
               />
             </div>
           ) : (
@@ -603,7 +631,7 @@ export function RevisionDraft({
         </div>
 
         {editing && (
-        <div ref={railRef} className="min-w-0 space-y-5 border-t border-ink-black/15 pt-5 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+        <div ref={railRef} className={`min-w-0 space-y-5 border-t border-ink-black/15 pt-5 lg:order-none lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0 ${marking ? "" : "order-first"}`}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h3 className="font-display text-2xl font-black">{t("Request changes")}</h3>
             <Button size="sm" variant="outline" onClick={hideEditing}>
@@ -611,7 +639,7 @@ export function RevisionDraft({
             </Button>
           </div>
           <p className="font-body text-sm leading-6 text-ink-muted">
-            {t("Describe what should change. You’ll review the cost before generating a new revision.")}
+            {t("Text is enough. Optionally add a pin, area or highlight to show where. You’ll review the cost before generating.")}
           </p>
           <div>
             <FieldLabel htmlFor="draft-manual">{t("What would you like to change?")}</FieldLabel>
@@ -620,12 +648,22 @@ export function RevisionDraft({
                 id="draft-manual"
                 value={manualInput}
                 disabled={locked}
-                placeholder={t("Describe a fix in your own words, e.g. which face, object or panel must change.")}
+                maxLength={MAX_CORRECTION_INSTRUCTION}
+                rows={4}
+                placeholder={t("For example: make his hair pink in the first panel, keeping his face and the lighting unchanged.")}
                 onChange={(event) => setManualInput(event.target.value)}
               />
-              <Button size="sm" variant="outline" onClick={addManual} disabled={locked || !manualInput.trim()}>
-                {t("Add request")}
-              </Button>
+              <p className="font-body text-xs leading-5 text-ink-muted">
+                {t("Go straight to Review changes, or add context below.")}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button size="xs" variant="outline" onClick={markPendingRequest} disabled={locked || !manualInput.trim()}>
+                  {t("Add location (optional)")}
+                </Button>
+                <Button size="xs" variant="outline" onClick={addManual} disabled={locked || !manualInput.trim()}>
+                  {t("Add request")}
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -682,7 +720,7 @@ export function RevisionDraft({
                       </button>
                       {change.annotations.length > 0 && (
                         <span className="shrink-0 font-meta text-xs font-bold text-ink-muted">
-                          {change.annotations.length} {t(change.annotations.length === 1 ? "mark" : "marks")}
+                          {change.annotations.length} {t(change.annotations.length === 1 ? "location" : "locations")}
                         </span>
                       )}
                     </li>
@@ -707,7 +745,7 @@ export function RevisionDraft({
                       <div className="min-w-0 flex-1 space-y-2">
                         {change.annotations.length > 0 && (
                           <p className="font-meta text-xs font-bold text-ink-muted">
-                            {change.annotations.length} {t(change.annotations.length === 1 ? "mark" : "marks")}
+                            {change.annotations.length} {t(change.annotations.length === 1 ? "location" : "locations")}
                           </p>
                         )}
                         <FieldLabel htmlFor={`draft-instruction-${change.id}`}>
@@ -718,6 +756,7 @@ export function RevisionDraft({
                           value={change.instruction}
                           disabled={locked || !change.selected}
                           rows={3}
+                          maxLength={MAX_CORRECTION_INSTRUCTION}
                           onChange={(event) => setChanges((current) => current.map((candidate) => candidate.id === change.id
                             ? { ...candidate, instruction: event.target.value }
                             : candidate))}
@@ -726,11 +765,11 @@ export function RevisionDraft({
                           <Button
                             size="sm"
                             variant={marking ? undefined : "outline"}
-                            disabled={locked}
+                            disabled={locked || !change.selected}
                             aria-pressed={marking}
                             onClick={() => toggleMarking(change.id)}
                           >
-                            {t(marking ? "DONE MARKING" : "MARK ON PAGE")}
+                            {t(marking ? "DONE MARKING" : "MARK ON PAGE (OPTIONAL)")}
                           </Button>
                           {!change.issueId && (
                             <Button
@@ -752,6 +791,9 @@ export function RevisionDraft({
             </ol>
           )}
 
+          <p className="font-body text-xs leading-5 text-ink-muted">
+            {t("Approved style and character references are included automatically. Review changes to see the exact reference images before generating.")}
+          </p>
           <details>
             <summary className="cursor-pointer py-3 font-meta text-xs font-bold text-ink-muted">
               {t("Overall note (optional)")}
@@ -760,6 +802,7 @@ export function RevisionDraft({
               <FieldLabel htmlFor="draft-note" className="sr-only">{t("Overall note (optional)")}</FieldLabel>
               <TextAreaField
                 id="draft-note"
+                maxLength={MAX_CORRECTION_INSTRUCTION}
                 value={note}
                 disabled={locked}
                 placeholder={t("Guidance the individual fixes do not cover.")}
