@@ -1,0 +1,21 @@
+name: TypeSafe integration source snapshot
+on:
+  push:
+    branches: [fix/typesafe-confidence-review]
+    paths: [.github/workflows/typesafe-source-checkout.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Package tracked source for isolated tests
+        run: git archive --format=zip --output="$RUNNER_TEMP/canary-source.zip" HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: typesafe-source-snapshot
+          path: ${{ runner.temp }}/canary-source.zip
+          retention-days: 1
