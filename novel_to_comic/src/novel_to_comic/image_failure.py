@@ -101,6 +101,10 @@ def classify_image_failure(
     if any(token in text for token in (
         "api_key is not set",
         "api key is not set",
+        "401",
+        "unauthorized",
+        "invalid api key",
+        "authentication",
         "vertexai_project is not set",
         "fal_key is not set",
         "requires canary_wire_request",
