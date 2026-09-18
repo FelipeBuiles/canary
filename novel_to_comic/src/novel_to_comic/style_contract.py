@@ -2,6 +2,11 @@
 
 from typing import Literal
 
+from novel_to_comic.rendering_fidelity import (
+    RENDERING_FIDELITY_BLOCK,
+    RENDERING_FIDELITY_MARKER,
+)
+
 DEFAULT_LETTERING_STANDARD = (
     "Preserve every canonical lettering string and its capitalization exactly. Use one "
     "consistent humanist comic-lettering typeface family throughout the book: regular "
@@ -21,7 +26,8 @@ FRAMING_MARKER = "PAGE FRAMING STANDARD —"
 def rendering_style_template(visual_style: str) -> str:
     """Extract art direction without page lettering or framing contracts."""
     rendering = visual_style or ""
-    for marker in (LETTERING_MARKER, FRAMING_MARKER, "POST-PRODUCTION LETTERING PRESET —"):
+    for marker in (LETTERING_MARKER, FRAMING_MARKER, "POST-PRODUCTION LETTERING PRESET —",
+                   RENDERING_FIDELITY_MARKER):
         rendering = rendering.split(marker, 1)[0]
     return rendering.strip()
 
@@ -86,7 +92,10 @@ def page_art_style_template(visual_style: str) -> str:
     rendering = rendering_style_template(visual_style).split(POST_LETTERING_MARKER)[0].strip()
     framing = (visual_style.split(FRAMING_MARKER, 1)[1].split(POST_LETTERING_MARKER)[0].strip()
                if FRAMING_MARKER in visual_style else DEFAULT_PAGE_FRAMING_STANDARD)
-    return f"{rendering}\n\n{FRAMING_MARKER} {framing}"
+    # The same policy as Style/Cast, included in the frozen hybrid page prompt.
+    # Strip only our production suffix on repeated projection, never art prose.
+    framing = framing.split(RENDERING_FIDELITY_MARKER, 1)[0].strip()
+    return f"{rendering}\n\n{FRAMING_MARKER} {framing}\n\n{RENDERING_FIDELITY_BLOCK}"
 
 
 def post_production_lettering_direction(template: str) -> str:

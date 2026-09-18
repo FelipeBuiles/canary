@@ -27,6 +27,7 @@ from __future__ import annotations
 from novel_to_comic.generation_input import GenerationPromptInput
 from novel_to_comic.models.generation import PromptAnchor, PromptSubject
 from novel_to_comic.text_utils import clean as _clean
+from novel_to_comic.rendering_fidelity import RENDERING_FIDELITY_CONSTRAINTS
 
 # Generated system-constraint lines. These are typed invariants, not editable
 # prose — the canonical projection emits them from typed generation input
@@ -240,6 +241,9 @@ def generate_system_constraints(
             lines.extend(_SHARED_ARTISTIC_HAND)
     if asset_kind not in {"character_ref", "style_sample"}:
         lines.append(_UNIFIED_CANVAS)
+    # Protected compiler constraints: included in the prompt budget and hash,
+    # not appended after freezing or persisted into the selected style itself.
+    lines.extend(RENDERING_FIDELITY_CONSTRAINTS)
     return lines
 
 
