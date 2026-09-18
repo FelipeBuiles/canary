@@ -641,7 +641,7 @@ export function RevisionDraft({
           <p className="font-body text-sm leading-6 text-ink-muted">
             {t("Text is enough. Optionally add a pin, area or highlight to show where. You’ll review the cost before generating.")}
           </p>
-          <div>
+          {(!marking || !focused) && <div>
             <FieldLabel htmlFor="draft-manual">{t("What would you like to change?")}</FieldLabel>
             <div className="flex flex-col gap-2">
               <TextAreaField
@@ -665,7 +665,7 @@ export function RevisionDraft({
                 </Button>
               </div>
             </div>
-          </div>
+          </div>}
 
           {changes.length > 0 && (
             <div className="border-t border-ink-black/15 pt-4">
@@ -765,7 +765,7 @@ export function RevisionDraft({
                           <Button
                             size="sm"
                             variant={marking ? undefined : "outline"}
-                            disabled={locked || !change.selected}
+                            disabled={locked || (!change.selected && !marking)}
                             aria-pressed={marking}
                             onClick={() => toggleMarking(change.id)}
                           >

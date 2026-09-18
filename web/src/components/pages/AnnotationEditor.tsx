@@ -241,7 +241,7 @@ export function AnnotationEditor({ imageSrc, alt, value, onChange, disabled: dis
         {full ? t("All 24 page locations are in use. Remove a location to add another.") : notice || t(HINTS[tool])}
       </p>
       {imageError && <p role="alert" className="font-body text-sm text-hero-red">{t("The page image could not be loaded. You can still send a text-only request.")}</p>}
-      <div className="max-h-[70dvh] overflow-auto bg-surface-container-low p-2">
+      <div className="max-h-[70dvh] overflow-auto bg-surface-container p-2">
         <div className="relative mx-auto w-fit max-w-full" style={zoom === 1 ? undefined : { width: `${zoom * 100}%`, maxWidth: "none" }}>
           <img src={imageSrc} alt={alt} draggable={false} className="block select-none"
             style={zoom === 1 ? { maxHeight: "65dvh", maxWidth: "100%", width: "auto", height: "auto" } : { width: "100%", height: "auto" }}
@@ -268,7 +268,7 @@ export function AnnotationEditor({ imageSrc, alt, value, onChange, disabled: dis
             // HTML badges use CSS pixels, not stretched SVG coordinates. A 44px
             // invisible hit target surrounds the 26px square paper tag.
             return <button key={mark.id} type="button" aria-label={`${t("Select location")} ${index + 1}: ${t(LABELS[mark.kind])}`}
-              aria-pressed={selectedId === mark.id} onClick={() => selectMark(mark.id)} onKeyDown={keyDown} disabled={disabled}
+              aria-pressed={selectedId === mark.id} onClick={() => selectMark(mark.id)} onFocus={() => selectMark(mark.id)} onKeyDown={keyDown} disabled={disabled}
               className="absolute z-10 flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center focus-visible:outline-2 focus-visible:outline-hero-red"
               style={{ left: `clamp(22px, ${first.x * 100}%, calc(100% - 22px))`, top: `clamp(22px, ${first.y * 100}%, calc(100% - 22px))` }}>
               <span className={`flex h-[26px] w-[26px] items-center justify-center border-2 border-ink-black font-meta text-xs font-bold shadow-ink-sm outline outline-2 outline-bristol ${selectedId === mark.id ? "bg-hero-red text-bristol" : "bg-pulp-paper text-ink-black"}`}>{index + 1}</span>
