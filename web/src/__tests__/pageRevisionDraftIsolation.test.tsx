@@ -323,7 +323,7 @@ describe("RevisionDraft across render targets", () => {
     fireEvent.click(screen.getByRole("button", { name: /make changes/i }));
 
     // A manual request keeps the draft previewable after the kept fix is deselected.
-    fireEvent.change(screen.getByPlaceholderText(/describe a fix in your own words/i), {
+    fireEvent.change(screen.getByLabelText(/what would you like to change/i), {
       target: { value: "Check the cape edge" },
     });
     fireEvent.click(screen.getByRole("button", { name: /add request/i }));
