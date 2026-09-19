@@ -1,14 +1,20 @@
-FROM docker.litellm.ai/berriai/litellm:main-v1.83.14-stable
+FROM python:3.12-slim-bookworm
+COPY --from=ghcr.io/astral-sh/uv:0.12.17 /uv /usr/local/bin/uv
+WORKDIR /app
 
-# The upstream LiteLLM image currently carries google-genai 1.37, which lacks
-# GenerateContentConfig.image_config / ImageConfig. Canary requires those
-# controls to preserve non-square panel and asset geometry (for example the
-# 4:5 style proofs), so keep the local gateway aligned with production.
-RUN /app/.venv/bin/python -m ensurepip \
-    && /app/.venv/bin/python -m pip install --no-cache-dir "google-genai==1.75.0"
+# Same resolution as production, without inheriting a second dependency tree
+# from the upstream gateway image. Never install into the application venv.
+COPY litellm/pyproject.toml litellm/uv.lock /app/gateway/
+RUN UV_PROJECT_ENVIRONMENT=/app/.venv \
+    uv sync --project /app/gateway --locked --no-dev --no-install-project
 
-COPY litellm/patch_http_errors.py /app/patch_http_errors.py
-RUN /app/.venv/bin/python /app/patch_http_errors.py
+COPY litellm/patch_http_errors.py litellm/patch_anthropic_refusals.py /app/
+RUN /app/.venv/bin/python /app/patch_http_errors.py \
+    && /app/.venv/bin/python /app/patch_anthropic_refusals.py
 
-COPY litellm/patch_anthropic_refusals.py /app/patch_anthropic_refusals.py
-RUN /app/.venv/bin/python /app/patch_anthropic_refusals.py
+COPY litellm/config.yaml /app/config.yaml
+COPY litellm_handlers/ /app/litellm_handlers/
+ENV PYTHONPATH=/app:/app/litellm_handlers
+EXPOSE 4000
+ENTRYPOINT ["/app/.venv/bin/litellm"]
+CMD ["--host", "0.0.0.0", "--port", "4000", "--config", "/app/config.yaml"]
