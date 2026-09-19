@@ -70,6 +70,7 @@ from novel_to_comic.codex_dev import classify_operations
 from ..codex_admission import image_operations
 from ..db import get_db
 from ..deps import get_project, get_project_dir, get_projects_dir, project_key
+from ..project_paths import project_directory
 from ..ratelimit import cost_limit, create_limit, limiter
 from ..product_events import capture_server_event
 from .styles import clear_style_failures_after_selection, is_style_selected
@@ -521,11 +522,14 @@ async def create_project(
     # Resolve the final path before staging, but do not create any project
     # state until the source has passed the same extraction budgets as Stage 1.
     slug = _slugify(name)
-    project_dir = projects_dir / user_id / slug
+    try:
+        project_dir = project_directory(projects_dir, user_id, slug)
+    except ValueError as exc:
+        raise HTTPException(409, "Project storage is unavailable") from exc
     if project_dir.exists():
         raise HTTPException(409, f"Project '{slug}' already exists")
 
-    user_dir = projects_dir / user_id
+    user_dir = project_dir.parent
     user_dir.mkdir(parents=True, exist_ok=True)
     staging_dir = Path(tempfile.mkdtemp(prefix=".incoming-", dir=user_dir))
     safe_filename = Path(file.filename or f"source{suffix}").name
@@ -630,7 +634,11 @@ def list_projects(
     )
     results = []
     for row in _rows(resp):
-        d = projects_dir / user_id / row["name"]
+        try:
+            d = project_directory(projects_dir, user_id, row["name"])
+        except ValueError:
+            logger.warning("Skipping project %s with an unsafe storage path", row["id"])
+            continue
         state_file = d / "state.json"
         if not d.is_dir() or not state_file.exists():
             continue  # orphaned DB row — directory missing, skip silently
@@ -950,7 +958,7 @@ async def import_short_story(
         else:
             story_code = url_or_code
 
-    if not story_code:
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,200}", story_code):
         raise HTTPException(400, "Could not parse a valid story code from input")
 
     story_url = f"https://www.libraryofshortstories.com/storiesgzip/{story_code}.txt"
@@ -979,7 +987,10 @@ async def import_short_story(
         raise HTTPException(400, "Invalid project configuration.") from exc
 
     slug = _slugify(payload.name)
-    project_dir = projects_dir / user_id / slug
+    try:
+        project_dir = project_directory(projects_dir, user_id, slug)
+    except ValueError as exc:
+        raise HTTPException(409, "Project storage is unavailable") from exc
     if project_dir.exists():
         raise HTTPException(409, f"Project '{slug}' already exists")
 
