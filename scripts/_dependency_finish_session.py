@@ -6,7 +6,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 assert subprocess.check_output(['git', 'branch', '--show-current'], text=True).strip() == 'fix/dependency-refresh-2026-09'
 if '[tool.ruff]' in (ROOT / 'novel_to_comic/pyproject.toml').read_text():
-    raise SystemExit('Compatibility fixes already applied')
+    raise SystemExit(0)
 
 def replace(path, old, new):
     target = ROOT / path
@@ -28,7 +28,7 @@ replace('novel_to_comic/tests/test_complete_page_draw.py',
         '    assert finalized["langfuse_input"]["prompt"] == prepared.prompt',
         '    from novel_to_comic.ai.client import _truncate_for_log\n\n    # Telemetry is bounded; the full frozen prompt is asserted on the wire above.\n    assert finalized["langfuse_input"]["prompt"] == _truncate_for_log(prepared.prompt)')
 replace('novel_to_comic/src/novel_to_comic/cast_instructions.py',
-        'from pydantic import Field\n', '')
+        'from pydantic import BaseModel, Field\n', 'from pydantic import BaseModel\n')
 replace('novel_to_comic/tests/test_lettering_translation.py',
         'from .test_hybrid_lettering import book, save, update',
         'from .test_hybrid_lettering import book as book, save, update')
