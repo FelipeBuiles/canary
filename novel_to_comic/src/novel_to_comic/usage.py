@@ -66,15 +66,6 @@ def calculate_cost_breakdown(record: UsageRecord) -> CostBreakdown:
     """Return detailed USD cost metadata for one API call."""
     resolver = get_pricing_resolver()
     resolved = resolver.resolve_model(record.model, record.provider_model)
-    if record.provider == "typesafe" and record.cost_usd is None:
-        # Native decisions explicitly distinguish unknown spend from zero. A
-        # missing/mismatched price must not fall through the catalog's legacy
-        # unknown-alias zero-cost behavior.
-        return CostBreakdown(
-            cost_usd=None, source="unknown_typesafe_usage",
-            model_alias=record.model, provider_model=record.provider_model or record.model,
-            pricing_snapshot=resolver.pricing_snapshot,
-        )
     if record.funding == "api" and record.cost_usd is None and "gpt-image-2.5-" in resolved:
         pricing, source = resolver._pricing_for(resolved.removesuffix("-2026-09-08"))
         fields = (record.input_text_tokens, record.input_image_tokens,
