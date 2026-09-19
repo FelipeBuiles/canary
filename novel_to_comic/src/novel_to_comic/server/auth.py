@@ -1,10 +1,12 @@
 """JWT authentication dependency using Supabase JWKS (RS256/ES256)."""
 
 import os
+from uuid import UUID
 
 import jwt
 from jwt import PyJWKClient
 from fastapi import Cookie, Header, HTTPException, Request, Response
+from starlette.concurrency import run_in_threadpool
 
 SESSION_COOKIE_NAME = "pulp_session"
 
@@ -12,15 +14,14 @@ SESSION_COOKIE_NAME = "pulp_session"
 _jwks_client: PyJWKClient | None = None
 
 
-def _cookie_secure(request: Request) -> bool:
-    """Decide whether to mark the session cookie Secure (HTTPS-only).
+def _production() -> bool:
+    return (os.environ.get("CANARY_ENV") or os.environ.get("ENV") or "dev").strip().lower() == "production"
 
-    Explicit opt-in via CANARY_COOKIE_SECURE=true wins and is the correct
-    setting in production behind a TLS-terminating proxy. Without it we fall
-    back to scheme detection — but note that behind a proxy ``request.url``
-    reports the *internal* scheme (http) unless Uvicorn runs with
-    ``--proxy-headers``, so prod must set the env flag explicitly.
-    """
+
+def _cookie_secure(request: Request) -> bool:
+    """Production cookies are HTTPS-only, including behind TLS termination."""
+    if _production():
+        return True
     raw = os.environ.get("CANARY_COOKIE_SECURE")
     if raw is not None:
         return raw.strip().lower() in {"1", "true", "yes", "on"}
@@ -28,38 +29,51 @@ def _cookie_secure(request: Request) -> bool:
 
 
 def _expected_audience() -> str | None:
-    """The JWT audience to enforce (e.g. Supabase's "authenticated").
+    """Production cannot disable audience validation with an empty override."""
+    raw = os.environ.get("SUPABASE_JWT_AUDIENCE", "").strip()
+    return raw or ("authenticated" if _production() else None)
 
-    Resolution order:
 
-    1. ``SUPABASE_JWT_AUDIENCE`` — explicit override (any value, incl. empty
-       string to opt out entirely).
-    2. In production (``CANARY_ENV=production``) — defaults to Supabase's
-       standard ``"authenticated"`` audience. Supabase JWTs always carry this
-       claim, so enforcing it costs nothing and blocks tokens minted for a
-       different audience.
-    3. Elsewhere (dev/test) — ``None`` (no audience check), preserving
-       backwards compatibility for hand-built test tokens.
-    """
-    if "SUPABASE_JWT_AUDIENCE" in os.environ:
-        raw = os.environ["SUPABASE_JWT_AUDIENCE"].strip()
-        return raw or None
-    if (os.environ.get("CANARY_ENV") or "").lower() == "production":
-        return "authenticated"
-    return None
+def _expected_issuer() -> str:
+    supabase_url = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
+    if not supabase_url:
+        raise RuntimeError("SUPABASE_URL is not set")
+    return f"{supabase_url}/auth/v1"
 
 
 def _get_jwks_client() -> PyJWKClient:
     global _jwks_client
     if _jwks_client is None:
-        supabase_url = os.environ.get("SUPABASE_URL", "").rstrip("/")
-        if not supabase_url:
-            raise RuntimeError("SUPABASE_URL is not set")
         _jwks_client = PyJWKClient(
-            f"{supabase_url}/auth/v1/.well-known/jwks.json",
-            lifespan=300,  # cache keys for 5 minutes; re-fetches on unknown kid
+            f"{_expected_issuer()}/.well-known/jwks.json",
+            lifespan=300,
+            timeout=5,
         )
     return _jwks_client
+
+
+def _verify_token(token: str) -> str:
+    """Blocking JWKS work runs in the thread pool, not the API event loop."""
+    signing_key = _get_jwks_client().get_signing_key_from_jwt(token)
+    audience = _expected_audience()
+    payload = jwt.decode(
+        token,
+        signing_key.key,
+        algorithms=["RS256", "ES256"],
+        audience=audience,
+        issuer=_expected_issuer(),
+        options={
+            "verify_aud": audience is not None,
+            "require": ["exp", "iss", "sub"],
+        },
+    )
+    subject = payload["sub"]
+    if not isinstance(subject, str):
+        raise jwt.InvalidTokenError("Invalid subject")
+    try:
+        return str(UUID(subject))
+    except ValueError as exc:
+        raise jwt.InvalidTokenError("Invalid subject") from exc
 
 
 async def get_current_user(
@@ -68,59 +82,49 @@ async def get_current_user(
     authorization: str | None = Header(None),
     session_cookie: str | None = Cookie(None, alias=SESSION_COOKIE_NAME),
 ) -> str:
-    """Verify a Supabase-issued JWT and return the user_id (sub claim).
+    """Verify a Supabase access token and return its account UUID.
 
-    Normal API fetches send the bearer token. Browser-native consumers such as
-    EventSource, img, iframe, and window.open cannot set Authorization headers,
-    so successful bearer-authenticated requests also refresh an HttpOnly cookie
-    that those same-origin requests can use.
+    Browser-native image, iframe, EventSource and download reads can use the
+    HttpOnly cookie. Mutations must explicitly send a bearer token: SameSite
+    cookies alone are not a CSRF boundary against a compromised sibling site.
+    An explicitly invalid Authorization header never falls back to a cookie.
     """
     token = None
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.removeprefix("Bearer ").strip()
+    if authorization is not None:
+        scheme, _, credentials = authorization.partition(" ")
+        if scheme.lower() != "bearer" or not credentials.strip():
+            raise HTTPException(401, "Invalid authentication header")
+        token = credentials.strip()
     elif session_cookie:
+        if request.method not in {"GET", "HEAD", "OPTIONS"}:
+            raise HTTPException(401, "Bearer authentication is required for mutations")
         token = session_cookie
-
     if not token:
-        raise HTTPException(status_code=401, detail="Missing authentication token")
+        raise HTTPException(401, "Missing authentication token")
 
     try:
-        client = _get_jwks_client()
+        user_id = await run_in_threadpool(_verify_token, token)
     except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-    try:
-        signing_key = client.get_signing_key_from_jwt(token)
-        expected_audience = _expected_audience()
-        payload = jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=["RS256", "ES256"],
-            audience=expected_audience,
-            # verify_aud only has an effect when `audience` is provided, so this
-            # is a no-op unless SUPABASE_JWT_AUDIENCE is set in production.
-            options={"verify_aud": expected_audience is not None},
-        )
-        user_id = payload["sub"]
-        request.state.user_id = user_id
-        try:
-            import sentry_sdk
+        raise HTTPException(500, str(exc)) from exc
+    except jwt.PyJWTError as exc:
+        raise HTTPException(401, "Invalid or expired token") from exc
 
-            sentry_sdk.set_user({"id": user_id})
-            sentry_sdk.set_tag("request_id", getattr(request.state, "request_id", "unknown"))
-        except Exception:
-            # Error reporting is optional and must never affect authentication.
-            pass
-        # Refresh the HttpOnly session cookie so browser-native consumers
-        # (img, EventSource, etc.) that can only use cookies stay authenticated.
-        response.set_cookie(
-            SESSION_COOKIE_NAME,
-            token,
-            httponly=True,
-            secure=_cookie_secure(request),
-            samesite="lax",
-            max_age=60 * 60,
-            path="/",
-        )
-        return user_id
-    except (KeyError, jwt.PyJWTError):
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    request.state.user_id = user_id
+    try:
+        import sentry_sdk
+
+        sentry_sdk.set_user({"id": user_id})
+        sentry_sdk.set_tag("request_id", getattr(request.state, "request_id", "unknown"))
+    except Exception:
+        # Error reporting is optional and must never affect authentication.
+        pass
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        token,
+        httponly=True,
+        secure=_cookie_secure(request),
+        samesite="lax",
+        max_age=60 * 60,
+        path="/",
+    )
+    return user_id

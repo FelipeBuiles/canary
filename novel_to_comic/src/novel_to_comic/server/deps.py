@@ -11,6 +11,7 @@ from novel_to_comic.state import PipelineState, load_state
 from .auth import get_current_user
 from .account_models import account_config
 from .db import get_db
+from .project_paths import project_directory
 
 
 def get_projects_dir(request: Request) -> Path:
@@ -40,6 +41,7 @@ def _resolve_project_slug(user_id: str, project_id: str) -> str:
     except httpx.ConnectError:
         # Retry this read on the live pool. Closing the singleton here also
         # closes the client retained by credit leases and admitted paid jobs.
+        # A failed connection does not require replacing the HTTP client.
         # A failed connection does not require replacing the HTTP client.
         result = _db_query_projects(user_id, project_id)
     if not result.data:
@@ -74,7 +76,10 @@ def get_project_dir(
     ``get_project`` so they only receive fully validated current projects.
     """
     slug = _resolve_project_slug(user_id, project_id)
-    d = request.app.state.projects_dir / user_id / slug
+    try:
+        d = project_directory(request.app.state.projects_dir, user_id, slug)
+    except ValueError as exc:
+        raise HTTPException(404, f"Project '{project_id}' not found") from exc
     if not d.is_dir() or not (d / "state.json").exists():
         raise HTTPException(404, f"Project '{project_id}' not found")
     return d
