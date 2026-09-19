@@ -1,18 +1,16 @@
-"""Tests for the JWT auth dependency (cookie secure flag + audience gating).
-
-These cover the launch-hardening additions to server/auth.py:
-
-- ``_cookie_secure`` honours CANARY_COOKIE_SECURE in production and falls back
-  to scheme detection otherwise.
-- ``_expected_audience`` reads SUPABASE_JWT_AUDIENCE (opt-in audience check).
-- ``get_current_user`` rejects requests with no token at all (no JWKS needed).
-"""
+"""Auth transport defaults and production audience/cookie policy."""
 
 from types import SimpleNamespace
 
 import pytest
 
 from novel_to_comic.server import auth
+
+
+@pytest.fixture(autouse=True)
+def clean_auth_environment(monkeypatch):
+    for name in ("CANARY_ENV", "ENV", "SUPABASE_JWT_AUDIENCE", "CANARY_COOKIE_SECURE"):
+        monkeypatch.delenv(name, raising=False)
 
 
 def _request_with_scheme(scheme: str) -> SimpleNamespace:
@@ -24,44 +22,40 @@ def test_cookie_secure_env_flag_true(monkeypatch):
     assert auth._cookie_secure(_request_with_scheme("http")) is True
 
 
-def test_cookie_secure_env_flag_off_is_explicit_opt_out(monkeypatch):
-    # CANARY_COOKIE_SECURE=false is an explicit opt-out → False regardless of scheme.
+def test_cookie_secure_env_flag_off_is_explicit_dev_opt_out(monkeypatch):
     monkeypatch.setenv("CANARY_COOKIE_SECURE", "false")
     assert auth._cookie_secure(_request_with_scheme("https")) is False
     assert auth._cookie_secure(_request_with_scheme("http")) is False
 
 
-def test_cookie_secure_unset_uses_scheme(monkeypatch):
-    monkeypatch.delenv("CANARY_COOKIE_SECURE", raising=False)
+def test_cookie_secure_unset_uses_scheme():
     assert auth._cookie_secure(_request_with_scheme("https")) is True
     assert auth._cookie_secure(_request_with_scheme("http")) is False
 
 
-def test_expected_audience_unset_by_default(monkeypatch):
-    # No env override and not production → no audience check (backwards compat).
-    monkeypatch.delenv("SUPABASE_JWT_AUDIENCE", raising=False)
-    monkeypatch.delenv("CANARY_ENV", raising=False)
+def test_expected_audience_unset_by_default():
     assert auth._expected_audience() is None
 
 
 def test_expected_audience_defaults_to_authenticated_in_production(monkeypatch):
-    # Production without an explicit override → Supabase's standard audience.
-    monkeypatch.delenv("SUPABASE_JWT_AUDIENCE", raising=False)
     monkeypatch.setenv("CANARY_ENV", "production")
     assert auth._expected_audience() == "authenticated"
 
 
 def test_expected_audience_env_override_wins_in_production(monkeypatch):
-    # Explicit override beats the production default.
     monkeypatch.setenv("SUPABASE_JWT_AUDIENCE", "custom-aud")
     monkeypatch.setenv("CANARY_ENV", "production")
     assert auth._expected_audience() == "custom-aud"
 
 
-def test_expected_audience_empty_string_opts_out(monkeypatch):
-    # SUPABASE_JWT_AUDIENCE="" is an explicit opt-out even in production.
+def test_expected_audience_empty_string_cannot_opt_out_in_production(monkeypatch):
     monkeypatch.setenv("SUPABASE_JWT_AUDIENCE", "")
     monkeypatch.setenv("CANARY_ENV", "production")
+    assert auth._expected_audience() == "authenticated"
+
+
+def test_expected_audience_empty_string_can_opt_out_in_development(monkeypatch):
+    monkeypatch.setenv("SUPABASE_JWT_AUDIENCE", "")
     assert auth._expected_audience() is None
 
 
@@ -71,9 +65,7 @@ def test_expected_audience_reads_env(monkeypatch):
 
 
 def test_get_current_user_rejects_missing_token():
-    # No Authorization header and no session cookie → 401, no JWKS lookup needed.
     import asyncio
-
     from fastapi import HTTPException
 
     async def call_without_token() -> str:

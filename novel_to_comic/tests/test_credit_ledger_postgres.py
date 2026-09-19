@@ -236,7 +236,7 @@ def test_subscription_images_do_not_write_credit_ledger(ledger, provider_model):
 def test_deleted_project_hold_does_not_block_recreated_project(ledger, started):
     db, user = ledger
     old_project, new_project, owner = (str(uuid.uuid4()) for _ in range(3))
-    db.query(f"insert into public.projects(id, user_id, name) values ('{old_project}', '{user}', 'Same story');")
+    db.query(f"insert into public.projects(id, user_id, name) values ('{old_project}', '{user}', 'same-story');")
     def reserve(project, amount):
         return db.rpc("reserve_stage_credits", {
             "p_user_id": user, "p_project_id": project, "p_stage": "extract",
@@ -248,7 +248,7 @@ def test_deleted_project_hold_does_not_block_recreated_project(ledger, started):
         assert db.rpc("check_credit_reservation_lease", {"p_reservation_id": hold, "p_owner": owner}).execute().data
     db.query(f"update public.credit_ledger set reservation_expires_at=now()-interval '1 second' where id='{hold}';")
     db.query(f"delete from public.projects where id='{old_project}';")
-    db.query(f"insert into public.projects(id, user_id, name) values ('{new_project}', '{user}', 'Same story');")
+    db.query(f"insert into public.projects(id, user_id, name) values ('{new_project}', '{user}', 'same-story');")
     assert reserve(new_project, 2) is not None
     row = json.loads(db.query(f"select row_to_json(r) from (select project_id, status, amount_credits from public.credit_ledger where id='{hold}') r;"))
     assert row == {"project_id": None, "status": "reserved" if started else "released", "amount_credits": -3}
