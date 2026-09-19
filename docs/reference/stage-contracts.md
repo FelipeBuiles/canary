@@ -362,7 +362,7 @@ Style proofs share one bounded scene roster and location across the generated
 brief, deterministic fallback, and request compiler. Contextual mentions cannot
 add subjects or crowds. Brief prose owns staging, not redesigned identities;
 the compiler supplies each selected canonical `visual_anchor` exactly.
-The v5 brief cache fingerprints the selected evidence, model, and prompt;
+The v6 brief cache fingerprints the selected evidence, model, and prompt;
 stale cache entries are not reused. Candidate styles render the same selection.
 
 New full-page style samples generate art and framing only, reserving four
