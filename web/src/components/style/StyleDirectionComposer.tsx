@@ -104,7 +104,7 @@ export function StyleDirectionComposer({
             {t("Art-direct for me")}
           </span>
           <span className="mt-2 block text-[0.83rem] leading-5 text-ink-black/70">
-            {t("Five story-aware directions: two strong fits, an adjacent option, a contrast, and one wildcard.")}
+            {t("Six story-aware directions: three strong fits, an adjacent option, a contrast, and one wildcard.")}
           </span>
         </button>
         <button
@@ -130,7 +130,7 @@ export function StyleDirectionComposer({
       {lane === "automatic" ? (
         <div className="mt-6 flex flex-wrap items-center gap-3">
           <Button size="lg" onClick={onAutomatic} disabled={busy || disabled}>
-            {busy ? t("PREPARING DIRECTIONS…") : t("CREATE FIVE DIRECTIONS")}
+            {busy ? t("PREPARING DIRECTIONS…") : t("CREATE SIX DIRECTIONS")}
           </Button>
           {automaticCost != null && automaticCost > 0 && (
             <CreditAmount
@@ -217,7 +217,7 @@ export function StyleDirectionComposer({
                   checked={mode === "neighbors"}
                   onChange={() => setMode("neighbors")}
                 />
-                <span className="text-[0.82rem] font-semibold">{t("This direction + four neighbors")}</span>
+                <span className="text-[0.82rem] font-semibold">{t("This direction + five neighbors")}</span>
               </label>
             </div>
             {neighborsNeedText && image !== null && (
@@ -233,7 +233,7 @@ export function StyleDirectionComposer({
               disabled={!canSubmitCustom || busy || disabled || !!fileError}
               onClick={() => onCustom({ direction: direction.trim(), image, mode })}
             >
-              {busy ? t("PREPARING PROOF…") : mode === "single" ? t("CREATE MY PROOF") : t("CREATE FIVE DIRECTIONS")}
+              {busy ? t("PREPARING PROOF…") : mode === "single" ? t("CREATE MY PROOF") : t("CREATE SIX DIRECTIONS")}
             </Button>
             {customCredits != null && customCredits > 0 && (
               <CreditAmount
