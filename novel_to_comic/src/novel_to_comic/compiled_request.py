@@ -336,7 +336,8 @@ def compile_reference_instruction(
             semantic = (
                 f"style variation context for {label} — preserve only "
                 f"{_facet_phrase(preserve) or 'the authored thematic inspiration'}; "
-                "the candidate's selected art direction owns all changed rendering facets; "
+                "the candidate's selected art direction owns all changed rendering facets, "
+                "including character proportions, silhouettes and facial abstraction; "
                 f"ignore {_facet_phrase(ignore)}"
             )
         else:

@@ -317,7 +317,7 @@ def test_style_batch_estimates_structured_text_output_and_story_context(tmp_path
     with patch("novel_to_comic.usage.estimate_text_cost", return_value=.2) as text_cost:
         estimate_style_batch_cost_usd(Config(image_model="image-sunburst"), tmp_path)
     assert text_cost.call_args.kwargs["output_chars"] == LLM_REQUEST_COUNT * 1800
-    assert "Generate 8 style options" in text_cost.call_args.args[1]
+    assert f"Generate {LLM_REQUEST_COUNT} style options" in text_cost.call_args.args[1]
 
 
 def test_generic_style_quote_uses_proof_geometry():
@@ -537,7 +537,7 @@ def test_direction_neighbors_commit_only_after_all_proofs(tmp_path, style_ledger
             "label": f"N{i}", "medium": f"medium {i}", "template": f"style {i}",
             "role": role,
         }, origin="generated_neighbor") for i, role in enumerate(
-            ("story_fit_primary", "adjacent", "contrast", "wildcard")
+            ("story_fit_primary", "story_fit_secondary", "adjacent", "contrast", "wildcard")
         )]
         with (
             patch("novel_to_comic.server.routers.styles.ensure_style_sample_brief", new=AsyncMock()),
@@ -560,7 +560,7 @@ def test_direction_neighbors_commit_only_after_all_proofs(tmp_path, style_ledger
                 await job.runner()
         persisted = load_suggestions(tmp_path)
         assert [item["origin"] for item in persisted] == (
-            ["user_text"] if fail_neighbors else ["user_text"] + ["generated_neighbor"] * 4
+            ["user_text"] if fail_neighbors else ["user_text"] + ["generated_neighbor"] * 5
         )
         assert project[2].stages["style"].status == (
             StageStatus.FAILED if fail_neighbors else StageStatus.AWAITING_REVIEW
@@ -603,5 +603,55 @@ def test_style_retry_reuses_queued_job_without_another_hold(tmp_path, style_ledg
         request.app.state.generation_queue.get_nowait().on_cancel()
         assert not style_ledger.holds
         assert len(style_ledger.released) == 1
+
+    asyncio.run(scenario())
+
+
+def test_default_and_directed_quotes_price_six_and_five_images(tmp_path):
+    from novel_to_comic.server.routers.styles import (
+        _direction_credit_estimates, _suggest_batch_credit_estimate,
+    )
+    from novel_to_comic.stages.s2_style import SAMPLE_COUNT, NEIGHBOR_COUNT
+
+    project = _project(tmp_path)
+    with (
+        patch("novel_to_comic.server.routers.styles.estimate_style_batch_cost_usd", return_value=.5) as batch,
+        patch("novel_to_comic.server.routers.styles.estimate_style_proof_cost_usd", return_value=.1),
+    ):
+        _suggest_batch_credit_estimate(project[1], tmp_path)
+        assert batch.call_args.args[2] == SAMPLE_COUNT == 6
+        batch.reset_mock()
+        _direction_credit_estimates(project[1], tmp_path)
+        assert batch.call_count == 2  # neighbors alone and faithful + neighbors
+        assert all(call.args[2] == NEIGHBOR_COUNT == 5 for call in batch.call_args_list)
+
+
+def test_six_proof_progress_is_monotonic_when_images_finish_out_of_order(tmp_path, style_ledger):
+    from novel_to_comic.stages.s2_style import SAMPLE_COUNT
+    from tests.test_style_stage import _batch
+
+    async def scenario():
+        request, project = _request(), _project(tmp_path)
+        suggestions = [normalize_suggestion(s) for s in _batch(count=SAMPLE_COUNT)["styles"]]
+
+        async def finish_in_reverse(_config, _bible, _directory, _suggestions, indices, *, on_sample_done):
+            assert indices == [1, 2, 3, 4, 5, 6]
+            for index in reversed(indices):
+                await on_sample_done(index, None)
+
+        with (
+            patch("novel_to_comic.server.routers.styles.generate_suggestions",
+                  new=AsyncMock(return_value=(suggestions, None))),
+            patch("novel_to_comic.server.routers.styles.generate_samples_for_indices", new=finish_in_reverse),
+        ):
+            await suggest_styles(request, "demo", None, project=project, user_id="user")
+            assert project[2].stages["style"].items_total == SAMPLE_COUNT
+            await request.app.state.generation_queue.get_nowait().runner()
+        events = request.app.state.event_queues["user:demo"].history
+        progress = [event["done"] for event in events if event["type"] == "stage_progress"]
+        assert progress == [0, 1, 2, 3, 4, 5, 6, 6]
+        assert project[2].stages["style"].items_done == SAMPLE_COUNT
+        assert len(load_suggestions(tmp_path)) == SAMPLE_COUNT
+        assert not style_ledger.holds
 
     asyncio.run(scenario())

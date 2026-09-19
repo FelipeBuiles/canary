@@ -1,6 +1,6 @@
 """Stage 2: Generate visual style options for review.
 
-Produces five distinct style templates (text descriptions) and one sample
+Produces six distinct style templates (text descriptions) and one sample
 image per style, then enters awaiting_review so the user can preview the
 samples and pick an active style before downstream stages run.
 """
@@ -47,15 +47,18 @@ from novel_to_comic.stage_runtime import StageRuntime
 
 logger = logging.getLogger(__name__)
 
-SAMPLE_COUNT = 5
-LLM_REQUEST_COUNT = 8  # ask for more than we need so dedup still yields >= 5
+SAMPLE_COUNT = 6
+NEIGHBOR_COUNT = SAMPLE_COUNT - 1
+LLM_REQUEST_COUNT = SAMPLE_COUNT * 2  # two candidates per role before curation
 SAMPLE_CONCURRENCY = 2
 _GENERATION_MAX_ATTEMPTS = 2
-SUGGESTION_SCHEMA_VERSION = 5
-STYLE_BRIEF_VERSION = 5
+SUGGESTION_SCHEMA_VERSION = 6
+STYLE_BRIEF_VERSION = 6
 PORTFOLIO_ROLES = (
-    "story_fit_primary", "story_fit_secondary", "adjacent", "contrast", "wildcard",
+    "story_fit_primary", "story_fit_secondary", "story_fit_tertiary",
+    "adjacent", "contrast", "wildcard",
 )
+NEIGHBOR_ROLES = tuple(role for role in PORTFOLIO_ROLES if role != "story_fit_tertiary")
 STYLE_VALIDATION_ACTION = "A decisive full-body action with readable silhouette appropriate to the subject's species and anatomy."
 STYLE_VALIDATION_COMPOSITION = (
     "One complete portrait comic-page proof with three panels: environment setup, "
@@ -64,6 +67,9 @@ STYLE_VALIDATION_COMPOSITION = (
 )
 
 VisualLogic = Literal["photographic", "realistic_illustration", "stylized", "graphic"]
+ProportionFamily = Literal[
+    "naturalistic", "heroic", "elongated", "compact", "caricatured", "geometric",
+]
 StyleReferenceMode = Literal["faithful", "variation"]
 
 
@@ -75,8 +81,15 @@ class StyleSuggestion(BaseModel):
     label: str
     medium: str
     visual_logic: VisualLogic
+    proportion_family: ProportionFamily
+    character_design: str = Field(
+        min_length=20,
+        description="Concrete silhouette, head/body and limb proportions, facial simplification, "
+        "and shape language. Apply to the subject's own species; never change identity or age.",
+    )
     portfolio_role: Literal[
-        "story_fit_primary", "story_fit_secondary", "adjacent", "contrast", "wildcard"
+        "story_fit_primary", "story_fit_secondary", "story_fit_tertiary",
+        "adjacent", "contrast", "wildcard"
     ]
     palette: str
     line_rendering: str
@@ -99,24 +112,34 @@ class StyleSuggestionBatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     medium_restriction_quote: str = Field(
-        description="Exact author wording explicitly narrowing permitted medium; empty if absent."
+        description="Exact author wording explicitly narrowing medium or rendering realism; empty if absent."
+    )
+    proportion_restriction_quote: str = Field(
+        description="Exact author wording explicitly fixing character proportions or shape language; "
+        "empty if absent. A medium, mood, genre or physical identity alone does not fix proportions."
     )
     styles: list[StyleSuggestion] = Field(max_length=LLM_REQUEST_COUNT)
 
 
 _SYSTEM_PROMPT = (
-    "You are a visual art director for adapted fiction. Surface 8 genuinely distinctive "
+    f"You are a visual art director for adapted fiction. Surface {LLM_REQUEST_COUNT} genuinely distinctive "
     "visual styles a comic adaptation of this story could take.\n\n"
 
     "Work in THREE passes:\n\n"
 
     "1) BRAINSTORM (silently). List 30-40 candidate visual approaches by populating "
-    "EVERY one of these six dimensions at least 4 times. Be exhaustive — push past "
+    "EVERY one of these seven dimensions at least 4 times. Be exhaustive — push past "
     "the obvious first ten ideas:\n"
     "- MEDIUM: oil, watercolor, gouache, acrylic, pastel, charcoal, pencil, ink, digital "
     "paint, vector art, collage, screen print, lithography, woodblock, etching, "
     "photography, stained glass, mosaic, textile, mixed media, clay, wax, origami, "
     "scratchboard, sumi-e, cyanotype, papier-mâché, diorama, batik, calligraphy\n"
+    "- CHARACTER DESIGN / PROPORTIONS: naturalistic observational anatomy; heroic broad "
+    "torsos and small heads; elongated limbs and narrow silhouettes; compact large-headed "
+    "cartoon figures; elastic caricature with exaggerated features; geometric/iconic "
+    "bodies built from bold simple shapes. Vary facial abstraction, hands, feet and "
+    "silhouette, not just brushwork. Adapt these principles to every subject's species "
+    "and preserve age, relative build and identifying traits. Compact adults are still adults.\n"
     "- ERA: pre-1800s, 1800s, 1900-1940, 1940-1970, 1970-1995, 1995-present\n"
     "- REGION: East Asian, South Asian, Middle Eastern, European, North American, Latin "
     "American, African, Oceanian, Indigenous\n"
@@ -129,15 +152,28 @@ _SYSTEM_PROMPT = (
     "symbolic/iconographic, decorative/ornamental, documentary/journalistic, "
     "diagrammatic/scientific, naive/folk, grotesque/caricature\n\n"
 
-    "2) CURATE (silently). From your brainstorm, pick 8 candidates that are MAXIMALLY "
+    f"2) CURATE (silently). From your brainstorm, pick {LLM_REQUEST_COUNT} candidates that are MAXIMALLY "
     "DISTINCT. Hard constraints:\n"
     "- Prefer distinct primary mediums, palette, and finish. For explicitly narrowed "
     "author requests, vary compatible technique and rendering instead of violating the medium.\n"
-    "- Unless the author explicitly narrows the medium, the final selected portfolio "
-    "MUST include both photographic (credible lens-based anatomy, materials and light) "
-    "and realistic_illustration (credible representational anatomy and materials, drawn "
-    "or painted rather than photographed). These must be viable sequential-art options, "
-    "not stylized art merely labeled realistic. Retain stylized/graphic alternatives.\n"
+    "- The default six-proof portfolio is ILLUSTRATION-FIRST: at least four selected "
+    "options must be clearly stylized or graphic, and at least one must be "
+    "realistic_illustration (observational drawing/painting, NOT photography). Photography "
+    "is optional, never mandatory, and at most one selected option may be photographic. "
+    "For five directed neighbors, require at least three stylized/graphic options. "
+    "A dark, serious or historical story is NOT a request for realistic rendering.\n"
+    "- The selected set must cover at least FOUR distinct proportion_family values, "
+    "including at least THREE non-naturalistic families. Palette or medium changes "
+    "on the same realistically proportioned cast do not count as different designs. "
+    "Ensure these families can survive choosing one candidate per required role.\n"
+    "- Explicit author constraints take precedence ONLY on the axis they constrain. "
+    "Quote a medium/realism restriction in medium_restriction_quote, and a shape or "
+    "proportion restriction in proportion_restriction_quote. Leave either empty when "
+    "not explicitly constrained. Woodblock-only still permits different proportions; "
+    "naturalistic proportions still permit different illustrative media. Never invent "
+    "a restriction from the story's identity anchors or mood. An explicit photographic-only "
+    "or photorealistic direction may constrain both axes: quote the same author phrase "
+    "for both when it requires naturalistic bodies.\n"
     "- At least 4 candidates should match the mood; at least 1 should productively contrast it.\n\n"
 
     "3) WRITE. Every template must name at least one real anchor: a specific artist, "
@@ -156,11 +192,13 @@ _SYSTEM_PROMPT = (
     "lowercase words (e.g. gouache, cut-paper collage, 35mm photography). "
     "Name the medium honestly and specifically.\n\n"
 
-    "Return eight candidates across five portfolio roles, with at least one candidate "
-    "for every required role. Code selects one per role, not the first five positions. "
-    "Place photographic and realistic_illustration options in different roles so both "
-    "survive final curation. With an author direction, return candidates for "
-    "story_fit_primary, adjacent, contrast, and wildcard; the faithful proof is separate. "
+    "Return twelve candidates across six portfolio roles, preferably two candidates "
+    "per role: story_fit_primary, story_fit_secondary, story_fit_tertiary, adjacent, "
+    "contrast, wildcard. Code selects one per role, not the first six positions. "
+    "Offer contrasting proportion families within roles so curation has real choices. "
+    "With an author direction, omit story_fit_tertiary and cover the other FIVE roles; "
+    "the sixth, faithful proof is separate. Do not force the faithful proof into the "
+    "default illustration or proportion mix. "
     "Contrast and wildcard must remain inside any explicit author medium restriction. "
     "Judge every direction as sequential art: repeatable identities, readable action, "
     "expressive faces, environments, and value separation.\n\n"
@@ -175,10 +213,13 @@ _SYSTEM_PROMPT = (
     "on every page or full bleed on every page — plus one panel-border and gutter treatment. "
     "Never alternate systems by page and never use scribbled borders unless that exact "
     "border treatment is the declared invariant.\n\n"
-    "Output a JSON object with EXACTLY TWO root keys: medium_restriction_quote and styles. The quote must be "
-    "verbatim author wording explicitly limiting medium, or empty; story mood alone "
-    "never narrows medium. Every style needs label, medium, visual_logic "
-    "(photographic, realistic_illustration, stylized, or graphic), portfolio_role, "
+    "Output a JSON object with EXACTLY THREE root keys: medium_restriction_quote, "
+    "proportion_restriction_quote, and styles. Each quote must be verbatim author "
+    "wording explicitly limiting that axis, or empty. Every style needs label, medium, "
+    "visual_logic (photographic, realistic_illustration, stylized, or graphic), "
+    "proportion_family (naturalistic, heroic, elongated, compact, caricatured, or geometric), "
+    "character_design (concrete silhouette, head/body and limb proportions, face and shape "
+    "language, not generic 'expressive characters'), portfolio_role, "
     "palette, line_rendering, lighting_value, lettering, lettering_preset, lettering_design, page_framing, "
     "sequential_art_strengths, story_fit, risk, and template. Inside EACH styles item, choose lettering_preset: literary "
     "(serif captions and serif speech), classic (comic type), pulp (typewriter captions/bold effects), "
@@ -209,6 +250,8 @@ def _stable_suggestion_id(suggestion: dict) -> str:
         suggestion.get("lettering") or DEFAULT_LETTERING_STANDARD,
         suggestion.get("page_framing") or DEFAULT_PAGE_FRAMING_STANDARD,
     )
+    if suggestion.get("character_design") or suggestion.get("proportion_family"):
+        values += (suggestion.get("visual_logic"), suggestion.get("proportion_family"), suggestion.get("character_design"))
     if suggestion.get("lettering_preset"):
         values += (suggestion["lettering_preset"],)
     if suggestion.get("lettering_design") is not None:
@@ -232,6 +275,8 @@ def normalize_suggestion(
         "label": suggestion.get("label") or "Untitled direction",
         "medium": suggestion.get("medium") or "mixed media",
         "visual_logic": suggestion.get("visual_logic"),
+        "proportion_family": suggestion.get("proportion_family"),
+        "character_design": suggestion.get("character_design") or "",
         "style_reference_mode": suggestion.get("style_reference_mode") or (
             "variation" if (suggestion.get("origin") or origin) == "generated_neighbor" else "faithful"
         ),
@@ -277,12 +322,15 @@ def _dedupe_suggestions(
     existing_suggestions: list[dict] | None = None,
 ) -> list[dict]:
     """Drop empty or repeated directions without excluding a whole medium."""
-    prior = {str(s.get("template") or "").strip().casefold()
-             for s in (existing_suggestions or [])}
+    def direction_key(suggestion: dict) -> tuple[str, str, str]:
+        return tuple(str(suggestion.get(field) or "").strip().casefold()
+                     for field in ("template", "proportion_family", "character_design"))
+
+    prior = {direction_key(s) for s in (existing_suggestions or [])}
     kept: list[dict] = []
     for s in new_suggestions:
-        key = str(s.get("template") or "").strip().casefold()
-        if not key or key in prior:
+        key = direction_key(s)
+        if not key[0] or key in prior:
             continue
         kept.append(s)
         prior.add(key)
@@ -300,8 +348,17 @@ def _field_distance(a: str, b: str) -> float:
 
 
 def _portfolio_distance(a: dict, b: dict) -> float:
-    return sum(_field_distance(str(a.get(field) or ""), str(b.get(field) or ""))
-               for field in _DIVERSITY_FIELDS) / len(_DIVERSITY_FIELDS)
+    surface_distance = sum(
+        _field_distance(str(a.get(field) or ""), str(b.get(field) or ""))
+        for field in _DIVERSITY_FIELDS
+    ) / len(_DIVERSITY_FIELDS)
+    # Categorical shape differences outweigh adjective/medium novelty. Otherwise
+    # an all-naturalistic pool can win by describing six finishes differently.
+    shape_distance = bool(a.get("proportion_family") and b.get("proportion_family")
+                          and a["proportion_family"] != b["proportion_family"])
+    logic_distance = bool(a.get("visual_logic") and b.get("visual_logic")
+                          and a["visual_logic"] != b["visual_logic"])
+    return 1.5 * shape_distance + 0.5 * logic_distance + surface_distance
 
 
 
@@ -324,7 +381,9 @@ def _missing_portfolio_roles(candidates: list[dict], roles: tuple[str, ...]) -> 
 
 
 def _select_role_portfolio(
-    candidates: list[dict], roles: tuple[str, ...], *, require_realism: bool = False,
+    candidates: list[dict], roles: tuple[str, ...], *,
+    require_illustration_balance: bool = False,
+    require_proportion_diversity: bool = False,
 ) -> list[dict]:
     groups = [
         [candidate for index, candidate in enumerate(candidates)
@@ -334,14 +393,22 @@ def _select_role_portfolio(
     for role, group in zip(roles, groups):
         if not group:
             raise RuntimeError(f"Style curation did not produce required role: {role}")
-    portfolios = (
-        choices for choices in product(*groups)
-        if not require_realism or {"photographic", "realistic_illustration"} <= {
-            candidate.get("visual_logic") for candidate in choices
-        }
-    )
+
+    def eligible(choices: tuple[dict, ...]) -> bool:
+        if require_illustration_balance:
+            logics = [candidate.get("visual_logic") for candidate in choices]
+            if ("realistic_illustration" not in logics
+                    or logics.count("photographic") > 1
+                    or sum(logic in {"stylized", "graphic"} for logic in logics) < len(roles) - 2):
+                return False
+        if require_proportion_diversity:
+            families = {candidate.get("proportion_family") for candidate in choices} - {None, ""}
+            if len(families) < min(4, len(roles)) or len(families - {"naturalistic"}) < min(3, len(roles)):
+                return False
+        return True
+
     selected = max(
-        portfolios,
+        (choices for choices in product(*groups) if eligible(choices)),
         key=lambda choices: sum(
             _portfolio_distance(left, right)
             for index, left in enumerate(choices) for right in choices[index + 1:]
@@ -349,9 +416,17 @@ def _select_role_portfolio(
         default=None,
     )
     if selected is None:
+        requirements = []
+        if require_illustration_balance:
+            requirements.append(
+                f"at least {len(roles) - 2} stylized/graphic options, at least one "
+                "realistic_illustration, and at most one optional photographic option"
+            )
+        if require_proportion_diversity:
+            requirements.append("four proportion families including three non-naturalistic families")
         raise RuntimeError(
-            "Style curation needs photographic and realistic illustration options "
-            "in distinct portfolio roles; no valid portfolio was generated."
+            "Style curation cannot form a balanced portfolio with one candidate per role: "
+            + "; ".join(requirements) + "."
         )
     return list(selected)
 
@@ -362,12 +437,17 @@ def _build_avoid_block(pool: list[dict]) -> str:
     mediums = sorted({m for s in pool if (m := (s.get("medium") or "").strip().lower())})
     medium_line = (
         "Previously used mediums: vary their treatment or choose other mediums, but do "
-        "not sacrifice required realism coverage or author medium restrictions: "
+        "not sacrifice illustration balance, proportion diversity, or author restrictions: "
         + ", ".join(mediums) + ".\n\n"
         if mediums
         else ""
     )
-    summaries = [f'"{s.get("label", "Unknown")}": {s.get("template", "")}' for s in pool]
+    summaries = [
+        f'"{s.get("label", "Unknown")}" [{s.get("visual_logic") or "unspecified"}; '
+        f'{s.get("proportion_family") or "unspecified"}]: {s.get("template", "")} '
+        f'Character design: {s.get("character_design") or "not specified"}'
+        for s in pool
+    ]
     return (
         f"\n\nCRITICAL: The following {len(pool)} styles have ALREADY been "
         f"suggested for this story. You MUST explore completely different visual "
@@ -404,21 +484,23 @@ async def generate_suggestions(
     existing_suggestions: list[dict] | None = None,
     custom_direction: dict | None = None,
 ):
-    """Generate typed directions and curate roles with real rendering-category coverage.
+    """Curate an illustration-first portfolio with distinct character designs.
 
-    Previously shown options guide novelty without excluding entire rendering categories.
-    A bounded second text call may complete an undersized pool; invalid roles or missing
-    realism fail explicitly rather than manufacturing substitute directions.
+    Schema repair, missing roles, and missing diversity share two text attempts.
+    No image is submitted until a valid portfolio exists; never invent fallback styles.
     """
     first_usage = None
     medium_restriction_quote = ""
+    proportion_restriction_quote = ""
+    curation_error: RuntimeError | None = None
     invalid_response: dict | None = None
     validation_error: ValidationError | None = None
 
     async def _call_llm(
         avoid_pool: list[dict], *, required_roles: tuple[str, ...] = (),
     ) -> list[dict] | None:
-        nonlocal first_usage, medium_restriction_quote, invalid_response, validation_error
+        nonlocal first_usage, medium_restriction_quote, proportion_restriction_quote
+        nonlocal invalid_response, validation_error
         role_gap = (
             "\n\nThe prior response was missing these required portfolio roles: "
             + ", ".join(required_roles)
@@ -430,6 +512,9 @@ async def generate_suggestions(
             _SYSTEM_PROMPT
             + _build_avoid_block(avoid_pool)
             + role_gap
+            + ("\n\nRepair the prior portfolio gap: " + str(curation_error)
+               + " Supply complementary candidates in the required roles; do not repeat "
+               "the same naturalistic design with new palette names." if curation_error else "")
             + config.generation_language_instruction()
         )
         user = _suggestion_story_context(story_bible, custom_direction)
@@ -466,32 +551,45 @@ async def generate_suggestions(
             logger.warning("Style suggestion response failed schema validation: %s", exc)
             return None
         invalid_response, validation_error = None, None
-        quote = result.medium_restriction_quote.strip()
         author_text = str((custom_direction or {}).get("text") or "")
-        if quote and (not author_text or quote not in author_text):
-            raise ValueError("Medium restriction must quote the author direction verbatim.")
-        medium_restriction_quote = quote
+        for axis, quote in (
+            ("Medium", result.medium_restriction_quote.strip()),
+            ("Proportion", result.proportion_restriction_quote.strip()),
+        ):
+            if quote and (not author_text or quote not in author_text):
+                raise ValueError(f"{axis} restriction must quote the author direction verbatim.")
+        # A valid explicit restriction is not lost when a completion response
+        # omits its quote. Neither axis is inferred from genre or identity anchors.
+        medium_restriction_quote = medium_restriction_quote or result.medium_restriction_quote.strip()
+        proportion_restriction_quote = proportion_restriction_quote or result.proportion_restriction_quote.strip()
         return [style.model_dump() for style in result.styles]
 
-    portfolio_roles = (
-        ("story_fit_primary", "adjacent", "contrast", "wildcard")
-        if custom_direction else PORTFOLIO_ROLES
-    )
-
+    portfolio_roles = NEIGHBOR_ROLES if custom_direction else PORTFOLIO_ROLES
     pool = existing_suggestions or []
     suggestions: list[dict] = []
-    required_count = 4 if custom_direction else SAMPLE_COUNT
-    # Schema correction and portfolio completion share one bounded budget.
+    selected: list[dict] | None = None
+    required_count = len(portfolio_roles)
+    # A numerically complete pool can still be all realism or the same anatomy.
+    # Validate the actual role-compatible selection on EVERY text attempt.
     for attempt in range(_GENERATION_MAX_ATTEMPTS):
         missing_roles = _missing_portfolio_roles(suggestions, portfolio_roles)
-        if len(suggestions) >= required_count and not missing_roles:
-            break
         retry_pool = pool + suggestions
         candidates = await _call_llm(
             retry_pool, required_roles=missing_roles if attempt else (),
         )
-        if candidates is not None:
-            suggestions.extend(_dedupe_suggestions(candidates, retry_pool))
+        if candidates is None:
+            continue
+        suggestions.extend(_dedupe_suggestions(candidates, retry_pool))
+        try:
+            selected = _select_role_portfolio(
+                suggestions, portfolio_roles,
+                require_illustration_balance=not bool(medium_restriction_quote),
+                require_proportion_diversity=not bool(proportion_restriction_quote),
+            )
+        except RuntimeError as exc:
+            curation_error = exc
+        else:
+            break
 
     if validation_error is not None:
         raise RuntimeError(
@@ -499,21 +597,23 @@ async def generate_suggestions(
             f"{_GENERATION_MAX_ATTEMPTS} attempts. Retry style suggestions. "
             f"{validation_error}"
         ) from validation_error
-
     if len(suggestions) < required_count:
         raise RuntimeError(
             f"Style curation produced {len(suggestions)} usable directions; "
             f"{required_count} are required. Please retry."
         )
+    if selected is None:
+        raise RuntimeError(
+            f"{curation_error} No valid portfolio after {_GENERATION_MAX_ATTEMPTS} "
+            "text attempts. Retry style suggestions."
+        ) from curation_error
     curated = [
         normalize_suggestion(
             suggestion,
             role=portfolio_roles[index],
             origin="generated_neighbor" if custom_direction else "generated",
         )
-        for index, suggestion in enumerate(_select_role_portfolio(
-            suggestions, portfolio_roles, require_realism=not bool(medium_restriction_quote),
-        ))
+        for index, suggestion in enumerate(selected)
     ]
     if custom_direction and custom_direction.get("id"):
         for suggestion in curated:
@@ -539,6 +639,9 @@ STYLE_SAMPLE_BRIEF_SYSTEM_PROMPT = (
     "listed subject and no additional characters, animals, creatures, or crowds. "
     "Scene evidence is context only: mentions of anyone outside the roster are not "
     "permission to depict them. Preserve each subject's species and anatomy. "
+    "Identity anchors describe who is present, not a mandatory naturalistic drawing "
+    "style. Do not prescribe head-to-body ratios, limb proportions, facial rendering, "
+    "or anatomical realism: each candidate character design owns those choices. "
     "Do not quote source prose as lettering. Let each candidate art direction own "
     "the palette, contrast, and value structure.\n"
     "\n"
@@ -710,7 +813,15 @@ STYLE_PROOF_ART_CONSTRAINTS = (
     "Reserve low-detail natural background, not blank white boxes, in these normalized "
     "page-space rectangles (x, y, width, height): narration (.05,.04,.47,.14), "
     "speech (.54,.37,.40,.13), thought (.05,.53,.44,.16), effect (.58,.83,.36,.12). "
-    "Keep faces, hands and important action outside these four spaces."
+    "Keep faces, hands and important action outside these four spaces. "
+    "CHARACTER DESIGN AUTHORITY: identity anchors preserve species, age, distinguishing "
+    "features, relative build and wardrobe; they do not mandate realistic rendering. "
+    "Apply the selected character-design system to silhouette, head/body ratio, limbs "
+    "and facial abstraction consistently in every panel, adapted to each species. "
+    "Do not normalize stylized or graphic figures back to realistic adult proportions "
+    "or photographic musculature. Exaggeration must remain intentional and readable, "
+    "not extra limbs, accidental distortions, changed identity or changed age. "
+    "For a naturalistic direction, retain its observational proportions."
 )
 
 
@@ -981,7 +1092,7 @@ async def generate_samples_for_indices(
 
 
 async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> None:
-    """Execute Stage 2: 5 style suggestions + 5 sample images."""
+    """Execute Stage 2: six style suggestions and six sample images."""
     bible = artifacts.read_story_bible(project_dir)
     existing_suggestions = load_suggestions(project_dir)
     needs_suggestions = not existing_suggestions

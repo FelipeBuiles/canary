@@ -26,7 +26,7 @@ describe("StyleDirectionComposer", () => {
 
     expect(onAutomatic).not.toHaveBeenCalled();
     expect(screen.getByText("~30 credits")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "CREATE FIVE DIRECTIONS" }));
+    await user.click(screen.getByRole("button", { name: "CREATE SIX DIRECTIONS" }));
 
     expect(onAutomatic).toHaveBeenCalledOnce();
   });
@@ -49,14 +49,14 @@ describe("StyleDirectionComposer", () => {
     });
   });
 
-  it("can request the supplied direction plus four neighbors", async () => {
+  it("can request the supplied direction plus five neighbors", async () => {
     const user = userEvent.setup();
     const { onCustom } = renderComposer();
 
     await user.click(screen.getByRole("radio", { name: /Bring a direction/i }));
     await user.type(screen.getByLabelText("DESCRIBE THE DIRECTION"), "Luminous ink wash");
-    await user.click(screen.getByRole("radio", { name: "This direction + four neighbors" }));
-    await user.click(screen.getByRole("button", { name: "CREATE FIVE DIRECTIONS" }));
+    await user.click(screen.getByRole("radio", { name: "This direction + five neighbors" }));
+    await user.click(screen.getByRole("button", { name: "CREATE SIX DIRECTIONS" }));
 
     expect(onCustom).toHaveBeenCalledWith({
       direction: "Luminous ink wash",
@@ -102,9 +102,9 @@ describe("StyleDirectionComposer", () => {
     const input = container.querySelector<HTMLInputElement>('input[type="file"]');
     expect(input).not.toBeNull();
     await user.upload(input!, new File(["pixels"], "reference.png", { type: "image/png" }));
-    await user.click(screen.getByRole("radio", { name: "This direction + four neighbors" }));
+    await user.click(screen.getByRole("radio", { name: "This direction + five neighbors" }));
 
     expect(screen.getByText(/Add a short text description/i)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "CREATE FIVE DIRECTIONS" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "CREATE SIX DIRECTIONS" })).toHaveProperty("disabled", true);
   });
 });
