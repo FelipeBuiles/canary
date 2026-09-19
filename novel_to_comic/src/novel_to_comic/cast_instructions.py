@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from novel_to_comic.cast_reference_inputs import CastReferenceInput, resolve_reference_inputs, saved_reference_inputs
 from novel_to_comic.codex_dev import classify_operations
 from novel_to_comic.server.codex_admission import prompt_image_operations
