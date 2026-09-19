@@ -63,17 +63,17 @@ describe("Sentry SDK upgrade contract", () => {
     const beforeSend = vi.mocked(Sentry.init).mock.calls[0]?.[0]?.beforeSend;
     expect(beforeSend).toBeTypeOf("function");
     if (!beforeSend) throw new Error("Sentry header redaction is not configured");
-    const event = { request: { headers: {
+    const event = { type: undefined, request: { headers: {
       Authorization: "Bearer private", Cookie: "session=private",
       "X-API-Key": "private", "x-canary-OPS-token": "private",
       "Content-Type": "application/json",
     } } };
-    expect(await beforeSend(event, {})).toEqual({ request: { headers: {
+    expect(await beforeSend(event, {})).toEqual({ type: undefined, request: { headers: {
       Authorization: "[Filtered]", Cookie: "[Filtered]",
       "X-API-Key": "[Filtered]", "x-canary-OPS-token": "[Filtered]",
       "Content-Type": "application/json",
     } } });
-    expect(await beforeSend({}, {})).toEqual({});
+    expect(await beforeSend({ type: undefined }, {})).toEqual({ type: undefined });
   });
 
   it("clears the telemetry identity on sign-out", () => {
