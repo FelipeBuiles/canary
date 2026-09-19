@@ -1,0 +1,50 @@
+{
+  "model": "jev-1.13.0",
+  "rubric_version": "canary-decisions-v1",
+  "languages": [
+    "en"
+  ],
+  "accepted_labels": {
+    "citation_support": {
+      "supported": {
+        "probability": 0.98,
+        "confidence": 0.95,
+        "margin": 0.9
+      }
+    },
+    "participation": {
+      "direct_action": {
+        "probability": 0.98,
+        "confidence": 0.95,
+        "margin": 0.9
+      },
+      "staged_recollection": {
+        "probability": 0.98,
+        "confidence": 0.95,
+        "margin": 0.9
+      },
+      "background_only": {
+        "probability": 0.98,
+        "confidence": 0.95,
+        "margin": 0.9
+      }
+    },
+    "correction_route": {
+      "display_lettering": {
+        "probability": 0.99,
+        "confidence": 0.98,
+        "margin": 0.95
+      },
+      "artwork": {
+        "probability": 0.99,
+        "confidence": 0.98,
+        "margin": 0.95
+      },
+      "canonical_story": {
+        "probability": 0.99,
+        "confidence": 0.98,
+        "margin": 0.95
+      }
+    }
+  }
+}
