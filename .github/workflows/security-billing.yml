@@ -1,0 +1,67 @@
+name: Security and billing database contracts
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-billing-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  database:
+    name: PostgreSQL authorization and ledger
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: canary_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d canary_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CREDIT_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/canary_test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: novel_to_comic/uv.lock
+      - name: Install dependencies
+        working-directory: novel_to_comic
+        run: uv sync --frozen --extra web --extra dev
+      - name: Focused security and billing API contracts
+        working-directory: novel_to_comic
+        # Keep money/security checks independently visible; this does not
+        # replace or relax the normal whole-repository lint/test/build gates.
+        run: >-
+          uv run pytest -q tests/test_auth.py
+          tests/test_security_boundary_contracts.py tests/test_checkout_receipts.py
+          tests/test_billing_receipt_integration.py tests/test_project_authority_routes.py
+      - name: Bootstrap disposable database
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          psql "$CREDIT_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f novel_to_comic/tests/fixtures/security_database_bootstrap.sql
+          psql "$CREDIT_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f docs/supabase-schema.sql
+          psql "$CREDIT_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f docs/sql/2026-09-19-project-trust-boundary.sql
+          # Migration replay must be safe and keep browser grants revoked.
+          psql "$CREDIT_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f docs/sql/2026-09-19-project-trust-boundary.sql
+      - name: Exercise real ledger transactions and browser roles
+        working-directory: novel_to_comic
+        run: uv run pytest -q tests/test_credit_ledger_postgres.py tests/test_project_data_api_postgres.py
