@@ -22,6 +22,22 @@ production gateway uses `/app/.venv-litellm`; the standalone gateway image uses
 `/app/.venv`. Neither is resolved from an upstream gateway image plus a second,
 unlocked package installation anymore.
 
+The database-enabled gateway explicitly locks Prisma 0.15.0 and psycopg 3.3.6.
+LiteLLM's PyPI `proxy` extra does not include its entire Docker database runtime;
+see the upstream [dependency groups](https://github.com/BerriAI/litellm/blob/v1.101.0/pyproject.toml)
+and [image build](https://github.com/BerriAI/litellm/blob/v1.101.0/Dockerfile).
+Both Canary images generate Prisma's client and cache its matching CLI/engines
+at build time. They retain the reviewed Node runtime, but remove npm after
+client generation. The production supervisor adds the gateway's executable
+path only to the gateway process, not the application's Python environment.
+
+`scripts/smoke_gateway.py` verifies both database-free startup and a fresh
+PostgreSQL-backed startup, including API-key creation and a mock request using
+that generated key. It creates uniquely named disposable containers/network
+and never uses the operator's existing Compose database or provider credentials.
+Normal CI runs this after building the gateway image. Installing successfully
+or serving a database-free health check alone would miss this failure mode.
+
 ## September refresh
 
 The app lock updates 53 existing Python package versions, including transitive
