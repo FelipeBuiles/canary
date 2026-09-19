@@ -156,7 +156,7 @@ $RECYCLE.BIN/
 .envrc
 .tool-versions
 .python-version
-.nvmrc
+# .nvmrc is tracked: one Node runtime for development, CI and Docker.
 
 # ── Agent / editor metadata (project-local; user-specific) ────────────────────
 .claude/cache/

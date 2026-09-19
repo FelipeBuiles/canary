@@ -190,10 +190,10 @@ def test_every_cast_route_the_ui_calls_is_mounted():
 
     app = create_app(Path("/tmp"))
     mounted = {
-        (path, method)
-        for route in app.routes
-        for path in [route.path]
-        for method in (getattr(route, "methods", None) or ())
+        (path, method.upper())
+        for path, operations in app.openapi()["paths"].items()
+        for method in operations
+        if method in {"get", "post", "put", "patch", "delete", "options", "head", "trace"}
     }
     prefix = "/api/projects/{project_id}"
     expected = {

@@ -7,7 +7,7 @@
 # — safe to expose in the image; RLS gates access). Pass via
 # `docker build --build-arg VITE_...=...`
 # or Fly's `fly deploy --build-arg`.
-FROM node:22-slim AS frontend
+FROM node:24.21.0-bookworm-slim AS frontend
 # jsdom's real canvas peer needs these when no prebuilt exists (Linux ARM64).
 # They stay in the frontend builder; the final Python image copies only dist.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -58,14 +58,14 @@ RUN export VITE_SUPABASE_URL="$VITE_SUPABASE_URL" \
 # keys off the public path (the proxy is bound to loopback, never exposed)
 # while letting the whole box scale to zero on idle and trimming ~$10-15/mo
 # of idle compute. See docs/deploy.md for the architecture rationale.
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 WORKDIR /app
 ARG CANARY_VERSION=unknown
 ARG CANARY_BUILD_TIMESTAMP=unknown
 ENV CANARY_VERSION="$CANARY_VERSION" \
     CANARY_BUILD_TIMESTAMP="$CANARY_BUILD_TIMESTAMP"
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.12.17 /uv /usr/local/bin/uv
 
 # Install Python dependencies (layer-cached separately from source)
 # --no-install-project skips building the package itself (src/ not present yet)
@@ -104,18 +104,28 @@ RUN cd novel_to_comic && uv sync --extra web --frozen --no-dev
 # websockets, anthropic, …) that the docker.litellm.ai prebuilt image ships
 # with. Without it the proxy boots then immediately ModuleNotFoundError-exits.
 #
-# Vertex AI support is NOT in [proxy] (the Google provider deps are optional in
-# litellm 1.83.14). Without google-cloud-aiplatform + google-auth the proxy
-# boots cleanly but every vertex_ai/* model group 500s at request time with
-# "ModuleNotFoundError: No module named 'google'" — which silently breaks the
-# whole pipeline (extract/panel/prompt/image stages all route to Vertex). The
-# prebuilt docker.litellm.ai image ships these; we add them explicitly to match.
-RUN python -m venv /app/.venv-litellm \
-    && /app/.venv-litellm/bin/pip install --no-cache-dir 'litellm[proxy]==1.83.14' \
-    && /app/.venv-litellm/bin/pip install --no-cache-dir \
-        'google-cloud-aiplatform>=1.133' \
-        'google-auth>=2.49' \
-        'google-genai==1.75.0'
+# Both local Compose and production resolve this exact independent lockfile.
+# Keep the gateway isolated: its Rich/WebSocket constraints differ from the app.
+COPY litellm/pyproject.toml litellm/uv.lock /app/gateway/
+RUN UV_PROJECT_ENVIRONMENT=/app/.venv-litellm \
+    uv sync --project /app/gateway --locked --no-dev --no-install-project
+
+# Prisma's generated client and CLI engines must exist before startup.
+# Node is shared with the reviewed frontend runtime; npm is build-only.
+COPY --from=frontend /usr/local/bin/node /usr/local/bin/node
+COPY --from=frontend /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN apt-get update && apt-get install -y --no-install-recommends openssl \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm
+ENV PRISMA_BINARY_CACHE_DIR=/opt/prisma/binaries \
+    PRISMA_CLI_PATH=/opt/prisma/binaries/node_modules/.bin/prisma \
+    PRISMA_CLI_QUERY_ENGINE_TYPE=binary
+RUN PATH="/app/.venv-litellm/bin:$PATH" HOME=/opt/prisma XDG_CACHE_HOME=/opt/prisma/.cache \
+    /app/.venv-litellm/bin/python -c 'from importlib.util import find_spec; from pathlib import Path; import subprocess, sys; schema = Path(find_spec("litellm").origin).parent / "proxy/schema.prisma"; assert schema.is_file(), schema; subprocess.run([sys.executable, "-m", "prisma", "generate", "--schema", str(schema)], check=True)' \
+    && chmod -R a+rX /opt/prisma \
+    && test -x /opt/prisma/binaries/node_modules/.bin/prisma \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm
+ENV PRISMA_OFFLINE_MODE=true
 
 COPY litellm/patch_http_errors.py /app/patch_http_errors.py
 RUN /app/.venv-litellm/bin/python /app/patch_http_errors.py

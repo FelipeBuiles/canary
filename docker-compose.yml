@@ -68,7 +68,7 @@ services:
     build:
       context: .
       dockerfile: litellm/Dockerfile
-    image: canary-litellm:1.83.14-google-genai-1.75.0
+    image: canary-litellm:1.101.0-google-genai-2.24.0
     command: ["--port", "4000", "--config", "/app/config.yaml"]
     ports:
       - "4000:4000"
@@ -107,7 +107,7 @@ services:
   # from langfuse-postgres so the two schemas never mix. The proxy runs its
   # Prisma migrations against this on first boot, so no manual setup is needed.
   litellm-db:
-    image: docker.io/postgres:17
+    image: docker.io/postgres:17.11
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${LITELLM_POSTGRES_USER:-litellm}
@@ -124,7 +124,7 @@ services:
       retries: 10
 
   langfuse-worker:
-    image: docker.io/langfuse/langfuse-worker:3.172.0
+    image: docker.io/langfuse/langfuse-worker:3.225.8
     restart: unless-stopped
     depends_on: &langfuse-depends-on
       langfuse-postgres:
@@ -165,7 +165,7 @@ services:
       REDIS_TLS_ENABLED: ${REDIS_TLS_ENABLED:-false}
 
   langfuse-web:
-    image: docker.io/langfuse/langfuse:3.172.0
+    image: docker.io/langfuse/langfuse:3.225.8
     restart: unless-stopped
     depends_on: *langfuse-depends-on
     ports:
@@ -184,7 +184,7 @@ services:
       LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-}
 
   langfuse-postgres:
-    image: docker.io/postgres:17
+    image: docker.io/postgres:17.11
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${LANGFUSE_POSTGRES_USER:-postgres}
@@ -203,7 +203,7 @@ services:
       retries: 10
 
   langfuse-clickhouse:
-    image: docker.io/clickhouse/clickhouse-server:26.3.9.8
+    image: docker.io/clickhouse/clickhouse-server:26.3.33.24
     restart: unless-stopped
     user: "101:101"
     environment:
@@ -225,7 +225,7 @@ services:
       start_period: 30s
 
   langfuse-minio:
-    image: cgr.dev/chainguard/minio
+    image: cgr.dev/chainguard/minio@sha256:e7728e37a015dcd2f2b146abc4aedc0096769ac72cb64cc9ed36b7f4183361e1
     restart: unless-stopped
     entrypoint: sh
     command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
@@ -244,7 +244,7 @@ services:
       retries: 5
 
   langfuse-redis:
-    image: docker.io/redis:7.4
+    image: docker.io/redis:7.4.11
     restart: unless-stopped
     command: ["--requirepass", "${REDIS_AUTH:-myredissecret}", "--maxmemory-policy", "noeviction"]
     ports:
