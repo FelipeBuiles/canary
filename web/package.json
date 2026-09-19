@@ -9,7 +9,7 @@
     "brand:preview": "npm run brand:build && vite --open /brand-system/preview/",
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "audit:production": "node scripts/audit-production.mjs",
+    "audit:production": "npm audit --omit=dev --audit-level=high",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",

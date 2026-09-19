@@ -942,7 +942,7 @@ export function BackofficePage() {
   const [connection, setConnection] = useState<OperatorConnection>(() => readOperatorConnection());
   const [snapshot, setSnapshot] = useState<OperatorSnapshot | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(Boolean(connection.token));
   const [activeView, setActiveView] = useState<BackofficeView>("overview");
   const [range, setRange] = useState<RangeKey>("30d");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -961,14 +961,8 @@ export function BackofficePage() {
   }, [notice]);
 
   useEffect(() => {
-    if (!connection.token) {
-      setSnapshot(null);
-      setLoading(false);
-      return;
-    }
+    if (!connection.token) return;
     let cancelled = false;
-    setLoading(true);
-    setConnectionError(null);
     fetchOperatorSnapshot(connection)
       .then((nextSnapshot) => {
         if (cancelled) return;
@@ -1060,6 +1054,7 @@ export function BackofficePage() {
   function connect(nextConnection: OperatorConnection) {
     saveOperatorConnection(nextConnection);
     setConnection(nextConnection);
+    setLoading(Boolean(nextConnection.token));
     setSnapshot(null);
     setUsers([]);
     setConnectionError(null);
@@ -1067,6 +1062,7 @@ export function BackofficePage() {
 
   function disconnect() {
     clearOperatorToken();
+    setLoading(false);
     setConnection((current) => ({ ...current, token: "" }));
     setSnapshot(null);
     setUsers([]);

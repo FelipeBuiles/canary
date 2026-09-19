@@ -27,6 +27,14 @@ interface Drag {
   original: LetteringElement;
 }
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n));
+function resizeHandlePosition(element: LetteringElement, aspect: number) {
+  const box = elementRect(element), angle = element.rotation * Math.PI / 180;
+  const dx = box.width / 2 * element.scale, dy = box.height / 2 * element.scale;
+  return {
+    x: box.x + box.width / 2 + dx * Math.cos(angle) - dy / aspect * Math.sin(angle),
+    y: box.y + box.height / 2 + dx * aspect * Math.sin(angle) + dy * Math.cos(angle),
+  };
+}
 export function LetteringCanvas({ state, style, artUrl, selected, disabled, onArtReady, select, focusText, begin, preview, commit, cancel, change }: Props) {
   const { t } = useI18n();
   const viewport = useRef<HTMLDivElement>(null), page = useRef<HTMLDivElement>(null);
@@ -52,6 +60,8 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
   }, []);
   const width = Math.max(160, Math.min(size.width - 40, (size.height - 40) * state.canvas_aspect_ratio)) * zoom;
   const selectedElement = state.elements.find(e => e.id === selected && !e.hidden);
+  // Geometry is pure render data; pointer handlers read refs only on events.
+  const resizeHandle = selectedElement ? resizeHandlePosition(selectedElement, state.canvas_aspect_ratio) : null;
   function down(event: PointerEvent<HTMLButtonElement>, element: LetteringElement, mode: Drag["mode"]) {
     if (disabled || panMode || event.button !== 0)
       return;
@@ -152,16 +162,10 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
             const rect = elementRect(element);
             return <button key={element.id} type="button" className={`lettering-hit ${selected === element.id ? "is-selected" : ""} ${element.resolved?.overflow ? "has-overflow" : ""}`} data-element-id={element.id} disabled={disabled || panMode} aria-pressed={selected === element.id} aria-label={`${t("Select lettering")} ${index + 1}: ${element.resolved?.text ?? ""}`} style={{ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, transform: `rotate(${element.rotation}deg) scale(${element.scale})`, zIndex: Math.max(1, element.z_index + 1001) }} onClick={event => { event.stopPropagation(); select(element.id); }} onDoubleClick={focusText} onPointerDown={event => down(event, element, "move")} onPointerMove={move} onPointerUp={end} onPointerCancel={abort} onLostPointerCapture={end} onKeyDown={event => nudge(event, element, "move")} />;
           })}
-          {selectedElement && !panMode && (() => {
-            const box = elementRect(selectedElement), angle = selectedElement.rotation * Math.PI / 180;
-            const dx = box.width / 2 * selectedElement.scale, dy = box.height / 2 * selectedElement.scale;
-            const rx = box.x + box.width / 2 + dx * Math.cos(angle) - dy / state.canvas_aspect_ratio * Math.sin(angle);
-            const ry = box.y + box.height / 2 + dx * state.canvas_aspect_ratio * Math.sin(angle) + dy * Math.cos(angle);
-            return <>
-              <button type="button" className="lettering-handle resize" aria-label={t("Resize selected lettering")} disabled={disabled} style={{ left: `${rx * 100}%`, top: `${ry * 100}%` }} onPointerDown={e => down(e, selectedElement, "resize")} onPointerMove={move} onPointerUp={end} onPointerCancel={abort} onLostPointerCapture={end} onKeyDown={e => nudge(e, selectedElement, "resize")}><span aria-hidden="true" /></button>
+          {selectedElement && resizeHandle && !panMode && <>
+              <button type="button" className="lettering-handle resize" aria-label={t("Resize selected lettering")} disabled={disabled} style={{ left: `${resizeHandle.x * 100}%`, top: `${resizeHandle.y * 100}%` }} onPointerDown={e => down(e, selectedElement, "resize")} onPointerMove={move} onPointerUp={end} onPointerCancel={abort} onLostPointerCapture={end} onKeyDown={e => nudge(e, selectedElement, "resize")}><span aria-hidden="true" /></button>
               {selectedElement.tail_target && <button type="button" className="lettering-handle tail" aria-label={t("Move balloon tail")} disabled={disabled} style={{ left: `${selectedElement.tail_target.x * 100}%`, top: `${selectedElement.tail_target.y * 100}%` }} onPointerDown={e => down(e, selectedElement, "tail")} onPointerMove={move} onPointerUp={end} onPointerCancel={abort} onLostPointerCapture={end} onKeyDown={e => nudge(e, selectedElement, "tail")}><span aria-hidden="true" /></button>}
-            </>;
-          })()}
+          </>}
         </div>
       </div>
     </div>

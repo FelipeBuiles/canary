@@ -74,3 +74,11 @@ where = ["src"]
 venvPath = "."
 venv = ".venv"
 pythonVersion = "3.12"
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+# Preserve the pre-upgrade lint gate rather than silently adopting Ruff's
+# expanded defaults. Broader style/security rules need a separate migration.
+select = ["E4", "E7", "E9", "F"]

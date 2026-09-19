@@ -14,7 +14,8 @@ from novel_to_comic.server.app import create_app
 
 
 def _has_labs_routes(app) -> bool:
-    return any(r.path.startswith("/api/labs") for r in app.routes)
+    # Included routers are lazy in newer FastAPI; inspect the public schema.
+    return any(path.startswith("/api/labs") for path in app.openapi()["paths"])
 
 
 def test_labs_disabled_by_default(monkeypatch, tmp_path):

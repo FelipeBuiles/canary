@@ -67,7 +67,7 @@ it("keeps canonical identity and a failed correction visible after closing and r
   await act(async () => { await client.invalidateQueries({ queryKey: ["project", "fixture", "generation-jobs"] }); });
   expect((await screen.findByRole("alert")).textContent).toContain(reason);
   view.unmount();
-  view = mount(client);
+  mount(client);
   expect((await screen.findByRole("alert")).textContent).toContain(reason);
   await user.click(screen.getByRole("button", { name: "Open image · Companion" }));
   expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(draft);
