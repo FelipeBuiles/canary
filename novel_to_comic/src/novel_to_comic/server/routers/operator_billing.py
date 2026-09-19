@@ -117,6 +117,24 @@ def _complete_ledger_reversal(
         raise RuntimeError("Refund completion did not return a record")
 
 
+def _verify_refund_identity(refund: dict, record: dict, grant: dict) -> str:
+    """A refund ID alone proves neither its amount nor that money was returned."""
+    refund_id = refund.get("id")
+    payment_intent = refund.get("payment_intent")
+    if isinstance(payment_intent, dict):
+        payment_intent = payment_intent.get("id")
+    if (
+        not isinstance(refund_id, str) or not refund_id.startswith("re_")
+        or (record.get("stripe_refund_id") and refund_id != record["stripe_refund_id"])
+        or payment_intent != record["stripe_payment_intent_id"]
+        or type(refund.get("amount")) is not int
+        or refund["amount"] != record["amount_cents"]
+        or refund.get("currency") != (grant.get("currency") or "usd")
+    ):
+        raise HTTPException(502, "Stripe refund does not match the persisted refund request. Reconciliation is required.")
+    return refund_id
+
+
 @router.post("/refunds")
 def refund_unused_credit_grant(body: RefundRequest):
     """Refund one provably unused purchase and reverse its credits exactly once."""
@@ -159,48 +177,47 @@ def refund_unused_credit_grant(body: RefundRequest):
                     "Refund eligibility changed during preparation. Review the ledger before retrying.",
                 ) from exc
 
-    stripe_refund_id = str(record.get("stripe_refund_id") or "")
-    if not stripe_refund_id:
-        _stripe()
-        try:
-            refund = _stripe_dict(
-                stripe.Refund.create(
-                    payment_intent=body.payment_intent_id,
-                    amount=grant["gross_amount_cents"],
-                    reason="requested_by_customer",
-                    metadata={
-                        "operator": body.operator,
-                        "ledger_grant_id": grant["id"],
-                    },
-                    idempotency_key=f"canary-refund:{body.payment_intent_id}",
-                )
-            )
-        except stripe.error.StripeError as exc:
-            raise _wrap_stripe_error(exc) from exc
-        if refund.get("status") == "failed" or not refund.get("id"):
-            raise HTTPException(502, "Stripe did not accept the refund.")
-        stripe_refund_id = str(refund["id"])
-        try:
-            (
-                db.table("credit_refunds")
-                .update(
-                    {
-                        "stripe_refund_id": stripe_refund_id,
-                        "status": "stripe_succeeded",
-                    }
-                )
-                .eq("id", record["id"])
-                .execute()
-            )
-        except Exception as exc:
-            logger.exception(
-                "Stripe refund %s succeeded but recovery record update failed",
-                stripe_refund_id,
-            )
-            raise HTTPException(
-                503,
-                "Stripe accepted the refund, but local reconciliation is pending. Retry this operation.",
-            ) from exc
+    if record.get("ledger_grant_id") != grant["id"] or record.get("user_id") != grant["user_id"]:
+        raise HTTPException(409, "Refund recovery record does not match the grant.")
+    _stripe()
+    try:
+        if record.get("stripe_refund_id"):
+            # Pending/requires_action is not success. Inspect the SAME refund on
+            # recovery, rather than completing blindly or issuing another one.
+            refund = _stripe_dict(stripe.Refund.retrieve(record["stripe_refund_id"]))
+        else:
+            refund = _stripe_dict(stripe.Refund.create(
+                payment_intent=record["stripe_payment_intent_id"],
+                amount=record["amount_cents"],
+                reason="requested_by_customer",
+                metadata={
+                    "operator": record["operator"],
+                    "ledger_grant_id": record["ledger_grant_id"],
+                },
+                idempotency_key=f"canary-refund:{record['stripe_payment_intent_id']}",
+            ))
+    except stripe.error.StripeError as exc:
+        raise _wrap_stripe_error(exc) from exc
+
+    stripe_refund_id = _verify_refund_identity(refund, record, grant)
+    succeeded = refund.get("status") == "succeeded"
+    try:
+        # Persist pending/failed IDs as well: future retries must inspect the
+        # existing Stripe object. The existing negative reservation stays held.
+        db.table("credit_refunds").update({
+            "stripe_refund_id": stripe_refund_id,
+            "status": "stripe_succeeded" if succeeded else "pending",
+        }).eq("id", record["id"]).neq("status", "completed").execute()
+    except Exception as exc:
+        logger.exception("Stripe refund %s recovery record update failed", stripe_refund_id)
+        raise HTTPException(
+            503, "Stripe refund recorded remotely; local reconciliation is pending. Retry this operation.",
+        ) from exc
+
+    if not succeeded:
+        if refund.get("status") in {"pending", "requires_action"}:
+            raise HTTPException(409, "Stripe refund is pending; credits remain on hold. Retry to check this same refund after Stripe completes it.")
+        raise HTTPException(409, "Stripe refund has not succeeded; credits remain on hold for manual reconciliation. No additional refund was issued.")
 
     try:
         _complete_ledger_reversal(
@@ -210,26 +227,23 @@ def refund_unused_credit_grant(body: RefundRequest):
             stripe_refund_id=stripe_refund_id,
         )
     except Exception as exc:
-        logger.exception(
-            "Stripe refund %s requires ledger reconciliation", stripe_refund_id
-        )
+        logger.exception("Stripe refund %s requires ledger reconciliation", stripe_refund_id)
         raise HTTPException(
-            503,
-            "Refund accepted; credit reconciliation is pending. Retry this operation.",
+            503, "Refund accepted; credit reconciliation is pending. Retry this operation.",
         ) from exc
 
     capture_server_event(
         "refund_completed",
         user_id=grant["user_id"],
         properties={
-            "credits": grant["amount_credits"],
-            "gross_amount_cents": grant["gross_amount_cents"],
+            "credits": record["credits_reversed"],
+            "gross_amount_cents": record["amount_cents"],
             "currency": grant.get("currency") or "usd",
         },
     )
     return {
         "status": "completed",
         "stripe_refund_id": stripe_refund_id,
-        "credits_reversed": grant["amount_credits"],
+        "credits_reversed": record["credits_reversed"],
         "idempotent": False,
     }

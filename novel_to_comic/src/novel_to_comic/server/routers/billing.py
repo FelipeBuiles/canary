@@ -7,9 +7,11 @@ from urllib.parse import urlparse
 
 import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from ..auth import get_current_user
 from ..branding import get_branding
+from ..checkout_receipts import InvalidCheckoutReceipt, checkout_receipt, offer_snapshot
 from ..db import get_db
 from ..product_events import capture_server_event
 
@@ -150,8 +152,8 @@ async def create_checkout(
     user_id: str = Depends(get_current_user),
 ):
     package_id = body.get("package")
-    if package_id not in CREDIT_PACKAGES:
-        raise HTTPException(400, f"Unknown package '{package_id}'. Valid: {list(CREDIT_PACKAGES)}")
+    if not isinstance(package_id, str) or package_id not in CREDIT_PACKAGES:
+        raise HTTPException(400, "Unknown credit package")
 
     pkg = CREDIT_PACKAGES[package_id]
     _stripe()
@@ -203,9 +205,10 @@ async def create_checkout(
                 "user_id": user_id,
                 "package": package_id,
                 "offer_version": _offer_version(),
+                **offer_snapshot(pkg["credits"], pkg["price_cents"]),
             },
         )
-        session = stripe.checkout.Session.create(**kwargs)
+        session = await run_in_threadpool(stripe.checkout.Session.create, **kwargs)
     except stripe.error.StripeError as exc:
         raise _wrap_stripe_error(exc) from exc
 
@@ -240,9 +243,9 @@ async def stripe_webhook(request: Request):
         logger.warning("Stripe webhook parse error: %s", exc)
         raise HTTPException(400, "Invalid payload")
 
-    if event["type"] == "checkout.session.completed":
+    if event["type"] in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
         session = _stripe_dict(event["data"]["object"])
-        _handle_checkout_completed(session)
+        await run_in_threadpool(_handle_checkout_completed, session)
 
     return {"status": "ok"}
 
@@ -280,52 +283,33 @@ async def _read_stripe_webhook_payload(request: Request) -> bytes:
 def _handle_checkout_completed(session: dict) -> None:
     if session.get("payment_status") != "paid":
         logger.warning(
-            "Ignoring unpaid checkout.session.completed — session %s status=%r",
-            session.get("id"),
-            session.get("payment_status"),
+            "Ignoring unpaid checkout event — session %s status=%r",
+            session.get("id"), session.get("payment_status"),
         )
         return
-
-    metadata = session.get("metadata") or {}
-    user_id = metadata.get("user_id")
-    package_id = metadata.get("package")
-    offer_version = str(metadata.get("offer_version") or "legacy").strip()[:120]
-
-    if not user_id or package_id not in CREDIT_PACKAGES:
-        logger.warning(
-            "checkout.session.completed missing metadata — session %s", session.get("id")
-        )
-        return
-
-    payment_intent_id = session.get("payment_intent")
-    if not payment_intent_id:
-        logger.warning(
-            "Paid checkout.session.completed missing payment_intent — session %s",
-            session.get("id"),
-        )
-        return
-    credits = CREDIT_PACKAGES[package_id]["credits"]
-    gross_amount_cents = session.get("amount_total")
-    if not isinstance(gross_amount_cents, int) or gross_amount_cents < 0:
-        gross_amount_cents = CREDIT_PACKAGES[package_id]["price_cents"]
-    currency = str(session.get("currency") or "usd").lower()
+    try:
+        receipt = checkout_receipt(session)
+    except InvalidCheckoutReceipt as exc:
+        # Do not acknowledge a paid but unfulfillable receipt as successful.
+        # Stripe delivery retries and operator logs retain the recovery signal.
+        logger.error("Checkout requires reconciliation session=%s reason=%s", session.get("id"), exc)
+        raise HTTPException(400, "Checkout payment requires manual reconciliation") from exc
     db = get_db()
 
-    # Atomic idempotency: the unique payment-intent constraint decides which
-    # concurrent webhook wins. ignore_duplicates turns the loser into a clean
-    # no-op instead of a uniqueness error/500 that makes Stripe retry forever.
+    # The unique payment-intent constraint atomically decides which concurrent
+    # delivery wins, including completed + async_payment_succeeded duplicates.
     response = db.table("credit_ledger").upsert(
         {
-            "user_id": user_id,
-            "amount_credits": credits,
+            "user_id": receipt.user_id,
+            "amount_credits": receipt.credits,
             "status": "settled",
-            "description": f"Credit purchase — {CREDIT_PACKAGES[package_id]['label']}",
-            "stripe_payment_intent_id": payment_intent_id,
-            "stripe_checkout_session_id": session.get("id"),
-            "credit_package_id": package_id,
-            "gross_amount_cents": gross_amount_cents,
-            "currency": currency,
-            "offer_version": offer_version,
+            "description": f"Credit purchase — {receipt.credits:,} credits",
+            "stripe_payment_intent_id": receipt.payment_intent_id,
+            "stripe_checkout_session_id": receipt.session_id,
+            "credit_package_id": receipt.package_id,
+            "gross_amount_cents": receipt.gross_amount_cents,
+            "currency": receipt.currency,
+            "offer_version": receipt.offer_version,
         },
         on_conflict="stripe_payment_intent_id",
         ignore_duplicates=True,
@@ -334,19 +318,14 @@ def _handle_checkout_completed(session: dict) -> None:
     if response.data:
         capture_server_event(
             "credits_purchased",
-            user_id=user_id,
+            user_id=receipt.user_id,
             properties={
-                "package_id": package_id,
-                "credits": credits,
-                "gross_amount_cents": gross_amount_cents,
-                "currency": currency,
+                "package_id": receipt.package_id,
+                "credits": receipt.credits,
+                "gross_amount_cents": receipt.gross_amount_cents,
+                "currency": receipt.currency,
             },
         )
-        logger.info(
-            "Added %d credits for user %s (payment_intent %s)",
-            credits,
-            user_id,
-            payment_intent_id,
-        )
+        logger.info("Added %d credits for user %s (payment_intent %s)", receipt.credits, receipt.user_id, receipt.payment_intent_id)
     else:
-        logger.info("Duplicate webhook for payment_intent %s — skipping", payment_intent_id)
+        logger.info("Duplicate webhook for payment_intent %s — skipping", receipt.payment_intent_id)
