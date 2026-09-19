@@ -16,6 +16,14 @@ from novel_to_comic.codex_dev import CodexRoutingError, process_setting, route_f
 from novel_to_comic.config import Config
 from novel_to_comic.model_catalog import STAGE_FIELDS, default_selections, validate_selections
 
+# Creation/import must not bypass the config edit API's trust boundary. These
+# affect provider routing, credentials or billing, not a customer's book.
+_SERVER_OWNED_CREATION_FIELDS = frozenset({
+    "litellm_base_url", "litellm_api_key", "ai_bill_failed_requests",
+    "mock_mode", "mock_model_base_url", "google_use_vertex_ai",
+    "google_cloud_project", "google_cloud_location",
+})
+
 
 def model_settings_enabled() -> bool:
     if process_setting("CANARY_ENV") != "development":
@@ -30,8 +38,8 @@ def model_settings_enabled() -> bool:
 def _account_dir(root: Path, user_id: str) -> Path:
     if not user_id or Path(user_id).name != user_id or user_id in {".", ".."}:
         raise ValueError("Invalid account identifier")
-    account = root / user_id
-    if not account.resolve().is_relative_to(root.resolve()):
+    account = root.resolve() / user_id
+    if account.resolve() != account:
         raise ValueError("Invalid account directory")
     return account
 
@@ -94,6 +102,8 @@ def creation_config(overrides: dict, root: Path, user_id: str) -> Config:
     """Validate creation-only local model preferences before persisting a project."""
     if not isinstance(overrides, dict):
         raise ValueError("Project configuration must be an object")
+    if _SERVER_OWNED_CREATION_FIELDS.intersection(overrides):
+        raise ValueError("Operator configuration cannot be supplied in project overrides")
     forbidden = set(STAGE_FIELDS.values()) | {"quality_preset", "fallback_image_model", "image_provider"}
     if forbidden.intersection(overrides):
         raise ValueError("Use dev_model_selections for local project model choices")

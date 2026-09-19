@@ -11,6 +11,7 @@ from novel_to_comic.state import PipelineState, load_state
 from .auth import get_current_user
 from .account_models import account_config
 from .db import get_db
+from .project_paths import project_directory
 
 
 def get_projects_dir(request: Request) -> Path:
@@ -74,7 +75,10 @@ def get_project_dir(
     ``get_project`` so they only receive fully validated current projects.
     """
     slug = _resolve_project_slug(user_id, project_id)
-    d = request.app.state.projects_dir / user_id / slug
+    try:
+        d = project_directory(request.app.state.projects_dir, user_id, slug)
+    except ValueError as exc:
+        raise HTTPException(404, f"Project '{project_id}' not found") from exc
     if not d.is_dir() or not (d / "state.json").exists():
         raise HTTPException(404, f"Project '{project_id}' not found")
     return d
