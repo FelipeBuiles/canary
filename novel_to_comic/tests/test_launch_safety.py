@@ -59,14 +59,23 @@ def test_stripe_webhook_payload_preserves_exact_raw_bytes(monkeypatch):
     assert payload == b'{"type":"event"}'
 
 
+def _paid_checkout(**changes):
+    return {
+        "id": "cs_test_paid",
+        "mode": "payment",
+        "status": "complete",
+        "payment_status": "paid",
+        "payment_intent": "pi_paid",
+        "amount_total": 1200,
+        "currency": "usd",
+        "metadata": {"user_id": "user-1", "package": "starter"},
+        **changes,
+    }
+
+
 @pytest.mark.parametrize("payment_status", [None, "unpaid", "no_payment_required"])
 def test_checkout_webhook_does_not_credit_unpaid_sessions(payment_status):
-    session = {
-        "id": "cs_test_unpaid",
-        "payment_status": payment_status,
-        "payment_intent": "pi_unpaid",
-        "metadata": {"user_id": "user-1", "package": "starter"},
-    }
+    session = _paid_checkout(payment_status=payment_status)
 
     with patch.object(billing, "get_db") as get_db:
         billing._handle_checkout_completed(session)
@@ -75,25 +84,19 @@ def test_checkout_webhook_does_not_credit_unpaid_sessions(payment_status):
 
 
 def test_checkout_webhook_does_not_credit_without_payment_intent():
-    session = {
-        "id": "cs_test_missing_intent",
-        "payment_status": "paid",
-        "metadata": {"user_id": "user-1", "package": "starter"},
-    }
+    session = _paid_checkout(payment_intent=None)
 
     with patch.object(billing, "get_db") as get_db:
-        billing._handle_checkout_completed(session)
+        with pytest.raises(HTTPException) as exc_info:
+            billing._handle_checkout_completed(session)
 
+    assert exc_info.value.status_code == 400
+    assert "reconciliation" in exc_info.value.detail
     get_db.assert_not_called()
 
 
 def test_checkout_webhook_credits_paid_session_once():
-    session = {
-        "id": "cs_test_paid",
-        "payment_status": "paid",
-        "payment_intent": "pi_paid",
-        "metadata": {"user_id": "user-1", "package": "starter"},
-    }
+    session = _paid_checkout()
     table = MagicMock()
     table.upsert.return_value.execute.return_value.data = [{"id": "ledger-1"}]
     db = MagicMock()
@@ -122,12 +125,7 @@ def test_checkout_webhook_credits_paid_session_once():
 
 
 def test_checkout_webhook_duplicate_conflict_is_a_clean_noop():
-    session = {
-        "id": "cs_test_duplicate",
-        "payment_status": "paid",
-        "payment_intent": "pi_paid",
-        "metadata": {"user_id": "user-1", "package": "starter"},
-    }
+    session = _paid_checkout(id="cs_test_duplicate")
     table = MagicMock()
     table.upsert.return_value.execute.return_value.data = []
     db = MagicMock()
@@ -139,15 +137,14 @@ def test_checkout_webhook_duplicate_conflict_is_a_clean_noop():
     table.upsert.return_value.execute.assert_called_once_with()
 
 
-def test_checkout_webhook_persists_signed_stripe_amount_and_currency():
-    session = {
-        "id": "cs_test_cad",
-        "payment_status": "paid",
-        "payment_intent": "pi_cad",
-        "amount_total": 1675,
-        "currency": "CAD",
-        "metadata": {"user_id": "user-1", "package": "starter"},
-    }
+def test_checkout_webhook_persists_integration_amount_with_local_presentment():
+    # Stripe Adaptive Pricing keeps Session/PaymentIntent amount and currency in
+    # the integration currency. Local customer currency is a separate field:
+    # https://docs.stripe.com/payments/currencies/localize-prices/adaptive-pricing
+    session = _paid_checkout(presentment_details={
+        "presentment_amount": 1675,
+        "presentment_currency": "cad",
+    })
     table = MagicMock()
     table.upsert.return_value.execute.return_value.data = []
     db = MagicMock()
@@ -157,8 +154,17 @@ def test_checkout_webhook_persists_signed_stripe_amount_and_currency():
         billing._handle_checkout_completed(session)
 
     payload = table.upsert.call_args.args[0]
-    assert payload["gross_amount_cents"] == 1675
-    assert payload["currency"] == "cad"
+    assert payload["gross_amount_cents"] == 1200
+    assert payload["currency"] == "usd"
+
+
+def test_checkout_webhook_rejects_currency_without_matching_offer_evidence():
+    session = _paid_checkout(amount_total=1675, currency="cad")
+    with patch.object(billing, "get_db") as get_db:
+        with pytest.raises(HTTPException) as exc_info:
+            billing._handle_checkout_completed(session)
+    assert exc_info.value.status_code == 400
+    get_db.assert_not_called()
 
 
 def test_checkout_origin_uses_configured_url_in_production(monkeypatch):
@@ -520,6 +526,7 @@ def test_ops_token_fails_closed_when_unconfigured(monkeypatch):
 
     with pytest.raises(HTTPException) as exc_info:
         deployment_status_module.require_ops_token(None)
+
     assert exc_info.value.status_code == 503
 
 
