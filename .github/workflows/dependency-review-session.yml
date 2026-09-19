@@ -1,0 +1,78 @@
+name: Dependency review session
+
+# Temporary, branch-scoped evidence collection; removed before merge.
+on:
+  push:
+    branches: [fix/dependency-refresh-2026-09]
+    paths: [.github/workflows/dependency-review-session.yml]
+permissions:
+  contents: read
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Inventory manifests and current upstream releases
+        run: |
+          mkdir -p /tmp/dependency-review
+          python - <<'PY'
+          import concurrent.futures, json, pathlib, re, subprocess, tomllib, urllib.request
+          root = pathlib.Path('.')
+          paths = subprocess.check_output(['git', 'ls-files'], text=True).splitlines()
+          manifests = [p for p in paths if pathlib.Path(p).name in {'package.json', 'pyproject.toml'}]
+          names = set()
+          for path in manifests:
+              print('\nMANIFEST', path, '\n', pathlib.Path(path).read_text())
+              if path.endswith('pyproject.toml'):
+                  data = tomllib.loads(pathlib.Path(path).read_text())
+                  deps = data.get('project', {}).get('dependencies', [])[:]
+                  for group in data.get('project', {}).get('optional-dependencies', {}).values(): deps += group
+                  deps += data.get('build-system', {}).get('requires', [])
+                  for dep in deps: names.add(('pypi', re.split(r'[\[<>=!~; ]', dep)[0]))
+              else:
+                  data = json.loads(pathlib.Path(path).read_text())
+                  for key in ('dependencies', 'devDependencies'):
+                      for name in data.get(key, {}): names.add(('npm', name))
+          for name in ('litellm', 'google-genai', 'google-cloud-aiplatform', 'google-auth', 'langfuse', 'openai-codex', 'uv', 'pip-audit'):
+              names.add(('pypi', name))
+          def query(item):
+              ecosystem, name = item
+              url = f'https://pypi.org/pypi/{name}/json' if ecosystem == 'pypi' else f'https://registry.npmjs.org/{name}/latest'
+              try:
+                  with urllib.request.urlopen(url, timeout=30) as response: data = json.load(response)
+                  info = data['info'] if ecosystem == 'pypi' else data
+                  return {'ecosystem': ecosystem, 'name': name, 'version': info['version'], 'requires_python': info.get('requires_python'), 'engines': info.get('engines'), 'dependencies': info.get('requires_dist') if ecosystem == 'pypi' else info.get('peerDependencies'), 'source': url}
+              except Exception as exc: return {'ecosystem': ecosystem, 'name': name, 'error': str(exc)}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool: releases = list(pool.map(query, sorted(names)))
+          pathlib.Path('/tmp/dependency-review/releases.json').write_text(json.dumps(releases, indent=2))
+          for release in releases: print('UPSTREAM', json.dumps(release))
+          for path in paths:
+              if path.endswith(('uv.lock', 'requirements.txt', 'requirements.in', 'package-lock.json')) or 'Dockerfile' in path or path.endswith('.yml') and path.startswith(('.github/', 'ops/')):
+                  print('DEPENDENCY_FILE', path)
+          lock = tomllib.loads(pathlib.Path('novel_to_comic/uv.lock').read_text())
+          print('PYTHON_LOCK', json.dumps({p['name']: p['version'] for p in lock['package']}))
+          for manifest in manifests:
+              lockpath = pathlib.Path(manifest).with_name('package-lock.json')
+              if lockpath.exists():
+                  lock = json.loads(lockpath.read_text())
+                  print('NPM_LOCK', str(lockpath), json.dumps({p: v.get('version') for p, v in lock.get('packages', {}).items() if p and p.count('node_modules/') == 1}))
+          # Only tracked source; never credentials, .git, node_modules, or local data.
+          text = {}
+          for path in paths:
+              p = pathlib.Path(path)
+              if p.suffix in {'.py', '.toml', '.json', '.yml', '.yaml', '.mjs', '.ts', '.tsx', '.md', '.sh', '.lock', '.txt'} or 'Dockerfile' in p.name:
+                  try: text[path] = p.read_text()
+                  except (UnicodeError, OSError): pass
+          pathlib.Path('/tmp/dependency-review/source.json').write_text(json.dumps(text))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dependency-review-inventory
+          path: /tmp/dependency-review/
+          retention-days: 3
