@@ -15,7 +15,6 @@ import httpx
 import pytest
 from PIL import Image
 
-from novel_to_comic.ai.client import _truncate_for_log
 from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.config import Config
 from novel_to_comic.models.adaptation import LetteringItem
@@ -653,8 +652,7 @@ def test_native_vertex_transport_preserves_reference_order_and_returns_one_page(
     assert finalized["model_alias"] == "image-gemini-pro"
     assert finalized["operation"] == "image"
     assert finalized["metadata"]["trace_name"] == "complete_page_draw"
-    # Provider payload remains exact; telemetry intentionally bounds large prompts.
-    assert finalized["langfuse_input"]["prompt"] == _truncate_for_log(prepared.prompt)
+    assert finalized["langfuse_input"]["prompt"] == prepared.prompt
     assert finalized["langfuse_output"]["actual_provider_model"] == (
         "vertex_ai/gemini-3-pro-image"
     )
