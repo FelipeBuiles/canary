@@ -23,7 +23,7 @@ def docker(*args: str, check: bool = True) -> str:
     result = subprocess.run(["docker", *args], text=True, capture_output=True, check=False)
     if check and result.returncode:
         raise RuntimeError(f"docker {args[0]} failed:\n{result.stderr}\n{result.stdout}")
-    return result.stdout.strip()
+    return (result.stdout + result.stderr).strip() if args[0] == "logs" else result.stdout.strip()
 
 
 def request(base: str, path: str, payload: dict | None = None, key: str = MASTER_KEY) -> dict:
