@@ -45,14 +45,16 @@ jobs:
       - name: Install dependencies
         working-directory: novel_to_comic
         run: uv sync --frozen --extra web --extra dev
-      - name: Focused security and billing API contracts
+      - name: Existing and new billing/security regressions
         working-directory: novel_to_comic
         # Keep money/security checks independently visible; this does not
         # replace or relax the normal whole-repository lint/test/build gates.
+        # PostgreSQL contracts run after schema bootstrap, below.
         run: >-
-          uv run pytest -q tests/test_auth.py
-          tests/test_security_boundary_contracts.py tests/test_checkout_receipts.py
-          tests/test_billing_receipt_integration.py tests/test_project_authority_routes.py
+          uv run pytest -q
+          --ignore=tests/test_credit_ledger_postgres.py
+          --ignore=tests/test_project_data_api_postgres.py
+          -k "billing or refund or checkout or credit or auth or security_boundary"
       - name: Bootstrap disposable database
         run: |
           sudo apt-get update
