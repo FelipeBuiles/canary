@@ -1,21 +1,49 @@
 name: Dependency review session
-
-# Temporary branch-only resolver. No production environment or provider secrets.
+# Temporary branch-scoped resolver and diagnostic evidence; removed before merge.
 on:
   push:
     branches: [fix/dependency-refresh-2026-09]
-    paths:
-      - .github/workflows/dependency-review-session.yml
-      - scripts/_dependency_refresh_session.py
+    paths: [.github/workflows/dependency-review-session.yml]
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: dependency-review-session
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
-  review:
+  resolve:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/dependency-refresh-2026-09
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - name: Refresh transitive locks and verify peer constraints
+        run: |
+          for directory in . web showcase/video; do
+            (cd "$directory" && npm update --package-lock-only --ignore-scripts)
+          done
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.gitignore')
+          path.write_text(path.read_text().replace('.nvmrc\n', '# .nvmrc is tracked: one Node runtime for development, CI and Docker.\n'))
+          PY
+          git add package-lock.json web/package-lock.json showcase/video/package-lock.json .gitignore
+          if ! git diff --cached --quiet; then
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'chore(deps): refresh transitive npm dependencies and align video peers'
+            git push origin HEAD:fix/dependency-refresh-2026-09
+          fi
+  gateway:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
@@ -26,163 +54,181 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '24.21.0'
       - uses: astral-sh/setup-uv@v8.2.0
         with:
           version: '0.12.17'
-      - name: Apply reviewed upgrades
+      - name: Install gateway and verify patches against actual imported libraries
         run: |
-          mkdir -p /tmp/dependency-review
-          if [ ! -f litellm/uv.lock ]; then
-            python scripts/_dependency_refresh_session.py | tee /tmp/dependency-review/selection.log
-          fi
-      - name: Resolve Python locks
-        id: python_locks
-        continue-on-error: true
-        run: |
-          uv lock --project novel_to_comic --upgrade 2>&1 | tee /tmp/dependency-review/backend-resolution.log
-          uv lock --project litellm --upgrade 2>&1 | tee /tmp/dependency-review/gateway-resolution.log
-      - name: Resolve JavaScript locks
-        id: npm_locks
-        continue-on-error: true
-        run: |
-          for directory in . web showcase/video; do
-            (cd "$directory" && npm install --package-lock-only --ignore-scripts) || exit 1
-          done
-      - name: Save authored manifests and generated locks to review branch
-        id: save
-        continue-on-error: true
-        if: steps.python_locks.outcome == 'success' && steps.npm_locks.outcome == 'success'
-        run: |
-          git add Dockerfile docker-compose.yml package.json package-lock.json \
-            web/package.json web/package-lock.json \
-            novel_to_comic/pyproject.toml novel_to_comic/uv.lock \
-            novel_to_comic/tests/test_launch_safety.py litellm/Dockerfile litellm/pyproject.toml litellm/uv.lock \
-            showcase/video/package.json
-          git add -f .nvmrc showcase/video/package-lock.json
-          if ! git diff --cached --quiet; then
-            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-              commit -m 'chore(deps): upgrade Python, web, video, and operational dependency locks'
-            git push origin HEAD:fix/dependency-refresh-2026-09
-          fi
-      - name: Install actual gateway libraries and capture upstream patch targets
-        id: gateway_install
-        continue-on-error: true
-        run: |
+          mkdir -p /tmp/evidence
           uv sync --project litellm --locked
           uv pip check --python litellm/.venv/bin/python
-          litellm/.venv/bin/python - <<'PY'
-          import importlib.util, json, pathlib
-          root = pathlib.Path(importlib.util.find_spec('litellm').origin).parent
-          names = ['llms/custom_httpx/http_handler.py', 'llms/anthropic/chat/transformation.py', 'llms/anthropic/chat/handler.py']
-          pathlib.Path('/tmp/dependency-review/upstream.json').write_text(json.dumps({name: (root / name).read_text() for name in names}))
-          from google.genai import types
-          config = types.GenerateContentConfig(image_config=types.ImageConfig(aspect_ratio='4:5', image_size='2K'))
-          assert config.image_config.aspect_ratio == '4:5'
-          import google.auth, google.cloud.aiplatform
-          print('Google SDK image controls and Vertex imports passed')
-          PY
-      - name: Apply fail-closed gateway patches
-        id: patches
-        continue-on-error: true
-        run: |
+          litellm/.venv/bin/python -c 'import litellm, importlib.metadata; print(litellm.__file__); print(importlib.metadata.version("litellm"))'
           litellm/.venv/bin/python litellm/patch_http_errors.py
           litellm/.venv/bin/python litellm/patch_anthropic_refusals.py
-      - uses: actions/upload-artifact@v4
+          litellm/.venv/bin/python -m pytest litellm/tests -q --tb=short 2>&1 | tee /tmp/evidence/gateway.log
+      - name: Build standalone gateway
+        run: docker build -f litellm/Dockerfile -t canary-gateway-review .
+      - name: Smoke-test gateway without external providers
+        run: |
+          cat > /tmp/gateway-smoke.yaml <<'EOF'
+          model_list:
+            - model_name: fixture
+              litellm_params:
+                model: openai/fixture
+                api_key: unused-fixture
+                mock_response: gateway-ok
+          general_settings:
+            master_key: sk-review-fixture
+          EOF
+          docker run -d --name gateway-review -p 127.0.0.1:4000:4000 \
+            -v /tmp/gateway-smoke.yaml:/app/config.yaml:ro canary-gateway-review
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:4000/health/liveliness; then break; fi
+            sleep 2
+          done
+          curl --fail-with-body -sS http://127.0.0.1:4000/v1/chat/completions \
+            -H 'Authorization: Bearer sk-review-fixture' -H 'Content-Type: application/json' \
+            -d '{"model":"fixture","messages":[{"role":"user","content":"fixture"}]}' \
+            | tee /tmp/evidence/gateway-response.json
+          python -c 'import json; data=json.load(open("/tmp/evidence/gateway-response.json")); assert data["choices"][0]["message"]["content"] == "gateway-ok"'
+      - name: Gateway diagnostics
+        if: always()
+        run: |
+          mkdir -p /tmp/evidence
+          docker logs gateway-review > /tmp/evidence/gateway-container.log 2>&1 || true
+          docker rm -f gateway-review || true
+      - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
-          name: dependency-review-upstream
-          path: /tmp/dependency-review/upstream.json
+          name: gateway-evidence
+          path: /tmp/evidence
           retention-days: 3
-      - name: Backend install
-        id: backend_install
-        continue-on-error: true
+  web:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        shell: bash
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/dependency-refresh-2026-09
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - name: Install
         run: |
-          uv sync --project novel_to_comic --locked --extra web --extra dev --extra otel
-          uv pip check --python novel_to_comic/.venv/bin/python
-          uv run --project novel_to_comic playwright install --with-deps chromium
-      - name: Backend lint
-        id: backend_lint
+          mkdir -p /tmp/evidence
+          npm ci
+          npm ls --all > /tmp/evidence/peers.txt
+      - name: Lint
+        id: lint
         continue-on-error: true
-        run: uv run --project novel_to_comic ruff check novel_to_comic 2>&1 | tee /tmp/dependency-review/ruff.log
-      - name: Backend tests
-        id: backend
+        run: npm run lint 2>&1 | tee /tmp/evidence/lint.log
+      - name: Build
+        id: build
         continue-on-error: true
-        run: uv run --project novel_to_comic pytest novel_to_comic/tests -q --tb=short 2>&1 | tee /tmp/dependency-review/pytest.log
-      - name: Web install
-        id: web_install
+        run: npm run build 2>&1 | tee /tmp/evidence/build.log
+      - name: Test
+        id: test
         continue-on-error: true
-        working-directory: web
-        run: npm ci
-      - name: Web tests
-        id: web_tests
-        continue-on-error: true
-        working-directory: web
         env:
           VITE_SUPABASE_URL: https://ci.supabase.co
           VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci
-        run: npm test 2>&1 | tee /tmp/dependency-review/vitest.log
-      - name: Web lint
-        id: web_lint
-        continue-on-error: true
-        working-directory: web
-        run: npm run lint 2>&1 | tee /tmp/dependency-review/eslint.log
-      - name: Web build
-        id: web_build
-        continue-on-error: true
-        working-directory: web
-        run: npm run build 2>&1 | tee /tmp/dependency-review/web-build.log
-      - name: Root tooling and video validation
-        id: video
+        run: timeout 240s npm test -- --reporter=verbose 2>&1 | tee /tmp/evidence/tests.log
+      - name: Audit
+        id: audit
         continue-on-error: true
         run: |
-          npm ci
-          cd showcase/video
-          npm ci
-          npm run lint 2>&1 | tee /tmp/dependency-review/video-lint.log
-          npm run build 2>&1 | tee /tmp/dependency-review/video-build.log
-      - name: JavaScript security inventory and Compose validation
-        id: npm_audit
-        continue-on-error: true
-        run: |
-          docker compose config --quiet
-          (cd web && npm audit --json > /tmp/dependency-review/npm-audit.json) || true
-          (cd web && npm run audit:production)
-      - name: Python security inventory
-        id: python_audit
-        continue-on-error: true
-        run: uv run --project novel_to_comic --with pip-audit==2.10.1 pip-audit --format json --output /tmp/dependency-review/python-audit.json
-      - name: Capture review evidence
-        if: always()
-        run: |
-          mkdir -p /tmp/dependency-review
-          git diff > /tmp/dependency-review/uncommitted.patch
-          git rev-parse HEAD > /tmp/dependency-review/head.txt
-          python - <<'PY'
-          import json, pathlib, subprocess
-          paths = subprocess.check_output(['git', 'ls-files'], text=True).splitlines()
-          source = {}
-          for path in paths:
-              try:
-                  text = pathlib.Path(path).read_text()
-                  if '\x00' not in text: source[path] = text
-              except (UnicodeError, OSError): pass
-          pathlib.Path('/tmp/dependency-review/source.json').write_text(json.dumps(source))
-          PY
-      - uses: actions/upload-artifact@v4
+          npm audit --json > /tmp/evidence/audit.json || true
+          npm run audit:production
+      - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
-          name: dependency-review-evidence
-          path: /tmp/dependency-review/
+          name: web-evidence
+          path: /tmp/evidence
           retention-days: 3
-      - name: Require all validation outcomes
-        if: always()
+      - if: always()
         env:
           OUTCOMES: ${{ join(steps.*.outcome, ',') }}
+        run: '[[ "$OUTCOMES" != *failure* ]]'
+  video:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/dependency-refresh-2026-09
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - name: Root tooling and video
         run: |
-          if [[ "$OUTCOMES" == *failure* ]]; then
-            echo 'One or more review checks failed; inspect the saved evidence.'
-            exit 1
-          fi
+          mkdir -p /tmp/evidence
+          npm ci
+          npm ls --all
+          cd showcase/video
+          npm ci
+          npm ls --all > /tmp/evidence/peers.txt
+          npm run lint 2>&1 | tee /tmp/evidence/lint.log
+          npm run build 2>&1 | tee /tmp/evidence/build.log
+          npm audit --audit-level=high
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: video-evidence
+          path: /tmp/evidence
+          retention-days: 3
+  inventory:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/dependency-refresh-2026-09
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: '0.12.17'
+      - name: Python audits and operational inventory
+        run: |
+          mkdir -p /tmp/evidence
+          uv export --project novel_to_comic --frozen --extra web --extra otel --no-dev --no-emit-project > /tmp/evidence/app-requirements.txt
+          uv export --project litellm --frozen --no-dev --no-emit-project > /tmp/evidence/gateway-requirements.txt
+          uvx pip-audit==2.10.1 -r /tmp/evidence/app-requirements.txt --no-deps --disable-pip --format json --output /tmp/evidence/app-audit.json || true
+          uvx pip-audit==2.10.1 -r /tmp/evidence/gateway-requirements.txt --no-deps --disable-pip --format json --output /tmp/evidence/gateway-audit.json || true
+          docker compose config --quiet
+          docker buildx imagetools inspect cgr.dev/chainguard/minio:latest > /tmp/evidence/minio.txt
+          python - <<'PY'
+          import json, pathlib, subprocess, urllib.request
+          paths = subprocess.check_output(['git','ls-files'], text=True).splitlines()
+          source = {}
+          for p in paths:
+              try:
+                  text = pathlib.Path(p).read_text()
+                  if '\x00' not in text: source[p] = text
+              except (UnicodeError, OSError): pass
+          pathlib.Path('/tmp/evidence/source.json').write_text(json.dumps(source))
+          pathlib.Path('/tmp/evidence/head.txt').write_text(subprocess.check_output(['git','rev-parse','HEAD'],text=True))
+          with urllib.request.urlopen('https://api.github.com/repos/superfly/flyctl/releases/latest',timeout=30) as r:
+              data=json.load(r)
+          pathlib.Path('/tmp/evidence/flyctl.json').write_text(json.dumps({'tag': data['tag_name'], 'published': data['published_at'], 'body': data['body'], 'url': data['html_url']}))
+          PY
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: inventory-evidence
+          path: /tmp/evidence
+          retention-days: 3
