@@ -1,9 +1,6 @@
 name: CI
 
-# Test + build gate. Every PR and push to main must pass this before merge or
-# deploy — it's the launch-readiness green-CI gate (P0 #1). A failing billing
-# test (P1 #5) or any regression here blocks `fly deploy`.
-
+# Test + build gate. Every PR and push to main must pass before merge or deploy.
 on:
   push:
     branches: [main]
@@ -11,9 +8,7 @@ on:
     branches: [main]
   workflow_dispatch: # manual trigger for prod release validation
 
-# Ordinary CI cancels superseded runs on the same ref. Each manual release has
-# its own workflow group so neither pushes nor later dispatches can cancel it;
-# the production-deploy job group below serializes actual deployments.
+# Manual releases cannot cancel one another or be cancelled by normal CI.
 concurrency:
   group: ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
@@ -27,42 +22,32 @@ jobs:
         working-directory: novel_to_comic
     steps:
       - uses: actions/checkout@v7
-
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-
       - name: Install uv
-        # setup-uv stopped publishing floating major tags after v7, so pin the
-        # exact stable release. Bump deliberately when upgrading.
         uses: astral-sh/setup-uv@v8.2.0
         with:
+          version: "0.12.17"
           enable-cache: true
           cache-dependency-glob: novel_to_comic/uv.lock
-
       - name: Sync dependencies
-        # ruff + pytest live in the `dev` extra, and the test suite imports
-        # FastAPI from the `web` extra — plain `uv sync --frozen` installs
-        # neither, so `uv run ruff`/`pytest` fail with "No such file or
-        # directory". Mirror the Dockerfile's explicit-extras style.
-        run: uv sync --frozen --extra web --extra dev
-
+        # Include actual optional production telemetry and web integrations.
+        run: uv sync --locked --extra web --extra dev --extra otel
+      - name: Check locked production dependencies
+        run: |
+          uv pip check
+          uv export --locked --extra web --extra otel --no-dev --no-emit-project > /tmp/app-requirements.txt
+          uvx pip-audit==2.10.1 -r /tmp/app-requirements.txt --no-deps --disable-pip
       - name: Install Playwright Chromium
-        # HTML renderer tests launch a real browser. The Python package does
-        # not download Playwright's browser binaries during dependency sync.
         run: uv run playwright install --with-deps chromium
-
-      - name: Ruff (lint + format check)
+      - name: Ruff
         run: uv run ruff check .
-
       - name: Pytest
         run: uv run pytest -x -q
-
       - name: Full-page contract gates
-        # Keep the current page-generation contract visible as its own CI
-        # check. These tests use local fixtures and never require provider
-        # credentials or credits.
+        # Local fixtures only; no provider credentials or credits required.
         run: uv run pytest -q tests/test_full_page_contracts.py
 
   web:
@@ -73,57 +58,43 @@ jobs:
         working-directory: web
     steps:
       - uses: actions/checkout@v7
-
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: "20"
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: web/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Production dependency audit
-        # The app uses declarative BrowserRouter, not React Router's unstable
-        # RSC APIs. The audit helper allows only that documented non-applicable
-        # advisory and still fails on every other high/critical finding.
-        run: npm run audit:production
-
-      # supabase.ts throws at import time when VITE_SUPABASE_* are unset, which
-      # breaks the two suites that pull it in transitively (api/client →
-      # store/insufficientCredits). web/.env is gitignored, so provide
-      # placeholders here — values are irrelevant to the unit tests.
+      - name: Install dependencies and validate peers
+        run: |
+          npm ci
+          npm ls --all
+      - name: Dependency audits
+        # No advisory allowlist: fail closed on production or tooling findings.
+        run: |
+          npm run audit:production
+          npm audit --audit-level=high
       - name: Vitest
+        # Import-time Supabase validation requires non-secret placeholders.
         env:
           VITE_SUPABASE_URL: https://ci.supabase.co
           VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci
         run: npm run test
-
       - name: ESLint
         run: npm run lint
-
       - name: Build
         run: npm run build
 
   docker:
     name: Docker image (build smoke test)
     runs-on: ubuntu-latest
-    # Builds the production image end-to-end but does NOT push it. Catches
-    # Dockerfile regressions (e.g. the latent theme_tokens.json copy bug that
-    # broke every Docker build for weeks while CI stayed green). Runs in
-    # parallel with backend/web — it's the slow job (~5 min, pulls Python +
-    # Playwright/Chromium) and a separate failure surface.
+    # Build production end-to-end without publishing or deploying an image.
     steps:
       - uses: actions/checkout@v7
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
-
       - name: Prepare build metadata
         id: build_meta
         run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-
       - name: Build image
         uses: docker/build-push-action@v7
         with:
@@ -131,8 +102,6 @@ jobs:
           file: ./Dockerfile
           push: false
           load: true
-          # The frontend stage inlines VITE_* at build time; supply placeholders
-          # so the build succeeds. Values are irrelevant for a smoke test.
           build-args: |
             CANARY_VERSION=${{ github.sha }}
             CANARY_BUILD_TIMESTAMP=${{ steps.build_meta.outputs.timestamp }}
@@ -142,11 +111,68 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  gateway:
+    name: Gateway dependency contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: "0.12.17"
+          enable-cache: true
+          cache-dependency-glob: litellm/uv.lock
+      - name: Install the shared gateway lock
+        run: |
+          uv sync --project litellm --locked
+          uv pip check --python litellm/.venv/bin/python
+      - name: Check real SDK and patched provider behavior
+        run: |
+          litellm/.venv/bin/python litellm/patch_http_errors.py
+          litellm/.venv/bin/python litellm/patch_anthropic_refusals.py
+          litellm/.venv/bin/python -m pytest litellm/tests -q
+      - name: Build the local gateway image
+        run: docker build -f litellm/Dockerfile -t canary-gateway-ci .
+      - name: Check locked production dependencies
+        run: |
+          uv export --project litellm --locked --no-dev --no-emit-project > /tmp/gateway-requirements.txt
+          uvx pip-audit==2.10.1 -r /tmp/gateway-requirements.txt --no-deps --disable-pip
+
+  tooling:
+    name: Root and showcase tooling
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            showcase/video/package-lock.json
+      - name: Root tooling
+        run: |
+          npm ci
+          npm ls --all
+          npm audit --audit-level=high
+      - name: Showcase video
+        working-directory: showcase/video
+        run: |
+          npm ci
+          npm ls --all
+          npm run lint
+          npm run build
+          npm audit --audit-level=high
+
   deploy:
     name: Deploy production
-    needs: [backend, web, docker]
-    # Production remains human-triggered. The authenticated drain barrier below
-    # excludes new admissions before checking idle and stays set on failure.
+    needs: [backend, web, docker, gateway, tooling]
+    # The authenticated drain barrier excludes new admissions and stays set
+    # on failure. Production remains restricted to an explicit main dispatch.
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
@@ -155,8 +181,6 @@ jobs:
     concurrency:
       group: production-deploy
       cancel-in-progress: false
-      # Keep queued manual releases instead of replacing the previous pending
-      # deploy when a third dispatch finishes validation. One deploy runs at once.
       queue: max
     permissions:
       contents: read
@@ -164,7 +188,6 @@ jobs:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
       - uses: actions/checkout@v7
-
       - name: Validate deployment configuration
         env:
           CANARY_OPS_TOKEN: ${{ secrets.CANARY_OPS_TOKEN }}
@@ -182,20 +205,16 @@ jobs:
             echo "::error::Missing production secrets: ${missing[*]}"
             exit 1
           fi
-
       - name: Set up Fly CLI
-        uses: superfly/flyctl-actions/setup-flyctl@master
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         with:
-          version: 0.4.49
-
+          version: 0.4.104
       - name: Drain production and wait for idle
         env:
           CANARY_OPS_TOKEN: ${{ secrets.CANARY_OPS_TOKEN }}
-          # Keep the deployment guard off the public Cloudflare proxy. The
-          # direct Fly hostname is still protected by CANARY_OPS_TOKEN.
+          # Direct Fly route, still protected by CANARY_OPS_TOKEN.
           SCENEWRIGHT_APP_URL: https://canary-web.fly.dev
         run: python scripts/check_deploy_safe.py
-
       - name: Record rollback target
         run: |
           {
@@ -207,11 +226,9 @@ jobs:
             flyctl releases -a canary-web | head -n 3
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Prepare release metadata
         id: release
         run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-
       - name: Deploy exact tested revision
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
@@ -225,14 +242,11 @@ jobs:
             --build-arg "VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}" \
             --build-arg "VITE_CANARY_ENV=production" \
             --build-arg "VITE_SENTRY_DSN=${VITE_SENTRY_DSN}"
-
       - name: Verify deployed release
         env:
           EXPECTED_CANARY_VERSION: ${{ github.sha }}
-          # This deliberately checks the user-facing route through Cloudflare.
           SCENEWRIGHT_APP_URL: https://scenewright.ink
         run: python scripts/verify_deployment.py
-
       - name: Record deployed release
         if: success()
         run: |
