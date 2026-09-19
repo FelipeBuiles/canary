@@ -93,6 +93,7 @@ fi
 #    --num_workers 1 keeps memory bounded; the proxy is not the throughput
 #    bottleneck for this product (one region, low concurrency).
 start_litellm() {
+  PATH="/app/.venv-litellm/bin:$PATH" \
   PYTHONPATH=/app:/app/litellm_handlers /app/.venv-litellm/bin/litellm \
     --host 127.0.0.1 \
     --port 4000 \
