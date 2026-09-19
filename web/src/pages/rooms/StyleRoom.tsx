@@ -459,7 +459,7 @@ export function StyleRoom() {
           <StateBlock
             minHeight="min-h-[22vh]"
             title={t("GENERATING STYLE OPTIONS")}
-            description={t("Five art-directed proofs are on the way. Each appears as soon as it is ready.")}
+            description={t("Six art-directed proofs are on the way. Each appears as soon as it is ready.")}
             icon="styles"
           />
         </Surface>
@@ -546,7 +546,7 @@ export function StyleRoom() {
                 {comparedSuggestions.map((suggestion) => <Button key={suggestion.id} variant="outline" size="xs" onClick={() => toggleCompare(suggestion.id)} aria-label={`${t("Remove from comparison")} · ${suggestion.label}`}><span className="text-left">{suggestion.label}</span><X size={14} className="shrink-0" aria-hidden="true" /></Button>)}
               </div>}
             </div>
-            <div className="grid gap-6 lg:grid-cols-2">
+            <div data-testid="style-proof-grid" className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
               {suggestions.map((suggestion) => (
                   <StyleProofCard
                     key={suggestion.id}
@@ -648,7 +648,7 @@ export function StyleRoom() {
       <ConfirmDrawer
         open={showSuggestConfirm}
         title="Suggest more styles?"
-        body="Generates five additional style descriptions and sample images. Credits are reserved now and settled to actual usage."
+        body="Generates six additional style descriptions and sample images. Credits are reserved now and settled to actual usage."
         cost={suggestEstimate}
         confirmLabel="Suggest"
         busy={suggestStyles.isPending || isSuggesting}
@@ -660,9 +660,9 @@ export function StyleRoom() {
       />
       <ConfirmDrawer
         open={pendingCustomInput !== null}
-        title={pendingCustomInput?.mode === "neighbors" ? t("Create five directed proofs?") : t("Create this proof?")}
+        title={pendingCustomInput?.mode === "neighbors" ? t("Create six directed proofs?") : t("Create this proof?")}
         body={pendingCustomInput?.mode === "neighbors"
-          ? t("Creates one faithful proof and four deliberately varied neighbors around your direction.")
+          ? t("Creates one faithful proof and five deliberately varied neighbors around your direction.")
           : t("Creates one story-specific proof from your text, visual reference, or both.")}
         cost={pendingCustomInput?.mode === "neighbors"
           ? pendingCustomInput.image && directionEstimate?.image_reference_supported
@@ -671,7 +671,7 @@ export function StyleRoom() {
           : pendingCustomInput?.image && directionEstimate?.image_reference_supported
             ? directionEstimate.estimates_with_reference.faithful
             : directionEstimate?.estimates_without_reference.faithful}
-        confirmLabel={pendingCustomInput?.mode === "neighbors" ? t("CREATE FIVE DIRECTIONS") : t("CREATE MY PROOF")}
+        confirmLabel={pendingCustomInput?.mode === "neighbors" ? t("CREATE SIX DIRECTIONS") : t("CREATE MY PROOF")}
         busy={createStyleDirection.isPending}
         onConfirm={() => {
           if (!pendingCustomInput) return;
