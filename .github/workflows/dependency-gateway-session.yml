@@ -1,0 +1,28 @@
+name: Gateway upgrade integration
+# Temporary branch-scoped integration check; retained smoke script joins normal CI.
+on:
+  push:
+    branches: [fix/dependency-refresh-2026-09]
+    paths: [.github/workflows/dependency-gateway-session.yml]
+permissions:
+  contents: read
+jobs:
+  gateway_database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/dependency-refresh-2026-09
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Documentation reliability
+        run: python scripts/check_docs_reliability.py
+      - name: Build locked gateway
+        run: docker build -f litellm/Dockerfile -t canary-gateway-ci .
+      - name: Verify database-free and PostgreSQL-backed startup and API keys
+        run: python scripts/smoke_gateway.py canary-gateway-ci
