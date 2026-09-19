@@ -36,6 +36,8 @@ from novel_to_comic.state import (
 )
 from novel_to_comic.stages import REGISTRY
 from novel_to_comic.stages.s2_style import (
+    SAMPLE_COUNT,
+    NEIGHBOR_COUNT,
     STYLE_VALIDATION_ACTION,
     STYLE_VALIDATION_COMPOSITION,
     ensure_style_sample_brief,
@@ -167,7 +169,7 @@ def _get_bible(project_dir):
 def _suggest_batch_credit_estimate(
     config: Config,
     project_dir,
-    sample_count: int = 5,
+    sample_count: int = SAMPLE_COUNT,
     *,
     has_style_reference: bool = False,
     reference_size: tuple[int, int] | None = None,
@@ -259,7 +261,7 @@ def _direction_credit_estimates(
 
     def neighbor_cost():
         return estimate_style_batch_cost_usd(
-            config, project_dir, 4, has_style_reference=bool(reference_count),
+            config, project_dir, NEIGHBOR_COUNT, has_style_reference=bool(reference_count),
             reference_size=reference_size,
         )
 
@@ -616,7 +618,7 @@ async def create_style_direction(
             StageStatus.AWAITING_REVIEW, StageStatus.COMPLETE,
         )
         if lifecycle_owned:
-            begin_stage(state, "style", 5 if with_neighbors else 1)
+            begin_stage(state, "style", SAMPLE_COUNT if with_neighbors else 1)
             save_state(state, project_dir)
     except BaseException:
         if reservation_id:
@@ -664,12 +666,12 @@ async def create_style_direction(
                         config, bible, project_dir, merged,
                         list(range(start, len(merged) + 1)),
                     )
-                    # Commit the four neighbors only after every proof succeeds.
+                    # Commit the neighbors only after every proof succeeds.
                     # A failed attempt may leave replaceable image files, but a
                     # retry cannot append duplicate suggestion records.
                     save_suggestions(project_dir, merged, bible.title)
             if lifecycle_owned:
-                for _ in range(5 if with_neighbors else 1):
+                for _ in range(SAMPLE_COUNT if with_neighbors else 1):
                     record_item_done(state, "style")
                 complete_stage(state, "style")
                 save_state(state, project_dir)
@@ -744,7 +746,7 @@ async def suggest_styles(
 
     style_reference = style_direction_image(project_dir, direction) if direction else None
     estimate = _suggest_batch_credit_estimate(
-        config, project_dir, 4 if direction else 5,
+        config, project_dir, NEIGHBOR_COUNT if direction else SAMPLE_COUNT,
         has_style_reference=style_reference is not None,
         reference_size=_reference_image_size(style_reference),
     )
@@ -799,8 +801,6 @@ async def suggest_styles(
                     config, bible, existing_suggestions=existing_suggestions,
                     custom_direction=direction,
                 )
-                if direction:
-                    new_suggestions = new_suggestions[:4]
                 merged = existing_suggestions + new_suggestions
                 save_suggestions(project_dir, merged, bible.title)
                 
@@ -817,8 +817,11 @@ async def suggest_styles(
                 operation_feature = "style.sample"
                 operation_model = config.effective_image_model()
                 
-                async def _on_sample_done(idx: int, result) -> None:
-                    done_count = idx - existing_count
+                done_count = 0
+
+                async def _on_sample_done(_idx: int, result) -> None:
+                    nonlocal done_count
+                    done_count += 1
                     queue.put_nowait({
                         "type": "stage_progress", "stage": "style_suggest",
                         "done": done_count, "total": total_samples,
@@ -882,7 +885,7 @@ async def suggest_styles(
             StageStatus.AWAITING_REVIEW, StageStatus.COMPLETE,
         )
         if lifecycle_owned:
-            begin_stage(state, "style", 4 if direction else 5)
+            begin_stage(state, "style", NEIGHBOR_COUNT if direction else SAMPLE_COUNT)
             lifecycle_started = True
             save_state(state, project_dir)
         style_running[pkey] = style_guard

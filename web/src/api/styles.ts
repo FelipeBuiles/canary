@@ -16,6 +16,8 @@ export interface StyleSuggestion {
   risk: string;
   template: string;
   visual_logic?: "photographic" | "realistic_illustration" | "stylized" | "graphic" | null;
+  proportion_family?: "naturalistic" | "heroic" | "elongated" | "compact" | "caricatured" | "geometric" | null;
+  character_design?: string;
   style_reference_mode?: "faithful" | "variation";
   sample_preview_url?: string | null;
   lettering_source?: "generated" | "preset";

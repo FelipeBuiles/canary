@@ -18,8 +18,12 @@ from novel_to_comic.server.deps import get_project
 from novel_to_comic.server.generation_jobs import generation_worker
 from novel_to_comic.server.routers.lettering import router
 from novel_to_comic.usage import ApiResult
-from .test_hybrid_lettering import book as book, save, update
+from .test_hybrid_lettering import book as _book_fixture, save, update
 from .test_server_admission import app_at, run_async
+
+
+# Register the shared pytest fixture without shadowing an unused import.
+book = _book_fixture
 
 
 def add_page(artifacts, image):

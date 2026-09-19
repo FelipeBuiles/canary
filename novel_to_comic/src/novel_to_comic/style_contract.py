@@ -76,8 +76,25 @@ def normalize_production_standard(
 
 def style_template_for_suggestion(suggestion: dict) -> str:
     """Return the complete selected style authority for samples and pages."""
+    visual_style = str(suggestion.get("template") or "")
+    character_design = str(suggestion.get("character_design") or "").strip()
+    if character_design:
+        family = str(suggestion.get("proportion_family") or "").strip()
+        rendering_direction = {
+            "stylized": "Clearly stylized illustration, not photographic rendering.",
+            "graphic": "Deliberate graphic abstraction and designed shapes, not photographic anatomy.",
+            "realistic_illustration": "Observational drawing or painting, visibly illustrated rather than photographed.",
+            "photographic": "Lens-based photographic rendering with naturalistic anatomy and materials.",
+        }.get(suggestion.get("visual_logic"), "")
+        if rendering_direction:
+            visual_style += "\n\nRENDERING APPROACH — " + rendering_direction
+        visual_style += (
+            "\n\nCHARACTER DESIGN — " + (f"{family}: " if family else "") + character_design
+            + " Preserve this proportion and shape system consistently across all subjects "
+            "and panels, adapted to each subject's species, age and identifying traits."
+        )
     template = page_style_template(
-        str(suggestion.get("template") or ""),
+        visual_style,
         lettering=normalize_production_standard(suggestion.get("lettering"), kind="lettering"),
         page_framing=normalize_production_standard(suggestion.get("page_framing"), kind="page_framing"),
     )

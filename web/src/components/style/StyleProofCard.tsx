@@ -12,6 +12,7 @@ import { LazyImage } from "../ui/LazyImage";
 const ROLE_LABELS: Record<string, string> = {
   story_fit_primary: "BEST FIT",
   story_fit_secondary: "STRONG FIT",
+  story_fit_tertiary: "STRONG FIT",
   adjacent: "ADJACENT",
   contrast: "CONTRAST",
   wildcard: "WILDCARD",
@@ -162,20 +163,20 @@ export function StyleProofCard({
         <h3 className="mt-3 text-balance font-display text-[1.7rem] font-black leading-[1.08] tracking-[-0.03em] text-ink-black">
           {suggestion.label}
         </h3>
-        <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <div className="mt-5 flex flex-wrap gap-2">
           <Button
             variant={isActive ? "secondary" : "primary"}
             size="sm"
             disabled={!canSelect}
             onClick={handleSelect}
             aria-pressed={isActive}
-            className={isActive ? "disabled:opacity-100 disabled:bg-narrator-gold disabled:text-ink-black" : undefined}
+            className={`flex-[2_1_12rem] ${isActive ? "disabled:opacity-100 disabled:bg-narrator-gold disabled:text-ink-black" : ""}`}
             aria-busy={setActive.isPending}
           >
             {isActive && <Check size={16} aria-hidden="true" />}
             {setActive.isPending ? t("SELECTING…") : isActive ? t("YOUR STYLE") : t("SELECT THIS STYLE")}
           </Button>
-          <Button variant="outline" size="sm" disabled={compareDisabled} title={compareDisabled ? t("Three proofs added. Remove one to compare another.") : undefined} onClick={onToggleCompare} aria-pressed={isCompared}>
+          <Button variant="outline" size="sm" className="flex-[1_1_6rem]" disabled={compareDisabled} title={compareDisabled ? t("Three proofs added. Remove one to compare another.") : undefined} onClick={onToggleCompare} aria-pressed={isCompared}>
             {isCompared && <Check size={14} aria-hidden="true" />}
             {isCompared ? t("COMPARING") : t("COMPARE")}
           </Button>
@@ -200,6 +201,7 @@ export function StyleProofCard({
               <p className="text-sm leading-6 text-ink-black">{suggestion.template}</p>
               <dl className="mt-5 space-y-4">
                 {[
+                  ["CHARACTER DESIGN", suggestion.character_design || ""],
                   ["PALETTE", suggestion.palette || t("Set by the direction")],
                   ["LINE & FINISH", suggestion.line_rendering || suggestion.medium],
                   ["LIGHTING", suggestion.lighting_value],

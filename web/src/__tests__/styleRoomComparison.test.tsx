@@ -84,7 +84,7 @@ it("shows estimate failures with a retry instead of claiming generation is runni
     </Routes></MemoryRouter></I18nProvider>);
     expect(screen.getByRole("alert").textContent).toContain(state.estimateError.message);
     expect(screen.queryByText("PREPARING DIRECTIONS…")).toBeNull();
-    expect(screen.getByRole("button", { name: "CREATE FIVE DIRECTIONS" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "CREATE SIX DIRECTIONS" })).toHaveProperty("disabled", true);
     await userEvent.setup().click(screen.getByRole("button", { name: "TRY AGAIN" }));
     expect(state.retryEstimate).toHaveBeenCalledOnce();
     expect(state.mutation.mutate).not.toHaveBeenCalled();
@@ -102,4 +102,19 @@ it("starts Cast with its bundled cover estimate without requesting a cover befor
   expect(state.generateCover).not.toHaveBeenCalled();
   expect(screen.getByText("Cast room")).toBeTruthy();
   state.castStatus = undefined;
+});
+
+it("places all six base proofs in the responsive three-column desktop grid", () => {
+  state.labels = ["Ink", "Watercolor", "Noir", "Graphic", "Caricature", "Paper"];
+  state.estimateError = null;
+  state.castStatus = undefined;
+  render(<I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
+    <Route path="/projects/:id/style" element={<StyleRoom />} />
+  </Routes></MemoryRouter></I18nProvider>);
+  const grid = screen.getByTestId("style-proof-grid");
+  expect(grid.classList.contains("grid-cols-1")).toBe(true);
+  expect(grid.classList.contains("md:grid-cols-2")).toBe(true);
+  expect(grid.classList.contains("lg:grid-cols-3")).toBe(true);
+  expect(within(grid).getAllByRole("heading", { level: 3 })).toHaveLength(6);
+  expect(within(grid).getAllByRole("button", { name: "SELECT THIS STYLE" })).toHaveLength(6);
 });

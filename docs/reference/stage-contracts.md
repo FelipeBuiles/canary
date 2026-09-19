@@ -327,20 +327,42 @@ authorization to silently redraw or release a reservation.
 
 ### Style and reference authority
 
-Style curation uses typed `visual_logic`: `photographic`,
-`realistic_illustration`, `stylized`, or `graphic`. Selection covers declared
-portfolio roles rather than taking the first candidates. Without an explicit
-author medium restriction, the selected portfolio must include photographic
-and realistic-illustration options in distinct roles; an invalid portfolio
-fails rather than silently dropping coverage. A restriction must quote the
-author direction verbatim; story mood is not a medium restriction. Contrast
-and wildcard directions must also honor that restriction.
+Style curation generates **six** base proofs: three story fits, an adjacent
+option, a contrast, and a wildcard. Twelve typed candidates are curated one per
+role rather than taking the first six. The default portfolio has at least four
+`stylized`/`graphic` directions, at least one `realistic_illustration`, and at
+most one optional `photographic` direction. Photography is not mandatory.
+
+Each generated candidate declares `proportion_family` (`naturalistic`, `heroic`,
+`elongated`, `compact`, `caricatured`, or `geometric`) and a concrete
+`character_design`. Selection requires four proportion families including three
+non-naturalistic families, with shape differences weighted above surface/medium
+wording. Design and rendering category are compiled into selected art authority
+and its identity/fingerprint; they are not picker-only metadata.
+
+An author-directed set is one unchanged faithful proof plus **five** neighbors.
+Neighbor curation uses five roles, at least three stylized/graphic options, and
+the same shape-diversity requirement. Explicit author restrictions override
+only the constrained axis: `medium_restriction_quote` covers medium/rendering,
+and `proportion_restriction_quote` covers proportions. Each must quote the author
+verbatim. Explicit photographic-only directions may constrain both; a dark mood,
+identity anchor or an ink-only medium does not mandate naturalistic proportions.
+Contrast and wildcard directions honor the same restrictions.
+
+Schema correction, missing roles and inadequate diversity share at most two
+text attempts. A complete but unbalanced pool receives the remaining attempt;
+no invalid portfolio is silently accepted or padded with invented directions.
+This validates declared directions, not generated pixels. Paid-image retries,
+visual verification and author selection remain explicit. Existing saved proofs
+remain visible and selectable; increasing the default does not auto-generate a
+sixth image or replace the selected style. The picker uses three columns on
+desktop, two on tablets, and one on narrow screens.
 
 Style proofs share one bounded scene roster and location across the generated
 brief, deterministic fallback, and request compiler. Contextual mentions cannot
 add subjects or crowds. Brief prose owns staging, not redesigned identities;
 the compiler supplies each selected canonical `visual_anchor` exactly.
-The v5 brief cache fingerprints the selected evidence, model, and prompt;
+The v6 brief cache fingerprints the selected evidence, model, and prompt;
 stale cache entries are not reused. Candidate styles render the same selection.
 
 New full-page style samples generate art and framing only, reserving four
@@ -907,10 +929,10 @@ book styles and local overrides are not silently replaced. Reapply a preset to
 adopt its new defaults. Older v1 layouts remain readable but require reopening
 Lettering and saving their explicit v2 reflow before export; artwork is retained.
 
-Style suggestion schema v5 requires `lettering_preset` inside each `styles` item,
+Style suggestion schema v6 requires `lettering_preset` inside each `styles` item,
 not at the batch root. Parsed schema failures receive a complete-response
 correction using the existing two-call curation budget. This budget is shared
-with portfolio completion; it is not an additional nested retry loop. Extra
+with portfolio completion and diversity repair; it is not an additional nested retry loop. Extra
 fields remain forbidden, and a root-level preset is never propagated silently
 across candidates. Provider-call failures are not caught by this correction path.
 

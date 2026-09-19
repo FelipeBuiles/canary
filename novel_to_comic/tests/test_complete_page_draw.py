@@ -652,10 +652,12 @@ def test_native_vertex_transport_preserves_reference_order_and_returns_one_page(
     assert finalized["model_alias"] == "image-gemini-pro"
     assert finalized["operation"] == "image"
     assert finalized["metadata"]["trace_name"] == "complete_page_draw"
-    from novel_to_comic.ai.client import _truncate_for_log
-
-    # Telemetry is bounded; the full frozen prompt is asserted on the wire above.
-    assert finalized["langfuse_input"]["prompt"] == _truncate_for_log(prepared.prompt)
+    # Observability deliberately bounds previews; the provider assertion above
+    # still requires the complete, untruncated prompt to reach the gateway.
+    assert len(prepared.prompt) > 4000
+    assert finalized["langfuse_input"]["prompt"] == (
+        prepared.prompt[:4000] + f"... [+{len(prepared.prompt) - 4000} chars]"
+    )
     assert finalized["langfuse_output"]["actual_provider_model"] == (
         "vertex_ai/gemini-3-pro-image"
     )
