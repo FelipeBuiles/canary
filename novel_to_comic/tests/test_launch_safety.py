@@ -592,8 +592,17 @@ def test_litellm_images_pin_sdk_with_native_image_config_support():
     local_gateway = (root / "litellm" / "Dockerfile").read_text(encoding="utf-8")
     compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
 
-    assert "google-genai==1.75.0" in production
-    assert "google-genai==1.75.0" in local_gateway
+    import tomllib
+
+    gateway = tomllib.loads((root / "litellm/pyproject.toml").read_text())
+    lock = tomllib.loads((root / "litellm/uv.lock").read_text())
+    versions = {package["name"]: package["version"] for package in lock["package"]}
+    assert "google-genai==2.24.0" in gateway["project"]["dependencies"]
+    assert versions["google-genai"] == "2.24.0"
+    assert versions["litellm"] == "1.101.0"
+    for dockerfile in (production, local_gateway):
+        assert "COPY litellm/pyproject.toml litellm/uv.lock" in dockerfile
+        assert "uv sync --project /app/gateway --locked" in dockerfile
     assert "dockerfile: litellm/Dockerfile" in compose
 
 
