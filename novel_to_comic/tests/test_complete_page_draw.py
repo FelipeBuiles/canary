@@ -652,7 +652,12 @@ def test_native_vertex_transport_preserves_reference_order_and_returns_one_page(
     assert finalized["model_alias"] == "image-gemini-pro"
     assert finalized["operation"] == "image"
     assert finalized["metadata"]["trace_name"] == "complete_page_draw"
-    assert finalized["langfuse_input"]["prompt"] == prepared.prompt
+    # Observability deliberately bounds previews; the provider assertion above
+    # still requires the complete, untruncated prompt to reach the gateway.
+    assert len(prepared.prompt) > 4000
+    assert finalized["langfuse_input"]["prompt"] == (
+        prepared.prompt[:4000] + f"... [+{len(prepared.prompt) - 4000} chars]"
+    )
     assert finalized["langfuse_output"]["actual_provider_model"] == (
         "vertex_ai/gemini-3-pro-image"
     )
