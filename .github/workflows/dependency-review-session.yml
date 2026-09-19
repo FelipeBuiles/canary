@@ -1,78 +1,164 @@
 name: Dependency review session
 
-# Temporary, branch-scoped evidence collection; removed before merge.
+# Temporary branch-only resolver. No production environment or provider secrets.
 on:
   push:
     branches: [fix/dependency-refresh-2026-09]
-    paths: [.github/workflows/dependency-review-session.yml]
+    paths:
+      - .github/workflows/dependency-review-session.yml
+      - scripts/_dependency_refresh_session.py
 permissions:
-  contents: read
+  contents: write
+concurrency:
+  group: dependency-review-session
+  cancel-in-progress: false
 jobs:
-  inventory:
+  review:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
         with:
-          persist-credentials: false
+          ref: fix/dependency-refresh-2026-09
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Inventory manifests and current upstream releases
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: '0.12.17'
+      - name: Apply reviewed upgrades
         run: |
           mkdir -p /tmp/dependency-review
+          if [ ! -f litellm/uv.lock ]; then
+            python scripts/_dependency_refresh_session.py | tee /tmp/dependency-review/selection.log
+          fi
+      - name: Resolve Python locks
+        id: python_locks
+        continue-on-error: true
+        run: |
+          uv lock --project novel_to_comic --upgrade 2>&1 | tee /tmp/dependency-review/backend-resolution.log
+          uv lock --project litellm --upgrade 2>&1 | tee /tmp/dependency-review/gateway-resolution.log
+      - name: Resolve JavaScript locks
+        id: npm_locks
+        continue-on-error: true
+        run: |
+          for directory in . web showcase/video; do
+            (cd "$directory" && npm install --package-lock-only --ignore-scripts) || exit 1
+          done
+      - name: Save authored manifests and generated locks to review branch
+        if: steps.python_locks.outcome == 'success' && steps.npm_locks.outcome == 'success'
+        run: |
+          git add .nvmrc Dockerfile docker-compose.yml package.json package-lock.json \
+            web/package.json web/package-lock.json \
+            novel_to_comic/pyproject.toml novel_to_comic/uv.lock \
+            novel_to_comic/tests/test_launch_safety.py litellm/Dockerfile litellm/pyproject.toml litellm/uv.lock \
+            showcase/video/package.json
+          git add -f showcase/video/package-lock.json
+          if ! git diff --cached --quiet; then
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m 'chore(deps): upgrade Python, web, video, and operational dependency locks'
+            git push origin HEAD:fix/dependency-refresh-2026-09
+          fi
+      - name: Install actual gateway libraries and capture upstream patch targets
+        id: gateway_install
+        continue-on-error: true
+        run: |
+          uv sync --project litellm --locked
+          uv pip check --python litellm/.venv/bin/python
+          litellm/.venv/bin/python - <<'PY'
+          import importlib.util, json, pathlib
+          root = pathlib.Path(importlib.util.find_spec('litellm').origin).parent
+          names = ['llms/custom_httpx/http_handler.py', 'llms/anthropic/chat/transformation.py', 'llms/anthropic/chat/handler.py']
+          pathlib.Path('/tmp/dependency-review/upstream.json').write_text(json.dumps({name: (root / name).read_text() for name in names}))
+          from google.genai import types
+          config = types.GenerateContentConfig(image_config=types.ImageConfig(aspect_ratio='4:5', image_size='2K'))
+          assert config.image_config.aspect_ratio == '4:5'
+          import google.auth, google.cloud.aiplatform
+          print('Google SDK image controls and Vertex imports passed')
+          PY
+      - name: Apply fail-closed gateway patches
+        id: patches
+        continue-on-error: true
+        run: |
+          litellm/.venv/bin/python litellm/patch_http_errors.py
+          litellm/.venv/bin/python litellm/patch_anthropic_refusals.py
+      - name: Backend validation
+        id: backend
+        continue-on-error: true
+        run: |
+          uv sync --project novel_to_comic --locked --extra web --extra dev --extra otel
+          uv pip check --python novel_to_comic/.venv/bin/python
+          uv run --project novel_to_comic playwright install --with-deps chromium
+          uv run --project novel_to_comic ruff check novel_to_comic 2>&1 | tee /tmp/dependency-review/ruff.log
+          uv run --project novel_to_comic pytest novel_to_comic/tests -q --tb=short 2>&1 | tee /tmp/dependency-review/pytest.log
+      - name: Web install
+        id: web_install
+        continue-on-error: true
+        working-directory: web
+        run: npm ci
+      - name: Web tests
+        id: web_tests
+        continue-on-error: true
+        working-directory: web
+        env:
+          VITE_SUPABASE_URL: https://ci.supabase.co
+          VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci
+        run: npm test 2>&1 | tee /tmp/dependency-review/vitest.log
+      - name: Web lint and build
+        id: web_build
+        continue-on-error: true
+        working-directory: web
+        run: |
+          npm run lint 2>&1 | tee /tmp/dependency-review/eslint.log
+          npm run build 2>&1 | tee /tmp/dependency-review/web-build.log
+      - name: Root tooling and video validation
+        id: video
+        continue-on-error: true
+        run: |
+          npm ci
+          cd showcase/video
+          npm ci
+          npm run lint 2>&1 | tee /tmp/dependency-review/video-lint.log
+          npm run build 2>&1 | tee /tmp/dependency-review/video-build.log
+      - name: Security inventory and Compose validation
+        id: audit
+        continue-on-error: true
+        run: |
+          docker compose config --quiet
+          (cd web && npm run audit:production)
+          uv run --project novel_to_comic --with pip-audit==2.10.1 pip-audit --format json --output /tmp/dependency-review/python-audit.json
+      - name: Capture review evidence
+        if: always()
+        run: |
+          mkdir -p /tmp/dependency-review
+          git diff > /tmp/dependency-review/uncommitted.patch
           python - <<'PY'
-          import concurrent.futures, json, pathlib, re, subprocess, tomllib, urllib.request
-          root = pathlib.Path('.')
-          paths = subprocess.check_output(['git', 'ls-files'], text=True).splitlines()
-          manifests = [p for p in paths if pathlib.Path(p).name in {'package.json', 'pyproject.toml'}]
-          names = set()
-          for path in manifests:
-              print('\nMANIFEST', path, '\n', pathlib.Path(path).read_text())
-              if path.endswith('pyproject.toml'):
-                  data = tomllib.loads(pathlib.Path(path).read_text())
-                  deps = data.get('project', {}).get('dependencies', [])[:]
-                  for group in data.get('project', {}).get('optional-dependencies', {}).values(): deps += group
-                  deps += data.get('build-system', {}).get('requires', [])
-                  for dep in deps: names.add(('pypi', re.split(r'[\[<>=!~; ]', dep)[0]))
-              else:
-                  data = json.loads(pathlib.Path(path).read_text())
-                  for key in ('dependencies', 'devDependencies'):
-                      for name in data.get(key, {}): names.add(('npm', name))
-          for name in ('litellm', 'google-genai', 'google-cloud-aiplatform', 'google-auth', 'langfuse', 'openai-codex', 'uv', 'pip-audit'):
-              names.add(('pypi', name))
-          def query(item):
-              ecosystem, name = item
-              url = f'https://pypi.org/pypi/{name}/json' if ecosystem == 'pypi' else f'https://registry.npmjs.org/{name}/latest'
+          import json, pathlib, subprocess
+          paths = subprocess.check_output(['git', 'ls-files', '--cached', '--others', '--exclude-standard'], text=True).splitlines()
+          source = {}
+          for path in paths:
+              if any(part in {'node_modules', '.venv', '__pycache__', '.git', 'dist', 'build'} for part in pathlib.Path(path).parts): continue
               try:
-                  with urllib.request.urlopen(url, timeout=30) as response: data = json.load(response)
-                  info = data['info'] if ecosystem == 'pypi' else data
-                  return {'ecosystem': ecosystem, 'name': name, 'version': info['version'], 'requires_python': info.get('requires_python'), 'engines': info.get('engines'), 'dependencies': info.get('requires_dist') if ecosystem == 'pypi' else info.get('peerDependencies'), 'source': url}
-              except Exception as exc: return {'ecosystem': ecosystem, 'name': name, 'error': str(exc)}
-          with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool: releases = list(pool.map(query, sorted(names)))
-          pathlib.Path('/tmp/dependency-review/releases.json').write_text(json.dumps(releases, indent=2))
-          for release in releases: print('UPSTREAM', json.dumps(release))
-          for path in paths:
-              if path.endswith(('uv.lock', 'requirements.txt', 'requirements.in', 'package-lock.json')) or 'Dockerfile' in path or path.endswith('.yml') and path.startswith(('.github/', 'ops/')):
-                  print('DEPENDENCY_FILE', path)
-          lock = tomllib.loads(pathlib.Path('novel_to_comic/uv.lock').read_text())
-          print('PYTHON_LOCK', json.dumps({p['name']: p['version'] for p in lock['package']}))
-          for manifest in manifests:
-              lockpath = pathlib.Path(manifest).with_name('package-lock.json')
-              if lockpath.exists():
-                  lock = json.loads(lockpath.read_text())
-                  print('NPM_LOCK', str(lockpath), json.dumps({p: v.get('version') for p, v in lock.get('packages', {}).items() if p and p.count('node_modules/') == 1}))
-          # Only tracked source; never credentials, .git, node_modules, or local data.
-          text = {}
-          for path in paths:
-              p = pathlib.Path(path)
-              if p.suffix in {'.py', '.toml', '.json', '.yml', '.yaml', '.mjs', '.ts', '.tsx', '.md', '.sh', '.lock', '.txt'} or 'Dockerfile' in p.name:
-                  try: text[path] = p.read_text()
-                  except (UnicodeError, OSError): pass
-          pathlib.Path('/tmp/dependency-review/source.json').write_text(json.dumps(text))
+                  text = pathlib.Path(path).read_text()
+                  if '\x00' not in text: source[path] = text
+              except (UnicodeError, OSError): pass
+          pathlib.Path('/tmp/dependency-review/source.json').write_text(json.dumps(source))
           PY
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: dependency-review-inventory
+          name: dependency-review-evidence
           path: /tmp/dependency-review/
           retention-days: 3
+      - name: Require all validation outcomes
+        if: always()
+        env:
+          OUTCOMES: ${{ join(steps.*.outcome, ',') }}
+        run: |
+          if [[ "$OUTCOMES" == *failure* ]]; then
+            echo 'One or more review checks failed; inspect the saved evidence.'
+            exit 1
+          fi
