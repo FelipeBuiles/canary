@@ -112,3 +112,14 @@ describe("StyleProofCard", () => {
     expect(mutation.mutate).not.toHaveBeenCalled();
   });
 });
+
+it("shows the concrete character design without adding more collapsed-card controls", async () => {
+  const characterDesign = "Compact large heads, short limbs, rounded adult silhouettes and simple faces.";
+  render(card(props({ suggestion: { ...suggestion, role: "story_fit_tertiary", character_design: characterDesign } })));
+  expect(screen.getByText("STRONG FIT")).toBeTruthy();
+  const design = screen.getByText(characterDesign);
+  expect(design.closest("details")).toHaveProperty("open", false);
+  await userEvent.click(screen.getByText("VISUAL DIRECTION"));
+  expect(design.closest("details")).toHaveProperty("open", true);
+  expect(screen.getByText("CHARACTER DESIGN")).toBeTruthy();
+});

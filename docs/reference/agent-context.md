@@ -104,14 +104,16 @@ word or page quotas. Review is metered text work and not a quality guarantee.
   Evidence is removed before canonical Story Bible persistence; the shared
   `visual_anchor` owns physical identity, including species/anatomy, without a
   separate species DTO.
-- Style curation declares `visual_logic` (`photographic`,
-  `realistic_illustration`, `stylized`, `graphic`) and portfolio roles. Without
-  an exact quoted author medium restriction, photographic and realistic
-  illustration coverage must survive selection. Mood is not a restriction;
-  contrast/wildcard options must still honor explicit author limits.
+- Style generates six base proofs (or a faithful author proof plus five neighbors).
+  Twelve candidates are curated by role, `visual_logic`, `proportion_family` and
+  concrete `character_design`. Defaults require four stylized/graphic directions,
+  one realistic illustration, at most one optional photo, and four proportion
+  families including three non-naturalistic ones. Author-quoted medium/rendering
+  and proportion restrictions override only their own axes. Schema, role and
+  diversity repair share two text attempts; mocked tests do not establish image quality.
 - Style's generated shared brief, deterministic fallback, and compiler use the
   same bounded scene roster/location. Context mentions do not add subjects.
-  Compiled canonical anchors stay exact; v5 brief caching keys selected evidence,
+  Compiled canonical anchors stay exact; v6 brief caching keys selected evidence,
   model, and prompt rather than reusing an unrelated scene.
 - Cast references use protected art-only style direction; full-page samples
   and Draw keep lettering/framing standards. Approved style imagery owns
