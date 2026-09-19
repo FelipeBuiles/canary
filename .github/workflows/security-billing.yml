@@ -45,6 +45,9 @@ jobs:
       - name: Install dependencies
         working-directory: novel_to_comic
         run: uv sync --frozen --extra web --extra dev
+      - name: Install browser for paid-action integration tests
+        working-directory: novel_to_comic
+        run: uv run playwright install --with-deps chromium
       - name: Existing and new billing/security regressions
         working-directory: novel_to_comic
         # Keep money/security checks independently visible; this does not
