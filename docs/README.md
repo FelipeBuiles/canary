@@ -35,6 +35,8 @@ retained as current reference.
 
 ## Current contracts and capability evidence
 
+- [Dependency maintenance](reference/dependencies.md): lockfile authorities,
+  supported version lines, upgrade contracts, and operational rollout checks.
 - [Stage contracts](reference/stage-contracts.md): source-owned stage authority,
   user gates, correction jobs, recovery, and generated-output compatibility.
 - [Agent context](reference/agent-context.md): concise workflow and code navigation.
