@@ -16,6 +16,9 @@ jobs:
   review:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
         with:
@@ -25,7 +28,7 @@ jobs:
           python-version: '3.12'
       - uses: actions/setup-node@v6
         with:
-          node-version: '24'
+          node-version: '24.21.0'
       - uses: astral-sh/setup-uv@v8.2.0
         with:
           version: '0.12.17'
@@ -49,14 +52,16 @@ jobs:
             (cd "$directory" && npm install --package-lock-only --ignore-scripts) || exit 1
           done
       - name: Save authored manifests and generated locks to review branch
+        id: save
+        continue-on-error: true
         if: steps.python_locks.outcome == 'success' && steps.npm_locks.outcome == 'success'
         run: |
-          git add .nvmrc Dockerfile docker-compose.yml package.json package-lock.json \
+          git add Dockerfile docker-compose.yml package.json package-lock.json \
             web/package.json web/package-lock.json \
             novel_to_comic/pyproject.toml novel_to_comic/uv.lock \
             novel_to_comic/tests/test_launch_safety.py litellm/Dockerfile litellm/pyproject.toml litellm/uv.lock \
             showcase/video/package.json
-          git add -f showcase/video/package-lock.json
+          git add -f .nvmrc showcase/video/package-lock.json
           if ! git diff --cached --quiet; then
             git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
               commit -m 'chore(deps): upgrade Python, web, video, and operational dependency locks'
@@ -85,15 +90,27 @@ jobs:
         run: |
           litellm/.venv/bin/python litellm/patch_http_errors.py
           litellm/.venv/bin/python litellm/patch_anthropic_refusals.py
-      - name: Backend validation
-        id: backend
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-review-upstream
+          path: /tmp/dependency-review/upstream.json
+          retention-days: 3
+      - name: Backend install
+        id: backend_install
         continue-on-error: true
         run: |
           uv sync --project novel_to_comic --locked --extra web --extra dev --extra otel
           uv pip check --python novel_to_comic/.venv/bin/python
           uv run --project novel_to_comic playwright install --with-deps chromium
-          uv run --project novel_to_comic ruff check novel_to_comic 2>&1 | tee /tmp/dependency-review/ruff.log
-          uv run --project novel_to_comic pytest novel_to_comic/tests -q --tb=short 2>&1 | tee /tmp/dependency-review/pytest.log
+      - name: Backend lint
+        id: backend_lint
+        continue-on-error: true
+        run: uv run --project novel_to_comic ruff check novel_to_comic 2>&1 | tee /tmp/dependency-review/ruff.log
+      - name: Backend tests
+        id: backend
+        continue-on-error: true
+        run: uv run --project novel_to_comic pytest novel_to_comic/tests -q --tb=short 2>&1 | tee /tmp/dependency-review/pytest.log
       - name: Web install
         id: web_install
         continue-on-error: true
@@ -107,13 +124,16 @@ jobs:
           VITE_SUPABASE_URL: https://ci.supabase.co
           VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci
         run: npm test 2>&1 | tee /tmp/dependency-review/vitest.log
-      - name: Web lint and build
+      - name: Web lint
+        id: web_lint
+        continue-on-error: true
+        working-directory: web
+        run: npm run lint 2>&1 | tee /tmp/dependency-review/eslint.log
+      - name: Web build
         id: web_build
         continue-on-error: true
         working-directory: web
-        run: |
-          npm run lint 2>&1 | tee /tmp/dependency-review/eslint.log
-          npm run build 2>&1 | tee /tmp/dependency-review/web-build.log
+        run: npm run build 2>&1 | tee /tmp/dependency-review/web-build.log
       - name: Root tooling and video validation
         id: video
         continue-on-error: true
@@ -123,24 +143,28 @@ jobs:
           npm ci
           npm run lint 2>&1 | tee /tmp/dependency-review/video-lint.log
           npm run build 2>&1 | tee /tmp/dependency-review/video-build.log
-      - name: Security inventory and Compose validation
-        id: audit
+      - name: JavaScript security inventory and Compose validation
+        id: npm_audit
         continue-on-error: true
         run: |
           docker compose config --quiet
+          (cd web && npm audit --json > /tmp/dependency-review/npm-audit.json) || true
           (cd web && npm run audit:production)
-          uv run --project novel_to_comic --with pip-audit==2.10.1 pip-audit --format json --output /tmp/dependency-review/python-audit.json
+      - name: Python security inventory
+        id: python_audit
+        continue-on-error: true
+        run: uv run --project novel_to_comic --with pip-audit==2.10.1 pip-audit --format json --output /tmp/dependency-review/python-audit.json
       - name: Capture review evidence
         if: always()
         run: |
           mkdir -p /tmp/dependency-review
           git diff > /tmp/dependency-review/uncommitted.patch
+          git rev-parse HEAD > /tmp/dependency-review/head.txt
           python - <<'PY'
           import json, pathlib, subprocess
-          paths = subprocess.check_output(['git', 'ls-files', '--cached', '--others', '--exclude-standard'], text=True).splitlines()
+          paths = subprocess.check_output(['git', 'ls-files'], text=True).splitlines()
           source = {}
           for path in paths:
-              if any(part in {'node_modules', '.venv', '__pycache__', '.git', 'dist', 'build'} for part in pathlib.Path(path).parts): continue
               try:
                   text = pathlib.Path(path).read_text()
                   if '\x00' not in text: source[path] = text
