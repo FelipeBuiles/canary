@@ -12,7 +12,7 @@ temperature.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from novel_to_comic.clients.text import generate_json
 from novel_to_comic.config import Config
-from novel_to_comic.usage import UsageRecord
+from novel_to_comic.usage import ApiResult, UsageRecord
 
 T = TypeVar("T")
 
@@ -109,6 +109,7 @@ async def generate_validated_json(
     temperatures: Sequence[float] = (0.4,),
     validate: Callable[[T], None] | None = None,
     repair: Callable[[T, Exception], T | None] | None = None,
+    generate: Callable[..., Awaitable[ApiResult[Any]]] | None = None,
 ) -> StructuredCallOutcome[T]:
     """Generate JSON, prefer deterministic repair, then re-prompt if necessary.
 
@@ -121,7 +122,7 @@ async def generate_validated_json(
 
     for attempt in range(total_attempts):
         temperature = temperatures[min(attempt, len(temperatures) - 1)]
-        api_result = await generate_json(
+        api_result = await (generate or generate_json)(
             config=config,
             model=model,
             system_prompt=system_prompt,

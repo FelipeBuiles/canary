@@ -120,6 +120,19 @@ export async function apiFetch<T>(
       const info = parseInsufficientCredits(detail);
       if (info) throw new InsufficientCreditsError(info);
     }
+    // Draw preflight precedes edition creation, holds, and job dispatch.
+    // Recognize the exact historical rejection too, so saved receipts recover.
+    // Unknown conflicts still retain their keys to prevent duplicate submissions.
+    const isDrawStart = /^\/projects\/[^/]+\/run(?:\?|$)/.test(path)
+      && new URLSearchParams(path.split("?")[1]).get("stage") === "draw";
+    const definiteDrawRejection = typeof detail === "object" && detail !== null
+      && (detail as { code?: unknown }).code === "draw_preflight_rejected";
+    const legacyDrawOverflow = typeof detail === "string"
+      && /^Page \d+ requires \d+ approved references, but this edition supports \d+\. Replan this page before drawing; identity references will not be silently dropped\.$/.test(detail);
+    if (res.status === 409 && method === "POST" && isDrawStart
+      && (definiteDrawRejection || legacyDrawOverflow)) {
+      action?.complete();
+    }
     throw new ApiError(res.status, message);
   }
   const result = await res.json();

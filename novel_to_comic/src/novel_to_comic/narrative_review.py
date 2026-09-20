@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from novel_to_comic.generation_checkpoints import checkpointed_generator
 from novel_to_comic.models.validation import EditorialIssue, InvariantFailure
+from novel_to_comic.paid_shards import run_paid_shards
 from novel_to_comic.usage import estimate_text_cost
 
 REVIEW_VERSION = "narrative_v4"
@@ -518,6 +519,10 @@ def reviewed_validation(validation, failures, *, artifacts, phase, context):
     return validation.model_copy(update={"invariant_failures": failures, "editorial_issues": tuple(issues.values())})
 
 
+class _ReviewProtocolError(ValueError):
+    """Stop admitting windows after protocol repairs are exhausted."""
+
+
 async def review_narrative(context, *, generate, ctx, artifacts, model, instruction=""):
     phase = context["phase"]
     owner = "adapt" if phase == "adapt" else "plan"
@@ -561,9 +566,10 @@ async def review_narrative(context, *, generate, ctx, artifacts, model, instruct
             invalid_windows = {f.id for f in previous.failures if f.code == "narrative_review_invalid"}
     except (ArtifactMissing, ArtifactInvalid):
         pass
-    for index, window in enumerate(
-        _review_contexts({**context, "approved_story_instruction": instruction}), 1
-    ):
+    windows = list(_review_contexts({**context, "approved_story_instruction": instruction}))
+    reviewed = {}
+
+    async def review_window(index, window):
         request = _review_request(window)
         prompt = request["user_content"]
         window_signals = {s["id"] for s in window["signals"]}
@@ -598,6 +604,24 @@ async def review_narrative(context, *, generate, ctx, artifacts, model, instruct
                     "\nPREVIOUS REVIEW JSON:\n" + json.dumps(result.value, ensure_ascii=False)
                     + "\nVALIDATION ERRORS:\n" + validation_error
                 )
+        reviewed[index] = (verdict, validation_error if verdict is None else "")
+        if verdict is None:
+            raise _ReviewProtocolError(validation_error)
+
+    try:
+        await run_paid_shards(
+            [lambda index=index, window=window: review_window(index, window)
+             for index, window in enumerate(windows, 1)],
+            limit=4,
+        )
+    except _ReviewProtocolError:
+        # Admitted siblings have finished checkpointing. Persist the invalid
+        # verdict below; explicit Resume can reuse every completed response.
+        pass
+    for index, window in enumerate(windows, 1):
+        if index not in reviewed:
+            break
+        verdict, validation_error = reviewed[index]
         if verdict is None:
             failures.append(
                 InvariantFailure(
@@ -607,7 +631,7 @@ async def review_narrative(context, *, generate, ctx, artifacts, model, instruct
                     evidence=[validation_error],
                 )
             )
-            break
+            continue
         verdicts.append(verdict)
         findings = list(verdict.findings)
         for assessment in verdict.signal_assessments:

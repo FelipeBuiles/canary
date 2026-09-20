@@ -1,4 +1,5 @@
 import { CastRegenAction } from "../../components/composites/CastRegenAction";
+import { CastIdentityReview } from "../../components/composites/CastIdentityReview";
 import { ArrowUpRight, Search, Users, MapPin, Box, LoaderCircle, ImagePlus } from "lucide-react";
 import { FieldLabel, TextField } from "../../components/ui/Field";
 import { useReferenceJob } from "../../hooks/useReferenceJob";
@@ -1045,7 +1046,7 @@ export function CastRoom() {
   const lastProgressAt = stageInfo?.last_progress_at ?? null;
   const needsApproval = stageStatus === "awaiting_review";
   const canStartCast = stageStatus === "pending";
-  const { data: castResumeEstimate } = useStageEstimate(id, "cast", canStartCast || checkpointAction === "resume" || isStageStuck);
+  const { data: castResumeEstimate } = useStageEstimate(id, "cast", !isCastStageRunning);
 
   function startCast() {
     if (!id || !status?.style_selected || !castResumeEstimate) return;
@@ -1168,6 +1169,8 @@ export function CastRoom() {
       )}
 
       <section className="space-y-10">
+        {bible.characters.length > 0 && <CastIdentityReview projectId={id} characters={bible.characters} onShowCharacter={() => setSearch("")}
+          onResume={handleContinueStale} busy={stageRegenerating || !status?.style_selected} />}
         <div id="cast-characters" tabIndex={-1} hidden={!!search.trim() && matchingCharacters === 0}>
           <SectionHeader
             variant="underline"
@@ -1176,7 +1179,7 @@ export function CastRoom() {
           />
           <div className="grid items-start gap-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
             {bible.characters.map((char) => (
-              <div key={char.id} hidden={!matches(char)} className="min-w-0">
+              <div id={`cast-character-${char.id}`} tabIndex={-1} key={char.id} hidden={!matches(char)} className="min-w-0 scroll-mt-24">
               <CharacterCastCard
                 character={char}
                 projectName={id}
@@ -1229,7 +1232,7 @@ export function CastRoom() {
       <ConfirmDrawer
         open={confirmCast}
         title={canStartCast ? t("Start cast characters & places") : t("Resume cast characters & places")}
-        body={t("Existing references are kept. Only missing cast images will be generated.")}
+        body={t("Current references are reused. Missing or outdated references are regenerated, then character identities are compared. Replaced artwork stays in version history.")}
         cost={castResumeEstimate}
         confirmLabel={canStartCast ? t("START CAST") : t("RESUME CAST")}
         onConfirm={startCast}

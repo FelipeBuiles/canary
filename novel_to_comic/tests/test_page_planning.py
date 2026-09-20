@@ -575,7 +575,7 @@ def test_invalid_reference_detail_stops_after_bounded_correction_with_page_locat
         variants = request["json_schema"]["$defs"]["_PageDetailDraft"]["anyOf"]
         assert variants[0]["properties"]["page_number"]["enum"] == [9]
         return ApiResult(value=detail_response({"rhythm_summary": "Page nine.", "pages": [{
-            "page_number": 1, "emphasis": "initial", "density_intent": "standard",
+            "page_number": 9, "emphasis": "initial", "density_intent": "standard",
             "rhythm_intent": "Advance.", "layout_intent": "One event.",
             "content": [{"beat_ids": ["beat_0009"], "lettering_ids": ["lettering_0009"],
                          "visual_intent": "Johansen watches.", "entity_ids": ["character_johansen"],
@@ -3445,6 +3445,59 @@ def _assigned_detail_fixture():
         "lettering_placements": {ids[3]: reservation(3), ids[1]: reservation(1), ids[0]: reservation(1), ids[2]: reservation(2)},
     }]}
     return adaptation, mapped, raw
+
+
+def _two_page_detail_fixture():
+    from copy import deepcopy
+    adaptation, first, raw = _assigned_detail_fixture()
+    second = first.model_copy(update={"page_number": 31, "lettering_ids": ()})
+    silent = deepcopy(raw["pages"][0])
+    silent.update(page_number=31, lettering_placements={}, layout_intent="A distinct silent page.")
+    raw["pages"].append(silent)
+    return adaptation, (first, second), raw
+
+
+def test_corrected_page_returned_first_keeps_its_declared_allocation():
+    from copy import deepcopy
+    from novel_to_comic.page_planning import _compile_detail_response
+    adaptation, mapped, raw = _two_page_detail_fixture()
+    expected = _compile_detail_response(raw, mapped, adaptation)
+    raw["pages"].reverse()
+    before = deepcopy(raw)
+    actual = _compile_detail_response(raw, mapped, adaptation)
+    assert actual == expected
+    assert _detail_matches_map(actual, mapped) == ()
+    assert raw == before
+    assert [page.page_number for page in actual.pages] == [30, 31]
+    assert actual.pages[1].layout_intent == "A distinct silent page."
+
+
+@pytest.mark.parametrize("defect,match", [
+    ("duplicate", "duplicate page numbers"), ("foreign", "out-of-batch"),
+    ("mixed", "number every page"), ("mislabeled", "lettering_placements"),
+])
+def test_page_identity_alignment_rejects_ambiguous_or_wrong_ownership(defect, match):
+    from novel_to_comic.page_planning import _compile_detail_response
+    adaptation, mapped, raw = _two_page_detail_fixture()
+    if defect == "duplicate":
+        raw["pages"][1]["page_number"] = 30
+    elif defect == "foreign":
+        raw["pages"][1]["page_number"] = 99
+    elif defect == "mixed":
+        del raw["pages"][1]["page_number"]
+    else:
+        raw["pages"][0]["page_number"], raw["pages"][1]["page_number"] = 31, 30
+    with pytest.raises(ValueError, match=match):
+        _compile_detail_response(raw, mapped, adaptation)
+
+
+def test_anonymous_detail_pages_use_fixed_map_order_not_default_page_one():
+    from novel_to_comic.page_planning import _compile_detail_response
+    adaptation, mapped, raw = _two_page_detail_fixture()
+    expected = _compile_detail_response(raw, mapped, adaptation)
+    for page in raw["pages"]:
+        del page["page_number"]
+    assert _compile_detail_response(raw, mapped, adaptation) == expected
 
 
 def test_detail_assignments_compile_once_without_changing_authored_destinations():

@@ -51,7 +51,7 @@ def stage_operations(config: Config, stage: str) -> Operations:
     if stage == "style":
         return prompt_image_operations(config)
     if stage == "cast":
-        return image_operations(config)
+        return (*prompt_image_operations(config), *visual_review_operations(config))
     if stage == "draw":
         return draw_operations(config)
     if stage == "finish":

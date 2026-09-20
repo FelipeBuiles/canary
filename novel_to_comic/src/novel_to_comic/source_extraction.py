@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable
 from difflib import SequenceMatcher
+from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,6 +22,12 @@ from novel_to_comic.target_artifacts import TargetArtifacts
 logger = logging.getLogger("canary.source_extraction")
 
 
+class SceneOpening(Protocol):
+    id: str
+    source_start_quote: str
+    source_start_offset: int | None
+
+
 class SourceSceneAnchor(BaseModel):
     """A Story Bible scene's exact opening sentence and display identity."""
 
@@ -28,6 +36,7 @@ class SourceSceneAnchor(BaseModel):
     id: str = Field(min_length=1)
     title: str = Field(min_length=1)
     opening_quote: str = Field(min_length=1)
+    start_offset: int | None = Field(default=None, ge=0)
 
 
 def source_units(text: str) -> tuple[SourceUnit, ...]:
@@ -109,7 +118,9 @@ def _unit_for_opening_quote(
     *,
     search_from: int,
 ) -> int:
-    position = text.find(anchor.opening_quote, search_from)
+    position = anchor.start_offset if anchor.start_offset is not None else text.find(anchor.opening_quote, search_from)
+    if position < search_from or not text.startswith(anchor.opening_quote, position):
+        position = -1
     if position == -1:
         raise ValueError(
             f"scene {anchor.id!r} verbatim opening quote was not found in source"
@@ -290,18 +301,28 @@ def align_scene_anchors(story_bible: StoryBible, text: str) -> tuple[str, ...]:
     Returns the IDs of scenes whose anchor could not be placed at all.
     """
 
+    return align_scene_openings(story_bible.scenes, text)
+
+
+def align_scene_openings(scenes: Iterable[SceneOpening], text: str) -> tuple[str, ...]:
+    """Resolve ordered source openings independently of entity/book metadata."""
     units = source_units(text)
     search_from = 0
     previous_index = -1
     unresolved: list[str] = []
-    for scene in story_bible.scenes:
+    for scene in scenes:
         quote = scene.source_start_quote.strip()
         if not quote:
             unresolved.append(scene.id)
             continue
 
-        position = text.find(quote, search_from)
-        if position == -1:
+        position = scene.source_start_offset if scene.source_start_offset is not None else text.find(quote, search_from)
+        if scene.source_start_offset is not None and (
+            position < search_from or not text.startswith(quote, position)
+        ):
+            unresolved.append(scene.id)
+            continue
+        if position == -1 and scene.source_start_offset is None:
             position = _find_quote_position(text, quote, start=search_from)
         if position == -1:
             unresolved.append(scene.id)
@@ -315,6 +336,11 @@ def align_scene_anchors(story_bible: StoryBible, text: str) -> tuple[str, ...]:
             unresolved.append(scene.id)
             continue
         unit = units[unit_index]
+        if scene.source_start_offset is not None and (
+            position != _semantic_start(unit) or quote != unit.text.strip()
+        ):
+            unresolved.append(scene.id)
+            continue
         aligned = unit.text.strip()
         if not aligned:
             unresolved.append(scene.id)
@@ -348,6 +374,7 @@ def produce_source_document(
                 id=scene.id,
                 title=scene.title,
                 opening_quote=scene.source_start_quote,
+                start_offset=scene.source_start_offset,
             )
             for scene in story_bible.scenes
         ),

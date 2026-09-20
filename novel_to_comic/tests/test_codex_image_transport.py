@@ -222,6 +222,42 @@ def test_output_finalization_persists_completed_runtime_evidence(routed, tmp_pat
     assert event["cost_usd"] is None
 
 
+def test_output_finalization_normalizes_non_png_artifacts(routed, tmp_path, persisted_events):
+    import datetime
+    import time
+    from novel_to_comic.ai import finalisation
+    from novel_to_comic.ai.providers.base import ProviderRawResult
+
+    encoded = io.BytesIO()
+    Image.new("RGB", (17, 23), "blue").save(encoded, format="WEBP")
+    image_bytes = encoded.getvalue()
+    evidence = {
+        "thread_id": "thread", "turn_id": "turn", "tool_id": "tool",
+        "image_status": "completed", "image": codex_runtime.validate_image_bytes(image_bytes),
+        "submitted": True, "indeterminate": False,
+    }
+    ctx = finalisation.ImageCallContext(
+        event_id="event", operation="image", metadata={"funding": "codex_subscription"},
+        params={}, estimated_cost_usd=None, started=time.perf_counter(),
+        started_at=datetime.datetime.now(datetime.UTC), langfuse_input={},
+    )
+    output_path = tmp_path / "output.png"
+
+    result = asyncio.run(finalisation.finalise_image_success(
+        ctx=ctx, config=routed, model="image-gpt-2", feature="test",
+        output_path=output_path,
+        raw=ProviderRawResult(image_bytes=image_bytes, mime="image/webp", raw_response={
+            "usage": {"prompt_tokens": 10, "completion_tokens": 20},
+            "codex_runtime": evidence,
+        }),
+    ))
+
+    assert result.value == output_path
+    with Image.open(output_path) as stored:
+        assert stored.format == "PNG"
+        assert stored.size == (17, 23)
+
+
 @pytest.mark.parametrize("outcome", ["failed", "cancelled"])
 def test_indeterminate_image_failure_persists_runtime_evidence(routed, persisted_events, outcome):
     import datetime

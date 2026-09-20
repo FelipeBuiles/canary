@@ -41,6 +41,14 @@ from ..ratelimit import cost_limit, limiter
 router = APIRouter()
 
 
+@router.get("/cast/review")
+def cast_review(project_id: str, project=Depends(get_project),
+                user_id: str = Depends(get_current_user)):
+    from novel_to_comic.cast_design import review_status
+    project_dir, config, _state = project
+    return review_status(config, project_dir)
+
+
 class CastInstructionRequest(BaseModel):
     # Reject mismatched request fields instead of silently dropping attachments
     # and charging for a correction that cannot honor the author's request.
@@ -105,6 +113,14 @@ def _enqueue_cast_asset_regen(
     differ only in kind, payload key, and work callable."""
     project_dir, config, _state = project
     pkey = project_key(user_id, project_id)
+    if kind == "character_ref_regen":
+        from novel_to_comic.stages.s3_cast import require_character_inputs
+        from novel_to_comic.target_artifacts import ArtifactInvalid
+        entity_id, _, state_id = asset_id.partition(":")
+        try:
+            require_character_inputs(config, project_dir, entity_id, state=bool(state_id))
+        except (ValueError, ArtifactInvalid) as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     # Credit pre-check: each cast regen calls the image model for real and is
     # debited on success. estimate_credits>0 also makes enqueue_credited_job

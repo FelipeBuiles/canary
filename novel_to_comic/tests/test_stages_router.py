@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from uuid import uuid4
 from starlette.testclient import TestClient
@@ -375,6 +376,7 @@ def test_brief_reapproval_resumes_adapt_when_cast_is_already_complete(
 def test_brief_stage_repairs_an_invalid_inference_with_one_retry(
     tmp_path: Path,
     caplog,
+    monkeypatch,
 ):
     """Anything normalization cannot fix gets the errors fed back, once."""
 
@@ -386,6 +388,8 @@ def test_brief_stage_repairs_an_invalid_inference_with_one_retry(
     from novel_to_comic.usage import ApiResult, UsageRecord
 
     project_dir, state, bible = _story_project(tmp_path)
+    monkeypatch.setenv("CANARY_ENV", "dev")
+    monkeypatch.setenv("CANARY_LOCAL_DIAGNOSTICS", "1")
     complete = {
         "story_promises": ["The witness never recovers."],
         "themes": ["Knowledge has a cost."],
@@ -459,3 +463,8 @@ def test_brief_stage_repairs_an_invalid_inference_with_one_retry(
         "character_turns[0, 1, 2]: Input should be a valid string"
     )
     assert "pydantic.dev" not in warning
+    records = [json.loads(line) for line in
+               (project_dir / ".canary" / "diagnostics.jsonl").read_text().splitlines()]
+    rejection = next(r for r in records if r["event"] == "structured_response_rejected")
+    assert rejection["stage"] == "brief"
+    assert rejection["message"] == "character_turns[0, 1, 2]: Input should be a valid string"

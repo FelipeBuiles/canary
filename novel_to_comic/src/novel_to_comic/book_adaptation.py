@@ -39,7 +39,7 @@ from novel_to_comic.narrative_review import (
     adaptation_context, require_narrative_review, review_narrative, reviewed_validation,
 )
 from novel_to_comic.stage_runtime import StageRuntime
-from novel_to_comic.paid_shards import run_paid_shards
+from novel_to_comic.paid_shards import run_paid_pipeline, run_paid_shards
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.text_utils import normalize_display_text
 from novel_to_comic.usage import ApiResult, estimate_text_cost
@@ -944,6 +944,31 @@ def _quoted_source_wording(text: str) -> tuple[str, ...]:
     )
 
 
+def _protected_source_key(text: str) -> str:
+    """Compare source emphasis as presentation without changing source bytes."""
+    # Only paired word-boundary emphasis, not arbitrary asterisks/underscores
+    # (multiplication and identifiers remain literal source wording).
+    text = re.sub(r"(?<![\w\\])(\*\*|__|\*|_)(?=\S)(.+?\S|\S)\1(?!\w)", r"\2", text)
+    return _protected_language_key(text)
+
+
+def _complete_source_quote_excerpt(item: LetteringItem, source_by_id) -> LetteringItem:
+    """Close a sentence copied from inside a longer source quotation."""
+    if (item.delivery != "quoted_text" or item.kind != "caption"
+            or not _has_terminal_display_punctuation(item.text)
+            or item.text.rstrip()[-1:] not in (".", "!", "?", "…", "—")
+            or not any(source_id in source_by_id
+                       and normalize_display_text(item.text) == normalize_display_text(source_by_id[source_id].text)
+                       for source_id in item.source_unit_ids)):
+        return item
+    for opening, closing in (("“", "”"), ('"', '"')):
+        unmatched = (item.text.count(opening) - item.text.count(closing)
+                     if opening != closing else item.text.count(opening) % 2)
+        if unmatched == 1 and not _has_unbalanced_display_delimiters(item.text + closing):
+            return item.model_copy(update={"text": item.text + closing})
+    return item
+
+
 def _materialize_protected_lettering(
     candidate: BookAdaptation,
     source: SourceDocument,
@@ -968,7 +993,7 @@ def _materialize_protected_lettering(
             and any(
                 source_id in source_by_id
                 and _protected_language_key(item.text)
-                in _protected_language_key(source_by_id[source_id].text)
+                in _protected_source_key(source_by_id[source_id].text)
                 for source_id in item.source_unit_ids
             )
             else item
@@ -1010,7 +1035,7 @@ def _materialize_protected_lettering(
                 unit
                 for unit in source.units
                 if phrase in unit.text
-                or phrase_key in _protected_language_key(unit.text)
+                or phrase_key in _protected_source_key(unit.text)
             ),
             None,
         )
@@ -1131,7 +1156,9 @@ def _materialize_protected_lettering(
         {
             **candidate.model_dump(mode="json"),
             "content_sha256": "",
-            "beats": [beat.model_dump(mode="json") for beat in beats],
+            "beats": [beat.model_copy(update={"lettering": tuple(
+                _complete_source_quote_excerpt(item, source_by_id) for item in beat.lettering
+            )}).model_dump(mode="json") for beat in beats],
             "ledger": [entry.model_dump(mode="json") for entry in ledger],
         }
     )
@@ -1401,6 +1428,14 @@ _SCENE_SCOPE_CONTRACT = (
     "visualizing a recollection, make its entry and return clear to the reader. "
     "Carry consequential reactions and causal links where supported, but do not "
     "invent a separate reaction, ominous pause, or recap for every fact or fragment. "
+)
+
+
+_DISPLAY_EXCERPT_CONTRACT = (
+    "Source units are sentence slices, not quotation boundaries. A quotation can "
+    "continue across several units. Make each display item a complete excerpt "
+    "with balanced quotation marks; do not copy an opening quote without closing "
+    "it. Source Markdown emphasis is formatting, not part of the protected words. "
 )
 
 
@@ -3486,10 +3521,8 @@ async def produce_book_adaptation(
             candidate: BookAdaptation | None = None
             validation = AdaptationValidation()
             known_speaker_ids = {character.id for character in story_bible.characters}
-            completed_blueprints = 0
 
             async def generate_blueprint(index: int) -> _BlueprintDraft:
-                nonlocal completed_blueprints
                 with ai_source_context("blueprint/shard_" + f"{index + 1:03d}", shards[index]):
                     blueprint = await _generate_blueprint(
                         prompt=blueprint_prompts[index],
@@ -3503,42 +3536,20 @@ async def produce_book_adaptation(
                         generate=generate,
                         ctx=ctx,
                     )
-                completed_blueprints += 1
                 ctx.record_item_done()
-                ctx.progress(1 + completed_blueprints, total_steps)
+                ctx.progress(ctx.stage_state.items_done, total_steps)
                 return blueprint
 
-            ctx.activity(fraction=0.0, detail="locking story structure", force=True)
-            blueprints = await run_paid_shards(
-                [lambda index=index: generate_blueprint(index) for index in range(len(shards))],
-                limit=_ADAPT_MAX_CONCURRENCY,
-            )
-            ctx.activity(fraction=1.0, detail="locking story structure", force=True)
-            lettering_prompts = [
-                build_locked_lettering_prompt(
-                    source,
-                    story_bible,
-                    brief,
-                    treatment,
-                    blueprint,
-                    primary_source_unit_ids=source_ids,
-                    shard_index=index,
-                    shard_count=len(shards),
-                )
-                + instruction_suffix
-                for index, (blueprint, source_ids) in enumerate(
-                    zip(blueprints, shards, strict=True),
-                    1,
-                )
-            ]
-            completed_lettering = 0
-
-            async def generate_lettering(index: int) -> _BookDraft:
-                nonlocal completed_lettering
+            async def generate_lettering(index: int, blueprint: _BlueprintDraft) -> _BookDraft:
+                prompt = build_locked_lettering_prompt(
+                    source, story_bible, brief, treatment, blueprint,
+                    primary_source_unit_ids=shards[index],
+                    shard_index=index + 1, shard_count=len(shards),
+                ) + instruction_suffix
                 with ai_source_context("lettering/shard_" + f"{index + 1:03d}", shards[index]):
                     draft = await _generate_locked_lettering(
-                        prompt=lettering_prompts[index],
-                        blueprint=blueprints[index],
+                        prompt=prompt,
+                        blueprint=blueprint,
                         known_speaker_ids=known_speaker_ids,
                         checkpoint_name=f"lettering/shard_{index + 1:03d}",
                         model=model,
@@ -3546,17 +3557,17 @@ async def produce_book_adaptation(
                         generate=generate,
                         ctx=ctx,
                     )
-                completed_lettering += 1
                 ctx.record_item_done()
                 ctx.progress(
-                    1 + len(shards) + completed_lettering,
+                    ctx.stage_state.items_done,
                     total_steps,
                 )
                 return draft
 
-            ctx.activity(fraction=0.0, detail="writing locked lettering", force=True)
-            generated_drafts = await run_paid_shards(
-                [lambda index=index: generate_lettering(index) for index in range(len(shards))],
+            ctx.activity(detail="locking structure and writing ready shards", force=True)
+            generated_drafts = await run_paid_pipeline(
+                [lambda index=index: generate_blueprint(index) for index in range(len(shards))],
+                generate_lettering,
                 limit=_ADAPT_MAX_CONCURRENCY,
             )
             ctx.activity(fraction=1.0, detail="writing locked lettering", force=True)
@@ -3751,18 +3762,20 @@ def _repair_prompt(
     beat_to_shard: Mapping[str, int],
     retained_neighbors: dict,
 ) -> str:
+    local_source_ids = {entry.source_unit_id for entry in previous_draft.ledger}
+    local_source_ids.update(u for beat in previous_draft.beats for u in beat.source_unit_ids)
     relevant = [
         failure
         for failure in validation.invariant_failures
         if (
-            not failure.artifact_ids
+            bool(local_source_ids.intersection(failure.source_unit_ids))
             or any(
                 beat_to_shard.get(artifact_id) == shard_index
                 for artifact_id in failure.artifact_ids
             )
-            or not any(
+            or (not failure.source_unit_ids and not any(
                 artifact_id in beat_to_shard for artifact_id in failure.artifact_ids
-            )
+            ))
         )
     ]
     failures = "\n".join(
@@ -3787,7 +3800,8 @@ def _repair_prompt(
         ],
     }
     return (
-        f"{book_prompt}\n\nYour previous book adaptation violated these blocking "
+        f"{book_prompt}\n\n{_DISPLAY_EXCERPT_CONTRACT}"
+        "Your previous book adaptation violated these blocking "
         "contract requirements. Return one complete corrected JSON object that "
         "resolves every one of them without dropping content you already had. "
         "Keep unaffected wording, facts, requirement citations, and source "
@@ -4132,16 +4146,26 @@ def validate_book_adaptation(
             _protected_language_key(phrase) in wording for wording in complete_wording
         )
     ]
-    if missing_protected:
+    for phrase_index, phrase in enumerate(missing_protected):
+        missing_source_ids = tuple(
+            unit.id for unit in source.units
+            if _protected_language_key(phrase) in _protected_source_key(unit.text)
+        )
+        missing_beats = tuple(dict.fromkeys(
+            beat_id for entry in adaptation.ledger
+            if entry.source_unit_id in missing_source_ids
+            for beat_id in entry.adapted_beat_ids
+        ))
         failures.append(
             InvariantFailure(
-                id="adapt_failure_protected_language_missing",
+                id="adapt_failure_protected_language_missing" + (f"_{phrase_index}" if phrase_index else ""),
                 owner_stage="adapt",
                 code="protected_language_missing",
                 message="Protected language must survive verbatim in publishable wording.",
+                source_unit_ids=missing_source_ids,
+                artifact_ids=missing_beats,
                 evidence=[
                     "Missing exact protected phrase: " + repr(phrase)
-                    for phrase in missing_protected
                 ],
             )
         )
@@ -4215,7 +4239,9 @@ def validate_book_adaptation(
                     owner_stage="adapt",
                     code="incomplete_display_text",
                     message="Display text contains an unclosed quotation or delimiter.",
-                    artifact_ids=[item.id],
+                    source_unit_ids=item.source_unit_ids,
+                    artifact_ids=[item.id, *(beat.id for beat in adaptation.beats
+                                             if any(owned.id == item.id for owned in beat.lettering))],
                     evidence=[f"Incomplete display text: {text!r}"],
                 )
             )

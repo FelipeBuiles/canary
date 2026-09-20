@@ -70,7 +70,7 @@ def build_brief_inference_prompt(
             "maximum": page_maximum,
         },
         "source_units": [
-            unit.model_dump(mode="json")
+            unit.model_dump(mode="json", include={"id", "text"})
             for unit in source.units
         ],
         "source_scenes": [
@@ -85,6 +85,13 @@ def build_brief_inference_prompt(
         "narrator_treatment, tone, ambiguities, motifs, protected_language, "
         "essential_events, character_turns, transformation_level, "
         "desired_emphasis, target_page_min, and target_page_max. "
+        "story_promises, themes, ambiguities, motifs, protected_language, "
+        "essential_events, character_turns, and desired_emphasis are arrays of "
+        "plain strings, never objects. Write character_turns as sentences naming "
+        "the character and their change. point_of_view, narrator_treatment, and "
+        "tone are plain strings. transformation_level is exactly one of "
+        "'faithful', 'medium_specific', or 'transformative'. target_page_min and "
+        "target_page_max are positive integers, with min <= max. "
         "The context contains a calibrated recommended_page_envelope. Both "
         "target_page_min and target_page_max MUST remain inside that envelope. "
         "Choose a useful editorial range within it; it is an editable narrative "

@@ -18,6 +18,27 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("paid action receipts", () => {
+  it.each([
+    "Page 6 requires 6 approved references, but this edition supports 5. Replan this page before drawing; identity references will not be silently dropped.",
+    { code: "draw_preflight_rejected", message: "Reference sheet exceeds the pixel budget" },
+  ])("releases a definite Draw rejection without automatically resubmitting: %j", async (detail) => {
+    const fetcher = vi.fn()
+      .mockRejectedValueOnce(new TypeError("Connection lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail }), {
+        status: 409, headers: { "Idempotency-Replayed": "true" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: "started", stage: "draw" })));
+    vi.stubGlobal("fetch", fetcher);
+    const send = () => apiFetch("/projects/demo/run?stage=draw", { method: "POST" });
+    await expect(send()).rejects.toThrow("Connection lost");
+    await expect(send()).rejects.toThrow("API 409");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    await expect(send()).resolves.toMatchObject({ status: "started" });
+    const keys = fetcher.mock.calls.map((call) => call[1].headers["Idempotency-Key"]);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).not.toBe(keys[0]);
+  });
+
   it("releases a replayed Adapt approval rejection for the next explicit attempt", async () => {
     const fetcher = vi.fn()
       .mockRejectedValueOnce(new TypeError("Connection lost"))
@@ -34,6 +55,21 @@ describe("paid action receipts", () => {
     const keys = fetcher.mock.calls.map((call) => call[1].headers["Idempotency-Key"]);
     expect(keys[1]).toBe(keys[0]);
     expect(keys[2]).not.toBe(keys[0]);
+  });
+
+  it.each([
+    { code: "idempotency_indeterminate", message: "This action may have been accepted." },
+    "Unknown draw conflict",
+  ])("retains uncertain Draw receipts: %j", async (detail) => {
+    const fetcher = vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ detail }), { status: 409 }),
+    ));
+    vi.stubGlobal("fetch", fetcher);
+    const send = () => apiFetch("/projects/demo/run?stage=draw", { method: "POST" });
+    await expect(send()).rejects.toThrow("API 409");
+    await expect(send()).rejects.toThrow("API 409");
+    expect(fetcher.mock.calls[1][1].headers["Idempotency-Key"])
+      .toBe(fetcher.mock.calls[0][1].headers["Idempotency-Key"]);
   });
 
   it("does not retry a lost response; an explicit reattempt after navigation reuses its receipt", async () => {

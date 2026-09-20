@@ -15,6 +15,7 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/billing/packages` | `list_packages` | `billing.py` |
 | `POST` | `/api/billing/checkout` | `create_checkout` | `billing.py` |
 | `POST` | `/api/billing/webhook` | `stripe_webhook` | `billing.py` |
+| `GET` | `/api/cast_assets/cast/review` | `cast_review` | `cast_assets.py` |
 | `GET` | `/api/cast_assets/asset-regen-estimate` | `asset_regen_estimate` | `cast_assets.py` |
 | `POST` | `/api/cast_assets/regen-ref` | `regen_ref` | `cast_assets.py` |
 | `POST` | `/api/cast_assets/regen-state-ref` | `regen_state_ref` | `cast_assets.py` |

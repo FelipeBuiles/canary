@@ -9,7 +9,8 @@ from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import ApiResult
 
 
-def test_checkpoint_resume_and_input_invalidation(tmp_path):
+@pytest.mark.parametrize("stage", ["extract", "adapt", "plan"])
+def test_checkpoint_resume_and_input_invalidation(tmp_path, stage):
     calls = []
 
     async def generate(**kwargs):
@@ -20,7 +21,7 @@ def test_checkpoint_resume_and_input_invalidation(tmp_path):
 
     def run(model="gpt-5.6-luna", **kwargs):
         generator = checkpointed_generator(
-            generate, artifacts=TargetArtifacts(tmp_path), stage="plan", model=model
+            generate, artifacts=TargetArtifacts(tmp_path), stage=stage, model=model
         )
         return asyncio.run(generator(**kwargs))
 

@@ -55,6 +55,7 @@ from novel_to_comic.models.page import (
     ComicPage,
 )
 from novel_to_comic.style_contract import page_style_template, page_art_style_template
+from novel_to_comic.reference_sheets import MAX_MEMBERS_PER_SHEET, pack_page_references
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import ApiResult, UsageRecord, calculate_cost, calculate_cost_breakdown
 
@@ -360,6 +361,7 @@ def _compile_prompt(
     correction_context: "PageCorrectionContext | None" = None,
     cast_art_direction: Mapping[str, str] | None = None,
     exact_visible_lettering: bool = True,
+    reference_bindings: Mapping[str, dict] | None = None,
 ) -> str:
     # Identity is independent of state labels and reference traversal order.
     entity_ids = sorted({
@@ -422,7 +424,9 @@ def _compile_prompt(
         ),
         "approved_page_references": [
             {
-                "image": _off_canvas_handle("asset", reference.order),
+                "image": _off_canvas_handle("asset", (reference_bindings or {}).get(reference.id, {}).get("input_order", reference.order)),
+                **({key: value for key, value in reference_bindings[reference.id].items() if key != "input_order"}
+                   if reference_bindings and reference.id in reference_bindings else {}),
                 "subject": handles[reference.entity_id],
                 "appearance": reference.label,
                 "visual_anchor": reference.visual_anchor,
@@ -669,11 +673,13 @@ def compile_page_generation_request(
     max_references = selected_edition.capability_profile.max_image_references
     if (page_profile_uses_native_dimensions(selected_edition.capability_profile) or selected_edition.capability_profile.provider in {"openai", "openrouter"}) and correction is not None:
         max_references -= 1  # The parent is an input image, never an authority replacement.
-    if len(authorities) > max_references:
+    sheet_capacity = max_references * MAX_MEMBERS_PER_SHEET if selected_edition.capability_profile.provider == "codex-dev" else max_references
+    if len(authorities) > sheet_capacity:
         raise ValueError(
             f"Page {page.page_number} requires {len(authorities)} approved references, "
-            f"but this edition supports {max_references}. Replan this page before drawing; "
-            "identity references will not be silently dropped."
+            f"but this edition can carry {sheet_capacity} with its available image inputs. "
+            "Choose a higher-capacity Draw model before starting an edition, or revise "
+            "the book's page composition. Identity references will not be silently dropped."
         )
     uploaded_authorities = authorities
     references: list[PageReference] = []
@@ -717,6 +723,9 @@ def compile_page_generation_request(
             direction = metadata.get("art_direction")
             if isinstance(direction, str) and direction.strip():
                 cast_art_direction[reference.id] = direction
+    uploaded_references, uploaded_bytes, reference_bindings = pack_page_references(
+        references, loaded, max_references,
+    ) if selected_edition.capability_profile.provider == "codex-dev" else (tuple(references), tuple(loaded), {})
     prompt = _compile_prompt(
         page,
         tuple(references),
@@ -726,18 +735,28 @@ def compile_page_generation_request(
         correction_context,
         cast_art_direction,
         exact_visible_lettering=selected_edition.capability_profile.exact_visible_lettering,
+        reference_bindings=reference_bindings,
     )
+    if reference_bindings:
+        prompt += (
+            "\nREFERENCE SHEETS: asset-A, asset-B, etc. identify uploaded authority images in order "
+            "(excluding parent-edit-base). Some contain two separately labeled references. "
+            "region_pixels and sheet dimensions locate each subject's original image; preserve "
+            "each subject's separate identity, state, anchors and continuity. Labels and sheet "
+            "borders are off-canvas reference guides: never draw them, combine identities, or "
+            "copy the sheet arrangement into the comic page."
+        )
     request = FrozenPageGenerationRequest.compile(
         page=page,
         edition=selected_edition,
         prompt=prompt,
-        references=references,
+        references=uploaded_references,
         retry=retry,
         correction=correction,
     )
     return CompiledPageGeneration(
         request=request,
-        reference_bytes=tuple(loaded),
+        reference_bytes=uploaded_bytes,
         edit_source_bytes=edit_source_bytes,
     )
 

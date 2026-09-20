@@ -65,10 +65,23 @@ class CodexCompletePageAdapter:
     def _references(prepared: PreparedCompletePageRequest) -> tuple[tuple[bytes, str], ...]:
         references = []
         if prepared.edit_source_bytes is not None:
-            codex_runtime.validate_image_bytes(prepared.edit_source_bytes, "image/png")
+            try:
+                codex_runtime.validate_image_bytes(prepared.edit_source_bytes, "image/png")
+            except codex_runtime.CodexRuntimeError as exc:
+                raise ValueError(
+                    "Saved Draw artwork is not a valid image/png. "
+                    "Rerun Draw before retrying this page."
+                ) from exc
             references.append((prepared.edit_source_bytes, "image/png"))
         for reference, data in zip(prepared.references, prepared.reference_bytes, strict=True):
-            codex_runtime.validate_image_bytes(data, reference.media_type)
+            try:
+                codex_runtime.validate_image_bytes(data, reference.media_type)
+            except codex_runtime.CodexRuntimeError as exc:
+                raise ValueError(
+                    f"Approved reference {reference.id!r} is not a valid "
+                    f"{reference.media_type} image. Rerun Cast to regenerate "
+                    "reference assets before Draw."
+                ) from exc
             references.append((data, reference.media_type))
         return tuple(references)
 

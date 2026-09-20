@@ -822,6 +822,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `scene_type` | `str` |  |
 | `narrative_beat` | `str` |  |
 | `source_start_quote` | `str` |  |
+| `source_start_offset` | `int | None` | `Field(default=None, ge=0)` |
 | `transient_objects` | `list[TransientObject]` | `[]` |
 
 ## NarrativeArc _(story_bible.py)_

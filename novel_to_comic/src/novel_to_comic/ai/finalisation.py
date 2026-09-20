@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import hashlib
+import io
 import os
 import time
 import uuid
@@ -133,6 +134,24 @@ def _write_image_outputs(
     output_path: Path,
     image_bytes: bytes,
 ) -> None:
+    # All non-panel image artifacts use a `.png` path.  Some image endpoints
+    # legitimately return another supported raster format, however, and
+    # persisting those bytes under a PNG path makes the artifact's declared
+    # media type false.  Normalize at the one common write boundary so Cast
+    # references remain valid Draw inputs.
+    if output_path.suffix.lower() == ".png":
+        from PIL import Image
+
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            if image.format not in {"PNG", "JPEG", "WEBP"}:
+                raise ValueError("image output must be PNG, JPEG, or WebP")
+            if image.format != "PNG":
+                image.load()
+                if image.mode not in {"1", "L", "LA", "P", "RGB", "RGBA", "I", "I;16"}:
+                    image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+                normalized = io.BytesIO()
+                image.save(normalized, format="PNG")
+                image_bytes = normalized.getvalue()
     parent_fd = _open_output_parent(output_path)
     try:
         _atomic_write_output(parent_fd, output_path.name, image_bytes)

@@ -19,7 +19,7 @@ def test_extract_estimate_for_typical_project_stays_in_sane_range(
     monkeypatch.setenv("PULP_RESERVATION_BUFFER", "1.25")
 
     novel_path = tmp_path / "novel.txt"
-    novel_path.write_text("word " * (120 * 1024 // 5))
+    novel_path.write_text("A short source sentence. " * (120 * 1024 // 25))
     state = create_initial_state("demo", str(novel_path))
     config = Config(extraction_model="gemini-3.8-flash")
 

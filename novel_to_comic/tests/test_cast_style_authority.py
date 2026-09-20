@@ -18,6 +18,17 @@ from novel_to_comic.style_contract import style_template_for_suggestion
 from novel_to_comic.usage import ApiResult
 
 
+def _save_design(config, project_dir, bible):
+    from novel_to_comic.cast_design import CastDesignPlan, CharacterDesign, _digest, design_context
+    from novel_to_comic.target_artifacts import TargetArtifacts
+    plan = CastDesignPlan(source_sha256=_digest(design_context(config, bible)), characters=[
+        CharacterDesign(character_id=c.id, face=f"{c.id} facial landmarks", hair="source hair",
+                        silhouette="source anatomy", posture="resting", wardrobe="source wardrobe",
+                        contrast="Distinct from the rest of the cast") for c in bible.characters])
+    TargetArtifacts(project_dir).write_cast_design(plan)
+    return plan
+
+
 def _project(tmp_path, model):
     suggestion = {"template": "Follow this sample's rough ink and ochre palette."}
     config = Config(image_model=model, style_template=style_template_for_suggestion(suggestion))
@@ -53,37 +64,8 @@ def test_cast_wire_keeps_approved_style_and_canonical_identity(tmp_path, model):
     assert "LETTERING STANDARD" not in prompt
 
 
-@pytest.mark.parametrize("model", ["image-sunburst", "openai/gpt-image-2.5-sunburst-2026-09-08"])
-def test_cast_run_and_resume_bypass_shared_lineup(tmp_path, model):
-    config, bible, proof = _project(tmp_path, model)
-    board = s3_cast._character_style_board_path(tmp_path)
-    board.parent.mkdir()
-    Image.new("RGB", (32, 40), "gray").save(board)
-    with patch.object(s3_cast, "asset_matches_request", return_value=True):
-        assert s3_cast._character_style_reference(config, tmp_path, proof) == proof
-
-    ctx = MagicMock()
-    with (
-        patch.object(s3_cast, "_generate_character_style_board", new_callable=AsyncMock) as calibrate,
-        patch.object(s3_cast, "_generate_character_refs", new_callable=AsyncMock) as canonical,
-        patch.object(s3_cast, "_generate_character_state_refs", new_callable=AsyncMock) as states,
-    ):
-        asyncio.run(s3_cast.run(config, tmp_path, ctx, char_ids=["sailor"]))
-    calibrate.assert_not_awaited()
-    ctx.execute.assert_called_once_with(total=1)
-    assert canonical.await_args.args[-1] == proof
-    assert states.await_args.args[-1] == proof
-
-    with patch("novel_to_comic.asset_generation.estimate_non_panel_request") as estimate:
-        estimate.return_value.cost_usd = .03
-        s3_cast.estimate_cost(config, tmp_path, MagicMock())
-    assert estimate.call_count == 1
-    assert estimate.call_args.args[1].asset_kind == "character_ref"
-    assert estimate.call_args.kwargs["reference_plan"].selected[0].path == proof
-
-
-@pytest.mark.parametrize("model", ["image-gemini-pro", "image-gemini-flash-lite", "image-gpt-2", "image-flare"])
-def test_other_models_preserve_shared_calibration_through_run_resume_and_estimate(tmp_path, model):
+@pytest.mark.parametrize("model", ["image-sunburst", "image-gemini-pro", "image-gemini-flash-lite", "image-gpt-2", "image-flare"])
+def test_all_models_use_rendering_only_calibration_through_run_resume_and_estimate(tmp_path, model):
     config, bible, proof = _project(tmp_path, model)
     board = s3_cast._character_style_board_path(tmp_path)
     board.parent.mkdir()
@@ -93,14 +75,17 @@ def test_other_models_preserve_shared_calibration_through_run_resume_and_estimat
         assert s3_cast._character_style_reference(config, tmp_path, proof) == board
     assert matches.call_args.args[1].reference_plan.selected[0].path == proof
     ctx = MagicMock()
+    ctx.stage_state.items_failed = []
     with (
+        patch.object(s3_cast, "ensure_design", new_callable=AsyncMock),
+        patch.object(s3_cast, "review_cast", new_callable=AsyncMock),
         patch.object(s3_cast, "_generate_character_style_board", new_callable=AsyncMock, return_value=board) as calibrate,
         patch.object(s3_cast, "_generate_character_refs", new_callable=AsyncMock) as canonical,
         patch.object(s3_cast, "_generate_character_state_refs", new_callable=AsyncMock) as states,
     ):
         asyncio.run(s3_cast.run(config, tmp_path, ctx, char_ids=["sailor"]))
     calibrate.assert_awaited_once()
-    ctx.execute.assert_called_once_with(total=2)
+    ctx.execute.assert_called_once_with(total=4)
     assert canonical.await_args.args[-1] == board
     assert states.await_args.args[-1] == board
     board.unlink()
@@ -126,7 +111,8 @@ def test_human_animal_creature_and_state_share_same_rendering_authority(tmp_path
     board = s3_cast._character_style_board_path(tmp_path)
     board.parent.mkdir()
     Image.new("RGB", (32, 40), "gray").save(board)
-    expected = proof if model == "image-sunburst" else board
+    expected = board
+    _save_design(config, tmp_path, bible)
     requests = []
 
     async def submit(**kwargs):
@@ -160,8 +146,8 @@ def test_sunburst_cannot_silently_fall_back_to_text_only_cast(tmp_path):
     config, bible, proof = _project(tmp_path, "image-sunburst")
     proof.unlink()
     with patch.object(s3_cast, "submit_non_panel_request", new_callable=AsyncMock) as submit:
-        with pytest.raises(ValueError, match="selected Style proof is required"):
+        with pytest.raises(ValueError, match="Cast style board is missing"):
             asyncio.run(s3_cast.regenerate_character_ref(config, tmp_path, "sailor"))
-        with pytest.raises(ValueError, match="selected Style proof is required"):
+        with pytest.raises(ValueError, match="Cast style board is missing"):
             asyncio.run(s3_cast._generate_character_refs(config, tmp_path, bible, MagicMock()))
     submit.assert_not_awaited()

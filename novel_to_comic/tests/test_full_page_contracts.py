@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pytest
 from pydantic import ValidationError
@@ -886,6 +887,15 @@ def test_brief_inference_uses_source_units_and_story_bible_without_approval() ->
     assert '"title":"The Door"' in prompts[0]
     assert '"recommended_page_envelope":{"maximum":4,"minimum":2}' in prompts[0]
     assert "Do not equate source units, sentences, paragraphs, or prose pages" in prompts[0]
+    context = json.loads(prompts[0].split("\n", 1)[1])
+    source = _source_document()
+    assert context["source_units"] == [
+        {"id": unit.id, "text": unit.text} for unit in source.units
+    ]
+    assert "".join(unit["text"] for unit in context["source_units"]) == source.text
+    assert context["story_bible"] == _story_bible().model_dump(mode="json")
+    assert "plain strings, never objects" in prompts[0]
+    assert "'faithful', 'medium_specific', or 'transformative'" in prompts[0]
 
 
 def test_recommended_page_envelope_calibrates_cthulhu_length() -> None:

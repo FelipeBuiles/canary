@@ -133,7 +133,7 @@ def test_profile_binds_reasoner_and_runtime_and_cannot_rewrite_an_edition(tmp_pa
         page_drawing.select_book_edition(edition_id=edition.id, profile=profile, existing=edition)
 
 
-def test_five_references_preserve_exact_authority_and_six_reject(tmp_path, dev_routes):
+def test_five_references_keep_original_bytes_and_six_use_a_lossless_sheet(tmp_path, dev_routes, monkeypatch):
     page, inventory, files = _authorities(tmp_path, 5)
     compiled = _compiled(page, inventory, files)
     prepared = page_drawing.complete_page_adapter(Config()).prepare(compiled)
@@ -144,11 +144,59 @@ def test_five_references_preserve_exact_authority_and_six_reject(tmp_path, dev_r
         assert ref.visual_anchor in prepared.prompt
     assert compiled.request.estimated_cost_usd == 0
     page, inventory, files = _authorities(tmp_path, 6)
-    with pytest.raises(ValueError):
-        _compiled(page, inventory, files)
+    compiled = _compiled(page, inventory, files)
+    prepared = page_drawing.complete_page_adapter(Config()).prepare(compiled)
+    assert len(prepared.references) == len(prepared.reference_bytes) == 5
+    assert "REFERENCE SHEETS" in prepared.prompt
+    for ref in inventory.references:
+        assert ref.visual_anchor in prepared.prompt
+    members = json.loads(prepared.references[0].visual_anchor)["members"]
+    assert [m["authority"]["id"] for m in members] == [r.id for r in inventory.references[:2]]
+    for member in members:
+        ref = member["authority"]
+        assert ref["content_sha256"] == hashlib.sha256(files[ref["id"]].path.read_bytes()).hexdigest()
+    monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
+    entries = pages._reference_entries(tmp_path, prepared.references)
+    assert [entry["id"] for entry in entries] == [r.id for r in inventory.references]
+    assert all(entry["image_path"] for entry in entries)
+    assert all(not entry["visual_anchor"].startswith("{") for entry in entries)
 
 
-@pytest.mark.parametrize("authority_count", [4, 5])
+def test_incompatible_stored_reference_requests_cast_rerun(tmp_path, dev_routes):
+    page, inventory, files = _authorities(tmp_path, 2)
+    path = files["subject-0-ref"].path
+    Image.new("RGB", (3, 4), "blue").save(path, format="JPEG")
+    compiled = _compiled(page, inventory, files)
+
+    with pytest.raises(ValueError, match="Rerun Cast"):
+        page_drawing.complete_page_adapter(Config()).prepare(compiled)
+
+
+def test_draw_estimate_maps_incompatible_reference_to_conflict(tmp_path, monkeypatch, dev_routes):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from novel_to_comic.server.deps import get_project
+
+    page, inventory, files = _authorities(tmp_path, 2)
+    Image.new("RGB", (3, 4), "blue").save(files["subject-0-ref"].path, format="JPEG")
+    artifacts = TargetArtifacts(tmp_path)
+    artifacts.write_page(page)
+    monkeypatch.setattr(
+        TargetArtifacts, "read_plan", lambda self: SimpleNamespace(pages=[page])
+    )
+    monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
+
+    app = FastAPI()
+    app.include_router(pages.router)
+    app.dependency_overrides[get_project] = lambda: (tmp_path, Config(), None)
+    response = TestClient(app).get("/pages/generate/estimate")
+
+    assert response.status_code == 409
+    assert "Rerun Cast" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("authority_count", [4, 5, 8, 9])
 def test_correction_parent_consumes_one_of_five_image_inputs(tmp_path, dev_routes, authority_count):
     page, inventory, files = _authorities(tmp_path, authority_count)
     parent = next(iter(files.values())).path.read_bytes()
@@ -159,20 +207,80 @@ def test_correction_parent_consumes_one_of_five_image_inputs(tmp_path, dev_route
         mode="instructed", instruction="Restore the crown; preserve exact lettering.",
         note="Restore the crown; preserve exact lettering.",
     )
-    if authority_count == 5:
+    if authority_count == 9:
         with pytest.raises(ValueError):
             _compiled(page, inventory, files, correction=correction, edit_source_bytes=parent)
     else:
         compiled = _compiled(page, inventory, files, correction=correction, edit_source_bytes=parent)
         prepared = page_drawing.complete_page_adapter(Config()).prepare(compiled)
         assert prepared.edit_source_bytes == parent
-        assert prepared.reference_bytes == tuple(files[ref.id].path.read_bytes() for ref in inventory.references)
+        assert len(prepared.reference_bytes) <= 4
+        if authority_count == 4:
+            assert prepared.reference_bytes == tuple(files[ref.id].path.read_bytes() for ref in inventory.references)
+        else:
+            assert "REFERENCE SHEETS" in prepared.prompt
         assert compiled.request.lettering == ()
+
+
+@pytest.mark.parametrize("queue_pages", [False, True])
+def test_start_draw_packs_references_for_both_entry_paths(tmp_path, monkeypatch, dev_routes, queue_pages):
+    from novel_to_comic.server.routers import pipeline, styles
+
+    page, inventory, files = _authorities(tmp_path, 6)
+    artifacts = TargetArtifacts(tmp_path)
+    artifacts.write_page(page)
+    monkeypatch.setattr(TargetArtifacts, "read_plan", lambda self: SimpleNamespace(pages=[page]))
+    monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(pipeline, "project_busy", lambda *args: False)
+    monkeypatch.setattr(pipeline, "_require_previous_stage", lambda *args: None)
+    monkeypatch.setattr(styles, "is_style_selected", lambda *args: True)
+    run_stage = AsyncMock()
+    monkeypatch.setattr(pipeline, "_run_stage_with_credits", run_stage)
+
+    async def run_job(pkey, user_id, request, job):
+        await job
+
+    monkeypatch.setattr(pipeline, "_run_job", run_job)
+    app = SimpleNamespace(state=SimpleNamespace(event_queues={}, running_tasks={}))
+
+    async def start():
+        result = await pipeline._start_stage(
+            SimpleNamespace(app=app), "project", "draw", False,
+            (tmp_path, Config(), None), "user", queue_pages=queue_pages,
+        )
+        await asyncio.gather(*app.state.running_tasks.values())
+        return result
+
+    assert asyncio.run(start()) == {"status": "started", "stage": "draw"}
+    assert run_stage.call_args.kwargs["queue_draw_pages"] is queue_pages
+    assert not artifacts.book_edition_path.exists()
+
+
+def test_start_draw_marks_preflight_rejection_before_dispatch(tmp_path, monkeypatch, dev_routes):
+    from fastapi import HTTPException
+    from novel_to_comic.server.routers import pipeline
+
+    prepare = MagicMock(side_effect=ValueError("reference overflow"))
+    monkeypatch.setattr(pages, "prepare_undrawn_pages", prepare)
+    dispatch = AsyncMock()
+    monkeypatch.setattr(pipeline, "_run_stage_with_credits", dispatch)
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(pipeline._start_stage(
+            SimpleNamespace(), "project", "draw", False,
+            (tmp_path, Config(), None), "user",
+        ))
+    assert caught.value.status_code == 409
+    assert caught.value.detail == {
+        "code": "draw_preflight_rejected", "message": "reference overflow",
+    }
+    dispatch.assert_not_called()
+    assert not TargetArtifacts(tmp_path).book_edition_path.exists()
 
 
 def test_queue_all_later_reference_overflow_has_no_enqueue_or_credit_hold(tmp_path, monkeypatch, dev_routes):
     first, _, _ = _authorities(tmp_path, 2)
-    later, inventory, files = _authorities(tmp_path, 6)
+    later, inventory, files = _authorities(tmp_path, 11)
     later = ComicPage.model_validate({
         **later.model_dump(exclude={"content_sha256"}), "page_number": 8,
     })

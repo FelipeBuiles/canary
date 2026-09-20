@@ -207,3 +207,83 @@ def test_extraction_requires_explicit_state_conditioning_facets():
         _parse_extraction(payload, SOURCE)
     payload["characters"][0]["appearance_states"][0].update(changed_facets=["hair"], replaces_identity=False)
     assert _parse_extraction(payload, SOURCE).characters[0].appearance_states[0].changed_facets == ("hair",)
+
+
+def test_scene_evidence_resolution_does_not_depend_on_book_or_character_metadata():
+    from novel_to_comic.stages.s1_extract import _resolved_scene_anchor_quotes
+
+    payload = _payload()
+    payload.pop('title')
+    payload.pop('author')
+    payload.pop('total_scenes')
+    payload['characters'][0]['gender'] = None
+    payload['characters'][0]['default_outfit'] = None
+    quotes = _resolved_scene_anchor_quotes(payload, SOURCE)
+    assert set(quotes) == {'now', 'memory', 'crossing'}
+    assert quotes['crossing'] == 'The keeper raised a lantern and explained the crossing.'
+    # One malformed opening must not suppress unrelated resolved scenes either.
+    payload['scenes'][1]['source_start_quote'] = None
+    assert set(_resolved_scene_anchor_quotes(payload, SOURCE)) == {'now', 'crossing'}
+
+
+@pytest.mark.parametrize('scene_count', [None, 99])
+def test_extract_derives_scene_count_and_preserves_explicitly_unknown_descriptions(scene_count):
+    payload = _payload()
+    if scene_count is None:
+        payload.pop('total_scenes')
+    else:
+        payload['total_scenes'] = scene_count
+    payload['characters'][0].update(gender=None, age_range=None, default_outfit=None)
+    payload['character_participation'].pop(0)  # recover the roster entry from its source opening
+    bible = _parse_extraction(payload, SOURCE)
+    assert bible.total_scenes == len(bible.scenes) == 3
+    assert bible.characters[0].gender == bible.characters[0].age_range == bible.characters[0].default_outfit == ''
+    assert bible.characters[0].visual_anchor == '1man, adult male'
+    assert payload['characters'][0]['default_outfit'] is None
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+def test_multiple_passages_consolidate_staged_participation_without_promoting_background(reverse):
+    payload = _payload()
+    original = payload['character_participation'][0]
+    payload['character_participation'].extend([
+        {**original, 'source_quote': 'opened the gate'},
+        {**original, 'classification': 'background_only', 'source_quote': 'A photograph'},
+        dict(payload['character_participation'][1]),  # Jo is still background only
+    ])
+    if reverse:
+        payload['character_participation'].reverse()
+    bible = _parse_extraction(payload, SOURCE)
+    assert bible.scenes[0].character_ids == ['Ari']
+    assert 'Jo' not in {c.id for c in bible.characters}
+
+
+def test_duplicate_participation_does_not_skip_evidence_validation():
+    payload = _payload()
+    payload['scenes'][0]['source_start_quote'] = 'No matching source opening.'
+    payload['character_participation'].append({
+        **payload['character_participation'][0], 'source_quote': 'An invented event.'})
+    with pytest.raises(_ParticipationQuoteMismatch):
+        _parse_extraction(payload, SOURCE)
+
+
+def test_missing_descriptive_field_still_reports_real_schema_error():
+    payload = _payload()
+    payload['characters'][0].pop('default_outfit')
+    payload['character_participation'].pop(0)
+    with pytest.raises(ValueError, match='default_outfit') as error:
+        _parse_extraction(payload, SOURCE)
+    assert 'Missing participation evidence' not in str(error.value)
+
+
+def test_unresolved_missing_evidence_is_reported_together_for_one_correction():
+    payload = _payload()
+    payload['scenes'][0]['source_start_quote'] = 'Missing first opening.'
+    payload['scenes'][2]['source_start_quote'] = 'Missing last opening.'
+    payload['character_participation'] = [row for row in payload['character_participation']
+                                          if row['character_id'] not in {'Ari', 'keeper'}]
+    with pytest.raises(ValueError, match='Missing participation evidence') as error:
+        _parse_extraction(payload, SOURCE)
+    assert 'Ari / now' in str(error.value)
+    assert 'keeper / crossing' in str(error.value)
+    assert 'source_start_quote' in str(error.value)
