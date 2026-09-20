@@ -1568,6 +1568,38 @@ def _strip_code_fence(text: str) -> str:
     return "\n".join(lines[1:-1])
 
 
+def _close_json_containers(text: str) -> str | None:
+    """Close containers only, without completing strings, literals, or values."""
+    text = text.rstrip()
+    if not text or text.lstrip()[0] not in "[{" or text[-1] not in '"]}':
+        return None
+    stack: list[str] = []
+    quoted = escaped = False
+    for char in text:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+        elif char in "[{":
+            stack.append("]" if char == "[" else "}")
+        elif char in "]}":
+            if not stack or stack.pop() != char:
+                return None
+    if quoted or not stack:
+        return None
+    candidate = text + "".join(reversed(stack))
+    try:
+        json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    return candidate
+
+
 def _format_json_parse_failure(
     exc: json.JSONDecodeError,
     raw_text: str,
@@ -1660,6 +1692,19 @@ async def generate_structured_object(
                 additional_usage=tuple(prior_usage),
             )
         except json.JSONDecodeError as exc:
+            # Preserve authored content; callers still validate the schema.
+            # Output-cap truncation is not a finished answer with missing braces.
+            capped = str(data.get("finish_reason") or "").lower() in {
+                "length", "max_tokens", "max_token", "max_output_tokens",
+            }
+            dropped = (data.get("stream") or {}).get("dropped", 0)
+            closed = _close_json_containers(text) if not capped and not dropped else None
+            if closed is not None:
+                logger.info("Closed missing JSON containers locally for %s", feature)
+                return ApiResult(
+                    value=json.loads(closed), usage=data["usage"],
+                    additional_usage=tuple(prior_usage),
+                )
             if data["usage"] is not None:
                 prior_usage.append(data["usage"])
             last_exc = exc

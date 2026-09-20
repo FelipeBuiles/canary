@@ -1,17 +1,17 @@
 """Stage 1: Novel → Story Bible JSON.
 
-Reads the full novel and makes one long-context call through the configured
-Gemini 3.7 Flash text route to extract characters, locations, scenes, and
-narrative arcs.
+Extracts bounded source sections through the configured text model, retaining
+completed responses and reconciling book-wide narrative arcs.
 """
 
 import json
 import re
+from collections.abc import Awaitable, Callable
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from rich.console import Console
 
@@ -21,10 +21,12 @@ from novel_to_comic.clients.structured_call import (
     generate_validated_json,
 )
 from novel_to_comic.config import Config
+from novel_to_comic.extraction_sections import estimate_sections, extract_sections
 from novel_to_comic.input_limits import read_source
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.source_extraction import (
     align_scene_anchors,
+    align_scene_openings,
     produce_source_document,
 )
 from novel_to_comic.stage_runtime import StageRuntime
@@ -121,18 +123,26 @@ def _nearest_source_quote(novel_text: str, source_quote: str) -> str | None:
     return candidate
 
 
+class _SceneOpening(BaseModel):
+    id: str
+    source_start_quote: str
+    source_start_offset: int | None = Field(default=None, ge=0)
+
+
 def _resolved_scene_anchor_quotes(result: dict, novel_text: str) -> dict[str, str]:
     """Resolve exact, scene-scoped source text for private evidence recovery."""
-    draft = json.loads(json.dumps(result))
-    draft.pop("character_participation", None)
-    try:
-        bible = StoryBible.model_validate(draft)
-    except Exception:
-        return {}
-    unresolved = set(align_scene_anchors(bible, novel_text))
+    openings = []
+    for scene in result.get("scenes", []):
+        try:
+            openings.append(_SceneOpening.model_validate(scene))
+        except ValidationError:
+            # Invalid scene fields are reported by final artifact validation;
+            # they must not hide recoverable evidence in unrelated scenes.
+            continue
+    unresolved = set(align_scene_openings(openings, novel_text))
     return {
         scene.id: scene.source_start_quote
-        for scene in bible.scenes
+        for scene in openings
         if scene.id not in unresolved
     }
 
@@ -320,6 +330,12 @@ def _parse_extraction(raw: object, novel_text: str) -> StoryBible:
     participation = _ExtractionParticipation.model_validate(result).character_participation
     # Work on a separate payload so schema-correction feedback retains the evidence.
     result = json.loads(json.dumps(result))
+    if isinstance(result.get("scenes"), list):
+        result["total_scenes"] = len(result["scenes"])
+    for character in result.get("characters", []):
+        for field in ("age_range", "gender", "default_outfit"):
+            if field in character and character[field] is None:
+                character[field] = ""  # explicitly unknown, never invent a visual fact
     characters = {character["id"] for character in result.get("characters", [])}
     scenes = {scene["id"]: scene for scene in result.get("scenes", [])}
     classified: set[tuple[str, str]] = set()
@@ -327,12 +343,23 @@ def _parse_extraction(raw: object, novel_text: str) -> StoryBible:
     mismatches: list[tuple[tuple[str, str], str, str | None]] = []
     normalized_source = clean(novel_text)
     scene_anchor_quotes = _resolved_scene_anchor_quotes(result, novel_text)
+    unknown_characters = {e.character_id for e in participation if e.character_id not in characters}
+    unknown_characters.update(
+        cid for scene in scenes.values() for cid in scene["character_ids"] if cid not in characters
+    )
+    unknown_scenes = {e.scene_id for e in participation if e.scene_id not in scenes}
+    if unknown_characters or unknown_scenes:
+        raise ValueError(
+            "Participation evidence must reference existing characters and scenes. "
+            f"Undefined character IDs: {sorted(unknown_characters)}; "
+            f"scene IDs outside this section: {sorted(unknown_scenes)}. "
+            "Use exact supplied registry IDs for known characters; define genuinely new "
+            "characters in characters. Scene references must belong to this source section."
+        )
     for evidence in participation:
         pair = (evidence.character_id, evidence.scene_id)
-        if evidence.character_id not in characters or evidence.scene_id not in scenes:
-            raise ValueError("Participation evidence must reference existing characters and scenes")
-        if pair in classified:
-            raise ValueError(f"Duplicate participation evidence: {pair}")
+        # Several passages can support the same pair. Validate each passage;
+        # any explicitly staged participation outweighs background mentions.
         source_quote = clean(evidence.source_quote)
         if not source_quote or source_quote not in normalized_source:
             # Participation evidence is private and discarded after this
@@ -352,6 +379,7 @@ def _parse_extraction(raw: object, novel_text: str) -> StoryBible:
             visible.add(pair)
     if mismatches:
         raise _ParticipationQuoteMismatch(mismatches)
+    missing_evidence = []
     for scene in scenes.values():
         for character_id in scene["character_ids"]:
             if (character_id, scene["id"]) not in classified:
@@ -359,13 +387,20 @@ def _parse_extraction(raw: object, novel_text: str) -> StoryBible:
                 # signal. Complete its private evidence from this scene's
                 # resolved source sentence instead of retrying redundant data.
                 if scene["id"] not in scene_anchor_quotes:
-                    raise ValueError(f"Missing participation evidence: {character_id} / {scene['id']}")
+                    missing_evidence.append(f"{character_id} / {scene['id']}")
+                    continue
                 classified.add((character_id, scene["id"]))
                 visible.add((character_id, scene["id"]))
         scene["character_ids"] = [
             character_id for character_id in scene["character_ids"]
             if (character_id, scene["id"]) in visible
         ]
+    if missing_evidence:
+        raise ValueError(
+            "Missing participation evidence: " + "; ".join(missing_evidence)
+            + ". These scenes' source_start_quote values could not be resolved. "
+            "Correct their source openings or supply nonempty verbatim participation evidence."
+        )
     for character_id, scene_id in sorted(visible):
         if character_id not in scenes[scene_id]["character_ids"]:
             # Participation is the explicit per-character/scene visual
@@ -409,11 +444,17 @@ async def _extract_with_retry(
     system_prompt: str,
     novel_text: str,
     max_retries: int = 2,
+    *,
+    user_content: str | None = None,
+    generate: Callable[..., Awaitable[ApiResult[Any]]] | None = None,
+    validate: Callable[[StoryBible], None] | None = None,
+    prepare: Callable[[Any], Any] | None = None,
+    max_output_tokens: int = EXTRACT_MAX_OUTPUT_TOKENS,
 ) -> ApiResult[StoryBible]:
     """Call the extraction model, normalize, validate, and retry on schema errors."""
 
     def parse(raw: object) -> StoryBible:
-        bible = _parse_extraction(raw, novel_text)
+        bible = _parse_extraction(prepare(raw) if prepare else raw, novel_text)
         aligned = bible.model_copy(deep=True)
         unresolved = align_scene_anchors(aligned, novel_text)
         if unresolved:
@@ -423,6 +464,8 @@ async def _extract_with_retry(
                 "source sentence. Unresolved scene IDs: "
                 + ", ".join(unresolved)
             )
+        if validate is not None:
+            validate(aligned)
         return aligned
 
     def correction(raw: object, error: Exception) -> str:
@@ -433,7 +476,7 @@ async def _extract_with_retry(
             f"Your previous response had schema validation errors. "
             f"Here is the original novel text, followed by your previous JSON output "
             f"and the specific errors. Please output corrected JSON only.\n\n"
-            f"NOVEL TEXT:\n{novel_text}\n\n"
+            f"NOVEL TEXT AND CONTEXT:\n{user_content or novel_text}\n\n"
             f"YOUR PREVIOUS JSON:\n{json.dumps(result, indent=2)}\n\n"
             f"VALIDATION ERRORS:\n{error}\n\n"
             f"{quote_instruction}\n"
@@ -445,12 +488,13 @@ async def _extract_with_retry(
             config,
             model=config.effective_extraction_model(),
             system_prompt=system_prompt,
-            user_content=novel_text,
+            user_content=user_content or novel_text,
             parse=parse,
             correction=correction,
             label="Story Bible extraction",
             feature="extract.story_bible",
-            max_output_tokens=EXTRACT_MAX_OUTPUT_TOKENS,
+            max_output_tokens=max_output_tokens,
+            generate=generate,
             retries=max_retries,
             temperatures=(0.4,),
         )
@@ -490,7 +534,8 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
 
         system_prompt = PROMPT_PATH.read_text()
         content_for_cost = novel_text if isinstance(novel_text, str) else ""
-        estimated = estimate_text_cost(
+        sectioned = len(novel_text) > config.extraction_chunk_chars
+        estimated = estimate_sections(config, novel_text, system_prompt) if sectioned else estimate_text_cost(
             config.effective_extraction_model(),
             system_prompt + "\n" + content_for_cost,
             output_chars=estimate_story_bible_output_chars(content_for_cost),
@@ -500,9 +545,15 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
 
         console.print(f"[bold]Calling {config.effective_extraction_model()}...[/bold]")
         ctx.log(f"Calling {config.effective_extraction_model()}...")
-        extract_result = await _extract_with_retry(config, system_prompt, novel_text)
-        story_bible = extract_result.value
+        extract_result = None
+        if sectioned:
+            story_bible = await extract_sections(config, project_dir, ctx, novel_text, system_prompt)
+        else:
+            extract_result = await _extract_with_retry(config, system_prompt, novel_text)
+            story_bible = extract_result.value
         unresolved = align_scene_anchors(story_bible, novel_text)
+        if sectioned and unresolved:
+            raise ValueError("Section source boundaries failed validation: " + ", ".join(unresolved))
         if unresolved:
             # The scene still exists in the Story Bible; only its source
             # boundary is unknown, so its units stay with the preceding scene.
@@ -525,9 +576,10 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
             f"{len(story_bible.locations)} locations, "
             f"{len(story_bible.scenes)} scenes"
         )
-        ctx.stage_state.items_done = 3
-        ctx.save()
-        ctx.progress(3, 4)
+        if not sectioned:
+            ctx.stage_state.items_done = 3
+            ctx.save()
+            ctx.progress(3, 4)
 
         artifacts.write_story_bible(project_dir, story_bible)
         produce_source_document(
@@ -536,10 +588,11 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
             story_bible,
         )
 
-        for retry_usage in extract_result.additional_usage:
-            ctx.record_api_usage(retry_usage)
-        ctx.record_item_done(usage=extract_result.usage)
-        ctx.progress(4, 4)
+        if extract_result is not None:
+            for retry_usage in extract_result.additional_usage:
+                ctx.record_api_usage(retry_usage)
+        ctx.record_item_done(usage=extract_result.usage if extract_result else None)
+        ctx.progress(ctx.stage_state.items_total, ctx.stage_state.items_total)
 
         console.print("[green]Extract stage complete — starting Brief next.[/green]")
         ctx.log("Extract stage complete; Brief will start automatically.")
@@ -559,6 +612,8 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
         novel_text = read_source(novel_path)
     except Exception:
         novel_text = ""
+    if len(novel_text) > config.extraction_chunk_chars:
+        return estimate_sections(config, novel_text, PROMPT_PATH.read_text())
     input_payload: str | int = PROMPT_PATH.read_text() + "\n" + novel_text
     return estimate_text_cost(
         config.effective_extraction_model(),

@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from novel_to_comic.config import Config, is_gpt_image_2, is_seedream_model
-from novel_to_comic.image_models import GATEWAY_IMAGE_SUNBURST, describe_image_model
 
 _GPT_LOCATION_PLATE_WIDTH = 1536
 _GPT_LOCATION_PLATE_HEIGHT = 1024
@@ -110,13 +109,9 @@ class RefStrategy:
         return style_ref
 
     def use_character_style_calibration(self) -> bool:
-        # Only Sunburst has evidence of copying the lineup's people. Preserve
-        # calibration for other models: it prevents per-species style drift.
-        # Sunburst still uses ONE shared approved proof, never per-character
-        # style invention or text-only conditioning.
-        provider_model = describe_image_model(self.model).provider_model.removeprefix("openai/")
-        sunburst = describe_image_model(GATEWAY_IMAGE_SUNBURST).provider_model.removeprefix("openai/")
-        return provider_model != sunburst and not provider_model.startswith(sunburst + "-")
+        # Calibrate materials/marks without any recognizable cast identities.
+        # Both scene proofs and character lineups have leaked identities.
+        return True
 
 
     def use_structured_location_plate_prompt(self) -> bool:

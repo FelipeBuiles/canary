@@ -772,6 +772,8 @@ def test_regenerate_character_state_persists_conditioned_metadata(tmp_path: Path
         return ApiResult(value=output_path)
 
     monkeypatch.setattr("novel_to_comic.ai.generate_wire_image", fake_generate_wire_image)
+    from .test_cast_asset_routes import _prepare_character_inputs
+    _prepare_character_inputs(tmp_path, config)
     import asyncio
     asyncio.run(regenerate_character_state_ref(config, tmp_path, char.id, state.id))
 

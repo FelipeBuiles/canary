@@ -171,6 +171,8 @@ class Config(BaseModel):
 
     # Model choices are overlaid from authenticated account preferences by the server.
     extraction_model: str = GATEWAY_GEMINI_FLASH
+    # Bound source and output work per Extract request; split on source units.
+    extraction_chunk_chars: int = Field(default=16000, ge=4000, le=64000)
     brief_model: str = GATEWAY_LUNA
     adapt_model: str = GATEWAY_TERRA
     plan_model: str = GATEWAY_TERRA

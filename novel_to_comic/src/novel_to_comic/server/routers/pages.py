@@ -928,6 +928,8 @@ def _reference_entries(project_dir, references) -> list[dict]:
             else None
         )
     entries = []
+    from novel_to_comic.reference_sheets import reference_display_members
+    references = [member for reference in references for member in reference_display_members(reference)]
     for reference in references:
         reference_id = _field(reference, "id")
         label = _field(reference, "label") or ""

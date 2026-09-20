@@ -1407,3 +1407,83 @@ def test_review_protocol_correction_cannot_bypass_cumulative_request_limit(tmp_p
         asyncio.run(review_narrative(context, generate=generate, ctx=runtime(tmp_path, "adapt"),
                                     artifacts=target, model="test"))
     assert len(calls) == 1
+
+
+def test_review_windows_overlap_in_time_but_publish_in_order_and_resume_from_cache(tmp_path):
+    async def scenario():
+        adaptation = _long_adaptation(30)
+        context = planning_context(adaptation, canonical(adaptation, draft_for(adaptation)))
+        target = TargetArtifacts(tmp_path)
+        starts, finished = [], []
+        all_started = asyncio.Event()
+        gates = {1: asyncio.Event(), 13: asyncio.Event()}
+
+        async def generate(**request):
+            supplied = json.JSONDecoder().raw_decode(request['user_content'].split('\n', 1)[1])[0]
+            first_page = supplied['pages'][0]['page_number']
+            starts.append(first_page)
+            if len(starts) == 3:
+                all_started.set()
+            await all_started.wait()
+            if first_page in gates:
+                await gates[first_page].wait()
+            finished.append(first_page)
+            if first_page == 25:
+                gates[13].set()
+            elif first_page == 13:
+                gates[1].set()
+            return ApiResult(value=verdict(request, finding={
+                'code': 'rushed_sequence', 'repair_stage': 'plan',
+                'artifact_ids': [f'page_{first_page:03d}'],
+                'evidence': 'An optional longer pause.', 'repair': 'Consider a quieter composition.',
+            }))
+
+        result = await asyncio.wait_for(review_narrative(
+            context, generate=generate, ctx=runtime(tmp_path, 'plan'), artifacts=target, model='test',
+        ), timeout=2)
+        assert not result
+        assert starts == [1, 13, 25]
+        assert finished == [25, 13, 1]
+        assert [i.artifact_ids[0] for i in target.read_narrative_review('plan').editorial_issues] == [
+            'page_001', 'page_013', 'page_025']
+        await review_narrative(context, generate=generate, ctx=runtime(tmp_path, 'plan'),
+                              artifacts=target, model='test')
+        assert len(starts) == 3
+
+    asyncio.run(scenario())
+
+
+def test_parallel_invalid_reviews_retain_all_completed_siblings_for_resume(tmp_path):
+    async def scenario():
+        adaptation = _long_adaptation(30)
+        context = planning_context(adaptation, canonical(adaptation, draft_for(adaptation)))
+        target = TargetArtifacts(tmp_path)
+        started = set()
+        all_started = asyncio.Event()
+
+        async def first(**request):
+            supplied = json.JSONDecoder().raw_decode(request['user_content'].split('\n', 1)[1])[0]
+            page = supplied['pages'][0]['page_number']
+            started.add(page)
+            if len(started) == 3:
+                all_started.set()
+            await all_started.wait()
+            return ApiResult(value={'wrong': True} if page in {1, 13} else verdict(request))
+
+        failures = await asyncio.wait_for(review_narrative(
+            context, generate=first, ctx=runtime(tmp_path, 'plan'), artifacts=target, model='test',
+        ), timeout=2)
+        assert [f.id for f in failures] == ['plan_review_invalid_1', 'plan_review_invalid_2']
+        calls = []
+
+        async def corrected(**request):
+            calls.append(request)
+            return ApiResult(value=verdict(request))
+
+        failures = await review_narrative(context, generate=corrected, ctx=runtime(tmp_path, 'plan'),
+                                         artifacts=target, model='test')
+        assert not failures
+        assert len(calls) == 2
+        assert all('Recheck the malformed prior review' in c['user_content'] for c in calls)
+
+    asyncio.run(scenario())

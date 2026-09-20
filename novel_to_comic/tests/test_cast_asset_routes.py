@@ -101,7 +101,36 @@ def _project(tmp_path: Path) -> Path:
     project_dir = tmp_path / "demo"
     project_dir.mkdir()
     artifacts.write_story_bible(project_dir, _bible())
+    _prepare_character_inputs(project_dir, Config())
     return project_dir
+
+
+def _prepare_character_inputs(project_dir, config):
+    from PIL import Image
+    from .test_cast_style_authority import _save_design
+    from novel_to_comic.stages import s3_cast
+    from novel_to_comic.asset_generation import persist_non_panel_provenance, style_reference_plan
+    bible = artifacts.read_story_bible(project_dir)
+    plan = _save_design(config, project_dir, bible)
+    board = s3_cast._character_style_board_path(project_dir)
+    board.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (32, 32), "orange").save(board)
+    request = s3_cast._compile_cast_request(config, project_dir,
+        s3_cast._character_style_calibration_input(config, bible),
+        reference_plan=style_reference_plan(config, s3_cast._find_style_ref(project_dir, config.style_template)))
+    persist_non_panel_provenance(request=request, output_path=board, project_dir=project_dir,
+                                request_id="fixture", result=ApiResult(value=board))
+    for char in bible.characters:
+        path = artifacts.character_ref_sheet_path(project_dir, char.id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            Image.new("RGB", (32, 32), "white").save(path)
+        request = s3_cast._compile_cast_request(config, project_dir,
+            s3_cast._character_generation_input(config, bible, char,
+                s3_cast._read_character_ref_addendum(project_dir, char.id), design=plan),
+            reference_plan=style_reference_plan(config, board))
+        persist_non_panel_provenance(request=request, output_path=path, project_dir=project_dir,
+                                    request_id="fixture", result=ApiResult(value=path))
 
 
 def _app():
@@ -355,6 +384,7 @@ def test_canonical_anatomy_restoration_reaches_image_without_mutating_anchor(tmp
     anchor = "1male creature, rat-like humanoid, beard"
     bible.characters[0].visual_anchor = anchor
     artifacts.write_story_bible(project_dir, bible)
+    _prepare_character_inputs(project_dir, Config())
     app = _app()
     direction = "Restore the rat-like humanoid anatomy and beard described by the canonical anchor."
     with patch(
@@ -630,7 +660,7 @@ def test_a_model_authored_state_id_is_not_rejected_for_its_spelling():
 
 
 @pytest.mark.parametrize("blocker", [None, "missing_state", "changed_style", "changed_parent", "missing_provenance", "failed_stage", "active_job", "unselected_style", "unapproved_style", "missing_prop_state"])
-def test_status_recognizes_individually_generated_cast_without_calibration_board(
+def test_status_requires_current_individual_refs_and_visual_review(
     tmp_path: Path, monkeypatch, blocker,
 ):
     from PIL import Image
@@ -641,6 +671,7 @@ def test_status_recognizes_individually_generated_cast_without_calibration_board
 
     project_dir = _project(tmp_path)
     config = Config(style_template="Clean expressive ink drawing")
+    _prepare_character_inputs(project_dir, config)
     state = PipelineState(project_name="demo", novel_path="novel.txt", created_at="2026-09-08T00:00:00Z")
     state.stages["style"].status = StageStatus.COMPLETE
     save_state(state, project_dir)
@@ -664,7 +695,11 @@ def test_status_recognizes_individually_generated_cast_without_calibration_board
     asyncio.run(s3_cast.regenerate_location_plate(config, project_dir, "loc_001"))
     asyncio.run(s3_cast.regenerate_location_plate(config, project_dir, "loc_001", state_id="ruined"))
     asyncio.run(s3_cast.regenerate_prop_ref(config, project_dir, "prop_001"))
-    assert not s3_cast._character_style_board_path(project_dir).exists()
+    assert s3_cast._character_style_board_path(project_dir).exists()
+    from novel_to_comic.cast_design import CastVisualReview, _digest, review_input
+    from novel_to_comic.target_artifacts import TargetArtifacts
+    TargetArtifacts(project_dir).write_cast_review(CastVisualReview(
+        input_sha256=_digest(review_input(config, project_dir, artifacts.read_story_bible(project_dir))), issues=[]))
     assert state.stages["cast"].status == StageStatus.PENDING
     db = MagicMock()
     db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
@@ -789,6 +824,7 @@ def test_comparison_pixels_reach_compiled_request_without_becoming_identity_or_e
         return SimpleNamespace(result=ApiResult(value=output))
     monkeypatch.setattr(s3_cast, "submit_non_panel_request", submit)
     config = Config(style_template="Clean ink")
+    _prepare_character_inputs(project_dir, config)
     if kind == "location":
         asyncio.run(s3_cast.regenerate_location_plate(config, project_dir, entity_id, state_id=state_id))
     elif state_id:

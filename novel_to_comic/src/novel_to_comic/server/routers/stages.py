@@ -82,6 +82,7 @@ def update_story_bible(body: dict, project=Depends(get_project)):
                         id=scene.id,
                         title=scene.title,
                         opening_quote=scene.source_start_quote,
+                        start_offset=scene.source_start_offset,
                     )
                     for scene in bible.scenes
                 ),

@@ -879,6 +879,106 @@ def test_unclosed_display_text_blocks(
     assert code in {failure.code for failure in result.invariant_failures}
 
 
+def _source_with_first_unit(text: str) -> SourceDocument:
+    source = _source_document()
+    tail = source.units[1].text
+    return SourceDocument.model_validate({
+        **source.model_dump(), "source_sha256": "", "text": text + tail,
+        "units": [
+            {**source.units[0].model_dump(), "text": text, "end_offset": len(text)},
+            {**source.units[1].model_dump(), "start_offset": len(text), "end_offset": len(text + tail)},
+        ],
+    })
+
+
+@pytest.mark.parametrize("marked", ["*door*", "**door**", "_door_", "__door__"])
+def test_protected_source_emphasis_restores_exact_approved_wording(marked):
+    source = _source_with_first_unit(f"I saw the {marked} open. ")
+    candidate = _with_lettering_text("I watched the door swing wide.").model_copy(
+        update={"source_sha256": source.source_sha256})
+    canonical = _canonicalize_candidate_requirements(candidate, source, _approved_brief())
+    result = validate_book_adaptation(source, _approved_brief(), canonical)
+    assert not result.invariant_failures
+    restored = [i for b in canonical.beats for i in b.lettering
+                if i.text == _approved_brief().protected_language[0]]
+    assert len(restored) == 1
+    assert restored[0].source_unit_ids == ("source_000001",)
+    assert restored[0].delivery == "quoted_text"
+    assert canonical == _canonicalize_candidate_requirements(canonical, source, _approved_brief())
+    assert marked in source.text  # comparison must not rewrite source authority
+
+
+@pytest.mark.parametrize("opening,closing", [('“', '”'), ('"', '"')])
+def test_exact_source_sentence_excerpt_closes_only_its_quote(opening, closing):
+    text = opening + "I saw the door open."
+    source = _source_with_first_unit(text + " ")
+    candidate = _with_lettering_text(text)
+    beat = candidate.beats[0]
+    item = beat.lettering[0].model_copy(update={"delivery": "quoted_text"})
+    candidate = candidate.model_copy(update={
+        "source_sha256": source.source_sha256,
+        "beats": (beat.model_copy(update={"lettering": (item, *beat.lettering[1:])}),),
+    })
+    canonical = _canonicalize_candidate_requirements(candidate, source, _approved_brief())
+    assert canonical.beats[0].lettering[0].text == text + closing
+    assert not validate_book_adaptation(source, _approved_brief(), canonical).invariant_failures
+    assert canonical == _canonicalize_candidate_requirements(canonical, source, _approved_brief())
+
+
+@pytest.mark.parametrize("text", ['“I saw the door', '“I watched the door open.', '(I saw the door open.'])
+def test_unproven_or_incomplete_excerpt_is_not_locally_rewritten(text):
+    from novel_to_comic.book_adaptation import _complete_source_quote_excerpt
+    item = _with_lettering_text(text).beats[0].lettering[0].model_copy(update={"delivery": "quoted_text"})
+    source = _source_with_first_unit('“I saw the door open. ')
+    assert _complete_source_quote_excerpt(item, {u.id: u for u in source.units}) == item
+
+
+def test_missing_protected_and_incomplete_text_find_their_repair_shard():
+    from novel_to_comic.book_adaptation import _affected_shards
+    candidate = _with_lettering_text('“I watched the door swing wide.')
+    validation = validate_book_adaptation(_source_document(), _approved_brief(), candidate)
+    for code in ("protected_language_missing", "incomplete_display_text"):
+        failure = next(f for f in validation.invariant_failures if f.code == code)
+        assert failure.source_unit_ids == ("source_000001",)
+        assert candidate.beats[0].id in failure.artifact_ids
+        assert _affected_shards(
+            AdaptationValidation(invariant_failures=(failure,)),
+            beat_to_shard={candidate.beats[0].id: 0},
+            shard_source_ids=(("source_000001",), ("source_000002",)),
+        ) == (0,)
+
+
+def test_source_scoped_repairs_do_not_receive_another_shards_missing_phrase():
+    from novel_to_comic.book_adaptation import _repair_prompt
+    candidate = _book_adaptation()
+    draft = _BookDraft(beats=candidate.beats, ledger=(candidate.ledger[0],))
+    # A wholly omitted phrase has source evidence but no existing beat owner.
+    remote = InvariantFailure(
+        id="missing_remote_phrase", owner_stage="adapt", code="protected_language_missing",
+        message="A remote approved line is missing.", source_unit_ids=("remote_source",),
+        evidence=("REMOTE_PHRASE_MUST_NOT_LEAK",),
+    )
+    prompt = _repair_prompt(
+        "Local source", draft, AdaptationValidation(invariant_failures=(remote,)),
+        shard_index=0, beat_to_shard={candidate.beats[0].id: 0}, retained_neighbors={},
+    )
+    assert "REMOTE_PHRASE_MUST_NOT_LEAK" not in prompt
+
+
+def test_protected_source_matching_does_not_erase_literal_symbols():
+    from novel_to_comic.book_adaptation import _protected_source_key
+    for text in ("x*y*z", "snake_case_word", "3 * 4 * 5", "unmatched *word", r"\*literal\*"):
+        assert _protected_source_key(text) == text
+
+
+def test_source_excerpt_with_only_a_closing_quote_is_not_given_another():
+    from novel_to_comic.book_adaptation import _complete_source_quote_excerpt
+    text = 'I saw the door open."'
+    source = _source_with_first_unit(text + " ")
+    item = _with_lettering_text(text).beats[0].lettering[0].model_copy(update={"delivery": "quoted_text"})
+    assert _complete_source_quote_excerpt(item, {u.id: u for u in source.units}) == item
+
+
 @pytest.mark.parametrize("text", [
     "MARCH 23, 1925", "CTHULHU CULT",
     "Ph'nglui mglw'nafh Cthulhu R'lyeh wgah'nagl fhtagn",

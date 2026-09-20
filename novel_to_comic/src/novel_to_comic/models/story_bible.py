@@ -3,7 +3,7 @@
 import re
 from typing import Any, Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from novel_to_comic.models.appearance import AppearanceState, StateActivation
 
@@ -84,6 +84,8 @@ class Scene(BaseModel):
     scene_type: str  # "action", "dialogue", "emotional", "transition"
     narrative_beat: str  # "inciting_incident", "climax", "resolution", etc.
     source_start_quote: str  # verbatim opening sentence of this scene in the novel text
+    # Deterministic Extract provenance; disambiguates repeated opening sentences.
+    source_start_offset: int | None = Field(default=None, ge=0)
     # Per-character and per-location appearance change is modeled on the entity
     # itself (appearance_states + appearance_timeline), resolved per panel by
     # adaptation chronology — not as per-scene override fields.

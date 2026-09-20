@@ -408,7 +408,9 @@ async def _start_stage(
                 project_dir=project_dir, config=config, rerun=rerun,
             )
         except (ArtifactMissing, ValueError) as exc:
-            raise HTTPException(409, str(exc)) from exc
+            raise HTTPException(409, {
+                "code": "draw_preflight_rejected", "message": str(exc),
+            }) from exc
     pkey = project_key(user_id, project_id)
     if project_busy(request.app, pkey):
         raise HTTPException(409, "Wait for all project jobs to finish before running a stage.")
@@ -591,6 +593,11 @@ async def approve(
     project_dir, config, state = project
     if stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}")
+    if stage == "cast":
+        from novel_to_comic.cast_design import review_status
+        from novel_to_comic import artifacts
+        if artifacts.read_story_bible(project_dir).characters and review_status(config, project_dir)["status"] != "current":
+            raise HTTPException(409, "Compare the current character references before approving Cast. Resume Cast to run its visual review.")
     if stage == "draw":
         from novel_to_comic.page_review import summarize_page_issues
 

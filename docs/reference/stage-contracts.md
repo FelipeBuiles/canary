@@ -105,6 +105,56 @@ establish that the resulting designs are visually distinct; that requires review
 
 ### Extraction participation
 
+Sources longer than `Config.extraction_chunk_chars` (16,000 characters by
+default) use sequential, sentence-aligned extraction sections. No source
+characters are removed or duplicated. A single unit exceeding the limit fails
+before generation with a source-formatting/configuration instruction. Shorter
+sources retain the single-call path.
+Section extraction also saves deterministic `source_start_offset` provenance
+on each scene, so repeated opening sentences cannot relocate a section's
+boundary to an earlier occurrence. Supplied offsets are validated against the
+exact complete source unit; invalid offsets never fall back to fuzzy matching.
+
+Each section receives the established entity registry and carried appearance
+states. New IDs use a section prefix; recurring entities reuse their original
+IDs. Merging preserves existing base anchors, state definitions, and first
+appearances; it validates references and ordered timelines. Disappearance and
+absence are not appearance states: states describe visible
+physical looks, and activations reference the same entity's declared catalog.
+The model does not retype established entities: recurring entries may
+contain only their ID and new states, activations, or relationships. Extract
+hydrates omitted identity fields and known states from the registry verbatim;
+it also resolves known character IDs cited by participation or scene rosters,
+and known location IDs cited by scenes, when their local definitions are
+omitted entirely. Only referenced entities are loaded; previous scene definitions
+and timeline activations are never imported into the section. Unknown IDs and
+explicit conflicting values still fail validation, with the offending character,
+scene, or appearance-state IDs identified in correction feedback. Per-section elapsed time and
+AI source scope make subsequent live runs measurable. Section boundaries
+may split a narrative scene into consecutive source scenes; Adapt still owns
+book-level pacing. A final compact call assigns every extracted scene exactly
+once to the three acts without rewriting scene or entity authorities.
+
+Section and organization JSON responses, including schema-repair responses,
+are retained under `.checkpoints/extract/responses`, keyed by model and request
+inputs. Resume revalidates matching responses without another provider call or
+usage charge. Completed section usage is recorded before later work; a timeout
+fails without automatically resubmitting that request. Stage cleanup preserves
+these checkpoints. Cost estimates include all sections, estimated registry
+growth, and the final organization call; they are not a spend ceiling or a
+measured latency/quality guarantee.
+
+Brief inference receives every source unit's exact text and ID, the scene index,
+and the complete Story Bible; redundant sentence offsets and ordinals are omitted
+from the prompt. Its first-call instructions specify string/list types and the
+transformation enum. Recoverable Brief validation failures are recorded in the
+existing opt-in local diagnostic journal, so truncated provider traces do not
+hide the reason for a correction.
+Structured JSON parsing can locally append missing closing brackets/braces when
+the result parses without changing authored content. It never completes strings,
+numbers, missing values, or responses reported as output-limit truncations;
+ordinary schema and reference validation still run afterward.
+
 Extract requires private `character_participation` evidence for candidate
 characters and scene rosters: `direct_action` means physically staged action,
 speech, or experience; `staged_recollection` means an embodied sequence in a
@@ -113,12 +163,15 @@ biographical exposition, unseen speakers, or background photos/social images.
 Retrospective narration alone does not exclude a staged participant, and a
 mention alone does not authorize inventing one.
 
-Each character/scene pair has one classification and a nonempty `source_quote`
+Participation observations have a nonempty `source_quote`
 found in the source with whitespace normalized only: words, punctuation, and
 case remain significant. A malformed nonempty model quote is replaced at this
 private boundary with that scene's resolved exact opening sentence; if no
-scene-scoped source sentence can be resolved, validation fails. Missing or
-duplicate evidence also fails validation. When the model's redundant roster
+scene-scoped source sentence can be resolved, validation fails. Repeated
+observations of a character/scene pair are consolidated after every quote is
+validated: any explicitly staged participation survives additional background
+mentions; background-only observations never create a visual participant.
+When the model's redundant roster
 and participation fields disagree, a resolved scene sentence grounds the
 rostered participant or adds an explicitly staged participant to the roster.
 Scene rosters contain visual participants, not everyone mentioned;
@@ -127,7 +180,25 @@ facts remain. This evidence is discarded at the extraction boundary, not added
 to the canonical Story Bible. `visual_anchor` remains the shared physical
 identity authority, including species/anatomy; there is no separate species DTO.
 
+Quote resolution reads only scene openings, not the entire Story Bible schema.
+Unrelated metadata errors cannot suppress valid evidence recovery. Extract
+derives `total_scenes` from the actual scene array. Explicit null character
+`age_range`, `gender`, and `default_outfit` become empty unknown descriptions;
+missing required fields and invalid visual anchors remain validation errors.
+Later sections inherit omitted book metadata from the established book. Unused,
+known, ID-only character echoes are ignored in the section while remaining in
+the book registry; new candidates or authored updates still require evidence.
+Unrecoverable missing participation pairs are reported together with their
+unresolved opening-quote cause for a single targeted correction.
+
 ### Adaptation and state authority
+
+Adapt pipelines each shard's validated blueprint into its locked-lettering
+request immediately, without waiting for unrelated blueprints. Both operations
+share a four-request admission pool. They retain their original prompts,
+checkpoint identities, and source scopes; final drafts merge in source order.
+Failure or cancellation closes admission, including ready lettering, while
+already admitted operations finish accounting and persistence.
 
 Adapt's bounded source requests keep complete scenes together when they fit the
 unit and projected output limits. Oversized scenes may split; each authoring
@@ -202,6 +273,11 @@ both caption-owner links: they follow its exact authored word placement. This
 does not claim that captions must be literally depicted. Foreign or backward
 visual citations remain invalid, and the combined provenance still undergoes
 the fixed-map ordering checks. Compilation never chooses a destination. Local repairs
+may return corrected pages first: explicit page numbers identify their locked
+allocations, and compilation orders them by the map without moving panel content
+or lettering. Duplicate, missing, foreign, or partially numbered page sets fail
+validation. A fully unnumbered response uses the existing fixed-map array order.
+Local repairs
 receive the previous panels in the same writer format. Canonical page artifacts
 retain their existing lettering contract; changed request schemas invalidate
 only the corresponding response checkpoints. Map/whole-book author instructions may change global allocation; detail
@@ -278,6 +354,14 @@ array must be empty; the reviewer still checks the story and reports defects in
 `findings`. Checklist entries for arbitrary beats, pages, or the ledger are not
 substitutes for the detected signals. Duplicate assessments remain checked in
 Python, with explicit missing, unexpected, and duplicate ID diagnostics.
+
+Independent review windows run with at most four admitted operations. They
+inspect the same fixed candidate; no window consumes or acts on another's
+verdict. Findings merge in window order with the existing evidence-based
+deduplication, so completion timing cannot change repair ownership. Exhausted
+protocol correction stops new admission and records all completed invalid
+windows; admitted siblings finish checkpointing and are reusable on Resume.
+This changes scheduling, not review scope, evidence, or repair allowances.
 
 Review contract `narrative_v4` separates advisory preferences from substantiated
 blockers. Padding, pacing, emphasis, panel variety, and weak page turns never
@@ -390,23 +474,40 @@ missing anatomy. Textual style notes remain secondary to an approved style
 reference; a generated-neighbor variation instead owns its declared changed
 rendering facets.
 
-Character style calibration is a distinct `style_calibration` asset: a
-text-free lineup of canonical Cast subjects in anatomy-appropriate natural
-postures, not an invented human/adult roster or a lettered page sample.
-It supplies rendering evidence only, never another character's identity, and
-is not a required Cast approval output. Reuse requires its current producing
-request; otherwise the approved style proof is the fallback conditioning image.
-Sunburst uses the same approved proof directly for every Cast character and state
-reference, instead of generating or reusing a shared character lineup. Saved
-Sunburst project evidence showed the lineup leaking its identities into other
-characters. Other models retain shared calibration to prevent per-character or
-per-species style drift; the exception does not apply to the whole GPT Image route.
-Sunburst character generation fails before submission if the proof is absent,
-rather than silently falling back to text. Cast prompts explicitly keep one
-medium and degree of realism across human, animal, and creature subjects.
-An image-edit transport never licenses discarding the selected style image.
-Canonical character sheets also receive the Story Bible's age, wardrobe, and
-distinguishing details alongside the exact protected visual anchor.
+Cast first writes `refs/cast_design.json`: a versioned, story/style-bound design
+plan covering the entire ensemble. Face, hair, silhouette, posture, wardrobe and
+contrasts are explicit adaptation choices for unspecified details, never edits
+to source visual anchors. The prompt receives the full roster and co-occurrence
+sets. Missing, repeated or duplicate-id designs are rejected before image work.
+Canonical sheets receive these choices alongside verbatim source anchors, age,
+wardrobe and distinguishing details. Authorized correction addenda take priority.
+
+Character style calibration is a distinct `style_calibration` asset containing
+abstract material and mark-making studies without people, faces, bodies, animals,
+costumes or scenery. Every image route uses the same rendering-only board, derived
+from the selected Style proof. The old character lineup is incompatible with the
+new producing request. A failed or missing board cannot fall back to a proof
+containing people. Existing canonical and state artwork is versioned before
+replacement. Identity-conditioned appearance states still preserve compatible
+canonical facets and the active state's verbatim anchor and continuity guard.
+
+After character generation, Cast visually compares all canonical sheets using
+labelled contact sheets and the configured visual review model. The typed
+`refs/cast_review.json` stores suspected lookalikes, anatomy, wardrobe and identity
+concerns, keyed to source, designs, correction direction and exact image hashes.
+`GET /cast/review` reports missing, stale or current evidence without spending.
+The Cast screen links each concern to its characters. Empty findings do not mean
+verified visual quality; the author remains responsible for approval. Approval
+requires a current comparison, and findings never trigger automatic regeneration.
+Resume Cast reuses current artifacts and refreshes stale ones, including review.
+An individual correction requires current designs and a current rendering board;
+state corrections also require a current canonical parent, before paid work.
+
+Design and visual-review text calls use StageRuntime usage accounting and are
+included in Cast admission/funding and estimates. No automatic text transport or
+invalid-JSON retries are added. Neither software tests nor a completed visual
+comparison establish that new generated art is distinct; that needs live visual
+assessment of the resulting references.
 
 Extraction requires explicit `changed_facets` and `replaces_identity` for every
 returned appearance state and rejects two activations for one entity at the
@@ -448,6 +549,16 @@ experimental complete-page profile when its image route and OCR are both
 subscription-selected. It permits five total ordered image inputs, including a
 correction parent; all required visual authorities remain intact. Hybrid copy
 stays outside the image request.
+When separate authority images exceed those slots, Draw creates labeled PNG
+reference sheets with at most two authorities per sheet, preserving every source
+pixel without cropping or resizing. Exact source hashes, anchors, guards, and
+sheet regions remain in the frozen request, and prompt bindings identify each
+subject's region. Requests that fit retain their original reference bytes. The
+model/profile and canonical Plan do not change. This permits up to ten authorities
+for initial Draw and eight with a correction parent; pixel-budget or larger
+overflows still fail before submission. Reference previews show the original
+subjects and thumbnails. Packaging checks do not establish generated identity
+fidelity; that requires visual review.
 Queue all prepares every page before any hold or enqueue. Subscription quotes,
 holds and debits are zero; observed cost and actual image backend remain unknown.
 This does not relax the production Vertex profile; both use current wire contracts.
@@ -549,7 +660,14 @@ Adaptation/Plan stays read-only.
 Adapt resumes by revalidating its saved failed candidate against the unchanged
 source and approved brief. Source-backed protected quotations receive explicit
 quoted-caption delivery; exact protected book titles do not require terminal
-punctuation. Missing terminal punctuation alone produces a nonblocking
+punctuation. Source matching ignores paired Markdown emphasis without rewriting
+source text or approved wording. A complete sentence copied verbatim into a
+quoted caption from a longer source quotation can receive its single missing
+closing quote locally; paraphrases, incomplete sentences, missing opening quotes,
+and other unbalanced delimiters still need repair. Missing protected phrases and
+incomplete display text cite their owning source units and beats for shard repair;
+source-scoped findings are not sent to unrelated shards.
+Missing terminal punctuation alone produces a nonblocking
 `possible_clipped_display_text` editorial issue: headings, date cards, chants,
 and quoted phrases may intentionally omit it. Unclosed quotation marks and
 delimiters remain blocking. Warnings preserve the exact lettering and cited IDs.

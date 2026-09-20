@@ -1022,9 +1022,28 @@ def _compile_detail_response(
     response = _BookDetailDraft.model_validate(value)
     if len(response.pages) != len(target_pages):
         raise ValueError(f"Expected {len(target_pages)} pages; received {len(response.pages)}.")
+    # A correction may return the repaired page first. The declared page number
+    # identifies its locked allocation; array position must not relabel its art.
+    numbered = ["page_number" in page.model_fields_set for page in response.pages]
+    if any(numbered) and not all(numbered):
+        raise ValueError("Detail must number every page or omit all page numbers and use fixed map order.")
+    # The existing anonymous-page contract uses map order. Never treat its
+    # default page_number=1 as an explicit declaration of page ownership.
+    by_number = ({page.page_number: page for page in response.pages} if all(numbered) else
+                 {mapped.page_number: page.model_copy(update={"page_number": mapped.page_number})
+                  for page, mapped in zip(response.pages, target_pages, strict=True)})
+    expected_numbers = {page.page_number for page in target_pages}
+    if len(by_number) != len(response.pages):
+        raise ValueError("Detail pages must have unique page_number values; duplicate page numbers received.")
+    if set(by_number) != expected_numbers:
+        raise ValueError(
+            f"Detail page numbers must match the fixed map: missing {sorted(expected_numbers - by_number.keys())}; "
+            f"out-of-batch {sorted(by_number.keys() - expected_numbers)}."
+        )
     owners = {item.id: beat.id for beat in adaptation.beats for item in beat.lettering}
     pages = []
-    for page, mapped in zip(response.pages, target_pages, strict=True):
+    for mapped in target_pages:
+        page = by_number[mapped.page_number]
         placements = page.lettering_placements
         missing = set(mapped.lettering_ids) - placements.keys()
         unknown = placements.keys() - set(mapped.lettering_ids)

@@ -108,6 +108,13 @@ it. This change provides no edition reset or migration action.
 All required approved authorities remain verbatim and ordered; none are dropped
 to fit. The limit is **five total image inputs**, including the preceding render
 for an explicit correction (so at most four authority images with a parent).
+Draw can package two approved references into one labeled, lossless PNG sheet.
+It uses this only when needed to fit the input slots; ordinary references remain
+unchanged. Source pixels are not cropped or resized. Frozen metadata preserves
+each source hash and authority, and the prompt maps subjects to sheet regions.
+This supports ten references for initial Draw or eight with a correction parent,
+subject to the sheet pixel budget. Those are packaging limits, not live proof
+of identity fidelity with ten subjects; generated output still needs visual review.
 Every page in a Queue all batch is prepared before any credit hold or submission;
 an over-capacity later page rejects the batch rather than partially enqueuing it.
 Authored Plan lettering remains exact and OCR checks are still required.

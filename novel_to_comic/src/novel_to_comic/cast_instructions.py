@@ -350,6 +350,13 @@ async def apply_asset_instruction(
     instruction = validate_user_instruction(instruction)
     asset_id = asset_id.strip()
     resolve_cast_asset(project_dir, asset_type, asset_id, state_id)
+    if asset_type == "character":
+        from novel_to_comic.stages.s3_cast import require_character_inputs
+        from novel_to_comic.target_artifacts import ArtifactInvalid
+        try:
+            require_character_inputs(config, project_dir, asset_id, state=bool(state_id))
+        except (ValueError, ArtifactInvalid) as exc:
+            raise HTTPException(409, str(exc)) from exc
     attachments = (reference_assets if reference_assets is not None else
                    saved_reference_inputs(project_dir, asset_type, asset_id, state_id))
     if len(attachments) > 3:

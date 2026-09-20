@@ -360,6 +360,48 @@ def test_glm_structured_request_keeps_schema_and_supported_max_tokens(
     assert request["messages"][0]["content"] == "Return JSON."
 
 
+@pytest.mark.parametrize("raw", [
+    '{"items":[{"text":"Keep \\"quoted\\" words and } brackets"}',
+    '{"items":["complete"]',
+])
+def test_missing_json_closers_preserve_content_without_resubmission(monkeypatch, raw):
+    calls = []
+    async def generate(**kwargs):
+        calls.append(kwargs)
+        return {"text": raw, "usage": None, "finish_reason": "stop"}
+    monkeypatch.setattr(client, "_chat_completion", generate)
+    result = asyncio.run(client.generate_structured_object(
+        config=Config(), model="gpt-5.6-terra", system_prompt="JSON",
+        user_content="story", retry_invalid_json=False,
+    ))
+    assert len(calls) == 1
+    assert result.value == json.loads(client._close_json_containers(raw))
+    assert client._close_json_containers(raw).startswith(raw)
+
+
+@pytest.mark.parametrize("raw", [
+    '{"text":"unfinished', '{"text":', '{"number":12', '{"ok":tru',
+    '{"items":["a",', '{"a":"b" "c":"d"}', '{"a":["b"}',
+])
+def test_json_closer_repair_rejects_missing_content_and_internal_errors(raw):
+    assert client._close_json_containers(raw) is None
+
+
+@pytest.mark.parametrize("finish_reason,stream", [
+    ("length", {}), ("stop", {"dropped": 1}),
+])
+def test_json_closer_repair_never_accepts_incomplete_transport(monkeypatch, finish_reason, stream):
+    async def generate(**kwargs):
+        return {"text": '{"items":["complete"]', "usage": None,
+                "finish_reason": finish_reason, "stream": stream}
+    monkeypatch.setattr(client, "_chat_completion", generate)
+    with pytest.raises(ValueError, match="malformed JSON"):
+        asyncio.run(client.generate_structured_object(
+            config=Config(), model="gpt-5.6-terra", system_prompt="JSON",
+            user_content="story", retry_invalid_json=False,
+        ))
+
+
 def test_generate_structured_object_retries_then_succeeds_on_malformed_json(
     monkeypatch, _patch_events
 ):

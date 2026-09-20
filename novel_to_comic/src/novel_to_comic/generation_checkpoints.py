@@ -13,7 +13,7 @@ from novel_to_comic.usage import ApiResult
 
 
 def _checkpoint_location(artifacts, stage, model, request):
-    if stage not in {"adapt", "plan"}:
+    if stage not in {"extract", "adapt", "plan"}:
         raise ValueError("unsupported structured generation stage")
     encoded = json.dumps(
         {"version": 1, "model": model, "request": request},
@@ -48,7 +48,7 @@ def checkpointed_generator(
     repair is a different input and therefore a different checkpoint. Cached
     calls return no usage: their original provider event was already charged.
     """
-    if stage not in {"adapt", "plan"}:
+    if stage not in {"extract", "adapt", "plan"}:
         raise ValueError("unsupported structured generation stage")
 
     async def run(**kwargs: Any) -> ApiResult[Any]:

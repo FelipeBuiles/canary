@@ -55,6 +55,8 @@ class ArtifactMissing(Exception):
 
 
 _ARTIFACT_OWNER_STAGES = {
+    "cast_design": "Cast",
+    "cast_review": "Cast",
     "source": "Extract",
     "adaptation_brief": "Brief",
     "book_adaptation": "Adapt",
@@ -95,6 +97,28 @@ class TargetArtifacts:
 
     def __init__(self, project_dir: Path) -> None:
         self.project_dir = Path(project_dir)
+
+    @property
+    def cast_design_path(self) -> Path:
+        return self.project_dir / "refs" / "cast_design.json"
+
+    def read_cast_design(self):
+        from novel_to_comic.cast_design import CastDesignPlan
+        return self._read_model("cast_design", self.cast_design_path, CastDesignPlan)
+
+    def write_cast_design(self, plan) -> None:
+        self._write_model(self.cast_design_path, plan)
+
+    @property
+    def cast_review_path(self) -> Path:
+        return self.project_dir / "refs" / "cast_review.json"
+
+    def read_cast_review(self):
+        from novel_to_comic.cast_design import CastVisualReview
+        return self._read_model("cast_review", self.cast_review_path, CastVisualReview)
+
+    def write_cast_review(self, review) -> None:
+        self._write_model(self.cast_review_path, review)
 
     def archive_adaptation_work(self) -> Path:
         """Start a new attempt while retaining outputs, checkpoints and budgets.

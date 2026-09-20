@@ -24,6 +24,7 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `google_cloud_location` | `str` | `'global'` |  |
 | `dev_model_selections` | `dict[str, str]` | `Field(default_factory=dict)` |  |
 | `extraction_model` | `str` | `GATEWAY_GEMINI_FLASH` |  |
+| `extraction_chunk_chars` | `int` | `Field(default=16000, ge=4000, le=64000)` |  |
 | `brief_model` | `str` | `GATEWAY_LUNA` |  |
 | `adapt_model` | `str` | `GATEWAY_TERRA` |  |
 | `plan_model` | `str` | `GATEWAY_TERRA` |  |

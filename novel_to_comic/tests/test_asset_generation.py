@@ -207,10 +207,9 @@ def test_calibration_and_character_requests_preserve_nonhuman_canonical_anatomy(
         locations=[], scenes=[], narrative_arcs=[],
     )
     calibration = _character_style_calibration_input(config, bible)
-    assert [(subject.character_id, subject.identity) for subject in calibration.prompt.subjects] == [
-        (cat.id, anchor),
-    ]
-    for input_data in (calibration, _character_generation_input(config, bible, cat)):
+    assert calibration.prompt.subjects == ()
+    assert "No people, faces" in calibration.prompt.constraints
+    for input_data in (_character_generation_input(config, bible, cat),):
         request = compile_non_panel_request(config, input_data)
         assert anchor in "\n\n".join(request.wire.prompt_parts)
         assert anchor in [protected.text for protected in request.compiled.protected_anchors]

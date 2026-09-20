@@ -14,6 +14,7 @@ from novel_to_comic.briefing import (
 from novel_to_comic.clients.structured_call import (
     StructuredCallError,
     generate_validated_json,
+    validation_error_summary,
 )
 from novel_to_comic.config import Config
 from novel_to_comic.stage_runtime import StageRuntime
@@ -37,6 +38,15 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
         return propose_brief(raw, page_envelope=page_envelope)
 
     def correction(raw: object, error: Exception) -> str:
+        # Provider traces can truncate before the validation feedback. Keep the
+        # rejection reason in the existing opt-in project diagnostic journal.
+        from novel_to_comic.server.diagnostics import record_diagnostic
+
+        record_diagnostic(
+            project_dir, "structured_response_rejected", stage="brief",
+            feature="brief.infer", model=model,
+            message=validation_error_summary(error), status="retrying",
+        )
         # Shape slips are repaired deterministically in propose_brief; anything
         # still invalid needs the model, so it gets the exact errors rather than
         # costing the user the whole stage.
