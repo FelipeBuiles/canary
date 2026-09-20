@@ -737,11 +737,20 @@ def project_status(
     if state_changed:
         save_state(state, project_dir)
 
+    active_jobs = [generation_job_payload(request.app, job)
+                   for job in request.app.state.generation_jobs.values()
+                   if job.project_name == project_key(user_id, project_id)
+                   and job.status in {"queued", "running"}]
+    active_stages = {job["stage"] for job in active_jobs}
     stages = {}
     for name in STAGE_NAMES:
         stages[name] = _stage_payload(
-            project_dir, name, state, is_task_alive=running
+            project_dir, name, state, is_task_alive=name in active_stages
         )
+    stages["cast"]["approval_blocker"] = None
+    if not running and state.stages["cast"].status in {StageStatus.AWAITING_REVIEW, StageStatus.COMPLETE}:
+        from novel_to_comic.stages.s3_cast import cast_approval_blocker
+        stages["cast"]["approval_blocker"] = cast_approval_blocker(config, project_dir, state.stages["cast"])
     total_estimated = sum(state.stages[n].estimated_cost_usd for n in STAGE_NAMES)
     db_row = (
         get_db()
@@ -762,6 +771,7 @@ def project_status(
         "misc_cost_credits": provider_usd_to_credits(state.misc_cost_usd),
         "total_estimated_cost_credits": provider_usd_to_credits(total_estimated),
         "is_running": running,
+        "active_jobs": active_jobs,
         "has_cover": _cover_path(project_dir).exists(),
         "style_selected": style_selected,
         "is_public": share_info.get("is_public", False),
@@ -834,6 +844,7 @@ def enqueue_project_cover(request: Request, project_id: str, project, user_id: s
     prune_finished_generation_jobs(request.app)
     from ..credited_job import enqueue_credited_job
 
+    from ..job_commands import command
     job, _created = enqueue_credited_job(
         request.app,
         project_name=pkey,
@@ -841,6 +852,7 @@ def enqueue_project_cover(request: Request, project_id: str, project, user_id: s
         label=f"{state.project_name} cover",
         payload={"path": "cover/cover.png"},
         work=_runner,
+        command=command("cover", project_dir, config),
         project_id=project_id,
         project_dir=project_dir,
         stage="cover",

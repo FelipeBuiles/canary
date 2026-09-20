@@ -36,6 +36,7 @@ from novel_to_comic.usage import ApiResult
 
 from .credits import (
     assert_reservation_active,
+    assert_sufficient_credits,
     debit_model_usage,
     estimate_adaptation_restart,
     estimate_stage_credit_reservation,
@@ -43,6 +44,7 @@ from .credits import (
     reserve_credits,
 )
 from .db import get_db
+from .job_commands import JobCommand
 from .generation_jobs import (
     GenerationJob,
     enqueue_generation_job,
@@ -147,6 +149,7 @@ def enqueue_credited_job(
     operations: Operations,
     semaphore: asyncio.Semaphore | None = None,
     estimate_credits: int = 0,
+    command: JobCommand | None = None,
 ) -> tuple[GenerationJob, bool]:
     """Find or create a generation job backed by a credit guarantee.
 
@@ -196,6 +199,7 @@ def enqueue_credited_job(
         debit_description=debit_description, semaphore=semaphore,
         reservation_credits=estimate_credits,
         operations=operations,
+        command=command,
     )
 
 
@@ -219,6 +223,7 @@ def enqueue_reserved_generation_job(
     existing_hold: tuple[str | None, str] | None = None,
     on_terminal: Callable[[], None] | None = None,
     on_settled: Callable[[ApiResult[Any]], None] | None = None,
+    command: JobCommand | None = None,
 ) -> tuple[GenerationJob, bool]:
     """Queue one request with a hold spanning execution, failure, or cancellation."""
     funding = classify_operations(operations)
@@ -241,6 +246,27 @@ def enqueue_reserved_generation_job(
             if on_terminal is not None:
                 on_terminal()
         return existing, False
+
+    if getattr(app.state, "durable_queue_required", False) is True:
+        import uuid
+        if command is None:
+            raise ValueError(f"Missing durable command for {kind}")
+        if existing_hold is not None and existing_hold[0] is not None:
+            release_reservation(get_db(), existing_hold[0])
+        assert_sufficient_credits(get_db(), user_id, reservation_credits, action=kind)
+        command = command.model_copy(update={
+            "stage": stage, "user_id": user_id, "project_id": project_id,
+            "reservation_credits": reservation_credits,
+            "ledger_job_id": str(uuid.uuid4()), "debit_description": debit_description,
+        })
+        job = enqueue_generation_job(
+            app, project_name=project_name, kind=kind, label=label,
+            payload=payload, runner=None, user_id=user_id, command=command,
+        )
+        # Route-local guards cannot outlive the request; the durable job now
+        # owns admission. Their callbacks may also mutate stage state, so do
+        # not invoke them here. Routes remove their temporary guards explicitly.
+        return job, True
 
     db = get_db()
     reservation_id, ledger_job_id = existing_hold if existing_hold is not None else reserve_credits(
@@ -340,6 +366,7 @@ def enqueue_frozen_generation_job(
     request_context: dict[str, Any] | None = None,
     on_complete: Callable[[ApiResult[Any], Any], Awaitable[None] | None] | None = None,
     on_failure: Callable[[BaseException, Any], Awaitable[None] | None] | None = None,
+    command: JobCommand | None = None,
 ) -> tuple[GenerationJob, bool]:
     """Freeze a wire request before publishing a credited image job.
 
@@ -464,6 +491,10 @@ def enqueue_frozen_generation_job(
         semaphore=semaphore,
         estimate_credits=estimate_credits,
         operations=operations,
+        command=command.model_copy(update={"arguments": {
+            **command.arguments, "frozen_request_id": frozen.request_id,
+            "output_path": str(output_path.relative_to(project_dir)), "feature": feature,
+        }}) if command is not None else None,
     )
     if created:
         update_frozen_request_status(

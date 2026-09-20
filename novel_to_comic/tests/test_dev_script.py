@@ -27,6 +27,7 @@ case "$1" in
     ;;
   compose)
     case "$*" in
+      *"ps -q queue-db") printf queue-db-id ;;
       *"ps -q litellm-db") printf '%s\n' 'litellm-db-id' ;;
       *"ps -q litellm") printf '%s\n' 'litellm-id' ;;
       *) exit 1 ;;
@@ -34,6 +35,7 @@ case "$1" in
     ;;
   inspect)
     case "$*" in
+      *queue-db-id) printf healthy ;;
       *litellm-db-id) printf '%s\n' 'healthy' ;;
       *litellm-id) printf '%s\n' 'running' ;;
       *) exit 1 ;;
@@ -63,7 +65,7 @@ case "$url" in
     [ "$attempts" -ge 2 ]
     ;;
   http://127.0.0.1:8000/api/health/ready)
-    printf '%s' '{"checks":{"litellm":"ok"},"model_mode":"api","pipeline_contract":"eight-stage-v2"}'
+    printf '%s' '{"checks":{"litellm":"ok","generation_queue":"ok"},"model_mode":"api","pipeline_contract":"eight-stage-v2"}'
     ;;
   http://127.0.0.1:5173)
     exit 0
@@ -106,6 +108,7 @@ case "$1" in
     ;;
   compose)
     case "$*" in
+      *"ps -q queue-db") printf queue-db-id ;;
       *"ps -q litellm-db") printf '%s\\n' 'litellm-db-id' ;;
       *"ps -q litellm") printf '%s\\n' 'litellm-id' ;;
       *) exit 1 ;;
@@ -113,6 +116,7 @@ case "$1" in
     ;;
   inspect)
     case "$*" in
+      *queue-db-id) printf healthy ;;
       *litellm-db-id) printf '%s\\n' 'healthy' ;;
       *litellm-id) printf '%s\\n' 'running' ;;
       *) exit 1 ;;
@@ -194,7 +198,7 @@ def _run_dev(
 
 def test_check_rejects_backend_missing_pipeline_contract(tmp_path: Path) -> None:
     result, docker_log = _run_dev(
-        tmp_path, '{"checks":{"litellm":"ok"},"model_mode":"api"}'
+        tmp_path, '{"checks":{"litellm":"ok","generation_queue":"ok"},"model_mode":"api"}'
     )
 
     assert result.returncode == 1, result.stdout + result.stderr
@@ -206,7 +210,7 @@ def test_check_accepts_compatible_api_backend_without_starting_services(
     tmp_path: Path,
 ) -> None:
     payload = (
-        '{"checks":{"litellm":"ok"},"model_mode":"api",'
+        '{"checks":{"litellm":"ok","generation_queue":"ok"},"model_mode":"api",'
         '"pipeline_contract":"eight-stage-v2"}'
     )
     result, docker_log = _run_dev(tmp_path, payload)
@@ -217,7 +221,7 @@ def test_check_accepts_compatible_api_backend_without_starting_services(
 
 def test_check_rejects_backend_with_old_pipeline_contract(tmp_path: Path) -> None:
     payload = (
-        '{"checks":{"litellm":"ok"},"model_mode":"api",'
+        '{"checks":{"litellm":"ok","generation_queue":"ok"},"model_mode":"api",'
         '"pipeline_contract":"seven-stage-v1"}'
     )
     result, docker_log = _run_dev(tmp_path, payload)
@@ -231,7 +235,7 @@ def test_api_start_rejects_backend_with_mismatched_mode_without_starting_service
     tmp_path: Path,
 ) -> None:
     payload = (
-        '{"checks":{"litellm":"ok"},"model_mode":"codex",'
+        '{"checks":{"litellm":"ok","generation_queue":"ok"},"model_mode":"codex",'
         '"pipeline_contract":"eight-stage-v2"}'
     )
     result, docker_log = _run_dev(tmp_path, payload, check_only=False)
@@ -243,7 +247,7 @@ def test_api_start_rejects_backend_with_mismatched_mode_without_starting_service
 
 def test_default_launcher_mode_uses_api_without_starting_services(tmp_path: Path) -> None:
     payload = (
-        '{"checks":{"litellm":"ok"},"model_mode":"api",'
+        '{"checks":{"litellm":"ok","generation_queue":"ok"},"model_mode":"api",'
         '"pipeline_contract":"eight-stage-v2"}'
     )
     result, docker_log = _run_dev(tmp_path, payload, default_mode=True)

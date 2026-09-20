@@ -1,7 +1,7 @@
 """Serialize project mutations and durably deduplicate explicit user actions.
 
-The journal lives on the same persistent volume as project artifacts. An accepted
-but interrupted request is never automatically dispatched again after restart.
+The journal lives on the same persistent volume as project artifacts. Unstarted durable
+operations survive restart; interrupted execution is never automatically replayed.
 """
 from __future__ import annotations
 
@@ -24,6 +24,26 @@ _PAID = re.compile(r"^/(?:run|regen-[^/]+|cover|lettering/translate|approve/(?:b
 _TARGETED = re.compile(r"^/(?:regen-(?!extract)[^/]+|cover|pages/\d+/(?:generate|analyze|visual-review|corrections)|(?:characters|locations)/[^/]+/states/[^/]+/(?:regenerate|regenerate-instructed))$")
 
 
+_CAST_REVIEW_REJECTION = "Compare the current character references before approving Cast. Resume Cast to run its visual review."
+
+
+def cast_approval_was_rejected(method: str, suffix: str, status: int, body: bytes) -> bool:
+    """Recognize only gates known to precede approval, holds and dispatch.
+
+    Unknown conflicts remain durable receipts: some may follow side effects.
+    The exact older message lets already-stored rejected actions recover too.
+    """
+    if method != "POST" or suffix != "/approve/cast" or status != 409:
+        return False
+    try:
+        detail = json.loads(body).get("detail")
+    except (ValueError, TypeError, AttributeError):
+        return False
+    return detail == _CAST_REVIEW_REJECTION or (
+        isinstance(detail, dict) and detail.get("code") == "cast_approval_rejected"
+    )
+
+
 def project_busy(app, key: str) -> bool:
     for name in ("running_tasks", "style_tasks"):
         task = getattr(app.state, name, {}).get(key)
@@ -31,6 +51,25 @@ def project_busy(app, key: str) -> bool:
             return True
     return any(job.project_name == key and job.status in {"queued", "running"}
                for job in getattr(app.state, "generation_jobs", {}).values())
+
+
+def mutation_conflicts(app, key: str, suffix: str) -> bool:
+    """Resource policy: independent presentation edits do not own all artwork."""
+    jobs = [job for job in getattr(app.state, "generation_jobs", {}).values()
+            if job.project_name == key and job.status in {"queued", "running"}]
+    # Legacy live tasks are exclusive during rolling/test compatibility.
+    if any(task is not None and not task.done() for task in
+           (getattr(app.state, name, {}).get(key) for name in ("running_tasks", "style_tasks"))):
+        return True
+    if suffix == "/styles/active":
+        return any(job.kind not in {"style_sample", "style_suggest", "style_validation"} for job in jobs)
+    lettering = re.fullmatch(r"/pages/(\d+)/lettering(?:/reset)?", suffix)
+    if lettering:
+        number = int(lettering.group(1))
+        return any(job.kind in {"pipeline_stage", "lettering_translation"}
+                   or (job.kind == "complete_page_draw" and job.payload.get("page_number") == number)
+                   for job in jobs)
+    return bool(jobs)
 
 
 class Admission:
@@ -128,9 +167,18 @@ async def admission_middleware(request, call_next):
                         raise HTTPException(409, {"code": "idempotency_conflict", "message": "This action key was used with different input."})
                     if row[1] is None:
                         raise HTTPException(409, {"code": "idempotency_indeterminate", "message": "This action may have been accepted. Inspect project status before starting a new action."})
-                    return Response(row[2], status_code=row[1], media_type="application/json", headers={"Idempotency-Replayed": "true"})
+                    if cast_approval_was_rejected(request.method, suffix, row[1], row[2]):
+                        # The prerequisite may now be satisfied. Re-evaluate it
+                        # under the same project lock; no action was admitted.
+                        with admission.journal() as db:
+                            db.execute("DELETE FROM requests WHERE account=? AND route=? AND key=?", (account, route, key))
+                    else:
+                        return Response(row[2], status_code=row[1], media_type="application/json", headers={"Idempotency-Replayed": "true"})
             if admission.draining:
                 raise HTTPException(503, {"code": "server_draining", "message": "Generation is paused for deployment."})
+            durable = getattr(request.app.state, "durable_queue", None)
+            if getattr(request.app.state, "durable_queue_required", False) is True and (durable is None or not durable.healthy):
+                raise HTTPException(503, {"code": "queue_unavailable", "message": "Generation queue is unavailable. Saved work is preserved."})
             from .credits import reservation_leases_healthy
             if hasattr(request.app.state, "credit_leases_ready") and (
                 not request.app.state.credit_leases_ready or not reservation_leases_healthy()
@@ -140,9 +188,13 @@ async def admission_middleware(request, call_next):
             if any(job.project_name == pkey and getattr(job, "kind", None) == "lettering_translation" and job.status in {"queued", "running"}
                    for job in getattr(request.app.state, "generation_jobs", {}).values()):
                 raise HTTPException(409, "Wait for project lettering translation to finish before changing this project.")
-            if not _TARGETED.fullmatch(suffix) and project_busy(request.app, pkey):
+            if not _TARGETED.fullmatch(suffix) and mutation_conflicts(request.app, pkey, suffix):
                 raise HTTPException(409, "Wait for all project jobs to finish before changing this project.")
             if _TARGETED.fullmatch(suffix):
+                if any(job.project_name == pkey and job.status in {"queued", "running"}
+                       and job.kind in {"pipeline_stage", "style_suggest"}
+                       for job in request.app.state.generation_jobs.values()):
+                    raise HTTPException(409, "Wait for the active project stage to finish.")
                 for name in ("running_tasks", "style_tasks"):
                     task = getattr(request.app.state, name, {}).get(pkey)
                     if task is not None and not task.done():

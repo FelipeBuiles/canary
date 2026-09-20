@@ -1,4 +1,4 @@
-"""In-memory queue for targeted image generation jobs."""
+"""Generation operation records and execution lifecycle. Dispatch uses Procrastinate."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from typing import Any, Awaitable, Callable, Literal
 from fastapi import FastAPI
 
 from novel_to_comic.config import Config
+from .job_commands import JobCommand
 from novel_to_comic.image_failure import (
     ImageFailureClassification,
     classify_image_failure,
@@ -72,7 +73,8 @@ class GenerationJob:
     label: str
     payload: dict[str, Any]
     sequence: int
-    runner: GenerationJobRunner
+    runner: GenerationJobRunner | None
+    command: JobCommand | None = None
     user_id: str | None = None
     semaphore: asyncio.Semaphore | None = None
     status: GenerationJobStatus = "queued"
@@ -97,9 +99,11 @@ def enqueue_generation_job(
     user_id: str | None = None,
     semaphore: asyncio.Semaphore | None = None,
     on_cancel: Callable[[], None] | None = None,
+    command: JobCommand | None = None,
 ) -> GenerationJob:
     global _global_sequence
-    sequence = _global_sequence
+    sequence = (max((job.sequence for job in app.state.generation_jobs.values()), default=0) + 1
+                if app is not None else _global_sequence)
     _global_sequence += 1
 
     job = GenerationJob(
@@ -110,11 +114,19 @@ def enqueue_generation_job(
         payload=payload,
         sequence=sequence,
         runner=runner,
+        command=command,
         user_id=user_id,
         semaphore=semaphore,
         on_cancel=on_cancel,
     )
 
+    durable = getattr(app.state, "durable_queue", None) if app is not None else None
+    if durable is not None and getattr(app.state, "durable_queue_required", False) is True:
+        durable.publish(job)
+        app.state.generation_jobs[job.id] = job
+        return job
+    if app is not None and getattr(app.state, "durable_queue_required", False) is True:
+        raise RuntimeError("Durable generation queue is unavailable")
     persist_generation_job(app, job)
     if app is not None:
         app.state.generation_jobs[job.id] = job
@@ -151,10 +163,14 @@ def generation_job_payload(app: FastAPI | None, job: GenerationJob) -> dict[str,
             None,
         )
 
+    stage = (job.payload.get("stage") or job.command.stage) if job.command else (
+        "style" if job.kind.startswith("style_") else "draw" if job.kind == "complete_page_draw" else "cast"
+    )
     return {
         "id": job.id,
         "project_name": job.project_name,
         "kind": job.kind,
+        "stage": "draw" if stage == "lettering" else stage,
         "label": job.label,
         "payload": job.payload,
         "status": job.status,
@@ -195,125 +211,131 @@ def find_active_generation_job(
     return None
 
 
-async def generation_worker(app: FastAPI) -> None:
+async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
     timeout_seconds = max(1, int(getattr(app.state, "generation_job_timeout_seconds", 900)))
-
-    async def _run_job(job: GenerationJob) -> None:
-        result = job.runner()
-        if not inspect.isawaitable(result):
-            return
-        await asyncio.wait_for(result, timeout=timeout_seconds)
-
-    while True:
-        job: GenerationJob = await app.state.generation_queue.get()
+    if job.kind in {"style_suggest", "pipeline_stage"} or (job.command and job.command.operation == "style_direction"):
+        timeout_seconds = max(1, int(os.getenv("CANARY_BATCH_JOB_TIMEOUT_SECONDS", "7200")))
+    started = time.perf_counter()
+    try:
+        semaphores: list[asyncio.Semaphore] = []
         if job.user_id:
-            user_semaphore = user_generation_semaphore(app, job.user_id)
-            if user_semaphore.locked():
-                # Do not let one user's queued batch occupy every worker while
-                # waiting for that same user's active slot. Requeue it behind
-                # other users so the process remains fair.
-                app.state.generation_queue.put_nowait(job)
-                app.state.generation_queue.task_done()
-                await asyncio.sleep(0.05)
-                continue
-        started = time.perf_counter()
-        try:
-            semaphores: list[asyncio.Semaphore] = []
-            if job.user_id:
-                semaphores.append(user_generation_semaphore(app, job.user_id))
-            if job.semaphore is not None and job.semaphore not in semaphores:
-                semaphores.append(job.semaphore)
+            semaphores.append(user_generation_semaphore(app, job.user_id))
+        if job.semaphore is not None and job.semaphore not in semaphores:
+            semaphores.append(job.semaphore)
 
-            async with AsyncExitStack() as stack:
-                for semaphore in semaphores:
-                    await stack.enter_async_context(semaphore)
-                job.status = "running"
-                job.started_at = _now()
-                persist_generation_job(app, job)
-                logger.info(
-                    "[bold cyan]Job start[/] project=[white]%s[/] kind=[cyan]%s[/] label=%s id=[dim]%s[/]",
-                    job.project_name,
-                    job.kind,
-                    job.label,
-                    job.id[:8],
-                )
-                await _run_job(job)
-            job.status = "complete"
+        async with AsyncExitStack() as stack:
+            for semaphore in semaphores:
+                await stack.enter_async_context(semaphore)
+            job.status = "running"
+            job.started_at = _now()
+            persist_generation_job(app, job)
             logger.info(
-                "[bold green]Job complete[/] project=[white]%s[/] kind=[cyan]%s[/] "
-                "label=%s id=[dim]%s[/] elapsed=[bold]%.1fs[/]",
+                "[bold cyan]Job start[/] project=[white]%s[/] kind=[cyan]%s[/] label=%s id=[dim]%s[/]",
                 job.project_name,
                 job.kind,
                 job.label,
                 job.id[:8],
-                time.perf_counter() - started,
             )
-        except asyncio.CancelledError:
+            if job.command is not None:
+                from .job_execution import execute_command
+                await asyncio.wait_for(execute_command(app, job), timeout=timeout_seconds)
+            else:
+                result = job.runner()
+                if inspect.isawaitable(result):
+                    await asyncio.wait_for(result, timeout=timeout_seconds)
+        job.status = "complete"
+        logger.info(
+            "[bold green]Job complete[/] project=[white]%s[/] kind=[cyan]%s[/] "
+            "label=%s id=[dim]%s[/] elapsed=[bold]%.1fs[/]",
+            job.project_name,
+            job.kind,
+            job.label,
+            job.id[:8],
+            time.perf_counter() - started,
+        )
+    except asyncio.CancelledError:
+        if job.command is not None and job.started_at is None:
+            job.status = "queued"
+        else:
             if job.started_at is None and job.on_cancel is not None:
                 job.on_cancel()
             job.status = "failed"
             job.error = "Generation interrupted by server shutdown."
-            job.recoverable = True
-            raise
-        except asyncio.TimeoutError:
-            job.status = "failed"
+            job.recoverable = False
+            job.phase = "outcome_unknown"
+            job.user_message = "Inspect saved output before explicitly retrying this interrupted operation."
+        raise
+    except asyncio.TimeoutError:
+        job.phase = "outcome_unknown"
+        job.status = "failed"
+        job.error = f"Generation timed out after {timeout_seconds}s"
+        job.classification = "timed_out"
+        job.user_message = user_message_for_image_failure(job.classification)
+        job.recoverable = False
+        logger.error(
+            "[bold red]Job timeout[/] project=[white]%s[/] kind=[cyan]%s[/] "
+            "label=%s id=[dim]%s[/] elapsed=[bold]%.1fs[/] timeout=%ss",
+            job.project_name,
+            job.kind,
+            job.label,
+            job.id[:8],
+            time.perf_counter() - started,
+            timeout_seconds,
+        )
+    except Exception as exc:
+        elapsed = time.perf_counter() - started
+        job.status = "failed"
+        if _looks_like_timeout_cancellation(exc, elapsed, timeout_seconds):
             job.error = f"Generation timed out after {timeout_seconds}s"
             job.classification = "timed_out"
-            job.user_message = user_message_for_image_failure(job.classification)
+        else:
+            job.error = str(exc) or type(exc).__name__
+            job.classification = classify_image_failure(exc)
+        job.user_message = user_message_for_image_failure(job.classification)
+        job.recoverable = job.classification != "configuration_error"
+        job.phase = (
+            "ambiguous_submission" if getattr(exc, "phase", None) == "ambiguous_submission"
+            else getattr(exc, "page_failure_phase", None)
+        )
+        if job.phase == "analysis":
+            job.classification = "analysis_error"
+            job.user_message = "Artwork saved; text checks incomplete. Recover the text check without redrawing."
             job.recoverable = True
-            logger.error(
-                "[bold red]Job timeout[/] project=[white]%s[/] kind=[cyan]%s[/] "
-                "label=%s id=[dim]%s[/] elapsed=[bold]%.1fs[/] timeout=%ss",
-                job.project_name,
-                job.kind,
-                job.label,
-                job.id[:8],
-                time.perf_counter() - started,
-                timeout_seconds,
-            )
-        except Exception as exc:
-            elapsed = time.perf_counter() - started
-            job.status = "failed"
-            if _looks_like_timeout_cancellation(exc, elapsed, timeout_seconds):
-                job.error = f"Generation timed out after {timeout_seconds}s"
-                job.classification = "timed_out"
-            else:
-                job.error = str(exc) or type(exc).__name__
-                job.classification = classify_image_failure(exc)
-            job.user_message = user_message_for_image_failure(job.classification)
-            job.recoverable = job.classification != "configuration_error"
-            job.phase = (
-                "ambiguous_submission" if getattr(exc, "phase", None) == "ambiguous_submission"
-                else getattr(exc, "page_failure_phase", None)
-            )
-            if job.phase == "analysis":
-                job.classification = "analysis_error"
-                job.user_message = "Artwork saved; text checks incomplete. Recover the text check without redrawing."
-                job.recoverable = True
-            from novel_to_comic.cast_instructions import PromptInstructionError
+        from novel_to_comic.cast_instructions import PromptInstructionError
 
-            if isinstance(exc, PromptInstructionError):
-                # This bounded rewrite rejection is safe author-facing feedback,
-                # not an image-provider failure to replace with generic prose.
-                job.user_message = str(exc)
-                job.recoverable = True
-            if job.kind == "lettering_translation":
-                job.user_message = "Lettering translation failed. Saved provider outputs are retained for inspection; completed calls may still be charged. " + job.error
-                job.recoverable = False
-            logger.error(
-                "[bold red]Job failed[/] project=[white]%s[/] kind=[cyan]%s[/] "
-                "label=%s id=[dim]%s[/] elapsed=[bold]%.1fs[/] error=%s",
-                job.project_name,
-                job.kind,
-                job.label,
-                job.id[:8],
-                elapsed,
-                job.error,
-                exc_info=bool_env("CANARY_LOG_JOB_TRACEBACKS", default=False),
-            )
-        finally:
+        if isinstance(exc, PromptInstructionError):
+            # This bounded rewrite rejection is safe author-facing feedback,
+            # not an image-provider failure to replace with generic prose.
+            job.user_message = str(exc)
+            job.recoverable = True
+        if job.kind == "lettering_translation":
+            job.user_message = "Lettering translation failed. Saved provider outputs are retained for inspection; completed calls may still be charged. " + job.error
+            job.recoverable = False
+        logger.error(
+            "[bold red]Job failed[/] project=[white]%s[/] kind=[cyan]%s[/] "
+            "label=%s id=[dim]%s[/] elapsed=[bold]%.1fs[/] error=%s",
+            job.project_name,
+            job.kind,
+            job.label,
+            job.id[:8],
+            elapsed,
+            job.error,
+            exc_info=bool_env("CANARY_LOG_JOB_TRACEBACKS", default=False),
+        )
+    finally:
+        if job.status in {"complete", "failed"}:
             job.finished_at = _now()
-            persist_generation_job(app, job)
+        persist_generation_job(app, job)
+
+
+
+async def generation_worker(app: FastAPI) -> None:
+    """Provider-free fixture runner. Application lifespan uses DurableQueue."""
+    while True:
+        job = await app.state.generation_queue.get()
+        try:
+            await run_generation_job(app, job)
+        finally:
             app.state.generation_queue.task_done()
 
 
@@ -334,17 +356,22 @@ def recovered_generation_jobs(app, pkey: str) -> list[dict]:
         return []
     with admission.journal() as db:
         db.execute("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, project TEXT NOT NULL, payload TEXT NOT NULL)")
+        has_outbox = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='operation_outbox'").fetchone()
         rows = db.execute("SELECT payload FROM jobs WHERE project=?", (pkey,)).fetchall()
+        durable_ids = {row[0] for row in db.execute("SELECT id FROM operation_outbox")} if has_outbox else set()
     recovered = []
     for row in rows:
         payload = json.loads(row[0])
         if payload["id"] in app.state.generation_jobs:
             continue
-        if payload["status"] in {"queued", "running"}:
+        if payload["status"] == "queued" and payload["id"] in durable_ids:
+            payload["queue_position"] = None
+        elif payload["status"] in {"queued", "running"}:
             payload.update(
                 status="failed", error="Server restarted before this job's outcome was recorded.",
                 user_message="Inspect existing output before explicitly retrying this interrupted action.",
-                classification="generation_error", recoverable=True, queue_position=None,
+                classification="generation_error", recoverable=payload["status"] == "queued",
+                phase="outcome_unknown" if payload["status"] == "running" else None, queue_position=None,
             )
         recovered.append(payload)
     return recovered

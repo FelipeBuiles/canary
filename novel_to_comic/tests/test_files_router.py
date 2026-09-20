@@ -28,7 +28,7 @@ from novel_to_comic.models.page import (
     PageContent,
     PlannedPageRevision,
 )
-from novel_to_comic.server.app import create_app
+from tests.queue_fixtures import create_app
 from novel_to_comic.server.deps import get_project
 from novel_to_comic.server.routers.files import serve_project_file
 from novel_to_comic.state import PipelineState, save_state

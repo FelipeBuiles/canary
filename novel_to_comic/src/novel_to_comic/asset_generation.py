@@ -404,6 +404,7 @@ async def submit_non_panel_request(
             request_id=frozen.request_id, error=error,
         )
 
+    from novel_to_comic.server.job_commands import command, snapshot
     job, created = enqueue_frozen_generation_job(
         app, project_name=project_name, user_id=user_id, project_id=project_id,
         project_dir=project_dir, config=config, stage=stage, kind=kind,
@@ -413,6 +414,7 @@ async def submit_non_panel_request(
         estimate_credits=estimate_credits, on_complete=_complete, on_failure=_failure,
         request_context=compiled_request_context(request.compiled),
         operations=image_operations(config),
+        command=command("frozen_asset", project_dir, config, request=snapshot(request)),
     )
     return NonPanelSubmission(
         job.payload["frozen_request_id"], request.wire.execution_fingerprint,

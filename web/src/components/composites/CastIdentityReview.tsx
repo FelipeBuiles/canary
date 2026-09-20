@@ -40,7 +40,7 @@ export function CastIdentityReview({ projectId, characters, onShowCharacter, onR
       </p>
       {data && data.status !== "current" && (
         <Button variant="outline" size="sm" className="mt-3" disabled={busy} onClick={onResume}>
-          {t("REVIEW CAST")}
+          {t("RESUME CAST")}
         </Button>
       )}
       {data?.status === "current" && data.issues.length > 0 && (

@@ -15,7 +15,7 @@ from novel_to_comic.models.finish import (
     FinishResult,
     PreflightPage,
 )
-from novel_to_comic.server.app import create_app
+from tests.queue_fixtures import create_app
 from novel_to_comic.server.auth import get_current_user
 from novel_to_comic.server.deps import get_project
 from novel_to_comic.stages import REGISTRY

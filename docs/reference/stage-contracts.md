@@ -471,7 +471,8 @@ identity/state facets, not their original rendering style. Active-state anchors
 override explicitly changed anatomy, age, proportions, wardrobe, location, or
 object facets; a provider-safe rewrite must not reverse a state or restore
 missing anatomy. Textual style notes remain secondary to an approved style
-reference; a generated-neighbor variation instead owns its declared changed
+reference's intended rendering language, subject to surface-fidelity constraints
+for incidental texture; a generated-neighbor variation instead owns its declared changed
 rendering facets.
 
 Cast first writes `refs/cast_design.json`: a versioned, story/style-bound design
@@ -496,6 +497,13 @@ labelled contact sheets and the configured visual review model. The typed
 `refs/cast_review.json` stores suspected lookalikes, anatomy, wardrobe and identity
 concerns, keyed to source, designs, correction direction and exact image hashes.
 `GET /cast/review` reports missing, stale or current evidence without spending.
+A Cast run with failed assets or checks fails the stage instead of entering the
+author checkpoint. Project status exposes `stages.cast.approval_blocker`, using
+the same read-only gate as approval: no failed/incomplete items, all required
+canonical and appearance images present, and a current identity review. The UI
+offers Resume Cast for blocked historical checkpoints rather than Continue.
+Resume rechecks and counts reusable references; its progress total is the full
+inventory, not the number of new image calls.
 The Cast screen links each concern to its characters. Empty findings do not mean
 verified visual quality; the author remains responsible for approval. Approval
 requires a current comparison, and findings never trigger automatic regeneration.

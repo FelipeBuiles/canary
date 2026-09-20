@@ -233,3 +233,47 @@ async def test_status_reconciliation_waits_for_project_mutation(tmp_path):
             result = await inspection
         assert result.status_code == 200
         assert result.json()["running"] is True
+
+
+@run_async
+async def test_cast_rejection_is_rechecked_after_restart_but_success_is_replayed(tmp_path):
+    from fastapi import HTTPException
+    from novel_to_comic.server.admission import _CAST_REVIEW_REJECTION
+    ready = False
+    effects = []
+
+    def build():
+        app = app_at(tmp_path)
+        @app.post("/api/projects/book/approve/cast")
+        async def approve():
+            if not ready:
+                raise HTTPException(409, _CAST_REVIEW_REJECTION)
+            effects.append("approved")
+            return {"status": "approved"}
+        return app
+
+    headers = {"Idempotency-Key": "same-browser-action"}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=build()), base_url="http://test") as client:
+        assert (await client.post("/api/projects/book/approve/cast", headers=headers)).status_code == 409
+    ready = True
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=build()), base_url="http://test") as client:
+        accepted = await client.post("/api/projects/book/approve/cast", headers=headers)
+        replay = await client.post("/api/projects/book/approve/cast", headers=headers)
+    assert accepted.status_code == replay.status_code == 200
+    assert "Idempotency-Replayed" not in accepted.headers
+    assert replay.headers["Idempotency-Replayed"] == "true"
+    assert effects == ["approved"]
+
+
+def test_only_definite_cast_preflight_receipts_can_be_rechecked():
+    import json
+    from novel_to_comic.server.admission import cast_approval_was_rejected, _CAST_REVIEW_REJECTION
+    def encoded(detail):
+        return json.dumps({"detail": detail}).encode()
+    assert cast_approval_was_rejected("POST", "/approve/cast", 409,
+        encoded({"code": "cast_approval_rejected", "message": "Missing appearance"}))
+    assert not cast_approval_was_rejected("POST", "/approve/cast", 409,
+        encoded({"code": "idempotency_indeterminate"}))
+    assert not cast_approval_was_rejected("POST", "/approve/cast", 409, encoded("Unknown conflict"))
+    assert not cast_approval_was_rejected("POST", "/cover", 409, encoded(_CAST_REVIEW_REJECTION))
+    assert not cast_approval_was_rejected("POST", "/approve/cast", 200, encoded(_CAST_REVIEW_REJECTION))

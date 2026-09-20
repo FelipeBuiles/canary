@@ -1037,7 +1037,7 @@ def _api_client(tmp_path: Path, project_dir: Path):
     from novel_to_comic.server.auth import get_current_user
 
     from novel_to_comic.config import Config as _Config
-    from novel_to_comic.server.app import create_app
+    from tests.queue_fixtures import create_app
     from novel_to_comic.server.deps import get_project
     from novel_to_comic.state import PipelineState, save_state
 

@@ -1,0 +1,343 @@
+"""Durable dispatch tests. Set CANARY_TEST_QUEUE_DSN for real PostgreSQL checks."""
+import asyncio
+import json
+import os
+from types import SimpleNamespace
+
+import pytest
+
+from novel_to_comic.config import Config
+from novel_to_comic.server.admission import Admission, mutation_conflicts
+from novel_to_comic.server.durable_queue import DurableQueue
+from novel_to_comic.server.generation_jobs import enqueue_generation_job, persist_generation_job
+from novel_to_comic.server.job_commands import command, read_blob, save_blob
+
+
+def make_app(root):
+    return SimpleNamespace(state=SimpleNamespace(
+        projects_dir=root, admission=Admission(root), generation_jobs={},
+        running_tasks={}, style_tasks={}, event_queues={}, user_generation_semaphores={},
+        credit_leases_ready=True, durable_queue_required=True,
+        generation_job_timeout_seconds=5,
+    ))
+
+
+def enqueue(app, label):
+    spec = command("fixture", app.state.projects_dir / "account" / "book", Config())
+    spec = spec.model_copy(update={"stage": "draw", "user_id": "account", "project_id": "book"})
+    return enqueue_generation_job(app, "account:book", "complete_page_draw", label,
+                                  {"page_number": int(label)}, None, user_id="account", command=spec)
+
+
+async def until(predicate, timeout=10):
+    async with asyncio.timeout(timeout):
+        while not predicate():
+            await asyncio.sleep(0.02)
+
+
+def test_blob_integrity_and_deduplication(tmp_path):
+    digest = save_blob(tmp_path, b"immutable-input")
+    assert save_blob(tmp_path, b"immutable-input") == digest
+    assert read_blob(tmp_path, digest) == b"immutable-input"
+    (tmp_path / ".jobs" / "inputs" / digest).write_bytes(b"changed")
+    with pytest.raises(ValueError, match="changed"):
+        read_blob(tmp_path, digest)
+    with pytest.raises(ValueError, match="digest"):
+        read_blob(tmp_path, "../../state.json")
+
+
+def test_resource_conflicts_allow_independent_lettering_and_style_selection(tmp_path):
+    app = make_app(tmp_path)
+    app.state.generation_jobs["page"] = SimpleNamespace(project_name="account:book", kind="complete_page_draw",
+                                                       status="running", payload={"page_number": 2})
+    assert not mutation_conflicts(app, "account:book", "/pages/1/lettering")
+    assert mutation_conflicts(app, "account:book", "/pages/2/lettering")
+    assert mutation_conflicts(app, "account:book", "/styles/active")
+    app.state.generation_jobs["page"].kind = "style_suggest"
+    assert not mutation_conflicts(app, "account:book", "/styles/active")
+    assert mutation_conflicts(app, "account:book", "/config")
+
+
+def test_restore_distinguishes_unstarted_from_unknown(tmp_path):
+    app = make_app(tmp_path)
+    queue = DurableQueue(app, "postgresql://unused")
+    app.state.durable_queue = queue
+    # publish enforces readiness; use a live inert fixture task for admission.
+    async def exercise():
+        queue.worker = asyncio.create_task(asyncio.sleep(100))
+        queue.ready = True
+        import time
+        queue.last_healthy = time.monotonic()
+        first, second = enqueue(app, "1"), enqueue(app, "2")
+        second.status = "running"
+        persist_generation_job(app, second)
+        restarted = make_app(tmp_path)
+        recovery = DurableQueue(restarted, "postgresql://unused")
+        recovery.restore()
+        assert restarted.state.generation_jobs[first.id].status == "queued"
+        unknown = restarted.state.generation_jobs[second.id]
+        assert unknown.status == "failed" and unknown.phase == "outcome_unknown"
+        assert unknown.recoverable is False
+        with restarted.state.admission.journal() as db:
+            payload = json.loads(db.execute("SELECT payload FROM jobs WHERE id=?", (second.id,)).fetchone()[0])
+        assert payload["phase"] == "outcome_unknown"
+        queue.worker.cancel()
+        await asyncio.gather(queue.worker, return_exceptions=True)
+    asyncio.run(exercise())
+
+
+@pytest.mark.skipif(not os.getenv("CANARY_TEST_QUEUE_DSN"), reason="requires isolated PostgreSQL")
+def test_postgres_restart_fifo_and_no_ambiguous_redelivery(tmp_path, monkeypatch):
+    from novel_to_comic.server import job_execution
+    calls = []
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    async def provider_free(app, job):
+        calls.append(job.label)
+        if job.label == "1":
+            entered.set()
+            await release.wait()
+    monkeypatch.setattr(job_execution, "execute_command", provider_free)
+
+    async def exercise():
+        app = make_app(tmp_path)
+        queue = DurableQueue(app, os.environ["CANARY_TEST_QUEUE_DSN"])
+        app.state.durable_queue = queue
+        worker = asyncio.create_task(queue.run())
+        await until(lambda: queue.healthy)
+        first, second, third = enqueue(app, "1"), enqueue(app, "2"), enqueue(app, "3")
+        await asyncio.wait_for(entered.wait(), 10)
+        assert calls == ["1"]
+        worker.cancel()
+        await asyncio.wait_for(asyncio.gather(worker, return_exceptions=True), 10)
+        assert first.status == "failed" and first.phase == "outcome_unknown"
+        assert second.status == third.status == "queued"
+        resumed = make_app(tmp_path)
+        recovery = DurableQueue(resumed, os.environ["CANARY_TEST_QUEUE_DSN"])
+        resumed.state.durable_queue = recovery
+        worker2 = asyncio.create_task(recovery.run())
+        try:
+            await until(lambda: resumed.state.generation_jobs.get(third.id) is not None
+                        and resumed.state.generation_jobs[third.id].status == "complete", timeout=45)
+            assert calls == ["1", "2", "3"]
+            # Even explicit duplicate dispatches cannot replay a terminal operation.
+            await recovery.task.defer_async(operation_id=first.id)
+            await recovery.task.defer_async(operation_id=second.id)
+            await asyncio.sleep(1)
+            assert calls == ["1", "2", "3"]
+        finally:
+            worker2.cancel()
+            await asyncio.gather(worker2, return_exceptions=True)
+    asyncio.run(exercise())
+
+
+def test_style_batch_waits_for_siblings_and_preserves_concurrent_state(tmp_path, monkeypatch):
+    from novel_to_comic.server import style_jobs
+    from novel_to_comic.server.generation_jobs import GenerationJob
+    from novel_to_comic.state import StageStatus, create_initial_state, load_state, save_state
+    from tests.test_style_stage import _bible
+    from unittest.mock import AsyncMock
+
+    state = create_initial_state("book", "novel.txt")
+    state.stages["style"].status = StageStatus.RUNNING
+    save_state(state, tmp_path)
+    candidates = [style_jobs.style.normalize_suggestion({"id": str(i), "label": f"Style {i}"}) for i in range(3)]
+    monkeypatch.setattr(style_jobs.style, "generate_suggestions", AsyncMock(return_value=(candidates, None)))
+    monkeypatch.setattr(style_jobs.style, "ensure_style_sample_brief", AsyncMock(return_value="brief"))
+
+    async def exercise():
+        app = make_app(tmp_path)
+        release = asyncio.Event()
+        failed = asyncio.Event()
+        async def image(config, bible, output, **kwargs):
+            if kwargs["candidate_id"] == candidates[0]["id"]:
+                failed.set()
+                raise RuntimeError("proof failed")
+            await release.wait()
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(b"proof")
+        monkeypatch.setattr(style_jobs.style, "generate_sample_image", image)
+        job = GenerationJob(id="batch", project_name="account:book", kind="style_suggest", label="Styles",
+            payload={}, sequence=1, runner=None, command=command("style_suggest", tmp_path, Config(),
+                bible=_bible().model_dump(mode="json"), lifecycle_owned=True))
+        app.state.generation_jobs[job.id] = job
+        task = asyncio.create_task(style_jobs.execute_style(app, job, tmp_path, Config()))
+        await until(lambda: failed.is_set() or task.done(), timeout=2)
+        if task.done():
+            await task
+        await asyncio.sleep(0)
+        assert not task.done()
+        edited = load_state(tmp_path)
+        edited.stages["finish"].error = "concurrent lettering edit"
+        save_state(edited, tmp_path)
+        release.set()
+        with pytest.raises(RuntimeError, match="1 style proof"):
+            await task
+        assert [p["status"] for p in job.payload["proofs"].values()] == ["failed", "complete", "complete"]
+        final = load_state(tmp_path)
+        assert final.stages["style"].status == StageStatus.FAILED
+        assert final.stages["style"].items_done == 2
+        assert final.stages["finish"].error == "concurrent lettering edit"
+    asyncio.run(exercise())
+
+
+def test_outbox_admission_rolls_back_job_when_command_insert_fails(tmp_path):
+    app = make_app(tmp_path)
+    queue = DurableQueue(app, "postgresql://unused")
+    app.state.durable_queue = queue
+    async def exercise():
+        import time
+        queue.worker = asyncio.create_task(asyncio.sleep(100))
+        queue.ready = True
+        queue.last_healthy = time.monotonic()
+        with app.state.admission.journal() as db:
+            db.execute("CREATE TRIGGER reject_command BEFORE INSERT ON operation_outbox BEGIN SELECT RAISE(ABORT, 'disk fixture'); END")
+        try:
+            with pytest.raises(Exception, match="disk fixture"):
+                enqueue(app, "1")
+            with app.state.admission.journal() as db:
+                assert db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+                assert db.execute("SELECT COUNT(*) FROM operation_outbox").fetchone()[0] == 0
+            assert not app.state.generation_jobs
+        finally:
+            queue.worker.cancel()
+            await asyncio.gather(queue.worker, return_exceptions=True)
+    asyncio.run(exercise())
+
+
+def test_queue_supervisor_reconnects_after_failure(tmp_path, monkeypatch):
+    from novel_to_comic.server import durable_queue
+    app = make_app(tmp_path)
+    monkeypatch.setenv("CANARY_QUEUE_DATABASE_URL", "postgresql://fixture")
+    attempts = []
+    async def exercise():
+        ready = asyncio.Event()
+        class FakeQueue:
+            def __init__(self, app, dsn):
+                attempts.append(self)
+            async def run(self):
+                if len(attempts) == 1:
+                    raise ConnectionError("temporary outage")
+                ready.set()
+                await asyncio.Event().wait()
+        monkeypatch.setattr(durable_queue, "DurableQueue", FakeQueue)
+        task = asyncio.create_task(durable_queue.initialize_queue(app))
+        try:
+            await asyncio.wait_for(ready.wait(), 3)
+            assert app.state.durable_queue is attempts[1]
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    asyncio.run(exercise())
+
+
+def test_page_handler_reconstructs_frozen_bytes_and_ocr(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+    from novel_to_comic.server import job_execution
+    from novel_to_comic import page_drawing
+    from novel_to_comic.page_ocr import GatewayPageOCRAdapter
+    from tests.test_complete_page_draw import _compile, _page
+
+    compiled = _compile(tmp_path)
+    captured = {}
+    work = AsyncMock(return_value="saved")
+    def execution(**kwargs):
+        captured.update(kwargs)
+        return work, None
+    monkeypatch.setattr(page_drawing, "page_draw_execution", execution)
+    monkeypatch.setattr(page_drawing, "complete_page_adapter", lambda config: "adapter")
+    monkeypatch.setattr(job_execution.TargetArtifacts, "read_plan", lambda self: SimpleNamespace(pages=[_page()]))
+    spec = command("page_draw", tmp_path, Config(),
+        request=compiled.request.model_dump(mode="json"), page=_page().model_dump(mode="json"),
+        references=[save_blob(tmp_path, data) for data in compiled.reference_bytes],
+        edit_source=save_blob(tmp_path, compiled.edit_source_bytes), ocr=True)
+    # Round trip the actual command, as a restarted worker does.
+    spec = type(spec).model_validate_json(spec.model_dump_json())
+    job = SimpleNamespace(command=spec, project_name="account:book")
+    result, _ = asyncio.run(job_execution._operate(make_app(tmp_path), job, tmp_path, Config()))
+    assert result == "saved"
+    assert captured["compiled"] == compiled
+    assert isinstance(captured["ocr"], GatewayPageOCRAdapter)
+    assert captured["page"] == _page()
+    work.assert_awaited_once()
+
+
+def test_asset_request_survives_command_roundtrip():
+    from pydantic import TypeAdapter
+    from novel_to_comic.asset_generation import AbstractStyleProofInput, NonPanelRequest, compile_non_panel_request
+    from novel_to_comic.generation_input import GenerationPromptInput
+    from novel_to_comic.server.job_commands import snapshot
+    from tests.test_asset_generation import _empty_plan
+    config = Config(image_model="image-gemini-pro", style_template="Woodblock print")
+    request = compile_non_panel_request(config, AbstractStyleProofInput(
+        asset_identity="style_sample:1", selected_style_text=config.style_template,
+        prompt=GenerationPromptInput(visual_brief="Indigo and ochre shapes", width=819, height=1024, generation_shape="portrait")),
+        reference_plan=_empty_plan(config))
+    restored = TypeAdapter(NonPanelRequest).validate_python(json.loads(json.dumps(snapshot(request))))
+    assert restored.compiled_request_sha256 == request.compiled_request_sha256
+    assert restored.execution_fingerprint == request.execution_fingerprint
+    assert restored.input.asset_kind == request.input.asset_kind
+
+
+def test_production_readiness_requires_queue_even_when_other_checks_pass(tmp_path, monkeypatch):
+    from novel_to_comic.server import app as app_module
+    app = app_module.create_app(tmp_path, dev=True)
+    monkeypatch.setattr(app_module, "_readiness_result", lambda: (True, {"litellm": "ok"}))
+    endpoint = next(route.endpoint for route in app.routes if route.path == "/api/health/ready")
+    response = endpoint()
+    assert response.status_code == 503
+    assert json.loads(response.body)["checks"]["generation_queue"] != "ok"
+    assert app.state.durable_queue_required is True
+    assert app.state.durable_queue is None
+
+
+def test_draw_batch_preparation_keeps_heartbeat_alive_and_announces_only_queued_pages(tmp_path, monkeypatch):
+    import threading
+    from novel_to_comic.server.routers import pages
+    entered, release = threading.Event(), threading.Event()
+    target = SimpleNamespace(read_book_edition=lambda: object())
+    def prepare(**kwargs):
+        entered.set()
+        assert release.wait(2), "Preparation blocked the event loop heartbeat"
+        return target, object(), [(1, object(), object())]
+    monkeypatch.setattr(pages, "prepare_undrawn_pages", prepare)
+    monkeypatch.setattr(pages, "ensure_current_page_edition", lambda *args: None)
+    app = make_app(tmp_path)
+    events = asyncio.Queue()
+    app.state.event_queues["account:book"] = events
+    def reject(*args, **kwargs):
+        raise RuntimeError("publication failed")
+    monkeypatch.setattr(pages, "enqueue_complete_page_draw", reject)
+    async def exercise():
+        task = asyncio.create_task(pages.enqueue_all_undrawn_pages(
+            SimpleNamespace(app=app), project_id="book", user_id="account", project_dir=tmp_path, config=Config()))
+        await until(entered.is_set)
+        # This coroutine stands in for the queue heartbeat. It must run while
+        # preparation waits, rather than only after the entire batch returns.
+        release.set()
+        with pytest.raises(RuntimeError, match="publication failed"):
+            await task
+        assert events.empty()  # No phantom page_start before durable publication.
+    asyncio.run(exercise())
+
+
+def test_draw_dispatch_failure_persists_stage_failure(tmp_path, monkeypatch):
+    from novel_to_comic.server import job_execution
+    from novel_to_comic.server.routers import pipeline
+    from novel_to_comic.state import create_initial_state, save_state, load_state, begin_stage, StageStatus
+    state = create_initial_state("book", "novel.txt")
+    save_state(state, tmp_path)
+    async def initialize_then_fail(stage, config, directory, state, *args, **kwargs):
+        begin_stage(state, "draw", 63)
+        save_state(state, directory)
+        raise RuntimeError("Durable generation queue is unavailable")
+    monkeypatch.setattr(pipeline, "_run_stage_with_credits", initialize_then_fail)
+    spec = command("pipeline", tmp_path, Config(), queue_pages=True).model_copy(update={"stage": "draw"})
+    job = SimpleNamespace(command=spec, project_name="account:book", payload={"stage": "draw"})
+    app = make_app(tmp_path)
+    with pytest.raises(RuntimeError, match="queue is unavailable"):
+        asyncio.run(job_execution._pipeline(app, job, tmp_path, Config()))
+    final = load_state(tmp_path).stages["draw"]
+    assert final.status == StageStatus.FAILED
+    assert final.items_done == 0 and final.items_total == 63
+    assert final.error == "Durable generation queue is unavailable"

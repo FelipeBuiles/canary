@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from novel_to_comic.server.app import create_app
+from tests.queue_fixtures import create_app
 
 
 def _has_labs_routes(app) -> bool:

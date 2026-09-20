@@ -123,3 +123,19 @@ describe("paid action receipts", () => {
     expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
   });
 });
+
+it.each([
+  "Compare the current character references before approving Cast. Resume Cast to run its visual review.",
+  { code: "cast_approval_rejected", message: "Missing appearance" },
+])("releases a definite Cast approval rejection without automatic resubmission: %j", async (detail) => {
+  const fetcher = vi.fn()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail }), { status: 409 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ status: "approved" })));
+  vi.stubGlobal("fetch", fetcher);
+  const send = () => apiFetch("/projects/demo/approve/cast", { method: "POST" });
+  await expect(send()).rejects.toThrow("API 409");
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  await expect(send()).resolves.toMatchObject({ status: "approved" });
+  expect(fetcher.mock.calls[1][1].headers["Idempotency-Key"])
+    .not.toBe(fetcher.mock.calls[0][1].headers["Idempotency-Key"]);
+});

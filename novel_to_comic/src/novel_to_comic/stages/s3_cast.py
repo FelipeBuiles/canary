@@ -369,6 +369,11 @@ def _character_style_calibration_input(
                 "into abstract color fields, contour strokes, shadow edges, folded fabric, "
                 "rough stone and curved unrecognizable forms. Match its artistic hand, "
                 "palette, line weight, medium, shadow density and degree of simplification. "
+                "Balance textured studies with quiet tonal fields and clear contour examples. "
+                "Show each material's distinct mark scale; keep paper aging on the support "
+                "rather than painting it into every material. Do not magnify incidental "
+                "mottling from the proof into an all-over stain pattern. Preserve deliberate "
+                "granulation and authored distress where the selected style calls for them. "
                 "Do not reproduce any recognizable subject from the reference."
             ),
             composition="Landscape arrangement of abstract material and rendering studies.",
@@ -1213,6 +1218,11 @@ async def run(
         if should_generate_prop_refs:
             await _generate_prop_refs(config, project_dir, story_bible, ctx, prop_ids)
 
+        if ctx.stage_state.items_failed:
+            raise ValueError(
+                "Some Cast references or checks did not finish. Resume Cast to finish the missing work; current references are reused."
+            )
+
         # Pin the style template hash so downstream stages (draw, especially)
         # can detect if the style was edited after cast plates were generated.
         # Skip pinning on partial re-runs unless plates were regenerated, since
@@ -1325,6 +1335,38 @@ def estimate_state_reference_count(
     return build_state_reference_plan(
         spec, project_dir, route_profile=profile,
     ).ref_count
+
+
+def cast_approval_blocker(config: Config, project_dir: Path, stage_state) -> str | None:
+    """Shared, read-only checkpoint gate for status and approval.
+
+    Include appearance states: the identity review compares canonical sheets
+    and cannot by itself certify the rest of the Cast inventory.
+    """
+    incomplete = "Some Cast references or checks did not finish. Resume Cast to finish the missing work; current references are reused."
+    if stage_state.items_failed or stage_state.items_done < stage_state.items_total:
+        return incomplete
+    bible = artifacts.read_story_bible_safe(project_dir)
+    if bible is None:
+        return "Cast source artifacts are missing or invalid. Restore the Story Bible before resuming Cast."
+    paths = []
+    for char in bible.characters:
+        paths.append(artifacts.character_ref_sheet_path(project_dir, char.id))
+        paths.extend(artifacts.character_state_ref_sheet_path(project_dir, char.id, sid)
+                     for sid, _anchor in _character_state_jobs(char))
+    for loc in bible.locations:
+        paths.extend(project_dir / "plates" / f"{stem}.png"
+                     for stem, _anchor, _sid in _location_plate_jobs(loc))
+    for prop in bible.props:
+        paths.append(artifacts.prop_ref_path(project_dir, prop.id))
+        paths.extend(artifacts.prop_state_ref_path(project_dir, prop.id, appearance.id)
+                     for appearance in prop.appearance_states
+                     if appearance.visually_significant and not appearance.canonical_equivalent)
+    if any(not path.is_file() for path in paths):
+        return incomplete
+    if bible.characters and review_status(config, project_dir)["status"] != "current":
+        return "Compare the current character references before approving Cast. Resume Cast to run its visual review."
+    return None
 
 
 def ready_asset_count(config: Config, project_dir: Path) -> int | None:

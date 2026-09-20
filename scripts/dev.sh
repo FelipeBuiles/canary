@@ -153,6 +153,7 @@ try:
         and payload.get("pipeline_contract") == "eight-stage-v2"
         and isinstance(payload.get("checks"), dict)
         and dependency in payload["checks"]
+        and payload["checks"].get("generation_queue") == "ok"
     )
 except (ValueError, TypeError):
     compatible = False
@@ -249,6 +250,25 @@ if [ "$MODE" = "codex" ]; then
   fi
 fi
 
+# Every execution mode, including fixture replay, uses the same durable queue.
+queue_failed=false
+if [ -z "${CANARY_QUEUE_DATABASE_URL:-}" ]; then
+export CANARY_QUEUE_DATABASE_URL="postgresql://canary:${CANARY_QUEUE_PASSWORD:-canary-local}@127.0.0.1:55432/canary_queue"
+if docker_available; then
+  if ! report_compose_service "queue-db"; then
+    if [ "$CHECK_ONLY" = false ] && [ "$START_DOCKER" = true ]; then
+      start_compose_services "queue-db"
+    else
+      required_failed=true
+    fi
+  fi
+else
+  failed "Docker queue-db is unavailable; configure an external CANARY_QUEUE_DATABASE_URL"
+  required_failed=true
+fi
+fi
+queue_failed="$required_failed"
+
 if [ "$MODE" != "mock" ]; then
   if docker_available; then
     ok "Docker daemon"
@@ -297,6 +317,8 @@ else
   fi
 fi
 
+if [ "$queue_failed" = true ]; then required_failed=true; fi
+
 if [ "$OBSERVABILITY" = true ]; then
   observability_failed=false
   if docker_available; then
@@ -319,6 +341,7 @@ elif http_responds "$BACKEND_URL/api/health/ready"; then
   echo "[dev] This launcher stops nothing automatically: stop that backend manually, then rerun with --$MODE." >&2
   required_failed=true
 elif [ "$CHECK_ONLY" = false ] && [ "$required_failed" = false ]; then
+  "$BACKEND_PYTHON" -m novel_to_comic.server.queue_schema
   starting "backend at $BACKEND_URL"
   (
     cd "$REPO_ROOT/novel_to_comic"

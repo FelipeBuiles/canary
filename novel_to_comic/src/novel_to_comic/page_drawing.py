@@ -621,7 +621,14 @@ def _hybrid_prompt(payload: dict, page: ComicPage, depiction: str) -> str:
         "verbatim in meaning, current staging, selected art direction, page framing and author pins. "
         "Compose around reservations while retaining artistic freedom outside them. "
         "Style proof images are RENDERING/STYLE authority only: do not copy their words, balloons, "
-        "captions or page content. The parent-edit-base is immutable art, not a lettered proof.\n"
+        "captions or page content. Subject and location assets own identity, state, architecture "
+        "and material identity; they do not prescribe an additional surface-texture layer. "
+        "The selected art direction owns rendering. Preserve authored markings and deliberate "
+        "medium texture, but do not transfer incidental paper stains or mottling onto skin, "
+        "clothing, sky and other unrelated materials. Reconstruct new surfaces with coherent "
+        "tonal areas and material-specific marks. For corrections, this does not authorize "
+        "cleanup outside the requested change. "
+        "The parent-edit-base is immutable art, not a lettered proof.\n"
     )
     if depiction == "less_graphic":
         policy += "Use framing, shadow, reaction or aftermath for graphic details; preserve identity, story and references.\n"
@@ -1575,46 +1582,11 @@ async def correct_complete_page(
     return provenance
 
 
-def enqueue_complete_page_draw(
-    app: FastAPI,
-    *,
-    project_name: str,
-    user_id: str,
-    project_id: str | None,
-    project_dir: Path,
-    config: Config,
-    compiled: CompiledPageGeneration,
-    adapter: CompletePageAdapter,
-    artifacts: TargetArtifacts,
-    page: ComicPage,
-    ocr: "OCRAdapter | None" = None,
-    request_revision: int | None = None,
-    render_revision: int | None = None,
-    parent_render_revision: int | None = None,
-    issue: PageIssue | None = None,
-    on_success: Callable[[PageGenerationProvenance], None] | None = None,
-) -> tuple[GenerationJob, bool]:
-    """Estimate, reserve, execute, settle, and release one complete-page job."""
-
-    # This is deliberately before the credited-job call: capability, geometry,
-    # reference capacity, identity, and selected bytes must fail before cost.
-    adapter.prepare(compiled)
-    from novel_to_comic.server.credited_job import enqueue_reserved_generation_job
-    from novel_to_comic.server.credits import credit_estimate_for_provider_cost
-    from novel_to_comic.codex_dev import classify_operations
-    from novel_to_comic.server.codex_admission import draw_operations
-
-    operations = draw_operations(config, ocr=ocr is not None)
-    funding = classify_operations(operations)
-
-    estimate = credit_estimate_for_provider_cost(
-        estimate_draw_api_cost(config, float(compiled.request.estimated_cost_usd), ocr=ocr is not None, compiled=compiled),
-        "draw",
-        reserve=True,
-        zero_cost_estimate=0,
-        funding=funding,
-    )
-
+def page_draw_execution(
+    *, project_dir, compiled, adapter, artifacts, page, ocr=None,
+    request_revision=None, render_revision=None, parent_render_revision=None,
+    issue=None, on_success=None,
+):
     async def _draw() -> ApiResult[PageGenerationProvenance]:
         try:
             if compiled.request.correction is None:
@@ -1710,6 +1682,65 @@ def enqueue_complete_page_draw(
             on_success(result.value)
         artifacts.mark_generation_complete(result.value)
 
+    return _work, _settled
+
+
+def enqueue_complete_page_draw(
+    app: FastAPI,
+    *,
+    project_name: str,
+    user_id: str,
+    project_id: str | None,
+    project_dir: Path,
+    config: Config,
+    compiled: CompiledPageGeneration,
+    adapter: CompletePageAdapter,
+    artifacts: TargetArtifacts,
+    page: ComicPage,
+    ocr: "OCRAdapter | None" = None,
+    request_revision: int | None = None,
+    render_revision: int | None = None,
+    parent_render_revision: int | None = None,
+    issue: PageIssue | None = None,
+    on_success: Callable[[PageGenerationProvenance], None] | None = None,
+) -> tuple[GenerationJob, bool]:
+    """Estimate, reserve, execute, settle, and release one complete-page job."""
+
+    # This is deliberately before the credited-job call: capability, geometry,
+    # reference capacity, identity, and selected bytes must fail before cost.
+    adapter.prepare(compiled)
+    from novel_to_comic.server.credited_job import enqueue_reserved_generation_job
+    from novel_to_comic.server.credits import credit_estimate_for_provider_cost
+    from novel_to_comic.codex_dev import classify_operations
+    from novel_to_comic.server.codex_admission import draw_operations
+
+    operations = draw_operations(config, ocr=ocr is not None)
+    funding = classify_operations(operations)
+
+    estimate = credit_estimate_for_provider_cost(
+        estimate_draw_api_cost(config, float(compiled.request.estimated_cost_usd), ocr=ocr is not None, compiled=compiled),
+        "draw",
+        reserve=True,
+        zero_cost_estimate=0,
+        funding=funding,
+    )
+
+    _work, _settled = page_draw_execution(
+        project_dir=project_dir, compiled=compiled, adapter=adapter, artifacts=artifacts,
+        page=page, ocr=ocr, request_revision=request_revision, render_revision=render_revision,
+        parent_render_revision=parent_render_revision, issue=issue, on_success=on_success,
+    )
+    from novel_to_comic.server.job_commands import command, save_blob
+    descriptor = command("page_draw", project_dir, config,
+        request=compiled.request.model_dump(mode="json"),
+        references=[save_blob(project_dir, data) for data in compiled.reference_bytes],
+        edit_source=save_blob(project_dir, compiled.edit_source_bytes),
+        page=page.model_dump(mode="json"), ocr=ocr is not None,
+        request_revision=request_revision, render_revision=render_revision,
+        parent_render_revision=parent_render_revision,
+        issue=issue.model_dump(mode="json") if issue else None,
+    )
+
     return enqueue_reserved_generation_job(
         app,
         project_name=project_name,
@@ -1731,4 +1762,5 @@ def enqueue_complete_page_draw(
         reservation_credits=estimate["reserved_credits"] or 0,
         operations=operations,
         on_settled=_settled,
+        command=descriptor,
     )

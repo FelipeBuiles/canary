@@ -693,6 +693,7 @@ export function useStyles(project: string | undefined) {
     queryKey: ["project", project, "styles"],
     queryFn: () => getStyles(project!),
     enabled: !!project,
+    refetchInterval: (query) => query.state.data?.is_generating ? 1000 : 15_000,
   });
 }
 

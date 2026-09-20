@@ -116,6 +116,13 @@ export async function apiFetch<T>(
       && detail === "Adapt requires an approved adaptation brief") {
       action?.complete();
     }
+    // Cast readiness gates precede approval and job dispatch. A corrected
+    // prerequisite is a new explicit action, including an older saved 409.
+    const isCastApproval = method === "POST" && /^\/projects\/[^/]+\/approve\/cast$/.test(path);
+    const castRejected = (typeof detail === "object" && detail !== null
+      && (detail as { code?: unknown }).code === "cast_approval_rejected")
+      || detail === "Compare the current character references before approving Cast. Resume Cast to run its visual review.";
+    if (res.status === 409 && isCastApproval && castRejected) action?.complete();
     if (res.status === 402) {
       const info = parseInsufficientCredits(detail);
       if (info) throw new InsufficientCreditsError(info);

@@ -388,11 +388,15 @@ describe("PagesRoom", () => {
     expect(screen.getByRole("button", { name: "Needs review (1)" }).getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("offers an explicit review action that opens the saved page without generation", () => {
+  it("uses the artwork as the single review action and keeps revision detail in the dialog", () => {
     renderRoom();
-    fireEvent.click(screen.getByRole("button", { name: "Review page 1" }));
+
+    expect(screen.queryByRole("button", { name: "Review page 1" })).toBeNull();
+    expect(screen.queryByText("Revision 2")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
 
     const dialog = screen.getByRole("dialog", { name: "Page 1 review" });
+    expect(within(dialog).getByText("Revision 2")).toBeTruthy();
     expect(within(dialog).getByRole("button", { name: "Page" }).getAttribute("aria-pressed")).toBe("true");
     expect(within(dialog).getByAltText("Complete page 1, render revision 2")).toBeTruthy();
     expect(generatePage).not.toHaveBeenCalled();
@@ -780,7 +784,7 @@ describe("PagesRoom", () => {
     renderRoom();
 
     expect(screen.getByText("1 of 2 pages drawn")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "RETRY ALL INCOMPLETE PAGES" }));
+    fireEvent.click(screen.getByRole("button", { name: "DRAW REMAINING PAGES" }));
     const confirmation = screen.getByRole("alertdialog", { name: "Retry the remaining pages?" });
     expect(within(confirmation).getByText(
       "Only pages without a saved render will be queued. Completed artwork stays available to review.",
@@ -806,7 +810,7 @@ describe("PagesRoom", () => {
     };
     renderRoom();
 
-    expect(screen.queryByRole("button", { name: "RETRY ALL INCOMPLETE PAGES" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "DRAW REMAINING PAGES" })).toBeNull();
   });
 
   it("offers to batch the remaining pages after choosing one-by-one", () => {
@@ -818,7 +822,7 @@ describe("PagesRoom", () => {
     };
     renderRoom();
 
-    fireEvent.click(screen.getByRole("button", { name: "QUEUE REMAINING PAGES" }));
+    fireEvent.click(screen.getByRole("button", { name: "DRAW REMAINING PAGES" }));
     expect(screen.getByRole("alertdialog", { name: "Queue all undrawn pages?" })).toBeTruthy();
   });
 
@@ -897,14 +901,19 @@ describe("PagesRoom", () => {
     });
     renderRoom();
 
-    fireEvent.click(screen.getByRole("button", { name: "GENERATE COMPLETE PAGE" }));
+    expect(screen.queryByRole("button", { name: "Open page 2, revision 0" })).toBeNull();
+    const generate = screen.getByRole("button", { name: "GENERATE COMPLETE PAGE" });
+    expect(generate.closest("article")?.children).toHaveLength(1);
+    fireEvent.click(generate);
     expect(generatePage).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "CONFIRM DRAW" }));
     expect(generatePage).toHaveBeenCalledWith(
       { project: "demo", pageNumber: 2 },
       expect.any(Object),
     );
-    expect(screen.getByRole("button", { name: "DRAWING PAGE…" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("img", { name: "Page 2: generation in progress" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "DRAWING PAGE…" })).toBeNull();
+    expect(screen.queryByText("Not generated")).toBeNull();
   });
 
   it.each(["failed", "running"] as const)("ignores %s jobs from an earlier page plan", async (jobStatus) => {
@@ -921,6 +930,21 @@ describe("PagesRoom", () => {
     expect(screen.getByRole("button", { name: "Drawing (0)" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "GENERATE COMPLETE PAGE" })).toBeTruthy();
     expect(generatePage).not.toHaveBeenCalled();
+  });
+
+  it.each(["running", "complete"] as const)("restores queued pages after refresh while the preceding page is %s", async (status) => {
+    includeUndrawnPage = true;
+    generationJobResults = [
+      { id: "first", status, is_current_page: true, payload: { page_number: 1 } },
+      { id: "waiting", status: "queued", is_current_page: true, payload: { page_number: 2 } },
+    ];
+    renderRoom();
+    await waitFor(() => expect(screen.getByText(`${status === "running" ? 2 : 1} pages drawing or queued`)).toBeTruthy());
+    expect(screen.queryByRole("button", { name: /DRAW REMAINING PAGES/ })).toBeNull();
+    expect(screen.getByRole("img", { name: "Page 2: generation in progress" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "DRAWING PAGE…" })).toBeNull();
+    expect(screen.queryByText("IMAGE GENERATION FAILED")).toBeNull();
+    expect(runPipeline).not.toHaveBeenCalled();
   });
 
   it("explains when the image provider blocks a complete page", () => {
@@ -986,7 +1010,9 @@ describe("PagesRoom", () => {
     renderRoom();
 
     const retry = screen.getByRole("button", { name: "TRY AGAIN" });
-    expect(retry).toBeTruthy();
+    const failedCard = retry.closest("article")!;
+    expect(within(failedCard).queryByText("READY TO DRAW")).toBeNull();
+    expect(failedCard.children).toHaveLength(1);
     fireEvent.click(retry);
     expect(generatePage).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "CONFIRM DRAW" }));
@@ -1046,7 +1072,8 @@ describe("PagesRoom", () => {
       recoverable: true, error: "Old generic failure", payload: { page_number: 1 },
     }];
     const room = renderRoom();
-    expect(screen.getByText("Artwork saved · Text not checked")).toBeTruthy();
+    expect(screen.queryByText("Artwork saved · Text not checked")).toBeNull();
+    expect(screen.getByRole("button", { name: "Open page 1, revision 2" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "TRY AGAIN" })).toBeNull();
     room.unmount();
     analysisChecked = true;
@@ -1152,7 +1179,7 @@ describe("PagesRoom", () => {
     renderRoom();
 
     const card = screen.getByRole("button", { name: "Open page 1, revision 2" });
-    expect(card.textContent).toContain("Needs visual review");
+    expect(screen.getByText("Needs visual review")).toBeTruthy();
     expect(card.textContent).not.toContain("Confirmed");
   });
 
@@ -1274,7 +1301,7 @@ describe("PagesRoom", () => {
     expect(retryEstimate).toHaveBeenCalledOnce();
     expect(generatePage).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getAllByRole("button", { name: /Cancel/i })[0]);
-    expect(screen.getByRole("button", { name: "Open page 2, revision 0" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "GENERATE COMPLETE PAGE" })).toBeTruthy();
   });
 
   it("keeps a submission error next to consent without automatically retrying", () => {
@@ -1287,6 +1314,14 @@ describe("PagesRoom", () => {
     expect(generatePage).toHaveBeenCalledOnce();
     fireEvent.click(within(screen.getByRole("alertdialog")).getAllByRole("button", { name: /Cancel/i })[0]);
     expect(screen.getByRole("alert").textContent).toContain("Connection interrupted");
-    expect(screen.getByRole("button", { name: "Open page 2, revision 0" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "GENERATE COMPLETE PAGE" })).toBeTruthy();
+  });
+
+  it("shows a persisted Draw batch failure when page plans are already available", () => {
+    includeUndrawnPage = true;
+    stageStatuses.draw = { status: "failed", stale: false, error: "Durable generation queue is unavailable" };
+    renderRoom();
+    expect(screen.getByRole("alert").textContent).toContain("Durable generation queue is unavailable");
+    expect(screen.getByRole("button", { name: /DRAW REMAINING PAGES/ })).toBeTruthy();
   });
 });

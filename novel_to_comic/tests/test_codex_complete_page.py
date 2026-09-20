@@ -300,10 +300,10 @@ def test_queue_all_later_reference_overflow_has_no_enqueue_or_credit_hold(tmp_pa
         event_queues={}, generation_jobs={}, generation_queue=events,
     ))
     with pytest.raises(ValueError):
-        pages.enqueue_all_undrawn_pages(
+        asyncio.run(pages.enqueue_all_undrawn_pages(
             SimpleNamespace(app=app), project_id="project", user_id="user",
             project_dir=tmp_path, config=Config(),
-        )
+        ))
     enqueue.assert_not_called()
     reserve.assert_not_called()
     assert events.empty()

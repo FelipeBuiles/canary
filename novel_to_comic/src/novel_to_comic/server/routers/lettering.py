@@ -188,11 +188,13 @@ async def post_translation(
             async def work():
                 await translate_project(target, project[1], prepared)
 
+            from ..job_commands import command, snapshot
             job, _ = enqueue_reserved_generation_job(
                 request.app, project_name=project_key(user_id, project_id),
                 user_id=user_id, project_id=project_id, project_dir=project[0],
                 stage="lettering", kind="lettering_translation", label=f"Translate lettering to {body.target_locale}",
                 payload=body.model_dump(), work=work, debit_description="Project lettering translation",
+                command=command("lettering_translation", project[0], project[1], prepared=snapshot(prepared)),
                 reservation_credits=prepared.estimate["reserved_credits"],
                 operations=(("text", prepared.model),),
             )

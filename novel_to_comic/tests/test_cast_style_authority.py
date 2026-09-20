@@ -61,7 +61,21 @@ def test_cast_wire_keeps_approved_style_and_canonical_identity(tmp_path, model):
     assert "seaman's working clothes" in prompt
     assert "do not copy their faces" in prompt
     assert "sole visual rendering style authority" in prompt
+    assert "surface-fidelity constraints" in prompt
+    assert "do not treat every blotch, stain or speckle as an authored style feature" in prompt
+    assert "match its exact" not in prompt
+    assert "overrides any conflict" not in prompt
     assert "LETTERING STANDARD" not in prompt
+
+
+def test_calibration_balances_texture_without_changing_selected_style(tmp_path):
+    config, bible, _ = _project(tmp_path, "image-gpt-2")
+    original = config.style_template
+    request = s3_cast._character_style_calibration_input(config, bible)
+    assert "quiet tonal fields and clear contour examples" in request.prompt.visual_brief
+    assert "Preserve deliberate granulation and authored distress" in request.prompt.visual_brief
+    assert "No people, faces" in request.prompt.constraints
+    assert request.selected_style_text == config.style_template == original
 
 
 @pytest.mark.parametrize("model", ["image-sunburst", "image-gemini-pro", "image-gemini-flash-lite", "image-gpt-2", "image-flare"])

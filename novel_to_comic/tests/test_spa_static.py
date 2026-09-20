@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
-from novel_to_comic.server.app import create_app
+from tests.queue_fixtures import create_app
 
 # web/dist is a built artifact (not always present in CI / fresh checkout),
 # so skip these tests entirely when it isn't there.
