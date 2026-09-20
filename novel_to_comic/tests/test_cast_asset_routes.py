@@ -215,7 +215,7 @@ def _apply(project_dir: Path, app, *, run_job=True, **kwargs):
 
 
 def test_every_cast_route_the_ui_calls_is_mounted():
-    from novel_to_comic.server.app import create_app
+    from tests.queue_fixtures import create_app
 
     app = create_app(Path("/tmp"))
     mounted = {
@@ -728,7 +728,9 @@ def test_status_requires_current_individual_refs_and_visual_review(
         state.stages["cast"].error = "Submission outcome is ambiguous"
         save_state(state, project_dir)
     elif blocker == "active_job":
-        app.state.generation_jobs["active"] = SimpleNamespace(project_name="test-user:demo", status="running")
+        from novel_to_comic.server.generation_jobs import GenerationJob
+        app.state.generation_jobs["active"] = GenerationJob(
+            id="cast-job", project_name="test-user:demo", kind="character_ref_regen", label="Cast", payload={}, sequence=1, runner=None, status="running")
     elif blocker == "unapproved_style":
         state.stages["style"].status = StageStatus.AWAITING_REVIEW
         # A selected usable sample IS checkpoint approval. Model an unselected

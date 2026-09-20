@@ -87,7 +87,7 @@ export function StyleProofCard({
   const showLoading = isGenerating || (!suggestion.has_sample && generationDisabled);
   const sampleRetryAvailable = !suggestion.has_sample && !isGenerating && !generationDisabled;
   const isActive = suggestion.is_active;
-  const canSelect = !isActive && !isGenerating && !selectionDisabled && !setActive.isPending;
+  const canSelect = suggestion.has_sample && !isActive && !isGenerating && !selectionDisabled && !setActive.isPending;
 
   const handleSelect = () => {
     if (!canSelect) return;
@@ -118,7 +118,7 @@ export function StyleProofCard({
             ) : imgFailed ? (
               <div className="flex aspect-[4/5] w-full flex-col items-center justify-center">
                 <div className="font-meta text-[0.58rem] font-bold tracking-[0.1em] text-ink-muted">
-                  {suggestion.has_sample ? t("PROOF IMAGE UNAVAILABLE") : t("SAMPLE PROOF FAILED")}
+                  {suggestion.has_sample ? t("PROOF IMAGE UNAVAILABLE") : t(suggestion.generation_status === "failed" ? "SAMPLE PROOF FAILED" : "PROOF NOT GENERATED")}
                 </div>
               </div>
             ) : (
@@ -270,7 +270,7 @@ export function StyleProofCard({
         {sampleRetryAvailable && (
           <div className="mt-4 flex items-center justify-between gap-3 border-[2px] border-hero-red/35 bg-hero-red/10 px-3 py-2.5">
             <span className="font-meta text-[0.62rem] font-bold tracking-[0.08em] text-hero-red">
-              {t("SAMPLE PROOF FAILED")}
+              {t(suggestion.generation_status === "failed" ? "SAMPLE PROOF FAILED" : "PROOF NOT GENERATED")}
             </span>
             <Button
               variant="outline"

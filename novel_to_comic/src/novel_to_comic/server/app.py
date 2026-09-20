@@ -18,7 +18,7 @@ from novel_to_comic.clients.structured_call import validation_error_summary
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing
 from novel_to_comic.usage import audit_pricing
 
-from .generation_jobs import generation_worker
+from .durable_queue import initialize_queue
 from .deployment_status import deployment_activity, require_ops_token
 from .logging import request_log_middleware
 from .ratelimit import configure_rate_limiting
@@ -271,10 +271,7 @@ async def _lifespan(app: FastAPI):
 
     app.state.lease_initialization_task = asyncio.create_task(initialize_leases())
 
-    worker_count = max(1, int(os.environ.get("CANARY_GENERATION_WORKERS", "5")))
-    app.state.generation_worker_tasks = [
-        asyncio.create_task(generation_worker(app)) for _ in range(worker_count)
-    ]
+    app.state.generation_worker_tasks = [asyncio.create_task(initialize_queue(app))]
     yield
     app.state.lease_shutdown = True
     app.state.admission.draining = True
@@ -297,19 +294,8 @@ async def _lifespan(app: FastAPI):
         *style_tasks,
         return_exceptions=True,
     )
-    from .generation_jobs import persist_generation_job
-
-    for job in app.state.generation_jobs.values():
-        if job.status == "queued":
-            if job.on_cancel is not None:
-                job.on_cancel()
-            job.status = "failed"
-            job.error = "Server stopped before this job started."
-            job.recoverable = True
-            persist_generation_job(app, job)
-    while not app.state.generation_queue.empty():
-        app.state.generation_queue.get_nowait()
-        app.state.generation_queue.task_done()
+    # Accepted but unstarted commands remain durable across shutdown. Running
+    # commands are interrupted and fenced before provider clients close.
     stop_reservation_leases()
     from novel_to_comic.ai.client import _http
 
@@ -387,9 +373,7 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
 
     # Shared state for SSE streaming and concurrency control
     from .generation_jobs import (
-        get_global_queue,
         get_global_semaphore,
-        _global_jobs,
         _global_light_semaphores,
     )
 
@@ -405,8 +389,10 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app.state.light_generation_semaphore = asyncio.Semaphore(5)
     app.state.light_generation_semaphores = _global_light_semaphores
     app.state.light_generation_semaphores[5] = app.state.light_generation_semaphore
-    app.state.generation_queue = get_global_queue()
-    app.state.generation_jobs = _global_jobs
+    app.state.generation_queue = asyncio.Queue()
+    app.state.durable_queue_required = True
+    app.state.durable_queue = None
+    app.state.generation_jobs = {}
     app.state.user_generation_semaphores: dict[str, asyncio.Semaphore] = {}
     app.state.generation_job_timeout_seconds = max(
         1,
@@ -466,6 +452,12 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         ):
             ok = False
             checks["credit_leases"] = "unavailable"
+        queue = app.state.durable_queue
+        if queue is None or not queue.healthy:
+            ok = False
+            checks["generation_queue"] = "unavailable"
+        else:
+            checks["generation_queue"] = "ok"
         return JSONResponse(
             status_code=200 if ok else 503,
             content={
@@ -507,7 +499,8 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
             leases_ready = not hasattr(app.state, "credit_leases_ready") or (
                 app.state.credit_leases_ready and reservation_leases_healthy()
             )
-            if not ok or not leases_ready:
+            queue_ready = app.state.durable_queue is not None and app.state.durable_queue.healthy
+            if not ok or not leases_ready or not queue_ready:
                 raise HTTPException(503, "Dependencies must be ready before reopening admission")
             app.state.admission.set_draining(False)
         return deployment_activity(app)

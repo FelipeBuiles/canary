@@ -31,9 +31,10 @@ export function FloatingIndicator() {
     return null;
   }
 
-  const runningStage = STAGE_ORDER.find(
-    (stage) => status.stages[stage]?.status === "running"
-  );
+  const activeJob = status.active_jobs?.find((job) => job.status === "running")
+    ?? status.active_jobs?.find((job) => job.status === "queued");
+  const runningStage = activeJob?.stage && STAGE_ORDER.includes(activeJob.stage)
+    ? activeJob.stage : undefined;
 
   if (!runningStage) {
     return null;
@@ -71,7 +72,7 @@ export function FloatingIndicator() {
         </div>
         <div>
           <div className="font-meta text-xs font-bold tracking-[0.08em] text-ink-muted">
-            RUNNING
+            {activeJob?.status === "queued" ? "QUEUED" : "RUNNING"}
           </div>
           <div className="font-display text-[0.82rem] font-bold tracking-[-0.03em]">
             {stageLabel}

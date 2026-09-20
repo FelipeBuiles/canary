@@ -6,7 +6,7 @@ from uuid import uuid4
 from starlette.testclient import TestClient
 from unittest.mock import MagicMock
 
-from novel_to_comic.server.app import create_app
+from tests.queue_fixtures import create_app
 from novel_to_comic.server.auth import get_current_user
 from novel_to_comic.server.deps import get_project
 from novel_to_comic.server.routers import pipeline
@@ -468,3 +468,23 @@ def test_brief_stage_repairs_an_invalid_inference_with_one_retry(
     rejection = next(r for r in records if r["event"] == "structured_response_rejected")
     assert rejection["stage"] == "brief"
     assert rejection["message"] == "character_turns[0, 1, 2]: Input should be a valid string"
+
+
+def test_cast_reapproval_does_not_restart_completed_adapt_and_plan(tmp_path, monkeypatch):
+    from novel_to_comic.briefing import approve_brief
+    from unittest.mock import AsyncMock
+    project_dir, state, _bible = _story_project(tmp_path)
+    _write_draft_brief(project_dir)
+    target = TargetArtifacts(project_dir)
+    brief = target.read_brief()
+    target.write_brief(approve_brief(brief, expected_revision=brief.revision))
+    state.stages["cast"] = StageState(status=StageStatus.AWAITING_REVIEW)
+    state.stages["adapt"] = StageState(status=StageStatus.COMPLETE)
+    state.stages["plan"] = StageState(status=StageStatus.COMPLETE)
+    start = AsyncMock()
+    monkeypatch.setattr(pipeline, "_run_stage_with_credits", start)
+    response = _client(tmp_path, project_dir, state).post("/api/projects/test_project/approve/cast")
+    assert response.status_code == 200
+    assert "auto_started" not in response.json()
+    start.assert_not_awaited()
+    assert state.stages["adapt"].status == state.stages["plan"].status == StageStatus.COMPLETE

@@ -13,3 +13,7 @@ describe("getCastCheckpointAction", () => {
     expect(getCastCheckpointAction("running")).toBe("wait");
   });
 });
+
+it.each(["awaiting_review", "complete"] as const)("resumes %s when the server reports an approval blocker", (status) => {
+  expect(getCastCheckpointAction(status, "Resume Cast to finish missing references")).toBe("resume");
+});

@@ -8,11 +8,12 @@ import { I18nProvider } from "../i18n";
 
 const run = vi.fn();
 let stageStatus = "pending";
+let approvalBlocker: string | null = null;
 let selectedStyle = true;
 vi.mock("../hooks/useRunAction", () => ({ useRunAction: () => ({ handleRun: run, isPending: false }) }));
 vi.mock("../api/queries", () => ({
   useStoryBible: () => ({ data: { characters: [], locations: [], props: [] }, isLoading: false }),
-  useProjectStatus: () => ({ data: { style_selected: selectedStyle, stages: { cast: { status: stageStatus } } } }),
+  useProjectStatus: () => ({ data: { style_selected: selectedStyle, stages: { cast: { status: stageStatus, approval_blocker: approvalBlocker } } } }),
   useApproveStage: () => ({ mutate: vi.fn(), isPending: false }),
   useResetStale: () => ({ mutate: vi.fn(), isPending: false }),
   useStageEstimate: () => ({ data: { estimate_credits: 20, reserved_credits: 30, reservation_multiplier: 1.5, confidence: "variable" } }),
@@ -28,7 +29,7 @@ function renderCast() {
   return render(<MemoryRouter initialEntries={["/project/demo/cast"]}><I18nProvider><Routes><Route path="/project/:id/cast" element={<CastRoom />} /></Routes></I18nProvider></MemoryRouter>);
 }
 
-beforeEach(() => { run.mockReset(); stageStatus = "pending"; selectedStyle = true; });
+beforeEach(() => { run.mockReset(); stageStatus = "pending"; approvalBlocker = null; selectedStyle = true; });
 
 describe("cast consent", () => {
   it("offers review instead of another generation once individually generated references are ready", () => {
@@ -71,4 +72,16 @@ describe("cast consent", () => {
     expect(screen.getByRole("alert").textContent).toContain("Provider unavailable");
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
+});
+
+
+it("replaces premature Continue with a confirmed resume for an incomplete checkpoint", async () => {
+  stageStatus = "awaiting_review";
+  approvalBlocker = "Resume Cast to finish the missing work";
+  renderCast();
+  expect(screen.queryByRole("button", { name: "LOOKS RIGHT — CONTINUE →" })).toBeNull();
+  expect(screen.getByText(approvalBlocker)).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: /RESUME CAST/ }));
+  expect(run).not.toHaveBeenCalled();
+  expect(screen.getByRole("alertdialog")).toBeTruthy();
 });

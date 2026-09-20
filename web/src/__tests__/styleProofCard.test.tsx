@@ -123,3 +123,12 @@ it("shows the concrete character design without adding more collapsed-card contr
   expect(design.closest("details")).toHaveProperty("open", true);
   expect(screen.getByText("CHARACTER DESIGN")).toBeTruthy();
 });
+
+it("distinguishes an unrequested proof from a failed proof", () => {
+  const view = render(card(props({ suggestion: { ...suggestion, has_sample: false, generation_status: "not_requested" } })));
+  expect(screen.getAllByText("PROOF NOT GENERATED").length).toBeGreaterThan(0);
+  expect(screen.queryByText("SAMPLE PROOF FAILED")).toBeNull();
+  expect(screen.getByRole("button", { name: "SELECT THIS STYLE" })).toHaveProperty("disabled", true);
+  view.rerender(card(props({ suggestion: { ...suggestion, has_sample: false, generation_status: "failed" } })));
+  expect(screen.getAllByText("SAMPLE PROOF FAILED").length).toBeGreaterThan(0);
+});

@@ -129,6 +129,7 @@ def _enqueue_cast_asset_regen(
         config, project_dir, kind, asset_id
     )
 
+    from ..job_commands import command
     job, _created = enqueue_credited_job(
         request.app,
         project_name=pkey,
@@ -140,6 +141,7 @@ def _enqueue_cast_asset_regen(
         label=label,
         payload={asset_id_key: asset_id},
         work=work,
+        command=command("cast_asset", project_dir, config, kind=kind, asset_id=asset_id),
         debit_description=debit_description,
         semaphore=generation_semaphore_for_config(request.app, config),
         estimate_credits=asset_estimate["estimate_credits"],

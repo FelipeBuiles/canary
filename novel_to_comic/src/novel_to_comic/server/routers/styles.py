@@ -32,7 +32,7 @@ from novel_to_comic.style_contract import (
     style_template_for_suggestion,
 )
 from novel_to_comic.state import (
-    StageState, StageStatus, begin_stage, complete_stage, fail_stage, record_item_done, save_state,
+    StageState, StageStatus, begin_stage, complete_stage, fail_stage, record_item_done, save_state, load_state,
 )
 from novel_to_comic.stages import REGISTRY
 from novel_to_comic.stages.s2_style import (
@@ -69,6 +69,7 @@ from ..credited_job import enqueue_reserved_generation_job
 from ..event_channel import EventChannel
 from ..db import get_db
 from ..deps import get_project, project_key
+from ..job_commands import command
 from ..generation_jobs import (
     find_active_generation_job,
     generation_job_payload,
@@ -312,7 +313,7 @@ def _assert_no_style_task(request: Request, pkey: str) -> None:
 
 
 @router.get("/styles")
-def get_styles(project_id: str, project=Depends(get_project)):
+def get_styles(project_id: str, project=Depends(get_project), request: Request = None, user_id: str = Depends(get_current_user)):
     project_dir, config, _state = project
     suggestions = load_suggestions(project_dir)
     bible = _get_bible(project_dir)
@@ -321,6 +322,28 @@ def get_styles(project_id: str, project=Depends(get_project)):
     )) if bible else set()
 
     active_index, active_id = _active_suggestion(suggestions, config)
+    proof_states = {}
+    active_style_jobs = []
+    if request is not None:
+        from ..generation_jobs import recovered_generation_jobs
+        pkey = project_key(user_id, project_id)
+        jobs = recovered_generation_jobs(request.app, pkey) + [
+            generation_job_payload(request.app, job) for job in request.app.state.generation_jobs.values()
+            if job.project_name == pkey and job.kind in {"style_sample", "style_suggest"}]
+        for job in sorted(jobs, key=lambda item: item.get("queued_at") or ""):
+            if job["kind"] not in {"style_sample", "style_suggest"}:
+                continue
+            if job["status"] in {"queued", "running"}:
+                active_style_jobs.append(job)
+            payload = job.get("payload", {})
+            proofs = payload.get("proofs", {})
+            if payload.get("index") is not None and not proofs:
+                proofs = {str(payload["index"]): {"status": job["status"]}}
+            for index, proof in proofs.items():
+                status = proof["status"]
+                if status in {"queued", "running"} and job["status"] == "failed":
+                    status = "failed"
+                proof_states[int(index)] = status
 
     result = []
     for i, s in enumerate(suggestions, 1):
@@ -361,6 +384,7 @@ def get_styles(project_id: str, project=Depends(get_project)):
             # under an older prompt contract is still valuable project work:
             # keep it visible and let the author decide when to replace it.
             "has_sample": sample_exists,
+            "generation_status": proof_states.get(i, "complete" if sample_exists else "not_requested"),
             "sample_stale": sample_exists and i in stale_indices,
             "has_validation": validation_fresh,
             "has_style_reference": bool(
@@ -373,7 +397,7 @@ def get_styles(project_id: str, project=Depends(get_project)):
             "is_active": i == active_index,
         })
 
-    return {"suggestions": result, "active_index": active_index, "active_id": active_id}
+    return {"suggestions": result, "active_index": active_index, "active_id": active_id, "is_generating": bool(active_style_jobs)}
 
 
 @router.get("/styles/{suggestion_id}/proof/{kind}")
@@ -690,6 +714,9 @@ async def create_style_direction(
             project_dir=project_dir, stage="style",
             debit_description="Style direction", reservation_credits=required,
             operations=operations,
+            command=command("style_direction", project_dir, config,
+                bible=bible.model_dump(mode="json"), candidate=candidate, index=index,
+                direction=direction, with_neighbors=with_neighbors, lifecycle_owned=lifecycle_owned),
             existing_hold=(reservation_id, job_id), on_terminal=_terminal,
             semaphore=generation_semaphore_for_config(request.app, config),
         )
@@ -704,6 +731,10 @@ async def create_style_direction(
         if not style_guard.done():
             style_guard.set_result(None)
         raise
+    if getattr(request.app.state, "durable_queue_required", False) is True:
+        if not style_guard.done():
+            style_guard.set_result(None)
+        request.app.state.style_tasks.pop(pkey, None)
     return {
         "status": "queued",
         "with_neighbors": with_neighbors,
@@ -889,13 +920,15 @@ async def suggest_styles(
             lifecycle_started = True
             save_state(state, project_dir)
         style_running[pkey] = style_guard
-        enqueue_reserved_generation_job(
+        queued_job, _created = enqueue_reserved_generation_job(
             request.app, project_name=pkey, user_id=user_id,
             project_id=project_id, project_dir=project_dir, stage="style",
             kind="style_suggest", label="Style suggestions",
             payload={"direction_id": direction_id}, work=_job,
             debit_description="Style suggestions", reservation_credits=required,
             operations=operations,
+            command=command("style_suggest", project_dir, config,
+                bible=bible.model_dump(mode="json"), direction=direction, lifecycle_owned=lifecycle_owned),
             existing_hold=(reservation_id, job_id), on_terminal=_terminal,
             semaphore=generation_semaphore_for_config(request.app, config),
         )
@@ -912,7 +945,11 @@ async def suggest_styles(
         if not style_guard.done():
             release_reservation(db, reservation_id)
         raise
-    return {"status": "started"}
+    if getattr(request.app.state, "durable_queue_required", False) is True:
+        if not style_guard.done():
+            style_guard.set_result(None)
+        style_running.pop(pkey, None)
+    return {"status": "started", "job": generation_job_payload(request.app, queued_job)}
 
 
 @router.post("/styles/generate-samples")
@@ -1005,6 +1042,8 @@ async def generate_style_samples(
             debit_description=f"Style sample {idx}",
             reservation_credits=estimate["reserved_credits"] or estimate["estimate_credits"],
             operations=operations,
+            command=command("style_sample", project_dir, config,
+                bible=bible.model_dump(mode="json"), candidate=s, index=idx),
             semaphore=generation_semaphore_for_config(request.app, sample_config),
         )
         jobs.append(generation_job_payload(request.app, job))
@@ -1098,6 +1137,8 @@ async def generate_style_validation(
         debit_description="Style validation",
         reservation_credits=estimate["reserved_credits"] or estimate["estimate_credits"],
         operations=operations,
+        command=command("style_validation", project_dir, config,
+            bible=bible.model_dump(mode="json"), candidate=suggestion, index=index),
         semaphore=generation_semaphore_for_config(request.app, sample_config),
     )
     return {
@@ -1117,6 +1158,7 @@ def set_active_style(
     project_dir, config, state = project
 
     with production_lock(project_dir):
+        state = load_state(project_dir)
         suggestions = load_suggestions(project_dir)
         if not suggestions:
             raise HTTPException(404, "No style suggestions found — run suggest first.")

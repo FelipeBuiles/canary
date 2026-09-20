@@ -213,3 +213,48 @@ def test_page_job_history_is_bound_to_current_frozen_input(tmp_path, case):
     assert jobs[0]["is_current_page"] is (case == "current")
     assert jobs[0]["status"] == "failed"  # History is retained, not deleted or relabeled as successful.
     assert "is_current_page" not in jobs[1]
+
+
+@pytest.mark.parametrize("status", ["queued", "running", "failed"])
+@pytest.mark.parametrize("changed", [False, True])
+def test_admitted_page_job_is_current_before_request_artifact_exists(tmp_path, status, changed):
+    from .test_complete_page_draw import _compile, _page
+
+    target = TargetArtifacts(tmp_path)
+    compiled = _compile(tmp_path)
+    target.write_page(_page(visual_intent="A changed scene.") if changed else _page())
+    jobs = [{"id": "admitted", "kind": "complete_page_draw", "status": status,
+             "payload": {"page_number": compiled.request.page_number,
+                         "request_sha256": compiled.request.request_sha256}}]
+    pipeline._mark_current_page_jobs(target, jobs, {
+        "admitted": compiled.request.model_dump(mode="json"),
+    })
+    assert jobs[0]["is_current_page"] is (not changed)
+    assert not target.request_revisions(compiled.request.page_number)
+
+
+def test_jobs_endpoint_restores_queued_page_visibility_from_durable_command(tmp_path):
+    from .test_complete_page_draw import _compile, _page
+    from novel_to_comic.server.generation_jobs import GenerationJob
+    from novel_to_comic.server.job_commands import command
+
+    target = TargetArtifacts(tmp_path)
+    compiled = _compile(tmp_path)
+    target.write_page(_page())
+    job = GenerationJob(
+        id="waiting", project_name=pipeline.project_key("account", "book"),
+        kind="complete_page_draw", label="Page 1", sequence=1, runner=None,
+        payload={"page_number": compiled.request.page_number,
+                 "request_sha256": compiled.request.request_sha256},
+        command=command("page_draw", tmp_path, Config(),
+                        request=compiled.request.model_dump(mode="json")),
+    )
+    app = SimpleNamespace(state=SimpleNamespace(generation_jobs={job.id: job}))
+    result = pipeline.get_generation_jobs(
+        SimpleNamespace(app=app), "book", ids=None,
+        project=(tmp_path, Config(), None), user_id="account",
+    )
+    assert result["jobs"][0]["status"] == "queued"
+    assert result["jobs"][0]["is_current_page"] is True
+    assert "command" not in result["jobs"][0]
+    assert not target.request_revisions(compiled.request.page_number)

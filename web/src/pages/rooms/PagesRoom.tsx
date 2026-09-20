@@ -856,6 +856,9 @@ export function PagesRoom() {
             </>
           )}
         />
+        {drawStatus === "failed" && status?.stages.draw?.error && (
+          <p role="alert" className="mb-5 text-sm text-hero-red">{status.stages.draw.error}</p>
+        )}
         {drawStatus === "pending" && (
           <Surface tone="pulp" padding="md" className="mb-5">
             <div className="flex flex-wrap items-end justify-between gap-5">
@@ -906,7 +909,7 @@ export function PagesRoom() {
                 })}
                 disabled={run.isPending || !status?.style_selected}
               >
-                {t(retryingDraw ? "RETRY ALL INCOMPLETE PAGES" : "QUEUE REMAINING PAGES")}
+                {t("DRAW REMAINING PAGES")}
               </Button>
             </div>
           </Surface>
@@ -942,12 +945,14 @@ export function PagesRoom() {
           {visiblePages.map((item) => {
             const revision = item.active_render?.render.revision;
             const pageIsDrawing = drawingPages.has(item.page.page_number);
+            const revisedIssues = item.issues.some((issue) => issue.status === "revised");
+            const openIssueCount = item.issues.filter((issue) => issue.status === "open").length;
             const serverJob = latestPageJobs.get(item.page.page_number);
             const pageFailure = item.analysis_recovery?.status === "checked" ? null
               : item.failure ?? pageFailures[item.page.page_number] ?? (serverJob?.status === "failed" ? serverJob : null);
             const failurePhase = revision && item.analysis_recovery?.status !== "checked"
               ? "analysis" : pageFailure?.phase;
-            const failureCopy = pageFailure && !revision
+            const failureCopy = pageFailure && !revision && !pageIsDrawing
               ? getImageFailureCopy(
                   t,
                   failurePhase === "analysis" ? "analysis_error" : pageFailure.classification,
@@ -957,27 +962,40 @@ export function PagesRoom() {
               : null;
             const canRetryGeneration = Boolean(pageFailure?.recoverable)
               && !revision
+              && !pageIsDrawing
               && pageFailure?.classification !== "provider_blocked";
+            const pageActionError = pageActionErrors[item.page.page_number];
             return (
               <EntityCard key={item.page.page_number} padding="cozy" className="h-full">
-                <button
-                  type="button"
-                  onClick={() => updateContext({ page: String(item.page.page_number), review: "page" })}
-                  aria-label={`${t("Open page")} ${item.page.page_number}, ${t("revision")} ${revision ?? 0}`}
-                  className="block w-full text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red"
-                >
-                  <div className="mb-3 flex items-center justify-between gap-2 flex-wrap">
-                    <span className="font-display text-lg font-black uppercase">{t("Page")} {item.page.page_number}</span>
-                    {item.issues.some((issue) => (issue.status === "open" || issue.status === "revised")) && (
-                      <StatusPill tone={item.issues.some((issue) => issue.status === "revised") ? "gold" : "red"}>
-                        {item.issues.some((issue) => issue.status === "revised")
-                          ? t("REVISED")
-                          : `${item.issues.filter((issue) => issue.status === "open").length} ${t("FLAGGED")}`}
-                      </StatusPill>
-                    )}
-                  </div>
+                <div className="mb-3 flex min-h-7 flex-wrap items-center justify-between gap-2">
+                  <span className="font-display text-lg font-black uppercase">{t("Page")} {item.page.page_number}</span>
+                  {pageIsDrawing && revision ? (
+                    <StatusPill tone="ink">{t("New revision drawing")}</StatusPill>
+                  ) : revisedIssues ? (
+                    <StatusPill tone="gold">{t("Needs visual review")}</StatusPill>
+                  ) : openIssueCount > 0 ? (
+                    <StatusPill tone="red">{openIssueCount} {t("FLAGGED")}</StatusPill>
+                  ) : null}
+                </div>
+                {revision ? (
+                  <button
+                    type="button"
+                    onClick={() => updateContext({ page: String(item.page.page_number), review: "page" })}
+                    aria-label={`${t("Open page")} ${item.page.page_number}, ${t("revision")} ${revision}`}
+                    className="block w-full text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red"
+                  >
+                    <div className="aspect-[2/3] overflow-hidden bg-surface-container">
+                      <PageThumbnail
+                        src={item.lettering_mode === "hybrid" ? pageCompositePreviewUrl(id, item.page.page_number, revision, "thumbnail", item.lettering_revision) : pageRenderPreviewUrl(id, item.page.page_number, revision, "thumbnail")}
+                        alt={`${t("Complete page thumbnail")} ${item.page.page_number}, ${t("revision")} ${revision}`}
+                        reveal={revealedPage === item.page.page_number}
+                        onRevealEnd={() => setRevealedPage(null)}
+                      />
+                    </div>
+                  </button>
+                ) : (
                   <div className="aspect-[2/3] overflow-hidden bg-surface-container">
-                    {pageIsDrawing && !revision ? (
+                    {pageIsDrawing ? (
                       <FlowingDotsPlaceholder
                         aspect="2 / 3"
                         label={t("DRAWING PAGE…")}
@@ -985,133 +1003,81 @@ export function PagesRoom() {
                         aria-label={`${t("Page")} ${item.page.page_number}: ${t("generation in progress")}`}
                         className="h-full border-0"
                       />
-                    ) : revision ? (
-                      <PageThumbnail
-                        src={item.lettering_mode === "hybrid" ? pageCompositePreviewUrl(id, item.page.page_number, revision, "thumbnail", item.lettering_revision) : pageRenderPreviewUrl(id, item.page.page_number, revision, "thumbnail")}
-                        alt={`${t("Complete page thumbnail")} ${item.page.page_number}, ${t("revision")} ${revision}`}
-                        reveal={revealedPage === item.page.page_number}
-                        onRevealEnd={() => setRevealedPage(null)}
-                      />
+                    ) : failureCopy ? (
+                      <div role="alert" className="flex h-full flex-col overflow-y-auto p-5 text-center">
+                        <div className="my-auto flex flex-col items-center">
+                          <Layers size={28} aria-hidden="true" className="text-hero-red" />
+                          <strong className="mt-4 font-meta text-xs text-hero-red">
+                            {failureCopy.title}
+                          </strong>
+                          <p className="mt-3 max-w-[28ch] font-body text-xs leading-5 text-ink-black/75">
+                            {failureCopy.message}
+                          </p>
+                          {failureCopy.guidance && (
+                            <p className="mt-2 max-w-[28ch] font-body text-xs leading-5 text-ink-black/75">
+                              {failureCopy.guidance}
+                            </p>
+                          )}
+                          {pageActionError && !paidIntent && (
+                            <p className="mt-3 max-w-[28ch] text-xs leading-5 text-hero-red">{pageActionError}</p>
+                          )}
+                        </div>
+                        {pageFailure?.classification === "provider_blocked" ? (
+                          <div className="mt-5 grid shrink-0 gap-2">
+                            <Button
+                              size="xs"
+                              fullWidth
+                              onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "less_graphic" })}
+                              disabled={generate.isPending || !status?.style_selected}
+                            >
+                              {t("DRAW LESS GRAPHIC VERSION")}
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              fullWidth
+                              onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "canonical" })}
+                              disabled={generate.isPending || !status?.style_selected}
+                            >
+                              {t("TRY AGAIN UNCHANGED")}
+                            </Button>
+                          </div>
+                        ) : canRetryGeneration ? (
+                          <Button
+                            className="mt-5 shrink-0"
+                            size="xs"
+                            fullWidth
+                            onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "canonical" })}
+                            disabled={generate.isPending || !status?.style_selected}
+                          >
+                            {t("TRY AGAIN")}
+                          </Button>
+                        ) : null}
+                      </div>
                     ) : (
-                      <div className="flex h-full flex-col items-center justify-center gap-4 px-4 text-center text-ink-muted">
-                        <Layers size={28} aria-hidden="true" />
-                        <span className="font-meta text-xs font-bold">{t("READY TO DRAW")}</span>
-                        <span className="max-w-[22ch] font-body text-xs leading-6">{t("The page plan is ready. Artwork appears here once drawn.")}</span>
+                      <div className="flex h-full flex-col overflow-y-auto p-5 text-center text-ink-muted">
+                        <div className="my-auto flex flex-col items-center gap-4">
+                          <Layers size={28} aria-hidden="true" />
+                          <span className="font-meta text-xs font-bold">{t("READY TO DRAW")}</span>
+                          <span className="max-w-[22ch] font-body text-xs leading-6">{t("The page plan is ready. Artwork appears here once drawn.")}</span>
+                          {pageActionError && !paidIntent && (
+                            <span role="alert" className="max-w-[28ch] text-xs leading-5 text-hero-red">{pageActionError}</span>
+                          )}
+                        </div>
+                        {drawStatus !== "pending" && (
+                          <Button
+                            className="mt-5 shrink-0"
+                            size="xs"
+                            fullWidth
+                            onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "canonical" })}
+                            disabled={!status?.style_selected}
+                          >
+                            {t("GENERATE COMPLETE PAGE")}
+                          </Button>
+                        )}
                       </div>
                     )}
                   </div>
-                  {revision && item.analysis_recovery?.status !== "checked" && (
-                    <p className="mt-2 text-sm font-bold text-ink-muted">{t("Artwork saved · Text not checked")}</p>
-                  )}
-                  <p className="mt-3 font-meta text-xs leading-6 text-ink-muted">
-                    {revision ? `${t("Revision")} ${revision}` : t("Not generated")}
-                    {pageIsDrawing && revision ? ` · ${t("New revision drawing")}` : ""}
-                    {item.issues.some((issue) => isOcrIssue(issue) && (issue.status === "open" || issue.status === "revised"))
-                      ? ` · ${t("Possible text difference")}`
-                      : ""}
-                    {item.issues.some((issue) => issue.status === "revised")
-                      ? ` · ${t("Needs visual review")}`
-                      : ""}
-                    {!item.issues.some((issue) => issue.status === "open" || issue.status === "revised")
-                      && item.issues.some((issue) => issue.status === "resolved" || issue.status === "accepted")
-                      ? ` · ${t("Checks resolved")}`
-                      : ""}
-                  </p>
-                </button>
-                {revision && <div className="mt-auto pt-4"><Button variant="outline" size="xs" fullWidth onClick={() => updateContext({ page: String(item.page.page_number), review: "page" })} aria-label={`${t("Review page")} ${item.page.page_number}`}><ArrowUpRight size={15} aria-hidden="true" />{t("Review page")}</Button></div>}
-                {failureCopy && (
-                  <Surface
-                    tone="pulp"
-                    border="soft"
-                    shadow="none"
-                    padding="sm"
-                    className="mt-3"
-                    role="alert"
-                  >
-                    <strong className="font-meta text-xs text-hero-red">
-                      {failureCopy.title}
-                    </strong>
-                    <p className="mt-1 text-xs leading-5 text-ink-black/75">
-                      {failureCopy.message}
-                    </p>
-                    {failureCopy.guidance && (
-                      <p className="mt-2 text-xs leading-5 text-ink-black/75">
-                        {failureCopy.guidance}
-                      </p>
-                    )}
-                    {pageFailure?.classification === "provider_blocked" && !revision && (
-                      <div className="mt-3 grid gap-2">
-                        <Button
-                          size="xs"
-                          fullWidth
-                          onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "less_graphic" })}
-                          disabled={
-                            generate.isPending
-                            || pageIsDrawing
-                            || !status?.style_selected
-                          }
-                        >
-                          {t("DRAW LESS GRAPHIC VERSION")}
-                        </Button>
-                        <Button
-                          size="xs"
-                          variant="outline"
-                          fullWidth
-                          onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "canonical" })}
-                          disabled={
-                            generate.isPending
-                            || pageIsDrawing
-                            || !status?.style_selected
-                          }
-                        >
-                          {t("TRY AGAIN UNCHANGED")}
-                        </Button>
-                      </div>
-                    )}
-                    {canRetryGeneration && (
-                      <Button
-                        className="mt-3"
-                        size="xs"
-                        fullWidth
-                        onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "canonical" })}
-                        disabled={generate.isPending || pageIsDrawing || !status?.style_selected}
-                      >
-                        {pageIsDrawing ? t("DRAWING PAGE…") : t("TRY AGAIN")}
-                      </Button>
-                    )}
-                    {failurePhase === "analysis" && revision && (
-                      <Button
-                        className="mt-3"
-                        size="xs"
-                        fullWidth
-                        onClick={() => item.analysis_recovery?.requires_paid_call
-                          ? requestSpend({ kind: "analysis", pageNumber: item.page.page_number })
-                          : retryAnalysis(item.page.page_number)}
-                        disabled={analyze.isPending}
-                      >
-                        {analyze.isPending ? t("CHECKING TEXT…") : t("RETRY TEXT CHECK")}
-                      </Button>
-                    )}
-                  </Surface>
-                )}
-                {!revision && drawStatus !== "pending" && !failureCopy && (
-                  <Button
-                    className="mt-3"
-                    size="xs"
-                    fullWidth
-                    onClick={() => requestSpend({ kind: "page", pageNumber: item.page.page_number, depiction: "canonical" })}
-                    disabled={
-                      pageIsDrawing
-                      || !status?.style_selected
-                    }
-                  >
-                    {pageIsDrawing
-                      ? t("DRAWING PAGE…")
-                      : t("GENERATE COMPLETE PAGE")}
-                  </Button>
-                )}
-                {pageActionErrors[item.page.page_number] && !paidIntent && (
-                  <p role="alert" className="mt-3 text-sm text-hero-red">{pageActionErrors[item.page.page_number]}</p>
                 )}
               </EntityCard>
             );

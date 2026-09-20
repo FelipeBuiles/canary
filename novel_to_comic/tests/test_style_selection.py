@@ -8,7 +8,7 @@ from novel_to_comic.server.routers.styles import (
     set_active_style,
 )
 from novel_to_comic.stages.s2_style import save_suggestions
-from novel_to_comic.state import StageStatus, create_initial_state, load_state
+from novel_to_comic.state import StageStatus, create_initial_state, load_state, save_state
 from novel_to_comic.style_contract import page_style_template
 
 
@@ -22,6 +22,7 @@ def test_set_active_style_clears_completed_style_failures(tmp_path):
         "Demo",
     )
 
+    save_state(state, tmp_path)
     result = set_active_style(
         "demo",
         {"index": 1},
@@ -34,7 +35,6 @@ def test_set_active_style_clears_completed_style_failures(tmp_path):
         "index": 1,
         "style_template": expected_template,
     }
-    assert state.stages["style"].items_failed == []
     assert load_state(tmp_path).stages["style"].items_failed == []
     loaded_config, _env_file = load_config(tmp_path)
     assert loaded_config.style_template.strip() == expected_template
@@ -111,3 +111,17 @@ def test_image_only_direction_is_usable_when_route_supports_reference():
     config = Config(image_model="gpt-image-2")
     _assert_usable_style_direction(config, "", True)
     _assert_usable_style_direction(config, "bright ligne claire", True)
+
+
+def test_selection_reloads_checkpoint_completed_since_dependency_load(tmp_path):
+    stale = create_initial_state("demo", "novel.txt")
+    stale.stages["style"].status = StageStatus.RUNNING
+    current = stale.model_copy(deep=True)
+    current.stages["style"].status = StageStatus.COMPLETE
+    current.stages["style"].items_done = 6
+    save_state(current, tmp_path)
+    save_suggestions(tmp_path, [{"label": "Ink", "template": "bold ink wash"}], "Demo")
+    set_active_style("demo", {"index": 1}, project=(tmp_path, Config(style_template="old"), stale))
+    saved = load_state(tmp_path)
+    assert saved.stages["style"].status == StageStatus.COMPLETE
+    assert saved.stages["style"].items_done == 6

@@ -315,7 +315,8 @@ def test_readiness_checks_mock_models_instead_of_litellm(monkeypatch):
 
 
 def test_readiness_endpoint_uses_http_503_on_failure(tmp_path: Path):
-    app = app_module.create_app(tmp_path, dev=True)
+    from tests.queue_fixtures import create_app
+    app = create_app(tmp_path, dev=True)
     endpoint = next(
         route.endpoint for route in app.routes if route.path == "/api/health/ready"
     )
@@ -331,7 +332,8 @@ def test_readiness_endpoint_uses_http_503_on_failure(tmp_path: Path):
 
 
 def test_readiness_endpoint_uses_http_200_on_success(tmp_path: Path):
-    app = app_module.create_app(tmp_path, dev=True)
+    from tests.queue_fixtures import create_app
+    app = create_app(tmp_path, dev=True)
     endpoint = next(
         route.endpoint for route in app.routes if route.path == "/api/health/ready"
     )
@@ -370,7 +372,8 @@ def test_readiness_reports_process_model_mode(
     monkeypatch.setenv("LITELLM_API_KEY", "test-key")
     monkeypatch.delenv("SUPABASE_URL", raising=False)
     monkeypatch.delenv("SUPABASE_SECRET_KEY", raising=False)
-    app = app_module.create_app(tmp_path, dev=True)
+    from tests.queue_fixtures import create_app
+    app = create_app(tmp_path, dev=True)
     endpoint = next(
         route.endpoint for route in app.routes if route.path == "/api/health/ready"
     )
@@ -383,7 +386,7 @@ def test_readiness_reports_process_model_mode(
         "status": "ok",
         "pipeline_contract": "eight-stage-v2",
         "model_mode": expected_mode,
-        "checks": {"supabase": "skipped", expected_dependency: "ok"},
+        "checks": {"supabase": "skipped", expected_dependency: "ok", "generation_queue": "ok"},
     }
 
 
@@ -399,7 +402,8 @@ def test_readiness_ignores_dotenv_and_project_codex_opt_in(tmp_path: Path, monke
         "dev_mode: true\nplan_model: codex-dev/gpt-5.6-terra\n"
     )
     load_config(tmp_path)
-    app = app_module.create_app(tmp_path, dev=True)
+    from tests.queue_fixtures import create_app
+    app = create_app(tmp_path, dev=True)
     endpoint = next(
         route.endpoint for route in app.routes if route.path == "/api/health/ready"
     )
@@ -615,7 +619,8 @@ def test_litellm_images_pin_sdk_with_native_image_config_support():
 
 def test_operational_drain_requires_authentication_and_explicit_resume(tmp_path, monkeypatch):
     monkeypatch.setenv("CANARY_OPS_TOKEN", "operator-secret")
-    app = app_module.create_app(tmp_path, dev=True)
+    from tests.queue_fixtures import create_app
+    app = create_app(tmp_path, dev=True)
     app.state.generation_jobs = {}
     app.state.generation_queue = asyncio.Queue()
     client = TestClient(app)

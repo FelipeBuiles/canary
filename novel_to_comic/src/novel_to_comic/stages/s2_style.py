@@ -1088,7 +1088,10 @@ async def generate_samples_for_indices(
         if on_sample_done is not None:
             await on_sample_done(idx, result)
 
-    await asyncio.gather(*[_one(i) for i in indices])
+    outcomes = await asyncio.gather(*[_one(i) for i in indices], return_exceptions=True)
+    failures = [result for result in outcomes if isinstance(result, BaseException)]
+    if failures:
+        raise failures[0]
 
 
 async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> None:

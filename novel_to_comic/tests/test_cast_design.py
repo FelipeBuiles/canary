@@ -149,3 +149,85 @@ def test_missing_design_rejected_before_correction_rewrite(tmp_path):
             asyncio.run(apply_asset_instruction(config, tmp_path, MagicMock(), "u", "p", "character", "sailor", "Different face"))
     assert error.value.status_code == 409
     generate.assert_not_awaited()
+
+
+@pytest.mark.parametrize("failed_group", ["_generate_character_state_refs", "_generate_location_plates", "_generate_prop_refs"])
+def test_cast_item_failure_cannot_complete_checkpoint(tmp_path, failed_group):
+    from contextlib import ExitStack
+    from novel_to_comic.stage_runtime import StageRuntime
+    from novel_to_comic.state import create_initial_state, load_state, StageStatus
+
+    config, bible, _ = _cast(tmp_path)
+    state = create_initial_state("test", "novel.txt")
+    events = []
+    ctx = StageRuntime("cast", state, tmp_path, on_event=events.append)
+
+    async def fail_item(*args):
+        ctx.record_item_failed("sailor:alternate")
+    with ExitStack() as stack:
+        for helper in ("ensure_design", "_generate_character_style_board", "_generate_character_refs",
+                       "_generate_character_state_refs", "review_cast", "_generate_location_plates", "_generate_prop_refs"):
+            stack.enter_context(patch.object(s3_cast, helper, new_callable=AsyncMock,
+                side_effect=fail_item if helper == failed_group else None))
+        with pytest.raises(ValueError, match="Resume Cast"):
+            asyncio.run(s3_cast.run(config, tmp_path, ctx))
+    saved = load_state(tmp_path).stages["cast"]
+    assert saved.status == StageStatus.FAILED
+    assert "sailor:alternate" in saved.items_failed
+    assert not any(event["type"] == "stage_complete" for event in events)
+    assert any(event["type"] == "stage_fail" for event in events)
+
+
+def test_cast_approval_requires_appearances_even_with_current_identity_review(tmp_path):
+    from novel_to_comic.models.story_bible import AppearanceState
+    from novel_to_comic.state import StageState, StageStatus
+    config, bible, _ = _cast(tmp_path)
+    bible.characters[0].appearance_states = [AppearanceState(
+        id="altered", label="Altered appearance", visual_anchor="changed clothing", visually_significant=True)]
+    artifacts.write_story_bible(tmp_path, bible)
+    stage = StageState(status=StageStatus.AWAITING_REVIEW, items_done=6, items_total=6)
+    with patch.object(s3_cast, "review_status", return_value={"status": "current"}):
+        assert "missing work" in s3_cast.cast_approval_blocker(config, tmp_path, stage)
+        appearance = artifacts.character_state_ref_sheet_path(tmp_path, "sailor", "altered")
+        appearance.parent.mkdir(parents=True)
+        Image.new("RGB", (32, 32), "orange").save(appearance)
+        assert s3_cast.cast_approval_blocker(config, tmp_path, stage) is None
+        stage.items_failed = ["sailor:altered"]
+        assert "missing work" in s3_cast.cast_approval_blocker(config, tmp_path, stage)
+
+
+def test_cast_approval_requires_current_visual_review(tmp_path):
+    from novel_to_comic.state import StageState, StageStatus
+    config, _, _ = _cast(tmp_path)
+    stage = StageState(status=StageStatus.AWAITING_REVIEW, items_done=5, items_total=5)
+    assert "visual review" in s3_cast.cast_approval_blocker(config, tmp_path, stage)
+
+
+def test_status_and_approval_share_cast_blocker_without_changing_old_checkpoint(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from novel_to_comic.server.routers import projects, pipeline
+    from novel_to_comic.state import create_initial_state, StageStatus
+    config, _, _ = _cast(tmp_path)
+    state = create_initial_state("test", "novel.txt")
+    state.stages["cast"].status = StageStatus.AWAITING_REVIEW
+    state.stages["cast"].items_failed = ["sailor:alternate", "cast_visual_review"]
+    app = SimpleNamespace(state=SimpleNamespace(generation_jobs={}, running_tasks={}, style_tasks={}))
+    request = SimpleNamespace(app=app)
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
+    monkeypatch.setattr(projects, "get_db", lambda: db)
+    status = projects.project_status(request, "test", (tmp_path, config, state), "account")
+    blocker = status["stages"]["cast"]["approval_blocker"]
+    assert "missing work" in blocker
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(pipeline.approve("cast", "test", request, (tmp_path, config, state), "account"))
+    assert error.value.status_code == 409
+    assert error.value.detail == {"code": "cast_approval_rejected", "message": blocker}
+    assert state.stages["cast"].status == StageStatus.AWAITING_REVIEW
+
+
+def test_missing_cast_source_is_a_blocker_not_a_status_read_failure(tmp_path):
+    from novel_to_comic.config import Config
+    from novel_to_comic.state import StageState
+    assert "source artifacts" in s3_cast.cast_approval_blocker(Config(), tmp_path, StageState())

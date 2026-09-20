@@ -40,7 +40,7 @@ from novel_to_comic.models.page import (
 )
 from novel_to_comic.models.story_bible import Scene, StoryBible
 from novel_to_comic.models.validation import EditorialIssue
-from novel_to_comic.server.app import create_app
+from tests.queue_fixtures import create_app
 from novel_to_comic.server.auth import get_current_user
 from novel_to_comic.server.deps import get_project
 from novel_to_comic.source_extraction import produce_source_document

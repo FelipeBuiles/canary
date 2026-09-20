@@ -38,7 +38,7 @@ it("shows visual evidence with character links and never starts work on entry", 
 it("does not present stale findings as current and requires deliberate review", async () => {
   vi.mocked(apiFetch).mockResolvedValue({ status: "stale", issues: [{ character_ids: ["a"], evidence: "Old concern" }] });
   const { resume } = mount();
-  const button = await screen.findByRole("button", { name: "REVIEW CAST" });
+  const button = await screen.findByRole("button", { name: "RESUME CAST" });
   expect(screen.queryByText("Old concern")).toBeNull();
   expect(resume).not.toHaveBeenCalled();
   await userEvent.click(button);

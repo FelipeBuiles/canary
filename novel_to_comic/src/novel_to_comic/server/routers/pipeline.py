@@ -161,6 +161,12 @@ async def _run_stage_with_credits(
     **_unused_kwargs,
 ) -> None:
     admit_stage_action(config, stage)
+    if request is not None:
+        from ..generation_jobs import persist_generation_job
+        for active in request.app.state.generation_jobs.values():
+            if active.project_name == project_key(user_id, project_id) and active.kind == "pipeline_stage" and active.status == "running":
+                active.payload["stage"] = stage
+                persist_generation_job(request.app, active)
     started = time.perf_counter()
     capture_server_event(
         "stage_started",
@@ -185,7 +191,7 @@ async def _run_stage_with_credits(
                     raise ValueError("queueing Draw pages requires an active request")
                 from .pages import enqueue_all_undrawn_pages
 
-                enqueue_all_undrawn_pages(
+                await enqueue_all_undrawn_pages(
                     request,
                     project_id=project_id,
                     user_id=user_id,
@@ -272,9 +278,20 @@ async def _run_stage_with_credits(
             user_id,
             project_id,
             rerun=False,
+            request=request,
         )
         if state.stages[next_stage].status != StageStatus.COMPLETE:
             break
+
+
+def _enqueue_pipeline(app, pkey, user_id, project_id, project_dir, config, stage,
+                      *, rerun=False, queue_pages=False):
+    from ..generation_jobs import enqueue_generation_job
+    from ..job_commands import command
+    descriptor = command("pipeline", project_dir, config, rerun=rerun, queue_pages=queue_pages)
+    descriptor = descriptor.model_copy(update={"stage": stage, "user_id": user_id, "project_id": project_id})
+    return enqueue_generation_job(app, pkey, "pipeline_stage", stage,
+                                  {"stage": stage}, None, user_id=user_id, command=descriptor)
 
 
 async def _run_job(
@@ -404,8 +421,8 @@ async def _start_stage(
         from .pages import prepare_undrawn_pages
 
         try:
-            prepare_undrawn_pages(
-                project_dir=project_dir, config=config, rerun=rerun,
+            await asyncio.to_thread(
+                prepare_undrawn_pages, project_dir=project_dir, config=config, rerun=rerun,
             )
         except (ArtifactMissing, ValueError) as exc:
             raise HTTPException(409, {
@@ -440,6 +457,10 @@ async def _start_stage(
         assert_sufficient_credits(get_db(), user_id, required, stage=stage)
     queue = EventChannel()
     request.app.state.event_queues[pkey] = queue
+    if getattr(request.app.state, "durable_queue_required", False) is True:
+        admitted = _enqueue_pipeline(request.app, pkey, user_id, project_id, project_dir,
+                                     config, stage, rerun=rerun, queue_pages=queue_pages)
+        return {"status": "started", "stage": stage, "job": generation_job_payload(request.app, admitted)}
     job = _run_stage_with_credits(
         stage,
         config,
@@ -550,12 +571,21 @@ def get_generation_jobs(
         if ids is None or job["id"] in ids
     ]
     payloads = recovered + [generation_job_payload(request.app, job) for job in jobs]
-    _mark_current_page_jobs(TargetArtifacts(project[0]), payloads)
+    _mark_current_page_jobs(TargetArtifacts(project[0]), payloads, {
+        job.id: job.command.arguments["request"]
+        for job in jobs
+        if job.command is not None and job.command.operation == "page_draw"
+        and "request" in job.command.arguments
+    })
     return {"jobs": payloads}
 
 
-def _mark_current_page_jobs(target: TargetArtifacts, jobs: list[dict]) -> None:
+def _mark_current_page_jobs(
+    target: TargetArtifacts, jobs: list[dict], admitted_requests: dict[str, dict] | None = None,
+) -> None:
     """Keep job history, but bind page status to the actual frozen page input."""
+    from novel_to_comic.models.draw import FrozenPageGenerationRequest
+
     current_requests: dict[int, set[str]] = {}
     for job in jobs:
         if job["kind"] != "complete_page_draw":
@@ -579,7 +609,22 @@ def _mark_current_page_jobs(target: TargetArtifacts, jobs: list[dict]) -> None:
                     continue
                 if not frozen.is_stale_for(page):
                     hashes.add(frozen.request_sha256)
-        job["is_current_page"] = payload.get("request_sha256") in current_requests[page_number]
+        admitted = (admitted_requests or {}).get(job["id"])
+        if admitted is not None:
+            # Queued commands already own immutable inputs; the request artifact
+            # is only written when execution starts. Do not hide the waiting jobs.
+            try:
+                frozen = FrozenPageGenerationRequest.model_validate(admitted)
+                page = target.read_page(page_number)
+            except (ValueError, ArtifactMissing, ArtifactInvalid):
+                continue
+            job["is_current_page"] = (
+                frozen.page_number == page_number
+                and frozen.request_sha256 == payload.get("request_sha256")
+                and not frozen.is_stale_for(page)
+            )
+        else:
+            job["is_current_page"] = payload.get("request_sha256") in current_requests[page_number]
 
 
 @router.post("/approve/{stage}")
@@ -594,10 +639,10 @@ async def approve(
     if stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}")
     if stage == "cast":
-        from novel_to_comic.cast_design import review_status
-        from novel_to_comic import artifacts
-        if artifacts.read_story_bible(project_dir).characters and review_status(config, project_dir)["status"] != "current":
-            raise HTTPException(409, "Compare the current character references before approving Cast. Resume Cast to run its visual review.")
+        from novel_to_comic.stages.s3_cast import cast_approval_blocker
+        blocker = cast_approval_blocker(config, project_dir, state.stages["cast"])
+        if blocker:
+            raise HTTPException(409, {"code": "cast_approval_rejected", "message": blocker})
     if stage == "draw":
         from novel_to_comic.page_review import summarize_page_issues
 
@@ -664,17 +709,20 @@ async def approve(
             raise HTTPException(409, "A stage is already running for this project")
         queue = EventChannel()
         request.app.state.event_queues[pkey] = queue
-        job = _run_stage_with_credits(
-            "adapt",
-            config,
-            project_dir,
-            state,
-            queue,
-            user_id,
-            project_id,
-        )
-        task = asyncio.create_task(_run_job(pkey, user_id, request, job))
-        request.app.state.running_tasks[pkey] = task
+        if getattr(request.app.state, "durable_queue_required", False) is True:
+            _enqueue_pipeline(request.app, pkey, user_id, project_id, project_dir, config, "adapt")
+        else:
+            job = _run_stage_with_credits(
+                "adapt",
+                config,
+                project_dir,
+                state,
+                queue,
+                user_id,
+                project_id,
+            )
+            task = asyncio.create_task(_run_job(pkey, user_id, request, job))
+            request.app.state.running_tasks[pkey] = task
         response["auto_started"] = "adapt"
     return response
 

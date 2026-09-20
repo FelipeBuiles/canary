@@ -22,6 +22,7 @@ export interface StyleSuggestion {
   sample_preview_url?: string | null;
   lettering_source?: "generated" | "preset";
   has_sample: boolean;
+  generation_status?: "not_requested" | "queued" | "running" | "complete" | "failed";
   sample_stale: boolean;
   has_style_reference: boolean;
   has_validation: boolean;
@@ -30,6 +31,7 @@ export interface StyleSuggestion {
 }
 
 export interface StylesData {
+  is_generating?: boolean;
   suggestions: StyleSuggestion[];
   active_index: number | null;
   active_id: string | null;
@@ -75,7 +77,7 @@ export function getStyles(project: string): Promise<StylesData> {
   return apiFetch(`/projects/${encodeURIComponent(project)}/styles`);
 }
 
-export function suggestStyles(project: string, directionId?: string): Promise<{ status: string }> {
+export function suggestStyles(project: string, directionId?: string): Promise<{ status: string; job?: GenerationJob }> {
   return apiFetch(`/projects/${encodeURIComponent(project)}/styles/suggest`, {
     method: "POST",
     body: directionId ? JSON.stringify({ direction_id: directionId }) : undefined,

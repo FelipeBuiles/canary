@@ -1041,10 +1041,10 @@ export function CastRoom() {
   const stageRegenerating = isCastStageRunning;
   const stageInfo = status?.stages?.cast;
   const stageStatus = stageInfo?.status ?? "pending";
-  const checkpointAction = getCastCheckpointAction(stageStatus);
+  const checkpointAction = getCastCheckpointAction(stageStatus, stageInfo?.approval_blocker);
   const isStageStuck = !!stageInfo?.stale;
   const lastProgressAt = stageInfo?.last_progress_at ?? null;
-  const needsApproval = stageStatus === "awaiting_review";
+  const needsApproval = checkpointAction === "approve";
   const canStartCast = stageStatus === "pending";
   const { data: castResumeEstimate } = useStageEstimate(id, "cast", !isCastStageRunning);
 
@@ -1242,7 +1242,7 @@ export function CastRoom() {
       <ApprovalBar
         next={canStartCast ? t("Start the character and place references when you are ready")
           : checkpointAction === "resume"
-          ? "Some cast references did not finish — resume from the missing images"
+          ? stageInfo?.approval_blocker ?? "Some cast references did not finish — resume from the missing images"
           : needsApproval
           ? "Scenewright adapts the book and plans complete pages — automatically"
           : stageStatus === "complete"

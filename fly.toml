@@ -18,6 +18,8 @@ kill_timeout = '30s'
   CANARY_COOKIE_SECURE = 'true'
   CANARY_ENV = 'production'
   CANARY_GENERATION_JOB_TIMEOUT_SECONDS = '900'
+  CANARY_BATCH_JOB_TIMEOUT_SECONDS = '7200'
+  # CANARY_QUEUE_DATABASE_URL is a secret pointing at the dedicated queue DB.
   CANARY_GENERATION_WORKERS = '5'
   CANARY_LABS_ENABLED = 'false'
   CANARY_OTEL_ENABLED = 'false'

@@ -37,6 +37,7 @@ export interface InFlightPage {
 }
 
 export interface StageInfo {
+  approval_blocker?: string | null;
   status: StageStatus;
   items_done: number;
   items_total: number;
@@ -74,6 +75,7 @@ export interface ProjectSummary {
 }
 
 export interface ProjectStatus {
+  active_jobs?: GenerationJob[];
   id: string;
   project_name: string;
   created_at: string;
@@ -197,6 +199,7 @@ export interface PipelineEvent {
 export type GenerationJobStatus = "queued" | "running" | "complete" | "failed";
 
 export interface GenerationJob {
+  stage?: StageName;
   id: string;
   project_name: string;
   kind: string;
@@ -211,7 +214,7 @@ export interface GenerationJob {
   classification?: string | null;
   user_message?: string | null;
   recoverable?: boolean | null;
-  phase?: "generation" | "analysis" | null;
+  phase?: "generation" | "analysis" | "ambiguous_submission" | "outcome_unknown" | null;
   is_current_page?: boolean;
 }
 

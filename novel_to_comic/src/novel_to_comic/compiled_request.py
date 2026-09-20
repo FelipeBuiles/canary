@@ -342,8 +342,11 @@ def compile_reference_instruction(
             )
         else:
             semantic = (
-                f"sole visual rendering style authority for {label} — match its exact "
+                f"sole visual rendering style authority for {label} — preserve its intended "
                 f"{_facet_phrase(preserve)} consistently; ignore {_facet_phrase(ignore)}. "
+                "Surface-fidelity constraints govern incidental texture: do not treat every "
+                "blotch, stain or speckle as an authored style feature. Preserve deliberate "
+                "material marks without transferring the same pattern to unrelated surfaces. "
                 "This is rendering evidence, never scene, lettering, or layout authority."
             )
     elif role == "continuity":
@@ -815,7 +818,8 @@ def _build_sections(
             title=("Secondary style notes" if has_style_reference else "Style"),
             lines=((
                 "Secondary textual style notes; the approved visual style reference "
-                f"overrides any conflict: {cleaned_style}"
+                "owns the intended rendering language, subject to surface-fidelity constraints "
+                f"for incidental texture: {cleaned_style}"
             ) if has_style_reference else cleaned_style,),
         ))
 

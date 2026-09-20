@@ -68,6 +68,9 @@ def test_hybrid_policy_changes_prompt_hash_not_refs_profile_or_old_frozen_reques
     assert payload["project_style_direction"].startswith(style)
     assert "LETTERING STANDARD" not in payload["project_style_direction"]
     assert "Draw NO speech or thought balloons" in current.request.prompt
+    assert "they do not prescribe an additional surface-texture layer" in current.request.prompt
+    assert "Preserve authored markings and deliberate medium texture" in current.request.prompt
+    assert args[2].references[0].visual_anchor in current.request.prompt
 
 
 def test_correction_keeps_parent_and_explicit_cleanup_scope(tmp_path):

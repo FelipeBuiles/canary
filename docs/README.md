@@ -35,6 +35,9 @@ retained as current reference.
 
 ## Current contracts and capability evidence
 
+- [Durable job queue](reference/job-queue.md): Procrastinate setup, execution
+  ownership, restart/retry contracts and provider-free integration checks.
+
 - [Dependency maintenance](reference/dependencies.md): lockfile authorities,
   supported version lines, upgrade contracts, and operational rollout checks.
 - [Stage contracts](reference/stage-contracts.md): source-owned stage authority,

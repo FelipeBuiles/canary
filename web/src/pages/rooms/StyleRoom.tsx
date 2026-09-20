@@ -90,10 +90,11 @@ export function StyleRoom() {
   const generateValidation = useGenerateStyleValidation();
   const { data: generationJobs } = useGenerationJobs(
     id,
-    Object.values(useStyleJobIds(projectName)),
+    [], true,
   );
   const [validationJobs, setValidationJobs] = useState<Record<string, string>>({});
   const { data: validationJobResults } = useGenerationJobs(id, Object.values(validationJobs));
+  const trackedJobIds = useStyleJobIds(projectName);
   const pendingSet = usePendingIndices(projectName);
   const styleJobStatuses = useStyleJobStatuses(projectName);
   const { add, attachJobs, updateJob, remove } = useStyleGenStore();
@@ -102,6 +103,7 @@ export function StyleRoom() {
   const clearEvents = usePipelineStore((s) => s.clearEvents);
   const [letteringOpen, setLetteringOpen] = useState(false);
   const [sampleError, setSampleError] = useState<string | null>(null);
+  const [suggestionJobId, setSuggestionJobId] = useState<string | null>(null);
   const [suggestionStatus, setSuggestionStatus] = useState<"idle" | "running" | "failed">("idle");
   const [suggestionError, setSuggestionError] = useState<string | null>(null);
   const [showSuggestConfirm, setShowSuggestConfirm] = useState(false);
@@ -132,7 +134,10 @@ export function StyleRoom() {
   const generateCover = useGenerateProjectCover();
   const { data: coverEstimate } = useProjectCoverEstimate(id, styleSelected && castReady && needsCover);
 
-  const isSuggesting = suggestionStatus === "running";
+  const latestSuggestionJob = generationJobs?.jobs.filter((job) => job.kind === "style_suggest")
+    .sort((a, b) => a.queued_at.localeCompare(b.queued_at)).at(-1);
+  const isSuggesting = !!stylesData?.is_generating || latestSuggestionJob?.status === "running"
+    || latestSuggestionJob?.status === "queued" || suggestionStatus === "running";
   const styleActionsDisabled = letteringOpen || isStageGenerating || isSuggesting || suggestStyles.isPending || createStyleDirection.isPending;
   const { data: suggestEstimate, error: suggestEstimateError, refetch: refetchSuggestEstimate } = useSuggestStylesEstimate(id, !isSuggesting);
   const { data: directionEstimate, error: directionEstimateError, refetch: refetchDirectionEstimate } = useStyleDirectionEstimate(id, !createStyleDirection.isPending);
@@ -149,10 +154,11 @@ export function StyleRoom() {
     clearEvents();
     setSuggestionStatus("running");
     setSuggestionError(null);
+    setSampleError(null);
     suggestStyles.mutate(
       { project: projectName, directionId },
       {
-        onSuccess: () => connect(projectName),
+        onSuccess: (data) => { setSuggestionJobId(data.job?.id ?? null); connect(projectName); },
         onError: (err) => {
           setSuggestionStatus("failed");
           setSuggestionError(err.message);
@@ -165,6 +171,7 @@ export function StyleRoom() {
     if (!projectName || !generationJobs?.jobs.length) return;
     const timer = window.setTimeout(() => {
       for (const job of generationJobs.jobs) {
+        if (!Object.values(trackedJobIds).includes(job.id)) continue;
         const index = Number(job.payload.index);
         if (!Number.isFinite(index)) continue;
         if (job.status === "complete") {
@@ -180,7 +187,7 @@ export function StyleRoom() {
       }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [generationJobs, projectName, refetchStyles, remove, updateJob]);
+  }, [generationJobs, projectName, refetchStyles, remove, updateJob, trackedJobIds]);
 
   useEffect(() => {
     if (!validationJobResults?.jobs.length) return;
@@ -199,6 +206,17 @@ export function StyleRoom() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [refetchStyles, t, validationJobResults]);
+
+  useEffect(() => {
+    const job = generationJobs?.jobs.find((item) => item.id === suggestionJobId);
+    if (!job || (job.status !== "complete" && job.status !== "failed")) return;
+    const timer = window.setTimeout(() => {
+      setSuggestionStatus(job.status === "complete" ? "idle" : "failed");
+      setSuggestionError(job.status === "failed" ? job.user_message ?? job.error : null);
+      refetchStyles();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [generationJobs, suggestionJobId, refetchStyles]);
 
   // Track the suggest-more-styles SSE job: it streams stage_complete /
   // stage_fail under the "style_suggest" stage tag.
@@ -552,10 +570,10 @@ export function StyleRoom() {
                     key={suggestion.id}
                     suggestion={suggestion}
                     projectName={id}
-                    isGenerating={pendingSet.has(suggestion.index)}
+                    isGenerating={pendingSet.has(suggestion.index) || suggestion.generation_status === "queued" || suggestion.generation_status === "running"}
                     generationDisabled={styleActionsDisabled}
-                    selectionDisabled={isStageGenerating || letteringOpen}
-                    queueState={pendingSet.has(suggestion.index) ? styleJobStatuses[suggestion.index] ?? "queued" : null}
+                    selectionDisabled={letteringOpen}
+                    queueState={suggestion.generation_status === "queued" || suggestion.generation_status === "running" ? suggestion.generation_status : pendingSet.has(suggestion.index) ? styleJobStatuses[suggestion.index] ?? "queued" : null}
                     fallbackPrompt={buildFallbackStyleSamplePrompt(suggestion, storyBible)}
                     fallbackParameters={{
                       width: projectConfig?.image_width,

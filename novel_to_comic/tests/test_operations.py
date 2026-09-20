@@ -97,7 +97,8 @@ def test_resume_requires_ready_dependencies_and_ops_auth(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     from novel_to_comic.server import app as module
     monkeypatch.setenv("CANARY_OPS_TOKEN", "secret")
-    app = module.create_app(tmp_path, dev=True)
+    from tests.queue_fixtures import create_app
+    app = create_app(tmp_path, dev=True)
     client = TestClient(app)
     app.state.admission.set_draining(True)
     monkeypatch.setattr(module, "_readiness_result", lambda: (False, {}))
@@ -120,7 +121,8 @@ def test_dependency_outage_keeps_liveness_and_closes_admission(tmp_path, monkeyp
     def unavailable(_): raise RuntimeError("database offline")
     monkeypatch.setattr("novel_to_comic.server.credits.start_reservation_leases", unavailable)
     monkeypatch.setattr("novel_to_comic.server.credits.stop_reservation_leases", lambda: None)
-    app = module.create_app(tmp_path, dev=True)
+    from tests.queue_fixtures import create_app
+    app = create_app(tmp_path, dev=True)
     app.dependency_overrides[get_current_user] = lambda: "account"
     with TestClient(app) as client:
         assert client.get("/api/health").status_code == 200

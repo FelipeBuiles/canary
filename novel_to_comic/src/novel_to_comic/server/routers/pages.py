@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from novel_to_comic.server.codex_admission import visual_review_operations
 
+import asyncio
 import uuid
 import hashlib
 from typing import Literal
@@ -319,7 +320,7 @@ def prepare_undrawn_pages(*, project_dir, config, rerun: bool = False):
     return target, adapter, prepared
 
 
-def enqueue_all_undrawn_pages(
+async def enqueue_all_undrawn_pages(
     request: Request,
     *,
     project_id: str,
@@ -329,8 +330,8 @@ def enqueue_all_undrawn_pages(
     rerun: bool = False,
 ):
     """Queue missing pages, or explicit replacement revisions without deletion."""
-    target, adapter, prepared = prepare_undrawn_pages(
-        project_dir=project_dir, config=config, rerun=rerun,
+    target, adapter, prepared = await asyncio.to_thread(
+        prepare_undrawn_pages, project_dir=project_dir, config=config, rerun=rerun,
     )
     # Estimation can select an ephemeral first edition; submission requires
     # Draw initialization to have durably pinned it first.
@@ -341,10 +342,9 @@ def enqueue_all_undrawn_pages(
     jobs = []
 
     for page_number, page, compiled in prepared:
-        if queue is not None:
-            queue.put_nowait(
-                {"type": "page_start", "stage": "draw", "page_number": page_number}
-            )
+        # Keep dispatch/heartbeats responsive during large batches. Publication
+        # stays on the event loop because it owns the in-memory job registry.
+        await asyncio.sleep(0)
         job, _created = enqueue_complete_page_draw(
             request.app,
             project_name=pkey,
@@ -364,6 +364,10 @@ def enqueue_all_undrawn_pages(
             ),
         )
         jobs.append(job)
+        if queue is not None:
+            queue.put_nowait(
+                {"type": "page_start", "stage": "draw", "page_number": page_number}
+            )
 
     return tuple(jobs)
 

@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from novel_to_comic.config import Config
 from novel_to_comic.server import metrics
-from novel_to_comic.server.app import create_app
+from tests.queue_fixtures import create_app
 from novel_to_comic.server.routers import pipeline
 from novel_to_comic.state import StageStatus, create_initial_state
 from novel_to_comic.server.product_events import (
