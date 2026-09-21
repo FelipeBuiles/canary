@@ -1,4 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
+import { LETTERING_CHOICE_TEXT } from "./letteringChoiceTranslations";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { StageName, StageStatus } from "./types/api";
@@ -16,6 +17,19 @@ const STORAGE_KEY = "canary.uiLanguage";
 const TEXT: Record<LanguageCode, Record<string, string>> = {
   en: {},
   es: {
+    ...LETTERING_CHOICE_TEXT.es,
+    "CREDIT HISTORY": "HISTORIAL DE CRÉDITOS",
+    "Credits used by this book across every edition and revision. Open an activity to see its hold, final charge, and released credits.": "Créditos usados por este libro en todas sus ediciones y revisiones. Abre una actividad para ver la reserva, el cargo final y los créditos liberados.",
+    "View all credit history": "Ver todo el historial de créditos",
+    "Open holds are still reserved. They are separate from final charges.": "Las reservas abiertas siguen apartadas. Son independientes de los cargos finales.",
+    "Credit history could not be loaded.": "No se pudo cargar el historial de créditos.",
+    "Retry credit history": "Reintentar el historial de créditos",
+    "No credit activity has been recorded for this book yet.": "Aún no se ha registrado actividad de créditos para este libro.",
+    "Generation charge": "Cargo de generación",
+    "Draw complete page": "Dibujar página completa",
+    "Estimated hold": "Reserva estimada",
+    "Final charge": "Cargo final",
+    "Released": "Liberados",
     "Character identity review": "Revisión de identidad de personajes",
     "Could not load the cast review. Refresh to try again.": "No se pudo cargar la revisión del reparto. Actualiza para volver a intentarlo.",
     "Loading cast review…": "Cargando revisión del reparto…",
@@ -1845,6 +1859,19 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
     "AWAITING REVIEW": "PENDIENTE DE REVISIÓN",
   },
   fr: {
+    ...LETTERING_CHOICE_TEXT.fr,
+    "CREDIT HISTORY": "HISTORIQUE DES CRÉDITS",
+    "Credits used by this book across every edition and revision. Open an activity to see its hold, final charge, and released credits.": "Crédits utilisés par ce livre pour toutes ses éditions et révisions. Ouvrez une activité pour voir sa réserve, son débit final et les crédits libérés.",
+    "View all credit history": "Voir tout l’historique des crédits",
+    "Open holds are still reserved. They are separate from final charges.": "Les réserves ouvertes restent mises de côté. Elles sont distinctes des débits finaux.",
+    "Credit history could not be loaded.": "Impossible de charger l’historique des crédits.",
+    "Retry credit history": "Réessayer l’historique des crédits",
+    "No credit activity has been recorded for this book yet.": "Aucune activité de crédits n’a encore été enregistrée pour ce livre.",
+    "Generation charge": "Débit de génération",
+    "Draw complete page": "Dessiner la page complète",
+    "Estimated hold": "Réserve estimée",
+    "Final charge": "Débit final",
+    "Released": "Libérés",
     "Character identity review": "Vérification de l’identité des personnages",
     "Could not load the cast review. Refresh to try again.": "Impossible de charger la vérification. Actualisez pour réessayer.",
     "Loading cast review…": "Chargement de la vérification…",

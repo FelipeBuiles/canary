@@ -187,6 +187,8 @@ class Config(BaseModel):
 
     # Output language for generated book text and visual assets.
     target_language: str = "en"
+    # Creation choice. Existing editions retain their frozen capability profile.
+    lettering_mode: Literal["editable", "integrated"] = "editable"
 
     # Dev/demo mode lowers image generation resolution/steps where supported.
     dev_mode: bool = False
@@ -412,6 +414,7 @@ dev_model_selections: {json.dumps(config.dev_model_selections)}
 
 # Generated text language: en | es | fr
 target_language: "{config.language_code()}"
+lettering_mode: "{config.lettering_mode}"
 
 # Dev/demo mode trades image fidelity for iteration speed.
 # When enabled, generated images use scaled-down dimensions and fewer

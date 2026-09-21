@@ -35,6 +35,16 @@ def read_checkpointed_response(*, artifacts, stage, model, request) -> ApiResult
     return None
 
 
+def discard_checkpointed_response(*, artifacts, stage, model, request) -> None:
+    """Do not replay a response already rejected by the owning validator.
+
+    Only completed structured responses are removed. Transport errors never
+    reach this path and therefore never authorize an ambiguous resubmission.
+    """
+    path, _ = _checkpoint_location(artifacts, stage, model, request)
+    path.unlink(missing_ok=True)
+
+
 def checkpointed_generator(
     generate: Callable[..., Awaitable[ApiResult[Any]]],
     *,

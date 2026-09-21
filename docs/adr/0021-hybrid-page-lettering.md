@@ -1,6 +1,7 @@
 # ADR 0021: Full-page base art and independent lettering
 
-Status: Accepted, implemented 2026-09-15. Supersedes the baked-lettering part
+Status: Accepted, implemented 2026-09-15. New-project mode selection is superseded
+by [ADR 0022](0022-project-lettering-choice.md). Supersedes the baked-lettering part
 of the full-page Draw contract, not full-page generation or stage ownership.
 
 ## Prior contract

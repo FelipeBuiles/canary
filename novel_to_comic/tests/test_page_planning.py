@@ -2434,7 +2434,8 @@ def test_pages_must_cite_the_canonical_book_adaptation_revision() -> None:
     )
 
 
-def test_a_schema_slip_in_the_plan_draft_is_repaired_not_fatal(tmp_path: Path) -> None:
+@pytest.mark.parametrize("semantic_first", [False, True])
+def test_a_schema_slip_in_the_plan_draft_is_repaired_not_fatal(tmp_path: Path, semantic_first) -> None:
     adaptation = _adaptation()
     page = {
         "page_number": 1,
@@ -2473,6 +2474,12 @@ def test_a_schema_slip_in_the_plan_draft_is_repaired_not_fatal(tmp_path: Path) -
         },
         {"rhythm_summary": "approach → escape", "pages": [page]},
     ]
+    if semantic_first:
+        from copy import deepcopy
+        incomplete = deepcopy(responses[-1])
+        incomplete["pages"][0]["content"][0]["lettering_ids"] = ["lettering_0001"]
+        incomplete["pages"][0]["reading_order"] = ["page_001_content_001", "lettering_0001"]
+        responses.insert(0, incomplete)
     calls: list[dict] = []
 
     async def generate(**request):
@@ -2511,8 +2518,10 @@ def test_a_schema_slip_in_the_plan_draft_is_repaired_not_fatal(tmp_path: Path) -
     )
 
     assert len(plan.pages) == 1
-    assert len(calls) == 2
-    assert "VALIDATION ERRORS" in calls[1]["user_content"]
+    assert len(calls) == 2 + semantic_first
+    assert "VALIDATION ERRORS" in calls[-1]["user_content"]
+    if semantic_first:
+        assert "BLOCKING CONTRACT FAILURES" in calls[-1]["user_content"]
 
 
 def test_plan_authored_issue_ownership_is_canonicalized_without_a_retry(
@@ -3636,3 +3645,54 @@ def test_invalid_detail_destination_gets_one_bounded_correction(tmp_path):
     assert len(calls) == 2
     assert error.value.validation.invariant_failures[0].code == "beat_allocation"
     assert "targets panel 5" in error.value.validation.invariant_failures[0].evidence[0]
+
+
+@pytest.mark.parametrize("resume_after_failure", [False, True])
+def test_detail_schema_repair_preserves_allocation_feedback_and_resume_progress(tmp_path, resume_after_failure):
+    from copy import deepcopy
+    from novel_to_comic.generation_checkpoints import checkpointed_generator
+    from novel_to_comic.page_planning import _generate_detail_batch
+
+    adaptation, mapped, raw = _assigned_detail_fixture()
+    page_map = _BookPageMap(rhythm_summary="Two events.", pages=(mapped,))
+    artifacts = TargetArtifacts(tmp_path)
+    calls = []
+    resumed = False
+
+    async def generate(**request):
+        calls.append(request)
+        value = deepcopy(raw)
+        if resume_after_failure and not resumed:
+            value["pages"][0]["lettering_placements"][mapped.lettering_ids[-1]]["panel_number"] = 5
+        elif not resumed and len(calls) in (1, 3):
+            value["pages"][0]["density_intent"] = "invalid-enum"
+        elif not resumed and len(calls) == 2:
+            value["pages"][0]["lettering_placements"][mapped.lettering_ids[-1]]["panel_number"] = 5
+        return ApiResult(value=value)
+
+    def run():
+        return asyncio.run(_generate_detail_batch(
+            adaptation, _inventory(), page_map, start=0, stop=1,
+            generate=checkpointed_generator(generate, artifacts=artifacts, stage="plan", model="test"),
+            ctx=StageRuntime("plan", PipelineState(project_name="repair", novel_path="novel.txt",
+                             created_at=datetime.now(timezone.utc)), tmp_path),
+            artifacts=artifacts, model="test",
+        ))
+
+    if resume_after_failure:
+        with pytest.raises(PlanInvariantError):
+            run()
+        assert len(calls) == 2
+        resumed = True
+        draft = run()
+        assert len(calls) == 3
+    else:
+        draft = run()
+        assert len(calls) == 4
+        assert "targets panel 5" in calls[-1]["user_content"]
+        assert "VALIDATION ERRORS" in calls[-1]["user_content"]
+    assert _detail_matches_map(draft, (mapped,)) == ()
+    # The now-valid response is reused on a later run.
+    if resume_after_failure:
+        assert run() == draft
+        assert len(calls) == 3

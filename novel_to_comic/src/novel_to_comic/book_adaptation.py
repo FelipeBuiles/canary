@@ -46,10 +46,9 @@ from novel_to_comic.usage import ApiResult, estimate_text_cost
 
 
 _MAX_ADAPT_ATTEMPTS = 2
-# A normal adaptation gets one bounded repair.  Editorial review happens after
-# that repair, however, so the repaired prose can expose a *different* reader
-# facing defect.  Allow one final, review-only correction in that narrow case
-# instead of making the author manually restart the stage.
+# A normal adaptation gets one bounded repair. Allow a final correction only
+# when blocking codes decrease or a changed narrative-review finding appears.
+# Repeated or newly introduced structural failures do not extend the loop.
 _MAX_ADAPT_VALIDATION_ATTEMPTS = _MAX_ADAPT_ATTEMPTS + 1
 _ADAPT_SHARD_MAX_UNITS = 180
 _ADAPT_MAX_CONCURRENCY = 4
@@ -934,6 +933,29 @@ def _protected_language_key(text: str) -> str:
     return wording.strip().strip('"“”«»').strip()
 
 
+def _contains_protected_language(text: str, phrase: str) -> bool:
+    """Match wording, allowing only the initial case change of an excerpt.
+
+    The Brief may capitalize a clause lifted from mid-sentence. Interior case,
+    punctuation and words remain significant; neither authority is rewritten.
+    """
+    wording, excerpt = _protected_language_key(text), _protected_language_key(phrase)
+    if not excerpt:
+        return False
+    initial = "(?:" + "|".join(re.escape(c) for c in {excerpt[0].lower(), excerpt[0].upper()}) + ")"
+    return re.search(r"(?<!\w)" + initial + re.escape(excerpt[1:]) + r"(?!\w)", wording) is not None
+
+
+def _protected_language_obligations(source, brief, source_ids):
+    owned = set(source_ids)
+    return [
+        {"text": phrase, "source_unit_ids": matches}
+        for phrase in brief.protected_language
+        if (matches := [unit.id for unit in source.units if unit.id in owned
+                        and _contains_protected_language(_protected_source_key(unit.text), phrase)])
+    ]
+
+
 def _quoted_source_wording(text: str) -> tuple[str, ...]:
     """Return publishable wording enclosed in straight or curly double quotes."""
 
@@ -992,8 +1014,9 @@ def _materialize_protected_lettering(
             and item.text in protected
             and any(
                 source_id in source_by_id
-                and _protected_language_key(item.text)
-                in _protected_source_key(source_by_id[source_id].text)
+                and _contains_protected_language(
+                    _protected_source_key(source_by_id[source_id].text), item.text
+                )
                 for source_id in item.source_unit_ids
             )
             else item
@@ -1028,14 +1051,13 @@ def _materialize_protected_lettering(
     }
     for phrase in brief.protected_language:
         phrase_key = _protected_language_key(phrase)
-        if any(phrase_key in existing for existing in existing_keys):
+        if any(_contains_protected_language(existing, phrase) for existing in existing_keys):
             continue
         source_unit = next(
             (
                 unit
                 for unit in source.units
-                if phrase in unit.text
-                or phrase_key in _protected_source_key(unit.text)
+                if _contains_protected_language(_protected_source_key(unit.text), phrase)
             ),
             None,
         )
@@ -1470,6 +1492,35 @@ def _book_scene_outline(source: SourceDocument, story_bible: StoryBible) -> list
     ]
 
 
+_PROTECTED_LANGUAGE_GUIDANCE = (
+    "protected_language_obligations locates protected wording in this source scope. "
+    "Keep a source-backed beat for each obligation and realize its wording in "
+    "the final lettering, with its source citation. Do not omit it or replace "
+    "it with a summary. Initial excerpt capitalization may differ from the "
+    "source; preserve all words and interior capitalization. "
+)
+
+
+_NARRATION_THOUGHT_GUIDANCE = (
+    "Classify caption versus thought by the source's narrative role and surrounding "
+    "context, not grammatical person. First-person pronouns (I, me, my, we), "
+    "present tense, emotional language, and an identifiable narrator are not "
+    "evidence of a thought. First-person storytelling, recollection, exposition, "
+    "and commentary addressed to the reader remain kind='caption' with narration "
+    "presentation/delivery, even when the narrator is visible in the scene. "
+    "Third-person narration about feelings also remains a caption. Use kind='thought' "
+    "only when the source context establishes a specific character's unspoken, "
+    "in-the-moment inner words (for example, explicit thinking attribution or "
+    "clearly established interior monologue), with an identified thinker. "
+    "An identified speaker alone is insufficient. 'I felt warm that summer' in "
+    "a narrator's recollection is a caption; 'I feel warm' in ongoing first-person "
+    "narration is also a caption; 'I must hide, she thought as the door opened' "
+    "supports the thought 'I must hide.' Thoughts need not contain 'I'. "
+    "When ambiguous, preserve narration as a caption. Do not rewrite narration "
+    "into first person to justify a thought bubble. "
+)
+
+
 def build_book_adaptation_prompt(
     source: SourceDocument,
     story_bible: StoryBible,
@@ -1503,6 +1554,7 @@ def build_book_adaptation_prompt(
             scene_ids=scene_ids,
         ),
         "approved_adaptation_brief": _brief_view(brief),
+        "protected_language_obligations": _protected_language_obligations(source, brief, primary_ids),
         "approved_requirement_registry": _requirement_registry(brief),
         "narrative_treatment": _treatment_view(treatment),
     }
@@ -1585,7 +1637,8 @@ def build_book_adaptation_prompt(
         "misclassify quoted prose as dialogue by a present character. SFX uses "
         "delivery='display'. Never use a slash-separated or combined speaker to "
         "stand for multiple possible owners. "
-        "Cite source-unit provenance. Do not restate the full source ledger: code "
+        + _NARRATION_THOUGHT_GUIDANCE
+        + "Cite source-unit provenance. Do not restate the full source ledger: code "
         "derives depicted, dialogue, thought, and caption dispositions from beats "
         "and lettering. Author ledger_exceptions only for "
         "visual_motif, compressed_into, or intentionally_omitted source units. Group "
@@ -1602,6 +1655,7 @@ def build_book_adaptation_prompt(
         "create scene-parallel screenplays or reconciliation work. Return one JSON "
         "object containing only beats and ledger_exceptions. "
         + _LEDGER_EXCEPTION_CONTRACT
+        + _PROTECTED_LANGUAGE_GUIDANCE
         + _SCENE_SCOPE_CONTRACT
         + ADAPT_DEPICTION_GUIDANCE
         + "\n"
@@ -1643,6 +1697,7 @@ def build_adaptation_blueprint_prompt(
         "story_bible": _story_bible_view(story_bible, scene_ids=scene_ids),
         "scene_obligations": _scene_obligations(story_bible, scene_ids=scene_ids),
         "approved_adaptation_brief": _brief_view(brief),
+        "protected_language_obligations": _protected_language_obligations(source, brief, primary_source_unit_ids),
         "approved_requirement_registry": _requirement_registry(brief),
         "narrative_treatment": _treatment_view(treatment),
     }
@@ -1691,6 +1746,7 @@ def build_adaptation_blueprint_prompt(
         "Every exception destination must be a beat ID present in this response, "
         "never a future shard or an unspecified range. "
         + _LEDGER_EXCEPTION_CONTRACT
+        + _PROTECTED_LANGUAGE_GUIDANCE
         + _SCENE_SCOPE_CONTRACT
         + ADAPT_DEPICTION_GUIDANCE
         + "\n"
@@ -1731,6 +1787,7 @@ def build_locked_lettering_prompt(
         "book_scene_outline": _book_scene_outline(source, story_bible),
         "story_bible": _story_bible_view(story_bible, scene_ids=scene_ids),
         "approved_adaptation_brief": _brief_view(brief),
+        "protected_language_obligations": _protected_language_obligations(source, brief, primary_source_unit_ids),
         "narrative_treatment": _treatment_view(treatment),
         "locked_blueprint": (blueprint.model_dump(mode="json") if blueprint is not None
                              else {"estimate_only": "Blueprint not generated yet."}),
@@ -1747,12 +1804,9 @@ def build_locked_lettering_prompt(
         "dialogue/thought requires speaker (the precise character name) and "
         "speaker_entity_id (that character's exact Story Bible ID). Include "
         "kind, text, speaker, speaker_entity_id, presentation, and source_unit_ids on every item, using null for "
-        "speaker fields only when no character speaks. Third-person narration "
-        "about a character's feelings is kind='caption', presentation='narration'; "
-        "do not label it thought merely because it describes an emotion. "
-        "For example, 'She felt warm.' is narration, while 'I feel warm.' can "
-        "be a thought only with an identified speaker. "
-        "presentation specifies how the words appear on the page, never tone or acting "
+        "speaker fields only when no character speaks. "
+        + _NARRATION_THOUGHT_GUIDANCE
+        + "presentation specifies how the words appear on the page, never tone or acting "
         "direction. Values such as 'listless', 'quiet, sincere', or 'whisper' are invalid. "
         "Use exactly onscreen, offscreen, narration, quoted_text, or display. "
         "off-panel voices use offscreen; narration uses narration; quoted prose, "
@@ -1761,6 +1815,7 @@ def build_locked_lettering_prompt(
         "lettering; the application owns all structural fields and the ledger. "
         "All lettering source citations must belong to the supplied source_units; "
         "the treatment and scene summaries supply context, not extra source authority. "
+        + _PROTECTED_LANGUAGE_GUIDANCE
         + _SCENE_SCOPE_CONTRACT
         + ADAPT_DEPICTION_GUIDANCE
         + "\n"
@@ -3406,9 +3461,9 @@ async def produce_book_adaptation(
     total_steps = 1 + (2 * len(shards))
     from novel_to_comic.generation_budget import budgeted_generator
     # Clean graph: treatment, blueprint+lettering per shard, source-window
-    # reviews. A third pass is reserved for a changed narrative-review finding
-    # after the ordinary repair. In the captured 458-unit book this is 20 calls
-    # before that narrowly conditional pass.
+    # reviews. A third pass is reserved for fewer blocking codes or a changed
+    # narrative-review finding after the ordinary repair. In the captured
+    # 458-unit book this is 20 calls before that narrowly conditional pass.
     review_windows = _adapt_review_window_count(source)
     generate = budgeted_generator(
         generate, artifacts=artifacts, stage="adapt", model=model,
@@ -3857,10 +3912,10 @@ def _may_repair_validation_attempt(
     """Keep repair bounded while handling a newly exposed review defect.
 
     The first repair is available to every blocking validation failure.  A
-    second repair is reserved for a changed set of evidence-backed narrative
-    review failures: it prevents a repair that fixes one story problem but
-    reveals another from requiring a manual Resume.  Repeating the same review
-    result cannot consume another provider call.
+    second repair is available when blocking codes strictly decrease or a
+    changed set of evidence-backed narrative review failures appears. This avoids
+    a manual Resume when a correction makes demonstrable progress. Repeating the
+    same review result cannot consume another provider call.
     """
     if attempt < _MAX_ADAPT_ATTEMPTS:
         return True
@@ -3871,7 +3926,7 @@ def _may_repair_validation_attempt(
     return (
         current != previous
         and bool(current)
-        and all(code.startswith("narrative_review_") for code in current)
+        and (current < previous or all(code.startswith("narrative_review_") for code in current))
         and current != {"narrative_review_invalid"}
     )
 
@@ -4143,13 +4198,13 @@ def validate_book_adaptation(
         phrase
         for phrase in brief.protected_language
         if not any(
-            _protected_language_key(phrase) in wording for wording in complete_wording
+            _contains_protected_language(wording, phrase) for wording in complete_wording
         )
     ]
     for phrase_index, phrase in enumerate(missing_protected):
         missing_source_ids = tuple(
             unit.id for unit in source.units
-            if _protected_language_key(phrase) in _protected_source_key(unit.text)
+            if _contains_protected_language(_protected_source_key(unit.text), phrase)
         )
         missing_beats = tuple(dict.fromkeys(
             beat_id for entry in adaptation.ledger
@@ -4487,7 +4542,7 @@ def _omission_issues(
     ]
     for entry in omitted:
         unit_text = normalize_display_text(text_by_unit[entry.source_unit_id])
-        dropped = [phrase for phrase in protected if phrase in unit_text]
+        dropped = [phrase for phrase in protected if _contains_protected_language(unit_text, phrase)]
         if dropped:
             issues.append(
                 EditorialIssue(

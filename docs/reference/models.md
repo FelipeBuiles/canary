@@ -153,7 +153,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `media_type` | `str` | `Field(min_length=1)` |
 | `content_sha256` | `str` | `Field(min_length=64, max_length=64)` |
 | `visual_anchor` | `str` | `Field(min_length=1)` |
-| `entity_id` | `str` | `Field(min_length=1)` |
+| `entity_id` | `str | None` | `Field(min_length=1)` |
 | `appearance_state_id` | `str | None` | `None` |
 | `label` | `str` | `''` |
 | `continuity_guard` | `str` | `''` |

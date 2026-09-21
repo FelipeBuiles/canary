@@ -181,7 +181,8 @@ _CONTEXTUAL_PRESERVE: dict[str, tuple[str, ...]] = {
     "style": (
         "medium", "mark-making", "palette", "line weight", "facial modeling",
         "wash density", "edge treatment", "shading", "shadow depth",
-        "rendering density", "degree of simplification",
+        "rendering density", "degree of simplification", "character proportion system",
+        "facial abstraction",
     ),
     "continuity": (),
 }
@@ -189,7 +190,8 @@ _CONTEXTUAL_PRESERVE: dict[str, tuple[str, ...]] = {
 _CONTEXTUAL_IGNORE: dict[str, tuple[str, ...]] = {
     "location_plate": ("depicted content that the active state contradicts",),
     "prop": ("reference backdrop",),
-    "style": ("people, objects, scenery, text and caption wording, panels, borders, source composition",),
+    "style": ("depicted identities, hairstyles, costumes, objects, scenery, text and caption wording, "
+              "poses, gaze, expressions, camera angles, panels, borders, source composition",),
     "continuity": ("facets incompatible with current states",),
 }
 
@@ -347,6 +349,8 @@ def compile_reference_instruction(
                 "Surface-fidelity constraints govern incidental texture: do not treat every "
                 "blotch, stain or speckle as an authored style feature. Preserve deliberate "
                 "material marks without transferring the same pattern to unrelated surfaces. "
+                "Transfer how faces and bodies are drawn, not who is depicted or how they are posed. "
+                "Canonical identity and active-state anatomy remain authoritative. "
                 "This is rendering evidence, never scene, lettering, or layout authority."
             )
     elif role == "continuity":

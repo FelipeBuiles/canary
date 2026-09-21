@@ -108,12 +108,6 @@ class RefStrategy:
         # does not authorize dropping the author's selected visual direction.
         return style_ref
 
-    def use_character_style_calibration(self) -> bool:
-        # Calibrate materials/marks without any recognizable cast identities.
-        # Both scene proofs and character lineups have leaked identities.
-        return True
-
-
     def use_structured_location_plate_prompt(self) -> bool:
         """GPT Image 2 location plates use the labeled design-plate prompt layout."""
         return self._gpt_image_2

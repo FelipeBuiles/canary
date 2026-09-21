@@ -32,6 +32,10 @@ _SETTABLE_FIELDS = {
 def get_config(project=Depends(get_project)):
     project_dir, config, state = project
     data = config.model_dump()
+    from novel_to_comic.lettering.service import project_lettering_mode
+    from novel_to_comic.target_artifacts import TargetArtifacts
+
+    data["lettering_mode"] = project_lettering_mode(TargetArtifacts(project_dir), config)
     # Mock replay is an operator-only local facility, not an end-user setting.
     data.pop("mock_mode", None)
     data.pop("mock_model_base_url", None)
@@ -45,6 +49,8 @@ def get_config(project=Depends(get_project)):
 @router.patch("/")
 def update_config(body: dict, request: Request, project=Depends(get_project), user_id: str = Depends(get_current_user)):
     project_dir, config, state = project
+    if "lettering_mode" in body and body["lettering_mode"] != config.lettering_mode:
+        raise HTTPException(409, "Choose lettering when creating a project. Switching requires a new project and new page generation.")
 
     # Reject attempts to set API keys via the web UI
     for key in _SECRET_FIELDS:
@@ -85,5 +91,7 @@ def update_config(body: dict, request: Request, project=Depends(get_project), us
             raise HTTPException(400, "target_language must be one of: en, es, fr")
         setattr(config, key, value)
 
+    # Validate edition-derived presentation before committing the settings edit.
+    response = get_config(project=(project_dir, config, state))
     save_config(config, project_dir)
-    return get_config(project=(project_dir, config, state))
+    return response

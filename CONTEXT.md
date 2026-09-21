@@ -135,9 +135,14 @@ panel-count and word-count caps are not part of the canonical page model.
 revision. Its stored artwork bytes are immutable. Text accidentally embedded
 in hybrid base art is not the publishable lettering layer.
 
-**Hybrid edition** — A Draw edition that keeps full-page base art separate from
-editable software-rendered lettering. A retained baked edition still reads and
-exports its original raster, without an additional lettering overlay.
+**Editable lettering (hybrid edition)** — Full-page base art kept separate from
+editable text and balloons. Wording, language and placement can change without
+redrawing the art.
+
+**Integrated lettering** — Text and balloons drawn into the artwork as part of
+the page. Text corrections require image corrections; translation requires new
+artwork. An integrated edition, including a retained baked edition, reads and
+exports its original raster without an additional lettering overlay.
 
 **Lettering reservation** — Plan-owned negative-space and speaker-corridor
 intent for a source lettering item. A reservation is a composition suggestion,
@@ -162,7 +167,7 @@ version; changing it is not an image-generation event.
 detected panel boundaries, reading order, and recognized lettering. It is
 validation evidence, not author intent.
 
-**Lettering comparison policy** — The retained baked-edition rule for comparing canonical
+**Lettering comparison policy** — The integrated-edition rule for comparing canonical
 lettering with recognized lettering. It folds representation differences that
 carry no meaning — quote and dash forms, ellipses, line breaks introduced by
 the letterer, repeated whitespace — and nothing else. Case and wording

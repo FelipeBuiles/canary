@@ -6,6 +6,7 @@ import type { ConfigOverrides, ShortStory } from "../../types/api";
 import { LANGUAGES, useI18n } from "../../i18n";
 import type { LanguageCode } from "../../i18n";
 import { useShortStories } from "../../api/queries";
+import { LetteringChoice, type LetteringMode } from "./LetteringChoice";
 import { Select } from "../ui/Select";
 import { FieldLabel, TextField } from "../ui/Field";
 import { browseStories, type SortKey } from "../../lib/storyBrowser";
@@ -34,7 +35,8 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [targetLanguage, setTargetLanguage] = useState<LanguageCode>(language);
-  const [step, setStep] = useState<"source" | "details">("source");
+  const [step, setStep] = useState<"source" | "details" | "lettering">("source");
+  const [letteringMode, setLetteringMode] = useState<LetteringMode | null>(null);
   const [tab, setTab] = useState<"file" | "library">("library");
   const [browsing, setBrowsing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -85,7 +87,9 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
       return;
     }
     if (!name.trim()) return;
-    const overrides: Partial<ConfigOverrides> = { target_language: targetLanguage };
+    if (step === "details") { setStep("lettering"); return; }
+    if (!letteringMode) return;
+    const overrides: Partial<ConfigOverrides> = { target_language: targetLanguage, lettering_mode: letteringMode };
     if (import.meta.env.DEV && Object.keys(modelSelections).length) overrides.dev_model_selections = modelSelections;
     if (tab === "file" && file) onSubmit(file, name.trim(), overrides);
     else onSubmitImport(selectedStory?.code ?? pastedUrlOrCode.trim(), name.trim(), overrides);
@@ -95,15 +99,14 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
     <form onSubmit={handleSubmit} className="flex min-h-0 max-h-[calc(100dvh-2rem)] flex-col">
       <Card className="flex min-h-0 flex-col overflow-hidden">
         <div ref={contentRef} className="min-h-0 overflow-y-auto overscroll-contain p-5 sm:p-7">
-          <div className="flex items-center justify-between gap-3 font-meta text-xs uppercase text-ink-muted">
-            <span>{t("NEW PRODUCTION")}</span>
-            <span>{step === "source" ? t("STEP 1 OF 2") : t("STEP 2 OF 2")}</span>
+          <div className="flex justify-end font-meta text-xs uppercase text-ink-muted">
+            <span>{step === "source" ? t("STEP 1 OF 3") : step === "details" ? t("STEP 2 OF 3") : t("STEP 3 OF 3")}</span>
           </div>
           <h1 ref={headingRef} tabIndex={-1} className="mt-4 font-display text-[2rem] font-black uppercase leading-none tracking-[-0.03em] text-ink-black sm:text-[2.6rem]">
-            {step === "source" ? t("CHOOSE A STARTING POINT") : t("PREPARE YOUR MANUSCRIPT")}
+            {step === "source" ? t("CHOOSE A STARTING POINT") : step === "details" ? t("PREPARE YOUR MANUSCRIPT") : t("CHOOSE YOUR LETTERING")}
           </h1>
           <p className="mt-3 max-w-[55ch] font-body text-sm leading-relaxed text-ink-muted">
-            {step === "source" ? t("Choose a sample or bring your own manuscript. You decide when generation begins.") : t("Save your source now. In Story, review the credit estimate before starting analysis.")}
+            {step === "source" ? t("Choose a sample or bring your own manuscript. You decide when generation begins.") : step === "details" ? t("Save your source now. In Story, review the credit estimate before starting analysis.") : t("This shapes how your comic looks—and how you can change it later. Compare both before choosing.")}
           </p>
 
           {step === "source" ? (
@@ -185,6 +188,8 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                 </>
               )}
             </div>
+          ) : step === "lettering" ? (
+            <LetteringChoice value={letteringMode} onChange={setLetteringMode} disabled={isPending} />
           ) : (
             <div className="mt-5 space-y-5">
               <div className="animate-proof-reveal bg-pulp-paper p-4">
@@ -214,12 +219,13 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
         <footer className="shrink-0 border-t-2 border-ink-black bg-bristol p-4 sm:px-7 sm:py-5">
           {error && <p role="alert" className="mb-3 text-sm text-hero-red">{error}</p>}
           <div className="mb-3 min-w-0" aria-live="polite">
-            <p className="truncate font-body text-sm font-bold">{sourceReady ? (step === "details" ? name || sourceTitle : sourceTitle) : t("Choose a source to continue")}</p>
+            <p className="truncate font-body text-sm font-bold">{sourceReady ? (step !== "source" ? name || sourceTitle : sourceTitle) : t("Choose a source to continue")}</p>
+            {step === "lettering" && <p className="mt-1 text-sm font-bold">{t(letteringMode === "integrated" ? "Integrated lettering" : letteringMode === "editable" ? "Editable lettering" : "Select a lettering option to create your project.")}</p>}
             <p className="mt-1 text-xs leading-relaxed text-ink-muted">{t("Saves your source only. No generation starts now.")}</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <Button type="submit" size="lg" disabled={isPending || !sourceReady || (step === "details" && !name.trim())}>{isPending ? t("CREATING…") : step === "source" ? t("CONTINUE") : t("CREATE PROJECT")}</Button>
-            {step === "details" && <Button type="button" variant="outline" onClick={() => setStep("source")} disabled={isPending}>{t("BACK")}</Button>}
+            <Button type="submit" size="lg" disabled={isPending || !sourceReady || (step !== "source" && !name.trim()) || (step === "lettering" && !letteringMode)}>{isPending ? t("CREATING…") : step !== "lettering" ? t("CONTINUE") : t("CREATE PROJECT")}</Button>
+            {step !== "source" && <Button type="button" variant="outline" onClick={() => setStep(step === "lettering" ? "details" : "source")} disabled={isPending}>{t("BACK")}</Button>}
             {onCancel && <Button type="button" variant="outline" onClick={onCancel} disabled={isPending}>{t("CANCEL")}</Button>}
           </div>
         </footer>

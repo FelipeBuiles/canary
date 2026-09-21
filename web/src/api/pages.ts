@@ -391,22 +391,6 @@ export async function getPageVisualReview(
   }
 }
 
-export interface ProviderUsageSummary {
-  artifact_link_error: string | null;
-  cost_sources: Record<string, number>;
-  known_cost_usd: number;
-  call_count: number;
-  failed_call_count: number;
-  unknown_cost_count: number;
-  artifact_calls_missing_from_events: number;
-  complete: boolean;
-  groups: { page_number: number | null; category: string; call_count: number; known_cost_usd: number; unknown_cost_count: number }[];
-}
-
-export function getProviderUsage(project: string): Promise<ProviderUsageSummary> {
-  return apiFetch(`${projectPath(project)}/provider-usage`);
-}
-
 export function getVisualReviewEstimate(project: string, pageNumber: number): Promise<CostEstimate> {
   return apiFetch(`${projectPath(project)}/pages/${pageNumber}/visual-review/estimate`);
 }

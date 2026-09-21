@@ -86,6 +86,41 @@ def test_restore_distinguishes_unstarted_from_unknown(tmp_path):
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("scheduler_status", ["failed", "cancelled", "aborted"])
+@pytest.mark.parametrize("starts_during_query", [False, True])
+def test_failed_dispatch_reconciles_only_unstarted_operations(tmp_path, monkeypatch, scheduler_status, starts_during_query):
+    from novel_to_comic.server.generation_jobs import GenerationJob
+
+    app = make_app(tmp_path)
+    queue = DurableQueue(app, "postgresql://unused")
+    job = GenerationJob(id="waiting", project_name="account:book", kind="complete_page_draw",
+                        label="55", payload={"page_number": 55}, sequence=1, runner=None)
+    app.state.generation_jobs[job.id] = job
+    persist_generation_job(app, job)
+    with app.state.admission.journal() as db:
+        db.execute("INSERT INTO operation_outbox VALUES(?,?,?)", (job.id, "{}", 63))
+
+    async def query(sql, **arguments):
+        assert arguments == {"ids": [63], "queue": queue.queue_name}
+        assert "'failed','cancelled','aborted'" in sql
+        if starts_during_query:
+            job.status = "running"
+        return [{"id": 63, "status": scheduler_status}]
+
+    monkeypatch.setattr(queue.backend.connector, "execute_query_all_async", query)
+    asyncio.run(queue.reconcile_failed_dispatches())
+    if starts_during_query:
+        assert job.status == "running"
+    else:
+        assert job.status == "failed"
+        assert job.phase == "dispatch" and job.recoverable is True
+        assert job.started_at is None and job.finished_at is not None
+        with app.state.admission.journal() as db:
+            saved = json.loads(db.execute("SELECT payload FROM jobs WHERE id=?", (job.id,)).fetchone()[0])
+            assert db.execute("SELECT dispatched FROM operation_outbox WHERE id=?", (job.id,)).fetchone()[0] == 63
+        assert saved["status"] == "failed"
+
+
 @pytest.mark.skipif(not os.getenv("CANARY_TEST_QUEUE_DSN"), reason="requires isolated PostgreSQL")
 def test_postgres_restart_fifo_and_no_ambiguous_redelivery(tmp_path, monkeypatch):
     from novel_to_comic.server import job_execution
@@ -131,7 +166,8 @@ def test_postgres_restart_fifo_and_no_ambiguous_redelivery(tmp_path, monkeypatch
     asyncio.run(exercise())
 
 
-def test_style_batch_waits_for_siblings_and_preserves_concurrent_state(tmp_path, monkeypatch):
+@pytest.mark.parametrize("brief", ["shared scene brief", None])
+def test_style_batch_waits_for_siblings_and_preserves_concurrent_state(tmp_path, monkeypatch, brief):
     from novel_to_comic.server import style_jobs
     from novel_to_comic.server.generation_jobs import GenerationJob
     from novel_to_comic.state import StageStatus, create_initial_state, load_state, save_state
@@ -143,13 +179,15 @@ def test_style_batch_waits_for_siblings_and_preserves_concurrent_state(tmp_path,
     save_state(state, tmp_path)
     candidates = [style_jobs.style.normalize_suggestion({"id": str(i), "label": f"Style {i}"}) for i in range(3)]
     monkeypatch.setattr(style_jobs.style, "generate_suggestions", AsyncMock(return_value=(candidates, None)))
-    monkeypatch.setattr(style_jobs.style, "ensure_style_sample_brief", AsyncMock(return_value="brief"))
+    brief_author = AsyncMock(return_value=brief)
+    monkeypatch.setattr(style_jobs.style, "ensure_style_sample_brief", brief_author)
 
     async def exercise():
         app = make_app(tmp_path)
         release = asyncio.Event()
         failed = asyncio.Event()
         async def image(config, bible, output, **kwargs):
+            assert kwargs["brief"] == brief
             if kwargs["candidate_id"] == candidates[0]["id"]:
                 failed.set()
                 raise RuntimeError("proof failed")
@@ -178,6 +216,7 @@ def test_style_batch_waits_for_siblings_and_preserves_concurrent_state(tmp_path,
         assert final.stages["style"].status == StageStatus.FAILED
         assert final.stages["style"].items_done == 2
         assert final.stages["finish"].error == "concurrent lettering edit"
+        brief_author.assert_awaited_once()
     asyncio.run(exercise())
 
 

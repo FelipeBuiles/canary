@@ -29,14 +29,18 @@ describe("project creation models", () => {
     const { user, submit } = await setup(source);
     expect((screen.getByRole("option", { name: "Codex" }) as HTMLOptionElement).disabled).toBe(true);
     await user.selectOptions(screen.getByRole("combobox", { name: "Adapt" }), "glm");
+    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("radio", { name: /Editable lettering/ }));
     await user.click(screen.getByRole("button", { name: "CREATE PROJECT" }));
-    expect(submit.mock.calls[0][2]).toEqual({ target_language: "en", dev_model_selections: { adapt: "glm" } });
+    expect(submit.mock.calls[0][2]).toEqual({ target_language: "en", lettering_mode: "editable", dev_model_selections: { adapt: "glm" } });
   });
   it("omits overrides after returning to account inheritance", async () => {
     const { user, submit } = await setup("import");
     await user.selectOptions(screen.getByRole("combobox", { name: "Adapt" }), "glm");
     await user.selectOptions(screen.getByRole("combobox", { name: "Adapt" }), "");
+    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("radio", { name: /Editable lettering/ }));
     await user.click(screen.getByRole("button", { name: "CREATE PROJECT" }));
-    expect(submit.mock.calls[0][2]).toEqual({ target_language: "en" });
+    expect(submit.mock.calls[0][2]).toEqual({ target_language: "en", lettering_mode: "editable" });
   });
 });

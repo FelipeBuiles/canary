@@ -1022,7 +1022,10 @@ export function PagesRoom() {
                             <p className="mt-3 max-w-[28ch] text-xs leading-5 text-hero-red">{pageActionError}</p>
                           )}
                         </div>
-                        {pageFailure?.classification === "provider_blocked" ? (
+                        {pageFailure?.classification === "provider_blocked"
+                          || (pageFailure?.recoverable && failurePhase !== "analysis"
+                            && (pageFailure.classification === "generation_error"
+                              || pageFailure.classification === "empty_response")) ? (
                           <div className="mt-5 grid shrink-0 gap-2">
                             <Button
                               size="xs"

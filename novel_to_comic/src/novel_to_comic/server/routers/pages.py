@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from novel_to_comic.style_reference import require_style_reference
 from novel_to_comic.server.codex_admission import visual_review_operations
 
 import asyncio
@@ -314,6 +315,7 @@ def prepare_undrawn_pages(*, project_dir, config, rerun: bool = False):
             page, edition, inventory, reference_files,
             retry=_generation_retry(target, page_number),
             style_template=config.style_template,
+            style_reference_path=require_style_reference(project_dir, config.style_template),
         )
         adapter.prepare(compiled)
         prepared.append((page_number, page, compiled))
@@ -594,6 +596,7 @@ def _prepare_initial_generation(
             retry=_generation_retry(target, page_number),
             depiction=depiction,
             style_template=config.style_template,
+            style_reference_path=require_style_reference(project_dir, config.style_template),
         )
         complete_page_adapter(config).prepare(compiled)
     except (ArtifactMissing, ValueError) as exc:
@@ -1014,6 +1017,7 @@ def _prepare_explicit_correction(
             context_source_unit_ids=tuple(body.context_source_unit_ids),
             artifacts=target,
             style_template=config.style_template,
+            style_reference_path=require_style_reference(target.project_dir, config.style_template),
         )
         complete_page_adapter(config).prepare(prepared.compiled)
         return prepared
@@ -1227,45 +1231,6 @@ def submit_page_correction(
     }
 
 
-@router.get("/provider-usage")
-def project_provider_usage(
-    project_id: str,
-    project_dir=Depends(get_project_dir),
-    user_id: str = Depends(get_current_user),
-):
-    """Provider costs, including failed calls, separate from charged credits."""
-    from ..db import get_db
-    from novel_to_comic.project_usage import page_usage_links, summarize_provider_usage
-
-    events = []
-    try:
-        for start in range(0, 100_000, 1000):
-            batch = (get_db().table("ai_usage_events")
-                     .select("id,stage,feature,status,cost_usd,cost_source,funding,metadata_json")
-                     .eq("user_id", user_id).eq("project_id", project_id)
-                     .order("id").range(start, start + 999).execute().data or [])
-            events.extend(batch)
-            if len(batch) < 1000:
-                break
-        else:
-            raise HTTPException(503, "Provider usage exceeds the supported report size.")
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(503, "Provider usage is unavailable; no zero-cost total can be inferred.") from exc
-    from novel_to_comic.target_artifacts import ArtifactInvalid
-    try:
-        links = page_usage_links(TargetArtifacts(project_dir))
-        link_error = None
-    except (ArtifactMissing, ArtifactInvalid) as exc:
-        links = {}
-        link_error = str(exc)
-    report = summarize_provider_usage(events, links)
-    report["artifact_link_error"] = link_error
-    if link_error:
-        report["complete"] = False
-    return report
-
 @router.get("/pages/{page_number}/visual-review/estimate")
 def visual_review_estimate(page_number: int, project=Depends(get_project)):
     from novel_to_comic.config import PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD
@@ -1282,6 +1247,7 @@ def visual_review_estimate(page_number: int, project=Depends(get_project)):
             approved_reference_files(project_dir),
             retry=RetryProvenance(attempt=1),
             style_template=config.style_template,
+            style_reference_path=require_style_reference(project_dir, config.style_template),
         )
         complete_page_adapter(config).prepare(compiled)
     except (ArtifactMissing, ValueError) as exc:
@@ -1309,6 +1275,7 @@ async def visual_review_page(page_number: int, project_id: str,
         compiled = compile_page_generation_request(
             page, ensure_current_page_edition(target, target.read_book_edition(), config, allow_retained_review=True), approved_visual_inventory(project_dir),
             approved_reference_files(project_dir), retry=RetryProvenance(attempt=1), style_template=config.style_template,
+            style_reference_path=require_style_reference(project_dir, config.style_template),
         )
         complete_page_adapter(config).prepare(compiled)
         result = await run_credited_page_check(
@@ -1360,6 +1327,7 @@ def read_saved_visual_review(page_number: int, project=Depends(get_project)):
             page, ensure_current_page_edition(target, target.read_book_edition(), config, allow_retained_review=True), approved_visual_inventory(project_dir),
             approved_reference_files(project_dir), retry=RetryProvenance(attempt=1),
             style_template=config.style_template,
+            style_reference_path=require_style_reference(project_dir, config.style_template),
         )
         complete_page_adapter(config).prepare(compiled)
         try:

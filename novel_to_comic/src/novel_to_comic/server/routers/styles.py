@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from novel_to_comic import artifacts
 from novel_to_comic.artifact_lock import production_lock
 from novel_to_comic.target_artifacts import TargetArtifacts, ArtifactMissing
-from novel_to_comic.lettering.service import style_from_template
+from novel_to_comic.lettering.service import style_from_template, project_lettering_mode
 from novel_to_comic.ai import ai_request_context
 from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.config import Config, mock_mode_active, save_config
@@ -363,6 +363,7 @@ def get_styles(project_id: str, project=Depends(get_project), request: Request =
             validation_request = build_style_sample_request(
                 validation_config, bible, style_validation_brief(bible),
                 candidate_id=f"{s['id']}:validation",
+                project_dir=project_dir,
                 style_reference=style_reference,
                 style_reference_mode=s["style_reference_mode"],
                 subject_action=STYLE_VALIDATION_ACTION,
@@ -405,7 +406,7 @@ def get_style_lettering_proof(
     project_id: str, suggestion_id: str, kind: Literal["sample", "validation"],
     project=Depends(get_project),
 ):
-    # Freshness is checked against the canonical *art-only* request under the
+    # Freshness is checked against the canonical mode-specific request under the
     # artifact lock. An old baked proof never gets an accidental second overlay.
     with production_lock(project[0]):
         entries = get_styles(project_id, project)["suggestions"]
@@ -415,9 +416,12 @@ def get_style_lettering_proof(
         fresh = (bool(suggestion["sample_preview_url"]) if kind == "sample"
                  else suggestion["has_validation"])
         if not fresh:
-            raise HTTPException(409, "This proof predates clean reference art. Explicitly refresh the sample before previewing software lettering.")
+            raise HTTPException(409, "This proof uses earlier rendering rules. Explicitly refresh it to preview the current lettering mode.")
         source = (artifacts.style_sample_path(project[0], suggestion["index"]) if kind == "sample"
                   else artifacts.style_validation_path(project[0], suggestion_id))
+        if project_lettering_mode(TargetArtifacts(project[0]), project[1]) == "integrated":
+            # Integrated proof requests already draw their lettering into the image.
+            return Response(source.read_bytes(), media_type="image/png", headers={"Cache-Control": "private, no-cache"})
         style = _proof_style(project[0], suggestion, active=suggestion["is_active"])
         try:
             data, identity = render_style_proof(TargetArtifacts(project[0]), style, source.read_bytes())

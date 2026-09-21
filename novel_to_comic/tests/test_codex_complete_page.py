@@ -38,6 +38,8 @@ def dev_routes(monkeypatch):
 
 
 def _authorities(tmp_path, count):
+    from .style_reference_support import write_style_proof
+    write_style_proof(tmp_path)
     entities = [f"subject-{index}" for index in range(count)]
     original = _page()
     page = ComicPage.model_validate({
@@ -335,7 +337,8 @@ def test_batch_subscription_quote_is_zero_and_subscription_even_when_empty(tmp_p
 
 
 @pytest.mark.parametrize("reasoner", [None, "gpt-5.5", "gpt-5.6-terra"])
-def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(tmp_path, monkeypatch, dev_routes, reasoner):
+@pytest.mark.parametrize("canvas", [(106, 158), (80, 120)])
+def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(tmp_path, monkeypatch, dev_routes, reasoner, canvas):
     import time
     from novel_to_comic.ai import client, finalisation
     from novel_to_comic.server import credited_job
@@ -344,15 +347,16 @@ def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(
 
     page, inventory, files = _authorities(tmp_path, 2)
     config = Config(draw_model=f"codex-dev/image/{reasoner}") if reasoner else Config()
-    compiled = _compiled(page, inventory, files, config=config)
+    proof = tmp_path / "samples" / "style_1.png"
+    compiled = _compiled(page, inventory, files, config=config, style_reference_path=proof)
     adapter = page_drawing.complete_page_adapter(config)
     output = io.BytesIO()
-    Image.new("RGB", (83, 117), "navy").save(output, format="PNG")
+    Image.new("RGB", canvas, "navy").save(output, format="PNG")
     native = output.getvalue()
     reference_digests = [
         hashlib.sha256(files[ref.id].path.read_bytes()).hexdigest()
         for ref in inventory.references
-    ]
+    ] + [hashlib.sha256(proof.read_bytes()).hexdigest()]
     runtime = AsyncMock(return_value=SimpleNamespace(
         image_bytes=native, input_tokens=12, output_tokens=3,
         metadata={
@@ -402,10 +406,13 @@ def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(
     assert runtime.call_args.kwargs["prompt"] == compiled.request.prompt
     assert runtime.call_args.kwargs["references"] == tuple(
         (files[ref.id].path.read_bytes(), "image/png") for ref in inventory.references
-    )
+    ) + ((proof.read_bytes(), "image/png"),)
+    assert runtime.call_args.kwargs["reference_roles"] == ("approved_asset", "approved_asset", "style")
+    assert runtime.call_args.kwargs["reference_instructions"][-1] == compiled.request.references[-1].visual_anchor
+    assert runtime.call_args.kwargs["edit_parent_indices"] == ()
     provenance = artifacts.read_provenance(page.page_number, 1)
     assert artifacts.read_render(page.page_number, 1) == native
-    assert (provenance.render.width, provenance.render.height) == (83, 117)
+    assert (provenance.render.width, provenance.render.height) == canvas
     assert provenance.render.model == "gpt-image-2"
     assert provenance.render.cost_usd is None
     assert provenance.usage.model == config.draw_model
@@ -559,3 +566,40 @@ def reviewed_story_precondition(monkeypatch):
     # test_narrative_review.py.
     monkeypatch.setattr("novel_to_comic.server.routers.pages.require_draw_narrative_reviews", lambda target: None)
     monkeypatch.setattr("novel_to_comic.narrative_review.require_draw_narrative_reviews", lambda target: None)
+
+
+@pytest.mark.parametrize("canvas", [(120, 80), (100, 100), (83, 117)])
+def test_native_draw_rejects_wrong_page_shape_without_retry_or_publication(
+    tmp_path, monkeypatch, dev_routes, canvas,
+):
+    from novel_to_comic.ai import client, finalisation
+
+    page, inventory, files = _authorities(tmp_path, 2)
+    compiled = _compiled(page, inventory, files)
+    assert "PAGE CANVAS: 1696 pixels wide by 2528 pixels high" in compiled.request.prompt
+    assert "Never output a landscape or square canvas" in compiled.request.prompt
+    output = io.BytesIO()
+    Image.new("RGB", canvas, "navy").save(output, format="PNG")
+    runtime = AsyncMock(return_value=SimpleNamespace(
+        image_bytes=output.getvalue(), input_tokens=12, output_tokens=3,
+        metadata={"tool_id": "wrong-shape"},
+    ))
+    monkeypatch.setattr(codex_runtime, "run_image", runtime)
+    monkeypatch.setattr(finalisation, "begin_image_call", AsyncMock(
+        return_value=SimpleNamespace(event_id="shape-call"),
+    ))
+    failed = AsyncMock()
+    succeeded = AsyncMock()
+    monkeypatch.setattr(finalisation, "finalise_image_failure", failed)
+    monkeypatch.setattr(client, "_finalize_event_shielded", succeeded)
+    artifacts = TargetArtifacts(tmp_path / "project")
+    with pytest.raises(codex_runtime.CodexRuntimeError, match="page_aspect_ratio_mismatch"):
+        asyncio.run(page_drawing.draw_complete_page(
+            compiled, adapter=page_drawing.complete_page_adapter(Config()),
+            artifacts=artifacts, page=page,
+        ))
+    runtime.assert_awaited_once()
+    failed.assert_awaited_once()
+    succeeded.assert_not_awaited()
+    assert artifacts.render_revisions(page.page_number) == ()
+    assert artifacts.provenance_revisions(page.page_number) == ()

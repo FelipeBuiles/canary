@@ -396,7 +396,8 @@ export function StyleRoom() {
         ) : undefined}
       />
 
-      {styleSelected && !letteringOpen && <div className="mt-5"><Button variant="outline" disabled={styleActionsDisabled} onClick={() => setLetteringOpen(true)}>{t("Edit book lettering")}</Button></div>}
+      {projectConfig?.lettering_mode === "integrated" && <p className="mt-5 text-sm leading-relaxed text-ink-muted">{t("Integrated lettering: these proofs draw text, balloons, and sound effects into the artwork, just like your pages. Text changes require an image correction.")}</p>}
+      {projectConfig?.lettering_mode !== "integrated" && styleSelected && !letteringOpen && <div className="mt-5"><Button variant="outline" disabled={styleActionsDisabled} onClick={() => setLetteringOpen(true)}>{t("Edit book lettering")}</Button></div>}
       {letteringOpen && <div className="mt-5"><BookLetteringPanel project={projectName} disabled={isStageGenerating} onClose={() => setLetteringOpen(false)} /></div>}
 
       {(isSuggesting || isStageGenerating || suggestionStatus === "failed") && (

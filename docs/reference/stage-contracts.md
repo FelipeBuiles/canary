@@ -389,11 +389,18 @@ action alongside the separate, destructive **Start adaptation over** action.
 After refreshing Adapt, an already failed Plan requires an explicit retry;
 the normal auto-chain starts only pending stages.
 
-A stage attempt permits at most one narrative repair pass. Adapt repairs the
-cited source scope. Plan repairs the compact map before detail, or the affected
-detail batches after composition; a narrative map revision consumes that
+Adapt normally permits one repair of the cited source scope. One final bounded
+repair is allowed when blocking codes strictly decrease or the repaired candidate
+exposes a changed narrative-review finding. Repeated failures do not extend the
+loop. Plan permits at most one narrative repair pass. Plan repairs the compact
+map before detail, or the affected detail batches after composition; a narrative map revision consumes that
 allowance. It never escalates an unresolved detail finding into whole-book
-regeneration. Schema corrections retain their separate bounded allowance.
+regeneration. Map, whole-book, and detail schema corrections retain a separate
+bounded allowance and preserve the current repair feedback. Plan evicts completed
+responses rejected by its schema or owned contract checks from the response
+cache, so explicit Resume can replace them while retaining valid batches.
+Upstream blockers and malformed review evidence do not invalidate valid planning
+responses. Transport failures do not trigger automatic resubmission.
 Unresolved blockers stop with evidence and preserve the draft for explicit
 review. Structurally valid Plan pages are retained in `plan/review_draft.json`
 before narrative review, readable through `GET /plan/review-draft`; they never
@@ -448,8 +455,11 @@ add subjects or crowds. Brief prose owns staging, not redesigned identities;
 the compiler supplies each selected canonical `visual_anchor` exactly.
 The v6 brief cache fingerprints the selected evidence, model, and prompt;
 stale cache entries are not reused. Candidate styles render the same selection.
+Concurrent sample jobs serialize shared-brief authoring and recheck the cache;
+a durable suggestion batch resolves its brief once, including a deterministic
+fallback when authoring fails.
 
-New full-page style samples generate art and framing only, reserving four
+Editable full-page style samples generate art and framing only, reserving four
 natural quiet areas without words, balloons, boxes or effects. The compiler and
 cost estimator share that same contract. Each generated candidate supplies a
 closed `lettering_design` with validated caption, speech, thought and SFX role
@@ -457,12 +467,26 @@ tokens. Selection seeds `lettering/style.json`; existing/custom directions
 without generated tokens use an explicit preset baseline. Neither structured
 tokens nor post-production prose enter image-model style projections.
 
-Style cards show a separate cached software-lettered proof, composed by the same
+Editable style cards show a separate cached software-lettered proof, composed by the same
 bundled-font SVG engine as finished pages. Raw sample bytes and their generation
 metadata remain the reference authority. `GET /styles/{suggestion_id}/proof/{kind}`
 serves the derivative, keyed by raw art, style, engine and specimen version.
-Legacy/stale proofs remain visible as raw images and require an explicit clean-art
-refresh; no overlay is added to an old baked proof. Hybrid Draw uses only art and
+The speech reservation contains separate normal and shouted-speech specimens;
+the shout uses a burst variant of the speech style, distinct from free-standing
+SFX. Provisional specimen tails attach after text fitting and stay short; they
+are typography demonstrations, not detected speaker positions. Generated thought
+styles use compact padding. The shared renderer balances thought text across lines
+and fits it inside unequal cloud lobes distributed around the full perimeter.
+Each element/style has a deterministic silhouette shared by fitting and rendering;
+moving a bubble does not change its shape. SVG font families are
+quoted so measurement and rendered text use the same bundled font.
+Integrated style proofs draw the same caption, speech, shout, thought and SFX specimen
+strings directly into the image using the candidate’s prose lettering standard.
+Software design tokens remain excluded from the image prompt; the endpoint serves
+the original lettered raster without an overlay. Compilation, estimates, freshness
+and delivery follow the project mode, including a retained frozen edition.
+Legacy/stale proofs remain visible as raw images and require an explicit
+mode-appropriate refresh; no overlay is added to an old baked proof. Hybrid Draw uses only art and
 framing directions. Cast reference prompts use only the art-rendering projection,
 not page lettering, borders, or gutters. Style and reference authority are not
 disposable scene prose: approved style imagery owns rendering, not depicted
@@ -483,14 +507,21 @@ sets. Missing, repeated or duplicate-id designs are rejected before image work.
 Canonical sheets receive these choices alongside verbatim source anchors, age,
 wardrobe and distinguishing details. Authorized correction addenda take priority.
 
-Character style calibration is a distinct `style_calibration` asset containing
-abstract material and mark-making studies without people, faces, bodies, animals,
-costumes or scenery. Every image route uses the same rendering-only board, derived
-from the selected Style proof. The old character lineup is incompatible with the
-new producing request. A failed or missing board cannot fall back to a proof
-containing people. Existing canonical and state artwork is versioned before
-replacement. Identity-conditioned appearance states still preserve compatible
-canonical facets and the active state's verbatim anchor and continuity guard.
+Canonical and state character requests use the selected raw Style proof directly
+on every image route. Generated material boards are not substitutes: they lose
+facial abstraction and character proportion evidence. The proof owns artistic
+treatment, not depicted identities, hair, costumes, poses, gaze, expressions,
+camera angles, text or composition. Cast design and canonical/state anchors own
+identity; scene instructions own acting. Missing selected proofs reject generation
+before spend. Existing artwork is versioned only on an explicit regeneration.
+
+Draw includes the same selected raw proof as a separate rendering reference,
+with a null entity binding, alongside all required Cast authorities. Its bytes
+are hashed into the frozen request and included in estimates. Reserve a proof
+slot and any correction-parent slot before packing subject reference sheets;
+never drop identities or the proof to fit a provider limit. Integrated and editable
+pages both receive surface-fidelity guidance. Corrections retain their requested
+scope and untouched artwork. Saved requests and rendered pages are not rewritten.
 
 After character generation, Cast visually compares all canonical sheets using
 labelled contact sheets and the configured visual review model. The typed
@@ -538,11 +569,17 @@ reader for the old location-state artifact layout.
 ### Frozen pages and corrections
 
 Draw compiles selected references, distinct subject labels, panel assignments,
-geometry, reading order, and lettering reservations into one frozen request.
-New versioned profiles set `exact_visible_lettering=false`: their wire lettering
+geometry and mode-specific lettering instructions into one frozen request.
+Projects explicitly choose integrated or editable lettering at creation (see
+[ADR 0022](../adr/0022-project-lettering-choice.md)). New integrated profiles set
+`exact_visible_lettering=true`, send canonical copy to Draw, and export the
+original raster. Software lettering controls are unavailable for these projects.
+Mode changes require a new project; existing edition profiles stay fixed.
+Editable profiles set `exact_visible_lettering=false`: their wire lettering
 array is empty and their prompt forbids balloons, caption boxes, SFX glyphs,
-placeholder words, and pseudo-writing. They retain quiet negative space and
-speaker corridors, not raster text. Canonical copy remains in Adapt/Plan; it
+placeholder words, pseudo-writing, and reserved blank areas. They request continuous
+scene artwork; Plan placement reservations seed the editor only and are omitted
+from image requests. Canonical copy remains in Adapt/Plan; it
 is not a typesetting payload for the image provider. Excess
 references fail before submission. Less-graphic framing retains identity
 references. An edition keeps its selected model/profile; a different current
@@ -570,17 +607,19 @@ fidelity; that requires visual review.
 Queue all prepares every page before any hold or enqueue. Subscription quotes,
 holds and debits are zero; observed cost and actual image backend remain unknown.
 This does not relax the production Vertex profile; both use current wire contracts.
-Codex native PNG dimensions are authoritative: 1696×2528 is composition intent,
-not an output guarantee. Finish preserves native bytes and per-page PDF/CBZ
-geometry, rejecting incompatible fixed/custom trims rather than cropping.
+Every frozen Draw prompt explicitly requires the edition’s portrait page canvas,
+including corrections. Codex native resolution may vary, but Draw rejects a
+width-to-height ratio more than 1% from the frozen profile before publishing the
+page, without automatically retrying. Finish preserves accepted native bytes and
+per-page PDF/CBZ geometry, rejecting incompatible fixed/custom trims rather than cropping.
 See [Codex development capabilities](codex-dev-capabilities.md) for setup and limits.
 
 Adapt beats cite Brief requirement IDs without repeated requirement prose.
 Missing citations remain validation failures rather than being inferred from
 keyword overlap. Explicit beat entity scopes allow bounded Plan context.
 
-OCR is blind to expected copy and runs only on raw saved art. Retained baked
-profiles compare canonical lettering and observed order. Hybrid profiles instead
+OCR is blind to expected copy and runs only on raw saved art. Integrated profiles, including retained baked editions,
+compare canonical lettering and observed order. Hybrid profiles instead
 record `unexpected_generated_lettering`, including its detected region, for
 comic text that should not have been drawn; incidental signs/documents remain
 distinct. It never checks a software-composited image and does not establish
@@ -669,7 +708,11 @@ Adapt resumes by revalidating its saved failed candidate against the unchanged
 source and approved brief. Source-backed protected quotations receive explicit
 quoted-caption delivery; exact protected book titles do not require terminal
 punctuation. Source matching ignores paired Markdown emphasis without rewriting
-source text or approved wording. A complete sentence copied verbatim into a
+source text or approved wording. Protected excerpt comparisons also tolerate
+initial-letter capitalization (a clause beginning mid-sentence in the source);
+interior case, words, and punctuation remain significant. Blueprint, lettering,
+and scoped repair prompts locate protected phrases with source-unit citations.
+A complete sentence copied verbatim into a
 quoted caption from a longer source quotation can receive its single missing
 closing quote locally; paraphrases, incomplete sentences, missing opening quotes,
 and other unbalanced delimiters still need repair. Missing protected phrases and
@@ -922,11 +965,13 @@ Resume once the balance covers its hold; without a retained action, return
 to the original control. Do not turn an ambiguous paid submission into an
 automatic retry.
 
-`GET /api/projects/{project_id}/provider-usage` reconciles provider events and
-artifact call IDs, including failures and unknown costs. Book's Dev Content
-view shows recorded cost sources separately from user credit charges. Optional
-visual review uses `/pages/{page_number}/visual-review` and its `/estimate`
-endpoint. Restart the gateway after changing its retry configuration.
+Book reads `GET /api/credits/history?project_id={project_id}` so its credit
+history uses the same holds, final charges, releases, and unsuccessful-attempt
+semantics as the account ledger. Customer credit-history responses omit provider
+prices, model identities, token counts, funding routes, and cost-source details.
+Provider usage remains internal accounting evidence. Optional visual review uses
+`/pages/{page_number}/visual-review` and its `/estimate` endpoint. Restart the
+gateway after changing its retry configuration.
 
 ## Book readiness and package recovery
 

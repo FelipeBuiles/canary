@@ -211,6 +211,8 @@ def _change(change_id: str, instruction: str = "Do the fix.", **updates: object)
 
 def _setup(tmp_path: Path, *, issues: tuple[PageIssue, ...] = ()) -> tuple[TargetArtifacts, ComicPage, PageRenderRevision]:
     artifacts = TargetArtifacts(tmp_path / "project")
+    from .style_reference_support import write_style_proof
+    write_style_proof(artifacts.project_dir)
     source = _source()
     artifacts.write_source(source)
     artifacts.write_adaptation(_adaptation(source))
@@ -1253,7 +1255,9 @@ def test_interrupted_correction_route_resumes_original_parent_without_redraw(tmp
         changes=(_change("dark", "Darken the chamber.", issue_id="issue-dark"),),
         parent_render_revision=1, comic_page_revision=page.revision,
     )
-    config = SimpleNamespace(style_template="")
+    config = Config(style_template="")
+    from .style_reference_support import write_style_proof
+    write_style_proof(artifacts.project_dir, config.style_template)
     prepared = pages._prepare_explicit_correction(
         target=artifacts, page_number=1, body=body, config=config,
     )

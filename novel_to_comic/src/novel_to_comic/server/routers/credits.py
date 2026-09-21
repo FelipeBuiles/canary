@@ -22,7 +22,11 @@ _HISTORY_SELECT = (
 _LEDGER_PAGE_SIZE = 1000
 
 
-def _fetch_all_history_rows(db, user_id: str) -> list[dict[str, Any]]:
+def _fetch_all_history_rows(
+    db,
+    user_id: str,
+    project_id: str | None = None,
+) -> list[dict[str, Any]]:
     """Read complete ledger rows in bounded PostgREST pages.
 
     Grouping after a fixed row limit can cut a job in half and under-report its
@@ -32,11 +36,15 @@ def _fetch_all_history_rows(db, user_id: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     start = 0
     while True:
-        page = (
+        query = (
             db.table("credit_ledger")
             .select(_HISTORY_SELECT)
             .eq("user_id", user_id)
-            .order("created_at", desc=True)
+        )
+        if project_id is not None:
+            query = query.eq("project_id", project_id)
+        page = (
+            query.order("created_at", desc=True)
             .range(start, start + _LEDGER_PAGE_SIZE - 1)
             .execute()
         ).data or []
@@ -48,6 +56,21 @@ def _fetch_all_history_rows(db, user_id: str) -> list[dict[str, Any]]:
 
 def _history_run(row: dict[str, Any]) -> str:
     return str(row.get("job_id") or row["id"])
+
+
+def _public_history_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Return only customer-facing accounting facts, never provider internals."""
+    return {
+        key: row.get(key)
+        for key in (
+            "id",
+            "amount_credits",
+            "status",
+            "stage",
+            "created_at",
+            "image_count",
+        )
+    }
 
 
 def _group_history_runs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -103,8 +126,7 @@ def _group_history_runs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "returned_credits": returned,
                 "credits_added": added,
                 "status": status,
-                "funding": sorted({row.get("funding") or "api" for row in settled}),
-                "rows": ordered,
+                "rows": [_public_history_row(row) for row in ordered],
             }
         )
     return sorted(runs, key=lambda run: run["last_activity_at"], reverse=True)
@@ -144,9 +166,10 @@ def balance(user_id: str = Depends(get_current_user)):
 def history(
     limit: int = Query(30, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    project_id: str | None = Query(default=None),
     user_id: str = Depends(get_current_user),
 ):
-    rows = _fetch_all_history_rows(get_db(), user_id)
+    rows = _fetch_all_history_rows(get_db(), user_id, project_id)
     runs = _group_history_runs(rows)
     page = runs[offset : offset + limit]
     return {

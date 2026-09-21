@@ -408,10 +408,12 @@ def test_project_model_changes_require_dev_gate(client, project_settings, monkey
 
 def test_existing_edition_allows_text_changes_but_not_draw_model_changes(client, project_settings):
     from novel_to_comic.target_artifacts import TargetArtifacts
+    from novel_to_comic.models.draw import BookEdition
+    from novel_to_comic.page_drawing import production_page_capability_profile
 
-    edition = TargetArtifacts(project_settings).book_edition_path
-    edition.parent.mkdir(parents=True, exist_ok=True)
-    edition.write_text("{}")
+    TargetArtifacts(project_settings).write_book_edition(BookEdition(
+        revision=1, id="edition-001", capability_profile=production_page_capability_profile(),
+    ))
     response = client.patch("/api/projects/novel/config/", json={"dev_model_selections": {"adapt": "gpt-6-astra"}})
     assert response.status_code == 200
     before = (project_settings / "config.yaml").read_bytes()

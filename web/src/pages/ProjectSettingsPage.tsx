@@ -156,6 +156,10 @@ export function ProjectSettingsPage() {
         )}
         {activeTab === "general" && (<div>
           <SectionHeader title="General" />
+          {config?.lettering_mode && <Surface border="soft" shadow="none" padding="md" className="mb-4">
+            <p className="font-body text-sm font-bold">{t(config.lettering_mode === "integrated" ? "Integrated lettering" : "Editable lettering")}</p>
+            <p className="mt-2 text-sm leading-relaxed text-ink-muted">{t("Switching later requires a new project and generating new pages. Neither mode guarantees a perfect first result.")}</p>
+          </Surface>}
           {id && status ? (
             <ProjectNameForm key={id} project={id} projectName={status.project_name} />
           ) : statusError ? (

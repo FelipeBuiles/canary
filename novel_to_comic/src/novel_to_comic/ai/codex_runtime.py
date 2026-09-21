@@ -111,6 +111,11 @@ class CodexRuntimeError(RuntimeError):
         self.metadata = metadata or {}
         provider = self.metadata.get("provider_error", {})
         reason = provider.get("message") if isinstance(provider, dict) else None
+        if code == "image_tool_failed":
+            tool_error = self.metadata.get("image_tool_error", {})
+            reason = ": ".join(filter(None, (
+                tool_error.get("code"), tool_error.get("message"),
+            ))) or reason
         if code == "runtime_timeout" and self.metadata.get("timeout_seconds"):
             message = f"{code}: Canary stopped the request after {self.metadata['timeout_seconds']} seconds without a completed result."
             if reason:
@@ -169,6 +174,46 @@ def _provider_error(error: Any, request: dict[str, Any]) -> dict[str, Any]:
     message = _diagnostic_message(getattr(error, "message", None), request)
     if message:
         diagnostic["message"] = message
+    return diagnostic
+
+
+def _image_tool_error(result: Any, request: dict[str, Any]) -> dict[str, Any]:
+    """Capture failed tool output without persisting images or raw envelopes."""
+    if not isinstance(result, str):
+        return {"result_kind": "missing"}
+    diagnostic: dict[str, Any] = {
+        "result_length": len(result),
+        "result_sha256": hashlib.sha256(result.encode()).hexdigest(),
+    }
+    stripped = result.strip()
+    if not stripped:
+        return {**diagnostic, "result_kind": "empty"}
+    if stripped.startswith("data:image/") or (
+        len(stripped) > 64 and re.fullmatch(r"[A-Za-z0-9+/=]+", stripped)
+    ):
+        return {**diagnostic, "result_kind": "image_or_encoded_data"}
+    message = None
+    if stripped.startswith(("{", "[")):
+        diagnostic["result_kind"] = "json"
+        try:
+            body = json.loads(stripped[:16384])
+        except (ValueError, RecursionError):
+            body = None
+        if isinstance(body, dict):
+            error = body.get("error", body)
+            if isinstance(error, dict):
+                message = error.get("message")
+                code = error.get("code")
+                if isinstance(code, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", code):
+                    diagnostic["code"] = code
+            elif isinstance(error, str):
+                message = error
+    else:
+        diagnostic["result_kind"] = "text"
+        message = stripped
+    reason = _diagnostic_message(message, request)
+    if reason:
+        diagnostic["message"] = reason
     return diagnostic
 
 
@@ -783,7 +828,13 @@ async def _execute(root: Path, request: dict[str, Any], evidence: dict[str, Any]
                                     raise CodexRuntimeError("image_saved_path_escape")
                                 evidence["saved_path"] = str(saved)
                             if item.status != "completed":
-                                raise CodexRuntimeError("image_tool_failed")
+                                evidence["image_tool_status"] = item.status
+                                evidence["image_tool_error"] = _image_tool_error(item.result, request)
+                                diagnostic = _diagnostic_message(text, request)
+                                if diagnostic:
+                                    evidence["assistant_response_diagnostic"] = diagnostic
+                                _save_evidence(root, evidence)
+                                raise CodexRuntimeError("image_tool_failed", evidence)
                             image = _decode_image(item.result)
                             evidence["image"] = validate_image_bytes(image)
                             evidence.update(image_status="completed", indeterminate=False,

@@ -16,6 +16,7 @@ export type StageStatus =
   | "failed";
 
 export interface ConfigOverrides {
+  lettering_mode?: "integrated" | "editable";
   dev_model_selections?: Record<string, string>;
   style_template?: string;
   target_language?: "en" | "es" | "fr";
@@ -124,18 +125,8 @@ export interface CreditTransaction {
   amount_credits: number;
   status: "reserved" | "settled" | "released";
   stage: string | null;
-  description: string | null;
-  project_id: string | null;
-  job_id?: string | null;
   created_at: string;
-  provider?: string | null;
-  model?: string | null;
-  provider_model?: string | null;
-  operation?: string | null;
-  input_tokens?: number;
-  output_tokens?: number;
   image_count?: number;
-  cost_usd?: number | null;
 }
 
 export interface CreditLedgerRun {

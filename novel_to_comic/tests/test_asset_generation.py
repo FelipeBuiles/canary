@@ -191,9 +191,9 @@ def test_prop_state_reference_emits_only_compatible_parent_facets(tmp_path):
 
 
 
-def test_calibration_and_character_requests_preserve_nonhuman_canonical_anatomy():
+def test_character_requests_preserve_nonhuman_canonical_anatomy():
     from novel_to_comic.models.story_bible import Character, StoryBible
-    from novel_to_comic.stages.s3_cast import _character_generation_input, _character_style_calibration_input
+    from novel_to_comic.stages.s3_cast import _character_generation_input
 
     config = Config(image_model="image-gemini-pro")
     anchor = "adult tortoiseshell cat, four short legs, round amber eyes, long fluffy tail"
@@ -206,9 +206,6 @@ def test_calibration_and_character_requests_preserve_nonhuman_canonical_anatomy(
         title="Test", author="Test", total_scenes=0, characters=[cat],
         locations=[], scenes=[], narrative_arcs=[],
     )
-    calibration = _character_style_calibration_input(config, bible)
-    assert calibration.prompt.subjects == ()
-    assert "No people, faces" in calibration.prompt.constraints
     for input_data in (_character_generation_input(config, bible, cat),):
         request = compile_non_panel_request(config, input_data)
         assert anchor in "\n\n".join(request.wire.prompt_parts)

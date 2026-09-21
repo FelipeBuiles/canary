@@ -257,6 +257,29 @@ def test_generate_suggestions_rejects_partial_portfolio():
 # ── style-sample brief ───────────────────────────────────────────────────────
 
 
+def test_concurrent_style_proofs_share_one_cached_brief(tmp_path, monkeypatch):
+    from novel_to_comic.stages import s2_style
+
+    calls = []
+
+    async def author(*_args):
+        calls.append(len(calls))
+        await asyncio.sleep(.01)  # allow the competing reader to observe a miss
+        return "The character stands beside the door and listens to the quiet room. " * 5
+
+    monkeypatch.setattr(s2_style, "generate_style_sample_brief", author)
+
+    async def run():
+        return await asyncio.gather(*(
+            ensure_style_sample_brief(Config(), _bible(), tmp_path) for _ in range(6)
+        ))
+
+    results = asyncio.run(run())
+    assert len(calls) == 1
+    assert len(set(results)) == 1
+    assert json.loads(artifacts.style_sample_brief_path(tmp_path).read_text())["brief"] == results[0]
+
+
 def test_ensure_style_sample_brief_generates_then_serves_from_cache(tmp_path):
     mock = AsyncMock(return_value=ApiResult(value=BRIEF, usage=None))
 

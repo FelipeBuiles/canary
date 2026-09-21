@@ -34,7 +34,7 @@ function invalidatePageReview(qc: ReturnType<typeof useQueryClient>, project: st
   }
   qc.invalidateQueries({ queryKey: ["project", project, "status"] });
   qc.invalidateQueries({ queryKey: ["project", project, "generation-jobs"] });
-  qc.invalidateQueries({ queryKey: ["provider-usage", project] });
+  qc.invalidateQueries({ queryKey: ["credits", "history"] });
 }
 
 /** Explicit paid visual review. Findings persist as page issues. */

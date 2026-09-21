@@ -21,10 +21,8 @@ from novel_to_comic.models.generation import PromptAnchor, PromptSubject
 from novel_to_comic.models.story_bible import Character, Prop, StoryBible
 from novel_to_comic.asset_versions import record_asset_version
 from novel_to_comic.stage_runtime import StageRuntime
-from novel_to_comic.style_contract import (
-    page_style_template,
-    style_template_for_suggestion,
-)
+from novel_to_comic.style_reference import find_style_reference as _find_style_ref
+
 from novel_to_comic.state_assets import (
     StateAssetGenerationSpec,
     build_character_state_spec,
@@ -32,7 +30,6 @@ from novel_to_comic.state_assets import (
     mark_dependent_states_stale,
 )
 from novel_to_comic.asset_generation import (
-    CharacterStyleCalibrationInput,
     CanonicalCharacterReferenceInput,
     CanonicalLocationPlateInput,
     CharacterStateReferenceInput,
@@ -193,33 +190,6 @@ def _prop_ref_meta(
 
 
 
-def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
-    """Return the sample image that matches the active style template.
-
-    Tries to match by comparing the template text against saved suggestions.
-    Returns None if no exact sample exists. This avoids conditioning refs and
-    panels on a sample from a different active style.
-    """
-    suggestions_path = artifacts.style_suggestions_path(project_dir)
-    if suggestions_path.exists():
-        try:
-            data = json.loads(suggestions_path.read_text())
-            suggestions = data.get("suggestions", [])
-            active = page_style_template(style_template)
-            for i, s in enumerate(suggestions, 1):
-                if (
-                    isinstance(s, dict)
-                    and style_template_for_suggestion(s) == active
-                ):
-                    candidate = artifacts.style_sample_path(project_dir, i)
-                    if candidate.exists():
-                        return candidate
-        except Exception:
-            pass
-
-    return None
-
-
 def _cast_asset_style_ref(config: Config, style_ref: Path | None) -> Path | None:
     return RefStrategy.for_config(config).cast_style_ref(style_ref)
 
@@ -227,8 +197,8 @@ def _cast_asset_style_ref(config: Config, style_ref: Path | None) -> Path | None
 def _require_shared_character_style(config: Config, style_ref: Path | None) -> None:
     if style_ref is None or not style_ref.is_file():
         raise ValueError(
-            "The rendering-only Cast style board is missing or stale. "
-            "Run Cast to rebuild it before generating character references."
+            "The selected Style proof is missing or stale. "
+            "Rerun Style and select a proof before generating character references."
         )
 
 
@@ -339,57 +309,15 @@ def _character_generation_input(
     )
 
 
-def _character_style_board_path(project_dir: Path) -> Path:
-    return project_dir / "refs" / "character_style_board.png"
-
-
 def _character_style_reference(
-    config: Config, project_dir: Path, fallback: Path | None,
+    config: Config, project_dir: Path, proof: Path | None,
 ) -> Path | None:
-    """Use a calibration board only when its producing request is current."""
-    if not RefStrategy.for_config(config).use_character_style_calibration():
-        return fallback
-    board = _character_style_board_path(project_dir)
-    request = _compile_cast_request(
-        config, project_dir, _character_style_calibration_input(config, artifacts.read_story_bible(project_dir)),
-        reference_plan=style_reference_plan(config, fallback),
-    )
-    return board if asset_matches_request(board, request) else None
+    """Keep the selected proof's facial abstraction and proportion evidence.
 
-
-def _character_style_calibration_input(
-    config: Config, story_bible: StoryBible,
-) -> CharacterStyleCalibrationInput:
-    """Transfer rendering without supplying faces or bodies to copy."""
-    return CharacterStyleCalibrationInput(
-        asset_identity="cast:character_style_board",
-        prompt=GenerationPromptInput(
-            visual_brief=(
-                "Rendering-only material and mark-making study. Translate the selected style "
-                "into abstract color fields, contour strokes, shadow edges, folded fabric, "
-                "rough stone and curved unrecognizable forms. Match its artistic hand, "
-                "palette, line weight, medium, shadow density and degree of simplification. "
-                "Balance textured studies with quiet tonal fields and clear contour examples. "
-                "Show each material's distinct mark scale; keep paper aging on the support "
-                "rather than painting it into every material. Do not magnify incidental "
-                "mottling from the proof into an all-over stain pattern. Preserve deliberate "
-                "granulation and authored distress where the selected style calls for them. "
-                "Do not reproduce any recognizable subject from the reference."
-            ),
-            composition="Landscape arrangement of abstract material and rendering studies.",
-            constraints=(
-                "No people, faces, heads, bodies, silhouettes of beings, animals, creatures, "
-                "costumes, complete garments, scenery, text or labels. Rendering evidence only."
-            ),
-            width=1344,
-            height=768,
-            generation_width=1344,
-            generation_height=768,
-            generation_shape="landscape",
-        ),
-        selected_style_text=config.style_template,
-        selected_style_source_hash=hashlib.sha256(config.style_template.encode()).hexdigest(),
-    )
+    A generated material board cannot convey how faces and bodies are drawn.
+    Identity, pose and composition are excluded by the style reference scope.
+    """
+    return _cast_asset_style_ref(config, proof)
 
 
 def _location_generation_input(
@@ -747,58 +675,6 @@ async def regenerate_location_plate(
     if not state_id:
         mark_dependent_states_stale(project_dir, "location", loc.id)
     return result
-
-
-async def _generate_character_style_board(
-    config: Config,
-    project_dir: Path,
-    ctx: StageRuntime,
-) -> Path | None:
-    """Generate shared rendering evidence without recognizable identities."""
-    output_path = _character_style_board_path(project_dir)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    approved_style_ref = _cast_asset_style_ref(
-        config, _find_style_ref(project_dir, config.style_template)
-    )
-    if approved_style_ref is None or not approved_style_ref.is_file():
-        raise ValueError("Select and generate a Style sample before running Cast.")
-    input_data = _character_style_calibration_input(config, artifacts.read_story_bible(project_dir))
-    request = _compile_cast_request(
-        config, project_dir,
-        input_data,
-        reference_plan=style_reference_plan(config, approved_style_ref),
-    )
-
-    if asset_matches_request(output_path, request):
-        ctx.record_item_done(cost=0.0)
-        ctx.log("Using existing character style calibration board", level="dim")
-        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
-        return output_path
-
-    ctx.log("Generating shared character style calibration board")
-    try:
-        semaphore = _cast_semaphore(config)
-        async with semaphore:
-            record_asset_version(output_path, project_dir, reason="before_regenerate")
-            submission = await submit_non_panel_request(
-                config=config,
-                project_dir=project_dir,
-                request=request,
-                output_path=output_path,
-                feature="cast.character_style_board",
-                kind="character_style_board",
-            )
-        result = submission.result
-        assert result is not None
-        ctx.record_item_done(usage=result.usage)
-        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
-        return output_path
-    except Exception as error:
-        cause = error.last_attempt.exception() if hasattr(error, "last_attempt") else error
-        ctx.record_item_failed("character_style_board")
-        ctx.log(f"Rendering-only Cast style calibration failed: {cause}", level="error")
-        ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
-        raise
 
 
 async def _generate_character_refs(
@@ -1170,8 +1046,6 @@ async def run(
     total_items = 0
     if should_generate_refs:
         chars_for_count = [c for c in story_bible.characters if not char_ids or c.id in char_ids]
-        if chars_for_count and RefStrategy.for_config(config).use_character_style_calibration():
-            total_items += 1  # shared character style calibration board
         if chars_for_count:
             total_items += 2  # ensemble design and visual review
         total_items += len(chars_for_count)
@@ -1192,10 +1066,8 @@ async def run(
                 if proof is None or not proof.is_file():
                     raise ValueError("Select and generate a Style sample before running Cast.")
                 await ensure_design(config, project_dir, story_bible, ctx)
-            character_style_ref = (
-                await _generate_character_style_board(config, project_dir, ctx)
-                if chars_for_count and RefStrategy.for_config(config).use_character_style_calibration()
-                else _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
+            character_style_ref = _cast_asset_style_ref(
+                config, _find_style_ref(project_dir, config.style_template)
             )
             await _generate_character_refs(
                 config, project_dir, story_bible, ctx, char_ids, character_style_ref
@@ -1472,13 +1344,6 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     total = estimate_design_review(config, project_dir, story_bible) if story_bible.characters else 0.0
     character_style_ref = _character_style_reference(config, project_dir, style_ref)
     character_style_plan = style_reference_plan(config, character_style_ref or style_ref)
-    if (story_bible.characters and RefStrategy.for_config(config).use_character_style_calibration()
-            and character_style_ref is None):
-        total += estimate_non_panel_request(
-            config,
-            _character_style_calibration_input(config, story_bible),
-            reference_plan=style_plan,
-        ).cost_usd
     try:
         design = read_design(config, project_dir, story_bible)
     except (ValueError, OSError):

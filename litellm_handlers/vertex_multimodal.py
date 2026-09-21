@@ -457,7 +457,7 @@ def _exact_complete_page_contents(
                 part,
                 (
                     f"Off-canvas asset-{suffix}: this immediately preceding image. "
-                    "Use only for its assigned subject and appearance state in the page "
+                    "Use only for its assigned authority scope in the page "
                     "instructions. This binding is never a visible caption or callout."
                 ),
             )

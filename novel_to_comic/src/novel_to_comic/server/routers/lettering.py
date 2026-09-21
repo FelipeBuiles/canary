@@ -103,9 +103,13 @@ def reset_page_lettering(
 
 
 def _require_editable_style(target: TargetArtifacts) -> None:
+    from novel_to_comic.config import load_config
+
     try:
         edition = target.read_book_edition()
     except ArtifactMissing:
+        if load_config(target.project_dir)[0].lettering_mode == "integrated":
+            raise LetteringConflict("This project uses integrated lettering. Text is drawn with the artwork.")
         return  # Before Draw: defining a book style is provider-free.
     if edition.capability_profile.exact_visible_lettering:
         raise LetteringConflict("This edition has baked lettering; its style is not editable.")

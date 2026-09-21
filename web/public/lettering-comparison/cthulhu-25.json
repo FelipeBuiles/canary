@@ -1,0 +1,193 @@
+{
+  "revision": 1,
+  "content_sha256": "06b76711595f3b1f702a202587f460502e127593ec82ddf5d22bca07b62fccb9",
+  "page_number": 25,
+  "comic_page_sha256": "3da96164fba314be752e7896c3252dc36f177dc36fa9362bb6f87bf5c72ce03d",
+  "style_sha256": "f7f84afd39d67378762de481b78189f101e778bfe6c3b0d6756e569a26b81bad",
+  "locale": "source",
+  "canvas_aspect_ratio": 0.6666666666666666,
+  "elements": [
+    {
+      "id": "lettering_0126",
+      "source_lettering_item_id": "lettering_0126",
+      "role": "caption",
+      "text_by_locale": {
+        "source": "Wilcox still lived alone in the Fleur-de-Lys Building in Thomas Street — a hideous Victorian imitation of seventeenth-century Breton architecture, flaunting its stuccoed front amidst the lovely colonial houses on the ancient hill, under the very shadow of the finest Georgian steeple in America."
+      },
+      "suggested_placement": {
+        "x": 0.0283203125,
+        "y": 0.013671875,
+        "width": 0.4033203125,
+        "height": 0.0859375
+      },
+      "placement": {
+        "x": 0.0283203125,
+        "y": 0.013671875,
+        "width": 0.4033203125,
+        "height": 0.0859375
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": null,
+      "suggested_tail_target": null,
+      "rotation": 0.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": true,
+      "resolved": null
+    },
+    {
+      "id": "lettering_0127",
+      "source_lettering_item_id": "lettering_0127",
+      "role": "caption",
+      "text_by_locale": {
+        "source": "I found him at work in his rooms, and at once conceded from the specimens scattered about that his genius is indeed profound and authentic. He will, I believe, some time be heard from as one of the great decadents; he has crystallised in clay, and will one day mirror in marble, those nightmares and phantasies which Arthur Machen evokes in prose and Clark Ashton Smith makes visible in verse and in painting."
+      },
+      "suggested_placement": {
+        "x": 0.0283203125,
+        "y": 0.2936197916666667,
+        "width": 0.462890625,
+        "height": 0.08919270833333333
+      },
+      "placement": {
+        "x": 0.0283203125,
+        "y": 0.2936197916666667,
+        "width": 0.462890625,
+        "height": 0.08919270833333333
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": null,
+      "suggested_tail_target": null,
+      "rotation": 0.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": true,
+      "resolved": null
+    },
+    {
+      "id": "lettering_0128",
+      "source_lettering_item_id": "lettering_0128",
+      "role": "caption",
+      "text_by_locale": {
+        "source": "Dark, frail, and somewhat unkempt in aspect, he turned languidly at my knock and asked my business without rising."
+      },
+      "suggested_placement": {
+        "x": 0.0283203125,
+        "y": 0.5924479166666666,
+        "width": 0.435546875,
+        "height": 0.036458333333333336
+      },
+      "placement": {
+        "x": 0.0283203125,
+        "y": 0.5924479166666666,
+        "width": 0.435546875,
+        "height": 0.036458333333333336
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": null,
+      "suggested_tail_target": null,
+      "rotation": 0.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": true,
+      "resolved": null
+    },
+    {
+      "id": "lettering_0129",
+      "source_lettering_item_id": "lettering_0129",
+      "role": "speech",
+      "text_by_locale": {
+        "source": "Yes? What is your business, sir?"
+      },
+      "suggested_placement": {
+        "x": 0.3828125,
+        "y": 0.63671875,
+        "width": 0.154296875,
+        "height": 0.045572916666666664
+      },
+      "placement": {
+        "x": 0.3828125,
+        "y": 0.63671875,
+        "width": 0.154296875,
+        "height": 0.045572916666666664
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": {
+        "x": 0.571,
+        "y": 0.646
+      },
+      "suggested_tail_target": null,
+      "rotation": 0.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": true,
+      "resolved": null
+    },
+    {
+      "id": "lettering_0130",
+      "source_lettering_item_id": "lettering_0130",
+      "role": "speech",
+      "text_by_locale": {
+        "source": "My name is Thurston. I am the grand-nephew — and executor — of the late Professor George Gammell Angell."
+      },
+      "suggested_placement": {
+        "x": 0.341796875,
+        "y": 0.7669270833333334,
+        "width": 0.2734375,
+        "height": 0.06510416666666667
+      },
+      "placement": {
+        "x": 0.341796875,
+        "y": 0.7669270833333334,
+        "width": 0.2734375,
+        "height": 0.06510416666666667
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": {
+        "x": 0.329,
+        "y": 0.842
+      },
+      "suggested_tail_target": null,
+      "rotation": 0.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": true,
+      "resolved": null
+    },
+    {
+      "id": "lettering_0131",
+      "source_lettering_item_id": "lettering_0131",
+      "role": "caption",
+      "text_by_locale": {
+        "source": "At that he displayed some interest; for my uncle had excited his curiosity in probing his strange dreams, yet had never explained the reason for the study."
+      },
+      "suggested_placement": {
+        "x": 0.580078125,
+        "y": 0.9205729166666666,
+        "width": 0.3876953125,
+        "height": 0.051432291666666664
+      },
+      "placement": {
+        "x": 0.580078125,
+        "y": 0.9205729166666666,
+        "width": 0.3876953125,
+        "height": 0.051432291666666664
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": null,
+      "suggested_tail_target": null,
+      "rotation": 0.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": true,
+      "resolved": null
+    }
+  ],
+  "reviewed_against_render_revision": null,
+  "reviewed_against_image_sha256": null
+}

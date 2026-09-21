@@ -32,46 +32,6 @@ def test_provider_costs_count_failures_once_and_preserve_unknowns():
     }
 
 
-def test_usage_endpoint_scopes_every_database_page_to_authenticated_owner(tmp_path):
-    from types import SimpleNamespace
-    from unittest.mock import MagicMock, patch
-    from novel_to_comic.server.routers.pages import project_provider_usage
-
-    query = MagicMock()
-    query.select.return_value = query
-    query.eq.return_value = query
-    query.order.return_value = query
-    query.range.return_value = query
-    query.execute.return_value = SimpleNamespace(data=[])
-    with patch('novel_to_comic.server.db.get_db') as db:
-        db.return_value.table.return_value = query
-        result = project_provider_usage('project-uuid', project_dir=tmp_path, user_id='owner-uuid')
-    assert ('user_id', 'owner-uuid') in [call.args for call in query.eq.call_args_list]
-    assert ('project_id', 'project-uuid') in [call.args for call in query.eq.call_args_list]
-    assert result['known_cost_usd'] == 0
-
-
-def test_usage_report_keeps_costs_when_artifact_linkage_is_unavailable(tmp_path):
-    from types import SimpleNamespace
-    from unittest.mock import MagicMock, patch
-    from novel_to_comic.server.routers.pages import project_provider_usage
-    from novel_to_comic.target_artifacts import ArtifactMissing
-
-    query = MagicMock()
-    query.select.return_value = query
-    query.eq.return_value = query
-    query.order.return_value = query
-    query.range.return_value = query
-    query.execute.return_value = SimpleNamespace(data=[{'id': 'paid', 'stage': 'draw', 'status': 'succeeded', 'cost_usd': 0.14}])
-    with patch('novel_to_comic.server.db.get_db') as db, \
-         patch('novel_to_comic.project_usage.page_usage_links', side_effect=ArtifactMissing('comic_page', tmp_path / 'missing.json')):
-        db.return_value.table.return_value = query
-        result = project_provider_usage('project', project_dir=tmp_path, user_id='owner')
-    assert result['known_cost_usd'] == 0.14
-    assert result['complete'] is False
-    assert result['artifact_link_error']
-
-
 def test_subscription_unknown_cost_remains_unknown_in_funding_summary():
     event = {
         "id": "subscription", "stage": "extract", "status": "failed",

@@ -1,4 +1,5 @@
 import { useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { cn } from "../../lib/cn";
 import { CreditAmount } from "../ui/CreditAmount";
@@ -41,7 +42,7 @@ export function RerunDrawer({
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-[120] flex items-end justify-center bg-ink-black/70"
       onClick={onClose}
@@ -176,6 +177,7 @@ export function RerunDrawer({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -3,7 +3,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "../i18n";
-import type { FinishPreflight } from "../types/api";
+import type { CreditHistoryPage, FinishPreflight } from "../types/api";
 import type * as PagesApi from "../api/pages";
 
 const exportBook = vi.fn();
@@ -20,7 +20,7 @@ const recoverChecks = vi.fn();
 const finishChecks = vi.fn();
 let finishStageStatus = "complete";
 let drawStageStatus = "complete";
-let providerUsage: { data: PagesApi.ProviderUsageSummary | undefined; isLoading: boolean; error: Error | null };
+let creditHistory: { pages: CreditHistoryPage[] };
 
 function drawnPage(pageNumber: number, spreadRole: "single" | "left" | "right" = "single", revision: number | null = 1) {
   return {
@@ -34,7 +34,15 @@ let drawnPages = [drawnPage(1)];
 
 
 vi.mock("../api/queries", () => ({
-  useProviderUsage: () => providerUsage,
+  useCreditHistory: () => ({
+    data: creditHistory,
+    isLoading: false,
+    isError: false,
+    refetch: vi.fn(),
+    fetchNextPage: vi.fn(),
+    hasNextPage: false,
+    isFetchingNextPage: false,
+  }),
   useProjectStatus: () => ({ data: {
     project_name: "The Lantern Keeper",
     finish_ready: true,
@@ -86,7 +94,7 @@ beforeEach(() => {
   exportError = null;
   pendingFormat = null;
   devDiagnostics = false;
-  providerUsage = { data: undefined, isLoading: false, error: null };
+  creditHistory = { pages: [{ runs: [], limit: 30, offset: 0, has_more: false, month_used_credits: 0 }] };
   finishStageStatus = "complete";
   drawStageStatus = "complete";
   rerunPreflight.mockReset();
@@ -103,21 +111,21 @@ beforeEach(() => {
 });
 
 describe("BookRoom edition decisions", () => {
-  it("labels incomplete provider totals without implying unknown calls were free", () => {
-    window.localStorage.setItem("canary.showDevContent", "1");
-    providerUsage.data = {
-      artifact_link_error: null, cost_sources: {}, known_cost_usd: 2.5,
-      call_count: 2, failed_call_count: 0, unknown_cost_count: 1,
-      artifact_calls_missing_from_events: 0, complete: false,
-      groups: [{ page_number: null, category: "ocr", call_count: 1, known_cost_usd: 0, unknown_cost_count: 1 }],
-    };
+  it("shows the book credit ledger without provider costs or model internals", () => {
+    creditHistory.pages[0].runs = [{
+      run_id: "draw-1", job_id: "job-1", stage: "draw", project_id: "demo",
+      started_at: "2026-09-20T14:00:00Z", last_activity_at: "2026-09-20T14:01:00Z",
+      estimate_credits: 12, actual_credits: 9, returned_credits: 3, credits_added: 0,
+      status: "complete", rows: [{
+        id: "charge-1", amount_credits: -9, status: "settled", stage: "draw",
+        created_at: "2026-09-20T14:01:00Z", image_count: 1,
+      }],
+    }];
     renderRoom();
-    expect(screen.getByText("Partial total (USD)")).toBeTruthy();
-    expect(screen.getByText("Project history across all editions and revisions. Not charged credits.")).toBeTruthy();
-    expect(screen.getByText("$2.5000")).toBeTruthy();
-    fireEvent.click(screen.getByText("Page-level details"));
-    expect(screen.getByText("Unknown")).toBeTruthy();
-    expect(screen.queryByText("0.0000 + ?")).toBeNull();
+    expect(screen.getByRole("heading", { name: "CREDIT HISTORY" })).toBeTruthy();
+    expect(screen.getByText("Draw pages")).toBeTruthy();
+    expect(screen.getByText("charged").parentElement?.textContent).toContain("9 credits charged");
+    expect(screen.queryByText(/USD|gemini|provider/i)).toBeNull();
   });
 
   it("shows outstanding lettering acceptance outside developer mode without blocking export", () => {

@@ -120,13 +120,15 @@ class CodexCompletePageAdapter:
                 references=references, requested_model=prepared.model, request_id=ctx.event_id,
                 reference_roles=(
                     (("edit_parent",) if prepared.edit_source_bytes is not None else ())
-                    + tuple("approved_asset" for _ in prepared.references)
+                    + tuple("style" if ref.entity_id is None else "approved_asset"
+                            for ref in prepared.references)
                 ),
                 reference_instructions=(
                     (("Preserve untouched artwork; canonical page authorities outrank conflicting pixels.",)
                      if prepared.edit_source_bytes is not None else ())
-                    + tuple("Apply this approved asset only to its assigned entity and state in the page specification."
-                            for _ in prepared.references)
+                    + tuple(ref.visual_anchor if ref.entity_id is None else
+                            "Apply this approved asset only to its assigned entity and state in the page specification."
+                            for ref in prepared.references)
                 ),
                 edit_parent_indices=(0,) if prepared.edit_source_bytes is not None else (),
             )
@@ -143,6 +145,20 @@ class CodexCompletePageAdapter:
                         "output_tokens": result.output_tokens,
                     },
                 ) from exc
+            # Native resolution can vary, but the edition's page shape cannot.
+            # Allow 1% for provider dimension rounding (including native 2:3).
+            expected_ratio = prepared.width / prepared.height
+            actual_ratio = geometry["width"] / geometry["height"]
+            if abs(actual_ratio / expected_ratio - 1) > 0.01:
+                raise codex_runtime.CodexRuntimeError(
+                    "page_aspect_ratio_mismatch",
+                    {
+                        **metadata, "submitted": True, "indeterminate": False,
+                        "requested_width": prepared.width, "requested_height": prepared.height,
+                        "actual_width": geometry["width"], "actual_height": geometry["height"],
+                        "input_tokens": result.input_tokens, "output_tokens": result.output_tokens,
+                    },
+                )
             latency_ms = int((time.perf_counter() - ctx.started) * 1000)
             usage = UsageRecord(
                 call_id=ctx.event_id, provider="codex", model=self._config.draw_model,

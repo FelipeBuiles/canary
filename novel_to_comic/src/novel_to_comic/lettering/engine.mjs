@@ -5,7 +5,7 @@
  */
 import { FONT_COVERAGE } from "./font-coverage.mjs";
 
-export const ENGINE_VERSION = "lettering-svg-v5";
+export const ENGINE_VERSION = "lettering-svg-v10";
 export const FONT_FILES = Object.freeze({
   "Comic Neue": "ComicNeue-Bold.ttf",
   "EB Garamond": "EBGaramond-SemiBold.ttf",
@@ -145,7 +145,10 @@ export function balancedLines(text, width, measure, locale = "source") {
   return { lines: output, overflow };
 }
 export function roleFor(element, style) {
-  return element.style_override || style.roles[element.role];
+  const role = element.style_override || style.roles[element.role];
+  // Stable per bubble/style, independent of movement, edits and render order.
+  return role.shape === "cloud"
+    ? {...role, cloudSeed: element.id + ":" + style.content_sha256} : role;
 }
 export function textFor(element, locale) {
   return element.text_by_locale[locale] ?? element.text_by_locale.source;
@@ -214,17 +217,54 @@ function curvePart(c, start, end) {
   const left = end < 1 ? splitCurve(c,end)[0] : c;
   return start > 0 ? splitCurve(left,start/end)[1] : left;
 }
-// Twelve outward, quadratic lobes make a coherent cloud silhouette. Adjacent
-// lobes meet at deliberate inward valleys; each lobe is a smooth rounded arch.
-// Convert to cubics so rendering and padded-ink fitting use the SAME boundary.
-const cloudCurves=Array.from({length:12},(_,i)=>{
-  const mid=-Math.PI/2+i*Math.PI/6, half=Math.PI/12, inner=.86;
-  const a=[inner*Math.cos(mid-half),inner*Math.sin(mid-half)];
-  const b=[inner*Math.cos(mid+half),inner*Math.sin(mid+half)];
-  const radius=2-inner*Math.cos(half);
-  const q=[radius*Math.cos(mid),radius*Math.sin(mid)];
-  return [a,mix(a,q,2/3),mix(b,q,2/3),b];
-});
+// Seeded unequal scallops around the entire perimeter. Each bubble keeps its
+// silhouette across redraws; fitting and SVG rendering share the exact curves.
+const cloudCache=new Map();
+function cloudGeometry(seed="cloud") {
+  if (cloudCache.has(seed)) return cloudCache.get(seed);
+  let hash=2166136261;
+  for (const char of seed) hash=Math.imul(hash^char.charCodeAt(0),16777619);
+  const random=()=>{
+    hash+=0x6D2B79F5;
+    let n=Math.imul(hash^(hash>>>15),hash|1);
+    n^=n+Math.imul(n^(n>>>7),n|61);
+    return ((n^(n>>>14))>>>0)/4294967296;
+  };
+  const count=13+Math.floor(random()*3), phase=random()*Math.PI*2;
+  const steps=Array.from({length:count},()=>.7+random()*.6);
+  const total=steps.reduce((a,b)=>a+b,0);
+  let angle=phase;
+  const points=steps.map(step=>{
+    const p=[Math.cos(angle),Math.sin(angle)]
+      .map(v=>Math.sign(v)*Math.pow(Math.abs(v),.65));
+    angle+=step/total*Math.PI*2;
+    return p;
+  });
+  const raw=points.map((p,i)=>{
+    const q=points[(i+1)%count], mid=mix(p,q,.5);
+    const length=Math.hypot(...mid), bulge=.11+random()*.10;
+    const normal=mid.map(v=>v/length*bulge);
+    const first=.23+random()*.14, second=.63+random()*.14;
+    return [p,mix(p,q,first).map((v,j)=>v+normal[j]),
+      mix(p,q,second).map((v,j)=>v+normal[j]),q];
+  });
+  // Normalize actual extrema, so selection bounds and export stay exact.
+  const limits=[0,1].map(axis=>{
+    const values=raw.flatMap(c=>[0,1,...curveExtrema(c,axis)].map(t=>curvePoint(c,t)[axis]));
+    return [Math.min(...values),Math.max(...values)];
+  });
+  const curves=raw.map(c=>c.map(p=>p.map((v,axis)=>{
+    const [min,max]=limits[axis]; return 2*(v-min)/(max-min)-1;
+  })));
+  const bands=curves.flatMap(c=>{
+    const cuts=[0,...curveExtrema(c,0),...curveExtrema(c,1),1].sort((a,b)=>a-b);
+    return cuts.slice(1).flatMap((end,i)=>end-cuts[i]>1e-10 ? [curvePart(c,cuts[i],end)] : []);
+  });
+  const geometry={curves,bands};
+  if (cloudCache.size>=128) cloudCache.clear();
+  cloudCache.set(seed,geometry);
+  return geometry;
+}
 function curveExtrema(c, axis) {
   const [p,q,r,s]=c.map(point=>point[axis]);
   const a=-p+3*q-3*r+s, b=2*(p-2*q+r), d=q-p;
@@ -232,16 +272,10 @@ function curveExtrema(c, axis) {
   const discriminant=b*b-4*a*d;
   return discriminant<0 ? [] : [(-b-Math.sqrt(discriminant))/(2*a),(-b+Math.sqrt(discriminant))/(2*a)].filter(t=>t>0 && t<1);
 }
-// A scallop can turn in both x and y. Split at every extremum once, so row
-// bands test their entire boundary, not just their corners or an inset ellipse.
-const cloudBands=cloudCurves.flatMap(c=>{
-  const cuts=[0,...curveExtrema(c,0),...curveExtrema(c,1),1].sort((a,b)=>a-b);
-  return cuts.slice(1).flatMap((end,i)=>end-cuts[i]>1e-10 ? [curvePart(c,cuts[i],end)] : []);
-}).filter(c=>curvePoint(c,.5)[0]>=-1e-10);
-function cloudFactor(top,bottom) {
+function cloudFactor(top,bottom,seed) {
   if (top<=-1 || bottom>=1) return 0;
   let factor=1;
-  for (const c of cloudBands) {
+  for (const c of cloudGeometry(seed).bands) {
     const low=Math.max(top,Math.min(c[0][1],c[3][1])), high=Math.min(bottom,Math.max(c[0][1],c[3][1]));
     if (low>high) continue;
     for (const y of [low,high]) {
@@ -251,7 +285,9 @@ function cloudFactor(top,bottom) {
         const t=(lo+hi)/2;
         if ((curvePoint(c,t)[1]<y)===ascending) lo=t; else hi=t;
       }
-      factor=Math.min(factor,curvePoint(c,(lo+hi)/2)[0]);
+      // The cloud is asymmetric: reserve the narrower side of each row band
+      // so centered, left- and right-aligned copy all clear the inward joins.
+      factor=Math.min(factor,Math.abs(curvePoint(c,(lo+hi)/2)[0]));
     }
   }
   return Math.max(0,factor-1e-6);
@@ -276,7 +312,7 @@ function rowSpace(role, height, top, bottom) {
     const distance=Math.max(Math.abs(top-height/2),Math.abs(bottom-height/2));
     return {factor:.78*ovalFactor(distance/(height*.39),"ellipse"),inset:0};
   }
-  if (role.shape==="cloud") return {factor:cloudFactor(top/(height/2)-1,bottom/(height/2)-1),inset:0};
+  if (role.shape==="cloud") return {factor:cloudFactor(top/(height/2)-1,bottom/(height/2)-1,role.cloudSeed),inset:0};
   const distance=Math.max(Math.abs(top-height/2),Math.abs(bottom-height/2));
   if (curved(role.shape)) return { factor: ovalFactor(distance/(height/2),role.shape), inset: 0 };
   const radius=Math.min(role.corner_radius,height/2);
@@ -402,9 +438,15 @@ function fitBalloon(text, role, size, maxWidth, maxHeight, measure, locale, tigh
     const loneEnding=candidate.lines.length>1 && text.trim().split(/\s+/).length>4
       && candidate.lines.at(-1).trim().split(/\s+/).length===1 ? .45 : 0;
     const aspectPenalty=optimizeOval
-      ? Math.max(0,ratio-3)**2*.2+Math.max(0,(role.shape==="cloud" ? 1.8 : 1.3)-ratio)**2*(role.shape==="cloud" ? 2 : .5)
+      ? Math.max(0,ratio-3)**2*.2+Math.max(0,(role.shape==="cloud" ? 1.45 : 1.3)-ratio)**2*(role.shape==="cloud" ? 1.1 : .5)
       : Math.max(0,ratio-3.7)**2*.25+Math.max(0,2.3-ratio)**2*2;
-    const score=candidate.width*natural*(1+loneEnding+aspectPenalty);
+    // Do not gain a few square units by turning a short thought into a tower
+    // of isolated words. Author-supplied hard breaks remain authoritative.
+    const cloudOrphans=role.shape==="cloud" && !/[\r\n]/.test(text) && text.trim().split(/\s+/).length>=4
+      ? candidate.lines.filter(line=>line.trim().split(/\s+/).length===1).length*.5 : 0;
+    const cloudSideSpace=role.shape==="cloud"
+      ? Math.max(0,candidate.width/(Math.max(...candidate.lines.map(widthOf))+2*padding)-1.12)**2*3 : 0;
+    const score=candidate.width*natural*(1+loneEnding+aspectPenalty+cloudOrphans+cloudSideSpace);
     if (score<bestScore) { bestScore=score; best=layout; }
   }
   return best;
@@ -485,7 +527,7 @@ function contour(role,w,h) {
     [[rx,h],[rx-k*rx,h],[0,ry+k*ry],[0,ry]],
     [[0,ry],[0,ry-k*ry],[rx-k*rx,0],[rx,0]],
   ];
-  if (role.shape==="cloud") return cloudCurves.map(c=>c.map(([x,y])=>[rx+x*rx,ry+y*ry]));
+  if (role.shape==="cloud") return cloudGeometry(role.cloudSeed).curves.map(c=>c.map(([x,y])=>[rx+x*rx,ry+y*ry]));
   if (role.shape==="burst") {
     const points=Array.from({length:28},(_,i)=>{
       const a=-Math.PI/2+i*Math.PI/14, r=i%2 ? .82 : 1;
@@ -615,7 +657,7 @@ export function renderOverlay(state, style) {
     }
     const lines=r.lines.map((line,index)=>{
       const metric=r.line_metrics[index];
-      return `<text x="${number(x+metric.x)}" y="${number(y+metric.baseline)}" text-anchor="start" font-family="${escape(role.font)}" font-size="${r.font_size}" font-weight="${role.font_weight ?? 400}" letter-spacing="${role.letter_spacing}" fill="${role.color}" stroke="${role.text_stroke}" stroke-width="${role.text_stroke_width}" paint-order="stroke fill" stroke-linejoin="round" xml:space="preserve">${escape(line)}</text>`;
+      return `<text x="${number(x+metric.x)}" y="${number(y+metric.baseline)}" text-anchor="start" font-family="${escape(JSON.stringify(role.font))}" font-size="${r.font_size}" font-weight="${role.font_weight ?? 400}" letter-spacing="${role.letter_spacing}" fill="${role.color}" stroke="${role.text_stroke}" stroke-width="${role.text_stroke_width}" paint-order="stroke fill" stroke-linejoin="round" xml:space="preserve">${escape(line)}</text>`;
     }).join("");
     return `<g data-lettering-id="${escape(element.id)}" transform="translate(${x+w/2} ${y+h/2}) rotate(${element.rotation}) scale(${element.scale}) translate(${-x-w/2} ${-y-h/2})">`+
       bodySVG(element,role,x,y,w,h,pageHeight)+lines+"</g>";

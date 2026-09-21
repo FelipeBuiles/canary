@@ -1,0 +1,30 @@
+{
+  "title": "The Call of Cthulhu lettering comparison",
+  "source_project": "the-call-of-cthulhu",
+  "source_author": "H. P. Lovecraft",
+  "pages": [
+    {
+      "page": 26,
+      "source_render": "render_001.png",
+      "source_model": "gpt-image-2.5-sunburst",
+      "base_prompts": [
+        "Use case: precise-object-edit. Create a clean base-art comparison specimen from this existing complete comic page, The Call of Cthulhu page 26. Preserve the exact four full-width panels, panel boundaries, gutters, outer margins, all character identities, facial expressions, poses, clothing, statue, studio, lighting, sepia palette and detailed ink rendering. Change only the lettering areas: remove all five rectangular caption boxes, the one speech balloon including its tail, and every letter. Reconstruct plausible quiet studio/background art underneath those regions. Keep these former text locations low-detail and suitable for software lettering to be overlaid later. Do not add text, boxes, balloons, glyphs or new subjects. Keep the complete 2:3 portrait page framing; no cropping. The goal is a faithful controlled lettering study, not a redesign."
+      ],
+      "base_method": "ImageGen reference-guided removal of raster lettering and balloon shapes; manually matched software placement."
+    },
+    {
+      "page": 25,
+      "source_render": "render_001.png",
+      "source_model": "gpt-image-2.5-sunburst",
+      "base_prompts": [
+        "Use case: precise-object-edit. Prepare this complete comic page (The Call of Cthulhu page 25) for a controlled software-lettering comparison. Preserve the four-panel page framing, every character identity, pose, expression, building, studio object, lighting, sepia palette, linework, borders, gutters and margins. Remove ONLY all four rectangular narration boxes and both speech balloons including tails and every letter. Reconstruct quiet plausible art in the former lettering areas, with enough calm space to replace the same text at the same locations later. No text, balloons, caption boxes, glyphs, or new subjects anywhere. Faithful clean base art, not a redesigned page. Keep full 2:3 portrait composition with no cropping.",
+        "Correct this clean-art comic page. The last result mistakenly retained six empty lettering shapes. REMOVE THE SHAPES THEMSELVES: the cream rectangle at top left of panel 1, the cream rectangle at top left of panel 2, the cream rectangle at top left of panel 3, the white oval and its tail in panel 3, the white oval and its tail in panel 4, and the cream rectangle at bottom right of panel 4. Inpaint these six regions with natural continuous background art from their surroundings. The final image must have NO white or cream rectangular boxes or ovals, no tails and no typography. Preserve absolutely everything else: same composition, panel framing, characters, buildings, warm sepia ink rendering and full portrait page."
+      ],
+      "base_method": "ImageGen reference-guided removal; first attempt retained blank boxes, corrected in one further generation. Manually matched software placement."
+    }
+  ],
+  "comparison_limits": "Controlled presentation study, not a same-model production benchmark or automated project conversion. Different generation conditions; manual placement; sample-specific typography. All English wording copied verbatim from canonical page JSON. Spanish is a prepared illustrative translation.",
+  "renderer": "lettering-svg-v5",
+  "compression": "All displayed pages 1024x1536 WebP quality 92.",
+  "rebuild": "novel_to_comic/.venv/bin/python scripts/build_lettering_comparison.py"
+}
