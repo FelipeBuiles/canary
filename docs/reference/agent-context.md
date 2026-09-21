@@ -121,12 +121,11 @@ word or page quotas. Review is metered text work and not a quality guarantee.
   parent. Only explicit edit-parent selection authorizes an edit. Canonical text
   outranks wrong parent pixels, including restoration of species/anatomy.
   State anchors override changed facets; provider-safe framing must not reverse
-  anatomy/state. Character calibration is a distinct text-free lineup of
-  canonical subjects in anatomy-appropriate postures, not invented human adults
-  or a page-style sample; it supplies rendering evidence only.
-  Sunburst alone bypasses that shared lineup after observed identity copying;
-  all its characters/states use the same approved proof, required before
-  generation. Other models retain calibration against per-species style drift.
+  anatomy/state. All character routes use the selected raw proof directly, scoped
+  to rendering rather than identity, pose, gaze, expression or composition. Material
+  boards lose facial abstraction and proportion evidence and are not substitutes.
+  Draw carries that proof separately from subject authorities, reserving its input
+  slot before packing identity sheets; proof bytes participate in request hashes.
 - Location state plates live at `plates/{location}/states/{state}.png`;
   instructions and lineage remain location-scoped. No old-artifact migration.
 - Provider wire v3 and current profiles are a breaking cutover; local Codex uses
@@ -151,9 +150,9 @@ word or page quotas. Review is metered text work and not a quality guarantee.
   story-change preview/apply; all routes under `/api/projects/{project_id}`.
 - `generation_checkpoints.py`: input-keyed resumable structured responses.
 - `stages/s1_extract.py`: private participation/source-quote validation.
-- `style_briefing.py`, `style_contract.py`, `compiled_request.py`,
+- `style_briefing.py`, `style_contract.py`, `style_reference.py`, `compiled_request.py`,
   `stages/s2_style.py`, `stages/s3_cast.py`: bounded shared proof selection,
-  exact anchors, page/art-only projection, and canonical character calibration.
+  exact anchors, page/art-only projection, and shared selected-proof resolution.
 - `state_assets.py`, `artifacts.py`: explicit state conditioning, scoped state
   paths, and reference lineage.
 - `page_drawing.py`: frozen page compilation, image submission, explicit corrections.

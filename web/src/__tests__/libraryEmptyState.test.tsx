@@ -94,6 +94,8 @@ describe("Library first-run (Issue #0)", () => {
     await user.click(screen.getByText("USE ANOTHER SOURCE"));
     await user.type(screen.getByLabelText("PASTE URL OR CODE"), "the-open-window");
     await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("radio", { name: /Editable lettering/ }));
     await user.click(screen.getByRole("button", { name: "CREATE PROJECT" }));
     expect(importStoryMutation.mutate).toHaveBeenCalledOnce();
     expect(runPipeline).not.toHaveBeenCalled();

@@ -1,0 +1,16 @@
+{
+  "title": "DCC1.2 page 3 lettering comparison",
+  "source_work": "Dungeon Crawler Carl",
+  "source_author": "Matt Dinniman",
+  "page": 3,
+  "source_render": "render_001.png",
+  "base_method": "Built-in ImageGen reference-guided removal of all text, caption boxes and burst; original source remains untouched.",
+  "base_prompts": [
+    "Use case: precise-object-edit. Edit target: supplied comic page. Create a clean base-art version for a fair comparison of integrated vs software editable lettering. Remove ALL comic text, all six cream narration rectangles including their borders, the yellow LEAP lettering, and the entire yellow jagged burst and MRAAAAAOW! lettering above the cat in bottom panel. Reconstruct the underlying scenery in those exact regions. Do not leave blank caption boxes, empty balloons, burst silhouettes, or residual text. Preserve the original three-panel composition, panel borders, camera framing, man and cat identities/poses, intricate ink linework, warm room lighting, snowy blue nighttime Seattle scene, and ALL non-text motion strokes beside the jumping cat exactly. Do not move or resize characters or add objects. Keep original 1024x1536 portrait proportions. This is text removal, not redesign. No new lettering anywhere."
+  ],
+  "renderer": "lettering-svg-v5",
+  "editable_method": "Canonical page copy, manually matched placements, Comic Neue captions, Bangers SFX with outlines and rotation; preset burst for the cat's cry. One caption box expanded to fit the unchanged wording. The burst is fitted within current renderer constraints; no hand-drawn imitation.",
+  "comparison_limits": "Prepared controlled study, not automatic conversion or a same-model production benchmark. Reconstructed base art can differ subtly. Current renderer features are used rather than deliberately simplified typography.",
+  "compression": "All displayed pages 1024x1536 WebP quality 92.",
+  "rebuild": "novel_to_comic/.venv/bin/python scripts/build_lettering_comparison.py"
+}

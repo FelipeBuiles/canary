@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
@@ -59,6 +59,15 @@ describe("StyleProofCard", () => {
     await userEvent.click(screen.getByRole("button", { name: /View proof and direction/ }));
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(mutation.mutate).not.toHaveBeenCalled();
+  });
+
+  it.each(["/lettered-proof.png?style=current", null])("keeps the full proof on the card's image source (%s)", async (preview) => {
+    render(card(props({ suggestion: { ...suggestion, sample_preview_url: preview } })));
+    const cardSource = screen.getByRole("img", { name: suggestion.label }).getAttribute("src");
+    if (preview) expect(cardSource).toContain(`${preview}&t=`);
+    else expect(cardSource).toContain("/files/samples/style_0.png?t=");
+    await userEvent.click(screen.getByRole("button", { name: /View proof and direction/ }));
+    expect(within(screen.getByRole("dialog")).getByRole("img", { name: suggestion.label }).getAttribute("src")).toBe(cardSource);
   });
 
   it.each(["pending", "generating", "disabled", "active"])("blocks selection while %s", async (state) => {

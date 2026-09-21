@@ -51,11 +51,16 @@ describe("UploadStep keyboard flow", () => {
     await user.click(projectName);
     await user.keyboard("{Enter}");
 
+    expect(onSubmitImport).not.toHaveBeenCalled();
+    expect((screen.getByRole("button", { name: "CREATE PROJECT" }) as HTMLButtonElement).disabled).toBe(true);
+    await user.click(screen.getByRole("radio", { name: /Integrated lettering/ }));
+    await user.keyboard("{Enter}");
+
     expect(onSubmitImport).toHaveBeenCalledTimes(1);
     expect(onSubmitImport).toHaveBeenCalledWith(
       "the-last-incantation",
       "The Last Incantation",
-      expect.objectContaining({ target_language: "en" }),
+      expect.objectContaining({ target_language: "en", lettering_mode: "integrated" }),
     );
   });
 
@@ -82,8 +87,10 @@ describe("UploadStep keyboard flow", () => {
     expect(within(choices).getAllByRole("button")).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "CONTINUE" }));
     expect((screen.getByLabelText("PROJECT NAME") as HTMLInputElement).value).toBe("The Open Window");
+    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("radio", { name: /Editable lettering/ }));
     await user.click(screen.getByRole("button", { name: "CREATE PROJECT" }));
-    expect(submit).toHaveBeenCalledWith("the-open-window", "The Open Window", { target_language: "en" });
+    expect(submit).toHaveBeenCalledWith("the-open-window", "The Open Window", { target_language: "en", lettering_mode: "editable" });
   });
 
   it("distinguishes loading, catalog failure, and an empty catalog while upload remains available", async () => {
@@ -116,7 +123,9 @@ describe("UploadStep keyboard flow", () => {
     expect(screen.queryByText("Rough whole-book estimate")).toBeNull();
     expect(screen.queryByRole("button", { name: "GENERATION QUALITY" })).toBeNull();
     expect(screen.getByText(/Review a live credit estimate/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("radio", { name: /Editable lettering/ }));
     await user.click(screen.getByRole("button", { name: "CREATE PROJECT" }));
-    expect(submit).toHaveBeenCalledWith(file, "My manuscript", { target_language: "en" });
+    expect(submit).toHaveBeenCalledWith(file, "My manuscript", { target_language: "en", lettering_mode: "editable" });
   });
 });

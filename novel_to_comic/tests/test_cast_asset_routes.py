@@ -112,14 +112,8 @@ def _prepare_character_inputs(project_dir, config):
     from novel_to_comic.asset_generation import persist_non_panel_provenance, style_reference_plan
     bible = artifacts.read_story_bible(project_dir)
     plan = _save_design(config, project_dir, bible)
-    board = s3_cast._character_style_board_path(project_dir)
-    board.parent.mkdir(parents=True, exist_ok=True)
-    Image.new("RGB", (32, 32), "orange").save(board)
-    request = s3_cast._compile_cast_request(config, project_dir,
-        s3_cast._character_style_calibration_input(config, bible),
-        reference_plan=style_reference_plan(config, s3_cast._find_style_ref(project_dir, config.style_template)))
-    persist_non_panel_provenance(request=request, output_path=board, project_dir=project_dir,
-                                request_id="fixture", result=ApiResult(value=board))
+    from .style_reference_support import write_style_proof
+    board = write_style_proof(project_dir, config.style_template)
     for char in bible.characters:
         path = artifacts.character_ref_sheet_path(project_dir, char.id)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -695,7 +689,7 @@ def test_status_requires_current_individual_refs_and_visual_review(
     asyncio.run(s3_cast.regenerate_location_plate(config, project_dir, "loc_001"))
     asyncio.run(s3_cast.regenerate_location_plate(config, project_dir, "loc_001", state_id="ruined"))
     asyncio.run(s3_cast.regenerate_prop_ref(config, project_dir, "prop_001"))
-    assert s3_cast._character_style_board_path(project_dir).exists()
+    assert s3_cast._find_style_ref(project_dir, config.style_template).exists()
     from novel_to_comic.cast_design import CastVisualReview, _digest, review_input
     from novel_to_comic.target_artifacts import TargetArtifacts
     TargetArtifacts(project_dir).write_cast_review(CastVisualReview(

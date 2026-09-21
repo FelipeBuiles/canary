@@ -36,6 +36,19 @@ async def execute_style(app, job, directory, config):
     channel = app.state.event_queues.setdefault(job.project_name, EventChannel())
     owned = args.get("lifecycle_owned", False)
     job.payload.setdefault("proofs", {})
+    brief_lock = asyncio.Lock()
+    brief_resolved = False
+    sample_brief = None
+
+    async def shared_brief():
+        nonlocal brief_resolved, sample_brief
+        async with brief_lock:
+            if not brief_resolved:
+                sample_brief = await style.ensure_style_sample_brief(config, bible, directory)
+                # None is a deliberate deterministic fallback, shared by the
+                # entire batch rather than retried for each candidate.
+                brief_resolved = True
+            return sample_brief
 
     async def one(candidate, index, validation=False):
         identity = candidate["id"]
@@ -46,7 +59,7 @@ async def execute_style(app, job, directory, config):
             cfg = config.model_copy(update={"style_template": style.style_template_for_suggestion(candidate)})
             direction = style.load_style_direction(directory, candidate.get("direction_id")) if candidate.get("direction_id") else None
             reference = style.style_direction_image(directory, direction) if direction else None
-            brief = style.style_validation_brief(bible) if validation else await style.ensure_style_sample_brief(cfg, bible, directory)
+            brief = style.style_validation_brief(bible) if validation else await shared_brief()
             output = artifacts.style_validation_path(directory, identity) if validation else artifacts.style_sample_path(directory, index)
             kwargs = dict(candidate_id=f"{identity}:validation" if validation else identity,
                           style_reference=reference, style_reference_mode=candidate["style_reference_mode"])

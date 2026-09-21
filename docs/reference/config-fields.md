@@ -36,6 +36,7 @@ Load with `load_config(project_dir) → (Config, env_file_path)`.
 | `image_model` | `str` | `GATEWAY_IMAGE_BALANCED` |  |
 | `draw_model` | `str` | `GATEWAY_IMAGE_BALANCED` |  |
 | `target_language` | `str` | `'en'` |  |
+| `lettering_mode` | `Literal['editable', 'integrated']` | `'editable'` |  |
 | `dev_mode` | `bool` | `False` |  |
 | `dev_image_scale` | `float` | `0.5` |  |
 | `dev_image_steps` | `int` | `8` |  |

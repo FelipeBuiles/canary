@@ -54,9 +54,10 @@ from novel_to_comic.models.page import (
     ApprovedVisualReferenceInventory,
     ComicPage,
 )
-from novel_to_comic.style_contract import page_style_template, page_art_style_template
+from novel_to_comic.style_contract import page_style_template, page_art_style_template, POST_LETTERING_MARKER, DESIGN_MARKER
 from novel_to_comic.reference_sheets import MAX_MEMBERS_PER_SHEET, pack_page_references
 from novel_to_comic.target_artifacts import TargetArtifacts
+from novel_to_comic.rendering_fidelity import RENDERING_FIDELITY_BLOCK
 from novel_to_comic.usage import ApiResult, UsageRecord, calculate_cost, calculate_cost_breakdown
 
 if TYPE_CHECKING:
@@ -166,6 +167,11 @@ def muse_page_capability_profile() -> PageCapabilityProfile:
 
 
 def _supported_page_profile(profile: PageCapabilityProfile) -> bool:
+    if profile.exact_visible_lettering and profile.id.endswith("-integrated-v1"):
+        return _supported_page_profile(profile.model_copy(update={
+            "id": profile.id.removesuffix("-integrated-v1"),
+            "exact_visible_lettering": False,
+        }))
     from novel_to_comic.codex_dev import model_has_vision, selectable_models, selector_available
 
     if profile == current_page_capability_profile() or any(
@@ -183,7 +189,20 @@ _CODEX_PAGE_PROFILE_PREFIX = "codex-dev-complete-page-hybrid-v1-"
 _LEGACY_CODEX_PAGE_PROFILE_PREFIX = "codex-dev-complete-page-v1-"
 
 
+def _integrated_page_profile(profile: PageCapabilityProfile) -> PageCapabilityProfile:
+    return profile.model_copy(update={
+        "id": profile.id + "-integrated-v1", "exact_visible_lettering": True,
+    })
+
+
 def current_page_capability_profile(config: Config | None = None) -> PageCapabilityProfile:
+    profile = _editable_page_capability_profile(config)
+    if config is not None and config.lettering_mode == "integrated":
+        return _integrated_page_profile(profile)
+    return profile
+
+
+def _editable_page_capability_profile(config: Config | None = None) -> PageCapabilityProfile:
     """Select only from original-process complete-page routing authority."""
     from novel_to_comic.ai import codex_runtime
     from novel_to_comic.codex_dev import route_for
@@ -228,7 +247,7 @@ def page_profile_uses_native_dimensions(profile: PageCapabilityProfile) -> bool:
     return (
         profile.provider == "codex-dev"
         and profile.model == "gpt-image-2"
-        and any(re.fullmatch(re.escape(prefix) + r"[0-9a-f]{64}", profile.id) is not None
+        and any(re.fullmatch(re.escape(prefix) + r"[0-9a-f]{64}", profile.id.removesuffix("-integrated-v1")) is not None
                 for prefix in (_CODEX_PAGE_PROFILE_PREFIX, _LEGACY_CODEX_PAGE_PROFILE_PREFIX))
     )
 
@@ -243,7 +262,7 @@ def complete_page_adapter(config: Config) -> CompletePageAdapter:
         from novel_to_comic.codex_complete_page import CodexCompletePageAdapter
 
         return CodexCompletePageAdapter(config)
-    return VertexCompletePageAdapter(GoogleVertexCompletePageTransport(config))
+    return VertexCompletePageAdapter(GoogleVertexCompletePageTransport(config), profile)
 
 
 
@@ -362,6 +381,7 @@ def _compile_prompt(
     cast_art_direction: Mapping[str, str] | None = None,
     exact_visible_lettering: bool = True,
     reference_bindings: Mapping[str, dict] | None = None,
+    style_reference: PageReference | None = None,
 ) -> str:
     # Identity is independent of state labels and reference traversal order.
     entity_ids = sorted({
@@ -393,7 +413,9 @@ def _compile_prompt(
                 "subject": handles[entity_id],
                 "references": [
                     {
-                        "image": _off_canvas_handle("asset", ref.order),
+                        "image": _off_canvas_handle("asset", (reference_bindings or {}).get(ref.id, {}).get("input_order", ref.order)),
+                        **({key: value for key, value in reference_bindings[ref.id].items() if key != "input_order"}
+                           if reference_bindings and ref.id in reference_bindings else {}),
                         "appearance": ref.label,
                     }
                     for ref in references
@@ -415,9 +437,20 @@ def _compile_prompt(
             "All asset and subject handles are off-canvas bindings, not illustration callouts. "
             "Each asset label binds the immediately preceding supplied image. The separately "
             "labeled parent-edit-base, when present, is not an approved asset and does not "
-            "advance asset ordering. Use each asset only for its assigned subject and state; "
+            "advance asset ordering. The selected_style_proof is rendering evidence only. "
+            "Use each subject asset only for its assigned subject and state; "
             "preserve hairstyle, age, facial structure, clothing design and recurring object "
             "features shown by that authority unless the assigned state explicitly changes them. "
+            "Character references establish identity and appearance, not a fixed pose, facing "
+            "direction, gaze, expression or camera angle. Re-stage each character for the panel's "
+            "action and relationships: direct eyelines toward the relevant person or event, "
+            "and choose body orientation, gesture and expression from the scene. Use profiles, "
+            "rear views and opposing eyelines when the scene calls for them; do not default "
+            "to the reference portrait's three-quarter view or camera-facing lineup. Preserve "
+            "anatomical constraints and sided identifying features when changing viewpoint; "
+            "do not mirror asymmetric features. Respect canonical staging, continuity and "
+            "author pins rather than varying direction arbitrarily. For corrections, change "
+            "acting or viewpoint only within the requested scope; preserve untouched artwork. "
             "When an asset includes owner art_direction, it records the approved Cast design: "
             "it overrides conflicting source appearance and continuity defaults for that asset/state. "
             "Preserve its requested design in the page without changing exact lettering or story events."
@@ -436,7 +469,7 @@ def _compile_prompt(
             }
             for reference in references
         ],
-        "project_style_direction": page_style_template(style_template) if style_template.strip() else None,
+        "project_style_direction": page_style_template(style_template.split(POST_LETTERING_MARKER, 1)[0].split(DESIGN_MARKER, 1)[0]) if style_template.strip() else None,
         "canonical_staging_and_layout": provider_safe_direction(page.layout_intent),
         "canonical_comic_page": {
             "page_turn_role": page.page_turn_role,
@@ -530,21 +563,18 @@ def _compile_prompt(
                 "continuity": list(correction_context.beat_transitions),
                 "sources": list(correction_context.source_texts),
             }
+    if style_reference is not None:
+        payload["selected_style_proof"] = {
+            "image": _off_canvas_handle("asset", style_reference.order),
+            "authority": style_reference.visual_anchor,
+        }
     if not exact_visible_lettering:
         if page.lettering_reservations is None:
             raise ValueError("This Plan predates lettering reservations. Rerun Plan before drawing a hybrid edition.")
         payload.pop("exact_lettering")
         payload["project_style_direction"] = page_art_style_template(style_template)
-        assignment = {item.id: (part, item) for part in ordered_content for item in part.lettering}
-        payload["lettering_reservations"] = [
-            {"id": reservation.lettering_item_id,
-             "panel": assignment[reservation.lettering_item_id][0].order,
-             "kind": assignment[reservation.lettering_item_id][1].kind,
-             "delivery": assignment[reservation.lettering_item_id][1].delivery,
-             **reservation.model_dump(mode="json", exclude={"lettering_item_id", "speaker_entity_id"}),
-             "speaker_subject": handles.get(reservation.speaker_entity_id)}
-            for reservation in page.lettering_reservations
-        ]
+        # Placement reservations seed the editable layer only; exposing them to
+        # the image model can bake blank caption boxes into the artwork.
         return _hybrid_prompt(payload, page, depiction)
     depiction_direction = (
         "Use framing, shadow, reaction, or aftermath for graphic details. Preserve "
@@ -565,6 +595,7 @@ def _compile_prompt(
     )
     return (
         "Render exactly one complete comic page, never a panel artifact or reference sheet.\n"
+        f"{RENDERING_FIDELITY_BLOCK}\n"
         "AUTHORITY: exact canonical copy and reading order, current approved subject/state "
         "references with verbatim physical anchors and guards, selected project style, and "
         "author-pinned geometry constrain every decision. Anchors describe physical features, "
@@ -599,7 +630,7 @@ def _hybrid_prompt(payload: dict, page: ComicPage, depiction: str) -> str:
         if isinstance(value, str):
             for text in copy:
                 if text and len(text.strip()) >= 12:
-                    value = value.replace(text, "[story copy omitted; reserve its space]")
+                    value = value.replace(text, "[story copy omitted]")
             return value
         if isinstance(value, list):
             return [without_copy(item, field) for item in value]
@@ -613,13 +644,13 @@ def _hybrid_prompt(payload: dict, page: ComicPage, depiction: str) -> str:
         "LETTERING POLICY: Final dialogue, thoughts, narration, captions and sound effects are added "
         "after illustration by Canary. Draw NO speech or thought balloons, caption/narration boxes, "
         "SFX glyphs, subtitles, words, placeholder text, lorem ipsum or pseudo-writing for these elements. "
-        "Do not draw the balloon or box itself. For every reservation preserve quiet negative space: "
-        "no faces, hands, focal props or indispensable details inside it. Keep a clean tail corridor "
-        "to the named speaker. Reservation IDs and panel numbers are off-canvas bindings. "
+        "Draw continuous scene artwork throughout every panel. Do not reserve space for lettering "
+        "or draw blank boxes, empty balloons, parchment patches, placeholder areas or tail corridors, "
+        "even if layout notes or reference images suggest them. "
         "Legitimate in-world signage is distinct; never substitute it for publishable copy.\n"
         "AUTHORITY: preserve approved subject/state references, physical anchors and continuity guards "
         "verbatim in meaning, current staging, selected art direction, page framing and author pins. "
-        "Compose around reservations while retaining artistic freedom outside them. "
+        "Compose each scene naturally within its panel. "
         "Style proof images are RENDERING/STYLE authority only: do not copy their words, balloons, "
         "captions or page content. Subject and location assets own identity, state, architecture "
         "and material identity; they do not prescribe an additional surface-texture layer. "
@@ -633,7 +664,7 @@ def _hybrid_prompt(payload: dict, page: ComicPage, depiction: str) -> str:
     if depiction == "less_graphic":
         policy += "Use framing, shadow, reaction or aftermath for graphic details; preserve identity, story and references.\n"
     return policy + json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + (
-        "\nOUTPUT: one complete page of artwork with quiet lettering reservations. NO generated comic lettering."
+        "\nOUTPUT: one complete page of continuous scene artwork. NO generated comic lettering."
     )
 
 def compile_page_generation_request(
@@ -648,6 +679,7 @@ def compile_page_generation_request(
     edit_source_bytes: bytes | None = None,
     depiction: Literal["canonical", "less_graphic"] = "canonical",
     style_template: str = "",
+    style_reference_path: Path | None = None,
 ) -> CompiledPageGeneration:
     """Compile one immutable request from canonical Plan and Cast authority."""
 
@@ -680,6 +712,10 @@ def compile_page_generation_request(
     max_references = selected_edition.capability_profile.max_image_references
     if (page_profile_uses_native_dimensions(selected_edition.capability_profile) or selected_edition.capability_profile.provider in {"openai", "openrouter"}) and correction is not None:
         max_references -= 1  # The parent is an input image, never an authority replacement.
+    if style_reference_path is not None:
+        max_references -= 1  # Keep the proof separate from subject transport sheets.
+    if max_references < 0:
+        raise ValueError("This edition has no image capacity for the selected Style proof and edit parent")
     sheet_capacity = max_references * MAX_MEMBERS_PER_SHEET if selected_edition.capability_profile.provider == "codex-dev" else max_references
     if len(authorities) > sheet_capacity:
         raise ValueError(
@@ -733,6 +769,35 @@ def compile_page_generation_request(
     uploaded_references, uploaded_bytes, reference_bindings = pack_page_references(
         references, loaded, max_references,
     ) if selected_edition.capability_profile.provider == "codex-dev" else (tuple(references), tuple(loaded), {})
+    style_reference = None
+    if style_reference_path is not None:
+        try:
+            style_bytes = style_reference_path.read_bytes()
+        except OSError as exc:
+            raise ValueError("Selected Style proof is unreadable. Rerun Style before Draw.") from exc
+        if not style_bytes:
+            raise ValueError("Selected Style proof is empty. Rerun Style before Draw.")
+        style_reference = PageReference(
+            id="selected-style-proof", entity_id=None,
+            order=len(uploaded_references) + 1, media_type="image/png",
+            content_sha256=hashlib.sha256(style_bytes).hexdigest(),
+            label="Selected Style proof",
+            visual_anchor=(
+                "Rendering authority only: match the selected proof's medium, palette, "
+                "line weight, edge treatment, shadow depth, facial abstraction, character "
+                "proportion system and degree of simplification. Transfer how people and "
+                "environments are drawn, not their identities, hairstyles, costumes or content. "
+                "Cast assets own identity and active-state anatomy; they do not override this "
+                "rendering language or prescribe an additional surface-texture layer. "
+                "Do not copy the proof's poses, gaze, expressions, camera angles, composition, "
+                "panels, text or lettering. Plan owns staging and acting; the selected written "
+                "standards own page framing and lettering. Preserve authored material marks "
+                "without amplifying incidental texture. For corrections preserve untouched "
+                "artwork; this reference does not authorize restyling outside the requested scope."
+            ),
+        )
+        uploaded_references += (style_reference,)
+        uploaded_bytes += (style_bytes,)
     prompt = _compile_prompt(
         page,
         tuple(references),
@@ -743,6 +808,7 @@ def compile_page_generation_request(
         cast_art_direction,
         exact_visible_lettering=selected_edition.capability_profile.exact_visible_lettering,
         reference_bindings=reference_bindings,
+        style_reference=style_reference,
     )
     if reference_bindings:
         prompt += (
@@ -753,6 +819,17 @@ def compile_page_generation_request(
             "borders are off-canvas reference guides: never draw them, combine identities, or "
             "copy the sheet arrangement into the comic page."
         )
+    profile = selected_edition.capability_profile
+    # Native image tools may expose only automatic sizing, so the frozen prompt
+    # must carry the same canvas authority as providers' structured size fields.
+    prompt = (
+        f"PAGE CANVAS: {profile.output_width} pixels wide by {profile.output_height} pixels high. "
+        "Use this portrait width-to-height ratio for the entire output image on every page. "
+        "Panel layout and story density must fit inside this fixed page canvas; they must not "
+        "change its aspect ratio. Never output a landscape or square canvas, rotate the page, "
+        "or add blank padding to simulate the requested shape. Reference images and correction "
+        "parents do not override this output canvas requirement.\n"
+    ) + prompt
     request = FrozenPageGenerationRequest.compile(
         page=page,
         edition=selected_edition,
@@ -789,6 +866,7 @@ def prepare_page_correction(
     context_source_unit_ids: tuple[str, ...] = (),
     artifacts: TargetArtifacts,
     style_template: str = "",
+    style_reference_path: Path | None = None,
 ) -> PreparedPageCorrection:
     """Validate and compile one explicit correction set, without spending.
 
@@ -828,6 +906,7 @@ def prepare_page_correction(
         correction_context=context,
         edit_source_bytes=artifacts.read_render(page.page_number, parent.revision),
         style_template=style_template,
+        style_reference_path=style_reference_path,
         depiction=correction.depiction,
     )
     return PreparedPageCorrection(correction=correction, compiled=compiled, context=context)
@@ -940,20 +1019,21 @@ def _validate_prepared_page(
 class VertexCompletePageAdapter:
     """Strict complete-page adapter over the proven Vertex multimodal transport."""
 
-    def __init__(self, transport: CompletePageTransport) -> None:
+    def __init__(self, transport: CompletePageTransport, profile: PageCapabilityProfile | None = None) -> None:
         self._transport = transport
+        self._profile = profile or production_page_capability_profile()
 
     def prepare(self, compiled: CompiledPageGeneration) -> PreparedCompletePageRequest:
         request = compiled.request
         if request.provider != COMPLETE_PAGE_PROVIDER or request.model != COMPLETE_PAGE_MODEL:
             raise ValueError("complete-page request is not bound to the production Vertex profile")
-        return _prepare_complete_page(compiled, production_page_capability_profile())
+        return _prepare_complete_page(compiled, self._profile)
 
     async def generate(
         self,
         prepared: PreparedCompletePageRequest,
     ) -> CompletePageProviderResult:
-        _validate_prepared_page(prepared, production_page_capability_profile())
+        _validate_prepared_page(prepared, self._profile)
         result = await self._transport.generate(prepared)
         actual_model = result.actual_provider_model
         for prefix in ("vertex_ai/", "vertex-multimodal/"):
@@ -992,7 +1072,7 @@ class GoogleVertexCompletePageTransport:
 
     def __init__(self, config: Config) -> None:
         self._config = config
-        self._profile = production_page_capability_profile()
+        self._profile = current_page_capability_profile(config)
         self._gateway_model = COMPLETE_PAGE_GATEWAY_MODEL
 
     async def generate(
@@ -1277,7 +1357,8 @@ class OpenAICompletePageAdapter(GoogleVertexCompletePageTransport):
 
     def __init__(self, config: Config, profile: PageCapabilityProfile) -> None:
         super().__init__(config)
-        if profile != openai_page_capability_profile(profile.model):
+        base = openai_page_capability_profile(profile.model)
+        if profile not in (base, _integrated_page_profile(base)):
             raise ValueError("Unsupported OpenAI complete-page profile")
         self._profile = profile
         self._gateway_model = "image-" + profile.model.removeprefix("gpt-image-2.5-")
@@ -1291,7 +1372,8 @@ class OpenRouterCompletePageAdapter(GoogleVertexCompletePageTransport):
 
     def __init__(self, config: Config, profile: PageCapabilityProfile) -> None:
         super().__init__(config)
-        if profile != muse_page_capability_profile():
+        base = muse_page_capability_profile()
+        if profile not in (base, _integrated_page_profile(base)):
             raise ValueError("Unsupported OpenRouter complete-page profile")
         self._profile = profile
         self._gateway_model = "image-muse"

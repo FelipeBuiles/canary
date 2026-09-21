@@ -133,13 +133,6 @@ def test_incompatible_artifact_requires_rerun(tmp_path):
         design.read_design(config, tmp_path, bible)
 
 
-def test_style_board_failure_never_falls_back_to_people(tmp_path):
-    config, _, _ = _project(tmp_path, "image-gemini-pro")
-    with patch.object(s3_cast, "submit_non_panel_request", new_callable=AsyncMock, side_effect=RuntimeError("failed")):
-        with pytest.raises(RuntimeError, match="failed"):
-            asyncio.run(s3_cast._generate_character_style_board(config, tmp_path, MagicMock()))
-
-
 def test_missing_design_rejected_before_correction_rewrite(tmp_path):
     from fastapi import HTTPException
     from novel_to_comic.cast_instructions import apply_asset_instruction
@@ -165,7 +158,7 @@ def test_cast_item_failure_cannot_complete_checkpoint(tmp_path, failed_group):
     async def fail_item(*args):
         ctx.record_item_failed("sailor:alternate")
     with ExitStack() as stack:
-        for helper in ("ensure_design", "_generate_character_style_board", "_generate_character_refs",
+        for helper in ("ensure_design", "_generate_character_refs",
                        "_generate_character_state_refs", "review_cast", "_generate_location_plates", "_generate_prop_refs"):
             stack.enter_context(patch.object(s3_cast, helper, new_callable=AsyncMock,
                 side_effect=fail_item if helper == failed_group else None))

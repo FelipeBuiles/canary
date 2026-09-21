@@ -179,6 +179,42 @@ class DurableQueue:
             if operation is not None and operation.status == "running":
                 continue  # Never steal an operation from this live process.
             await self.backend.job_manager.retry_job(stalled)
+        await self.reconcile_failed_dispatches()
+
+    async def reconcile_failed_dispatches(self):
+        """A dead dispatch must not leave an unstarted operation queued forever."""
+        from .generation_jobs import persist_generation_job
+
+        with self.app.state.admission.journal() as db:
+            dispatched = dict(db.execute(
+                "SELECT id,dispatched FROM operation_outbox WHERE dispatched IS NOT NULL"
+            ))
+        pending = {
+            dispatch_id: operation_id for operation_id, dispatch_id in dispatched.items()
+            if (job := self.app.state.generation_jobs.get(operation_id)) is not None
+            and job.status == "queued" and job.started_at is None
+        }
+        if not pending:
+            return
+        rows = await self.backend.connector.execute_query_all_async(
+            "SELECT id,status FROM procrastinate_jobs WHERE id = ANY(%(ids)s) "
+            "AND queue_name = %(queue)s AND status IN ('failed','cancelled','aborted')",
+            ids=list(pending), queue=self.queue_name,
+        )
+        for row in rows:
+            job = self.app.state.generation_jobs.get(pending[row["id"]])
+            # Execution can start while the scheduler query is in flight.
+            if job is None or job.status != "queued" or job.started_at is not None:
+                continue
+            job.status = "failed"
+            job.phase = "dispatch"
+            job.classification = "generation_error"
+            job.recoverable = True
+            job.error = f"Queue dispatch {row['id']} ended as {row['status']} before generation started."
+            job.user_message = "This page never started drawing because its queued task stopped. Try again."
+            job.finished_at = datetime.now(timezone.utc)
+            persist_generation_job(self.app, job)
+            logger.warning("Reconciled unstarted operation %s: %s", job.id, job.error)
 
 
 async def initialize_queue(app):

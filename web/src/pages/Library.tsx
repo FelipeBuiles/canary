@@ -92,7 +92,7 @@ function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
         aria-modal="true"
         aria-label={t("NEW PRODUCTION")}
         tabIndex={-1}
-        className="max-h-[calc(100dvh-2rem)] w-full max-w-[720px] overflow-y-auto"
+        className="max-h-[calc(100dvh-2rem)] w-full max-w-[1080px] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <UploadStep

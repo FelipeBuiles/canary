@@ -1,0 +1,4 @@
+{
+  "prompt": "Use case: precise-object-edit. Create a clean base-art comparison specimen from this existing complete comic page, The Call of Cthulhu page 26. Preserve the exact four full-width panels, panel boundaries, gutters, outer margins, all character identities, facial expressions, poses, clothing, statue, studio, lighting, sepia palette and detailed ink rendering. Change only the lettering areas: remove all five rectangular caption boxes, the one speech balloon including its tail, and every letter. Reconstruct plausible quiet studio/background art underneath those regions. Keep these former text locations low-detail and suitable for software lettering to be overlaid later. Do not add text, boxes, balloons, glyphs or new subjects. Keep the complete 2:3 portrait page framing; no cropping. The goal is a faithful controlled lettering study, not a redesign.",
+  "createdAt": "2026-09-20T20:16:34.011Z"
+}

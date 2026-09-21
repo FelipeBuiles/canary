@@ -947,13 +947,15 @@ describe("PagesRoom", () => {
     expect(runPipeline).not.toHaveBeenCalled();
   });
 
-  it("explains when the image provider blocks a complete page", () => {
+  it.each(["provider_blocked", "generation_error", "empty_response"] as const)("offers less-graphic recovery for %s without automatic generation", (classification) => {
     includeUndrawnPage = true;
     generationJobResults = [{
       id: "job-page-16",
       status: "failed",
-      classification: "provider_blocked",
-      user_message: "The image provider declined this scene but did not say which detail caused it. Your work is unchanged.",
+      classification,
+      user_message: classification === "provider_blocked"
+        ? "The image provider declined this scene but did not say which detail caused it. Your work is unchanged."
+        : undefined,
       recoverable: true,
       error: "raw LiteLLM gateway error",
     }];

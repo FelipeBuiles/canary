@@ -1,0 +1,262 @@
+{
+  "revision": 1,
+  "content_sha256": "",
+  "page_number": 3,
+  "comic_page_sha256": "96149870b89c0965b1232e6083ed0128260488acb973ba0d9317f0f236298cf0",
+  "style_sha256": "4ced8e50f660121058c9bef728feb48970ff615850afdc3c3f2ddf3a6e9fc157",
+  "locale": "source",
+  "canvas_aspect_ratio": 0.6666666666666666,
+  "elements": [
+    {
+      "id": "lettering_0018",
+      "source_lettering_item_id": "lettering_0018",
+      "role": "caption",
+      "text_by_locale": {
+        "source": "Beatrice's rule against smoking in the apartment was ironclad. After our breakup, I made a point of smoking as much as I could. Immature? Sure. But it was freezing outside."
+      },
+      "suggested_placement": {
+        "x": 0.0234375,
+        "y": 0.014322916666666666,
+        "width": 0.447265625,
+        "height": 0.06770833333333333
+      },
+      "placement": {
+        "x": 0.0234375,
+        "y": 0.014322916666666666,
+        "width": 0.447265625,
+        "height": 0.06770833333333333
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": null,
+      "suggested_tail_target": null,
+      "rotation": 0.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": true,
+      "resolved": null
+    },
+    {
+      "id": "lettering_0019",
+      "source_lettering_item_id": "lettering_0019",
+      "role": "caption",
+      "text_by_locale": {
+        "source": "Donut did not like the smoke, and the smell clung to her fur. As a compromise, I cracked the window when I smoked."
+      },
+      "suggested_placement": {
+        "x": 0.578125,
+        "y": 0.045572916666666664,
+        "width": 0.26953125,
+        "height": 0.06770833333333333
+      },
+      "placement": {
+        "x": 0.578125,
+        "y": 0.045572916666666664,
+        "width": 0.26953125,
+        "height": 0.06770833333333333
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": null,
+      "suggested_tail_target": null,
+      "rotation": 0.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": true,
+      "resolved": null
+    },
+    {
+      "id": "lettering_0020",
+      "source_lettering_item_id": "lettering_0020",
+      "role": "caption",
+      "text_by_locale": {
+        "source": "Around two A.M., a bad dream woke me up. I cracked the window and lit a cigarette."
+      },
+      "suggested_placement": {
+        "x": 0.02734375,
+        "y": 0.3509114583333333,
+        "width": 0.3056640625,
+        "height": 0.050130208333333336
+      },
+      "placement": {
+        "x": 0.02734375,
+        "y": 0.3509114583333333,
+        "width": 0.3056640625,
+        "height": 0.050130208333333336
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": null,
+      "suggested_tail_target": null,
+      "rotation": 0.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": true,
+      "resolved": null
+    },
+    {
+      "id": "lettering_0021",
+      "source_lettering_item_id": "lettering_0021",
+      "role": "caption",
+      "text_by_locale": {
+        "source": "That was when Donut decided\u2014apparently for the first time in her life\u2014that she needed to explore the outdoors."
+      },
+      "suggested_placement": {
+        "x": 0.6396484375,
+        "y": 0.3502604166666667,
+        "width": 0.3388671875,
+        "height": 0.06770833333333333
+      },
+      "placement": {
+        "x": 0.6396484375,
+        "y": 0.3502604166666667,
+        "width": 0.3388671875,
+        "height": 0.06770833333333333
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": null,
+      "suggested_tail_target": null,
+      "rotation": 0.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": true,
+      "resolved": null
+    },
+    {
+      "id": "lettering_0022",
+      "source_lettering_item_id": "lettering_0022",
+      "role": "sfx",
+      "text_by_locale": {
+        "source": "LEAP"
+      },
+      "suggested_placement": {
+        "x": 0.34765625,
+        "y": 0.3971354166666667,
+        "width": 0.140625,
+        "height": 0.068359375
+      },
+      "placement": {
+        "x": 0.34765625,
+        "y": 0.3971354166666667,
+        "width": 0.140625,
+        "height": 0.068359375
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": null,
+      "suggested_tail_target": null,
+      "rotation": -14.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": false,
+      "resolved": null
+    },
+    {
+      "id": "lettering_0023",
+      "source_lettering_item_id": "lettering_0023",
+      "role": "caption",
+      "text_by_locale": {
+        "source": "She jumped from my shoulder through the second-story window and onto the tree. On the coldest night of the year. Of course she did."
+      },
+      "suggested_placement": {
+        "x": 0.357421875,
+        "y": 0.583984375,
+        "width": 0.4013671875,
+        "height": 0.052083333333333336
+      },
+      "placement": {
+        "x": 0.357421875,
+        "y": 0.583984375,
+        "width": 0.4013671875,
+        "height": 0.052083333333333336
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": null,
+      "suggested_tail_target": null,
+      "rotation": 0.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": true,
+      "resolved": null
+    },
+    {
+      "id": "lettering_0024",
+      "source_lettering_item_id": "lettering_0024",
+      "role": "caption",
+      "text_by_locale": {
+        "source": "She sniffed the sidewalk, discovered it was cold as fuck, scrambled back up the tree\u2014and refused to risk the jump back inside."
+      },
+      "suggested_placement": {
+        "x": 0.029296875,
+        "y": 0.8880208333333334,
+        "width": 0.3271484375,
+        "height": 0.07161458333333333
+      },
+      "placement": {
+        "x": 0.029296875,
+        "y": 0.8880208333333334,
+        "width": 0.3271484375,
+        "height": 0.07161458333333333
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": null,
+      "suggested_tail_target": null,
+      "rotation": 0.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": true,
+      "resolved": null
+    },
+    {
+      "id": "lettering_0025",
+      "source_lettering_item_id": "lettering_0025",
+      "role": "sfx",
+      "text_by_locale": {
+        "source": "MRAAAAAOW!"
+      },
+      "suggested_placement": {
+        "x": 0.697265625,
+        "y": 0.6555989583333334,
+        "width": 0.2783203125,
+        "height": 0.07682291666666667
+      },
+      "placement": {
+        "x": 0.697265625,
+        "y": 0.6555989583333334,
+        "width": 0.2783203125,
+        "height": 0.07682291666666667
+      },
+      "hidden": false,
+      "style_override": {
+        "font": "Bangers",
+        "font_weight": 400,
+        "min_font_size": 30,
+        "max_font_size": 52.0,
+        "line_height": 1.05,
+        "align": "center",
+        "color": "#181818",
+        "fill": "#ffda42",
+        "stroke": "#181818",
+        "stroke_width": 2.5,
+        "padding": 8,
+        "corner_radius": 12.0,
+        "shape": "burst",
+        "letter_spacing": 0.0,
+        "text_stroke": "transparent",
+        "text_stroke_width": 0.0
+      },
+      "tail_target": null,
+      "suggested_tail_target": null,
+      "rotation": -5.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": false,
+      "resolved": null
+    }
+  ],
+  "reviewed_against_render_revision": null,
+  "reviewed_against_image_sha256": null
+}

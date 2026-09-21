@@ -19,7 +19,6 @@ import {
 import {
   acceptPageIssue,
   analyzeCompletePage,
-  getProviderUsage,
   dismissPageIssue,
   generateCompletePage,
   getAdaptation,
@@ -580,7 +579,7 @@ function invalidatePageReview(qc: ReturnType<typeof useQueryClient>, project: st
     qc.invalidateQueries({ queryKey: ["project", project, "complete-pages", pageNumber] });
   }
   qc.invalidateQueries({ queryKey: ["project", project, "status"] });
-  qc.invalidateQueries({ queryKey: ["provider-usage", project] });
+  qc.invalidateQueries({ queryKey: ["credits", "history"] });
   qc.invalidateQueries({ queryKey: ["project", project, "generation-jobs"] });
 }
 
@@ -803,12 +802,12 @@ export function usePricingReference() {
   });
 }
 
-export function useCreditHistory() {
+export function useCreditHistory(project?: string) {
   return useInfiniteQuery({
     // Version the cache key when the response shape changes. The previous
     // flat `transactions` payload is not compatible with InfiniteData pages.
-    queryKey: ["credits", "history", "runs-v2"],
-    queryFn: ({ pageParam }) => getCreditHistory(pageParam),
+    queryKey: ["credits", "history", "runs-v3", project ?? "all"],
+    queryFn: ({ pageParam }) => getCreditHistory(pageParam, 30, project),
     initialPageParam: 0,
     getNextPageParam: (lastPage) => lastPage?.has_more && Array.isArray(lastPage.runs)
       ? lastPage.offset + lastPage.runs.length
@@ -910,15 +909,5 @@ export function useLabsRun(runId: string | undefined) {
       const data = query.state.data;
       return data && data.status === "running" ? 1500 : false;
     },
-  });
-}
-
-
-export function useProviderUsage(project: string | undefined, enabled = true) {
-  return useQuery({
-    queryKey: ["provider-usage", project],
-    queryFn: () => getProviderUsage(project!),
-    enabled: !!project && enabled,
-    staleTime: 30_000,
   });
 }

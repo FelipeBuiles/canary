@@ -1,0 +1,196 @@
+{
+  "revision": 1,
+  "content_sha256": "fe402d89184f7e4a77873acf5544fd7393e34738cfff3deae9e2c1bd9e2f16be",
+  "page_number": 26,
+  "comic_page_sha256": "f82f418403408ee10bb0947625fbb60ca79a6536b7a936102ca09adc5762e83d",
+  "style_sha256": "f7f84afd39d67378762de481b78189f101e778bfe6c3b0d6756e569a26b81bad",
+  "locale": "source",
+  "canvas_aspect_ratio": 0.6666666666666666,
+  "elements": [
+    {
+      "id": "lettering_0132",
+      "source_lettering_item_id": "lettering_0132",
+      "role": "caption",
+      "text_by_locale": {
+        "source": "I did not enlarge his knowledge in this regard, but sought with some subtlety to draw him out.",
+        "es": "No amplié sus conocimientos al respecto, sino que procuré hacerlo hablar con cierta sutileza."
+      },
+      "suggested_placement": {
+        "x": 0.037109375,
+        "y": 0.012369791666666666,
+        "width": 0.2705078125,
+        "height": 0.052083333333333336
+      },
+      "placement": {
+        "x": 0.037109375,
+        "y": 0.012369791666666666,
+        "width": 0.2705078125,
+        "height": 0.052083333333333336
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": null,
+      "suggested_tail_target": null,
+      "rotation": 0.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": true,
+      "resolved": null
+    },
+    {
+      "id": "lettering_0133",
+      "source_lettering_item_id": "lettering_0133",
+      "role": "caption",
+      "text_by_locale": {
+        "source": "In a short time I became convinced of his absolute sincerity, for he spoke of the dreams in a manner none could mistake. They and their subconscious residuum had influenced his art profoundly.",
+        "es": "Pronto me convencí de su absoluta sinceridad: hablaba de los sueños de un modo inequívoco. Estos y su poso subconsciente habían influido profundamente en su arte."
+      },
+      "suggested_placement": {
+        "x": 0.5546875,
+        "y": 0.012369791666666666,
+        "width": 0.3955078125,
+        "height": 0.07747395833333333
+      },
+      "placement": {
+        "x": 0.5546875,
+        "y": 0.012369791666666666,
+        "width": 0.3955078125,
+        "height": 0.07747395833333333
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": null,
+      "suggested_tail_target": null,
+      "rotation": 0.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": true,
+      "resolved": null
+    },
+    {
+      "id": "lettering_0134",
+      "source_lettering_item_id": "lettering_0134",
+      "role": "caption",
+      "text_by_locale": {
+        "source": "And he shewed me a morbid statue whose contours almost made me shake with the potency of its black suggestion.",
+        "es": "Y me mostró una estatua mórbida cuyos contornos casi me hicieron temblar por la fuerza de su oscura sugestión."
+      },
+      "suggested_placement": {
+        "x": 0.037109375,
+        "y": 0.3033854166666667,
+        "width": 0.3310546875,
+        "height": 0.050130208333333336
+      },
+      "placement": {
+        "x": 0.037109375,
+        "y": 0.3033854166666667,
+        "width": 0.3310546875,
+        "height": 0.050130208333333336
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": null,
+      "suggested_tail_target": null,
+      "rotation": 0.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": true,
+      "resolved": null
+    },
+    {
+      "id": "lettering_0135",
+      "source_lettering_item_id": "lettering_0135",
+      "role": "speech",
+      "text_by_locale": {
+        "source": "I cannot recall having seen the original of this thing anywhere — except in my own dream bas-relief. The outlines formed themselves insensibly under my hands.",
+        "es": "No recuerdo haber visto el original de esta cosa en ninguna parte, salvo en mi propio bajorrelieve onírico. Los contornos se formaron sin darme cuenta bajo mis manos."
+      },
+      "suggested_placement": {
+        "x": 0.4365234375,
+        "y": 0.3040364583333333,
+        "width": 0.3134765625,
+        "height": 0.07552083333333333
+      },
+      "placement": {
+        "x": 0.4365234375,
+        "y": 0.3040364583333333,
+        "width": 0.3134765625,
+        "height": 0.07552083333333333
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": {
+        "x": 0.789,
+        "y": 0.395
+      },
+      "suggested_tail_target": null,
+      "rotation": 0.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": true,
+      "resolved": null
+    },
+    {
+      "id": "lettering_0136",
+      "source_lettering_item_id": "lettering_0136",
+      "role": "caption",
+      "text_by_locale": {
+        "source": "It was, no doubt, the giant shape he had raved of in delirium.",
+        "es": "Era, sin duda, la forma gigantesca de la que había hablado en su delirio."
+      },
+      "suggested_placement": {
+        "x": 0.037109375,
+        "y": 0.552734375,
+        "width": 0.2734375,
+        "height": 0.040364583333333336
+      },
+      "placement": {
+        "x": 0.037109375,
+        "y": 0.552734375,
+        "width": 0.2734375,
+        "height": 0.040364583333333336
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": null,
+      "suggested_tail_target": null,
+      "rotation": 0.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": true,
+      "resolved": null
+    },
+    {
+      "id": "lettering_0137",
+      "source_lettering_item_id": "lettering_0137",
+      "role": "caption",
+      "text_by_locale": {
+        "source": "That he really knew nothing of the hidden cult, save from what my uncle's relentless catechism had let fall, he soon made clear; and again I strove to think of some way in which he could possibly have received the weird impressions.",
+        "es": "Pronto dejó claro que nada sabía del culto oculto, salvo lo que había dejado escapar el incesante interrogatorio de mi tío; y de nuevo intenté imaginar cómo pudo haber recibido aquellas extrañas impresiones."
+      },
+      "suggested_placement": {
+        "x": 0.0361328125,
+        "y": 0.7434895833333334,
+        "width": 0.4951171875,
+        "height": 0.064453125
+      },
+      "placement": {
+        "x": 0.0361328125,
+        "y": 0.7434895833333334,
+        "width": 0.4951171875,
+        "height": 0.064453125
+      },
+      "hidden": false,
+      "style_override": null,
+      "tail_target": null,
+      "suggested_tail_target": null,
+      "rotation": 0.0,
+      "scale": 1.0,
+      "z_index": 0,
+      "tight_box": true,
+      "resolved": null
+    }
+  ],
+  "reviewed_against_render_revision": null,
+  "reviewed_against_image_sha256": null
+}

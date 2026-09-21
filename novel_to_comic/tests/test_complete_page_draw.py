@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .plan_detail_support import with_reservations
+from .style_reference_support import write_style_proof
 
 import asyncio
 import hashlib
@@ -132,6 +133,7 @@ def _inventory() -> ApprovedVisualReferenceInventory:
 
 
 def _reference_files(tmp_path: Path, *, ward_bytes: bytes = b"ward-v1") -> dict[str, ApprovedReferenceFile]:
+    write_style_proof(tmp_path)
     paths = {
         "ward-clean-ref": tmp_path / "ward-clean.png",
         "ward-bloodied-ref": tmp_path / "ward-bloodied.png",
@@ -252,10 +254,7 @@ def test_provider_subject_binding_separates_identity_from_state_and_speaker_name
             expected = "Ward — bloodied" if canonical.appearance_states else "Ward"
             assert refs[ward["references"][0]["image"]]["appearance"] == expected
         assert ward_handles[0] == ward_handles[1]
-        speakers = brief["lettering_reservations"]
-        assert speakers[0]["speaker_subject"] != speakers[1]["speaker_subject"]
-        assert speakers[0]["speaker_subject"] == ward_handles[0]
-        assert all("text" not in item for item in speakers)
+        assert "lettering_reservations" not in brief
         assert "Stay." not in request.prompt
         assert brief["canonical_staging_and_layout"] == (
             f"{ward_handles[0]} is already inside; the arrival is complete."
@@ -1477,7 +1476,8 @@ def test_final_page_prompt_preserves_geometry_reading_order_and_state_guard(tmp_
     )})
     request = compile_page_generation_request(page, _edition(), inventory, _reference_files(tmp_path), retry=RetryProvenance(attempt=1)).request
     brief = _provider_brief(request.prompt)
-    assert [(entry["id"], entry["panel"]) for entry in brief["lettering_reservations"]] == [("letter-1", 1)]
+    assert "lettering_reservations" not in brief
+    assert page.lettering_reservations  # Still available to seed the editor.
     assert "exact_lettering" not in brief
     assert brief["canonical_comic_page"]["content"][0]["pinned_geometry"] == {
         "x": 0, "y": 0, "width": 1, "height": 0.5,
@@ -1952,3 +1952,59 @@ def test_selected_character_crop_uses_its_sheet_art_direction(tmp_path):
     files["ward-bloodied-ref"] = replace(files["ward-bloodied-ref"], metadata_path=metadata)
     brief = _provider_brief(_compile(tmp_path, files=files).request.prompt)
     assert brief["approved_page_references"][0]["art_direction"] == "A ragged naval coat."
+
+
+@pytest.mark.parametrize("exact_visible_lettering", [True, False])
+def test_panel_reference_bindings_follow_packed_images(tmp_path, exact_visible_lettering):
+    from novel_to_comic.page_drawing import _compile_prompt
+    from novel_to_comic.reference_sheets import pack_page_references
+
+    page = _ordered_page(state_first=True)
+    compiled = _compile(tmp_path, page=page)
+    refs = compiled.request.references
+    images = []
+    for index in range(len(refs)):
+        output = io.BytesIO()
+        Image.new("RGB", (32, 32), (index * 60, 100, 200)).save(output, format="PNG")
+        images.append(output.getvalue())
+    refs = tuple(ref.model_copy(update={"label": ref.id, "content_sha256": hashlib.sha256(data).hexdigest()})
+                 for ref, data in zip(refs, images, strict=True))
+    _, _, bindings = pack_page_references(refs, images, 2)
+    assert bindings  # Three authorities must share two uploaded images.
+    brief = _provider_brief(_compile_prompt(
+        page, refs, reference_bindings=bindings,
+        exact_visible_lettering=exact_visible_lettering,
+    ))
+    authorities = {
+        (ref["subject"], ref["appearance"]): ref
+        for ref in brief["approved_page_references"]
+    }
+    for panel in brief["canonical_comic_page"]["content"]:
+        for subject in panel["visible_subjects"]:
+            for ref in subject["references"]:
+                authority = authorities[(subject["subject"], ref["appearance"])]
+                assert ref["image"] == authority["image"]
+                assert ref.get("region_pixels") == authority.get("region_pixels")
+                assert ref.get("source_image_sha256") == authority.get("source_image_sha256")
+
+
+def test_editable_art_prompt_omits_placement_hints_and_copy_placeholders(tmp_path):
+    page = _page()
+    page = page.model_copy(update={"layout_intent": "Illustrate: It was the same face."})
+    before = page.model_dump_json()
+    request = compile_page_generation_request(
+        page, _edition(), _inventory(), _reference_files(tmp_path),
+        retry=RetryProvenance(attempt=1),
+    ).request
+    brief = _provider_brief(request.prompt)
+    assert "lettering_reservations" not in brief
+    assert "preferred_zone" not in request.prompt
+    assert "line_budget" not in request.prompt
+    assert "reserve its space" not in request.prompt
+    assert "quiet negative space" not in request.prompt
+    assert "It was the same face." not in request.prompt
+    assert "[story copy omitted]" in request.prompt
+    assert "Draw continuous scene artwork throughout every panel" in request.prompt
+    assert "Do not reserve space for lettering" in request.prompt
+    assert "blank boxes, empty balloons" in request.prompt
+    assert page.model_dump_json() == before

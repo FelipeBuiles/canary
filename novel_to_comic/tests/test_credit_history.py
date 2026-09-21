@@ -1,6 +1,9 @@
 from datetime import UTC, datetime, timedelta
 
-from novel_to_comic.server.routers.credits import _group_history_runs
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from novel_to_comic.server.routers.credits import _group_history_runs, history
 
 
 def _row(
@@ -87,5 +90,25 @@ def test_subscription_failure_has_history_without_claiming_a_charge():
     run = _group_history_runs([row])[0]
     assert run["status"] == "failed"
     assert run["actual_credits"] == 0
-    assert run["funding"] == ["codex_subscription"]
-    assert run["rows"][0]["cost_usd"] is None
+    assert "funding" not in run
+    assert "cost_usd" not in run["rows"][0]
+    assert "provider" not in run["rows"][0]
+    assert "model" not in run["rows"][0]
+    assert "provider_model" not in run["rows"][0]
+
+
+def test_history_can_scope_customer_safe_activity_to_one_project():
+    query = MagicMock()
+    query.select.return_value = query
+    query.eq.return_value = query
+    query.order.return_value = query
+    query.range.return_value = query
+    query.execute.return_value = SimpleNamespace(data=[])
+
+    with patch("novel_to_comic.server.routers.credits.get_db") as get_db:
+        get_db.return_value.table.return_value = query
+        result = history(limit=30, offset=0, project_id="project-1", user_id="user-1")
+
+    assert ("user_id", "user-1") in [call.args for call in query.eq.call_args_list]
+    assert ("project_id", "project-1") in [call.args for call in query.eq.call_args_list]
+    assert result["runs"] == []

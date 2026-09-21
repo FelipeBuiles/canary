@@ -3,15 +3,16 @@ import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   useCompletePages,
+  useCreditHistory,
   useExport,
   useFinishPreflight,
   useProjectStatus,
-  useProviderUsage,
   useRunFinishPreflight,
 } from "../../api/queries";
 import { pageCompositePreviewUrl } from "../../api/lettering";
 import { pageRenderPreviewUrl } from "../../api/pages";
 import { BookExportPanel } from "../../components/book/BookExportPanel";
+import { CreditHistoryLedger } from "../../components/credits/CreditHistoryLedger";
 import { PageThumbnail } from "../../components/pages/PageThumbnail";
 import { BookReader } from "../../components/BookReader";
 import { PageCheckRecovery } from "../../components/pages/PageCheckRecovery";
@@ -22,10 +23,12 @@ import {
   StagePlaceholder,
 } from "../../components/composites";
 import { Button } from "../../components/ui/Button";
+import { Skeleton } from "../../components/ui/Skeleton";
 import { StatusPill } from "../../components/ui/StatusPill";
 import { Surface } from "../../components/ui/Surface";
 import { useI18n } from "../../i18n";
 import { readerPages } from "../../lib/bookReader";
+import { groupRunsByDay } from "../../lib/creditsHistory";
 import { useShowDevContent } from "../../lib/devContent";
 import type { FinishPreflight, InvariantFailure } from "../../types/api";
 
@@ -96,8 +99,16 @@ export function BookRoom() {
   const { id } = useParams<{ id: string }>();
   const { t } = useI18n();
   const [showDevContent] = useShowDevContent();
-  const providerUsage = useProviderUsage(id, showDevContent);
   const { data: status } = useProjectStatus(id);
+  const {
+    data: creditHistory,
+    isLoading: creditHistoryLoading,
+    isError: creditHistoryError,
+    refetch: refetchCreditHistory,
+    fetchNextPage: fetchOlderCreditHistory,
+    hasNextPage: hasOlderCreditHistory,
+    isFetchingNextPage: isFetchingOlderCreditHistory,
+  } = useCreditHistory(id);
   const finishStatus = status?.stages.finish?.status ?? "pending";
   const drawComplete = status?.stages.draw?.status === "complete";
   const shouldRunPreflight =
@@ -151,6 +162,9 @@ export function BookRoom() {
       ? `${acceptedIssues} ${acceptedIssues === 1 ? t("accepted editorial issue") : t("accepted editorial issues")}`
       : t("No editorial issues");
   const title = status?.project_name ?? t("Your book");
+  const creditRuns = creditHistory?.pages.flatMap((page) => page.runs ?? []) ?? [];
+  const creditDayGroups = groupRunsByDay(creditRuns);
+  const creditProjectNames = new Map([[id, title]]);
   const packages = preflight?.packages ?? [];
   const reviewUrl = (pageNumber: number, review: "checks" | "visual" | "lettering") =>
     `/project/${encodeURIComponent(id)}/pages?page=${pageNumber}&review=${review}`;
@@ -407,58 +421,37 @@ export function BookRoom() {
         </section>
       ) : null}
 
-      {showDevContent && (
-        <Surface padding="md" border="soft" shadow="none">
-          <SectionHeader variant="underline" title={t("PROVIDER COSTS")}
-            description={t("Project history across all editions and revisions. Not charged credits.")} />
-          {providerUsage.error ? (
-            <p role="alert">{t("Provider usage is unavailable.")}</p>
-          ) : providerUsage.data ? (
-            <>
-              <p className="font-body text-sm">
-                <span className="font-bold">{t(providerUsage.data.complete ? "Recorded total (USD)" : "Partial total (USD)")}</span>
-                {" "}· <span className="font-meta font-bold tabular-nums">${providerUsage.data.known_cost_usd.toFixed(4)}</span>
-              </p>
-              {!providerUsage.data.complete && (
-                <p role="status" className="font-body text-sm">
-                  {t("Only known costs are included. The final cost may be higher.")}{" "}
-                  {providerUsage.data.unknown_cost_count} {t("unpriced calls")} · {providerUsage.data.artifact_calls_missing_from_events} {t("missing events")}
-                </p>
-              )}
-              {providerUsage.data.artifact_link_error && <p role="status" className="font-body text-sm">{providerUsage.data.artifact_link_error}</p>}
-              <details className="mt-3">
-                <summary className="min-h-11 cursor-pointer py-3 font-meta text-sm font-bold">{t("Page-level details")}</summary>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left font-body text-sm tabular-nums">
-                    <thead><tr>
-                      <th scope="col" className="py-2 pr-4">{t("Page")}</th>
-                      <th scope="col" className="py-2 pr-4">{t("Operation")}</th>
-                      <th scope="col" className="py-2 pr-4 text-right">{t("Calls")}</th>
-                      <th scope="col" className="py-2 text-right">USD</th>
-                    </tr></thead>
-                    <tbody>{providerUsage.data.groups.map((group) => (
-                      <tr key={`${group.page_number}:${group.category}`}>
-                        <td className="py-2 pr-4">{group.page_number ?? t("Not assigned to a page")}</td>
-                      <td className="py-2 pr-4">{group.category.replaceAll("_", " ")}</td>
-                        <td className="py-2 pr-4 text-right">{group.call_count}</td>
-                        <td className="py-2 text-right">
-                          {group.unknown_cost_count === group.call_count && group.known_cost_usd === 0 ? t("Unknown") : group.known_cost_usd.toFixed(4)}
-                          {group.unknown_cost_count > 0 && <span className="block text-xs text-ink-muted">{group.unknown_cost_count} {t("unpriced calls")}</span>}
-                        </td>
-                    </tr>))}
-                    </tbody>
-                  </table>
-                </div>
-                <p className="mt-3 break-words font-body text-xs leading-5">
-                  {Object.entries(providerUsage.data.cost_sources).map(([source, count]) => `${source}: ${count}`).join(" · ")}
-                </p>
-              </details>
-            </>
-          ) : (
-            <p role="status" className="font-body text-sm">{t("Loading provider costs…")}</p>
-          )}
-        </Surface>
-      )}
+      <section id="book-credit-history" className="scroll-mt-6">
+        <SectionHeader
+          variant="underline"
+          title={t("CREDIT HISTORY")}
+          description={t("Credits used by this book across every edition and revision. Open an activity to see its hold, final charge, and released credits.")}
+          actions={<Link to={`/credits?project=${encodeURIComponent(id)}`} className="inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4">{t("View all credit history")}</Link>}
+        />
+        <p className="mb-4 max-w-prose font-body text-sm leading-6 text-ink-muted">{t("Open holds are still reserved. They are separate from final charges.")}</p>
+        {creditHistoryError && (
+          <Surface tone="pulp" padding="md" shadow="none" role="alert" className="mb-4">
+            <p className="font-body text-sm">{t("Credit history could not be loaded.")}</p>
+            <Button variant="outline" size="sm" className="mt-3" onClick={() => void refetchCreditHistory()}>{t("Retry credit history")}</Button>
+          </Surface>
+        )}
+        {creditHistoryLoading ? (
+          <div className="space-y-2">{[1, 2, 3].map((item) => <Skeleton key={item} className="h-14" />)}</div>
+        ) : creditHistoryError && creditDayGroups.length === 0 ? null : creditDayGroups.length === 0 ? (
+          <Surface border="soft" shadow="none" padding="md">
+            <p className="font-body text-sm text-ink-muted">{t("No credit activity has been recorded for this book yet.")}</p>
+          </Surface>
+        ) : (
+          <>
+            <CreditHistoryLedger groups={creditDayGroups} projectNameMap={creditProjectNames} />
+            {hasOlderCreditHistory && (
+              <Button variant="outline" size="sm" fullWidth className="mt-5" disabled={isFetchingOlderCreditHistory} onClick={() => void fetchOlderCreditHistory()}>
+                {t(isFetchingOlderCreditHistory ? "Loading history…" : "Load older history")}
+              </Button>
+            )}
+          </>
+        )}
+      </section>
     </RoomShell>
   );
 }

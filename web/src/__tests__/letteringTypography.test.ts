@@ -87,7 +87,7 @@ describe("contour-aware comic typography", () => {
     expect(resolved.width).toBe(element.placement.width);
     expect(resolved.height).toBe(element.placement.height);
   });
-  it("joins twelve rounded cloud lobes at deliberate inward valleys with a closed seam", () => {
+  it("varies cloud lobes and inward bends while keeping a closed contour", () => {
     const draft = speech();
     draft.elements[0].style_override = { ...style.roles.speech, shape: "cloud" };
     draft.elements[0].tail_target = null;
@@ -100,20 +100,57 @@ describe("contour-aware comic typography", () => {
       curves.push([...start, ...values.slice(i, i + 6)]);
       start = values.slice(i + 4, i + 6);
     }
-    expect(curves).toHaveLength(12);
+    const spans = curves.map(c => Math.hypot(c[6] - c[0], c[7] - c[1]));
+    expect(Math.max(...spans) / Math.min(...spans)).toBeGreaterThan(2);
+    const bends: number[] = [];
     for (let i = 0; i < curves.length; i++) {
       const a = curves[i], b = curves[(i + 1) % curves.length];
       const incoming = [a[6] - a[4], a[7] - a[5]], outgoing = [b[2] - b[0], b[3] - b[1]];
       expect(a.slice(6)).toEqual(b.slice(0, 2));
       const cosine = (incoming[0] * outgoing[0] + incoming[1] * outgoing[1]) / (Math.hypot(...incoming) * Math.hypot(...outgoing));
-      // A classic thought cloud has visible concave valleys, unlike the old
-      // nearly-elliptical radial ripple. Each lobe is smooth, not each valley.
+      // Unequal lobes meet at inward bends without gaps or degenerate tangents.
       expect(Number.isFinite(cosine)).toBe(true);
       expect(cosine).toBeGreaterThan(-1);
       expect(cosine).toBeLessThan(.9999);
       const cross = incoming[0] * outgoing[1] - incoming[1] * outgoing[0];
-      expect(cross).toBeLessThan(0);
+      bends.push(cross);
+      // Sample curvature inside each cubic as well as its concave joins.
+      for (const t of [.25, .5, .75]) {
+        const u = 1 - t;
+        const dx = 3*u*u*(a[2]-a[0])+6*u*t*(a[4]-a[2])+3*t*t*(a[6]-a[4]);
+        const dy = 3*u*u*(a[3]-a[1])+6*u*t*(a[5]-a[3])+3*t*t*(a[7]-a[5]);
+        const ddx = 6*u*(a[4]-2*a[2]+a[0])+6*t*(a[6]-2*a[4]+a[2]);
+        const ddy = 6*u*(a[5]-2*a[3]+a[1])+6*t*(a[7]-2*a[5]+a[3]);
+        bends.push(dx*ddy-dy*ddx);
+      }
     }
+    expect(bends.some(cross => cross < 0)).toBe(true);
+    expect(bends.some(cross => cross > 0)).toBe(true);
+  });
+  it("gives clouds stable individual silhouettes with scallops on every side", () => {
+    const draft = speech();
+    const element = draft.elements[0];
+    element.style_override = { ...style.roles.speech, shape: "cloud" };
+    element.tail_target = null;
+    const outline = () => {
+      const svg = renderOverlay(resolvePage(draft, style, measure), style);
+      return new DOMParser().parseFromString(svg, "image/svg+xml")
+        .querySelector("[data-balloon-body]")!.getAttribute("d")!;
+    };
+    const first = outline();
+    expect(outline()).toBe(first);
+    element.placement.x += .1;
+    expect(outline()).toBe(first);
+    element.id += "-other";
+    expect(outline()).not.toBe(first);
+    const values = first.match(/-?\d+(?:\.\d+)?/g)!.map(Number);
+    const endpoints = [values.slice(0, 2)];
+    for (let i = 2; i < values.length; i += 6) endpoints.push(values.slice(i + 4, i + 6));
+    const center = [0, 1].map(axis =>
+      (Math.min(...endpoints.map(p => p[axis])) + Math.max(...endpoints.map(p => p[axis]))) / 2);
+    // Multiple scallop joins in all four quadrants, not just decorated corners.
+    for (const x of [-1, 1]) for (const y of [-1, 1])
+      expect(endpoints.filter(p => (p[0]-center[0])*x>0 && (p[1]-center[1])*y>0).length).toBeGreaterThanOrEqual(2);
   });
   it("reuses layout during drags, but invalidates it for text, locale, size or style edits", () => {
     const counted = vi.fn(measure), draft = speech();

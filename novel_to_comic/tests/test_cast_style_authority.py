@@ -61,6 +61,9 @@ def test_cast_wire_keeps_approved_style_and_canonical_identity(tmp_path, model):
     assert "seaman's working clothes" in prompt
     assert "do not copy their faces" in prompt
     assert "sole visual rendering style authority" in prompt
+    assert "facial abstraction" in prompt
+    assert "poses, gaze, expressions, camera angles" in prompt
+    assert "Transfer how faces and bodies are drawn" in prompt
     assert "surface-fidelity constraints" in prompt
     assert "do not treat every blotch, stain or speckle as an authored style feature" in prompt
     assert "match its exact" not in prompt
@@ -68,45 +71,32 @@ def test_cast_wire_keeps_approved_style_and_canonical_identity(tmp_path, model):
     assert "LETTERING STANDARD" not in prompt
 
 
-def test_calibration_balances_texture_without_changing_selected_style(tmp_path):
-    config, bible, _ = _project(tmp_path, "image-gpt-2")
-    original = config.style_template
-    request = s3_cast._character_style_calibration_input(config, bible)
-    assert "quiet tonal fields and clear contour examples" in request.prompt.visual_brief
-    assert "Preserve deliberate granulation and authored distress" in request.prompt.visual_brief
-    assert "No people, faces" in request.prompt.constraints
-    assert request.selected_style_text == config.style_template == original
-
-
 @pytest.mark.parametrize("model", ["image-sunburst", "image-gemini-pro", "image-gemini-flash-lite", "image-gpt-2", "image-flare"])
-def test_all_models_use_rendering_only_calibration_through_run_resume_and_estimate(tmp_path, model):
+def test_all_models_use_original_proof_through_run_resume_and_estimate(tmp_path, model):
     config, bible, proof = _project(tmp_path, model)
-    board = s3_cast._character_style_board_path(tmp_path)
+    board = tmp_path / "refs" / "character_style_board.png"
     board.parent.mkdir()
     Image.new("RGB", (32, 40), "gray").save(board)
-    assert RefStrategy.for_config(config).use_character_style_calibration()
     with patch.object(s3_cast, "asset_matches_request", return_value=True) as matches:
-        assert s3_cast._character_style_reference(config, tmp_path, proof) == board
-    assert matches.call_args.args[1].reference_plan.selected[0].path == proof
+        assert s3_cast._character_style_reference(config, tmp_path, proof) == proof
+    matches.assert_not_called()
     ctx = MagicMock()
     ctx.stage_state.items_failed = []
     with (
         patch.object(s3_cast, "ensure_design", new_callable=AsyncMock),
         patch.object(s3_cast, "review_cast", new_callable=AsyncMock),
-        patch.object(s3_cast, "_generate_character_style_board", new_callable=AsyncMock, return_value=board) as calibrate,
         patch.object(s3_cast, "_generate_character_refs", new_callable=AsyncMock) as canonical,
         patch.object(s3_cast, "_generate_character_state_refs", new_callable=AsyncMock) as states,
     ):
         asyncio.run(s3_cast.run(config, tmp_path, ctx, char_ids=["sailor"]))
-    calibrate.assert_awaited_once()
-    ctx.execute.assert_called_once_with(total=4)
-    assert canonical.await_args.args[-1] == board
-    assert states.await_args.args[-1] == board
+    ctx.execute.assert_called_once_with(total=3)
+    assert canonical.await_args.args[-1] == proof
+    assert states.await_args.args[-1] == proof
     board.unlink()
     with patch("novel_to_comic.asset_generation.estimate_non_panel_request") as estimate:
         estimate.return_value.cost_usd = .03
         s3_cast.estimate_cost(config, tmp_path, MagicMock())
-    assert {call.args[1].asset_kind for call in estimate.call_args_list} == {"style_calibration", "character_ref"}
+    assert {call.args[1].asset_kind for call in estimate.call_args_list} == {"character_ref"}
 
 
 @pytest.mark.parametrize("model", ["image-sunburst", "image-gemini-pro"])
@@ -122,10 +112,10 @@ def test_human_animal_creature_and_state_share_same_rendering_authority(tmp_path
         changed_facets=("hair",), visually_significant=True,
     )]
     (tmp_path / "story_bible.json").write_text(bible.model_dump_json())
-    board = s3_cast._character_style_board_path(tmp_path)
+    board = tmp_path / "refs" / "character_style_board.png"
     board.parent.mkdir()
     Image.new("RGB", (32, 40), "gray").save(board)
-    expected = board
+    expected = proof
     _save_design(config, tmp_path, bible)
     requests = []
 
@@ -160,8 +150,8 @@ def test_sunburst_cannot_silently_fall_back_to_text_only_cast(tmp_path):
     config, bible, proof = _project(tmp_path, "image-sunburst")
     proof.unlink()
     with patch.object(s3_cast, "submit_non_panel_request", new_callable=AsyncMock) as submit:
-        with pytest.raises(ValueError, match="Cast style board is missing"):
+        with pytest.raises(ValueError, match="selected Style proof is missing"):
             asyncio.run(s3_cast.regenerate_character_ref(config, tmp_path, "sailor"))
-        with pytest.raises(ValueError, match="Cast style board is missing"):
+        with pytest.raises(ValueError, match="selected Style proof is missing"):
             asyncio.run(s3_cast._generate_character_refs(config, tmp_path, bible, MagicMock()))
     submit.assert_not_awaited()

@@ -118,7 +118,9 @@ def visual_review_prompt(
     return (
         "Image 1 is the complete page to review. Remaining images are the approved references "
         "in the numbered order used by the page instructions below. Compare visible identity, "
-        "appearance state, recurring objects, scene setting, and panel composition. "
+        "appearance state, recurring objects, scene setting, panel composition, and fidelity "
+        "to the selected_style_proof's rendering language when supplied. The style proof owns "
+        "artistic treatment, not depicted identities, poses, gaze, expressions or page content. "
         "Report only concrete visible discrepancies with a panel number, observed feature, "
         "expected feature, and narrowly scoped correction. Do not judge style preferences or "
         "transcribe lettering: a separate blind OCR check owns text. Account for perspective, "

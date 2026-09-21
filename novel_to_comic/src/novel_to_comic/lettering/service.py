@@ -10,7 +10,7 @@ from pathlib import Path
 from PIL import Image
 
 from novel_to_comic.artifact_lock import locked_mutation
-from novel_to_comic.config import load_config
+from novel_to_comic.config import Config, load_config
 from novel_to_comic.models.draw import PageRenderRevision
 from novel_to_comic.models.lettering import (
     LetteringElement,
@@ -36,6 +36,15 @@ from .renderer import (
 
 class LetteringConflict(ValueError):
     """A draft must not overwrite a newer page, style, art selection or edit."""
+
+
+def project_lettering_mode(artifacts: TargetArtifacts, config: Config) -> str:
+    """Presentation follows the frozen edition, including retained baked books."""
+    try:
+        integrated = artifacts.read_book_edition().capability_profile.exact_visible_lettering
+    except ArtifactMissing:
+        return config.lettering_mode
+    return "integrated" if integrated else "editable"
 
 
 def is_hybrid(artifacts: TargetArtifacts) -> bool:

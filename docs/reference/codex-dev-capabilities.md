@@ -119,8 +119,10 @@ Every page in a Queue all batch is prepared before any credit hold or submission
 an over-capacity later page rejects the batch rather than partially enqueuing it.
 Authored Plan lettering remains exact and OCR checks are still required.
 
-The 1696×2528 request is composition intent only for this experimental profile.
-The native PNG bytes and actual dimensions are preserved through Draw and Finish:
+The frozen prompt explicitly requests the edition’s 1696×2528 portrait canvas.
+Native resolution may vary, but Draw rejects aspect ratios more than 1% from
+the requested ratio before publication, without automatically retrying.
+Accepted native PNG bytes and actual dimensions are preserved through Draw and Finish:
 PDF page boxes and CBZ images follow each page's native canvas, without resizing
 or cropping. An incompatible fixed/custom trim rejects. Production retains its
 fixed Vertex `gemini-3-pro-image`, eight-reference, 1696×2528 geometry contract.
@@ -218,6 +220,18 @@ error**. In the older missing-image path, the diagnostic was lost with the
 ephemeral thread. Native parameter rejection can precede an image event, so an
 absent image event proves neither that no tool call was attempted nor that no
 allowance was consumed.
+
+Failed image-tool items retain `image_tool_status` and `image_tool_error` in
+the usage event's `metadata_json.codex_runtime`. The latter records the result's
+length, SHA-256, format, and a bounded, redacted error message/code when supplied.
+Raw JSON envelopes and encoded image data are excluded. The error reason also
+reaches the page failure artifact through exception text, allowing explicit
+policy rejection markers to select the existing less-graphic recovery action.
+An unexplained failed item remains a generic failure, not evidence of rejection.
+Thread, turn, and tool IDs remain available for correlation. The adapter still
+interrupts immediately after the terminal image item; it never waits for an
+explanation that could let the agent submit another image. Earlier attempts that
+discarded the result cannot recover that reason from the ephemeral thread.
 
 ## Capabilities: hard controls, prompt requests, observed evidence
 

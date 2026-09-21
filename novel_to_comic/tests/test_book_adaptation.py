@@ -2282,6 +2282,9 @@ def test_book_prompt_owns_complete_wording_ledger_and_prohibits_page_planning() 
 
     assert "complete, publishable dialogue, thought, caption, and SFX wording" in prompt
     assert "code derives depicted, dialogue, thought, and caption" in prompt
+    assert "First-person storytelling, recollection, exposition" in prompt
+    assert "An identified speaker alone is insufficient" in prompt
+    assert "When ambiguous, preserve narration as a caption" in prompt
     assert "ledger_exceptions" in prompt
     assert "Preserve every protected-language string verbatim" in prompt
     assert '"I saw the door open."' in prompt
@@ -2361,7 +2364,9 @@ def test_producer_writes_one_book_artifact_and_records_model_usage(
     item_schema = calls[2]["json_schema"]["$defs"]["_LetteringCopy"]
     assert all({"speaker", "speaker_entity_id", "presentation"} <= set(variant["required"])
                for variant in item_schema["anyOf"])
-    assert "Third-person narration" in calls[2]["user_content"]
+    assert "First-person storytelling, recollection, exposition" in calls[2]["user_content"]
+    assert "An identified speaker alone is insufficient" in calls[2]["user_content"]
+    assert "When ambiguous, preserve narration as a caption" in calls[2]["user_content"]
     assert "ledger" not in calls[1]["json_schema"]["properties"]
     assert state.stages["adapt"].items_done == 3
     assert len(state.stages["adapt"].usage_log) == 3
@@ -4217,3 +4222,51 @@ def test_locked_lettering_corrects_tone_without_guessing_presentation(tmp_path, 
     assert len(calls) == 2
     assert result.beats == expected.beats
     assert invalid["beats"][0]["lettering"][0]["presentation"] == tone
+
+
+@pytest.mark.parametrize("wording,missing", [
+    ("For he is there just because I am alone!", False),
+    ("He is there just because I am alone!", False),
+    ("For he is there just because I am Alone!", True),
+    ("For he is there only because I am alone!", True),
+    ("For she is there just because I am alone!", True),
+])
+def test_protected_excerpt_initial_case_preserves_wording_and_finds_repair_scope(wording, missing):
+    from novel_to_comic.book_adaptation import _protected_language_obligations
+
+    phrase = "He is there just because I am alone!"
+    source = _source_document()
+    source = source.model_copy(update={"units": (
+        source.units[0].model_copy(update={"text": "For he is there just because I am alone!"}),
+        *source.units[1:],
+    )})
+    brief = _approved_brief().model_copy(update={"protected_language": (phrase,)})
+    candidate = _with_lettering_text(wording)
+    result = validate_book_adaptation(source, brief, candidate)
+    failures = [f for f in result.invariant_failures if f.code == "protected_language_missing"]
+    assert bool(failures) == missing
+    if missing:
+        assert failures[0].source_unit_ids == (source.units[0].id,)
+        assert candidate.beats[0].id in failures[0].artifact_ids
+    else:
+        canonical = _canonicalize_candidate_requirements(candidate, source, brief)
+        assert [i.text for b in canonical.beats for i in b.lettering] == [
+            i.text for b in candidate.beats for i in b.lettering
+        ]
+    assert _protected_language_obligations(source, brief, (source.units[0].id,)) == [
+        {"text": phrase, "source_unit_ids": [source.units[0].id]}
+    ]
+    assert _protected_language_obligations(source, brief, (source.units[-1].id,)) == []
+
+
+def test_structural_repair_gets_one_more_pass_only_when_blocking_codes_decrease():
+    from novel_to_comic.book_adaptation import _may_repair_validation_attempt
+    from novel_to_comic.models.validation import ValidationAttempt
+
+    first = ValidationAttempt(attempt=1, invariant_codes=("unknown_entity", "protected_language_missing"))
+    improved = ValidationAttempt(attempt=2, invariant_codes=("protected_language_missing",))
+    assert _may_repair_validation_attempt(2, [first, improved])
+    assert not _may_repair_validation_attempt(3, [first, improved])
+    assert not _may_repair_validation_attempt(2, [first, first])
+    regressed = ValidationAttempt(attempt=2, invariant_codes=("source_order",))
+    assert not _may_repair_validation_attempt(2, [first, regressed])

@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from novel_to_comic import artifacts as paths
 from novel_to_comic.config import Config, save_config
 from novel_to_comic.lettering import service
-from novel_to_comic.lettering.proof import render_style_proof, style_proof_state
+from novel_to_comic.lettering.proof import render_style_proof, resolve_style_proof, style_proof_state
 from novel_to_comic.models.lettering import LetteringDesign, LetteringStyle
 from novel_to_comic.models.page import PinnedGeometry
 from novel_to_comic.server.routers import lettering, pipeline, styles
@@ -154,6 +154,10 @@ def test_proof_uses_shared_renderer_caches_and_never_modifies_reference_art(tmp_
     style = service.style_from_template(style_template_for_suggestion(suggestion()))
     state = style_proof_state(style, 1000, 1250)
     assert {item.role for item in state.elements} == {"caption", "speech", "thought", "sfx"}
+    specimens = {item.id: item for item in state.elements}
+    assert specimens["proof-shout"].role == "speech"
+    assert specimens["proof-shout"].style_override.shape == "burst"
+    assert specimens["proof-sfx"].style_override is None
     composite, identity = render_style_proof(target, style, source.read_bytes())
     assert composite != raw
     assert source.read_bytes() == raw
@@ -163,6 +167,28 @@ def test_proof_uses_shared_renderer_caches_and_never_modifies_reference_art(tmp_
     assert next_identity != identity
     monkeypatch.setattr("novel_to_comic.lettering.proof.resolve_lettering", lambda *_: pytest.fail("cache miss"))
     assert render_style_proof(target, style, raw) == (composite, identity)
+
+
+@pytest.mark.parametrize("size", [(1000, 1250), (1024, 1536)])
+def test_proof_tails_follow_fitted_bodies_and_specimens_do_not_overlap(size):
+    style = service.preset_style("classic")
+    state = resolve_style_proof(style, *size)
+    boxes = []
+    for element in state.elements:
+        body = element.resolved
+        assert not body.overflow
+        x, y = element.placement.x, element.placement.y
+        assert body.width <= element.placement.width
+        bottom = y + body.height
+        if element.role in {"speech", "thought"}:
+            tail = element.tail_target
+            assert x < tail.x < x + body.width
+            assert 0 < (tail.y - bottom) / state.canvas_aspect_ratio * 1000 <= body.font_size * 1.26
+            bottom = tail.y
+        boxes.append((x, y, x + body.width, bottom))
+    for i, a in enumerate(boxes):
+        for b in boxes[i + 1:]:
+            assert a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1]
 
 
 def test_old_baked_proof_is_visible_but_never_gets_a_second_overlay(tmp_path):
@@ -182,12 +208,14 @@ def test_old_baked_proof_is_visible_but_never_gets_a_second_overlay(tmp_path):
     assert source.read_bytes() == b"old baked art"
 
 
-def test_fresh_art_gets_a_software_proof_url_and_separate_immutable_bytes(tmp_path):
+@pytest.mark.parametrize("mode", ["editable", "integrated"])
+@pytest.mark.parametrize("kind", ["sample", "validation"])
+def test_fresh_proofs_follow_mode_and_preserve_generated_lettering(tmp_path, mode, kind):
     item = suggestion()
     save_suggestions(tmp_path, [item], _bible().title)
     bible = _bible()
     paths.story_bible_path(tmp_path).write_text(bible.model_dump_json())
-    config = Config(style_template=style_template_for_suggestion(item), style_sample_brief_enabled=False)
+    config = Config(style_template=style_template_for_suggestion(item), style_sample_brief_enabled=False, lettering_mode=mode)
     raw_image = io.BytesIO()
     Image.new("RGB", (800, 1000), "#c3c2b5").save(raw_image, "PNG")
     raw = raw_image.getvalue()
@@ -198,12 +226,59 @@ def test_fresh_art_gets_a_software_proof_url_and_separate_immutable_bytes(tmp_pa
         return ApiResult(value=output_path, usage=None)
 
     with patch("novel_to_comic.asset_generation.execute_frozen_request", new=AsyncMock(side_effect=execute)):
-        asyncio.run(generate_sample_image(config, bible, paths.style_sample_path(tmp_path, 1), candidate_id=item["id"]))
+        from novel_to_comic.stages.s2_style import style_validation_brief, STYLE_VALIDATION_ACTION, STYLE_VALIDATION_COMPOSITION
+        source = paths.style_sample_path(tmp_path, 1) if kind == "sample" else paths.style_validation_path(tmp_path, item["id"])
+        kwargs = {} if kind == "sample" else dict(
+            brief=style_validation_brief(bible), subject_action=STYLE_VALIDATION_ACTION,
+            composition=STYLE_VALIDATION_COMPOSITION,
+        )
+        asyncio.run(generate_sample_image(config, bible, source, project_dir=tmp_path,
+            candidate_id=item["id"] if kind == "sample" else f"{item['id']}:validation", **kwargs))
     project = (tmp_path, config, create_initial_state("demo", "novel.txt"))
     result = styles.get_styles("demo", project)["suggestions"][0]
     assert not result["sample_stale"]
-    assert f"/styles/{item['id']}/proof/sample?style=" in result["sample_preview_url"]
-    response = styles.get_style_lettering_proof("demo", item["id"], "sample", project)
+    url = result["sample_preview_url"] if kind == "sample" else result["validation_url"]
+    assert f"/styles/{item['id']}/proof/{kind}?style=" in url
+    assert result["lettering_source"] == "generated"
+    with patch.object(styles, "render_style_proof", wraps=render_style_proof) as compositor:
+        response = styles.get_style_lettering_proof("demo", item["id"], kind, project)
+    if mode == "integrated":
+        compositor.assert_not_called()
+    else:
+        assert compositor.call_args.args[1].roles == service.style_from_template(config.style_template).roles
     assert response.media_type == "image/png"
-    assert response.body != raw
-    assert paths.style_sample_path(tmp_path, 1).read_bytes() == raw
+    assert (response.body == raw) == (mode == "integrated")
+    assert source.read_bytes() == raw
+    other_mode = "editable" if mode == "integrated" else "integrated"
+    other_project = (tmp_path, config.model_copy(update={"lettering_mode": other_mode}), project[2])
+    with pytest.raises(HTTPException) as exc:
+        styles.get_style_lettering_proof("demo", item["id"], kind, other_project)
+    assert exc.value.status_code == 409
+
+
+def test_integrated_style_prompt_draws_all_specimens_and_preserves_lettering_direction():
+    from novel_to_comic.lettering.proof import SPECIMENS
+    item = suggestion()
+    item["lettering"] = "Distinctive hand-painted captions, rounded speech, cloud thoughts and textured display effects."
+    config = Config(lettering_mode="integrated", style_template=style_template_for_suggestion(item))
+    prompt = build_style_sample_request(config, _bible(), "A quiet scene.", candidate_id="integrated").compiled.final_prompt
+    assert item["lettering"] in prompt
+    for _role, text, _bounds in SPECIMENS:
+        assert text in prompt
+    assert "Draw the lettering directly into the image" in prompt
+    assert "Do not draw any lettering" not in prompt
+    assert "Software adds them later" not in prompt
+    assert DESIGN_MARKER not in prompt
+    assert "POST-PRODUCTION LETTERING PRESET" not in prompt
+
+
+def test_retained_integrated_edition_controls_style_proof_compilation(tmp_path):
+    from novel_to_comic.page_drawing import select_book_edition, current_page_capability_profile
+    integrated = Config(lettering_mode="integrated")
+    TargetArtifacts(tmp_path).write_book_edition(select_book_edition(
+        edition_id="retained", profile=current_page_capability_profile(integrated),
+    ))
+    prompt = build_style_sample_request(Config(), _bible(), "A quiet scene.",
+        candidate_id="retained", project_dir=tmp_path).compiled.final_prompt
+    assert "Draw the lettering directly into the image" in prompt
+    assert "Do not draw any lettering" not in prompt

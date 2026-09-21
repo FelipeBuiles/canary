@@ -56,6 +56,9 @@ always requires the durable queue; missing PostgreSQL never selects a memory que
   supervisor reconnects with backoff up to 30 seconds. A stale worker dispatch is
   reclaimed after Procrastinate's heartbeat threshold (30 seconds); the operation
   state still determines whether execution is permitted.
+- A scheduler dispatch that ends failed, cancelled, or aborted before its
+  operation starts is reconciled to a retryable `dispatch` failure. It must not
+  remain queued forever. This does not resubmit work or change running operations.
 - Ordinary jobs retain the 900-second deadline. Pipeline and style batches use
   `CANARY_BATCH_JOB_TIMEOUT_SECONDS` (default 7200). A timeout does not establish
   that a paid provider call failed to execute.

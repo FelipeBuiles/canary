@@ -93,16 +93,16 @@ def test_real_glyph_layout_matches_server_and_fits_the_drawn_contour(typography,
     assert caption.resolved.height < caption.placement.height
 
 
-@pytest.mark.parametrize("shape", ["ellipse", "cloud"])
-def test_curved_shapes_contain_padded_ink_through_every_row_band(typography, browser_page, shape):
+@pytest.mark.parametrize("shape,seed", [("ellipse", "oval"), *[("cloud", f"cloud-{i}") for i in range(6)]])
+def test_curved_shapes_contain_padded_ink_through_every_row_band(typography, browser_page, shape, seed):
     state, style = typography
-    value = browser_page.evaluate("""({state,style,shape})=>{
+    value = browser_page.evaluate("""({state,style,shape,seed})=>{
       const e=window.engine, measure=e.canvasMeasure(), defects=[];
       for(const role of ['caption','speech','thought']) for(const tight of [true,false])
       for(const align of ['left','center','right']) {
         const draft=structuredClone(state); draft.elements=[draft.elements[1]];
         const element=draft.elements[0];
-        element.role=role; element.tight_box=tight; element.tail_target=null;
+        element.id=seed; element.role=role; element.tight_box=tight; element.tail_target=null;
         element.style_override={...style.roles.speech,shape,align};
         const resolved=e.resolvePage(draft,style,measure), r=resolved.elements[0].resolved;
         document.getElementById('out').innerHTML=e.renderOverlay(resolved,style);
@@ -119,7 +119,7 @@ def test_curved_shapes_contain_padded_ink_through_every_row_band(typography, bro
         }
       }
       return defects;
-    }""", {"state": state.model_dump(mode="json"), "style": style.model_dump(mode="json"), "shape": shape})
+    }""", {"state": state.model_dump(mode="json"), "style": style.model_dump(mode="json"), "shape": shape, "seed": seed})
     assert value == []
 
 
@@ -199,3 +199,29 @@ def test_bundled_font_coverage_table_matches_the_actual_font_files():
 
     root = Path(__file__).resolve().parents[2]
     subprocess.run([sys.executable, str(root / "scripts/update_lettering_fonts.py"), "--check"], check=True)
+
+
+@pytest.mark.parametrize("font", ["Comic Neue", "M PLUS 1p", "Fredoka"])
+def test_thought_sample_balances_lines_and_renders_the_measured_font(typography, browser_page, font):
+    state, style = typography
+    value = browser_page.evaluate("""({state,style,font})=>{
+      const e=window.engine, draft=structuredClone(state);
+      draft.elements=[draft.elements[0]];
+      const element=draft.elements[0];
+      element.role='thought'; element.tail_target=null;
+      element.text_by_locale={source:'Did you hear that?'};
+      element.placement={x:.05,y:.53,width:.44,height:.16};
+      element.style_override={...style.roles.thought,font,shape:'cloud',align:'center',
+        padding:6,min_font_size:22,max_font_size:22,letter_spacing:0};
+      const resolved=e.resolvePage(draft,style,e.canvasMeasure());
+      document.getElementById('out').innerHTML=e.renderOverlay(resolved,style);
+      const r=resolved.elements[0].resolved;
+      const texts=[...document.querySelectorAll('text')];
+      return {lines:r.lines, ratio:r.width*1000/Math.max(...r.line_metrics.map(m=>m.width)),
+        families:texts.map(t=>getComputedStyle(t).fontFamily.replaceAll('"','')),
+        widths:texts.map(t=>t.getComputedTextLength()), metrics:r.line_metrics.map(m=>m.width)};
+    }""", {"state": state.model_dump(mode="json"), "style": style.model_dump(mode="json"), "font": font})
+    assert value["lines"] == ["Did you", "hear that?"]
+    assert value["ratio"] < 1.45
+    assert value["families"] == [font, font]
+    assert value["widths"] == pytest.approx(value["metrics"], abs=1)

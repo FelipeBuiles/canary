@@ -51,3 +51,21 @@ def test_corrupt_checkpoint_is_regenerated(tmp_path):
     next((tmp_path / ".checkpoints").rglob("*.json")).write_text("broken")
     assert asyncio.run(generator(prompt="page")).value == {"ok": True}
     assert len(calls) == 2
+
+
+def test_rejected_response_can_be_replaced_without_discarding_other_batches(tmp_path):
+    from novel_to_comic.generation_checkpoints import discard_checkpointed_response
+    artifacts = TargetArtifacts(tmp_path)
+    calls = []
+
+    async def generate(**request):
+        calls.append(request)
+        return ApiResult(value={"attempt": len(calls)})
+
+    generator = checkpointed_generator(generate, artifacts=artifacts, stage="plan", model="test")
+    good = asyncio.run(generator(prompt="good"))
+    bad = asyncio.run(generator(prompt="bad"))
+    discard_checkpointed_response(artifacts=artifacts, stage="plan", model="test", request={"prompt": "bad"})
+    assert asyncio.run(generator(prompt="good")).value == good.value
+    assert asyncio.run(generator(prompt="bad")).value != bad.value
+    assert len(calls) == 3

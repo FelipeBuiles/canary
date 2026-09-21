@@ -20,8 +20,11 @@ resources, not a mandatory onboarding sequence; reuse context already loaded.
   orchestration owns the explicit auto-chain.
 - Preserve visual anchors and continuity guards verbatim. State IDs are
   entity-scoped; Plan maps each visible entity to its state explicitly.
-- New hybrid Draw editions generate one full page of base art around Plan
-  lettering reservations, without comic text or balloons. Adapt owns canonical
+- Projects choose integrated or editable lettering at creation; new integrated
+  profiles generate canonical copy with the art. Never rebind an existing edition.
+- Editable (hybrid) Draw editions generate one full page of continuous base art,
+  without comic text, balloons, or reserved blank areas. Plan lettering
+  reservations seed the editor only and are omitted from image requests. Adapt owns canonical
   copy; Pages owns independent editable display lettering. Retained baked
   editions stay baked. Never revive panel generation or a Compose stage.
 - `TargetArtifacts` owns current full-page paths and typed reads/writes.
@@ -32,7 +35,7 @@ resources, not a mandatory onboarding sequence; reuse context already loaded.
 - Request hashes identify input, not guaranteed provider deduplication.
   Avoid automatic retries after ambiguous paid image submissions.
 - OCR observes base art only: unwanted comic lettering for hybrid profiles,
-  canonical-copy checks for retained baked profiles. It is optional evidence.
+  canonical-copy checks for integrated profiles, including retained baked editions. It is optional evidence.
   Visual concerns require visual review;
   creating a revision alone must not mark them verified.
 - Stage `run()` receives `StageRuntime` as `ctx`; use its logging, progress,
@@ -84,6 +87,9 @@ provider-free; paid generation and ambiguous submissions retain the guardrails a
   or unresolved concern. Mocked tests do not establish image quality.
 
 ## Working agreements
+
+The user manages development servers. Do not start or restart them unless
+explicitly asked; use provider-free tests and offline inspection for verification.
 
 Carry authorized work through implementation and relevant verification. Make
 routine reversible decisions locally; ask when missing information affects

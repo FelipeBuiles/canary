@@ -76,10 +76,19 @@ class PageReference(BaseModel):
     media_type: str = Field(min_length=1)
     content_sha256: str = Field(min_length=64, max_length=64)
     visual_anchor: str = Field(min_length=1)
-    entity_id: str = Field(min_length=1)
+    entity_id: str | None = Field(min_length=1)
     appearance_state_id: str | None = None
     label: str = ""
     continuity_guard: str = ""
+
+    @model_validator(mode="after")
+    def _validate_style_scope(self) -> "PageReference":
+        if self.id == "selected-style-proof":
+            if self.entity_id is not None or self.appearance_state_id is not None:
+                raise ValueError("Style proof references cannot bind a subject or appearance state")
+        elif self.entity_id is None:
+            raise ValueError("Subject references require an entity_id")
+        return self
 
 
 class RetryProvenance(BaseModel):

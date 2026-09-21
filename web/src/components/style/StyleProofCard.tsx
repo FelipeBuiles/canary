@@ -58,6 +58,7 @@ export function StyleProofCard({
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [selectionConfirmed, setSelectionConfirmed] = useState(false);
   const [timestamp, setTimestamp] = useState(() => Date.now());
+  const displayedProofUrl = `${sampleUrl}${sampleUrl.includes("?") ? "&" : "?"}t=${timestamp}`;
   const wasGenerating = useRef(isGenerating);
   const setActive = useSetActiveStyle();
   const { data: meta, isLoading: isMetaLoading } = useImageGenerationMeta(
@@ -123,7 +124,7 @@ export function StyleProofCard({
               </div>
             ) : (
               <LazyImage
-                src={`${sampleUrl}${sampleUrl.includes("?") ? "&" : "?"}t=${timestamp}`}
+                src={displayedProofUrl}
                 alt={suggestion.label}
                 loading="lazy"
                 width={320}
@@ -288,7 +289,7 @@ export function StyleProofCard({
         isOpen={isDetailsOpen}
         onClose={() => setIsDetailsOpen(false)}
         title={suggestion.label}
-        imageUrl={`${artUrl}?t=${timestamp}`}
+        imageUrl={displayedProofUrl}
         metadata={meta}
         prompt={fallbackPrompt}
         parameters={fallbackParameters}

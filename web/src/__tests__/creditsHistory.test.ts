@@ -8,8 +8,6 @@ function transaction(overrides: Partial<CreditTransaction> = {}): CreditTransact
     amount_credits: -4,
     status: "settled",
     stage: "cast",
-    description: "Model call: cast.reference",
-    project_id: "project-1",
     created_at: "2026-07-15T12:00:00Z",
     image_count: 0,
     ...overrides,

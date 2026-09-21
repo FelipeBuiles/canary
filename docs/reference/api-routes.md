@@ -81,7 +81,6 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `POST` | `/api/projects/{project}/pages/{page_number}/issues/{issue_id}/dismiss` | `dismiss_automated_page_issue` | `pages.py` |
 | `POST` | `/api/projects/{project}/pages/{page_number}/corrections/preview` | `preview_page_correction` | `pages.py` |
 | `POST` | `/api/projects/{project}/pages/{page_number}/corrections` | `submit_page_correction` | `pages.py` |
-| `GET` | `/api/projects/{project}/provider-usage` | `project_provider_usage` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_number}/visual-review/estimate` | `visual_review_estimate` | `pages.py` |
 | `POST` | `/api/projects/{project}/pages/{page_number}/visual-review` | `visual_review_page` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_number}/visual-review` | `read_saved_visual_review` | `pages.py` |

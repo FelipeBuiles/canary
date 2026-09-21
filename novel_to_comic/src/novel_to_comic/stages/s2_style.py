@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 from itertools import product
 from typing import Literal
+from weakref import WeakValueDictionary
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -40,6 +41,9 @@ from novel_to_comic.style_contract import (
     DEFAULT_PAGE_FRAMING_STANDARD,
     style_template_for_suggestion,
     page_art_style_template,
+    page_style_template,
+    POST_LETTERING_MARKER,
+    DESIGN_MARKER,
 )
 from novel_to_comic.style_contract import normalize_production_standard
 from novel_to_comic.models.lettering import LetteringDesign
@@ -54,6 +58,7 @@ SAMPLE_CONCURRENCY = 2
 _GENERATION_MAX_ATTEMPTS = 2
 SUGGESTION_SCHEMA_VERSION = 6
 STYLE_BRIEF_VERSION = 6
+_BRIEF_LOCKS: WeakValueDictionary = WeakValueDictionary()
 PORTFOLIO_ROLES = (
     "story_fit_primary", "story_fit_secondary", "story_fit_tertiary",
     "adjacent", "contrast", "wildcard",
@@ -234,10 +239,15 @@ _SYSTEM_PROMPT = (
     "rounded cloud; effects an intentional display font and contrasting text outline, "
     "not the same generic loud font for every aesthetic. Shapes include box, round, "
     "balloon, ellipse, cloud, whisper (dashed balloon), burst (shouting), and none. "
+    "Sound effects use shape none and transparent fill: expressive outlined letters, "
+    "never a shout balloon. Reserve burst shapes for shouted speech. Center speech "
+    "and thought copy. Keep thought padding compact, normally 5-8 units for 16-24 "
+    "unit text; the cloud contour already provides additional breathing room. "
     "Use six-digit hex colors or transparent, never CSS/font names outside the schema. "
     "Match outline weights, ink palette, mood and framing without sacrificing legibility. "
     "Keep lettering and page_framing as concise prose strings. The image model draws "
-    "ONLY art and framing; the software renderer owns all words and balloon contours. "
+    "art and framing only for editable projects, where software renders the words and "
+    "balloons. Integrated projects draw the lettering directly from the prose standard. "
     "Never put lettering_design or lettering_preset at the batch root. Template is 40-70 words."
 )
 
@@ -731,6 +741,17 @@ async def ensure_style_sample_brief(
     """Return a versioned cached proof brief or regenerate it."""
     if not getattr(config, "style_sample_brief_enabled", True):
         return None
+    # Parallel proof jobs must recheck the cache after the first author finishes.
+    # Scope to the loop as well as the project; tests/CLI can use multiple loops.
+    key = (asyncio.get_running_loop(), project_dir.resolve())
+    lock = _BRIEF_LOCKS.setdefault(key, asyncio.Lock())
+    async with lock:
+        return await _ensure_style_sample_brief(config, story_bible, project_dir)
+
+
+async def _ensure_style_sample_brief(
+    config: Config, story_bible: StoryBible, project_dir: Path,
+) -> str | None:
     source_key = _style_sample_brief_source_key(config, story_bible)
     path = artifacts.style_sample_brief_path(project_dir)
     if path.exists():
@@ -788,6 +809,7 @@ async def generate_sample_image(
     request = build_style_sample_request(
         config, bible, scene_brief,
         candidate_id=candidate_id or sample_path.stem,
+        project_dir=project_dir or sample_path.parents[1],
         style_reference=style_reference,
         style_reference_mode=style_reference_mode,
         subject_action=subject_action,
@@ -804,16 +826,7 @@ async def generate_sample_image(
     return submission.result
 
 
-STYLE_PROOF_ART_CONSTRAINTS = (
-    "Depict exactly the listed subjects and no additional people, animals, creatures, "
-    "or crowds, even if background context mentions them. Draw one complete art-only "
-    "comic page with the declared framing, borders, margins and gutters. "
-    "Do not draw any lettering, words, captions, speech balloons, thought clouds, "
-    "sound effects, empty boxes, logos, signatures or watermarks. Software adds them later. "
-    "Reserve low-detail natural background, not blank white boxes, in these normalized "
-    "page-space rectangles (x, y, width, height): narration (.05,.04,.47,.14), "
-    "speech (.54,.37,.40,.13), thought (.05,.53,.44,.16), effect (.58,.83,.36,.12). "
-    "Keep faces, hands and important action outside these four spaces. "
+STYLE_PROOF_IDENTITY_CONSTRAINTS = (
     "CHARACTER DESIGN AUTHORITY: identity anchors preserve species, age, distinguishing "
     "features, relative build and wardrobe; they do not mandate realistic rendering. "
     "Apply the selected character-design system to silhouette, head/body ratio, limbs "
@@ -825,12 +838,54 @@ STYLE_PROOF_ART_CONSTRAINTS = (
 )
 
 
+STYLE_PROOF_ART_CONSTRAINTS = (
+    "Depict exactly the listed subjects and no additional people, animals, creatures, "
+    "or crowds, even if background context mentions them. Draw one complete art-only "
+    "comic page with the declared framing, borders, margins and gutters. "
+    "Do not draw any lettering, words, captions, speech balloons, thought clouds, "
+    "sound effects, empty boxes, logos, signatures or watermarks. Software adds them later. "
+    "Reserve low-detail natural background, not blank white boxes, in these normalized "
+    "page-space rectangles (x, y, width, height): narration (.05,.04,.47,.14), "
+    "speech (.54,.37,.40,.13), thought (.05,.53,.44,.16), effect (.58,.83,.36,.12). "
+    "Keep faces, hands and important action outside these four spaces. "
+    + STYLE_PROOF_IDENTITY_CONSTRAINTS
+)
+
+
+def _style_proof_direction(config: Config, project_dir: Path | None = None) -> tuple[str, str]:
+    """The frozen project mode governs both request identity and proof delivery."""
+    from novel_to_comic.lettering.proof import SPECIMENS
+    from novel_to_comic.lettering.service import project_lettering_mode
+    from novel_to_comic.target_artifacts import TargetArtifacts
+
+    mode = (project_lettering_mode(TargetArtifacts(project_dir), config)
+            if project_dir is not None else config.lettering_mode)
+    if mode == "editable":
+        return page_art_style_template(config.style_template), STYLE_PROOF_ART_CONSTRAINTS
+    template = config.style_template.split(POST_LETTERING_MARKER, 1)[0].split(DESIGN_MARKER, 1)[0]
+    specimens = "; ".join(f"{role}: {json.dumps(text)}" for role, text, _bounds in SPECIMENS)
+    constraints = (
+        "Depict exactly the listed subjects and no additional people, animals, creatures, "
+        "or crowds, even if background context mentions them. Draw one complete lettered "
+        "comic page with the declared framing, borders, margins and gutters. "
+        "Draw the lettering directly into the image using this candidate's lettering standard. "
+        "Include each of these specimen strings exactly once, preserving spelling and case: "
+        + specimens + ". These are typography specimens, not quotations from the story. "
+        "Integrate narration captions, speech balloons with speaker tails, thought clouds, "
+        "and expressive sound effects naturally into the three-panel composition. "
+        "Keep lettering legible and clear of faces and important action. No other text, "
+        "logos, signatures or watermarks. " + STYLE_PROOF_IDENTITY_CONSTRAINTS
+    )
+    return page_style_template(template), constraints
+
+
 def build_style_sample_request(
     config: Config,
     bible: StoryBible,
     scene_brief: str,
     *,
     candidate_id: str,
+    project_dir: Path | None = None,
     style_reference: Path | None = None,
     style_reference_mode: StyleReferenceMode = "faithful",
     subject_action: str | None = None,
@@ -840,7 +895,7 @@ def build_style_sample_request(
     from novel_to_comic.image_geometry import style_proof_dimensions
 
     width, height = style_proof_dimensions()
-    selected_style = page_art_style_template(config.style_template)
+    selected_style, proof_constraints = _style_proof_direction(config, project_dir)
     selection = style_sample_selection(bible)
     location = selection.location
     anchors = tuple(filter(None, (
@@ -872,7 +927,7 @@ def build_style_sample_request(
                 "margin, and gutter system."
             ),
             setting=None,
-            constraints=STYLE_PROOF_ART_CONSTRAINTS,
+            constraints=proof_constraints,
             width=width,
             height=height,
             generation_width=width,
@@ -962,7 +1017,7 @@ def style_validation_brief(bible: StoryBible) -> str:
         "each subject's own anatomy and preserving their species. Show readable "
         "full-body silhouettes, expressive details, layered environment depth, and "
         "distinct foreground and background materials across setup, action, and reaction "
-        "panels with the declared framing and quiet space for software lettering."
+        "panels with the declared framing and readable space for lettering."
     )
 
 
@@ -1043,6 +1098,7 @@ def missing_sample_indices(
                 config.model_copy(update={"style_template": template}), bible,
                 brief or style_sample_fallback_brief(bible),
                 candidate_id=suggestion.get("id") or f"style_{idx}",
+                project_dir=project_dir,
                 style_reference=_style_reference_for_suggestion(project_dir, suggestion),
                 style_reference_mode=suggestion["style_reference_mode"],
             )
@@ -1163,6 +1219,9 @@ def _style_sample_estimate(config: Config, project_dir: Path, bible: StoryBible,
         except (OSError, ValueError):
             brief = None
     width, height = style_proof_dimensions()
+    selected_style, proof_constraints = _style_proof_direction(
+        config.model_copy(update={"style_template": template}), project_dir,
+    )
     input_data = AbstractStyleProofInput(
         asset_identity=identity,
         prompt=GenerationPromptInput(
@@ -1171,14 +1230,14 @@ def _style_sample_estimate(config: Config, project_dir: Path, bible: StoryBible,
                 "One complete portrait comic-page style proof with three clearly separated "
                 "panels using the invariant outer-page framing system."
             ),
-            constraints=STYLE_PROOF_ART_CONSTRAINTS,
+            constraints=proof_constraints,
             width=width,
             height=height,
             generation_width=width,
             generation_height=height,
             generation_shape="portrait",
         ),
-        selected_style_text=page_art_style_template(template),
+        selected_style_text=selected_style,
     )
     return estimate_non_panel_request(
         config.model_copy(update={"style_template": template}), input_data,
@@ -1228,6 +1287,7 @@ def estimate_style_proof_cost_usd(
         bible,
         brief or style_sample_fallback_brief(bible),
         candidate_id=candidate_id,
+        project_dir=project_dir,
         style_reference=style_reference,
         style_reference_mode=style_reference_mode,
         subject_action=subject_action,

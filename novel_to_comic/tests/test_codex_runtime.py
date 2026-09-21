@@ -306,6 +306,76 @@ def test_unusable_terminal_image_retains_usage_without_regeneration(sdk, artifac
         assert sdk.interrupts
 
 
+@pytest.mark.parametrize("result,classification", [
+    ('{"error":{"code":"content_policy_violation","message":"Scene declined"}}', "provider_blocked"),
+    ("Image generation failed: service unavailable", "service_unavailable"),
+    ("Image generation failed for an unknown reason", "generation_error"),
+])
+def test_failed_image_retains_tool_reason_without_retry(sdk, result, classification):
+    from novel_to_comic.image_failure import classify_image_failure
+
+    sdk.events = [_usage(sdk), _image_event(sdk, status="failed", encoded=result)]
+    with pytest.raises(runtime.CodexRuntimeError) as failure:
+        _generate()
+    error = failure.value
+    assert error.code == "image_tool_failed"
+    assert error.metadata["image_tool_status"] == "failed"
+    assert error.metadata["image_tool_error"]["message"] in str(error)
+    assert error.metadata["image_tool_error"]["result_sha256"] == hashlib.sha256(result.encode()).hexdigest()
+    assert classify_image_failure(error) == classification
+    assert error.metadata["submitted"] is True
+    assert (error.metadata["input_tokens"], error.metadata["output_tokens"]) == (31, 7)
+    assert len(sdk.turns) == 1
+    assert sdk.notification_reads == 2
+    assert sdk.interrupts == [("thread-1", "turn-1")]
+
+
+@pytest.mark.parametrize("result", [
+    "Failure: A red square sk-private-token https://private.example/token\nprivate tail",
+    json.dumps({"error": {"message": "Failure: A red square sk-private-token"}, "request": "private body"}),
+    json.dumps({"request": "private body"}),
+    base64.b64encode(_png()).decode(),
+    "data:image/png;base64," + base64.b64encode(_png()).decode(),
+])
+def test_failed_image_diagnostics_exclude_payloads(sdk, result):
+    sdk.events = [_image_event(sdk, status="failed", encoded=result)]
+    with pytest.raises(runtime.CodexRuntimeError) as failure:
+        _generate()
+    diagnostic = failure.value.metadata["image_tool_error"]
+    encoded = json.dumps(diagnostic)
+    for private in ("A red square", "sk-private-token", "https://private.example", "private tail", "private body", base64.b64encode(_png()).decode()):
+        assert private not in encoded
+    assert len(diagnostic.get("message", "")) <= 512
+
+
+def test_failed_image_reason_survives_child_and_parent(sdk, monkeypatch, supported_host, tmp_path):
+    sdk.events = [_image_event(sdk, status="failed", encoded=json.dumps({
+        "error": {"code": "content_policy_violation", "message": "Scene declined"},
+    }))]
+    persisted = []
+
+    class Process:
+        async def wait(self):
+            return 0
+
+    async def spawn(*args, **kwargs):
+        root = Path(kwargs["cwd"])
+        await runtime._child(root)
+        persisted.append(json.loads((root / "result.json").read_text()))
+        return Process()
+
+    monkeypatch.setattr(runtime, "_run", sdk.parent_run)
+    monkeypatch.setattr(runtime.importlib.metadata, "version", lambda package: runtime.SDK_VERSION)
+    monkeypatch.setattr(runtime.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(runtime.asyncio, "create_subprocess_exec", spawn)
+    with pytest.raises(runtime.CodexRuntimeError, match="content_policy_violation: Scene declined") as failure:
+        _generate()
+    assert persisted[0]["metadata"]["image_tool_error"] == failure.value.metadata["image_tool_error"]
+    assert failure.value.metadata["thread_id"] == "thread-1"
+    assert failure.value.metadata["tool_id"] == "image-1"
+    assert len(sdk.turns) == 1
+
+
 @pytest.mark.parametrize("phase", ["final_answer", None])
 @pytest.mark.parametrize("reason_kind", ["safe", "long", "absent", "redacted"])
 @pytest.mark.parametrize("diagnostics", [False, True])
