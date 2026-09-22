@@ -277,3 +277,45 @@ def test_only_definite_cast_preflight_receipts_can_be_rechecked():
     assert not cast_approval_was_rejected("POST", "/approve/cast", 409, encoded("Unknown conflict"))
     assert not cast_approval_was_rejected("POST", "/cover", 409, encoded(_CAST_REVIEW_REJECTION))
     assert not cast_approval_was_rejected("POST", "/approve/cast", 200, encoded(_CAST_REVIEW_REJECTION))
+
+
+@run_async
+async def test_finish_preflight_recovers_legacy_interrupted_receipt_and_rechecks_inputs(tmp_path):
+    app = app_at(tmp_path)
+    calls = []
+    with app.state.admission.journal() as db:
+        db.execute("INSERT INTO requests(account,route,key,fingerprint) VALUES(?,?,?,?)",
+                   ("account", "POST /api/projects/book/export/preflight", "old-check", "old-input"))
+
+    @app.post("/api/projects/book/export/preflight")
+    async def check():
+        calls.append("check")
+        if len(calls) == 1:
+            raise RuntimeError("check interrupted")
+        return {"checked_version": len(calls)}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test") as client:
+        first = await client.post("/api/projects/book/export/preflight", headers={"Idempotency-Key": "old-check"})
+        retry = await client.post("/api/projects/book/export/preflight", headers={"Idempotency-Key": "old-check"})
+        refreshed = await client.post("/api/projects/book/export/preflight", headers={"Idempotency-Key": "old-check"})
+    assert first.status_code == 500
+    assert retry.json() == {"checked_version": 2}
+    assert refreshed.json() == {"checked_version": 3}
+    assert "Idempotency-Replayed" not in retry.headers
+
+
+@run_async
+async def test_finish_preflight_does_not_replay_obsolete_success(tmp_path):
+    app = app_at(tmp_path)
+    with app.state.admission.journal() as db:
+        db.execute("INSERT INTO requests(account,route,key,fingerprint,status,body) VALUES(?,?,?,?,?,?)",
+                   ("account", "POST /api/projects/book/export/preflight", "old-check", "old-input", 200, b'{"ready":true}'))
+
+    @app.post("/api/projects/book/export/preflight")
+    async def check():
+        return {"ready": False, "reason": "New edition needs checking"}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/api/projects/book/export/preflight", headers={"Idempotency-Key": "old-check"})
+    assert response.status_code == 200
+    assert response.json()["ready"] is False

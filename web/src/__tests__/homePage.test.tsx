@@ -1,6 +1,7 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
 import { HomePage } from "../pages/HomePage";
 
@@ -18,21 +19,39 @@ const storage: Storage = {
 
 function renderHomePage() {
   return render(
-    <MemoryRouter>
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter>
       <I18nProvider>
         <HomePage />
       </I18nProvider>
-    </MemoryRouter>,
+    </MemoryRouter></QueryClientProvider>,
   );
 }
 
 describe("Scenewright homepage", () => {
+  afterEach(() => vi.unstubAllGlobals());
   beforeEach(() => {
     Object.defineProperty(globalThis, "localStorage", {
       configurable: true,
       value: storage,
     });
     storage.clear();
+  });
+
+
+  it("places finished books immediately after the scene sample", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{
+        id: "sample", title: "A complete story", author: "An author", description: "A finished edition.",
+        pages: [{ number: 1, url: "/page.jpg", width: 120, height: 180 }],
+      }],
+    }));
+    renderHomePage();
+    const heading = await screen.findByRole("heading", { name: "Read a finished book" });
+    const section = heading.closest("section");
+    expect(section?.previousElementSibling?.id).toBe("continuity");
+    expect(section?.nextElementSibling?.id).toBe("process");
+    expect(screen.getByRole("link", { name: "Read book" }).getAttribute("href")).toBe("/read/sample");
   });
 
   it("leads with the product outcome and a real signup path", () => {
@@ -56,7 +75,7 @@ describe("Scenewright homepage", () => {
 
     expect(screen.getByText(/Not customer work; results vary/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "Read a development sample" }).getAttribute("href")).toBe("#continuity");
-    expect(screen.getAllByRole("link", { name: "Read page 3 at full size" })[0].getAttribute("href")).toBe("/marketing/dcc1-2-page-003.webp");
+    expect(screen.getAllByRole("link", { name: "Read page 20 at full size" })[0].getAttribute("href")).toBe("/api/public/books/d1cb0ec790244ce6849974daa586146b/ccf1a606bd1747c4864d8a4770000891/pages/20");
     expect(screen.getByText(/Automated checks do not guarantee visual quality/)).toBeTruthy();
     expect(screen.getByText(/not a fixed number of pages/)).toBeTruthy();
   });
@@ -67,7 +86,7 @@ describe("Scenewright homepage", () => {
 
     expect(screen.getByRole("heading", { level: 1, name: "Votre récit. Sa première scène de BD." })).toBeTruthy();
     expect(screen.getAllByRole("link", { name: /Créer ma première scène/ })[0].getAttribute("href")).toBe("/signup");
-    expect(screen.getAllByRole("link", { name: "Lire la page 4 en taille réelle" })[0].getAttribute("href")).toBe("/marketing/dcc1-2-page-004.webp");
+    expect(screen.getAllByRole("link", { name: "Lire la page 21 en taille réelle" })[0].getAttribute("href")).toBe("/api/public/books/d1cb0ec790244ce6849974daa586146b/ccf1a606bd1747c4864d8a4770000891/pages/21");
     expect(screen.getByRole("link", { name: "Aller au contenu" })).toBeTruthy();
   });
 

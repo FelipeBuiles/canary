@@ -68,7 +68,10 @@ export async function apiFetch<T>(
   const { data: { session } } = await supabase.auth.getSession();
   assertAccountEpoch(epoch);
   const method = options?.method?.toUpperCase() ?? "GET";
-  const action = session && !["GET", "HEAD", "OPTIONS"].includes(method) && path.startsWith("/projects/")
+  // Provider-free Finish checks are safe to recompute after an interruption.
+  // Do not retain a paid-action receipt that would block an explicit retry.
+  const isFinishCheck = method === "POST" && /^\/projects\/[^/]+\/export\/preflight(?:\?|$)/.test(path);
+  const action = session && !isFinishCheck && !["GET", "HEAD", "OPTIONS"].includes(method) && path.startsWith("/projects/")
     ? await pendingAction(session.user.id, method, path, options?.body)
     : null;
   assertAccountEpoch(epoch);

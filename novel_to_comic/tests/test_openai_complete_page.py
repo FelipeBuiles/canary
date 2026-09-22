@@ -43,14 +43,29 @@ def test_public_image_page_preserves_references_and_sends_fixed_controls(tmp_pat
     assert post.await_count == 1
     kwargs = post.call_args.kwargs
     assert kwargs['retry_ambiguous'] is False
-    assert kwargs['data'] == {
-        'model': f'image-{variant}', 'prompt': prepared.prompt, 'size': '1024x1536',
-        'quality': 'high', 'output_format': 'png', 'n': 1,
+    expected = {
+        'model': f'image-{variant}', 'prompt': prepared.prompt, 'size': '1024x1536', 'n': 1,
     }
+    if variant == 'sunburst':
+        expected.update({
+            'quality': 'medium', 'output_format': 'png',
+        })
+    else:
+        expected.update({'quality': 'high', 'output_format': 'png'})
+    assert kwargs['data'] == expected
     assert [entry[1][1] for entry in kwargs['files']] == list(prepared.reference_bytes)
-    assert result.actual_provider_model == f'openai/gpt-image-2.5-{variant}'
-    assert result.usage.provider == "openai"
+    assert result.actual_provider_model == (
+        f'fal-queue/{profile.model}' if variant == 'sunburst'
+        else f'openai/gpt-image-2.5-{variant}'
+    )
+    assert result.usage.provider == ("fal-queue" if variant == 'sunburst' else "openai")
     assert result.usage.cost_usd == 0.19
+
+
+def test_sunburst_page_profile_uses_fal_queue():
+    profile = current_page_capability_profile(Config(draw_model='image-sunburst'))
+    assert profile.provider == 'fal-queue'
+    assert profile.model == 'openai/gpt-image-2.5/sunburst'
 
 
 def test_variant_cannot_change_frozen_edition():
@@ -107,7 +122,7 @@ def test_unknown_billing_recovery_and_correction_keep_generation_pending(tmp_pat
     result = CompletePageProviderResult(artifact_kind='complete_page', image_bytes=output.getvalue(),
         media_type='image/png', width=1024, height=1536, latency_ms=1,
         actual_provider_model=profile.model,
-        usage=UsageRecord(provider='openai', model=profile.model, operation='image', image_count=1))
+        usage=UsageRecord(provider='fal-queue', model=profile.model, operation='image', image_count=1))
     artifacts = TargetArtifacts(tmp_path / 'project')
     with patch.object(adapter, 'generate', AsyncMock(return_value=result)) as generate:
         first = asyncio.run(draw_complete_page(compiled, adapter=adapter, artifacts=artifacts, page=_page()))

@@ -1,11 +1,16 @@
+import { PublicationShowcase } from "../components/book/PublicationShowcase";
 import { Link } from "react-router-dom";
+import { BrandIdentity } from "../components/BrandIdentity";
 import { BrandMark } from "../components/BrandMark";
 import { LANGUAGES, useI18n, type LanguageCode } from "../i18n";
 import { LANDING_COPY, type LandingCopy, type LandingFaq, type LandingStep } from "./landingCopy";
 import "./HomePage.css";
 
 const MARKETING_IMAGES = {
-  pages: ["/marketing/dcc1-2-page-003.webp", "/marketing/dcc1-2-page-004.webp"],
+  pages: [
+    "/api/public/books/d1cb0ec790244ce6849974daa586146b/ccf1a606bd1747c4864d8a4770000891/pages/20",
+    "/api/public/books/d1cb0ec790244ce6849974daa586146b/ccf1a606bd1747c4864d8a4770000891/pages/21",
+  ],
   anya: "/marketing/anya-reference.webp",
   rurik: "/marketing/rurik-reference.webp",
   tavern: "/marketing/tavern-reference.webp",
@@ -141,12 +146,8 @@ export function HomePage() {
       </a>
 
       <header className="landing-header">
-        <Link className="landing-brand" to="/" aria-label={copy.nav.home}>
-          <BrandMark className="landing-brand__mark" variant="micro" />
-          <span>
-            <strong>Scenewright</strong>
-            <small>{copy.footer.line}</small>
-          </span>
+        <Link className="inline-flex w-fit items-center" to="/" aria-label={copy.nav.home}>
+          <BrandIdentity />
         </Link>
 
         <nav className="landing-header__nav" aria-label={copy.nav.navigation}>
@@ -228,6 +229,8 @@ export function HomePage() {
             <Link className="landing-cta" to="/signup">{copy.hero.primaryCta}</Link>
           </div>
         </section>
+
+        <PublicationShowcase />
 
         <section className="landing-process" id="process" aria-labelledby="landing-process-title">
           <div className="landing-section-heading">

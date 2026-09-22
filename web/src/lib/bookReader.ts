@@ -6,6 +6,8 @@ export interface ReaderPage {
   pageNumber: number;
   revision: number;
   spreadRole: SpreadRole;
+  /** Explicit immutable asset URL for published editions. */
+  imageUrl?: string;
   hybrid?: boolean;
   letteringRevision?: number | null;
 }

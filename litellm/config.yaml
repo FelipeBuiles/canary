@@ -68,6 +68,18 @@ model_list:
         ignore:
         - wafer
         - venice
+- model_name: mimo-v2.6-pro
+  litellm_params:
+    model: openrouter/xiaomi/mimo-v2.6-pro
+    api_key: os.environ/OPENROUTER_API_KEY
+    # MiMo's low effort still enables unbounded thinking, which can exhaust
+    # Extract's 16k completion budget before any JSON is emitted.
+    reasoning_effort: none
+    extra_body:
+      reasoning:
+        enabled: false
+      provider:
+        require_parameters: true
 - model_name: union-alpha
   litellm_params:
     model: openrouter/stealth/union-alpha
@@ -95,8 +107,8 @@ model_list:
     api_key: os.environ/FAL_KEY
 - model_name: image-sunburst
   litellm_params:
-    model: openai/gpt-image-2.5-sunburst
-    api_key: os.environ/OPENAI_API_KEY
+    model: fal-queue/openai/gpt-image-2.5/sunburst
+    api_key: os.environ/FAL_KEY
 - model_name: image-flare
   litellm_params:
     model: openai/gpt-image-2.5-flare

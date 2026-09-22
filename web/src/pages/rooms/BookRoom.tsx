@@ -1,3 +1,4 @@
+import { BookPublication } from "../../components/book/BookPublication";
 import { BookOpen, ArrowDown } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
@@ -134,6 +135,7 @@ export function BookRoom() {
           stage="finish"
           status="pending"
         />
+        <BookPublication project={id} title={status?.project_name ?? t("Your book")} ready={false} />
       </RoomShell>
     );
   }
@@ -211,6 +213,8 @@ export function BookRoom() {
         </button>}
       </section>
 
+      <BookPublication project={id} title={title} ready={canExport} onPreview={() => setReaderOpen(true)} />
+
       <BookExportPanel project={id}
         packages={canExport && !exportBook.isPending ? packages : []}
         exportUrls={exportUrls} canExport={canExport} pending={exportBook.isPending}
@@ -271,6 +275,7 @@ export function BookRoom() {
             <p className="font-body text-sm font-bold leading-6">
               {t("The book could not be checked.")}
             </p>
+            {preflightError && <p className="mt-2 break-words font-body text-sm leading-6">{preflightError.message}</p>}
             <Button className="mt-3" variant="outline" disabled={isFetching} onClick={() => void refetch()}>
               {isFetching ? t("Checking edition…") : t("Retry edition checks")}
             </Button>

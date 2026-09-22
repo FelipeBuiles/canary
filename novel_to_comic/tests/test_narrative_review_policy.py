@@ -144,7 +144,73 @@ def test_resume_published_adaptation_refreshes_only_review(tmp_path, outcome):
     else:
         assert resume() == adaptation
         require_narrative_review(target, "adapt", context)
-    assert len(calls) == (0 if outcome in {"source_changed", "already_current"} else 1)
+    assert len(calls) == (0 if outcome in {"source_changed", "already_current"} else 2 if outcome == "block" else 1)
     assert target.adaptation_path.read_bytes() == original
     assert checkpoint.read_text() == '{"saved":true}'
     assert not target.failed_adaptation_candidate_path.exists()
+
+
+@pytest.mark.parametrize("outcome", ["withdraw", "confirm", "invalid", "transport"])
+@pytest.mark.parametrize("other_defect", [False, True])
+def test_missing_context_is_verified_before_story_repair(tmp_path, outcome, other_defect):
+    """A reviewer can overlook exactly the caption it asks the author to add."""
+    from novel_to_comic.narrative_review import _review_contexts, _substantiated_blocker, NarrativeFinding
+
+    context = adaptation_context(_source_document(), _approved_brief(), _book_adaptation())
+    beat = context["beats"][0]
+    item = beat["lettering"][0]
+    item["text"] = "I couldn’t understand the goblin language. It was grunts and squeaks."
+    missing = {
+        "code": "missing_context", "repair_stage": "adapt", "artifact_ids": [item["id"]],
+        "evidence": "The goblin language has not been established.",
+        "repair": "Explain that Carl cannot understand the goblin language.",
+        "consequence": "unintelligible_sequence", "reader_impact": "The exchange has no context.",
+        "passages": [{"artifact_id": item["id"], "quote": item["text"]}],
+    }
+    # Keep an independently blocking defect even if confirmation drops it.
+    other = {**missing, "code": "unsupported_event", "evidence": "A separate event is unsupported."}
+    window = next(_review_contexts(context))
+    assert _substantiated_blocker(NarrativeFinding.model_validate(other), window)
+    calls = []
+
+    async def generate(**request):
+        calls.append(request)
+        if len(calls) == 1:
+            return ApiResult(value={"findings": [missing, other] if other_defect else [missing], "signal_assessments": []})
+        assert "VERIFY MISSING CONTEXT BEFORE REPAIR" in request["user_content"]
+        assert item["text"] in request["user_content"]
+        if outcome == "transport":
+            raise TimeoutError("confirmation interrupted")
+        if outcome == "invalid":
+            return ApiResult(value={"findings": [], "signal_assessments": [
+                {"signal_id": "invented", "acceptable": True, "evidence": "Not supplied."},
+            ]})
+        return ApiResult(value={"findings": [missing] if outcome == "confirm" else [],
+                                "signal_assessments": []})
+
+    target = TargetArtifacts(tmp_path)
+    def run():
+        return asyncio.run(review_narrative(context, generate=generate, ctx=runtime(tmp_path, "adapt"),
+                                           artifacts=target, model="test"))
+    if outcome == "transport":
+        with pytest.raises(TimeoutError):
+            run()
+        with pytest.raises(ValueError):
+            require_narrative_review(target, "adapt", context)
+        assert len(calls) == 2
+        return
+    failures = run()
+    codes = {f.code for f in failures}
+    if outcome == "invalid":
+        assert codes == {"narrative_review_invalid"}
+        assert len(calls) == 3
+    else:
+        expected = {"narrative_review_unsupported_event"} if other_defect else set()
+        if outcome == "confirm":
+            expected.add("narrative_review_missing_context")
+        assert codes == expected
+        if not expected:
+            require_narrative_review(target, "adapt", context)
+        assert len(calls) == 2
+        assert run() == failures
+        assert len(calls) == 2  # Both verdicts reuse their exact-input checkpoints.

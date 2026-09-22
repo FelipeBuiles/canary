@@ -10,8 +10,8 @@ const auth = vi.hoisted(() => ({ session: null as object | null, loading: false,
   signInWithPassword: vi.fn(), signUp: vi.fn(), resetPasswordForEmail: vi.fn(), updateUser: vi.fn() }));
 vi.mock("../lib/supabase", () => ({ supabase: { auth } }));
 vi.mock("../hooks/useAuth", () => ({ useAuth: () => ({ session: auth.session, loading: auth.loading }) }));
-function setup(page: "login" | "signup" | "reset-password" = "login") {
-  return render(<I18nProvider><MemoryRouter initialEntries={[`/${page}`]}><Routes>
+function setup(page: "login" | "signup" | "reset-password" = "login", query = "") {
+  return render(<I18nProvider><MemoryRouter initialEntries={[`/${page}${query}`]}><Routes>
     <Route path="/login" element={<LoginPage />} /><Route path="/signup" element={<SignupPage />} />
     <Route path="/reset-password" element={<ResetPasswordPage />} /><Route path="/" element={<p>Studio home</p>} />
   </Routes></MemoryRouter></I18nProvider>);
@@ -48,6 +48,17 @@ describe("Auth forms", () => {
     await waitFor(() => expect(screen.getByRole("status").textContent).toBe("Check author@example.com for the confirmation link."));
     expect(auth.signUp).toHaveBeenCalledExactlyOnceWith({ email: "author@example.com", password: "secret", options: { data: { studio_name: "Ink studio" } } });
     expect(screen.queryByText("Studio home")).toBeNull();
+  });
+
+  it("retains the shared book referral when creating an account", async () => {
+    auth.signUp.mockResolvedValue({ error: null });
+    const id = "a".repeat(32);
+    setup("signup", `?ref=book-${id}`);
+    fireEvent.change(screen.getByLabelText("Studio Name"), { target: { value: "Ink studio" } });
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "author@example.com" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret" } });
+    fireEvent.submit(screen.getByRole("form", { name: "Create account" }));
+    await waitFor(() => expect(auth.signUp).toHaveBeenCalledWith(expect.objectContaining({ options: { data: { studio_name: "Ink studio", referred_by_book: id } } })));
   });
 
   it("sends a reset link to the same-origin recovery page and handles rejection", async () => {

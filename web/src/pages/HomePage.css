@@ -1596,3 +1596,30 @@
     gap: 2.5rem;
   }
 }
+
+/* Finished editions follow the scene sample in the same printed-page language. */
+.landing-showcase {
+  scroll-margin-top: 8rem;
+  padding: clamp(4rem, 7vw, 7rem) max(2rem, calc((100vw - var(--landing-max)) / 2));
+  border-block: 2px solid var(--landing-ink);
+  background: var(--landing-bristol);
+}
+.landing-showcase__books { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(2rem, 5vw, 5rem); }
+.landing-showcase__book { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1fr); gap: clamp(1.25rem, 2vw, 2rem); align-items: center; }
+.landing-showcase__cover { display: block; border: 2px solid var(--landing-ink); background: var(--landing-paper); }
+.landing-showcase__cover img { display: block; width: 100%; height: auto; }
+.landing-showcase__copy { min-width: 0; overflow-wrap: anywhere; }
+.landing-showcase__credit { margin: 0 0 1rem; font-family: var(--font-meta); font-size: .75rem; line-height: 1.6; color: var(--landing-muted); }
+.landing-showcase__copy h3 { margin: 0; font-family: var(--font-display); font-size: clamp(1.5rem, 2.5vw, 2.6rem); font-weight: 800; line-height: 1.08; letter-spacing: -.03em; text-wrap: balance; }
+.landing-showcase__description { margin: 1rem 0 0; font-size: 1rem; line-height: 1.65; color: var(--landing-muted); }
+.landing-showcase__copy .landing-text-link { margin-top: 1.5rem; }
+.landing-showcase a:focus-visible { outline: 3px solid var(--landing-red); outline-offset: 5px; }
+.landing-showcase h3 a:hover { color: var(--landing-red); }
+@media (max-width: 900px) {
+  .landing-showcase__books { grid-template-columns: 1fr; gap: 3rem; }
+  .landing-showcase__book { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); }
+}
+@media (max-width: 600px) {
+  .landing-showcase { padding: 3.5rem 1.25rem; }
+  .landing-showcase__book { gap: 1.25rem; }
+}

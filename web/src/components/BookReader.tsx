@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
 import { pageCompositePreviewUrl } from "../api/lettering";
 import { pageRenderPreviewUrl } from "../api/pages";
 import { useI18n } from "../i18n";
@@ -31,8 +31,12 @@ const PREFETCH = 2;
 const SWIPE_THRESHOLD_PX = 48;
 
 interface BookReaderProps {
-  project: string;
+  project?: string;
   pages: ReaderPage[];
+  title?: string;
+  headerActions?: ReactNode;
+  endContent?: ReactNode;
+  closeLabel?: string;
   /** Page to open on, when entering from a specific page rather than the cover. */
   initialPageNumber?: number;
   onClose: () => void;
@@ -69,7 +73,7 @@ function ReaderImage({
         </>
       )}
       <img
-        src={(page.hybrid ? pageCompositePreviewUrl(project, page.pageNumber, page.revision, "reader", page.letteringRevision) : pageRenderPreviewUrl(project, page.pageNumber, page.revision, "reader"))}
+        src={(page.imageUrl ?? (page.hybrid ? pageCompositePreviewUrl(project, page.pageNumber, page.revision, "reader", page.letteringRevision) : pageRenderPreviewUrl(project, page.pageNumber, page.revision, "reader")))}
         alt={alt}
         decoding="async"
         onLoad={() => setLoaded(true)}
@@ -143,7 +147,7 @@ function ViewLayer({
   );
 }
 
-export function BookReader({ project, pages, initialPageNumber, onClose }: BookReaderProps) {
+export function BookReader({ project = "", pages, initialPageNumber, onClose, title, headerActions, endContent, closeLabel }: BookReaderProps) {
   const { t } = useI18n();
   const [layout, setLayout] = useState<ReaderLayout>("spreads");
   const [fit, setFit] = useState<Fit>("height");
@@ -158,15 +162,22 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
       ? viewIndexForPage(buildReaderViews(pages, "spreads"), initialPageNumber)
       : 0,
   );
-  const safeIndex = Math.min(index, Math.max(views.length - 1, 0));
+  const lastIndex = Math.max(views.length - 1 + (endContent ? 1 : 0), 0);
+  const safeIndex = Math.min(index, lastIndex);
+  const showingEnd = !!endContent && safeIndex === views.length;
   const current = views[safeIndex];
 
   function goTo(next: number) {
-    setIndex(Math.max(0, Math.min(next, views.length - 1)));
+    setIndex(Math.max(0, Math.min(next, lastIndex)));
   }
 
   /** Switching layout must land on the page the reader was already showing. */
   function changeLayout(next: ReaderLayout) {
+    if (showingEnd) {
+      setLayout(next);
+      setIndex(buildReaderViews(pages, next).length);
+      return;
+    }
     const anchor = current?.pages[0].pageNumber;
     setLayout(next);
     if (anchor !== undefined) {
@@ -181,7 +192,7 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
       for (const step of [safeIndex + offset, safeIndex - offset]) {
         views[step]?.pages.forEach((page) => {
           const image = new Image();
-          image.src = (page.hybrid ? pageCompositePreviewUrl(project, page.pageNumber, page.revision, "reader", page.letteringRevision) : pageRenderPreviewUrl(project, page.pageNumber, page.revision, "reader"));
+          image.src = (page.imageUrl ?? (page.hybrid ? pageCompositePreviewUrl(project, page.pageNumber, page.revision, "reader", page.letteringRevision) : pageRenderPreviewUrl(project, page.pageNumber, page.revision, "reader")));
         });
       }
     }
@@ -214,7 +225,7 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
         return;
       case "End":
         event.preventDefault();
-        goTo(views.length - 1);
+        goTo(lastIndex);
         return;
       default:
         return;
@@ -233,9 +244,9 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
     };
   }, []);
 
-  const label = viewLabel(current, t("Page"), t("Pages"));
+  const label = showingEnd ? t("End of book") : viewLabel(current, t("Page"), t("Pages"));
   const atStart = safeIndex <= 0;
-  const atEnd = safeIndex >= views.length - 1;
+  const atEnd = safeIndex >= lastIndex;
 
   return (
     <div
@@ -246,7 +257,7 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
       tabIndex={-1}
       className="fixed inset-0 z-[130] flex flex-col bg-ink-black"
       onTouchStart={(event) => {
-        if (event.touches.length !== 1 || (event.target instanceof HTMLElement && event.target.closest("button, input"))) {
+        if (event.touches.length !== 1 || (event.target instanceof HTMLElement && event.target.closest("button, input, select, a, summary"))) {
           touchStart.current = null;
           return;
         }
@@ -264,9 +275,10 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
     >
       <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b-[2px] border-bristol/25 px-3 py-2 md:px-5 md:py-3">
         <p className="font-display text-lg font-black uppercase text-bristol">
-          {t("READING")}
+          {title ?? t("READING")}
         </p>
         <div className="flex flex-wrap items-center gap-2">
+          {headerActions}
           <button
             type="button"
             onClick={() => changeLayout(layout === "spreads" ? "single" : "spreads")}
@@ -307,8 +319,10 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
           />
         ))}
 
+        {showingEnd && <div className="absolute inset-0 overflow-y-auto bg-pulp-paper p-4 text-ink-black md:p-8">{endContent}</div>}
+
         {/* Click-to-turn only in fit-height: fit-width is a scrolling read. */}
-        {fit === "height" && (
+        {fit === "height" && !showingEnd && (
           <>
             <button
               type="button"
@@ -349,7 +363,7 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
           </button>
           {atEnd ? (
             <button type="button" onClick={onClose} className="min-h-11 border-[2px] border-bristol/40 px-3 font-meta text-xs font-bold text-bristol hover:border-bristol">
-              {t("Back to edition")}
+              {closeLabel ?? t("Back to edition")}
             </button>
           ) : (
             <button
@@ -365,7 +379,7 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
 
         <p aria-live="polite" className="font-meta text-xs font-bold tracking-[0.12em] text-bristol">
           {label}
-          {atEnd && <span className="ml-2">{t("End of book")}</span>}
+          {atEnd && !showingEnd && <span className="ml-2">{t("End of book")}</span>}
           <span className="text-bristol/55">
             {" · "}
             {pages.length} {pages.length === 1 ? t("page") : t("pages")}
@@ -375,7 +389,7 @@ export function BookReader({ project, pages, initialPageNumber, onClose }: BookR
         <input
           type="range"
           min={0}
-          max={Math.max(views.length - 1, 0)}
+          max={lastIndex}
           value={safeIndex}
           onChange={(event) => goTo(Number(event.target.value))}
           aria-label={t("Jump to page")}

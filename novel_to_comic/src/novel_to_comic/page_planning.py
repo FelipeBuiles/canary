@@ -41,7 +41,7 @@ from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import ApiResult, estimate_text_cost
 
 
-_MAX_PLAN_ATTEMPTS = 2
+_MAX_PLAN_ATTEMPTS = 3
 _TWO_PASS_PLAN_MIN_BEATS = 24
 _PLAN_DETAIL_BATCH_PAGES = 8
 _MIN_PLAN_GENERATION_CALLS = 64
@@ -1897,7 +1897,15 @@ def _canonical_pages(
                 lettering.append(item)
             if tuple(r.lettering_item_id for r in content.lettering_reservations) != content.lettering_ids:
                 raise ValueError("Every assigned lettering ID needs exactly one reservation; rerun Plan.")
-            reservations.extend(content.lettering_reservations)
+            # Adapt owns delivery and attribution. A named narrator, quoted
+            # voice, or offscreen speaker is not a visible balloon-tail target.
+            # Normalize model-authored (including cached) layout metadata before
+            # constructing ComicPage; never change the canonical lettering.
+            reservations.extend(
+                reservation.model_copy(update={"speaker_entity_id": None, "tail_target": None})
+                if item.delivery != "onscreen" else reservation
+                for reservation, item in zip(content.lettering_reservations, lettering, strict=True)
+            )
             entity_ids, states, unapproved = _derived_state_citations(
                 content,
                 beat_by_id,

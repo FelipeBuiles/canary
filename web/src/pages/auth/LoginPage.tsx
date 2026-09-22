@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, Navigate, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../hooks/useAuth";
 import { Button } from "../../components/ui/Button";
@@ -34,6 +34,7 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
   const { session, loading } = useAuth();
   const { t } = useI18n();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [studioName, setStudioName] = useState("");
   const [email, setEmail] = useState("");
@@ -54,9 +55,13 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
     setSubmitting(true);
     try {
       if (mode === "signup") {
+        const reference = searchParams.get("ref");
+        const referral = reference && /^book-[a-f0-9]{32}$/.test(reference)
+          ? { referred_by_book: reference.slice(5) }
+          : {};
         const { error } = await supabase.auth.signUp({
           email: email.trim(), password,
-          options: { data: { studio_name: studioName } },
+          options: { data: { studio_name: studioName, ...referral } },
         });
         if (error) throw error;
         setMessage(t("Check {email} for the confirmation link.").replace("{email}", email.trim()));

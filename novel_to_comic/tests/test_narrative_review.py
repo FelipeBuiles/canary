@@ -1258,9 +1258,9 @@ def test_budget_stop_before_review_preserves_repair_across_model_switch(tmp_path
         return asyncio.run(produce_book_adaptation(source, bible, brief, artifacts=target,
             ctx=runtime(tmp_path, "adapt"), model=model, generate=generate, max_generation_calls=limit))
     with pytest.raises(GenerationWorkLimitError):
-        run("test", generate, 5)
+        run("test", generate, 6)
     assert calls == ["adapt.narrative_treatment", "adapt.blueprint", "adapt.lettering",
-                     "adapt.narrative_review", "adapt.book"]
+                     "adapt.narrative_review", "adapt.narrative_review", "adapt.book"]
     saved = target.read_failed_adaptation_candidate()
     assert saved.beats[0].lettering[0].text == improved
     assert not target.adaptation_path.exists()
@@ -1289,12 +1289,12 @@ def test_budget_stop_before_review_preserves_repair_across_model_switch(tmp_path
         assert improved in request["user_content"]
         return ApiResult(value=verdict(request))
     # Only an explicit limit change admits the remaining review; no regeneration.
-    result = run("other", fresh_review, 6)
+    result = run("other", fresh_review, 7)
     assert result.beats[0].lettering[0].text == improved
     assert calls == ["adapt.narrative_review"]
     assert target.read_narrative_review("adapt").model == "other"
     budget = json.loads(next((tmp_path / ".checkpoints/adapt/work").glob("*.json")).read_text())
-    assert len(budget["calls"]) == budget["limit"] == 6
+    assert len(budget["calls"]) == budget["limit"] == 7
 
 
 def test_reviewed_candidate_without_current_work_receipts_is_not_adopted(tmp_path):
@@ -1347,7 +1347,7 @@ def test_empty_signal_window_corrects_invented_checks_without_losing_findings(tm
                 {"signal_id": name, "acceptable": True, "evidence": "The beat is accounted for."}
                 for name in ("beats[beat_0001]", "ledger")
             ]
-        else:
+        elif len(calls) == 2:
             assert "unexpected signal IDs" in request["user_content"]
             assert "No signals were requested" in request["user_content"]
             assert finding["evidence"] in request["user_content"]
@@ -1359,9 +1359,9 @@ def test_empty_signal_window_corrects_invented_checks_without_losing_findings(tm
     failures = asyncio.run(run())
     assert [failure.code for failure in failures] == ["narrative_review_missing_context"]
     assert failures[0].evidence[0] == finding["evidence"]
-    assert len(calls) == 2
+    assert len(calls) == 3
     assert asyncio.run(run()) == failures
-    assert len(calls) == 2  # Both base and corrected verdict are exact-input cached.
+    assert len(calls) == 3  # Base, protocol correction and confirmation are exact-input cached.
 
 
 @pytest.mark.parametrize("invalid", ["missing", "duplicate", "invented"])

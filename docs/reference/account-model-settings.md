@@ -55,7 +55,7 @@ environment variables. Model aliases and pricing remain in configuration.
 | DeepSeek V4.1 Flash | `deepseek-v4.1-flash` | `openrouter/deepseek/deepseek-v4.1-flash` |
 | GLM 5.3 Flash | `glm-5.3-flash` | `openrouter/z-ai/glm-5.3-flash` |
 | Union Alpha | `union-alpha` | `openrouter/stealth/union-alpha` |
-| GPT Image 2.5 Sunburst | `image-sunburst` | `openai/gpt-image-2.5-sunburst` |
+| GPT Image 2.5 Sunburst | `image-sunburst` | `fal-queue/openai/gpt-image-2.5/sunburst` |
 | GPT Image 2.5 Flare | `image-flare` | `openai/gpt-image-2.5-flare` |
 | Muse Image | `image-muse` | `openrouter/meta/muse-image` |
 

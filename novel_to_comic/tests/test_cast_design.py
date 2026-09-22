@@ -82,6 +82,25 @@ def test_invalid_design_response_records_usage_and_never_generates_images(tmp_pa
     assert not TargetArtifacts(tmp_path).cast_design_path.exists()
 
 
+def test_design_requires_characters_in_provider_schema_and_rejects_missing_key(tmp_path):
+    config, bible, _ = _cast(tmp_path)
+    TargetArtifacts(tmp_path).cast_design_path.unlink()
+    ctx = MagicMock()
+
+    async def response(**kwargs):
+        schema = kwargs["json_schema"]
+        assert "characters" in schema["required"]
+        return ApiResult(value={"designs": []})
+
+    with patch.object(design.text, "generate_json", side_effect=response), \
+         patch.object(s3_cast, "submit_non_panel_request", new_callable=AsyncMock) as images:
+        with pytest.raises(ValueError, match="invalid character roster"):
+            asyncio.run(design.ensure_design(config, tmp_path, bible, ctx))
+
+    images.assert_not_awaited()
+    assert not TargetArtifacts(tmp_path).cast_design_path.exists()
+
+
 def test_visual_review_uses_images_is_cached_and_expires_on_replacement(tmp_path):
     config, bible, _ = _cast(tmp_path)
     result = {"issues": [{"character_ids": ["sailor", "doctor"], "concern": "lookalike",

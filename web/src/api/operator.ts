@@ -233,3 +233,7 @@ export function grantOperatorCredits(
     },
   );
 }
+
+export function fetchPublications(connection: OperatorConnection) {
+  return operatorFetch<import("./publications").Publication[]>("/api/ops/publications", connection);
+}

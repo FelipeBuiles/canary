@@ -45,6 +45,7 @@ MODEL_REGISTRY: dict[str, str] = {
     "gpt-5.6-luna": "openai",
     "deepseek-v4.1-flash": "openrouter",
     "glm-5.3-flash": "openrouter",
+    "mimo-v2.6-pro": "openrouter",
     "union-alpha": "openrouter",
 }
 

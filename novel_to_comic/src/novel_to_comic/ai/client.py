@@ -145,6 +145,8 @@ _OPENROUTER_MAX_TOKENS_ALIASES = frozenset(
         "openrouter/deepseek/deepseek-v4.1-flash",
         "glm-5.3-flash",
         "openrouter/z-ai/glm-5.3-flash",
+        "mimo-v2.6-pro",
+        "openrouter/xiaomi/mimo-v2.6-pro",
         "union-alpha",
         "openrouter/stealth/union-alpha",
     }
@@ -281,8 +283,9 @@ async def _post_with_retry(
             else:
                 response = await _http.post(url, headers=headers, json=json)
             if not retry_ambiguous and response.status_code >= 500:
-                from novel_to_comic.server.credits import retain_ambiguous_job
-                retain_ambiguous_job(current_ai_request_context().job_id)
+                if not _fal_definitely_unsubmitted(response):
+                    from novel_to_comic.server.credits import retain_ambiguous_job
+                    retain_ambiguous_job(current_ai_request_context().job_id)
                 return response
             if response.status_code not in _RETRYABLE_STATUS_CODES:
                 return response
@@ -319,6 +322,21 @@ async def _post_with_retry(
             retry_after=retry_after,
             slow_timeout=slow_timeout,
         )
+
+
+def _fal_definitely_unsubmitted(response: httpx.Response) -> bool:
+    """Recognize only FAL connection failures before its queue accepted a POST."""
+    try:
+        body = response.json()
+    except (TypeError, ValueError):
+        return False
+    error = body.get("error") if isinstance(body, dict) else None
+    message = error.get("message") if isinstance(error, dict) else None
+    return isinstance(message, str) and bool(re.search(
+        r"\bFal-queueException - FAL submit_connect failed for "
+        r"[a-zA-Z0-9_./-]+; detail=(?:ConnectError|ConnectTimeout|PoolTimeout)\b",
+        message,
+    ))
 
 
 # Top-level chunk fields worth keeping when collapsing a stream: cost extraction

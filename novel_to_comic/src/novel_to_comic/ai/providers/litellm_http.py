@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -293,6 +294,20 @@ def _raise_safe_wire_phase_error(phase: str, exc: BaseException) -> None:
                 descriptor["provider_error_code"] = error["code"]
             if isinstance(error, dict) and isinstance(error.get("message"), str):
                 message = " ".join(error["message"].split())
+                # The proxy wraps custom-provider exceptions in a generic
+                # HTTP 500. Copy only these bounded, structural FAL fields;
+                # the full upstream message can include prompts or URLs.
+                fal = re.search(
+                    r"\bFAL (?P<phase>[a-z_]+) failed for "
+                    r"(?P<endpoint>[a-zA-Z0-9_./-]+)"
+                    r"(?:; request_id=(?P<request_id>[a-zA-Z0-9_-]+))?",
+                    message,
+                )
+                if fal:
+                    descriptor["fal_phase"] = fal.group("phase")
+                    descriptor["fal_endpoint"] = fal.group("endpoint")
+                    if fal.group("request_id"):
+                        descriptor["fal_request_id"] = fal.group("request_id")
                 marker = "Vertex image SDK does not support native aspect ratio controls"
                 if marker in message:
                     detail = message[message.index(marker):]
