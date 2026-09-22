@@ -88,8 +88,8 @@ _ALIAS_DESCRIPTIONS: dict[str, ImageModelDescription] = {
     GATEWAY_IMAGE_SUNBURST: ImageModelDescription(
         route=ImageRoute.GPT_IMAGE_2,
         display_name="GPT Image 2.5 Sunburst",
-        provider_model="openai/gpt-image-2.5-sunburst",
-        provider_key=IMAGE_PROVIDER_OPENAI,
+        provider_model="fal-queue/openai/gpt-image-2.5/sunburst",
+        provider_key=IMAGE_PROVIDER_FAL_QUEUE,
     ),
     GATEWAY_IMAGE_FLARE: ImageModelDescription(
         route=ImageRoute.GPT_IMAGE_2,
@@ -117,12 +117,33 @@ def describe_image_model(model: str) -> ImageModelDescription:
     normalized = (model or "").strip().lower()
     if normalized in _ALIAS_DESCRIPTIONS:
         return _ALIAS_DESCRIPTIONS[normalized]
-    if normalized.removeprefix("openai/") in {"gpt-image-2", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst-2026-09-08", "gpt-image-2.5-flare-2026-09-08"}:
+    if normalized.removeprefix("openai/") in {
+        "gpt-image-2",
+        # Retained historical literals remain OpenAI routes; the selectable
+        # image-sunburst alias below is the FAL route.
+        "gpt-image-2.5-sunburst",
+        "gpt-image-2.5-sunburst-2026-09-08",
+        "gpt-image-2.5-flare",
+        "gpt-image-2.5-flare-2026-09-08",
+    }:
         return ImageModelDescription(
             route=ImageRoute.GPT_IMAGE_2,
             display_name=normalized.removeprefix("openai/").replace("gpt-image-", "GPT Image "),
             provider_model=normalized,
             provider_key=IMAGE_PROVIDER_OPENAI,
+        )
+    if normalized.removeprefix("fal-queue/") in {
+        "gpt-image-2.5-sunburst",
+        "gpt-image-2.5-sunburst-2026-09-08",
+        "openai/gpt-image-2.5/sunburst",
+        "openai/gpt-image-2.5/sunburst/text-to-image",
+        "openai/gpt-image-2.5/sunburst/edit",
+    }:
+        return ImageModelDescription(
+            route=ImageRoute.GPT_IMAGE_2,
+            display_name="GPT Image 2.5 Sunburst",
+            provider_model=normalized,
+            provider_key=IMAGE_PROVIDER_FAL_QUEUE,
         )
     if normalized.removeprefix("openrouter-image/").removeprefix("openrouter/") == "meta/muse-image":
         return ImageModelDescription(

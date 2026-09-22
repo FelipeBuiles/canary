@@ -156,6 +156,7 @@ def _extract_routes() -> list[dict]:
     prefix_map = {
         "account_models.py": "/api/account",
         "projects.py": "/api/projects",
+        "publications.py": "/api/projects/{project_id}",
         "pipeline.py": "/api/projects/{project}",
         "pages.py": "/api/projects/{project}",
         "export.py": "/api/projects/{project}/export",
@@ -170,16 +171,20 @@ def _extract_routes() -> list[dict]:
         prefix = prefix_map.get(path.name, f"/api/{path.stem}")
 
         pattern = re.compile(
-            r'@router\.(get|post|put|patch|delete)\("([^"]*)"[^)]*\)\s*\n'
+            r'@(router|public_router|ops_router)\.(get|post|put|patch|delete)\("([^"]*)"[^)]*\)\s*\n'
             r'(?:@[^\n]+\n)*'
             r'(?:async\s+)?def (\w+)',
             re.MULTILINE,
         )
         for m in pattern.finditer(source):
-            method = m.group(1).upper()
-            route_path = m.group(2)
-            func_name = m.group(3)
-            full_path = prefix + route_path if route_path != "/" else prefix
+            router_name = m.group(1)
+            method = m.group(2).upper()
+            route_path = m.group(3)
+            func_name = m.group(4)
+            route_prefix = prefix
+            if path.name == "publications.py":
+                route_prefix = {"router": prefix, "public_router": "/api/public/books", "ops_router": "/api/ops/publications"}[router_name]
+            full_path = route_prefix + route_path if route_path != "/" else route_prefix
             routes.append({
                 "method": method,
                 "path": full_path,

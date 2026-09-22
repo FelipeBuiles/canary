@@ -19,7 +19,7 @@ from novel_to_comic.models.validation import EditorialIssue, InvariantFailure
 from novel_to_comic.paid_shards import run_paid_shards
 from novel_to_comic.usage import estimate_text_cost
 
-REVIEW_VERSION = "narrative_v4"
+REVIEW_VERSION = "narrative_v5"
 
 
 class NarrativePassage(BaseModel):
@@ -367,13 +367,13 @@ def _prompt(context):
 
 
 def estimate_narrative_review(model: str, context: dict, *, passes: int = 2) -> float:
-    """Estimate a bounded number of complete review passes for this context."""
+    """Estimate review passes, allowing an absence-claim verification in each window."""
     return (
         sum(
             estimate_text_cost(model, p, output_chars=5000)
             for p in _review_prompts(context)
         )
-        * passes
+        * passes * 2
     )
 
 
@@ -574,36 +574,73 @@ async def review_narrative(context, *, generate, ctx, artifacts, model, instruct
         prompt = request["user_content"]
         window_signals = {s["id"] for s in window["signals"]}
         window_anchors = _review_anchors(window)
-        verdict = None
-        attempt_prompt = prompt
-        for attempt in range(2):
-            # Cached base responses are revalidated. A protocol correction is a
-            # distinct, checkpointed input and never asks the story writer to repair.
-            ctx.activity(detail="checking narrative coherence", force=True)
-            result = await generate(**{**request, "user_content": attempt_prompt})
-            for usage in (result.usage, *result.additional_usage):
-                if usage is not None:
-                    ctx.record_api_usage(usage)
-            try:
-                verdict = _validate_verdict(result.value, owner=owner,
-                                            signals=window_signals, anchors=window_anchors)
-                break
-            except ValueError as error:
-                validation_error = str(error)
-            if attempt == 0:
-                resume_suffix = (
-                    f"\nRecheck the malformed prior review on stage attempt {ctx.stage_state.started_at}."
-                    if f"{phase}_review_invalid_{index}" in invalid_windows else ""
-                )
-                attempt_prompt = (
-                    prompt + resume_suffix
-                    + "\n\nCorrect this review response's protocol errors. Return the complete verdict. "
-                    "Preserve supported findings and editorial judgments; do not erase a story defect "
-                    "or mark a signal acceptable merely to satisfy the output contract. "
-                    "Assess only the supplied signal IDs, exactly once each. "
-                    "\nPREVIOUS REVIEW JSON:\n" + json.dumps(result.value, ensure_ascii=False)
-                    + "\nVALIDATION ERRORS:\n" + validation_error
-                )
+
+        async def checked_verdict(review_prompt):
+            verdict = None
+            attempt_prompt = review_prompt
+            for attempt in range(2):
+                # Cached base responses are revalidated. A protocol correction is a
+                # distinct, checkpointed input and never asks the story writer to repair.
+                ctx.activity(detail="checking narrative coherence", force=True)
+                result = await generate(**{**request, "user_content": attempt_prompt})
+                for usage in (result.usage, *result.additional_usage):
+                    if usage is not None:
+                        ctx.record_api_usage(usage)
+                try:
+                    verdict = _validate_verdict(result.value, owner=owner,
+                                                signals=window_signals, anchors=window_anchors)
+                    break
+                except ValueError as error:
+                    validation_error = str(error)
+                if attempt == 0:
+                    resume_suffix = (
+                        f"\nRecheck the malformed prior review on stage attempt {ctx.stage_state.started_at}."
+                        if f"{phase}_review_invalid_{index}" in invalid_windows else ""
+                    )
+                    attempt_prompt = (
+                        review_prompt + resume_suffix
+                        + "\n\nCorrect this review response's protocol errors. Return the complete verdict. "
+                        "Preserve supported findings and editorial judgments; do not erase a story defect "
+                        "or mark a signal acceptable merely to satisfy the output contract. "
+                        "Assess only the supplied signal IDs, exactly once each. "
+                        "\nPREVIOUS REVIEW JSON:\n" + json.dumps(result.value, ensure_ascii=False)
+                        + "\nVALIDATION ERRORS:\n" + validation_error
+                    )
+            return verdict, validation_error if verdict is None else ""
+
+        verdict, validation_error = await checked_verdict(prompt)
+        if verdict is not None and any(
+            f.code == "missing_context" and _substantiated_blocker(f, window)
+            for f in verdict.findings
+        ):
+            # A valid quotation proves that text exists, not that surrounding
+            # context is absent. Verify this negative claim before rewriting.
+            confirmation_prompt = (
+                prompt
+                + "\n\nVERIFY MISSING CONTEXT BEFORE REPAIR:\n"
+                + "The prior review below claims indispensable context is absent. "
+                "Independently test each missing_context claim against ALL supplied "
+                "lettering, including earlier items in the SAME beat and reader_context. "
+                "Search for the information requested by its proposed repair; it may "
+                "already be present verbatim or in equivalent words. For Plan, verify "
+                "page placement as well. Do not treat source text or beat summaries "
+                "as published words. Withdraw a claim if existing reader-facing copy "
+                "already supplies the alleged gap. Retain genuine gaps with exact "
+                "passages and explain why the surrounding copy does not resolve them. "
+                "Do not invent new defects. Return the complete verdict, preserving "
+                "other findings and signal assessments.\nPRIOR REVIEW JSON:\n"
+                + verdict.model_dump_json()
+            )
+            confirmed, validation_error = await checked_verdict(confirmation_prompt)
+            if confirmed is None:
+                verdict = None
+            else:
+                # Confirmation owns absence claims only. It cannot erase other
+                # defects or promote a different category of criticism.
+                verdict = verdict.model_copy(update={"findings": (
+                    *(f for f in verdict.findings if f.code != "missing_context"),
+                    *(f for f in confirmed.findings if f.code == "missing_context"),
+                )})
         reviewed[index] = (verdict, validation_error if verdict is None else "")
         if verdict is None:
             raise _ReviewProtocolError(validation_error)

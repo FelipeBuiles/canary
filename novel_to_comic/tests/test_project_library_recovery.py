@@ -118,9 +118,11 @@ def test_delete_reaches_incompatible_project_without_loading_state(tmp_path: Pat
     (project_dir / "state.json").write_text("{not-json")
     db = MagicMock()
 
+    request = _request()
+    request.app.state.projects_dir = tmp_path
     with patch("novel_to_comic.server.routers.projects.get_db", return_value=db):
         response = delete_project(
-            request=_request(),
+            request=request,
             project_id="project-1",
             project_dir=project_dir,
             user_id="user-1",

@@ -40,8 +40,8 @@ from novel_to_comic.image_models import (
         (
             "image-sunburst",
             ImageRoute.GPT_IMAGE_2,
-            "openai/gpt-image-2.5-sunburst",
-            "openai",
+            "fal-queue/openai/gpt-image-2.5/sunburst",
+            "fal-queue",
             "GPT Image 2.5 Sunburst",
         ),
         (

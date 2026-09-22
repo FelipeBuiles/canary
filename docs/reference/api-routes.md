@@ -101,6 +101,15 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `DELETE` | `/api/projects/{project_id}` | `delete_project` | `projects.py` |
 | `GET` | `/api/projects/short-stories` | `list_short_stories` | `projects.py` |
 | `POST` | `/api/projects/import-story` | `import_short_story` | `projects.py` |
+| `GET` | `/api/projects/{project_id}/publication` | `owned` | `publications.py` |
+| `POST` | `/api/projects/{project_id}/publication` | `publish` | `publications.py` |
+| `DELETE` | `/api/projects/{project_id}/publication` | `unpublish` | `publications.py` |
+| `GET` | `/api/public/books` | `featured` | `publications.py` |
+| `GET` | `/api/public/books/{book_id}` | `book` | `publications.py` |
+| `GET` | `/api/public/books/{book_id}/{version}/pages/{number}` | `page` | `publications.py` |
+| `GET` | `/api/public/books/{book_id}/download/{format}` | `download` | `publications.py` |
+| `GET` | `/api/ops/publications` | `list_publications` | `publications.py` |
+| `GET` | `/api/public/books/{book_id}/bookend` | `preview_bookend` | `publications.py` |
 | `GET` | `/api/projects/{project}/story` | `get_story` | `stages.py` |
 | `GET` | `/api/projects/{project}/story-bible` | `get_story_bible` | `stages.py` |
 | `PUT` | `/api/projects/{project}/story-bible` | `update_story_bible` | `stages.py` |

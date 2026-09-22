@@ -262,6 +262,10 @@ reservation intent: zone, footprint, line budget, optional normalized bounds,
 and valid visible speaker/tail anchor. The whole-book writer carries equivalent
 ordered reservation arrays (closed items, no arbitrary-key schema). Every
 canonical lettering ID has exactly one reservation in locked reading order.
+Canonicalization clears reservation speaker and tail attachments for non-onscreen
+lettering, including cached drafts, using Adapt’s authoritative delivery. Named
+narrators and quoted voices keep their attribution without becoming visible
+speakers. Onscreen attachments still require the item’s visible speaker.
 These extend the existing calls, not another planning stage. Panels cannot return
 lettering ID lists. Closed page-specific schemas require all assigned IDs and
 forbid other pages' IDs; silent pages require an empty object. Compilation copies
@@ -318,13 +322,19 @@ Before publishing Adapt, a separate structured editorial call reviews source
 windows, including omitted units, alongside global beat summaries and neighboring
 beats. Supporting source units accompany the exact beat and lettering provenance
 in each detailed window. Identical ledger decisions are grouped losslessly for
-transport. Review contract `narrative_v4` also supplies the exact lettering outside
+transport. Review contract `narrative_v5` also supplies the exact lettering outside
 the detailed window as compact `reader_context`, with no duplicate local copy.
 Together these contain the full adapted text in global story order. Reviewers
 must check earlier publishable words before requesting a repeated date, identity,
 or causal explanation; later reveals do not automatically excuse earlier gaps.
-Plan must also check when its page allocation presents those words. This adds
-text to existing review calls, not another review/repair loop. Changes to distant
+Plan must also check when its page allocation presents those words. A potentially
+blocking missing-context claim receives one checkpointed verification
+against the full supplied copy before it can trigger a story repair. This check
+can withdraw an overlooked-context claim but cannot erase other defect categories.
+Malformed verification receives one protocol correction, then blocks as invalid;
+transport failures retain completed work for an explicit resume. New-run estimates
+and Adapt request allowances include verification; existing cumulative limits
+remain in force. Changes to distant
 lettering invalidate affected review requests because reader knowledge is part
 of their evidence; a content-hash change alone does not. Each silence/concentration signal
 has one review-window owner with its complete sequence supplied. Lettering IDs
@@ -363,7 +373,7 @@ protocol correction stops new admission and records all completed invalid
 windows; admitted siblings finish checkpointing and are reusable on Resume.
 This changes scheduling, not review scope, evidence, or repair allowances.
 
-Review contract `narrative_v4` separates advisory preferences from substantiated
+Review contract `narrative_v5` separates advisory preferences from substantiated
 blockers. Padding, pacing, emphasis, panel variety, and weak page turns never
 block or trigger automatic polishing. Negative signal assessments are advisory;
 they cannot manufacture a missing-context blocker. Advisory findings are saved

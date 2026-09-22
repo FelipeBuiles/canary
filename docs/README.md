@@ -35,6 +35,9 @@ retained as current reference.
 
 ## Current contracts and capability evidence
 
+- [Public books](reference/public-books.md): owner publishing, public readers,
+  homepage curation, sharing attribution, and optional export back pages.
+
 - [Durable job queue](reference/job-queue.md): Procrastinate setup, execution
   ownership, restart/retry contracts and provider-free integration checks.
 

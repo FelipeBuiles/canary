@@ -1,0 +1,7 @@
+.public-book { min-height: 100vh; background: var(--color-pulp-paper); color: var(--color-ink-black); }
+.public-book-header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:1rem; padding:1rem clamp(1rem, 4vw, 4rem); border-bottom:2px solid var(--color-ink-black); }
+.public-book-intro { max-width:960px; margin:auto; padding:2rem 1rem; overflow-wrap:anywhere; }
+.public-book-end { max-width:960px; margin:0 auto; padding:3rem 1rem; text-align:center; }
+.public-book-cta { display:inline-block; margin-top:1.5rem; padding:1rem 1.5rem; background:var(--color-hero-red); color:var(--color-bristol); border:2px solid var(--color-ink-black); font-weight:bold; }
+.public-book :focus-visible { outline:3px solid var(--color-hero-red); outline-offset:4px; }
+.public-book select { padding:.65rem; border:2px solid var(--color-ink-black); background:var(--color-bristol); }

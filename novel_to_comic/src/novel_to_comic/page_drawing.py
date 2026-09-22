@@ -151,6 +151,20 @@ def openai_page_capability_profile(model: str) -> PageCapabilityProfile:
     )
 
 
+def fal_sunburst_page_capability_profile() -> PageCapabilityProfile:
+    """Sunburst complete pages routed through fal.ai's queue adapter."""
+    return PageCapabilityProfile(
+        id="gpt-image-2.5-sunburst-fal-complete-page-high-hybrid-v1",
+        exact_visible_lettering=False, provider="fal-queue", model="openai/gpt-image-2.5/sunburst",
+        max_image_references=16, reference_ordering="ordered",
+        editing_modes=("instructed", "region_targeted"),
+        output_width=1024, output_height=1536, max_prompt_characters=32_000,
+        retry_semantics="bounded_submission", max_attempts=1,
+        price_per_page_usd=Decimal(GPT25_PAGE_ESTIMATED_COST_USD),
+        price_per_reference_usd=Decimal(GPT25_REFERENCE_ESTIMATED_COST_USD),
+    )
+
+
 def muse_page_capability_profile() -> PageCapabilityProfile:
     """Return Muse's empirically verified native portrait complete-page profile."""
     return PageCapabilityProfile(
@@ -177,7 +191,7 @@ def _supported_page_profile(profile: PageCapabilityProfile) -> bool:
     if profile == current_page_capability_profile() or any(
         profile == openai_page_capability_profile(model)
         for model in ("gpt-image-2.5-sunburst", "gpt-image-2.5-flare")
-    ) or profile == muse_page_capability_profile():
+    ) or profile in (fal_sunburst_page_capability_profile(), _integrated_page_profile(fal_sunburst_page_capability_profile())) or profile == muse_page_capability_profile():
         return True
     return selector_available() and any(
         profile == current_page_capability_profile(Config(draw_model=f"codex-dev/image/{model}"))
@@ -208,7 +222,9 @@ def _editable_page_capability_profile(config: Config | None = None) -> PageCapab
     from novel_to_comic.codex_dev import route_for
 
     selected = getattr(config, "draw_model", COMPLETE_PAGE_GATEWAY_MODEL)
-    if selected in {"image-sunburst", "image-flare"}:
+    if selected == "image-sunburst":
+        return fal_sunburst_page_capability_profile()
+    if selected == "image-flare":
         return openai_page_capability_profile("gpt-image-2.5-" + selected.removeprefix("image-"))
     if selected == "image-muse":
         return muse_page_capability_profile()
@@ -254,6 +270,8 @@ def page_profile_uses_native_dimensions(profile: PageCapabilityProfile) -> bool:
 
 def complete_page_adapter(config: Config) -> CompletePageAdapter:
     profile = current_page_capability_profile(config)
+    if profile.provider == "fal-queue":
+        return OpenAICompletePageAdapter(config, profile)
     if profile.provider == "openai":
         return OpenAICompletePageAdapter(config, profile)
     if profile.provider == "openrouter":
@@ -710,7 +728,7 @@ def compile_page_generation_request(
             raise ValueError("edit source bytes do not match correction lineage")
     authorities = _selected_authorities(page, inventory)
     max_references = selected_edition.capability_profile.max_image_references
-    if (page_profile_uses_native_dimensions(selected_edition.capability_profile) or selected_edition.capability_profile.provider in {"openai", "openrouter"}) and correction is not None:
+    if (page_profile_uses_native_dimensions(selected_edition.capability_profile) or selected_edition.capability_profile.provider in {"openai", "openrouter", "fal-queue"}) and correction is not None:
         max_references -= 1  # The parent is an input image, never an authority replacement.
     if style_reference_path is not None:
         max_references -= 1  # Keep the proof separate from subject transport sheets.
@@ -972,7 +990,7 @@ def _validate_compiled_page(
     ):
         raise ValueError("Frozen complete-page request does not match the selected profile")
     total = len(request.references)
-    if (page_profile_uses_native_dimensions(profile) or profile.provider in {"openai", "openrouter"}) and request.correction is not None:
+    if (page_profile_uses_native_dimensions(profile) or profile.provider in {"openai", "openrouter", "fal-queue"}) and request.correction is not None:
         total += 1
     if total > profile.max_image_references:
         raise ValueError("Complete-page image inputs exceed profile capacity; references cannot be dropped")
@@ -1142,7 +1160,7 @@ class GoogleVertexCompletePageTransport:
             "canary_requested_aspect": str(request.width / request.height),
             "canary_idempotency_key": request.idempotency_key,
         }
-        if self._profile.provider in {"openai", "openrouter"}:
+        if self._profile.provider in {"openai", "openrouter", "fal-queue"}:
             # GPT Image 2.5 rejects input_fidelity, including on image edits.
             # Reference images are still sent unchanged in the multipart files.
             request_data = {
@@ -1151,6 +1169,8 @@ class GoogleVertexCompletePageTransport:
             }
             if self._profile.provider == "openai":
                 request_data.update({"quality": "high", "output_format": "png"})
+            elif self._profile.provider == "fal-queue":
+                request_data.update({"quality": self._config.image_quality, "output_format": "png"})
             else:
                 # LiteLLM 1.83.14 drops named size on custom image edits but
                 # forwards aspect_ratio through optional_params to OpenRouter.
@@ -1267,6 +1287,14 @@ class GoogleVertexCompletePageTransport:
                 request.model, request.model + "-2026-09-08",
             }:
                 raise ValueError("OpenAI response model does not match frozen page profile")
+            if self._profile.provider == "fal-queue":
+                observed = actual_provider_model.removeprefix("fal-queue/")
+                if observed not in {
+                    request.model,
+                    request.model + "/text-to-image",
+                    request.model + "/edit",
+                }:
+                    raise ValueError("FAL response model does not match frozen page profile")
             if self._profile.provider == "openrouter" and actual_provider_model.removeprefix("openrouter/") != request.model:
                 raise ValueError("OpenRouter response model does not match frozen page profile")
             usage = usage.model_copy(
@@ -1357,11 +1385,16 @@ class OpenAICompletePageAdapter(GoogleVertexCompletePageTransport):
 
     def __init__(self, config: Config, profile: PageCapabilityProfile) -> None:
         super().__init__(config)
-        base = openai_page_capability_profile(profile.model)
+        base = (fal_sunburst_page_capability_profile()
+                if profile.provider == "fal-queue"
+                else openai_page_capability_profile(profile.model))
         if profile not in (base, _integrated_page_profile(base)):
-            raise ValueError("Unsupported OpenAI complete-page profile")
+            raise ValueError("Unsupported complete-page profile")
         self._profile = profile
-        self._gateway_model = "image-" + profile.model.removeprefix("gpt-image-2.5-")
+        self._gateway_model = (
+            "image-sunburst" if profile.provider == "fal-queue"
+            else "image-" + profile.model.removeprefix("gpt-image-2.5-")
+        )
 
     def prepare(self, compiled: CompiledPageGeneration) -> PreparedCompletePageRequest:
         return _prepare_complete_page(compiled, self._profile)

@@ -213,12 +213,13 @@ describe("BookRoom edition decisions", () => {
   });
 
   it("recovers an unavailable preflight inline without enabling export", () => {
-    preflightError = new Error("Unavailable");
+    preflightError = new Error("The check was interrupted. Please retry.");
     renderRoom();
     expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
     expect(screen.getByRole("button", { name: "Create CBZ" })).toHaveProperty("disabled", true);
     fireEvent.click(screen.getByRole("button", { name: "Retry edition checks" }));
     expect(retryPreflight).toHaveBeenCalledOnce();
+    expect(screen.getByText("The check was interrupted. Please retry.")).toBeTruthy();
   });
 
   it("blocks both formats while a preflight is loading", () => {

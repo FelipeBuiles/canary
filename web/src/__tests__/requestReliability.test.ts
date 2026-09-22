@@ -139,3 +139,16 @@ it.each([
   expect(fetcher.mock.calls[1][1].headers["Idempotency-Key"])
     .not.toBe(fetcher.mock.calls[0][1].headers["Idempotency-Key"]);
 });
+
+
+it("lets an interrupted provider-free Finish check be explicitly retried without a paid receipt", async () => {
+  const fetcher = vi.fn().mockRejectedValueOnce(new TypeError("Connection lost"))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ status: "done", preflight: { ready_to_export: true } })));
+  vi.stubGlobal("fetch", fetcher);
+  const check = () => apiFetch("/projects/demo/export/preflight", { method: "POST" });
+  await expect(check()).rejects.toThrow("Connection lost");
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  await expect(check()).resolves.toMatchObject({ status: "done" });
+  for (const call of fetcher.mock.calls) expect(call[1].headers["Idempotency-Key"]).toBeUndefined();
+  expect(localStorage.length).toBe(0);
+});

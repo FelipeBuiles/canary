@@ -1,4 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
+import { PUBLICATION_TEXT } from "./publicationTranslations";
 import { LETTERING_CHOICE_TEXT } from "./letteringChoiceTranslations";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
@@ -18,6 +19,7 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
   en: {},
   es: {
     ...LETTERING_CHOICE_TEXT.es,
+    ...PUBLICATION_TEXT.es,
     "CREDIT HISTORY": "HISTORIAL DE CRÉDITOS",
     "Credits used by this book across every edition and revision. Open an activity to see its hold, final charge, and released credits.": "Créditos usados por este libro en todas sus ediciones y revisiones. Abre una actividad para ver la reserva, el cargo final y los créditos liberados.",
     "View all credit history": "Ver todo el historial de créditos",
@@ -1860,6 +1862,7 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
   },
   fr: {
     ...LETTERING_CHOICE_TEXT.fr,
+    ...PUBLICATION_TEXT.fr,
     "CREDIT HISTORY": "HISTORIQUE DES CRÉDITS",
     "Credits used by this book across every edition and revision. Open an activity to see its hold, final charge, and released credits.": "Crédits utilisés par ce livre pour toutes ses éditions et révisions. Ouvrez une activité pour voir sa réserve, son débit final et les crédits libérés.",
     "View all credit history": "Voir tout l’historique des crédits",

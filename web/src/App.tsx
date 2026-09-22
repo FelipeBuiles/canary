@@ -16,6 +16,7 @@ const SignupPage = lazy(() => import("./pages/auth/SignupPage").then(({ SignupPa
 const ResetPasswordPage = lazy(() =>
   import("./pages/auth/ResetPasswordPage").then(({ ResetPasswordPage }) => ({ default: ResetPasswordPage })),
 );
+const PublicBookPage = lazy(() => import("./pages/PublicBookPage").then(({ PublicBookPage }) => ({ default: PublicBookPage })));
 const HomePage = lazy(() => import("./pages/HomePage").then(({ HomePage }) => ({ default: HomePage })));
 const TermsPage = lazy(() => import("./pages/legal/TermsPage").then(({ TermsPage }) => ({ default: TermsPage })));
 const PrivacyPage = lazy(() => import("./pages/legal/PrivacyPage").then(({ PrivacyPage }) => ({ default: PrivacyPage })));
@@ -82,6 +83,7 @@ export function App() {
   return (
     <I18nProvider>
       <Routes>
+        <Route path="/read/:id" element={lazyRoute(PublicBookPage)} />
         {/* Public auth routes */}
         <Route path="/login" element={lazyRoute(LoginPage)} />
         <Route path="/signup" element={lazyRoute(SignupPage)} />

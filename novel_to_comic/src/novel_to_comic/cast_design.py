@@ -36,6 +36,11 @@ class CastDesignPlan(BaseModel):
     characters: list[CharacterDesign]
 
 
+class CastDesignResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    characters: list[CharacterDesign]
+
+
 class CastVisualIssue(BaseModel):
     model_config = ConfigDict(extra="forbid")
     character_ids: list[str] = Field(min_length=1)
@@ -142,11 +147,18 @@ async def ensure_design(config, project_dir, bible, ctx):
         config=config, model=config.effective_prompt_model(), system_prompt=DESIGN_SYSTEM,
         user_content=json.dumps(design_context(config, bible), ensure_ascii=False, default=str),
         max_output_tokens=max(4096, len(bible.characters) * 900),
+        json_schema=CastDesignResponse.model_json_schema(),
         feature="cast.design", retry_invalid_json=False, retry_transport=False,
         response_sink=lambda response: ctx.record_api_usage(response.usage) if response.usage else None,
     )
+    try:
+        response = CastDesignResponse.model_validate(result.value)
+    except ValueError:
+        raise ValueError(
+            "Cast design returned an invalid character roster; rerun Cast."
+        ) from None
     plan = CastDesignPlan(source_sha256=_digest(design_context(config, bible)),
-                          characters=result.value["characters"])
+                          characters=response.characters)
     validate_designs(plan, bible)
     target.write_cast_design(plan)
     ctx.record_item_done(cost=0.0)

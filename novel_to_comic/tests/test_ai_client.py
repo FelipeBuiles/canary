@@ -1598,6 +1598,39 @@ def test_bounded_submission_does_not_repeat_server_failure(monkeypatch):
     assert len(calls) == 1
 
 
+def test_fal_pre_submit_connect_failure_releases_credit_hold(monkeypatch):
+    from novel_to_comic.ai.context import ai_request_context
+    from novel_to_comic.server import credits
+    from unittest.mock import MagicMock
+
+    monkeypatch.setattr(credits, "_unsettled_jobs", set())
+    monkeypatch.setattr(credits, "_reservation_jobs", {"hold": "job"})
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(503, json={"error": {"message": (
+            "litellm.ServiceUnavailableError: Fal-queueException - FAL "
+            "submit_connect failed for openai/gpt-image-2.5/sunburst/text-to-image; "
+            "detail=ConnectError"
+        )}})
+
+    _mock_transport(monkeypatch, handler)
+    async def run():
+        with ai_request_context(job_id="job"):
+            response = await client._post_with_retry(
+                "http://gw/v1/images", headers={}, json={}, retry_ambiguous=False,
+            )
+            assert response.status_code == 503
+
+    asyncio.run(run())
+    db = MagicMock()
+    credits.release_reservation(db, "hold")
+    db.rpc.assert_called_once()
+    assert len(calls) == 1
+    assert "job" not in credits._unsettled_jobs
+
+
 def test_finalize_shielded_completes_billing_before_cancellation_surfaces(
     monkeypatch,
 ):

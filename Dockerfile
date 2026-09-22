@@ -90,9 +90,13 @@ RUN set -eu; \
     done; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
 
+# Selected public editions ship with the release; private projects stay on the volume.
+COPY showcase/books/ /app/showcase/books/
+
 # Copy application source and install the project itself
 COPY novel_to_comic/ ./novel_to_comic/
 RUN cd novel_to_comic && uv sync --extra web --frozen --no-dev
+RUN /app/novel_to_comic/.venv/bin/python -c "from novel_to_comic.server.showcase import books; books()"
 
 # ─── LiteLLM proxy (loopback subprocess) ────────────────────────────────────
 # The proxy has its own dependency tree (transitively large, occasionally

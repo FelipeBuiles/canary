@@ -142,6 +142,12 @@ async def admission_middleware(request, call_next):
             raise HTTPException(400, {"code": "idempotency_key_required", "message": "An Idempotency-Key is required for this action."})
         if key is not None and (not key.strip() or len(key) > 200):
             raise HTTPException(400, "Invalid Idempotency-Key")
+        # Finish preflight only rebuilds local derived artifacts. It must check
+        # current inputs again even when an older client retains an interrupted
+        # receipt; replaying a completed receipt could also return stale checks.
+        # Keep all paid and publishing mutations on the existing receipt path.
+        if request.method == "POST" and suffix == "/export/preflight":
+            key = None
         route = f"{request.method} {request.url.path}"
         body = await request.body()
         try:

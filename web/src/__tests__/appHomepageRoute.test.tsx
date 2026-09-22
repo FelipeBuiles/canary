@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,9 +32,9 @@ describe("public homepage routing", () => {
 
   it("shows the homepage at the signed-out root", async () => {
     render(
-      <MemoryRouter initialEntries={["/"]}>
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={["/"]}>
         <App />
-      </MemoryRouter>,
+      </MemoryRouter></QueryClientProvider>,
     );
 
     expect(
@@ -46,9 +47,9 @@ describe("public homepage routing", () => {
 
   it("still sends signed-out visitors on protected routes to sign in", async () => {
     render(
-      <MemoryRouter initialEntries={["/credits"]}>
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={["/credits"]}>
         <App />
-      </MemoryRouter>,
+      </MemoryRouter></QueryClientProvider>,
     );
 
     expect(await screen.findByRole("button", { name: "SIGN IN" })).toBeTruthy();

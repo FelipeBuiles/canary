@@ -1999,7 +1999,7 @@ def estimate_book_adaptation_cost(
         review = estimate_text_cost(
             model, source.text + brief.model_dump_json() + treatment.model_dump_json(),
             output_chars=5_000,
-        ) * _adapt_review_window_count(source) * _MAX_ADAPT_VALIDATION_ATTEMPTS
+        ) * 2 * _adapt_review_window_count(source) * _MAX_ADAPT_VALIDATION_ATTEMPTS
     return clean + repair + review
 
 
@@ -3402,7 +3402,7 @@ async def produce_book_adaptation(
                         override_limit=max_generation_calls is not None,
                         max_calls=max_generation_calls if max_generation_calls is not None else
                         2 * (1 + 2 * len(_adaptation_shards(source, model=model))
-                             + _adapt_review_window_count(source)),
+                             + 2 * _adapt_review_window_count(source)),
                     )
                     ctx.log("Refreshing the review of the saved adaptation; the script is retained.")
                     failures = await review_narrative(
@@ -3461,16 +3461,16 @@ async def produce_book_adaptation(
     total_steps = 1 + (2 * len(shards))
     from novel_to_comic.generation_budget import budgeted_generator
     # Clean graph: treatment, blueprint+lettering per shard, source-window
-    # reviews. A third pass is reserved for fewer blocking codes or a changed
-    # narrative-review finding after the ordinary repair. In the captured
-    # 458-unit book this is 20 calls before that narrowly conditional pass.
+    # reviews and one missing-context verification per window. A third pass is
+    # reserved for fewer blocking codes or a changed narrative-review finding
+    # after the ordinary repair.
     review_windows = _adapt_review_window_count(source)
     generate = budgeted_generator(
         generate, artifacts=artifacts, stage="adapt", model=model,
         inputs=_adaptation_work_inputs(source, story_bible, brief, story_instruction),
         override_limit=max_generation_calls is not None,
         max_calls=max_generation_calls if max_generation_calls is not None
-        else 2 * (total_steps + review_windows),
+        else 2 * (total_steps + 2 * review_windows),
     )
 
     resume_candidate = resume_work.candidate if resume_work else None

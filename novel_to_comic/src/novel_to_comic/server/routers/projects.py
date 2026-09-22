@@ -879,15 +879,22 @@ def delete_project(
     if _is_project_running(user_id, project_id, request):
         raise HTTPException(409, "Cannot delete a project while a stage is running")
 
-    get_db().table("projects").delete().eq("user_id", user_id).eq(
-        "id", project_id
-    ).execute()
-    try:
-        shutil.rmtree(project_dir)
-    except OSError as exc:
-        # DB row already removed; filesystem cleanup is best-effort. A stranded
-        # dir can be reclaimed later — don't fail the already-committed delete.
-        logger.warning("Could not remove project directory %s: %s", project_dir, exc)
+    from .. import publications
+    from novel_to_comic.artifact_lock import production_lock
+
+    with production_lock(publications.root(request.app.state.projects_dir)):
+        get_db().table("projects").delete().eq("user_id", user_id).eq(
+            "id", project_id
+        ).execute()
+        try:
+            shutil.rmtree(project_dir)
+        except OSError as exc:
+            # DB row already removed; filesystem cleanup is best-effort. A stranded
+            # dir can be reclaimed later — don't fail the already-committed delete.
+            logger.warning("Could not remove project directory %s: %s", project_dir, exc)
+        owner = publications.read_json(publications.owner_path(request.app.state.projects_dir, user_id, project_id))
+        if owner:
+            (publications.root(request.app.state.projects_dir) / owner["id"] / "current.json").unlink(missing_ok=True)
     return {"status": "deleted", "id": project_id}
 
 

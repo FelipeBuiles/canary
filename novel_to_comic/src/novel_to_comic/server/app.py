@@ -25,6 +25,7 @@ from .ratelimit import configure_rate_limiting
 from .sentry import configure_sentry
 from .routers import (
     billing,
+    publications,
     account_models,
     backoffice,
     cast_assets,
@@ -511,6 +512,9 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         return exception_snapshot(app)
 
     # Routers
+    app.include_router(publications.router, prefix="/api/projects/{project_id}", tags=["publications"])
+    app.include_router(publications.public_router, prefix="/api/public/books", tags=["publications"])
+    app.include_router(publications.ops_router, prefix="/api/ops/publications", tags=["publications"])
     app.include_router(account_models.router, prefix="/api/account", tags=["account"])
     app.include_router(credits.router, prefix="/api/credits", tags=["credits"])
     app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
@@ -590,6 +594,10 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     if not dev:
         dist = Path(__file__).parent.parent.parent.parent.parent / "web" / "dist"
         if dist.is_dir():
+            @app.get("/read/{book_id}", include_in_schema=False)
+            def public_reader_document(book_id: str):
+                return publications.reader_html(book_id, projects_dir, dist / "index.html")
+
             app.mount("/", SPAStaticFiles(directory=str(dist), html=True), name="frontend")
 
     return app

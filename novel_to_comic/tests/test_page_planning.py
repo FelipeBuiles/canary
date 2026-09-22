@@ -3696,3 +3696,35 @@ def test_detail_schema_repair_preserves_allocation_feedback_and_resume_progress(
     if resume_after_failure:
         assert run() == draft
         assert len(calls) == 3
+
+
+@pytest.mark.parametrize("delivery", ["narration", "quoted_text", "offscreen", "display", "onscreen"])
+def test_reservation_visibility_follows_canonical_delivery(tmp_path, delivery):
+    payload = _onscreen_adaptation().model_dump(mode="json")
+    payload["content_sha256"] = ""
+    payload["beats"][1]["lettering"][0]["delivery"] = delivery
+    adaptation = BookAdaptation.model_validate(payload)
+    response = plan_response(_two_page_response({"entity_ids": ["location_alert"]}))
+    panel = response["pages"][1]["content"][0]
+    panel["entity_ids"] = ["location_alert"]
+    placement = panel["lettering_reservations"][0]
+    placement.update(speaker_entity_id="character_johansen", tail_target={"x": 0.5, "y": 0.5})
+
+    artifacts, calls, plan = _run_plan(adaptation, _inventory(), response, tmp_path)
+    assert isinstance(plan, BookPlan)
+    assert len(calls) == 1
+    page = artifacts.read_page(2)
+    assert page.content[0].lettering == adaptation.beats[1].lettering
+    saved = page.lettering_reservations[0]
+    if delivery == "onscreen":
+        assert saved.speaker_entity_id == "character_johansen"
+        assert saved.tail_target is not None
+        assert "character_johansen" in page.content[0].entity_ids
+    else:
+        assert saved.speaker_entity_id is None
+        assert saved.tail_target is None
+        assert "character_johansen" not in page.content[0].entity_ids
+    # Resume reuses the original model output, including its invalid metadata.
+    _, resumed_calls, resumed = _run_plan(adaptation, _inventory(), response, tmp_path)
+    assert isinstance(resumed, BookPlan)
+    assert resumed_calls == []

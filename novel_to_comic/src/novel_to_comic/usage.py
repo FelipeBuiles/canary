@@ -66,7 +66,11 @@ def calculate_cost_breakdown(record: UsageRecord) -> CostBreakdown:
     """Return detailed USD cost metadata for one API call."""
     resolver = get_pricing_resolver()
     resolved = resolver.resolve_model(record.model, record.provider_model)
-    if record.funding == "api" and record.cost_usd is None and "gpt-image-2.5-" in resolved:
+    if (
+        record.funding == "api"
+        and record.cost_usd is None
+        and ("gpt-image-2.5-" in resolved or "gpt-image-2.5/" in resolved)
+    ):
         pricing, source = resolver._pricing_for(resolved.removesuffix("-2026-09-08"))
         fields = (record.input_text_tokens, record.input_image_tokens,
                   record.cached_text_tokens, record.cached_image_tokens, record.image_output_tokens)

@@ -173,3 +173,32 @@ def test_wire_wrapper_preserves_ambiguous_transport_phase():
         _raise_safe_wire_phase_error("gateway_request", error)
     assert captured.value is error
     assert captured.value.phase == "ambiguous_submission"
+
+
+def test_wire_error_reports_safe_fal_phase_and_request_id():
+    import httpx
+    from novel_to_comic.ai.errors import AITransportError
+    from novel_to_comic.ai.providers.litellm_http import _raise_safe_wire_phase_error
+
+    response = httpx.Response(500, json={"error": {
+        "code": "500",
+        "message": (
+            "litellm.InternalServerError: Fal-queueException - FAL result failed "
+            "for openai/gpt-image-2.5/sunburst/text-to-image; request_id=req-123; "
+            "detail=see https://example.invalid/signed?token=secret and prompt text"
+        ),
+    }})
+    error = httpx.HTTPStatusError(
+        "gateway error",
+        request=httpx.Request("POST", "https://gateway.invalid/v1/images/generations"),
+        response=response,
+    )
+
+    with pytest.raises(AITransportError) as captured:
+        _raise_safe_wire_phase_error("gateway_request", error)
+
+    message = str(captured.value)
+    assert '"fal_phase": "result"' in message
+    assert '"fal_request_id": "req-123"' in message
+    assert "signed" not in message
+    assert "prompt text" not in message
