@@ -548,6 +548,23 @@ async def event_stream(
     return StreamingResponse(generator(), media_type="text/event-stream")
 
 
+@router.post("/jobs/cancel-queued-pages")
+async def cancel_queued_page_jobs(
+    request: Request,
+    project_id: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    """Stop waiting page draws without interrupting submitted provider work."""
+    queue = getattr(request.app.state, "durable_queue", None)
+    if queue is None:
+        raise HTTPException(503, "The generation queue is unavailable; no jobs were cancelled.")
+    ids = await queue.cancel_queued_pages(
+        project_name=project_key(user_id, project_id), user_id=user_id,
+    )
+    return {"cancelled_job_ids": ids}
+
+
 @router.get("/generation-jobs")
 @router.get("/jobs")
 def get_generation_jobs(

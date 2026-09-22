@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 
 from novel_to_comic.config import Config
-from novel_to_comic.server.admission import Admission, mutation_conflicts
-from novel_to_comic.server.durable_queue import DurableQueue
+from novel_to_comic.server.admission import Admission, admission_middleware, mutation_conflicts
+from novel_to_comic.server.durable_queue import DurableQueue, dispatch_lock
 from novel_to_comic.server.generation_jobs import enqueue_generation_job, persist_generation_job
 from novel_to_comic.server.job_commands import command, read_blob, save_blob
 
@@ -84,6 +84,75 @@ def test_restore_distinguishes_unstarted_from_unknown(tmp_path):
         queue.worker.cancel()
         await asyncio.gather(queue.worker, return_exceptions=True)
     asyncio.run(exercise())
+
+
+def test_fal_page_dispatch_has_three_locks_without_changing_other_account_work(tmp_path):
+    from novel_to_comic.server.generation_jobs import GenerationJob
+
+    pages = [GenerationJob(
+        id=str(number), project_name="account:book", kind="complete_page_draw",
+        label=str(number), payload={"page_number": number}, sequence=number, runner=None,
+        user_id="account",
+        command=SimpleNamespace(operation="page_draw", arguments={"request": {"provider": "fal-queue"}}),
+    ) for number in range(1, 5)]
+    locks = [dispatch_lock("queue", page) for page in pages]
+    assert len(set(locks[:3])) == 3
+    assert locks[0] == locks[3]
+    assert dispatch_lock("queue", SimpleNamespace(user_id="account", kind="pipeline_stage", command=None)) == "queue:account:account"
+
+
+def test_cancel_queued_pages_preserves_running_work_and_survives_restore(tmp_path):
+    from unittest.mock import AsyncMock
+
+    app = make_app(tmp_path)
+    queue = DurableQueue(app, "postgresql://unused")
+    app.state.durable_queue = queue
+
+    async def exercise():
+        queue.worker = asyncio.create_task(asyncio.sleep(100))
+        queue.ready = True
+        import time
+        queue.last_healthy = time.monotonic()
+        waiting, running = enqueue(app, "1"), enqueue(app, "2")
+        running.status = "running"
+        persist_generation_job(app, running)
+        with app.state.admission.journal() as db:
+            db.execute("UPDATE operation_outbox SET dispatched=77 WHERE id=?", (waiting.id,))
+        queue.backend.job_manager.cancel_job_by_id_async = AsyncMock(return_value=False)
+        cancelled = await queue.cancel_queued_pages(project_name="account:book", user_id="account")
+        assert cancelled == [waiting.id]
+        queue.backend.job_manager.cancel_job_by_id_async.assert_awaited_once_with(77, abort=False)
+        assert waiting.status == "cancelled" and waiting.started_at is None
+        assert running.status == "running"
+        assert await queue.cancel_queued_pages(project_name="account:book", user_id="account") == []
+        restored = make_app(tmp_path)
+        DurableQueue(restored, "postgresql://unused").restore()
+        assert restored.state.generation_jobs[waiting.id].status == "cancelled"
+        queue.worker.cancel()
+        await asyncio.gather(queue.worker, return_exceptions=True)
+
+    asyncio.run(exercise())
+
+
+def test_cancel_route_is_admitted_while_page_jobs_make_project_busy(tmp_path):
+    from fastapi import Response
+    from novel_to_comic.server.auth import get_current_user
+
+    app = make_app(tmp_path)
+    app.dependency_overrides = {get_current_user: lambda: "account"}
+    app.state.generation_jobs["waiting"] = SimpleNamespace(
+        project_name="account:book", kind="complete_page_draw", status="queued",
+    )
+    request = SimpleNamespace(
+        url=SimpleNamespace(path="/api/projects/book/jobs/cancel-queued-pages", query=""),
+        method="POST", app=app, headers={}, cookies={}, body=lambda: asyncio.sleep(0, result=b""),
+    )
+
+    async def next_handler(_request):
+        return Response("ok", status_code=200)
+
+    response = asyncio.run(admission_middleware(request, next_handler))
+    assert response.status_code == 200
 
 
 @pytest.mark.parametrize("scheduler_status", ["failed", "cancelled", "aborted"])

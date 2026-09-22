@@ -1,5 +1,9 @@
 export const PUBLICATION_TEXT = {
   "es": {
+    "Later edits stay private until you update the published version.": "Los cambios posteriores siguen siendo privados hasta que actualices la versión publicada.",
+    "Edit publication": "Editar publicación",
+    "Close details": "Cerrar detalles",
+    "Open the first page": "Abrir la primera página",
     "About this book": "Acerca de este libro",
     "Back page preview": "Vista previa de la página final",
     "Share your finished book": "Comparte tu cómic terminado",
@@ -40,6 +44,10 @@ export const PUBLICATION_TEXT = {
     "Read book": "Leer libro"
   },
   "fr": {
+    "Later edits stay private until you update the published version.": "Les modifications restent privées jusqu’à la mise à jour de la version publiée.",
+    "Edit publication": "Modifier la publication",
+    "Close details": "Fermer les détails",
+    "Open the first page": "Ouvrir la première page",
     "About this book": "À propos de ce livre",
     "Back page preview": "Aperçu de la page finale",
     "Share your finished book": "Partagez votre BD terminée",

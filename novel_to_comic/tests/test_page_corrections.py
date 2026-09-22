@@ -432,6 +432,9 @@ def test_annotations_and_novel_context_reach_prompt_and_provenance(tmp_path: Pat
 
     prompt = prepared.compiled.request.prompt
     assert "Keep this edge readable." in prompt
+    producing = artifacts.read_request(page.page_number, 1)
+    assert producing.prompt in prepared.correction.retained_instructions
+    assert producing.prompt not in prompt  # Current Plan/references already carry its authority.
     # Bookwide spine travels, not just the page's own beat.
     assert "beat-1" in prompt and "beat-2" in prompt
     assert "The door opens, then stillness." in prompt
@@ -452,6 +455,28 @@ def test_annotations_and_novel_context_reach_prompt_and_provenance(tmp_path: Pat
     assert prepared.correction.context_adaptation_revision == 1
     # Source copy remains canonical; hybrid provider requests carry reservations only.
     assert prepared.compiled.request.lettering == ()
+
+
+def test_long_book_context_focuses_prompt_without_losing_saved_provenance(tmp_path: Path) -> None:
+    artifacts, page, render = _setup(tmp_path)
+    prepared = _prepare(artifacts, page, render, note="Make the jacket crimson.")
+    context = prepared.context
+    remote = tuple(f"Remote beat {i}: " + "unrelated history " * 35 for i in range(3, 90))
+    long_context = context.model_copy(update={
+        "beat_ids": (*context.beat_ids, *(f"remote-{i}" for i in range(3, 90))),
+        "beat_summaries": (*context.beat_summaries, *remote),
+        "beat_transitions": (*context.beat_transitions, *(f"Beat remote-{i} [{i}]: old state" for i in range(3, 90))),
+    })
+    compiled = compile_page_generation_request(
+        page, _edition(), ApprovedVisualReferenceInventory(references=()), {},
+        retry=RetryProvenance(attempt=1), correction=prepared.correction,
+        correction_context=long_context, edit_source_bytes=artifacts.read_render(page.page_number, render.revision),
+    )
+    assert len(compiled.request.prompt) <= _edition().capability_profile.max_prompt_characters
+    assert "Remote beat 89" not in compiled.request.prompt
+    assert "The door opens, then stillness." in compiled.request.prompt
+    assert prepared.correction.context_digest == context.digest
+    assert len(long_context.beat_summaries) == 89
     estimate = correction_credit_estimate(prepared.compiled, config=Config(), reserve=True)
     assert estimate["estimate_credits"] > 0
     assert estimate["reserved_credits"] is not None and estimate["reserved_credits"] >= estimate["estimate_credits"]

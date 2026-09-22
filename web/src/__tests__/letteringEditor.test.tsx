@@ -263,6 +263,35 @@ describe("Pages-room lettering", () => {
     fireEvent.click(screen.getByRole("button", { name: /Undo/ }));
     expect((copy as HTMLTextAreaElement).value).toBe("The door opened.");
   });
+  it("clears the recovery draft when undo returns to saved wording, including after reopening", async () => {
+    const view = mount();
+    await ready();
+    const copy = screen.getByLabelText(/Words on the page/);
+    fireEvent.focus(copy);
+    fireEvent.change(copy, { target: { value: "An abandoned edit." } });
+    fireEvent.blur(copy);
+    await waitFor(() => expect(localStorage.getItem(letteringDraftKey("book", 1))).toContain("An abandoned edit."));
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(localStorage.getItem(letteringDraftKey("book", 1))).toBeNull());
+    view.unmount();
+    mount();
+    await ready();
+    expect(screen.queryByRole("button", { name: "Restore draft" })).toBeNull();
+    expect(screen.getByLabelText(/Words on the page/)).toHaveProperty("value", "The door opened.");
+    expect(api.put).not.toHaveBeenCalled();
+  });
+  it("previews book style on the current artwork without changing page copy or saving", async () => {
+    mount();
+    await ready();
+    fireEvent.click(screen.getByRole("button", { name: "Book lettering style" }));
+    const page = (await screen.findByRole("img", { name: "Page artwork" })).parentElement!;
+    expect(page.textContent).toContain("The door opened.");
+    const book = within(screen.getByRole("group", { name: "Book lettering style" }));
+    fireEvent.change(book.getByRole("combobox", { name: "Font" }), { target: { value: "Special Elite" } });
+    expect(page.querySelector("svg")?.innerHTML).toContain("Special Elite");
+    expect(api.putStyle).not.toHaveBeenCalled();
+    expect(api.put).not.toHaveBeenCalled();
+  });
   it("keeps failed saves recoverable and never erases the draft", async () => {
     api.put.mockRejectedValue(new Error("Connection interrupted"));
     mount();

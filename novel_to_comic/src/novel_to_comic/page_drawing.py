@@ -531,14 +531,20 @@ def _compile_prompt(
         # structured author changes once; legacy single-issue instructions once.
         payload["complete_page_correction"] = {
             "mode": correction.mode,
-            "retained_render_intent": list(correction.retained_instructions),
+            # The initial frozen request is preserved verbatim in correction
+            # provenance, but replaying that complete prompt duplicates the
+            # current Plan, style, copy and reference authorities above. It
+            # can consume half a fixed-profile prompt by itself. Keep prior
+            # authored corrections in order; current authorities supply the
+            # original page intent without re-sending its full specification.
+            "retained_render_intent": [instruction for instruction in correction.retained_instructions
+                                       if not instruction.startswith("PAGE CANVAS: ")],
             "retained_intent_scope": (
-                "Historical producing instructions are non-lettering original constraints. "
-                "Preserve deliberate depiction and earlier corrections only where consistent "
+                "Preserve deliberate depiction and earlier author corrections only where consistent "
                 "with current canonical copy, approved identity/state/style and author pins. "
-                "Current changes supersede conflicting earlier changes. Historical image and "
-                "subject bindings describe the producing request, not current attachments; "
-                "never render that historical specification as copy or additional panels."
+                "Current changes supersede conflicting earlier changes. The original complete "
+                "page specification is retained in provenance; current canonical authorities "
+                "supply its page intent without duplicating its old bindings."
             ),
             "parent_coordinate_regions": [
                 {"polygon": [{"x": x, "y": y} for x, y in region.polygon]}
@@ -816,18 +822,51 @@ def compile_page_generation_request(
         )
         uploaded_references += (style_reference,)
         uploaded_bytes += (style_bytes,)
+    profile = selected_edition.capability_profile
+    prompt_context = correction_context
     prompt = _compile_prompt(
         page,
         tuple(references),
         correction,
         depiction,
         style_template,
-        correction_context,
+        prompt_context,
         cast_art_direction,
-        exact_visible_lettering=selected_edition.capability_profile.exact_visible_lettering,
+        exact_visible_lettering=profile.exact_visible_lettering,
         reference_bindings=reference_bindings,
         style_reference=style_reference,
     )
+    if correction is not None and correction_context is not None and len(prompt) > profile.max_prompt_characters - 1024:
+        # A long book's entire beat/transition history can exceed a fixed
+        # Draw edition's prompt capacity before its page-specific authorities
+        # are added. Keep the full context and digest on the correction, but
+        # send nearby beats plus the book's causal spine to the image model.
+        # Exact author-selected sources, current Plan and visual anchors stay.
+        active = {beat for content in page.content for beat in content.beat_ids}
+        ordered = correction_context.beat_ids
+        indexes = {i for i, beat in enumerate(ordered) if beat in active}
+        nearby = {ordered[j] for i in indexes for j in range(max(0, i - 1), min(len(ordered), i + 2))}
+        prompt_context = correction_context.model_copy(update={
+            "beat_summaries": tuple(summary for beat, summary in zip(
+                ordered, correction_context.beat_summaries, strict=True,
+            ) if beat in nearby),
+            "beat_transitions": tuple(item for item in correction_context.beat_transitions
+                                      if any(item.startswith(f"Beat {beat} [") for beat in nearby)),
+            "appearance_chronology": tuple(item for item in correction_context.appearance_chronology
+                                            if any(item.startswith(f"Beat {beat} [") for beat in nearby)),
+        })
+        prompt = _compile_prompt(
+            page,
+            tuple(references),
+            correction,
+            depiction,
+            style_template,
+            prompt_context,
+            cast_art_direction,
+            exact_visible_lettering=profile.exact_visible_lettering,
+            reference_bindings=reference_bindings,
+            style_reference=style_reference,
+        )
     if reference_bindings:
         prompt += (
             "\nREFERENCE SHEETS: asset-A, asset-B, etc. identify uploaded authority images in order "
@@ -837,7 +876,6 @@ def compile_page_generation_request(
             "borders are off-canvas reference guides: never draw them, combine identities, or "
             "copy the sheet arrangement into the comic page."
         )
-    profile = selected_edition.capability_profile
     # Native image tools may expose only automatic sizing, so the frozen prompt
     # must carry the same canvas authority as providers' structured size fields.
     prompt = (
@@ -1171,6 +1209,18 @@ class GoogleVertexCompletePageTransport:
                 request_data.update({"quality": "high", "output_format": "png"})
             elif self._profile.provider == "fal-queue":
                 request_data.update({"quality": self._config.image_quality, "output_format": "png"})
+                # Custom-provider routing can strip standard Images fields.
+                # Preserve dimensions and controls through the same manifest
+                # consumed by the FAL handler for other image requests.
+                request_data["canary_wire_request"] = json.dumps({
+                    "width": request.width,
+                    "height": request.height,
+                    "controls": [
+                        ["quality", self._config.image_quality],
+                        ["output_format", "png"],
+                        ["n", 1],
+                    ],
+                })
             else:
                 # LiteLLM 1.83.14 drops named size on custom image edits but
                 # forwards aspect_ratio through optional_params to OpenRouter.

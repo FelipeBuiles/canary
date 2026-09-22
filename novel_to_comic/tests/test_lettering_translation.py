@@ -252,6 +252,26 @@ async def test_existing_empty_target_is_preserved_without_provider_and_active_co
 
 
 @run_async
+async def test_account_selected_model_survives_the_job_snapshot_check(book, monkeypatch):
+    # Admission quotes with the account-scoped config; the project file on disk
+    # still names its own Adapt model. The job must not treat that as a change.
+    artifacts, _ = book
+    service.ensure_lettering(artifacts, 1)
+    admitted = Config(adapt_model="gpt-5.6-luna")
+    assert Config().adapt_model != admitted.adapt_model
+    prepared = translation.prepare_translation(artifacts, admitted, "es")
+    async def provider(**kwargs):
+        assert kwargs["model"] == "gpt-5.6-luna"
+        return ApiResult(value={"translations": [{"page_number": item["page_number"],
+            "element_id": item["element_id"], "text": "Traducido."}
+            for item in json.loads(kwargs["user_content"])["items"]]})
+    monkeypatch.setattr(translation, "generate_json", provider)
+    await translation.translate_project(artifacts, admitted, prepared)
+    assert artifacts.read_lettering_settings().locale == "es"
+    assert artifacts.read_lettering(1).elements[0].text_by_locale["es"] == "Traducido."
+
+
+@run_async
 async def test_translation_recovers_mixed_saved_locales_without_replacing_variants(book, monkeypatch):
     artifacts, image = book
     add_page(artifacts, image)

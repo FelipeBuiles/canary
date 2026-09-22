@@ -7,7 +7,7 @@
 .lettering-error { color: var(--color-hero-red, #b32a21); }
 .lettering-warning { color: #684115; background: #fff4dc; }
 .lettering-context-toolbar { align-items: center; }
-.lettering-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(270px, 310px); gap: 20px; align-items: start; }
+.lettering-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 390px); gap: 20px; align-items: start; }
 .lettering-canvas-column { position: sticky; top: 0; min-width: 0; display: grid; gap: 8px; }
 .lettering-viewport { height: min(68vh, 800px); min-height: 400px; overflow: auto; background: #dad7d0; border: 1px solid var(--lettering-rule); overscroll-behavior: contain; }
 .lettering-page-wrap { display: grid; place-items: center; padding: 20px; }
@@ -30,3 +30,29 @@
 .lettering-editor :is(button, summary, input, textarea, select):focus-visible { outline: 2px solid #176180; outline-offset: 3px; }.lettering-editor :is(textarea, input) { caret-color: var(--color-hero-red, #b32a21); }.lettering-editor ::selection { color: var(--color-ink-black, #211f1c); background: var(--color-pulp-paper, #f6f4e7); }.lettering-editor :is(.lettering-inspector, .lettering-reading-order, .lettering-viewport) { scrollbar-color: var(--color-ink-muted, #65605a) var(--color-pulp-paper, #f6f4e7); }
 @media (max-width: 800px) { .lettering-inspector { max-height: none; overflow: visible; scrollbar-gutter: auto; } .lettering-workspace { grid-template-columns: minmax(0,1fr); }.lettering-canvas-column { position: relative; }.lettering-viewport { height: 52vh; min-height: 280px; }.lettering-reading-order { max-height: 185px; }.lettering-book-style-fields { grid-template-columns: 1fr; gap: 20px; }.lettering-book-preview { position: static; grid-row: 1; }.lettering-main-toolbar { align-items: start; }.lettering-save-state { width: 100%; }.lettering-toolbar-actions { flex: 1 1 260px; }.lettering-small-actions > button,.lettering-toolbar-actions > button { min-height: 40px; } }
 @media (prefers-reduced-motion: reduce) { .lettering-editor * { scroll-behavior: auto !important; } }
+
+.lettering-size-shape { display: grid; grid-template-columns: minmax(72px, .6fr) minmax(0, 1.4fr); gap: 10px; }
+.lettering-book-page-preview { display: grid; place-items: center; padding: 16px; background: #dad7d0; }
+.lettering-book-page { position: relative; max-width: 100%; }
+.lettering-book-page > img { display: block; width: 100%; height: 100%; }
+.lettering-book-preview:has(.lettering-book-page) .lettering-book-preview-art { max-width: 360px; margin-inline: auto; }
+@media (min-width: 801px) { .lettering-book-style-fields:has(.lettering-book-page) { grid-template-columns: minmax(300px, 390px) minmax(0, 1fr); } }
+
+.lettering-workspace[hidden] { display: none; }
+
+/* The page editor owns the available dialog height; only its inspector scrolls. */
+.lettering-inspector > *, .lettering-reading-order li, .lettering-reading-order button > span { min-width: 0; }
+.lettering-reading-order { max-height: none; overflow: visible; }
+.lettering-list-section { grid-template-columns: minmax(0, 1fr); }
+.lettering-inspector { overflow-x: hidden; }
+@media (min-width: 801px) {
+  .lettering-modal-body { overflow: hidden; }
+  .lettering-modal-body > div { height: 100%; min-height: 0; }
+  .lettering-modal-body .lettering-editor { height: 100%; min-height: 0; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+  .lettering-modal-body .lettering-editor > * { flex-shrink: 0; }
+  .lettering-modal-body .lettering-editor:has(.lettering-workspace:not([hidden])) { overflow: hidden; }
+  .lettering-modal-body .lettering-workspace { flex: 1 1 0; min-height: 0; align-items: stretch; }
+  .lettering-modal-body .lettering-canvas-column { position: static; min-height: 0; grid-template-rows: auto minmax(0, 1fr) auto; }
+  .lettering-modal-body .lettering-viewport { height: 100%; min-height: 0; }
+  .lettering-modal-body .lettering-inspector { height: 100%; max-height: none; min-height: 0; }
+}

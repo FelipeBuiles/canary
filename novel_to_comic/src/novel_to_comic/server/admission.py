@@ -165,6 +165,10 @@ async def admission_middleware(request, call_next):
             canonical = json.dumps(sorted(fields), separators=(",", ":")).encode()
         fingerprint = hashlib.sha256(request.url.query.encode() + b"\0" + canonical).hexdigest()
         async with admission.enter(project_key(account, project_id)):
+            # Cancelling unstarted page work must remain possible while that
+            # work makes the project busy, including during a credit outage.
+            if request.method == "POST" and suffix == "/jobs/cancel-queued-pages":
+                return await call_next(request)
             if key:
                 with admission.journal() as db:
                     row = db.execute("SELECT fingerprint,status,body FROM requests WHERE account=? AND route=? AND key=?", (account, route, key)).fetchone()

@@ -1484,6 +1484,7 @@
 
 /* Account for the sticky masthead when following section links. */
 .landing-page main > section[id],
+.landing-page #showcase-title,
 .landing-page #landing-main {
   scroll-margin-top: 100px;
 }
@@ -1503,6 +1504,7 @@
 
 @media (max-width: 680px) {
   .landing-page main > section[id],
+.landing-page #showcase-title,
   .landing-page #landing-main {
     scroll-margin-top: 140px;
   }

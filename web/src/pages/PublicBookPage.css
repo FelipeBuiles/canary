@@ -1,6 +1,10 @@
 .public-book { min-height: 100vh; background: var(--color-pulp-paper); color: var(--color-ink-black); }
 .public-book-header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:1rem; padding:1rem clamp(1rem, 4vw, 4rem); border-bottom:2px solid var(--color-ink-black); }
-.public-book-intro { max-width:960px; margin:auto; padding:2rem 1rem; overflow-wrap:anywhere; }
+.public-book-intro { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); align-items: center; gap: clamp(2rem, 5vw, 5rem); max-width:1120px; margin:auto; padding:clamp(2rem, 5vw, 5rem) 1.5rem; overflow-wrap:anywhere; }
+.public-book-cover { display: block; width: 100%; padding: 0; cursor: pointer; }
+.public-book-cover img { display: block; width: 100%; max-height: 65dvh; object-fit: contain; }
+.public-book-description { min-width: 0; }
+@media (max-width: 680px) { .public-book-intro { grid-template-columns: 1fr; gap: 2rem; } .public-book-cover { max-width: 280px; margin-inline: auto; } }
 .public-book-end { max-width:960px; margin:0 auto; padding:3rem 1rem; text-align:center; }
 .public-book-cta { display:inline-block; margin-top:1.5rem; padding:1rem 1.5rem; background:var(--color-hero-red); color:var(--color-bristol); border:2px solid var(--color-ink-black); font-weight:bold; }
 .public-book :focus-visible { outline:3px solid var(--color-hero-red); outline-offset:4px; }

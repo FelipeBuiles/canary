@@ -186,11 +186,12 @@ export function Library() {
             <p role="status" className="text-sm text-ink-muted">{visibleProjects?.length} / {projects?.length} {t("productions")}</p>
           </div>
           {visibleProjects?.length === 0 && <StateBlock title={t("No matching productions")} description={t("Try another title or author.")} action={<Button variant="outline" onClick={() => setSearch("")}>{t("Clear search")}</Button>} />}
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,270px),1fr))] gap-7">
+          <div className={visibleProjects?.length === 1 ? "max-w-4xl" : "grid grid-cols-[repeat(auto-fill,minmax(min(100%,270px),1fr))] gap-7"}>
             {visibleProjects?.map((project) => (
               <ProjectCard
                 key={project.id}
                 project={project}
+                expanded={visibleProjects?.length === 1}
                 coverPending={
                   (generateCover.isPending && generateCover.variables?.project === project.id) ||
                   project.cover_job?.status === "queued" ||

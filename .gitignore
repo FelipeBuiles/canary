@@ -170,6 +170,8 @@ $RECYCLE.BIN/
 *.orig
 *.rej
 docs/exports/
+showcase/
+work/
 
 # keep graph outputs, skip heavy/local-only files
 
@@ -183,3 +185,4 @@ graphify-out/manifest.json
 graphify-out/cost.json
 # Playwright CLI output (may contain credentials)
 .playwright-cli/
+

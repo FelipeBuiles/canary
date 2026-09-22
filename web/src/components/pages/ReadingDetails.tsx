@@ -18,13 +18,14 @@ function PassageList({ lines }: { lines: string[] }) {
 function EditorialNotes({ issues }: { issues: EditorialIssue[] }) {
   const { t } = useI18n();
   if (issues.length === 0) return null;
-  return <section aria-label={t("Optional editorial notes")}>
-    <SectionHeader title={t("Optional editorial notes")} description={t("These suggestions do not block completion or start another generation.")} />
+  return <details className="group border-t border-ink-black/15">
+    <summary className={disclosureClass}>{t("Optional editorial notes")} · {issues.length}<ChevronDown size={16} aria-hidden="true" /></summary>
+    <p className={`${copyClass} mb-4 text-ink-muted`}>{t("These suggestions do not block completion or start another generation.")}</p>
     {issues.map((issue) => <details key={issue.id} className="border-b border-ink-black/15">
       <summary className={disclosureClass}>{issue.evidence[0] ?? issue.message}<ChevronDown size={16} aria-hidden="true" /></summary>
       <div className="pb-4"><PassageList lines={issue.evidence.slice(1)} /></div>
     </details>)}
-  </section>;
+  </details>;
 }
 
 export function AdaptationDetails({ adaptation }: { adaptation: BookAdaptation }) {
@@ -42,7 +43,6 @@ export function AdaptationDetails({ adaptation }: { adaptation: BookAdaptation }
 
   return (
     <div className="space-y-12">
-      <EditorialNotes issues={adaptation.editorial_issues} />
       <nav aria-label={t("Adaptation sections")} className="flex flex-wrap gap-x-6 gap-y-2 border-b border-ink-black/15 pb-4">
         <a href={`#${prefix}-treatment`} className="flex min-h-11 items-center font-meta text-sm font-bold text-hero-red underline decoration-hero-red/30 underline-offset-4 hover:decoration-hero-red focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red">{t("Narrative treatment")}</a>
         <a href={`#${prefix}-beats`} className="flex min-h-11 items-center font-meta text-sm font-bold text-hero-red underline decoration-hero-red/30 underline-offset-4 hover:decoration-hero-red focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red">{t("Adapted beats")}</a>
@@ -100,6 +100,7 @@ export function AdaptationDetails({ adaptation }: { adaptation: BookAdaptation }
           })}
         </ol>
       </section>
+      <EditorialNotes issues={adaptation.editorial_issues} />
     </div>
   );
 }
@@ -120,7 +121,6 @@ export function PagePlanDetails({ plan, pages, detailsLoading, detailsError }: {
   const detailsByNumber = new Map(pages?.map((item) => [item.page.page_number, item.page]));
   return (
     <div className="space-y-12">
-      <EditorialNotes issues={plan.editorial_issues} />
       <section>
         <SectionHeader title="Book rhythm" />
         <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_auto] md:gap-10">
@@ -168,6 +168,7 @@ export function PagePlanDetails({ plan, pages, detailsLoading, detailsError }: {
           })}
         </ol>
       </section>
+      <EditorialNotes issues={plan.editorial_issues} />
     </div>
   );
 }

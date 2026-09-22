@@ -1,6 +1,7 @@
 """Public GPT Image 2.5 transport preserves frozen page contracts without retries."""
 import asyncio
 import io
+import json
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -50,6 +51,22 @@ def test_public_image_page_preserves_references_and_sends_fixed_controls(tmp_pat
         expected.update({
             'quality': 'medium', 'output_format': 'png',
         })
+        manifest = kwargs['data']['canary_wire_request']
+        assert json.loads(manifest) == {
+            'width': 1024, 'height': 1536,
+            'controls': [['quality', 'medium'], ['output_format', 'png'], ['n', 1]],
+        }
+        expected['canary_wire_request'] = manifest
+        # Reproduce custom-provider filtering: only the manifest survives.
+        from litellm_handlers.fal_provider import _build_payload
+        payload = _build_payload(
+            'openai/gpt-image-2.5/sunburst/edit', prepared.prompt, [],
+            {'canary_wire_request': manifest},
+        )
+        assert payload['image_size'] == {'width': 1024, 'height': 1536}
+        assert payload['quality'] == 'medium'
+        assert payload['output_format'] == 'png'
+        assert payload['num_images'] == 1
     else:
         expected.update({'quality': 'high', 'output_format': 'png'})
     assert kwargs['data'] == expected

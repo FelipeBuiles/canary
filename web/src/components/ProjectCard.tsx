@@ -20,6 +20,7 @@ const FALLBACK_BG = "#111827";
 
 interface Props {
   project: ProjectSummary;
+  expanded?: boolean;
   coverPending?: boolean;
   coverFailed?: boolean;
   coverRetrying?: boolean;
@@ -59,6 +60,7 @@ function statusLine(project: ProjectSummary, t: (s: string) => string): { label:
 
 export function ProjectCard({
   project,
+  expanded = false,
   coverPending = false,
   coverFailed = false,
   coverRetrying = false,
@@ -87,7 +89,7 @@ export function ProjectCard({
   const station = stationRoute ? stationForRoute(stationRoute) : null;
 
   const cardContent = (
-    <article className="h-full overflow-hidden border-[3px] border-ink-black/12 bg-bristol shadow-paper-sm transition-[border-color,box-shadow,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:border-ink-black group-hover:-translate-x-[2px] group-hover:-translate-y-[2px] group-hover:shadow-ink group-focus-visible:border-ink-black group-focus-visible:-translate-x-[2px] group-focus-visible:-translate-y-[2px] group-focus-visible:shadow-ink">
+    <article className={`${expanded ? "sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]" : ""} h-full overflow-hidden border-[3px] border-ink-black/12 bg-bristol shadow-paper-sm transition-[border-color,box-shadow,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:border-ink-black group-hover:-translate-x-[2px] group-hover:-translate-y-[2px] group-hover:shadow-ink group-focus-visible:border-ink-black group-focus-visible:-translate-x-[2px] group-focus-visible:-translate-y-[2px] group-focus-visible:shadow-ink`}>
       <div className="relative border-b-[2px] border-ink-black/12 transition-colors duration-200 group-hover:border-ink-black group-focus-visible:border-ink-black">
       {project.has_cover ? (
         <LazyImage
@@ -135,10 +137,10 @@ export function ProjectCard({
       )}
       </div>
 
-      <div className="p-4">
+      <div className={expanded ? "flex flex-col justify-center p-5 sm:p-8" : "p-4"}>
       <h3
         title={project.project_name}
-        className="truncate font-display text-[1.34rem] font-black uppercase leading-none tracking-[-0.03em] text-ink-black"
+        className="break-words font-display text-[1.34rem] font-black uppercase leading-none tracking-[-0.03em] text-ink-black"
       >
         {project.project_name}
       </h3>
@@ -191,7 +193,7 @@ export function ProjectCard({
       )}
 
       {coverFailed && !project.has_cover && !coverPending && onRetryCover && (
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex aspect-[6/5] items-end p-4">
+        <div className={`pointer-events-none absolute inset-x-0 top-0 z-20 flex aspect-[6/5] items-end p-4 ${expanded ? "sm:right-auto sm:w-[45.4545%]" : ""}`}>
           <button
             type="button"
             className="pointer-events-auto min-h-11 bg-hero-red px-4 font-meta text-[0.62rem] font-bold uppercase tracking-[0.12em] text-bristol shadow-[3px_3px_0_0_var(--color-ink-black)] transition-transform hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-75"

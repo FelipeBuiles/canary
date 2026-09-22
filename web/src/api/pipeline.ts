@@ -38,6 +38,12 @@ export function getGenerationJobs(
   );
 }
 
+export function cancelQueuedPageJobs(project: string): Promise<{ cancelled_job_ids: string[] }> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/jobs/cancel-queued-pages`, {
+    method: "POST",
+  });
+}
+
 export function regenRef(
   project: string,
   charId: string,

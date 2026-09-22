@@ -167,9 +167,10 @@ def enable_codex(monkeypatch):
     monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType(values))
 
 
-def test_explicit_codex_models_route_without_shadowing_api(client, tmp_path, monkeypatch):
+@pytest.mark.parametrize("reasoner", ("gpt-6-sol", "gpt-6-luna", "gpt-5.6-terra"))
+def test_explicit_codex_models_route_without_shadowing_api(client, tmp_path, monkeypatch, reasoner):
     enable_codex(monkeypatch)
-    selection = "codex-dev/text/gpt-5.6-terra"
+    selection = f"codex-dev/text/{reasoner}"
     response = client.patch("/api/account/model-settings", json={"selections": {"adapt": selection}})
     assert response.status_code == 200
     payload = response.json()
@@ -177,7 +178,7 @@ def test_explicit_codex_models_route_without_shadowing_api(client, tmp_path, mon
     assert payload["funding"] == "mixed"
     assert payload["warnings"] == []
     assert "funding_groups" not in payload
-    assert codex_dev.route_for("text", selection).reasoning_model == "gpt-5.6-terra"
+    assert codex_dev.route_for("text", selection).reasoning_model == reasoner
     assert codex_dev.route_for("text", "gpt-5.6-terra") is None
     assert account_config(Config(), tmp_path, "alice").adapt_model == selection
     assert account_config(Config(), tmp_path, "bob").adapt_model == "gpt-5.6-terra"
@@ -201,12 +202,13 @@ def test_disabled_codex_choices_remain_visible_but_cannot_execute(client, tmp_pa
     assert client.patch("/api/account/model-settings", json={"selections": {"adapt": "gpt-5.6-terra"}}).status_code == 200
 
 
-def test_codex_image_reasoner_and_text_only_constraints(client, monkeypatch):
+@pytest.mark.parametrize("reasoner", ("gpt-6-sol", "gpt-6-luna", "gpt-5.6-luna"))
+def test_codex_image_reasoner_and_text_only_constraints(client, monkeypatch, reasoner):
     enable_codex(monkeypatch)
-    image = "codex-dev/image/gpt-5.6-luna"
+    image = f"codex-dev/image/{reasoner}"
     assert client.patch("/api/account/model-settings", json={"selections": {"image": image, "draw": image}}).status_code == 200
     route = codex_dev.route_for("complete_page", image)
-    assert (route.reasoning_model, route.image_model) == ("gpt-5.6-luna", "gpt-image-2")
+    assert (route.reasoning_model, route.image_model) == (reasoner, "gpt-image-2")
     for stage, model in (("draw", "codex-dev/text/gpt-5.5"), ("ocr", "codex-dev/text/gpt-5.3-codex-spark"), ("image", "codex-dev/image/gpt-5.3-codex-spark")):
         assert client.patch("/api/account/model-settings", json={"selections": {stage: model}}).status_code == 400
 

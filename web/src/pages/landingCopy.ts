@@ -161,11 +161,11 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       ],
     },
     continuity: {
-      title: "Read a scene, page by page.",
-      body: "Two consecutive pages from The Call of Cthulhu showcase edition. Follow Inspector Legrasse and Castro as they trace the old cult and its sleeping god. Open either page to read the lettering at full size.",
-      promise: "From a complete showcase edition",
-      sample: "Showcase edition · The Call of Cthulhu · pages 20–21 · English text. Not customer work; results vary.",
-      captions: ["Page 20 · The old cult", "Page 21 · The sleeping god", ""],
+      title: "Different stories. Distinct worlds.",
+      body: "Explore pixel-art fantasy in Dungeon Crawler Carl and painted cosmic horror in The Call of Cthulhu. Open either page to read the lettering at full size.",
+      promise: "From two showcase projects",
+      sample: "Showcase projects · Dungeon Crawler Carl, page 25 · The Call of Cthulhu, page 21 · English text. Not customer work; results vary.",
+      captions: ["Dungeon Crawler Carl · Page 25", "The Call of Cthulhu · Page 21", ""],
       details: [
         {
           title: "Character references",
@@ -180,10 +180,10 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
           body: "Book-level story state helps each complete page stay consistent with the pages around it.",
         },
       ],
-      alts: ["The Call of Cthulhu comic page 20: Inspector Legrasse questions Castro about Cthulhu, with visions of an ancient cult and lost cities. English narration.", "The Call of Cthulhu comic page 21: Castro describes the Great Old Ones, with scenes of ancient ruins, R’lyeh and cosmic space. English narration.", ""],
+      alts: ["Dungeon Crawler Carl comic page 25: Carl and a cat outside the Tutorial Guild, with game achievement notifications in a torchlit pixel-art dungeon. English lettering.", "The Call of Cthulhu comic page 21: Castro describes the Great Old Ones, with scenes of ancient ruins, R’lyeh and cosmic space. English narration.", ""],
       inspectTitle: "A story you can actually read.",
       inspectBody: "Panels, narration and dialogue arrive together. These pages show the current development workflow, including its imperfections. You review the story, art and lettering before deciding what to keep or correct.",
-      inspectLinks: ["Read page 20 at full size", "Read page 21 at full size", ""],
+      inspectLinks: ["Read page 25 at full size", "Read page 21 at full size", ""],
     },
     direction: {
       title: "The tool takes the workload. You keep the creative decisions.",
@@ -308,11 +308,11 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       ],
     },
     continuity: {
-      title: "Lee una escena, página a página.",
-      body: "Dos páginas consecutivas de la edición de muestra de La llamada de Cthulhu. Sigue al inspector Legrasse y a Castro mientras rastrean el culto antiguo y a su dios dormido. Abre cualquiera de las páginas para leer los textos a tamaño completo.",
-      promise: "De una edición completa de muestra",
-      sample: "Edición de muestra · La llamada de Cthulhu · páginas 20–21 · Texto en inglés. No es trabajo de un cliente; los resultados varían.",
-      captions: ["Página 20 · El culto antiguo", "Página 21 · El dios dormido", ""],
+      title: "Historias diferentes. Mundos distintos.",
+      body: "Explora la fantasía en pixel art de Dungeon Crawler Carl y el horror cósmico pictórico de La llamada de Cthulhu. Abre cualquiera de las páginas para leer los textos a tamaño completo.",
+      promise: "De dos proyectos de muestra",
+      sample: "Proyectos de muestra · Dungeon Crawler Carl, página 25 · La llamada de Cthulhu, página 21 · Texto en inglés. No es trabajo de un cliente; los resultados varían.",
+      captions: ["Dungeon Crawler Carl · Página 25", "La llamada de Cthulhu · Página 21", ""],
       details: [
         {
           title: "Referencias de personajes",
@@ -327,10 +327,10 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
           body: "El estado narrativo del libro mantiene cada página coherente con las que la rodean.",
         },
       ],
-      alts: ["Página 20 del cómic La llamada de Cthulhu: el inspector Legrasse interroga a Castro sobre Cthulhu, con visiones de un culto antiguo y ciudades perdidas. Narración en inglés.", "Página 21 del cómic La llamada de Cthulhu: Castro describe a los Grandes Antiguos, con escenas de ruinas antiguas, R’lyeh y el espacio cósmico. Narración en inglés.", ""],
+      alts: ["Página 25 del cómic Dungeon Crawler Carl: Carl y un gato ante el gremio tutorial, con avisos de logros en una mazmorra de pixel art iluminada por antorchas. Textos en inglés.", "Página 21 del cómic La llamada de Cthulhu: Castro describe a los Grandes Antiguos, con escenas de ruinas antiguas, R’lyeh y el espacio cósmico. Narración en inglés.", ""],
       inspectTitle: "Una historia que puedes leer.",
       inspectBody: "Las viñetas, la narración y los diálogos llegan juntos. Estas páginas muestran el flujo de desarrollo actual, incluidas sus imperfecciones. Tú revisas la historia, el arte y los textos antes de decidir qué conservar o corregir.",
-      inspectLinks: ["Leer la página 20 a tamaño completo", "Leer la página 21 a tamaño completo", ""],
+      inspectLinks: ["Leer la página 25 a tamaño completo", "Leer la página 21 a tamaño completo", ""],
     },
     direction: {
       title: "La herramienta asume la carga. Tú conservas las decisiones creativas.",
@@ -455,11 +455,11 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       ],
     },
     continuity: {
-      title: "Lisez une scène, page après page.",
-      body: "Deux pages consécutives de l’édition de démonstration de L’Appel de Cthulhu. Suivez l’inspecteur Legrasse et Castro alors qu’ils retracent le culte ancien et son dieu endormi. Ouvrez chaque page pour lire les textes en taille réelle.",
-      promise: "Issu d’une édition complète de démonstration",
-      sample: "Édition de démonstration · L’Appel de Cthulhu · pages 20–21 · Textes en anglais. Pas un projet client ; les résultats varient.",
-      captions: ["Page 20 · Le culte ancien", "Page 21 · Le dieu endormi", ""],
+      title: "Des histoires différentes. Des mondes distincts.",
+      body: "Explorez la fantasy en pixel art de Dungeon Crawler Carl et l’horreur cosmique picturale de L’Appel de Cthulhu. Ouvrez chaque page pour lire les textes en taille réelle.",
+      promise: "Issu de deux projets de démonstration",
+      sample: "Projets de démonstration · Dungeon Crawler Carl, page 25 · L’Appel de Cthulhu, page 21 · Textes en anglais. Pas un projet client ; les résultats varient.",
+      captions: ["Dungeon Crawler Carl · Page 25", "L’Appel de Cthulhu · Page 21", ""],
       details: [
         {
           title: "Références des personnages",
@@ -474,10 +474,10 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
           body: "L’état narratif du livre maintient chaque page cohérente avec celles qui l’entourent.",
         },
       ],
-      alts: ["Page 20 de la BD L’Appel de Cthulhu : l’inspecteur Legrasse interroge Castro sur Cthulhu, avec des visions d’un culte ancien et de cités perdues. Narration en anglais.", "Page 21 de la BD L’Appel de Cthulhu : Castro décrit les Grands Anciens, avec des scènes de ruines anciennes, de R’lyeh et de l’espace cosmique. Narration en anglais.", ""],
+      alts: ["Page 25 de la BD Dungeon Crawler Carl : Carl et un chat devant la guilde du tutoriel, avec des notifications de succès dans un donjon en pixel art éclairé aux torches. Textes en anglais.", "Page 21 de la BD L’Appel de Cthulhu : Castro décrit les Grands Anciens, avec des scènes de ruines anciennes, de R’lyeh et de l’espace cosmique. Narration en anglais.", ""],
       inspectTitle: "Un récit que vous pouvez lire.",
       inspectBody: "Les cases, la narration et les dialogues arrivent ensemble. Ces pages montrent le flux de développement actuel, avec ses imperfections. Vous vérifiez le récit, les images et les textes avant de décider quoi conserver ou corriger.",
-      inspectLinks: ["Lire la page 20 en taille réelle", "Lire la page 21 en taille réelle", ""],
+      inspectLinks: ["Lire la page 25 en taille réelle", "Lire la page 21 en taille réelle", ""],
     },
     direction: {
       title: "L’outil prend en charge le travail. Vous gardez les choix créatifs.",

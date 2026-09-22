@@ -9,7 +9,8 @@ import logging
 import os
 import time
 import uuid
-from contextlib import AsyncExitStack
+from collections import deque
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Literal
@@ -25,7 +26,7 @@ from novel_to_comic.image_failure import (
 )
 from novel_to_comic.server.env import bool_env
 
-GenerationJobStatus = Literal["queued", "running", "complete", "failed"]
+GenerationJobStatus = Literal["queued", "running", "complete", "failed", "cancelled"]
 GenerationJobRunner = Callable[[], Awaitable[None]]
 logger = logging.getLogger("canary.generation")
 
@@ -63,6 +64,77 @@ def _looks_like_timeout_cancellation(exc: BaseException, elapsed: float, timeout
     text = " ".join(str(part) for part in (type(exc).__name__, str(exc), *(str(arg) for arg in getattr(exc, "args", ()))))
     lowered = text.lower()
     return elapsed >= max(0, timeout_seconds - 2) and "cancel" in lowered
+
+
+def is_fal_page_draw(job: GenerationJob) -> bool:
+    """Use the frozen request, not mutable project settings, as routing authority."""
+    return bool(
+        job.kind == "complete_page_draw"
+        and job.command is not None
+        and job.command.operation == "page_draw"
+        and job.command.arguments.get("request", {}).get("provider") == "fal-queue"
+    )
+
+
+class _AccountLane:
+    """Three FAL pages may run together; all other account work is exclusive."""
+
+    def __init__(self) -> None:
+        self.condition = asyncio.Condition()
+        self.waiters: deque[tuple[object, bool]] = deque()
+        self.parallel = 0
+        self.exclusive = False
+
+    @asynccontextmanager
+    async def enter(self, parallel: bool):
+        token = object()
+        admitted = False
+        async with self.condition:
+            self.waiters.append((token, parallel))
+            try:
+                while True:
+                    ahead = list(self.waiters)
+                    position = next(index for index, (waiting, _) in enumerate(ahead) if waiting is token)
+                    earlier_exclusive = any(not sibling_parallel for _, sibling_parallel in ahead[:position])
+                    if parallel:
+                        admitted = not self.exclusive and not earlier_exclusive and self.parallel < 3
+                    else:
+                        admitted = position == 0 and not self.exclusive and self.parallel == 0
+                    if admitted:
+                        self.waiters.remove((token, parallel))
+                        if parallel:
+                            self.parallel += 1
+                        else:
+                            self.exclusive = True
+                        break
+                    await self.condition.wait()
+            except BaseException:
+                self.waiters.remove((token, parallel))
+                self.condition.notify_all()
+                raise
+        try:
+            yield
+        finally:
+            async with self.condition:
+                if parallel:
+                    self.parallel -= 1
+                else:
+                    self.exclusive = False
+                self.condition.notify_all()
+
+
+def _account_lane(app: FastAPI, user_id: str) -> _AccountLane:
+    lanes = getattr(app.state, "user_generation_lanes", None)
+    if lanes is None:
+        lanes = app.state.user_generation_lanes = {}
+    return lanes.setdefault(user_id, _AccountLane())
+
+
+def job_transition_lock(app: FastAPI, user_id: str) -> asyncio.Lock:
+    locks = getattr(app.state, "job_transition_locks", None)
+    if locks is None:
+        locks = app.state.job_transition_locks = {}
+    return locks.setdefault(user_id, asyncio.Lock())
 
 
 @dataclass
@@ -212,23 +284,35 @@ def find_active_generation_job(
 
 
 async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
+    if job.status == "cancelled":
+        return
     timeout_seconds = max(1, int(getattr(app.state, "generation_job_timeout_seconds", 900)))
     if job.kind in {"style_suggest", "pipeline_stage"} or (job.command and job.command.operation == "style_direction"):
         timeout_seconds = max(1, int(os.getenv("CANARY_BATCH_JOB_TIMEOUT_SECONDS", "7200")))
     started = time.perf_counter()
     try:
         semaphores: list[asyncio.Semaphore] = []
-        if job.user_id:
-            semaphores.append(user_generation_semaphore(app, job.user_id))
         if job.semaphore is not None and job.semaphore not in semaphores:
             semaphores.append(job.semaphore)
 
         async with AsyncExitStack() as stack:
+            if job.user_id:
+                await stack.enter_async_context(_account_lane(app, job.user_id).enter(is_fal_page_draw(job)))
             for semaphore in semaphores:
                 await stack.enter_async_context(semaphore)
-            job.status = "running"
-            job.started_at = _now()
-            persist_generation_job(app, job)
+            if job.user_id:
+                async with job_transition_lock(app, job.user_id):
+                    if job.status == "cancelled":
+                        return
+                    job.status = "running"
+                    job.started_at = _now()
+                    persist_generation_job(app, job)
+            else:
+                if job.status == "cancelled":
+                    return
+                job.status = "running"
+                job.started_at = _now()
+                persist_generation_job(app, job)
             logger.info(
                 "[bold cyan]Job start[/] project=[white]%s[/] kind=[cyan]%s[/] label=%s id=[dim]%s[/]",
                 job.project_name,
@@ -254,7 +338,9 @@ async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
             time.perf_counter() - started,
         )
     except asyncio.CancelledError:
-        if job.command is not None and job.started_at is None:
+        if job.status == "cancelled":
+            pass
+        elif job.command is not None and job.started_at is None:
             job.status = "queued"
         else:
             if job.started_at is None and job.on_cancel is not None:
@@ -323,7 +409,7 @@ async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
             exc_info=bool_env("CANARY_LOG_JOB_TRACEBACKS", default=False),
         )
     finally:
-        if job.status in {"complete", "failed"}:
+        if job.status in {"complete", "failed", "cancelled"}:
             job.finished_at = _now()
         persist_generation_job(app, job)
 
@@ -415,7 +501,7 @@ def prune_finished_generation_jobs(app: FastAPI | None, max_finished: int = 200)
         (
             job
             for job in jobs.values()
-            if job.status in ("complete", "failed")
+            if job.status in ("complete", "failed", "cancelled")
         ),
         key=lambda job: job.finished_at or job.queued_at,
     )
