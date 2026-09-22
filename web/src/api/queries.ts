@@ -2,7 +2,7 @@ import type { CastReferenceInput } from "../types/api";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { isNotFoundError } from "./client";
 import { listProjects, getProjectStatus, createProject, renameProject, deleteProject, fetchProjectCoverEstimate, generateProjectCover, listShortStories, importStory } from "./projects";
-import { runPipeline, approveStage, regenRef, regenStateRef, regenLocationState, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, regenExtract, resetStale, fetchStageEstimate, fetchAssetRegenEstimate, getCastAssetVersions, restoreCastAssetVersion } from "./pipeline";
+import { runPipeline, approveStage, regenRef, regenStateRef, regenLocationState, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, cancelQueuedPageJobs, regenExtract, resetStale, fetchStageEstimate, fetchAssetRegenEstimate, getCastAssetVersions, restoreCastAssetVersion } from "./pipeline";
 import type { AdaptationBrief, ConfigOverrides, StoryBible, ProjectStatus, ProjectSummary } from "../types/api";
 import { reconcileStatusPoll } from "../lib/stageProgress";
 import { getBalance, getCreditHistory, getPricingReference } from "./credits";
@@ -204,6 +204,17 @@ export function useRunPipeline() {
     onSettled: (_data, _err, { project }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "status"] });
       qc.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+}
+
+export function useCancelQueuedPageJobs() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (project: string) => cancelQueuedPageJobs(project),
+    onSuccess: (_result, project) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "generation-jobs"] });
+      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
     },
   });
 }

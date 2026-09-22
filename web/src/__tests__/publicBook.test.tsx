@@ -49,6 +49,7 @@ describe("public books", () => {
     expect(screen.getByRole("img", { name: "Page 2 — Page 2" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Close reader" }));
     expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("img", { name: "First page of the book" }).getAttribute("src")).toBe("/public-page-1");
     fireEvent.click(screen.getByRole("button", { name: "Read your book" }));
     expect(screen.getByRole("img", { name: "Page 1 — Page 1" })).toBeTruthy();
   });
@@ -66,6 +67,10 @@ describe("public books", () => {
     expect(screen.getByRole("button", { name: "Publish book" }).hasAttribute("disabled")).toBe(true);
     fireEvent.change(author, { target: { value: "Author" } });
     fireEvent.click(screen.getByRole("button", { name: "Publish book" }));
+    await screen.findByRole("button", { name: "Edit publication" });
+    expect(screen.queryByLabelText("Author credit")).toBeNull();
+    expect(screen.getByRole("link", { name: "Read book" }).getAttribute("href")).toContain(`/read/${book.id}`);
+    fireEvent.click(screen.getByRole("button", { name: "Edit publication" }));
     await screen.findByRole("button", { name: "Unpublish" });
     const call = vi.mocked(apiFetch).mock.calls.find(([, options]) => options?.method === "POST");
     expect(JSON.parse(call![1]!.body as string)).toEqual({ title: "Working title", author: "Author", description: "", allow_feature: false });

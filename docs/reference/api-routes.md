@@ -88,6 +88,7 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `POST` | `/api/projects/{project}/run` | `run_pipeline` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/regen-extract` | `regen_extract` | `pipeline.py` |
 | `GET` | `/api/projects/{project}/events` | `event_stream` | `pipeline.py` |
+| `POST` | `/api/projects/{project}/jobs/cancel-queued-pages` | `cancel_queued_page_jobs` | `pipeline.py` |
 | `GET` | `/api/projects/{project}/generation-jobs` | `get_generation_jobs` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/approve/{stage}` | `approve` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/reset/{stage}` | `reset_stage` | `pipeline.py` |

@@ -1,6 +1,7 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import type { GenerationJob } from "../types/api";
 import type { ReactNode } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { StyleRoom } from "../pages/rooms/StyleRoom";
@@ -10,7 +11,7 @@ const state = vi.hoisted(() => {
   const mutation = { mutate: vi.fn(), isPending: false };
   const emptyQuery = () => ({ data: undefined });
   return { mutation, emptyQuery, estimateError: null as Error | null, retryEstimate: vi.fn(), labels: ["Ink", "Watercolor", "Noir", "Graphic"],
-    castStatus: undefined as string | undefined, handleRun: vi.fn(), generateCover: vi.fn() };
+    jobs: [] as GenerationJob[], castStatus: undefined as string | undefined, handleRun: vi.fn(), generateCover: vi.fn() };
 });
 vi.mock("../api/queries", () => ({
   useStyles: () => ({ data: { suggestions: state.labels.map((label, index) => ({
@@ -18,7 +19,7 @@ vi.mock("../api/queries", () => ({
   })) }, refetch: vi.fn(), isLoading: false, isError: false }),
   useProjectConfig: state.emptyQuery, useStoryBible: state.emptyQuery,
   useProjectStatus: () => ({ data: state.castStatus ? { style_selected: true, has_cover: false,
-    stages: { style: { status: "complete" }, cast: { status: state.castStatus } } } : undefined }), useGenerationJobs: state.emptyQuery,
+    stages: { style: { status: "complete" }, cast: { status: state.castStatus } } } : undefined }), useGenerationJobs: () => ({ data: { jobs: state.jobs } }),
   useSuggestStylesEstimate: () => ({ error: state.estimateError, refetch: state.retryEstimate }), useStyleDirectionEstimate: () => ({ refetch: vi.fn() }),
   useStyleSampleEstimate: state.emptyQuery, useStageEstimate: () => ({ data: { estimate_credits: 25 } }),
   useProjectCoverEstimate: state.emptyQuery, useProjects: state.emptyQuery,
@@ -32,7 +33,7 @@ vi.mock("../hooks/useRunAction", () => ({ useRunAction: () => ({ handleRun: stat
 vi.mock("../components/composites", async (importOriginal) => ({
   ...await importOriginal<object>(),
   RoomShell: ({ children }: { children: ReactNode }) => <main>{children}</main>,
-  RoomHeader: () => null,
+  RoomHeader: ({ actions }: { actions: ReactNode }) => <header>{actions}</header>,
   ApprovalBar: ({ onPrimary, primaryDisabled, estimateCredits }: { onPrimary: () => void; primaryDisabled: boolean; estimateCredits: number }) =>
     <button disabled={primaryDisabled} onClick={onPrimary}>Continue for {estimateCredits}</button>,
   ConfirmDrawer: () => null, RerunStageAction: () => null,
@@ -117,4 +118,16 @@ it("places all six base proofs in the responsive three-column desktop grid", () 
   expect(grid.classList.contains("lg:grid-cols-3")).toBe(true);
   expect(within(grid).getAllByRole("heading", { level: 3 })).toHaveLength(6);
   expect(within(grid).getAllByRole("button", { name: "SELECT THIS STYLE" })).toHaveLength(6);
+});
+
+it("does not surface an unrelated historic cover failure as a style audition failure", async () => {
+  state.labels = ["Ink", "Watercolor"];
+  state.jobs = [{ id: "old-cover", kind: "project_cover", status: "failed", error: "Approve references before creating this cover.", payload: {}, queued_at: "2026-09-01" } as GenerationJob];
+  render(<I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
+    <Route path="/projects/:id/style" element={<StyleRoom />} />
+  </Routes></MemoryRouter></I18nProvider>);
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+  expect(screen.queryByText("Approve references before creating this cover.")).toBeNull();
+  expect(screen.getByRole("heading", { name: "Ink" })).toBeTruthy();
+  state.jobs = [];
 });

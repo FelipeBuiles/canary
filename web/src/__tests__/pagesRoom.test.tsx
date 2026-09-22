@@ -16,6 +16,7 @@ const analyzePage = vi.fn();
 const continueToBook = vi.fn();
 const generatePage = vi.fn();
 const runPipeline = vi.fn();
+const cancelQueuedPages = vi.fn();
 const recoverChecks = vi.fn();
 const estimateChecks = vi.fn();
 const finishChecks = vi.fn();
@@ -34,6 +35,7 @@ let stageStatuses: Record<"adapt" | "plan" | "draw", TestStageInfo> = {
   draw: { status: "awaiting_review", stale: false },
 };
 let includeUndrawnPage = false;
+let includeThirdUndrawnPage = false;
 let completePagesUnavailable = false;
 let pageIssues: Array<Record<string, unknown>> | undefined;
 let persistedPageFailure: Record<string, unknown> | null = null;
@@ -53,7 +55,7 @@ let planValidation: {
 let generationJobResults: Array<{
   id: string;
   is_current_page?: boolean;
-  status: "queued" | "running" | "complete" | "failed";
+  status: "queued" | "running" | "complete" | "failed" | "cancelled";
   classification?: string;
   user_message?: string;
   recoverable?: boolean;
@@ -158,6 +160,17 @@ vi.mock("../api/queries", () => ({
         issues: [],
         failure: persistedPageFailure,
         analysis_recovery: { status: "undrawn", requires_paid_call: false },
+      }] : []), ...(includeThirdUndrawnPage ? [{
+        page: {
+          page_number: 3,
+          revision: 1,
+          content_sha256: "c".repeat(64),
+          content: [],
+          reading_order: [],
+        },
+        active_render: null,
+        issues: [],
+        analysis_recovery: { status: "undrawn", requires_paid_call: false },
       }] : [])],
       issue_summary: {
         unresolved_issue_ids: ["page-issue-1"],
@@ -175,6 +188,7 @@ vi.mock("../api/queries", () => ({
   useDismissPageIssue: () => ({ mutate: dismissIssue, isPending: false }),
   useApproveStage: () => ({ mutate: continueToBook, isPending: false }),
   useRunPipeline: () => ({ mutate: runPipeline, isPending: false }),
+  useCancelQueuedPageJobs: () => ({ mutate: cancelQueuedPages, isPending: false, error: null }),
   useGenerationJobs: () => ({
     data: { jobs: generationJobResults.map((job) => ({
       kind: "complete_page_draw",
@@ -262,8 +276,10 @@ describe("PagesRoom", () => {
     continueToBook.mockReset();
     generatePage.mockReset();
     runPipeline.mockReset();
+    cancelQueuedPages.mockReset();
     runPipeline.mockImplementation((_variables, options) => options?.onSuccess?.());
     includeUndrawnPage = false;
+    includeThirdUndrawnPage = false;
     completePagesUnavailable = false;
     pageIssues = undefined;
     persistedPageFailure = null;
@@ -824,6 +840,40 @@ describe("PagesRoom", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "DRAW REMAINING PAGES" }));
     expect(screen.getByRole("alertdialog", { name: "Queue all undrawn pages?" })).toBeTruthy();
+  });
+
+  it("keeps the remaining-pages action visible during an individual draw and enables it afterward", () => {
+    includeUndrawnPage = true;
+    includeThirdUndrawnPage = true;
+    stageStatuses.draw = { status: "running", stale: false };
+    generationJobResults = [{ id: "single-page", status: "running", payload: { page_number: 2 } }];
+    const room = renderRoom();
+
+    const queue = screen.getByRole("button", { name: "DRAW REMAINING PAGES" }) as HTMLButtonElement;
+    expect(queue.disabled).toBe(true);
+    expect(screen.getByText("One page still needs artwork. Completed pages are saved. Queue it after reviewing the current estimate.")).toBeTruthy();
+    expect(screen.getByText("Wait for the current page to finish before queuing the rest.")).toBeTruthy();
+
+    generationJobResults = [];
+    room.unmount();
+    renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: "DRAW REMAINING PAGES" }));
+    expect(screen.getByRole("alertdialog", { name: "Queue all undrawn pages?" })).toBeTruthy();
+  });
+
+  it("offers to cancel only queued pages while another page is already running", () => {
+    includeUndrawnPage = true;
+    includeThirdUndrawnPage = true;
+    stageStatuses.draw = { status: "running", stale: false };
+    generationJobResults = [
+      { id: "running-page", status: "running", payload: { page_number: 2 } },
+      { id: "waiting-page", status: "queued", payload: { page_number: 3 } },
+    ];
+    renderRoom();
+
+    fireEvent.click(screen.getByRole("button", { name: "CANCEL QUEUED PAGES (1)" }));
+    expect(cancelQueuedPages).toHaveBeenCalledWith("demo");
+    expect(screen.getByRole("img", { name: "Page 2: generation in progress" })).toBeTruthy();
   });
 
   it("explains OCR mismatches with full evidence and routes redraws through the draft", () => {

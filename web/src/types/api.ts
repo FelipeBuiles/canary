@@ -187,7 +187,7 @@ export interface PipelineEvent {
   error?: string | null;
 }
 
-export type GenerationJobStatus = "queued" | "running" | "complete" | "failed";
+export type GenerationJobStatus = "queued" | "running" | "complete" | "failed" | "cancelled";
 
 export interface GenerationJob {
   stage?: StageName;
@@ -205,7 +205,7 @@ export interface GenerationJob {
   classification?: string | null;
   user_message?: string | null;
   recoverable?: boolean | null;
-  phase?: "generation" | "analysis" | "ambiguous_submission" | "outcome_unknown" | null;
+  phase?: "generation" | "analysis" | "ambiguous_submission" | "outcome_unknown" | "cancelled" | null;
   is_current_page?: boolean;
 }
 

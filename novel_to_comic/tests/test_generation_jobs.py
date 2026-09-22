@@ -8,6 +8,8 @@ from novel_to_comic.server.generation_jobs import (
     generation_job_payload,
     generation_worker,
     user_generation_semaphore,
+    _account_lane,
+    is_fal_page_draw,
 )
 
 
@@ -157,6 +159,106 @@ def test_per_user_generation_semaphore_serializes_same_user(monkeypatch):
     asyncio.run(run())
 
     assert peak == 1
+
+
+def test_fal_page_lane_runs_three_pages_but_keeps_other_work_exclusive():
+    app = SimpleNamespace(state=SimpleNamespace())
+    lane = _account_lane(app, "user-1")
+    release_pages = asyncio.Event()
+    release_exclusive = asyncio.Event()
+    active = 0
+    peak = 0
+    entered_pages = asyncio.Event()
+    exclusive_entered = asyncio.Event()
+    fourth_entered = asyncio.Event()
+
+    async def page(number):
+        nonlocal active, peak
+        async with lane.enter(True):
+            active += 1
+            peak = max(peak, active)
+            if active == 3:
+                entered_pages.set()
+            if number == 4:
+                fourth_entered.set()
+            await release_pages.wait()
+            active -= 1
+
+    async def exclusive():
+        async with lane.enter(False):
+            assert active == 0
+            exclusive_entered.set()
+            await release_exclusive.wait()
+
+    async def exercise():
+        first = [asyncio.create_task(page(number)) for number in (1, 2, 3)]
+        await asyncio.wait_for(entered_pages.wait(), 1)
+        other = asyncio.create_task(exclusive())
+        await asyncio.sleep(0)
+        fourth = asyncio.create_task(page(4))
+        await asyncio.sleep(0)
+        assert active == 3 and peak == 3
+        assert not exclusive_entered.is_set() and not fourth_entered.is_set()
+        release_pages.set()
+        await asyncio.wait_for(exclusive_entered.wait(), 1)
+        assert not fourth_entered.is_set()
+        release_exclusive.set()
+        await asyncio.wait_for(asyncio.gather(*first, other, fourth), 1)
+        assert fourth_entered.is_set()
+
+    asyncio.run(exercise())
+    assert peak == 3
+
+
+def test_fal_parallel_routing_uses_frozen_page_provider():
+    job = GenerationJob(
+        id="fal-page", project_name="account:book", kind="complete_page_draw",
+        label="Page 1", payload={"page_number": 1}, sequence=1, runner=None,
+        command=SimpleNamespace(operation="page_draw", arguments={"request": {"provider": "fal-queue"}}),
+    )
+    assert is_fal_page_draw(job)
+    job.command.arguments["request"]["provider"] = "openai"
+    assert not is_fal_page_draw(job)
+
+
+def test_queued_fal_page_cancelled_while_waiting_never_enters_provider(tmp_path, monkeypatch):
+    from novel_to_comic.config import Config
+    from novel_to_comic.server.admission import Admission
+    from novel_to_comic.server.job_commands import command
+    from novel_to_comic.server import job_execution
+    from novel_to_comic.server.generation_jobs import job_transition_lock, persist_generation_job, run_generation_job
+
+    app = SimpleNamespace(state=SimpleNamespace(
+        admission=Admission(tmp_path), generation_jobs={}, generation_job_timeout_seconds=5,
+    ))
+    spec = command("page_draw", tmp_path, Config(), request={"provider": "fal-queue"})
+    spec = spec.model_copy(update={"stage": "draw", "user_id": "user-1"})
+    job = GenerationJob(
+        id="waiting-fal-page", project_name="user-1:book", kind="complete_page_draw",
+        label="Page 1", payload={"page_number": 1}, sequence=1, runner=None,
+        command=spec, user_id="user-1",
+    )
+    app.state.generation_jobs[job.id] = job
+    called = False
+
+    async def provider(*args):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(job_execution, "execute_command", provider)
+
+    async def exercise():
+        async with _account_lane(app, "user-1").enter(False):
+            task = asyncio.create_task(run_generation_job(app, job))
+            await asyncio.sleep(0)
+            async with job_transition_lock(app, "user-1"):
+                job.status = "cancelled"
+                persist_generation_job(app, job)
+        await task
+
+    asyncio.run(exercise())
+    assert job.status == "cancelled" and job.started_at is None
+    assert not called
 
 
 def test_transport_ambiguity_survives_page_phase_annotation():

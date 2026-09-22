@@ -94,8 +94,11 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
     return () => { live = false; };
   }, [fontAttempt]);
   useEffect(() => {
-    if (recovery || !dirty)
+    if (recovery) return;
+    if (!dirty) {
+      clearLetteringDraft(draftKey);
       return;
+    }
     const saved = writeLetteringDraft(draftKey, {
       version: 1, baseRevision: base.saved_revision, sourceSha: base.state.comic_page_sha256,
       styleSha: base.style.content_sha256, imageSha: base.render_image_sha256, state: history.present, updatedAt: new Date().toISOString()
@@ -275,11 +278,11 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
     {disabled && <p className="lettering-notice">{t("Artwork is being revised. Your lettering is retained; finish editing after the new render is ready.")}</p>}
     {base.placement_review_needed && !base.source_stale && <p className="lettering-hint">{t("Check the lettering against this artwork, then save to record your placement review. Suggested positions are starting points, not detected empty spaces.")}</p>}
     <div className="lettering-context-toolbar"><ProjectLetteringLanguage project={project} disabled={pageLocked || dirty} onBusyChange={setTranslationBusy} onApplied={adoptBookChange} /></div>
-    {bookStyleOpen && <BookStyleEditor project={project} initial={base.style} disabled={locked || dirty} onClose={() => setBookStyleOpen(false)} onApplied={async () => {
+    {bookStyleOpen && <BookStyleEditor project={project} initial={base.style} pagePreview={{ state: history.present, artUrl }} disabled={locked || dirty} onClose={() => setBookStyleOpen(false)} onApplied={async () => {
       await adoptBookChange();
       setBookStyleOpen(false);
     }} />}
-    {!fontsReady ? <p role="status">{t("Loading the book’s bundled typefaces…")}</p> : layout.state && <div className="lettering-workspace">
+    {!fontsReady ? <p role="status">{t("Loading the book’s bundled typefaces…")}</p> : layout.state && <div className="lettering-workspace" hidden={bookStyleOpen}>
       <LetteringCanvas state={layout.state} style={base.style} artUrl={artUrl} onArtReady={setLoadedArtUrl} selected={selected} disabled={pageLocked} select={setSelected} focusText={() => textarea.current?.focus()} begin={() => dispatch({ type: "begin" })} preview={(id, value) => patch(id, value, true)} commit={() => dispatch({ type: "commit" })} cancel={() => dispatch({ type: "cancel" })} change={patch} />
       <aside className="lettering-inspector" aria-label={t("Lettering controls")}>
         {current ? <fieldset disabled={pageLocked} className="lettering-element-controls">
@@ -319,9 +322,10 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
     <details className="lettering-shortcuts"><summary>{t("Keyboard shortcuts")}</summary><p className="lettering-hint">{t("Ctrl / ⌘ S saves. Ctrl / ⌘ Z undoes page edits. Text fields keep their normal typing undo. Hidden source copy can always be restored.")}</p></details>
   </div>;
 }
-export function BookStyleEditor({ project, initial, disabled, onClose, onApplied }: {
+export function BookStyleEditor({ project, initial, pagePreview, disabled, onClose, onApplied }: {
   project: string;
   initial: LetteringStyle;
+  pagePreview?: { state: PageLettering; artUrl: string };
   disabled: boolean;
   onClose: () => void;
   onApplied: () => Promise<void>;
@@ -377,6 +381,14 @@ export function BookStyleEditor({ project, initial, disabled, onClose, onApplied
       return { svg: "", overflow: false, error: message(error) };
     }
   }, [style, role, sample, measure]);
+  const pageSample = useMemo(() => {
+    if (!pagePreview || !measure) return null;
+    try {
+      return { svg: renderOverlay(resolvePage(pagePreview.state, style, measure), style), error: null };
+    } catch (error) {
+      return { svg: "", error: message(error) };
+    }
+  }, [pagePreview, style, measure]);
   const presets = useQuery({ queryKey: ["lettering-presets", project], queryFn: () => getBookLetteringStyle(project), staleTime: Infinity });
   async function apply() {
     setBusy(true); setError(null); try {
@@ -399,6 +411,7 @@ export function BookStyleEditor({ project, initial, disabled, onClose, onApplied
       <span role="status" className="lettering-hint">{t(dirty ? "Unsaved style changes" : "Saved style")}</span>
     </div>
     {!fontsReady && <p role="status">{t("Loading the book’s bundled typefaces…")}</p>}
+    {error && <p role="alert" className="lettering-error">{error}</p>}<div className="lettering-small-actions"><Button disabled={disabled || busy || !fontsReady || !!preview.error || !!pageSample?.error || !!preview.overflow} onClick={() => void apply()}>{busy ? t("Reflowing the book…") : t("Apply to book")}</Button><Button variant="outline" disabled={busy} onClick={close}>{t("Cancel")}</Button>{!fontsReady && error && <Button variant="outline" onClick={() => { setError(null); setFontAttempt(n => n + 1); }}>{t("Retry fonts")}</Button>}</div>
     <fieldset aria-label={t("Book lettering style")} disabled={disabled || busy} className="lettering-book-style-fields">
       <div className="lettering-book-controls">
         <div><FieldLabel htmlFor="lettering-preset">{t("Preset")}</FieldLabel><SelectField id="lettering-preset" value={presetName} disabled={presets.isPending || presets.isError} onChange={event => { const name = event.target.value, preset = presets.data?.presets[name]; if (preset) { setStyle({ ...preset, source_direction: initial.source_direction, revision: initial.revision }); setPresetName(name); setPresetRevision(value => value + 1); } }}><option value="" disabled>{presets.isPending ? t("Loading presets…") : t("Custom style")}</option>{Object.entries(presets.data?.presets ?? {}).map(([name, preset]) => <option key={name} value={name}>{t(preset.label)}</option>)}</SelectField></div>
@@ -407,7 +420,16 @@ export function BookStyleEditor({ project, initial, disabled, onClose, onApplied
         <LetteringStyleControls key={`${role}:${presetRevision}`} idPrefix="book-lettering" value={style.roles[role]} onChange={value => { setStyle({ ...style, roles: { ...style.roles, [role]: value } }); setPresetName(""); }} />
         {initial.source_direction && <details><summary>{t("Selected creative direction")}</summary><p className="lettering-hint mt-2">{initial.source_direction}</p></details>}
       </div>
-      <figure className="lettering-book-preview"><figcaption>{t("Live sample")} · {t(roleNames[role])}</figcaption><div className="lettering-book-preview-art" role="img" aria-label={`${t("Live sample")}: ${sample}`} dangerouslySetInnerHTML={{ __html: preview.svg }} />{preview.error && <p role="alert" className="lettering-error">{preview.error}</p>}{preview.overflow && <p role="status" className="lettering-warning">{t("The sample does not fit. Adjust the size or spacing.")}</p>}</figure>
-    </fieldset>{error && <p role="alert" className="lettering-error">{error}</p>}<div className="lettering-small-actions"><Button disabled={disabled || busy || !fontsReady || !!preview.error || !!preview.overflow} onClick={() => void apply()}>{busy ? t("Reflowing the book…") : t("Apply to book")}</Button><Button variant="outline" disabled={busy} onClick={close}>{t("Cancel")}</Button>{!fontsReady && error && <Button variant="outline" onClick={() => { setError(null); setFontAttempt(n => n + 1); }}>{t("Retry fonts")}</Button>}</div>
+      <figure className="lettering-book-preview"><figcaption>{t("Live sample")} · {t(roleNames[role])}</figcaption>{pagePreview && pageSample && <>
+        <div className="lettering-book-page-preview">
+          <div className="lettering-book-page" style={{ aspectRatio: pagePreview.state.canvas_aspect_ratio, width: `min(100%, calc(min(52dvh, 680px) * ${pagePreview.state.canvas_aspect_ratio}))` }}>
+            <img src={pagePreview.artUrl} alt={t("Page artwork")} />
+            <div className="lettering-svg" dangerouslySetInnerHTML={{ __html: pageSample.svg }} />
+          </div>
+        </div>
+        <p className="lettering-hint my-3">{t("Preview only · local styles stay unchanged")}</p>
+        {pageSample.error && <p role="alert" className="lettering-error">{pageSample.error}</p>}
+      </>}<div className="lettering-book-preview-art" role="img" aria-label={`${t("Live sample")}: ${sample}`} dangerouslySetInnerHTML={{ __html: preview.svg }} />{preview.error && <p role="alert" className="lettering-error">{preview.error}</p>}{preview.overflow && <p role="status" className="lettering-warning">{t("The sample does not fit. Adjust the size or spacing.")}</p>}</figure>
+    </fieldset>
   </Surface>;
 }

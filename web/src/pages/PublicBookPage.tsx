@@ -76,6 +76,10 @@ export function PublicBookPage() {
         <title>{book.title} — Scenewright</title>
         {!readerOpen && <>
           <section className="public-book-intro">
+            {book.pages[0] && <button className="public-book-cover" onClick={() => setReaderOpen(true)} aria-label={t("Open the first page")}>
+              <img src={book.pages[0].url} width={book.pages[0].width} height={book.pages[0].height} alt={t("First page of the book")} />
+            </button>}
+            <div className="public-book-description">
             <h1 className="font-display text-4xl">{book.title}</h1>
             <p className="mt-2 font-meta">{book.author} · {book.pages.length} {t("pages")}</p>
             {book.description && <p className="mt-4 max-w-prose font-body">{book.description}</p>}
@@ -84,6 +88,7 @@ export function PublicBookPage() {
               <Button variant="outline" onClick={() => void share()}>{t("Share book")}</Button>
             </div>
             {message && <p role="status" className="mt-3">{message}</p>}
+            </div>
           </section>
           {closingPage}
         </>}

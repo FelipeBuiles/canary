@@ -19,6 +19,7 @@ import {
   useRunPipeline,
   useStageValidation,
   useCompletePageBatchEstimate,
+  useCancelQueuedPageJobs,
   useCompletePageEstimate,
   usePageAnalysisEstimate,
   useStyles,
@@ -319,7 +320,7 @@ function PageReview({
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="flex max-h-full w-full max-w-6xl flex-col bg-pulp-paper shadow-ink focus-visible:outline-none sm:border-[3px] sm:border-ink-black"
+        className={`flex max-h-full w-full ${view === "lettering" ? "max-w-[1800px]" : "max-w-6xl"} flex-col bg-pulp-paper shadow-ink focus-visible:outline-none sm:border-[3px] sm:border-ink-black`}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="shrink-0 bg-bristol">
@@ -383,7 +384,7 @@ function PageReview({
             </button>}
           </div>
         </div>
-        <div ref={bodyRef} className="min-h-0 flex-1 overflow-y-auto">
+        <div ref={bodyRef} className={`min-h-0 flex-1 overflow-y-auto ${view === "lettering" ? "lettering-modal-body" : ""}`}>
           <div className="space-y-7 p-4 lg:p-6">
             {/* Revision draft stays mounted while hidden so unsaved changes survive tab switches. */}
             <div hidden={view !== "page"} role="region" aria-label={t("Page")}>
@@ -521,6 +522,7 @@ export function PagesRoom() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [pageActionErrors, setPageActionErrors] = useState<Partial<Record<number, string>>>({});
   const [approvalError, setApprovalError] = useState<string | null>(null);
+  const cancelQueued = useCancelQueuedPageJobs();
   const { data: generationJobs, isLoading: generationJobsLoading } = useGenerationJobs(id, [], true);
   const observedTerminalJobs = useRef(new Set<string>());
   const firstArtworkObserved = useRef<boolean | null>(null);
@@ -553,7 +555,7 @@ export function PagesRoom() {
     const terminal = (generationJobs?.jobs ?? []).filter((job) =>
       job.is_current_page !== false
       && (job.kind === "complete_page_draw" || pageJobs[job.id] != null)
-      && (job.status === "complete" || job.status === "failed")
+      && (job.status === "complete" || job.status === "failed" || job.status === "cancelled")
       && !observedTerminalJobs.current.has(job.id),
     );
     if (terminal.length === 0) return;
@@ -687,6 +689,10 @@ export function PagesRoom() {
   }).map((item) => item.page.page_number));
   const drawnPages = pages.filter((item) => item.active_render);
   const undrawnPages = pages.filter((item) => !item.active_render);
+  const pagesWaitingToDraw = undrawnPages.filter((item) => !drawingPages.has(item.page.page_number));
+  const queuedPageJobs = (generationJobs?.jobs ?? []).filter((job) =>
+    job.kind === "complete_page_draw" && job.is_current_page !== false && job.status === "queued",
+  );
   const retryingDraw = undrawnPages.some((item) => failedPages.has(item.page.page_number))
     || drawStatus === "failed"
     || !!status?.stages.draw?.stale;
@@ -891,15 +897,18 @@ export function PagesRoom() {
             {actionError && !paidIntent && <p role="alert" className="mt-3 text-sm">{actionError}</p>}
           </Surface>
         )}
-        {drawStatus !== "pending" && !generationJobsLoading && undrawnPages.length > 0 && drawingPages.size === 0 && (
+        {drawStatus !== "pending" && !generationJobsLoading && pagesWaitingToDraw.length > 0 && (
           <Surface tone="pulp" padding="md" className="mb-5">
             <div className="flex flex-wrap items-end justify-between gap-5">
               <div className="max-w-[62ch]">
                 <h3 className="font-body text-base font-bold text-ink-black">{t("Finish drawing the edition")}</h3>
                 <p className="mt-1 text-sm leading-6 text-ink-muted">
-                  {t("{count} pages still need artwork. Completed pages are saved. Queue the unfinished pages together after reviewing the current estimate.")
-                    .replace("{count}", String(undrawnPages.length))}
+                  {t(pagesWaitingToDraw.length === 1
+                    ? "One page still needs artwork. Completed pages are saved. Queue it after reviewing the current estimate."
+                    : "{count} pages still need artwork. Completed pages are saved. Queue the unfinished pages together after reviewing the current estimate.")
+                    .replace("{count}", String(pagesWaitingToDraw.length))}
                 </p>
+                {drawingPages.size > 0 && <p className="mt-2 text-sm leading-6 text-ink-muted">{t("Wait for the current page to finish before queuing the rest.")}</p>}
               </div>
               <Button
                 variant="primary"
@@ -907,7 +916,7 @@ export function PagesRoom() {
                   kind: "batch",
                   retry: retryingDraw,
                 })}
-                disabled={run.isPending || !status?.style_selected}
+                disabled={run.isPending || !status?.style_selected || drawingPages.size > 0 || !!status?.is_running}
               >
                 {t("DRAW REMAINING PAGES")}
               </Button>
@@ -916,8 +925,17 @@ export function PagesRoom() {
         )}
         {drawingPages.size > 0 && (
           <Surface tone="pulp" border="soft" shadow="none" padding="md" className="mb-5">
-            <p role="status" className="text-sm font-bold">{drawingPages.size} {t("pages drawing or queued")}</p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p role="status" className="text-sm font-bold">{drawingPages.size} {t("pages drawing or queued")}</p>
+              {queuedPageJobs.length > 0 && <Button
+                variant="outline"
+                size="sm"
+                disabled={cancelQueued.isPending}
+                onClick={() => cancelQueued.mutate(id)}
+              >{cancelQueued.isPending ? t("CANCELLING QUEUED PAGES…") : t("CANCEL QUEUED PAGES")} ({queuedPageJobs.length})</Button>}
+            </div>
             <p className="mt-1 text-sm text-ink-muted">{t("Completed pages are ready to inspect while the press continues.")}</p>
+            {cancelQueued.error && <p role="alert" className="mt-2 text-sm text-hero-red">{cancelQueued.error.message}</p>}
             <div className="mt-3 flex gap-3 overflow-x-auto">
               {pages.filter((item) => item.active_render).map((item) => (
                 <button key={item.page.page_number} type="button" className="w-20 shrink-0 p-1 text-center text-xs font-bold" onClick={() => updateContext({ page: String(item.page.page_number), review: "page" })} aria-label={`${t("Inspect completed page")} ${item.page.page_number}`}>

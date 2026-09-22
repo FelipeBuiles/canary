@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { AdaptationDetails, PagePlanDetails } from "../components/pages/ReadingDetails";
 import { I18nProvider } from "../i18n";
@@ -36,7 +36,9 @@ describe("Reading document details", () => {
       ? <AdaptationDetails adaptation={{ revision: 1, editorial_issues: issues }} />
       : <PagePlanDetails plan={{ ...plan, editorial_issues: issues }} pages={[]} detailsLoading={false} detailsError={null} />}
     </I18nProvider>);
-    expect(screen.getByRole("region", { name: "Optional editorial notes" })).toBeTruthy();
+    const summary = screen.getByText(/Optional editorial notes/, { selector: "summary" });
+    expect(summary.parentElement).toHaveProperty("open", false);
+    fireEvent.click(summary);
     expect(screen.getByText("These suggestions do not block completion or start another generation.")).toBeTruthy();
     expect(screen.getByText("The closing pause could be shorter.")).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();

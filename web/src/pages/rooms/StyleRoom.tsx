@@ -190,9 +190,11 @@ export function StyleRoom() {
   }, [generationJobs, projectName, refetchStyles, remove, updateJob, trackedJobIds]);
 
   useEffect(() => {
-    if (!validationJobResults?.jobs.length) return;
+    const trackedIds = new Set(Object.values(validationJobs));
+    if (!trackedIds.size || !validationJobResults?.jobs.length) return;
     const terminalJobs = validationJobResults.jobs.filter(
-      (job) => job.status === "complete" || job.status === "failed",
+      (job) => trackedIds.has(job.id) && job.kind === "style_validation"
+        && (job.status === "complete" || job.status === "failed"),
     );
     if (!terminalJobs.length) return;
     const timer = window.setTimeout(() => {
@@ -205,7 +207,7 @@ export function StyleRoom() {
       if (terminalJobs.some((job) => job.status === "complete")) refetchStyles();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [refetchStyles, t, validationJobResults]);
+  }, [refetchStyles, t, validationJobResults, validationJobs]);
 
   useEffect(() => {
     const job = generationJobs?.jobs.find((item) => item.id === suggestionJobId);

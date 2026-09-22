@@ -8,7 +8,7 @@ import "./HomePage.css";
 
 const MARKETING_IMAGES = {
   pages: [
-    "/api/public/books/d1cb0ec790244ce6849974daa586146b/ccf1a606bd1747c4864d8a4770000891/pages/20",
+    "/marketing/dungeon-crawler-carl-page-25.webp",
     "/api/public/books/d1cb0ec790244ce6849974daa586146b/ccf1a606bd1747c4864d8a4770000891/pages/21",
   ],
   anya: "/marketing/anya-reference.webp",

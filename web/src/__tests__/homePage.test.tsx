@@ -75,7 +75,7 @@ describe("Scenewright homepage", () => {
 
     expect(screen.getByText(/Not customer work; results vary/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "Read a development sample" }).getAttribute("href")).toBe("#continuity");
-    expect(screen.getAllByRole("link", { name: "Read page 20 at full size" })[0].getAttribute("href")).toBe("/api/public/books/d1cb0ec790244ce6849974daa586146b/ccf1a606bd1747c4864d8a4770000891/pages/20");
+    expect(screen.getAllByRole("link", { name: "Read page 25 at full size" })[0].getAttribute("href")).toBe("/marketing/dungeon-crawler-carl-page-25.webp");
     expect(screen.getByText(/Automated checks do not guarantee visual quality/)).toBeTruthy();
     expect(screen.getByText(/not a fixed number of pages/)).toBeTruthy();
   });

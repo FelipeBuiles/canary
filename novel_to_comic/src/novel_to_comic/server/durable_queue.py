@@ -21,6 +21,14 @@ from .job_commands import JobCommand
 logger = logging.getLogger("canary.queue")
 
 
+def dispatch_lock(queue_name: str, job) -> str:
+    from .generation_jobs import is_fal_page_draw
+
+    if is_fal_page_draw(job):
+        return f"{queue_name}:account:{job.user_id}:fal-page:{job.sequence % 3}"
+    return f"{queue_name}:account:{job.user_id}"
+
+
 class DurableQueue:
     def __init__(self, app, dsn: str):
         import procrastinate
@@ -108,6 +116,36 @@ class DurableQueue:
             self.ready = False
             raise
 
+    async def cancel_queued_pages(self, *, project_name: str, user_id: str) -> list[str]:
+        """Cancel only page operations that have not begun a provider call."""
+        from .generation_jobs import job_transition_lock, persist_generation_job
+
+        cancelled = []
+        async with job_transition_lock(self.app, user_id):
+            jobs = [job for job in self.app.state.generation_jobs.values()
+                    if job.project_name == project_name and job.kind == "complete_page_draw"
+                    and job.status == "queued" and job.started_at is None]
+            with self.app.state.admission.journal() as db:
+                dispatches = dict(db.execute(
+                    "SELECT id,dispatched FROM operation_outbox WHERE id IN ("
+                    + ",".join("?" for _ in jobs) + ")", tuple(job.id for job in jobs)
+                )) if jobs else {}
+            for job in jobs:
+                dispatch_id = dispatches.get(job.id)
+                if dispatch_id is not None:
+                    # False means a worker already claimed the dispatch. It is
+                    # still safe to cancel while our domain job is queued: the
+                    # worker checks status under this same lock before execution.
+                    await self.backend.job_manager.cancel_job_by_id_async(int(dispatch_id), abort=False)
+                job.status = "cancelled"
+                job.finished_at = datetime.now(timezone.utc)
+                job.phase = "cancelled"
+                job.user_message = "Cancelled before the image request started. No generation charge was made."
+                job.recoverable = True
+                persist_generation_job(self.app, job)
+                cancelled.append(job.id)
+        return cancelled
+
     async def run(self):
         root = self.app.state.projects_dir
         root.mkdir(parents=True, exist_ok=True)
@@ -164,8 +202,11 @@ class DurableQueue:
             if job is None or job.status != "queued" or dispatched is not None:
                 continue
             try:
+                # Procrastinate's account lock otherwise serializes every page.
+                # Three stable lanes bound FAL Draw dispatch; the in-process
+                # account gate keeps other operations exclusive with them.
                 dispatch_id = await self.task.configure(
-                    lock=f"{self.queue_name}:account:{job.user_id}", queueing_lock=f"{self.queue_name}:operation:{job.id}",
+                    lock=dispatch_lock(self.queue_name, job), queueing_lock=f"{self.queue_name}:operation:{job.id}",
                 ).defer_async(operation_id=job.id)
             except AlreadyEnqueued:
                 continue

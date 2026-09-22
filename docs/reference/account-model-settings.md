@@ -95,8 +95,10 @@ API mode displays Codex choices as unavailable; it cannot enable the adaptor.
 The original-process `CANARY_CODEX_DEV_ENABLED=1` gate, local-only runtime,
 authenticated account boundary, and Codex login requirements still apply.
 
-Codex choices include GPT-6 Astra, GPT-5.6 Sol/Terra/Luna, GPT-5.5, and GPT-5.3
-Codex Spark. Spark is text-only and excluded from visual checks and image work.
+Codex choices include GPT-6 Astra/Sol/Luna, GPT-5.6 Sol/Terra/Luna, GPT-5.5,
+and GPT-5.3 Codex Spark. The GPT-5.6 choices remain in Canary's allowlist to
+preserve saved selections and existing Draw profiles. Spark is text-only and
+excluded from visual checks and image work.
 Operators can replace the exact-model allowlist with an original-process
 `CANARY_CODEX_DEV_MODELS` JSON list of supported `gpt-*` reasoning model names;
 restart the backend after changing it. This list is a selection allowlist,

@@ -24,10 +24,13 @@ Prepared page inputs retain their model profile, reference bytes, request hash a
 optional OCR. Stage implementations continue to receive `StageRuntime`.
 Synchronous analysis/review APIs keep their existing request lifecycle.
 
-One account executes one queued operation at a time, in admission order; other
-accounts can proceed concurrently. The old process-local per-user concurrency
-override does not raise this durable account limit. `CANARY_GENERATION_WORKERS`
-controls concurrent account operations (default 5). A style batch owns its bounded
+One account executes ordinary queued operations exclusively. Complete-page Draw
+jobs whose frozen provider is FAL use three durable dispatch lanes and an
+account gate that admits up to three together; ordinary operations wait for
+those pages to finish, and vice versa. Other accounts can proceed concurrently.
+The old process-local per-user concurrency override does not raise this durable
+limit. `CANARY_GENERATION_WORKERS` controls total concurrent operations (default 5),
+so its value must remain at least 3 for full FAL Draw throughput. A style batch owns its bounded
 parallel proof calls until every sibling has finished or acknowledged cancellation.
 Each proof has its own persisted status. Draw batch preflight runs in a worker
 thread so preparing many pages cannot starve the queue heartbeat. Page publication
@@ -48,6 +51,10 @@ always requires the durable queue; missing PostgreSQL never selects a memory que
 - Queued operations resume after restart. Credit availability is checked at
   admission and the actual hold is acquired at execution, so queued work does not
   accumulate expiring holds. A later balance change can reject execution.
+- Pages offers **Cancel queued pages** for current page draws that have not started.
+  Cancellation marks only waiting jobs terminal, without submitting them to FAL
+  or acquiring a credit hold. A running or ambiguously submitted call is never
+  cancelled by this action; its outcome and possible charge remain visible.
 - Execution is recorded before calling a provider. Interrupted execution becomes
   `outcome_unknown`; inspect saved output and provider evidence before explicitly
   retrying. No automatic provider retry is added by the queue. A duplicate dispatch

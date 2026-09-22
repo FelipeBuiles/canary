@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from novel_to_comic.artifact_lock import production_lock
 from novel_to_comic.clients.text import generate_json
 from novel_to_comic.config import Config, load_config
+from novel_to_comic.model_catalog import STAGE_FIELDS
 from novel_to_comic.model_costs import get_pricing_resolver
 from novel_to_comic.models.lettering import LetteringSettings, LetteringStyle, PageLettering
 from novel_to_comic.server.codex_admission import classify_operations
@@ -154,7 +155,11 @@ async def translate_project(artifacts: TargetArtifacts, config: Config, prepared
     """Settle each provider response in the AI client; publish only a complete book."""
     attempt = attempt or uuid4().hex
     def current():
-        return prepare_translation(artifacts, load_config(artifacts.project_dir)[0], prepared.target_locale)
+        # Admission quoted with account-scoped model selections; a raw reload
+        # would drop them and look like changed inputs on every run.
+        latest = load_config(artifacts.project_dir)[0].model_copy(
+            update={field: getattr(config, field) for field in STAGE_FIELDS.values()})
+        return prepare_translation(artifacts, latest, prepared.target_locale)
     assert_snapshot(current(), prepared.snapshot_sha256)
     artifacts.write_lettering_translation_evidence(attempt, "request", {"snapshot_sha256": prepared.snapshot_sha256, "target_locale": prepared.target_locale, "model": prepared.model, "batches": list(prepared.batches)})
     translated = {}
