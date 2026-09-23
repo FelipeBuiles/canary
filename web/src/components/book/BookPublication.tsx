@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "../../api/client";
-import type { Publication } from "../../api/publications";
+import { publicationLanguages, type Publication } from "../../api/publications";
 import { Surface } from "../ui/Surface";
 import { Button } from "../ui/Button";
 import { useI18n } from "../../i18n";
@@ -14,13 +14,15 @@ export function BookPublication({ project, title, ready, onPreview }: { project:
   const [draft, setDraft] = useState<{ title: string; author: string; description: string; allow_feature: boolean } | null>(null);
   const [editing, setEditing] = useState(false);
   const [message, setMessage] = useState("");
+  const [leftOut, setLeftOut] = useState<string[]>([]);
   const values = draft ?? { title: query.data?.title ?? title, author: query.data?.author ?? "", description: query.data?.description ?? "", allow_feature: query.data?.allow_feature ?? false };
   const update = (change: Partial<typeof values>) => setDraft({ ...values, ...change });
   const mutation = useMutation({
     mutationFn: (remove: boolean) => apiFetch<Publication | null>(`/projects/${project}/publication`, { method: remove ? "DELETE" : "POST", ...(remove ? {} : { body: JSON.stringify(values) }) }),
-    onSuccess: (_result, remove) => { setDraft(null); setEditing(false); setMessage(t(remove ? "Your book is no longer public." : "Your finished book is now public. Copy the link to share it.")); void cache.invalidateQueries({ queryKey: key }); },
+    onSuccess: (result, remove) => { setLeftOut(Object.keys(result?.unpublished_locales ?? {}).map(code => code.toUpperCase())); setDraft(null); setEditing(false); setMessage(t(remove ? "Your book is no longer public." : "Your finished book is now public. Copy the link to share it.")); void cache.invalidateQueries({ queryKey: key }); },
   });
   const url = query.data ? `${window.location.origin}/read/${query.data.id}` : "";
+  const readerLanguages = query.data ? publicationLanguages(query.data) : [];
   async function share() {
     try {
       if (navigator.share) await navigator.share({ title: query.data!.title, url });
@@ -37,6 +39,7 @@ export function BookPublication({ project, title, ready, onPreview }: { project:
         <div className="min-w-0">
           <h3 className="break-words font-display text-xl font-bold">{query.data.title}</h3>
           <p className="mt-2 font-body text-sm text-ink-muted">{query.data.author} · {query.data.pages.length} {t("pages")}</p>
+          {readerLanguages.length > 1 && <p className="mt-2 font-body text-sm">{t("Reader languages")}: {readerLanguages.map(item => item.locale === "source" ? t("Original") : item.locale.toUpperCase()).join(" · ")}</p>}
           <p className="mt-3 max-w-prose font-body text-sm leading-6">{t("Later edits stay private until you update the published version.")}</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -60,6 +63,7 @@ export function BookPublication({ project, title, ready, onPreview }: { project:
       </div>}
     </>}
     {message && <p className="mt-4" role="status">{message}</p>}
+    {leftOut.length > 0 && <p className="mt-2 max-w-prose font-body text-sm">{t("Not published in {languages}. Readers only see languages where every page has a saved translation that fits.").replace("{languages}", leftOut.join(", "))}</p>}
     {mutation.error && <p className="mt-4" role="alert">{mutation.error.message}</p>}
   </Surface>;
 }

@@ -37,6 +37,8 @@ interface BookReaderProps {
   headerActions?: ReactNode;
   endContent?: ReactNode;
   closeLabel?: string;
+  /** Named in every page's label when the book offers more than one language. */
+  languageLabel?: string;
   /** Page to open on, when entering from a specific page rather than the cover. */
   initialPageNumber?: number;
   onClose: () => void;
@@ -96,12 +98,14 @@ function ViewLayer({
   fit,
   isCurrent,
   label,
+  languageLabel,
 }: {
   project: string;
   view: ReaderView;
   fit: Fit;
   isCurrent: boolean;
   label: string;
+  languageLabel?: string;
 }) {
   const { t } = useI18n();
   const widthClass = view.kind === "facing"
@@ -134,12 +138,13 @@ function ViewLayer({
       >
         {view.pages.map((page) => (
           <ReaderImage
-            key={page.pageNumber}
+            // A new language is a new image: show its skeleton, not the old copy.
+            key={`${page.pageNumber}-${page.imageUrl ?? ""}`}
             project={project}
             page={page}
             fit={fit}
             widthClass={widthClass}
-            alt={`${label} — ${t("Page")} ${page.pageNumber}`}
+            alt={`${label} — ${t("Page")} ${page.pageNumber}${languageLabel ? ` · ${languageLabel}` : ""}`}
           />
         ))}
       </div>
@@ -147,7 +152,7 @@ function ViewLayer({
   );
 }
 
-export function BookReader({ project = "", pages, initialPageNumber, onClose, title, headerActions, endContent, closeLabel }: BookReaderProps) {
+export function BookReader({ project = "", pages, initialPageNumber, onClose, title, headerActions, endContent, closeLabel, languageLabel }: BookReaderProps) {
   const { t } = useI18n();
   const [layout, setLayout] = useState<ReaderLayout>("spreads");
   const [fit, setFit] = useState<Fit>("height");
@@ -316,6 +321,7 @@ export function BookReader({ project = "", pages, initialPageNumber, onClose, ti
             fit={fit}
             isCurrent={view.key === current?.key}
             label={label}
+            languageLabel={languageLabel}
           />
         ))}
 

@@ -113,6 +113,7 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/public/books` | `featured` | `publications.py` |
 | `GET` | `/api/public/books/{book_id}` | `book` | `publications.py` |
 | `GET` | `/api/public/books/{book_id}/{version}/pages/{number}` | `page` | `publications.py` |
+| `GET` | `/api/public/books/{book_id}/{version}/locales/{locale}/pages/{number}` | `translated_page` | `publications.py` |
 | `GET` | `/api/public/books/{book_id}/download/{format}` | `download` | `publications.py` |
 | `GET` | `/api/ops/publications` | `list_publications` | `publications.py` |
 | `GET` | `/api/public/books/{book_id}/bookend` | `preview_bookend` | `publications.py` |

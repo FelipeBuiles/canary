@@ -1,18 +1,38 @@
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { publicBook } from "../api/publications";
+import { publicBook, publicationLanguages, type PublicationLocale } from "../api/publications";
 import { BrandIdentity } from "../components/BrandIdentity";
 import { BrandMark } from "../components/BrandMark";
 import { BookReader } from "../components/BookReader";
 import { Button } from "../components/ui/Button";
 import type { ReaderPage } from "../lib/bookReader";
-import { useI18n } from "../i18n";
+import { LANGUAGES, useI18n } from "../i18n";
+import { cn } from "../lib/cn";
 import "./PublicBookPage.css";
+
+/** One reading-language preference per viewer, shared by every public book. */
+const READER_LANGUAGE_KEY = "canary.readerLanguage";
+
+function storedReaderLanguage(): string | null {
+  try {
+    return window.localStorage.getItem(READER_LANGUAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function storeReaderLanguage(locale: PublicationLocale) {
+  try {
+    window.localStorage.setItem(READER_LANGUAGE_KEY, locale);
+  } catch {
+    // A convenience only; the reader still switches without storage.
+  }
+}
 
 export function PublicBookPage() {
   const { id = "" } = useParams();
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const query = useQuery({
     queryKey: ["public-book", id],
     queryFn: ({ signal }) => publicBook(id, signal),
@@ -22,12 +42,39 @@ export function PublicBookPage() {
   const [message, setMessage] = useState("");
   const book = query.data;
   const referral = `/signup?ref=book-${encodeURIComponent(id)}`;
-  const pages = useMemo<ReaderPage[]>(() => book?.pages.map(page => ({
+  const languages = useMemo(() => book ? publicationLanguages(book) : [], [book]);
+  const [preferredLanguage, setPreferredLanguage] = useState<string | null>(() => storedReaderLanguage() ?? language ?? null);
+  const selectedLanguage = languages.find(item => item.locale === preferredLanguage) ?? languages[0];
+  const bookPages = selectedLanguage?.pages ?? book?.pages;
+  const languageName = (locale: PublicationLocale) => LANGUAGES.find(item => item.code === locale)?.label ?? t("Original language");
+  const downloadLocale = selectedLanguage && selectedLanguage !== languages[0] ? `?locale=${selectedLanguage.locale}` : "";
+  function chooseLanguage(locale: PublicationLocale) {
+    setPreferredLanguage(locale);
+    storeReaderLanguage(locale);
+  }
+  const languageToggle = (tone: "reader" | "paper") => languages.length > 1 && <div role="group" aria-label={t("Book language")} className="flex">
+    {languages.map((item, index) => <button
+      key={item.locale}
+      type="button"
+      lang={item.locale === "source" ? undefined : item.locale}
+      aria-label={languageName(item.locale)}
+      aria-pressed={item === selectedLanguage}
+      onClick={() => chooseLanguage(item.locale)}
+      className={cn(
+        "min-h-11 min-w-11 border-2 px-3 font-meta text-xs font-bold transition-colors",
+        index > 0 && "-ml-[2px]",
+        tone === "reader"
+          ? (item === selectedLanguage ? "relative border-bristol bg-bristol text-ink-black" : "border-bristol/40 text-bristol hover:border-bristol")
+          : (item === selectedLanguage ? "relative border-ink-black bg-ink-black text-pulp-paper" : "border-ink-black text-ink-black hover:bg-ink-black/10"),
+      )}
+    >{item.locale === "source" ? t("Original") : item.locale.toUpperCase()}</button>)}
+  </div>;
+  const pages = useMemo<ReaderPage[]>(() => bookPages?.map(page => ({
     pageNumber: page.number,
     revision: 1,
     imageUrl: page.url,
     spreadRole: page.spread_role ?? (page.width > page.height ? "spread" : "single"),
-  })) ?? [], [book]);
+  })) ?? [], [bookPages]);
 
   async function share() {
     try {
@@ -59,7 +106,7 @@ export function PublicBookPage() {
         <summary className="cursor-pointer p-3 underline">{t("Download this book")}</summary>
         <img className="mx-auto my-4 w-full max-w-64 border-2 border-ink-black" src={`/api/public/books/${book.id}/bookend`} alt={t("Back page preview")} loading="lazy" />
         <div className="flex justify-center gap-6">
-          {["pdf", "cbz"].map(format => <a key={format} className="p-3 underline" href={`/api/public/books/${book.id}/download/${format}`}>{format.toUpperCase()}</a>)}
+          {["pdf", "cbz"].map(format => <a key={format} className="p-3 underline" href={`/api/public/books/${book.id}/download/${format}${downloadLocale}`}>{format.toUpperCase()}</a>)}
         </div>
       </details>
     </section>
@@ -81,14 +128,15 @@ export function PublicBookPage() {
         <title>{book.title} — Scenewright</title>
         {!readerOpen && <>
           <section className="public-book-intro">
-            {book.pages[0] && <button className="public-book-cover" onClick={() => setReaderOpen(true)} aria-label={t("Open the first page")}>
-              <img src={book.pages[0].url} width={book.pages[0].width} height={book.pages[0].height} alt={t("First page of the book")} />
+            {bookPages?.[0] && <button className="public-book-cover" onClick={() => setReaderOpen(true)} aria-label={t("Open the first page")}>
+              <img src={bookPages[0].url} width={bookPages[0].width} height={bookPages[0].height} alt={t("First page of the book")} />
             </button>}
             <div className="public-book-description">
             <h1 className="font-display text-4xl">{book.title}</h1>
             <p className="mt-2 font-meta">{book.author} · {book.pages.length} {t("pages")}</p>
             {book.description && <p className="mt-4 max-w-prose font-body">{book.description}</p>}
             <div className="mt-5 flex flex-wrap gap-3">
+              {languageToggle("paper")}
               <Button onClick={() => setReaderOpen(true)}>{t("Read your book")}</Button>
               <Button variant="outline" onClick={() => void share()}>{t("Share book")}</Button>
             </div>
@@ -103,7 +151,9 @@ export function PublicBookPage() {
           title={book.title}
           onClose={() => setReaderOpen(false)}
           closeLabel={t("About this book")}
+          languageLabel={languages.length > 1 && selectedLanguage ? languageName(selectedLanguage.locale) : undefined}
           headerActions={<>
+            {languageToggle("reader")}
             <button type="button" className="min-h-11 border-2 border-bristol/40 px-3 font-meta text-xs font-bold text-bristol hover:border-bristol" onClick={() => void share()}>{t("Share book")}</button>
             {message && <span role="status" className="max-w-64 text-sm text-bristol">{message}</span>}
           </>}

@@ -534,6 +534,53 @@ def composite_identity(render, state: PageLettering, style: LetteringStyle) -> s
     ).hexdigest()
 
 
+def stores_locale(state: PageLettering, locale: str) -> bool:
+    """Translation's ``translate_count == 0`` rule: every element, hidden ones too."""
+    return all(locale in element.text_by_locale for element in state.elements)
+
+
+@locked_mutation
+def render_stored_locale(
+    artifacts: TargetArtifacts,
+    page_number: int,
+    locale: str,
+    *,
+    expected_render_revision: int,
+) -> bytes:
+    """Letter the current art in another stored language; the project is unchanged.
+
+    The saved placement is laid out again for ``locale`` in memory and must pass
+    publication validation (no overflow, warnings or missing copy).
+    """
+    if not is_hybrid(artifacts):
+        raise LetteringConflict("Baked lettering has no other languages.")
+    render = active_render(artifacts, page_number)
+    if render.revision != expected_render_revision:
+        raise LetteringConflict("The selected artwork changed. Refresh the page preview.")
+    state = artifacts.read_lettering(page_number)
+    style = artifacts.read_lettering_style()
+    if state.comic_page_sha256 != artifacts.read_page(page_number).content_sha256:
+        raise LetteringConflict(
+            "Lettering belongs to an earlier plan. Open Lettering and rebuild it explicitly."
+        )
+    if not stores_locale(state, locale):
+        raise LetteringConflict(
+            f"Page {page_number} has lettering without a saved {locale} translation."
+        )
+    localized = resolve_lettering(_replace(state, locale=locale), style)
+    validate_lettering_render(localized, style, render.width, render.height)
+    image = artifacts.read_render(page_number, render.revision)
+    if hashlib.sha256(image).hexdigest() != render.image_sha256:
+        raise ValueError("Base artwork checksum does not match its provenance.")
+    identity = composite_identity(render, localized, style)
+    path = artifacts.composite_path(page_number, identity)
+    if path.is_file():
+        return path.read_bytes()
+    data = render_lettered_page(localized, style, image, render.width, render.height)
+    artifacts.write_composite(page_number, identity, data)
+    return data
+
+
 @locked_mutation
 def composite_page(
     artifacts: TargetArtifacts,
