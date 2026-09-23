@@ -33,6 +33,7 @@ from novel_to_comic.page_drawing import (
 )
 from novel_to_comic.narrative_review import require_draw_narrative_reviews
 from novel_to_comic.page_previews import ensure_page_render_preview
+from novel_to_comic.page_source import PageSourceStale, page_source_view
 from novel_to_comic.page_ocr import GatewayPageOCRAdapter
 from novel_to_comic.page_review import (
     accept_editorial_page_issue,
@@ -443,6 +444,22 @@ def get_page(page_number: int, project=Depends(get_project)):
         "failure": _page_failure(target, page_number),
         "analysis_recovery": _analysis_recovery(target, page_number),
     }
+
+
+@router.get("/pages/{page_number}/source")
+def read_page_source(page_number: int, project=Depends(get_project)):
+    """Manuscript passages this page adapts; a provider-free artifact read."""
+    project_dir, _config, _state = project
+    try:
+        return page_source_view(TargetArtifacts(project_dir), page_number)
+    except ArtifactMissing as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ArtifactInvalid as exc:
+        raise HTTPException(
+            409, f"Saved story artifacts failed validation: {exc}. Re-run the owning stage and retry.",
+        ) from exc
+    except PageSourceStale as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.get("/pages/{page_number}/renders/{revision}")

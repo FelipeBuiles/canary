@@ -25,6 +25,7 @@ import {
   getBookPlan,
   getStageValidation,
   getCompletePage,
+  getPageSource,
   getCompletePageEstimate,
   getPageAnalysisEstimate,
   getCompletePageBatchEstimate,
@@ -541,6 +542,15 @@ export function useCompletePage(project: string | undefined, pageNumber: number 
   return useQuery({
     queryKey: ["project", project, "complete-pages", pageNumber],
     queryFn: () => getCompletePage(project!, pageNumber!),
+    enabled: !!project && pageNumber != null,
+  });
+}
+
+export function usePageSource(project: string | undefined, pageNumber: number | undefined) {
+  return useQuery({
+    // Nested under the page key so page and plan invalidations refresh it.
+    queryKey: ["project", project, "complete-pages", pageNumber, "source"],
+    queryFn: () => getPageSource(project!, pageNumber!),
     enabled: !!project && pageNumber != null,
   });
 }

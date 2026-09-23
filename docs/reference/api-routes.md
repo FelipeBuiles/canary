@@ -69,6 +69,7 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `POST` | `/api/operator_billing/refunds` | `refund_unused_credit_grant` | `operator_billing.py` |
 | `GET` | `/api/projects/{project}/pages` | `list_pages` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_number}` | `get_page` | `pages.py` |
+| `GET` | `/api/projects/{project}/pages/{page_number}/source` | `read_page_source` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_number}/renders/{revision}` | `get_page_render` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_number}/renders/{revision}/correction` | `read_render_correction` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_number}/renders/{revision}/preview/{rendition}` | `get_page_render_preview` | `pages.py` |

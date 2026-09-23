@@ -1,0 +1,33 @@
+/** Pages → Source: manuscript passages behind one comic page. */
+export const PAGE_SOURCE_TEXT = {
+  es: {
+    "Source": "Fuente",
+    "Loading source passages…": "Cargando pasajes de la fuente…",
+    "The source for this page is not available.": "La fuente de esta página no está disponible.",
+    "Lettered in panel {panels}": "Rotulado en la viñeta {panels}",
+    "Drawn in panel {panels}": "Dibujado en la viñeta {panels}",
+    "Point at a highlight to outline its panel. Outlines come from the page's text check and can be approximate.": "Señala un resaltado para marcar su viñeta. Los contornos provienen de la revisión de texto de la página y pueden ser aproximados.",
+    "Panel outlines are not available for this artwork.": "Los contornos de viñeta no están disponibles para esta ilustración.",
+    "Source passages": "Pasajes de la fuente",
+    "The manuscript this page adapts, with the words that became lettering or drawn details.": "El manuscrito que adapta esta página, con las palabras que se convirtieron en rotulación o en detalles dibujados.",
+    "Highlight key": "Leyenda de resaltados",
+    "Became lettering": "Se convirtió en rotulación",
+    "Drawn on this page": "Dibujado en esta página",
+    "This page cites no manuscript passages.": "Esta página no cita pasajes del manuscrito.",
+  },
+  fr: {
+    "Source": "Source",
+    "Loading source passages…": "Chargement des passages source…",
+    "The source for this page is not available.": "La source de cette page n’est pas disponible.",
+    "Lettered in panel {panels}": "Lettré dans la case {panels}",
+    "Drawn in panel {panels}": "Dessiné dans la case {panels}",
+    "Point at a highlight to outline its panel. Outlines come from the page's text check and can be approximate.": "Pointez un surlignage pour encadrer sa case. Les contours viennent de la vérification du texte de la page et peuvent être approximatifs.",
+    "Panel outlines are not available for this artwork.": "Les contours des cases ne sont pas disponibles pour cette illustration.",
+    "Source passages": "Passages source",
+    "The manuscript this page adapts, with the words that became lettering or drawn details.": "Le manuscrit adapté par cette page, avec les mots devenus lettrage ou détails dessinés.",
+    "Highlight key": "Légende des surlignages",
+    "Became lettering": "Devenu lettrage",
+    "Drawn on this page": "Dessiné sur cette page",
+    "This page cites no manuscript passages.": "Cette page ne cite aucun passage du manuscrit.",
+  },
+} as const;

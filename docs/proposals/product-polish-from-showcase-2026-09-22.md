@@ -34,6 +34,16 @@ Done in the working tree, with provider-free tests. There was no visual pass in 
   stored. The chips appear inside Project language. Still open: a preview-only language toggle in the page editor.
 - **A11:** the resize hit area sits outside the box, "Confirm placement" replaces
   "Save lettering" while review is pending, and the gallery shows a "Needs placement" badge.
+- **A7 (September 23):** Pages → page detail has a read-only **Source** tab backed by
+  `GET /pages/{n}/source` (`page_source.py`). Passages are the page's beat source units plus
+  lettering citations. Lettering is panel-level: the verbatim words are highlighted, or the whole
+  cited unit when the copy paraphrases it. Ledger `depicted`/`visual_motif` units are beat-level and
+  point at every panel on the page that carries the beat. Hovering or focusing a highlight outlines its
+  panel(s) only when the current render's text check has OCR panel boxes tied to planned panels, either
+  through matched lettering or through a proven reading order whose panel count equals the plan's.
+  Plan and Draw store no canonical panel geometry (`pinned_geometry` is unused). Pages without a
+  text check show no outlines. Stale lineage (source→Adapt→Plan) is rejected with a rerun instruction.
+  **Later:** panel-level depiction would need Plan to cite source units per content item.
 - **B1:** audit is clean. Durable jobs already run on the admitted `Config` snapshot, and only the
   translation recheck re-read disk (already patched).
 - **B2:** `lettering_translation` has its own per-account lane and dispatch lock. Payloads carry
@@ -43,7 +53,7 @@ Done in the working tree, with provider-free tests. There was no visual pass in 
 - **B5:** fresh editions already composite without editor saves (existing test). The real failure
   was engine drift (v9→v10 in `a918055`). Composites now reflow in memory without saving, and placement review is requested.
 - **B7:** the reader slider announces "Page N of M".
-- **Not started:** A7, A10, A12, B4 (each needs planning), and B6 (read-only check: failed proofs
+- **Not started:** A10, A12, B4 (each needs planning), and B6 (read-only check: failed proofs
   already show "Try sample again" behind an estimate).
 
 **Evidence labels:** *Verified* = reproduced or read in code during this session.

@@ -73,6 +73,17 @@ const cost: CostEstimate = { estimate_credits: 7, reserved_credits: 10, reservat
 
 vi.mock("../api/queries", () => ({
   useCompletePage: () => ({ data: undefined }),
+  usePageSource: () => ({
+    data: {
+      page_number: 1, page_revision: 2, geometry_render_revision: null,
+      panels: [{ id: "panel-1", order: 1, panel_role: "standard", box: null }],
+      passages: [{ scene_title: "The market", units: [{ id: "source-1", ordinal: 1, segments: [
+        { text: "Mara argued at the market.", kind: "depicted", content_ids: ["panel-1"] },
+      ] }] }],
+    },
+    error: null,
+    isLoading: false,
+  }),
   useProjectStatus: () => ({
     data: {
       stages: { ...stageStatuses, brief: { status: briefApproved ? "complete" : "awaiting_review", approved: briefApproved } },
@@ -1165,6 +1176,18 @@ describe("PagesRoom", () => {
     // Visual and checks views stay out of the default viewport.
     expect(screen.queryByText("VISUAL REVIEW")).toBeNull();
     expect(screen.queryByText("ISSUE HISTORY")).toBeNull();
+  });
+
+  it("shows the manuscript source for the open page in its own tab", () => {
+    renderRoom();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Source" }));
+
+    expect(screen.getByRole("button", { name: "Source" }).getAttribute("aria-pressed")).toBe("true");
+    const region = screen.getByRole("region", { name: "Source" });
+    expect(within(region).getByText("Mara argued at the market.").tagName).toBe("MARK");
+    expect(within(region).getByText("Panel outlines are not available for this artwork.")).toBeTruthy();
   });
 
   it("switches between visual and checks views and keeps the draft mounted", () => {

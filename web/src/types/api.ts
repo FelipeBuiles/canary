@@ -501,6 +501,34 @@ export interface CompletePageDetail {
   analysis_recovery: PageAnalysisRecovery;
 }
 
+/** A run of one manuscript unit; marked runs cite the planned panels they became. */
+export interface PageSourceSegment {
+  text: string;
+  kind: "lettering" | "depicted" | null;
+  content_ids: string[];
+}
+
+export interface PageSourcePassage {
+  scene_title: string | null;
+  units: { id: string; ordinal: number; segments: PageSourceSegment[] }[];
+}
+
+/** Normalized box derived from the text check; never canonical layout. */
+export interface PageSourceBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface PageSourceView {
+  page_number: number;
+  page_revision: number;
+  passages: PageSourcePassage[];
+  panels: { id: string; order: number; panel_role: string; box: PageSourceBox | null }[];
+  geometry_render_revision: number | null;
+}
+
 export interface RenderAnalysis {
   render_image_sha256?: string;
   ocr_observations?: Array<{ id: string; text: string }>;
