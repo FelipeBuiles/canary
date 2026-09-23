@@ -1,6 +1,6 @@
 """Optional, single-turn ChatGPT Codex transport; never an API fallback.
 
-Pinned source: openai/codex rust-v0.147.0, sdk/python and codex-rs/{config,
+Pinned source: openai/codex rust-v0.156.1, sdk/python and codex-rs/{config,
 model-provider-info,ext/image-generation}. The runtime owns image copies under
 ~/.codex/generated_images; model-selected output paths are not supported. Only
 validated typed base64 is returned here. No credential files are inspected.
@@ -26,8 +26,8 @@ import uuid
 
 from novel_to_comic.ai.errors import AIRefusalError
 
-SDK_VERSION = "0.147.0"
-RUNTIME_VERSION = "0.147.0"
+SDK_VERSION = "0.156.1"
+RUNTIME_VERSION = "0.156.1"
 EXECUTION_VERSION = "canary-codex-subprocess-v6-image-tool-arguments"
 IMAGE_SOURCE_SELECTOR = "gpt-image-2"
 PROVIDER = "canary_codex_subscription"

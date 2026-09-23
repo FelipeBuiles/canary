@@ -9,6 +9,43 @@ and three project translations. This document records what that exposed. It is
 meant to be picked up in fresh sessions, so each item says why (evidence), what to
 build, where the code lives, and how to know it is done.
 
+## Implementation status (September 22, 2026, same day)
+
+Done in the working tree, with provider-free tests. There was no visual pass in a signed-in browser.
+
+- **§0:** verified. `_supported_saved_selections` (commit `fbca23c`) lets every project
+  open. Retired project choices show as "Retired model" in project settings, and the
+  account default is used instead. Inventory: Call of Cthulhu, The Egg and The Most Dangerous Game
+  still store retired API models.
+- **A1:** after a custom proof lands, one vision call on the visual-review model fills
+  `display_label` and the descriptive fields. It is best effort, priced in the direction estimate
+  and never overwrites an author's label. `PATCH /styles/{id}` renames or hides a proof. `label`
+  stays as it was because it is part of the stable suggestion id.
+- **A2:** Grid / Flip / Wall in the Look room.
+- **A3:** single directions queue beside other proof jobs; admission and index assignment
+  happen under `production_lock`. `is_suggesting` gates batches, and `is_generating` still drives polling.
+  Remaining limit: the very first direction (while the Style stage is `running`) still blocks new directions.
+- **A4:** All / Yours / Suggested filters, reversible Hide with a "Hidden (n)" row, and Yours sorted newest first.
+- **A5:** `components/ui/motion.tsx` (`Stamp`, `usePress`, `useArrival`): the style-selected stamp,
+  proof press, the one-time whole-book pull-back (`WholeBookReveal`) and the PRINTED export stamp.
+- **A6:** `components/ui/Loupe.tsx` on proof cards and the page view. The lettering editor keeps its own zoom.
+- **A8:** a WIPE comparison mode with a one-time auto-sweep per revision pair.
+- **A9:** `POST /lettering/locale` switches, with no charge, to languages that are already
+  stored. The chips appear inside Project language. Still open: a preview-only language toggle in the page editor.
+- **A11:** the resize hit area sits outside the box, "Confirm placement" replaces
+  "Save lettering" while review is pending, and the gallery shows a "Needs placement" badge.
+- **B1:** audit is clean. Durable jobs already run on the admitted `Config` snapshot, and only the
+  translation recheck re-read disk (already patched).
+- **B2:** `lettering_translation` has its own per-account lane and dispatch lock. Payloads carry
+  `waiting_for_other_project`.
+- **B3:** root cause was visual review requiring the *current* draw adapter. It now validates against
+  the edition's own profile (`validate_review_request`). Drawing still refuses retired profiles.
+- **B5:** fresh editions already composite without editor saves (existing test). The real failure
+  was engine drift (v9→v10 in `a918055`). Composites now reflow in memory without saving, and placement review is requested.
+- **B7:** the reader slider announces "Page N of M".
+- **Not started:** A7, A10, A12, B4 (each needs planning), and B6 (read-only check: failed proofs
+  already show "Try sample again" behind an estimate).
+
 **Evidence labels:** *Verified* = reproduced or read in code during this session.
 *Observed* = seen once in the running app, not reproduced. *To verify* = plausible;
 check before building.

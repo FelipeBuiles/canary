@@ -272,3 +272,55 @@ def test_transport_ambiguity_survives_page_phase_annotation():
     _run_single_job_worker(job)
     assert job.phase == "ambiguous_submission"
     assert generation_job_payload(None, job)["phase"] == "ambiguous_submission"
+
+
+def test_text_only_translation_does_not_wait_behind_another_projects_image_job(tmp_path, monkeypatch):
+    from novel_to_comic.config import Config
+    from novel_to_comic.server.admission import Admission
+    from novel_to_comic.server.durable_queue import dispatch_lock
+    from novel_to_comic.server.generation_jobs import generation_job_payload, run_generation_job
+    from novel_to_comic.server.job_commands import command
+    from novel_to_comic.server import job_execution
+
+    app = SimpleNamespace(state=SimpleNamespace(
+        admission=Admission(tmp_path), generation_jobs={}, generation_job_timeout_seconds=5,
+    ))
+
+    def job(identity, project, kind, operation, sequence):
+        spec = command(operation, tmp_path, Config()).model_copy(update={"stage": "style", "user_id": "user-1"})
+        created = GenerationJob(id=identity, project_name=f"user-1:{project}", kind=kind, label=identity,
+                                payload={}, sequence=sequence, runner=None, command=spec, user_id="user-1")
+        app.state.generation_jobs[identity] = created
+        return created
+
+    image = job("image", "carl", "style_sample", "style_sample", 1)
+    translation = job("translation", "egg", "lettering_translation", "lettering_translation", 2)
+    other_image = job("other-image", "egg", "style_sample", "style_sample", 3)
+    assert dispatch_lock("q", translation) == "q:account:user-1:light"
+    assert dispatch_lock("q", image) == "q:account:user-1"
+    release = asyncio.Event()
+    ran = []
+
+    async def execute(_app, current):
+        ran.append(current.id)
+        if current.id == "image":
+            await release.wait()
+
+    monkeypatch.setattr(job_execution, "execute_command", execute)
+
+    async def exercise():
+        blocking = asyncio.create_task(run_generation_job(app, image))
+        await asyncio.sleep(0.01)
+        assert image.status == "running"
+        assert generation_job_payload(app, translation)["waiting_for_other_project"] is False
+        assert generation_job_payload(app, other_image)["waiting_for_other_project"] is True
+        await asyncio.wait_for(run_generation_job(app, translation), 1)
+        assert translation.status == "complete" and image.status == "running"
+        waiting = asyncio.create_task(run_generation_job(app, other_image))
+        await asyncio.sleep(0.01)
+        assert other_image.status == "queued"
+        release.set()
+        await asyncio.wait_for(asyncio.gather(blocking, waiting), 1)
+
+    asyncio.run(exercise())
+    assert ran == ["image", "translation", "other-image"]

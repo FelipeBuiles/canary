@@ -5,6 +5,9 @@ export interface StyleSuggestion {
   id: string;
   index: number;
   label: string;
+  /** Presentation name from the proof-naming pass or an author rename. */
+  display_label?: string;
+  hidden?: boolean;
   origin: string;
   role: string | null;
   medium: string;
@@ -32,6 +35,8 @@ export interface StyleSuggestion {
 
 export interface StylesData {
   is_generating?: boolean;
+  /** A suggestion batch owns the portfolio; single proofs may still queue. */
+  is_suggesting?: boolean;
   suggestions: StyleSuggestion[];
   active_index: number | null;
   active_id: string | null;
@@ -128,6 +133,30 @@ export function generateStyleValidation(
   return apiFetch(`/projects/${encodeURIComponent(project)}/styles/validation`, {
     method: "POST",
     body: JSON.stringify({ id }),
+  });
+}
+
+export function isAuthorDirection(suggestion: Pick<StyleSuggestion, "origin">): boolean {
+  return suggestion.origin.startsWith("user_");
+}
+
+export function proofImageUrl(projectName: string, suggestion: Pick<StyleSuggestion, "sample_preview_url" | "index">): string {
+  return suggestion.sample_preview_url
+    ?? `/api/projects/${encodeURIComponent(projectName)}/files/samples/style_${suggestion.index}.png`;
+}
+
+export function styleName(suggestion: Pick<StyleSuggestion, "label" | "display_label">): string {
+  return suggestion.display_label || suggestion.label;
+}
+
+export function updateStylePresentation(
+  project: string,
+  id: string,
+  changes: { display_label?: string; hidden?: boolean },
+): Promise<{ suggestion: StyleSuggestion }> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/styles/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(changes),
   });
 }
 

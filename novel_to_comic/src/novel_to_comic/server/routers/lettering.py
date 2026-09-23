@@ -32,7 +32,7 @@ from ..credited_job import enqueue_reserved_generation_job
 from ..generation_jobs import generation_job_payload
 from novel_to_comic.lettering.translation import (
     TargetLocale, TranslationSnapshotConflict, assert_snapshot,
-    prepare_translation, translate_project,
+    prepare_translation, switch_stored_locale, translate_project,
 )
 
 router = APIRouter()
@@ -176,6 +176,13 @@ class LetteringTranslate(BaseModel):
 @_errors
 def get_translation_estimate(target_locale: TargetLocale, project=Depends(get_project)):
     return prepare_translation(TargetArtifacts(project[0]), project[1], target_locale).estimate
+
+
+@router.post("/lettering/locale")
+@_errors
+def post_stored_locale(body: LetteringTranslate, project=Depends(get_project)):
+    """Free, synchronous switch between languages that are already fully stored."""
+    return switch_stored_locale(TargetArtifacts(project[0]), project[1], body.target_locale, body.expected_snapshot_sha256)
 
 
 @router.post("/lettering/translate")

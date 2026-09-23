@@ -198,6 +198,8 @@ export interface GenerationJob {
   payload: Record<string, unknown>;
   status: GenerationJobStatus;
   queue_position: number | null;
+  /** Queued behind this account's running work in another project. */
+  waiting_for_other_project?: boolean;
   queued_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -466,6 +468,7 @@ export interface PageAnalysisRecovery {
 export interface CompletePageSummary {
   lettering_mode?: "hybrid" | "baked";
   lettering_revision?: number | null;
+  lettering_placement_review_needed?: boolean;
   page: ComicPage;
   active_render: PageGenerationProvenance | null;
   issues: PageIssue[];

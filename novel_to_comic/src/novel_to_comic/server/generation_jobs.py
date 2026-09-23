@@ -76,6 +76,21 @@ def is_fal_page_draw(job: GenerationJob) -> bool:
     )
 
 
+# Text-only work with no image spend. It gets its own per-account lane so
+# lettering stays interactive while an image job renders in another project.
+LIGHT_JOB_KINDS = frozenset({"lettering_translation"})
+
+
+def is_light_job(job: GenerationJob) -> bool:
+    return job.kind in LIGHT_JOB_KINDS
+
+
+def account_lane_key(job: GenerationJob) -> str:
+    if is_fal_page_draw(job):
+        return f"fal-page:{job.sequence % 3}"
+    return "light" if is_light_job(job) else "exclusive"
+
+
 class _AccountLane:
     """Three FAL pages may run together; all other account work is exclusive."""
 
@@ -123,11 +138,11 @@ class _AccountLane:
                 self.condition.notify_all()
 
 
-def _account_lane(app: FastAPI, user_id: str) -> _AccountLane:
+def _account_lane(app: FastAPI, user_id: str, *, light: bool = False) -> _AccountLane:
     lanes = getattr(app.state, "user_generation_lanes", None)
     if lanes is None:
         lanes = app.state.user_generation_lanes = {}
-    return lanes.setdefault(user_id, _AccountLane())
+    return lanes.setdefault(f"{user_id}:light" if light else user_id, _AccountLane())
 
 
 def job_transition_lock(app: FastAPI, user_id: str) -> asyncio.Lock:
@@ -219,6 +234,7 @@ def enqueue_generation_job(
 
 def generation_job_payload(app: FastAPI | None, job: GenerationJob) -> dict[str, Any]:
     queue_position: int | None = None
+    waiting_for_other_project = False
     if job.status == "queued":
         jobs = app.state.generation_jobs if app is not None else _global_jobs
         queued = sorted(
@@ -234,6 +250,13 @@ def generation_job_payload(app: FastAPI | None, job: GenerationJob) -> dict[str,
             (index + 1 for index, candidate in enumerate(queued) if candidate.id == job.id),
             None,
         )
+        # Explain waits caused by the same account's work in another project.
+        waiting_for_other_project = bool(job.user_id) and any(
+            candidate.status == "running" and candidate.user_id == job.user_id
+            and candidate.project_name != job.project_name
+            and account_lane_key(candidate) == account_lane_key(job)
+            for candidate in jobs.values()
+        )
 
     stage = (job.payload.get("stage") or job.command.stage) if job.command else (
         "style" if job.kind.startswith("style_") else "draw" if job.kind == "complete_page_draw" else "cast"
@@ -247,6 +270,7 @@ def generation_job_payload(app: FastAPI | None, job: GenerationJob) -> dict[str,
         "payload": job.payload,
         "status": job.status,
         "queue_position": queue_position,
+        "waiting_for_other_project": waiting_for_other_project,
         "queued_at": _iso(job.queued_at),
         "started_at": _iso(job.started_at),
         "finished_at": _iso(job.finished_at),
@@ -297,7 +321,8 @@ async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
 
         async with AsyncExitStack() as stack:
             if job.user_id:
-                await stack.enter_async_context(_account_lane(app, job.user_id).enter(is_fal_page_draw(job)))
+                lane = _account_lane(app, job.user_id, light=is_light_job(job))
+                await stack.enter_async_context(lane.enter(is_fal_page_draw(job)))
             for semaphore in semaphores:
                 await stack.enter_async_context(semaphore)
             if job.user_id:

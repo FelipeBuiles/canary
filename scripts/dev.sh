@@ -126,7 +126,7 @@ import importlib.metadata
 import sys
 try:
     installed = all(
-        importlib.metadata.version(package) == "0.147.0"
+        importlib.metadata.version(package) == "0.156.1"
         for package in ("openai-codex", "openai-codex-cli-bin")
     )
 except importlib.metadata.PackageNotFoundError:
@@ -167,6 +167,7 @@ wait_for_http() {
   local pid="${3:-}"
   local attempt=0
   while [ "$attempt" -lt 60 ]; do
+    if [ "$SHUTDOWN_REQUESTED" = true ]; then return 130; fi
     if http_ok "$url"; then
       ok "$name ($url)"
       return 0
@@ -211,19 +212,7 @@ start_compose_services() {
   docker compose -f "$REPO_ROOT/docker-compose.yml" up -d --wait "$@"
 }
 
-cleanup() {
-  local pid
-  if [ "${#CHILD_PIDS[@]}" -gt 0 ]; then
-    echo
-    echo "[dev] stopping services started by this launcher..."
-    for pid in "${CHILD_PIDS[@]}"; do
-      kill "$pid" 2>/dev/null || true
-    done
-    wait "${CHILD_PIDS[@]}" 2>/dev/null || true
-  fi
-}
-trap cleanup EXIT
-trap 'exit 130' INT TERM
+source "$SCRIPT_DIR/dev_lifecycle.sh"
 
 echo "[dev] Scenewright development stack ($MODE mode)"
 if [ "$MODE" = "codex" ]; then
@@ -237,9 +226,9 @@ required_failed=false
 
 if [ "$MODE" = "codex" ]; then
   if codex_sdk_installed; then
-    ok "Codex SDK and bundled runtime (0.147.0; local metadata only)"
+    ok "Codex SDK and bundled runtime (0.156.1; local metadata only)"
   else
-    failed "Codex mode requires the optional SDK and bundled runtime pinned to 0.147.0"
+    failed "Codex mode requires the optional SDK and bundled runtime pinned to 0.156.1"
     echo "[dev] Install explicitly from the repository root (the launcher never installs it):" >&2
     echo "[dev] uv pip install --python novel_to_comic/.venv/bin/python -r scripts/requirements-codex-dev.txt" >&2
     echo "[dev] Or select --api for normal paid API routing, or --mock for replay." >&2
@@ -306,7 +295,7 @@ else
     starting "mock models from $FIXTURE"
     (
       cd "$REPO_ROOT/novel_to_comic"
-      exec uv run canary-mock-models --source "$FIXTURE"
+      exec "$BACKEND_PYTHON" -c "$DEV_SERVICE_EXEC" uv run canary-mock-models --source "$FIXTURE"
     ) &
     mock_pid=$!
     CHILD_PIDS+=("$mock_pid")
@@ -334,6 +323,7 @@ if [ "$OBSERVABILITY" = true ]; then
   fi
 fi
 
+stop_if_requested
 if backend_healthy_for_mode; then
   ok "Backend ($BACKEND_URL)"
 elif http_responds "$BACKEND_URL/api/health/ready"; then
@@ -360,9 +350,9 @@ elif [ "$CHECK_ONLY" = false ] && [ "$required_failed" = false ]; then
         echo "[dev] Choose Codex or API models in Account → Models (dev). No legacy route overrides are active." >&2
       fi
       export CANARY_CODEX_DEV_IMAGE_REASONING_MODEL="${CANARY_CODEX_DEV_IMAGE_REASONING_MODEL-gpt-5.5}"
-      exec uv run --no-sync pipeline serve --dev --projects-dir "$REPO_ROOT/projects"
+      exec "$BACKEND_PYTHON" -c "$DEV_SERVICE_EXEC" uv run --no-sync pipeline serve --dev --projects-dir "$REPO_ROOT/projects"
     fi
-    exec uv run pipeline serve --dev --projects-dir "$REPO_ROOT/projects"
+    exec "$BACKEND_PYTHON" -c "$DEV_SERVICE_EXEC" uv run pipeline serve --dev --projects-dir "$REPO_ROOT/projects"
   ) &
   backend_pid=$!
   CHILD_PIDS+=("$backend_pid")
@@ -372,13 +362,14 @@ else
   required_failed=true
 fi
 
+stop_if_requested
 if http_ok "$FRONTEND_URL"; then
   ok "Frontend ($FRONTEND_URL)"
 elif [ "$CHECK_ONLY" = false ] && [ "$required_failed" = false ]; then
   starting "Vite frontend at $FRONTEND_URL"
   (
     cd "$REPO_ROOT/web"
-    exec npm run dev -- --host 127.0.0.1
+    exec "$BACKEND_PYTHON" -c "$DEV_SERVICE_EXEC" npm run dev -- --host 127.0.0.1
   ) &
   frontend_pid=$!
   CHILD_PIDS+=("$frontend_pid")
@@ -388,6 +379,7 @@ else
   required_failed=true
 fi
 
+stop_if_requested
 echo
 if [ "$required_failed" = true ]; then
   failed "development stack is not ready"
@@ -404,4 +396,13 @@ if [ "${#CHILD_PIDS[@]}" -eq 0 ]; then
 fi
 
 echo "[dev] press Ctrl-C to stop the processes started here; Docker dependencies stay running"
-wait "${CHILD_PIDS[@]}"
+service_exit=0
+wait "${CHILD_PIDS[@]}" || service_exit=$?
+if [ "$SHUTDOWN_REQUESTED" = false ]; then
+  signal_owned_services TERM
+fi
+wait_for_owned_services
+if [ "$SHUTDOWN_REQUESTED" = true ]; then
+  exit 130
+fi
+exit "$service_exit"

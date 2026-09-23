@@ -713,3 +713,50 @@ def test_missing_bundled_glyph_is_not_exported_with_a_system_fallback(book):
     assert not result.preflight.ready_to_export
     assert any(issue.code == "lettering_layout" for issue in result.preflight.pages[0].invariant_failures)
     assert not result.preflight.correction_requests
+
+
+def test_page_list_flags_unreviewed_placement_without_writing_lettering(book, monkeypatch):
+    from novel_to_comic.server.routers import pages
+    from novel_to_comic.server.routers.pages import router as pages_router
+
+    monkeypatch.setattr(pages, "_sync_draw_progress", lambda _project_dir: None)
+
+    artifacts, _image = book
+    app = FastAPI()
+    app.include_router(pages_router, prefix="/api/projects/{project_id}")
+    app.dependency_overrides[get_project] = lambda: (artifacts.project_dir, Config(), None)
+    client = TestClient(app)
+
+    def flag():
+        response = client.get("/api/projects/test/pages")
+        assert response.status_code == 200, response.text
+        return response.json()["pages"][0]["lettering_placement_review_needed"]
+
+    assert flag() is True
+    with pytest.raises(Exception):
+        artifacts.read_lettering(1)
+    base = service.editor_state(artifacts, 1)
+    save(artifacts, base["state"], base=base)
+    assert flag() is True
+    save(artifacts, service.editor_state(artifacts, 1)["state"], reviewed=True)
+    assert flag() is False
+
+
+def test_engine_upgrade_composites_without_an_editor_save_but_asks_for_review(book):
+    artifacts, _image = book
+    base = service.editor_state(artifacts, 1)
+    saved = save(artifacts, base["state"], base=base, reviewed=True)
+    render = service.active_render(artifacts, 1)
+    assert not service.placement_review_needed(saved, render)
+    elements = [element.model_dump() for element in saved.elements]
+    for element in elements:
+        element["resolved"]["engine_version"] = "lettering-svg-v9"
+    stale = update(saved, elements=elements)
+    artifacts.write_lettering(stale)
+    before = artifacts.lettering_path(1).read_bytes()
+
+    path, identity = service.composite_page(artifacts, 1)
+
+    assert path.is_file() and identity
+    assert artifacts.lettering_path(1).read_bytes() == before
+    assert service.placement_review_needed(artifacts.read_lettering(1), render)

@@ -108,11 +108,11 @@ PostgreSQL stays on 17, Redis on 7.4 and ClickHouse on the 26.3 LTS line. Newer
 majors require data-format, restore and resource tests. MinIO's selected
 multi-platform digest stops an implicit `latest` image changing between runs.
 
-The optional `openai-codex` SDK and bundled runtime remain on 0.147.0 rather
-than following the registry's newer runtime. That adapter has an explicitly
-restricted execution, authentication, tool and funding contract; its pinned
-runtime is also part of the recorded generation identity. A runtime upgrade
-needs its own capability/security review and opt-in local-auth test. See the
+The optional `openai-codex` SDK and bundled runtime are pinned to 0.156.1.
+That adapter has an explicitly restricted execution, authentication, tool and
+funding contract; its pinned
+runtime is also part of the recorded generation identity. Runtime upgrades
+need a capability/security review and opt-in local-auth test. See the
 [Codex capability reference](codex-dev-capabilities.md). No paid-provider
 fallback, model alias, image retry policy or existing edition selector changes
 as part of this dependency refresh.

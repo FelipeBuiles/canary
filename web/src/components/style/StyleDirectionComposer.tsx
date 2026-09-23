@@ -17,6 +17,8 @@ interface StyleDirectionComposerProps {
   imageReferenceSupported?: boolean;
   busy?: boolean;
   disabled?: boolean;
+  /** Six new suggestions wait for running proofs; author directions can queue. */
+  automaticDisabled?: boolean;
   onRetry?: () => void;
   error?: string | null;
   onAutomatic: () => void;
@@ -35,6 +37,7 @@ export function StyleDirectionComposer({
   imageReferenceSupported = true,
   busy = false,
   disabled = false,
+  automaticDisabled = false,
   onRetry,
   error,
   onAutomatic,
@@ -129,7 +132,7 @@ export function StyleDirectionComposer({
 
       {lane === "automatic" ? (
         <div className="mt-6 flex flex-wrap items-center gap-3">
-          <Button size="lg" onClick={onAutomatic} disabled={busy || disabled}>
+          <Button size="lg" onClick={onAutomatic} disabled={busy || disabled || automaticDisabled}>
             {busy ? t("PREPARING DIRECTIONS…") : t("CREATE SIX DIRECTIONS")}
           </Button>
           {automaticCost != null && automaticCost > 0 && (

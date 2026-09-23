@@ -7,6 +7,7 @@ import { ConfirmDrawer, EntityCard, SectionHeader } from "../composites";
 import { Button } from "../ui/Button";
 import { StatusPill } from "../ui/StatusPill";
 import { Surface } from "../ui/Surface";
+import { Stamp, useArrival } from "../ui/motion";
 
 type ExportFormat = "pdf" | "cbz";
 
@@ -63,6 +64,7 @@ export function BookExportPanel({
             : (format === "pdf" ? t("Creating PDF…") : t("Creating CBZ…"));
           return (
             <EntityCard key={format} padding="tight">
+              {saved && !working && <PrintedStamp saved={!!saved} />}
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <FormatIcon aria-hidden="true" size={28} strokeWidth={1.5} className="text-ink-muted" />
                 <StatusPill tone={working ? "gold" : saved ? "sage" : "pulp"}>
@@ -122,5 +124,17 @@ export function BookExportPanel({
         }}
       />
     </section>
+  );
+}
+
+
+/** Rests on a finished package; slams in when the package lands while watched. */
+function PrintedStamp({ saved }: { saved: boolean }) {
+  const { t } = useI18n();
+  const { arrived, settle } = useArrival(saved);
+  return (
+    <Stamp play={arrived} onSettled={settle} rotate={-8} className="pointer-events-none absolute right-5 top-[4.75rem]">
+      {t("Printed")}
+    </Stamp>
   );
 }

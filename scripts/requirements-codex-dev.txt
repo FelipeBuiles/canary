@@ -1,4 +1,4 @@
 # Optional local Codex diagnostic/probe/backend adapter; not a production dependency.
-# Published metadata: https://pypi.org/pypi/openai-codex/0.147.0/json
-# Requires Python >=3.10; upstream pins openai-codex-cli-bin==0.147.0.
-openai-codex==0.147.0
+# Published metadata: https://pypi.org/pypi/openai-codex/0.156.1/json
+# Requires Python >=3.10; upstream pins openai-codex-cli-bin==0.156.1.
+openai-codex==0.156.1

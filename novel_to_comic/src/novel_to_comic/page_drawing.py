@@ -1012,10 +1012,10 @@ def correction_credit_estimate(compiled: CompiledPageGeneration, *, config: Conf
 
 
 def _validate_compiled_page(
-    compiled: CompiledPageGeneration, profile: PageCapabilityProfile,
+    compiled: CompiledPageGeneration, profile: PageCapabilityProfile, *, drawable: bool = True,
 ) -> None:
     request = compiled.request
-    if not _supported_page_profile(profile):
+    if drawable and not _supported_page_profile(profile):
         raise ValueError("Complete-page profile changed; existing requests cannot be rerouted")
     if (
         request.profile_id != profile.id
@@ -1047,6 +1047,15 @@ def _validate_compiled_page(
         hashlib.sha256(compiled.edit_source_bytes).hexdigest() != request.correction.parent_render_image_sha256
     ):
         raise ValueError("complete-page edit source changed after compilation")
+
+
+def validate_review_request(compiled: CompiledPageGeneration, edition: BookEdition) -> None:
+    """Check the compiled evidence for reviewing existing art under its own edition.
+
+    Review reads a finished render; it never draws, so it must not require the
+    edition's profile to be selectable for new pages today.
+    """
+    _validate_compiled_page(compiled, edition.capability_profile, drawable=False)
 
 
 def _prepare_complete_page(

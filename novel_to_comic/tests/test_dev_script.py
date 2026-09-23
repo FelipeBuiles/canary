@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import fcntl
 import os
+import signal
 import subprocess
+import sys
+import time
 from pathlib import Path
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -253,3 +259,82 @@ def test_default_launcher_mode_uses_api_without_starting_services(tmp_path: Path
     result, docker_log = _run_dev(tmp_path, payload, default_mode=True)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "up -d" not in docker_log
+
+
+def test_second_interrupt_releases_lock_held_by_server_descendant(tmp_path: Path) -> None:
+    """The first interrupt drains; the second must kill an inherited lock owner."""
+    worker = tmp_path / "worker.py"
+    worker.write_text(
+        """import fcntl
+import os
+import signal
+import sys
+import time
+from pathlib import Path
+
+lock = Path(sys.argv[1]).open("a+b")
+fcntl.flock(lock, fcntl.LOCK_EX)
+if os.fork() == 0:
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    Path(sys.argv[2]).write_text(str(os.getpid()))
+    while True:
+        time.sleep(0.1)
+while True:
+    time.sleep(0.1)
+"""
+    )
+    lock_path = tmp_path / "owner.lock"
+    ready_path = tmp_path / "child-ready"
+    service_pid_path = tmp_path / "service-pid"
+    env = os.environ.copy()
+    env.update(
+        DEV_LIFECYCLE=str(REPO_ROOT / "scripts" / "dev_lifecycle.sh"),
+        DEV_PYTHON=sys.executable,
+        DEV_WORKER=str(worker),
+        DEV_LOCK=str(lock_path),
+        DEV_READY=str(ready_path),
+        DEV_PIDFILE=str(service_pid_path),
+    )
+    launcher = subprocess.Popen(
+        ["bash", "-c", """set -euo pipefail
+CHILD_PIDS=()
+source "$DEV_LIFECYCLE"
+"$DEV_PYTHON" -c "$DEV_SERVICE_EXEC" "$DEV_PYTHON" "$DEV_WORKER" "$DEV_LOCK" "$DEV_READY" &
+CHILD_PIDS+=("$!")
+printf '%s' "$!" > "$DEV_PIDFILE"
+wait "${CHILD_PIDS[@]}" || true
+if [ "$SHUTDOWN_REQUESTED" = true ]; then
+  wait_for_owned_services
+  exit 130
+fi
+"""],
+        cwd=REPO_ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not ready_path.exists():
+            assert launcher.poll() is None, "launcher exited before its worker acquired the lock"
+            assert time.monotonic() < deadline, "worker did not become ready"
+            time.sleep(0.02)
+        launcher.send_signal(signal.SIGINT)
+        time.sleep(0.2)
+        assert launcher.poll() is None
+        with lock_path.open("a+b") as probe:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        launcher.send_signal(signal.SIGINT)
+        output, _ = launcher.communicate(timeout=5)
+        assert launcher.returncode == 130, output
+        assert "waiting for running jobs" in output
+        assert "forcing services" in output
+        with lock_path.open("a+b") as probe:
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        if service_pid_path.exists():
+            try:
+                os.killpg(int(service_pid_path.read_text()), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if launcher.poll() is None:
+            launcher.kill()
+            launcher.communicate(timeout=5)

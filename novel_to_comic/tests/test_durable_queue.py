@@ -1,7 +1,11 @@
 """Durable dispatch tests. Set CANARY_TEST_QUEUE_DSN for real PostgreSQL checks."""
 import asyncio
+import fcntl
 import json
 import os
+from pathlib import Path
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -58,6 +62,16 @@ def test_resource_conflicts_allow_independent_lettering_and_style_selection(tmp_
     assert mutation_conflicts(app, "account:book", "/config")
 
 
+def test_stored_language_switch_waits_only_for_work_that_rewrites_lettering(tmp_path):
+    app = make_app(tmp_path)
+    app.state.generation_jobs["style"] = SimpleNamespace(project_name="account:book", kind="style_sample",
+                                                        status="running", payload={})
+    assert not mutation_conflicts(app, "account:book", "/lettering/locale")
+    for kind in ("complete_page_draw", "lettering_translation", "pipeline_stage"):
+        app.state.generation_jobs["style"].kind = kind
+        assert mutation_conflicts(app, "account:book", "/lettering/locale")
+
+
 def test_restore_distinguishes_unstarted_from_unknown(tmp_path):
     app = make_app(tmp_path)
     queue = DurableQueue(app, "postgresql://unused")
@@ -84,6 +98,49 @@ def test_restore_distinguishes_unstarted_from_unknown(tmp_path):
         queue.worker.cancel()
         await asyncio.gather(queue.worker, return_exceptions=True)
     asyncio.run(exercise())
+
+
+def test_hard_exit_releases_volume_owner_and_restores_job_states(tmp_path):
+    child = subprocess.run(
+        [sys.executable, "-c", """import asyncio
+import fcntl
+import os
+import sys
+import time
+from pathlib import Path
+from tests.test_durable_queue import make_app, enqueue
+from novel_to_comic.server.durable_queue import DurableQueue
+from novel_to_comic.server.generation_jobs import persist_generation_job
+
+async def crash(root):
+    app = make_app(root)
+    queue = DurableQueue(app, "postgresql://unused")
+    app.state.durable_queue = queue
+    queue.worker = asyncio.create_task(asyncio.sleep(60))
+    queue.ready = True
+    queue.last_healthy = time.monotonic()
+    enqueue(app, "1")
+    started = enqueue(app, "2")
+    started.status = "running"
+    persist_generation_job(app, started)
+    lock = (root / ".queue-owner.lock").open("a+b")
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    os._exit(73)
+
+asyncio.run(crash(Path(sys.argv[1])))
+""", str(tmp_path)],
+        cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=10,
+    )
+    assert child.returncode == 73, child.stderr
+    with (tmp_path / ".queue-owner.lock").open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    recovered = make_app(tmp_path)
+    DurableQueue(recovered, "postgresql://unused").restore()
+    jobs = {job.label: job for job in recovered.state.generation_jobs.values()}
+    assert jobs["1"].status == "queued"
+    assert jobs["2"].status == "failed"
+    assert jobs["2"].phase == "outcome_unknown"
+    assert jobs["2"].recoverable is False
 
 
 def test_fal_page_dispatch_has_three_locks_without_changing_other_account_work(tmp_path):

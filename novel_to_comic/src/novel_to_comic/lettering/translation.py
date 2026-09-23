@@ -137,6 +137,7 @@ def prepare_translation(artifacts: TargetArtifacts, config: Config, target_local
         estimate = credit_estimate_for_provider_cost(cost, "lettering", reserve=True, funding=funding) | {
             "target_locale": target_locale, "snapshot_sha256": snapshot, "page_count": len(states),
             "element_count": sum(len(state.elements) for state in states), "translate_count": len(items), "preserved_target_count": preserved,
+            "current_locale": settings.locale,
         }
         return PreparedTranslation(target_locale, snapshot, model, tuple(states), style, settings, tuple(batches), estimate)
 
@@ -149,6 +150,37 @@ def _output_chars(batch: str) -> int:
 def assert_snapshot(prepared: PreparedTranslation, expected: str) -> None:
     if prepared.snapshot_sha256 != expected:
         raise TranslationSnapshotConflict("Lettering translation inputs changed. Request a new estimate.")
+
+
+def _localized(artifacts: TargetArtifacts, prepared: PreparedTranslation, translated: dict) -> tuple[list[PageLettering], LetteringSettings]:
+    """Every page re-laid out in the target language; placement needs a fresh review."""
+    updates = []
+    for state in prepared.states:
+        elements = []
+        for element in state.elements:
+            texts = dict(element.text_by_locale)
+            if prepared.target_locale not in texts:
+                texts[prepared.target_locale] = translated[(state.page_number, element.id)]
+            elements.append(element.model_dump() | {"text_by_locale": texts})
+        render = active_render(artifacts, state.page_number)
+        updates.append(resolve_lettering(_replace(state, revision=state.revision + 1, locale=prepared.target_locale,
+            canvas_aspect_ratio=render.width / render.height, elements=elements,
+            reviewed_against_render_revision=None, reviewed_against_image_sha256=None), prepared.style))
+    return updates, LetteringSettings(revision=prepared.settings.revision + 1, locale=prepared.target_locale)
+
+
+def switch_stored_locale(artifacts: TargetArtifacts, config: Config, target_locale: TargetLocale, expected_snapshot: str) -> dict:
+    """Switch to a language every element already stores: no provider, no job, no credits."""
+    with production_lock(artifacts.project_dir):
+        prepared = prepare_translation(artifacts, config, target_locale)
+        assert_snapshot(prepared, expected_snapshot)
+        if prepared.estimate["translate_count"]:
+            raise LetteringConflict("Some lettering has no saved translation in this language. Translate the project instead.")
+        if prepared.settings.locale == target_locale:
+            return {"locale": target_locale, "changed": False}
+        updates, settings = _localized(artifacts, prepared, {})
+        artifacts.publish_lettering_translation(updates, prepared.style, settings)
+        return {"locale": target_locale, "changed": True, "page_count": len(updates)}
 
 
 async def translate_project(artifacts: TargetArtifacts, config: Config, prepared: PreparedTranslation, *, attempt: str | None = None) -> None:
@@ -183,19 +215,7 @@ async def translate_project(artifacts: TargetArtifacts, config: Config, prepared
             translated.update(actual)
         with production_lock(artifacts.project_dir):
             assert_snapshot(current(), prepared.snapshot_sha256)
-            updates = []
-            for state in prepared.states:
-                elements = []
-                for element in state.elements:
-                    texts = dict(element.text_by_locale)
-                    if prepared.target_locale not in texts:
-                        texts[prepared.target_locale] = translated[(state.page_number, element.id)]
-                    elements.append(element.model_dump() | {"text_by_locale": texts})
-                render = active_render(artifacts, state.page_number)
-                updates.append(resolve_lettering(_replace(state, revision=state.revision + 1, locale=prepared.target_locale,
-                    canvas_aspect_ratio=render.width / render.height, elements=elements,
-                    reviewed_against_render_revision=None, reviewed_against_image_sha256=None), prepared.style))
-            settings = LetteringSettings(revision=prepared.settings.revision + 1, locale=prepared.target_locale)
+            updates, settings = _localized(artifacts, prepared, translated)
             artifacts.write_lettering_translation_evidence(attempt, "prepared", {"settings": settings.model_dump(mode="json"), "pages": [state.model_dump(mode="json") for state in updates]})
             # All provider, validation and measurement work precedes the first publication.
             artifacts.publish_lettering_translation(updates, prepared.style, settings)

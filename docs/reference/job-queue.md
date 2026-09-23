@@ -100,6 +100,11 @@ Local `scripts/dev.sh` starts Compose's `queue-db` on loopback port 55432 when n
 external queue URL is supplied, and bootstraps the schema before starting a new
 backend. The PostgreSQL data uses the `canary_queue_data` named volume. Credentials
 in Compose are for local development; use a managed secret in production.
+The launcher runs each service in its own process group. The first Ctrl-C requests
+graceful shutdown and waits for active jobs; a second Ctrl-C stops the groups,
+including a child server that has already closed its HTTP listener. On restart,
+the OS-released volume lock lets the queue restore waiting jobs. Work recorded as
+started remains `outcome_unknown` for inspection and is never replayed automatically.
 
 For explicit bootstrap, with the queue URL set in the environment:
 

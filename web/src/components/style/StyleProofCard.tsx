@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Expand, ScanLine } from "lucide-react";
-import { useImageGenerationMeta, useSetActiveStyle } from "../../api/queries";
-import type { StyleSuggestion } from "../../api/styles";
+import { Check, Expand, EyeOff, Eye, Pencil, ScanLine } from "lucide-react";
+import { useImageGenerationMeta, useSetActiveStyle, useUpdateStylePresentation } from "../../api/queries";
+import { isAuthorDirection, styleName, type StyleSuggestion } from "../../api/styles";
 import { useI18n } from "../../i18n";
 import { EntityCard } from "../composites";
 import { Button } from "../ui/Button";
 import { FlowingDotsPlaceholder } from "../ui/FlowingDotsPlaceholder";
 import { GenerationDetailsModal } from "../ui/GenerationDetailsModal";
 import { LazyImage } from "../ui/LazyImage";
+import { Loupe } from "../ui/Loupe";
+import { Stamp, usePress } from "../ui/motion";
 
 const ROLE_LABELS: Record<string, string> = {
   story_fit_primary: "BEST FIT",
@@ -51,6 +53,12 @@ export function StyleProofCard({
   onRefresh: () => void;
 }) {
   const { t } = useI18n();
+  const name = styleName(suggestion);
+  const yours = isAuthorDirection(suggestion);
+  const presentation = useUpdateStylePresentation();
+  const [renaming, setRenaming] = useState(false);
+  const [draftName, setDraftName] = useState(name);
+  const [presentationError, setPresentationError] = useState<string | null>(null);
   const artUrl = `/api/projects/${encodeURIComponent(projectName)}/files/samples/style_${suggestion.index}.png`;
   const sampleUrl = suggestion.sample_preview_url ?? artUrl;
   const [imgFailed, setImgFailed] = useState(!suggestion.has_sample);
@@ -60,6 +68,8 @@ export function StyleProofCard({
   const [timestamp, setTimestamp] = useState(() => Date.now());
   const displayedProofUrl = `${sampleUrl}${sampleUrl.includes("?") ? "&" : "?"}t=${timestamp}`;
   const wasGenerating = useRef(isGenerating);
+  // A finished proof seats with a press instead of fading in.
+  const arrival = usePress(timestamp);
   const setActive = useSetActiveStyle();
   const { data: meta, isLoading: isMetaLoading } = useImageGenerationMeta(
     projectName,
@@ -90,6 +100,22 @@ export function StyleProofCard({
   const isActive = suggestion.is_active;
   const canSelect = suggestion.has_sample && !isActive && !isGenerating && !selectionDisabled && !setActive.isPending;
 
+  const updatePresentation = (changes: { display_label?: string; hidden?: boolean }, onSuccess?: () => void) => {
+    setPresentationError(null);
+    presentation.mutate(
+      { project: projectName, id: suggestion.id, changes },
+      { onSuccess, onError: (error) => setPresentationError(error.message) },
+    );
+  };
+  const saveName = () => {
+    const next = draftName.trim();
+    if (!next || next === name) {
+      setRenaming(false);
+      return;
+    }
+    updatePresentation({ display_label: next }, () => setRenaming(false));
+  };
+
   const handleSelect = () => {
     if (!canSelect) return;
     setSelectionError(null);
@@ -109,7 +135,7 @@ export function StyleProofCard({
         padding="tight"
         className="min-w-0"
         media={
-          <div className="relative bg-surface-container">
+          <div className={`relative bg-surface-container ${arrival.className}`} onAnimationEnd={arrival.onAnimationEnd}>
             {showLoading ? (
               <FlowingDotsPlaceholder
                 aspect="4 / 5"
@@ -123,30 +149,32 @@ export function StyleProofCard({
                 </div>
               </div>
             ) : (
-              <LazyImage
-                src={displayedProofUrl}
-                alt={suggestion.label}
-                loading="lazy"
-                width={320}
-                height={400}
-                aspect="4 / 5"
-                containerClassName="w-full"
-                className="object-contain object-center"
-                onError={() => setImgFailed(true)}
-              />
+              <Loupe>
+                <LazyImage
+                  src={displayedProofUrl}
+                  alt={name}
+                  loading="lazy"
+                  width={320}
+                  height={400}
+                  aspect="4 / 5"
+                  containerClassName="w-full"
+                  className="object-contain object-center"
+                  onError={() => setImgFailed(true)}
+                />
+              </Loupe>
             )}
 
             {isActive && (
-              <div onAnimationEnd={() => setSelectionConfirmed(false)} className={`${selectionConfirmed ? "animate-register-stamp " : ""}absolute left-0 top-0 bg-narrator-gold px-3 py-1.5 font-meta text-xs font-bold text-ink-black shadow-ink-sm`}>
-                <span className="flex items-center gap-2"><Check size={14} aria-hidden="true" />{t("YOUR STYLE")}</span>
-              </div>
+              <Stamp play={selectionConfirmed} onSettled={() => setSelectionConfirmed(false)} className="absolute left-3 top-4 shadow-ink-sm">
+                <Check size={14} aria-hidden="true" />{t("YOUR STYLE")}
+              </Stamp>
             )}
 
             <div className="absolute right-3 top-3 flex gap-1.5">
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); setIsDetailsOpen(true); }}
-                aria-label={`${t("View proof and direction")} · ${suggestion.label}`}
+                aria-label={`${t("View proof and direction")} · ${name}`}
                 className="flex min-h-11 items-center justify-center border-[2px] border-bristol bg-ink-black px-3 font-meta text-[0.68rem] font-bold tracking-[0.08em] text-bristol transition-colors hover:bg-hero-red"
               >
                 <Expand size={14} className="mr-2" aria-hidden="true" />{t("VIEW PROOF")}
@@ -157,13 +185,53 @@ export function StyleProofCard({
       >
         <div className="flex flex-wrap items-center gap-2">
           <span className="bg-pulp-paper px-2 py-1 font-meta text-[0.65rem] font-bold tracking-[0.06em] text-ink-muted">
-            {t(ROLE_LABELS[suggestion.role ?? ""] ?? "DIRECTION")}
+            {yours ? t("YOURS") : t(ROLE_LABELS[suggestion.role ?? ""] ?? "DIRECTION")}
           </span>
           {suggestion.medium && <span className="text-xs leading-5 text-ink-muted">{suggestion.medium}</span>}
         </div>
-        <h3 className="mt-3 text-balance font-display text-[1.7rem] font-black leading-[1.08] tracking-[-0.03em] text-ink-black">
-          {suggestion.label}
-        </h3>
+        {renaming ? (
+          <form
+            className="mt-3 flex flex-wrap items-center gap-2"
+            onSubmit={(event) => { event.preventDefault(); saveName(); }}
+          >
+            <input
+              autoFocus
+              aria-label={t("Proof name")}
+              value={draftName}
+              maxLength={60}
+              onChange={(event) => setDraftName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                setRenaming(false);
+              }}
+              className="min-h-11 min-w-0 flex-[1_1_12rem] border-[2px] border-ink-black bg-bristol px-3 font-display text-lg font-black text-ink-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red"
+            />
+            <Button type="submit" size="xs" disabled={presentation.isPending || !draftName.trim()}>{t("SAVE NAME")}</Button>
+            <Button type="button" variant="outline" size="xs" onClick={() => setRenaming(false)}>{t("CANCEL")}</Button>
+          </form>
+        ) : (
+          <div className="mt-3 flex items-start justify-between gap-2">
+            <h3 className="min-w-0 text-balance font-display text-[1.7rem] font-black leading-[1.08] tracking-[-0.03em] text-ink-black">
+              {name}
+            </h3>
+            {yours && (
+              <button
+                type="button"
+                onClick={() => { setDraftName(name); setRenaming(true); }}
+                aria-label={`${t("Rename")} · ${name}`}
+                className="flex min-h-11 min-w-11 shrink-0 items-center justify-center text-ink-muted hover:text-ink-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red"
+              >
+                <Pencil size={16} aria-hidden="true" />
+              </button>
+            )}
+          </div>
+        )}
+        {yours && suggestion.origin !== "user_image" && suggestion.template && (
+          <blockquote className="mt-2 line-clamp-3 border-l-[3px] border-narrator-gold pl-3 font-body text-sm italic leading-6 text-ink-black/75" title={suggestion.template}>
+            “{suggestion.template}”
+          </blockquote>
+        )}
         <div className="mt-5 flex flex-wrap gap-2">
           <Button
             variant={isActive ? "secondary" : "primary"}
@@ -182,9 +250,9 @@ export function StyleProofCard({
             {isCompared ? t("COMPARING") : t("COMPARE")}
           </Button>
         </div>
-        {selectionError && (
+        {(selectionError || presentationError) && (
           <p role="alert" className="mt-3 bg-hero-red/10 p-3 text-sm leading-6 text-hero-red">
-            {selectionError}
+            {selectionError ?? presentationError}
           </p>
         )}
         {suggestion.story_fit && (
@@ -228,7 +296,7 @@ export function StyleProofCard({
               {suggestion.has_validation && suggestion.validation_url && (
                 <LazyImage
                   src={suggestion.validation_url}
-                  alt={`${suggestion.label} · ${t("ACTION AUDITION")}`}
+                  alt={`${name} · ${t("ACTION AUDITION")}`}
                   loading="lazy"
                   width={320}
                   height={400}
@@ -268,6 +336,21 @@ export function StyleProofCard({
           </div>
         )}
 
+        {!isActive && (
+          <div className="mt-3 flex justify-end">
+            <button
+              type="button"
+              disabled={presentation.isPending}
+              onClick={() => updatePresentation({ hidden: !suggestion.hidden })}
+              aria-label={`${t(suggestion.hidden ? "Show" : "Hide")} · ${name}`}
+              className="inline-flex min-h-11 items-center gap-2 px-2 font-meta text-xs font-bold text-ink-muted hover:text-ink-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red disabled:opacity-40"
+            >
+              {suggestion.hidden ? <Eye size={14} aria-hidden="true" /> : <EyeOff size={14} aria-hidden="true" />}
+              {t(suggestion.hidden ? "SHOW" : "HIDE")}
+            </button>
+          </div>
+        )}
+
         {sampleRetryAvailable && (
           <div className="mt-4 flex items-center justify-between gap-3 border-[2px] border-hero-red/35 bg-hero-red/10 px-3 py-2.5">
             <span className="font-meta text-[0.62rem] font-bold tracking-[0.08em] text-hero-red">
@@ -288,7 +371,7 @@ export function StyleProofCard({
       <GenerationDetailsModal
         isOpen={isDetailsOpen}
         onClose={() => setIsDetailsOpen(false)}
-        title={suggestion.label}
+        title={name}
         imageUrl={displayedProofUrl}
         metadata={meta}
         prompt={fallbackPrompt}

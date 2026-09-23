@@ -1325,3 +1325,25 @@ def reviewed_story_precondition(monkeypatch):
     # test_narrative_review.py.
     monkeypatch.setattr("novel_to_comic.server.routers.pages.require_draw_narrative_reviews", lambda target: None)
     monkeypatch.setattr("novel_to_comic.narrative_review.require_draw_narrative_reviews", lambda target: None)
+
+
+def test_reviewing_existing_art_never_requires_todays_draw_profile(tmp_path: Path, monkeypatch) -> None:
+    # A retained edition whose model left the catalog can no longer draw, but
+    # its finished pages must stay reviewable under their own frozen profile.
+    from novel_to_comic.server.routers import pages
+
+    _setup(tmp_path)
+    project_dir = tmp_path / "project"
+    _write_empty_story_bible(project_dir)
+    client = _api_client(tmp_path, project_dir)
+
+    class RetiredDrawProfile:
+        def prepare(self, _compiled):
+            raise ValueError("Frozen complete-page request does not match the selected profile")
+
+    monkeypatch.setattr(pages, "complete_page_adapter", lambda _config: RetiredDrawProfile())
+
+    assert client.get("/api/projects/test_project/pages/1/visual-review/estimate").status_code == 200
+    saved = client.get("/api/projects/test_project/pages/1/visual-review")
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["report"] is None

@@ -101,6 +101,10 @@ async def execute_style(app, job, directory, config):
             direction = args.get("direction")
             if operation == "style_direction":
                 await one(args["candidate"], args["index"])
+                await style.describe_custom_direction(
+                    config, directory, args["candidate"],
+                    artifacts.style_sample_path(directory, args["index"]), bible.title,
+                )
                 if not args.get("with_neighbors"):
                     _checkpoint(directory, owned, job.payload["proofs"])
                     return
@@ -109,7 +113,9 @@ async def execute_style(app, job, directory, config):
                 existing_suggestions=existing, custom_direction=direction)
             with production_lock(directory):
                 # No competing suggestion batch is admitted; selecting a proof
-                # changes config/lettering, not this candidate portfolio.
+                # changes config/lettering, not this candidate portfolio. Re-read
+                # so renames and hides made during generation are preserved.
+                existing = style.load_suggestions(directory)
                 style.save_suggestions(directory, existing + suggestions, bible.title)
             await batch(suggestions, len(existing) + 1)
         _checkpoint(directory, owned, job.payload["proofs"])

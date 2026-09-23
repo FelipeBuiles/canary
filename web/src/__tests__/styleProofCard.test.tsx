@@ -7,8 +7,10 @@ import type { StyleSuggestion } from "../api/styles";
 import { I18nProvider } from "../i18n";
 
 const mutation = vi.hoisted(() => ({ mutate: vi.fn(), isPending: false }));
+const presentation = vi.hoisted(() => ({ mutate: vi.fn(), isPending: false }));
 vi.mock("../api/queries", () => ({
   useSetActiveStyle: () => mutation,
+  useUpdateStylePresentation: () => presentation,
   useImageGenerationMeta: () => ({ data: undefined, isLoading: false }),
 }));
 

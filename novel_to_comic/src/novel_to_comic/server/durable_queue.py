@@ -22,11 +22,10 @@ logger = logging.getLogger("canary.queue")
 
 
 def dispatch_lock(queue_name: str, job) -> str:
-    from .generation_jobs import is_fal_page_draw
+    from .generation_jobs import account_lane_key
 
-    if is_fal_page_draw(job):
-        return f"{queue_name}:account:{job.user_id}:fal-page:{job.sequence % 3}"
-    return f"{queue_name}:account:{job.user_id}"
+    lane = account_lane_key(job)
+    return f"{queue_name}:account:{job.user_id}" + ("" if lane == "exclusive" else f":{lane}")
 
 
 class DurableQueue:
