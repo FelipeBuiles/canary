@@ -321,6 +321,9 @@ def persist_non_panel_provenance(
     request_id: str | None, result: ApiResult[Any] | None = None,
     error: BaseException | None = None,
 ) -> None:
+    from novel_to_comic.asset_scope import require_project_asset_path
+
+    require_project_asset_path(project_dir, output_path)
     width = height = None
     if result is not None and result.value is not None:
         width, height = _actual_dimensions(Path(result.value))

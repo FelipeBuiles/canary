@@ -1,6 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { PUBLICATION_TEXT } from "./publicationTranslations";
 import { LETTERING_CHOICE_TEXT } from "./letteringChoiceTranslations";
+import { SAMPLE_LIBRARY_TEXT } from "./sampleLibraryTranslations";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { StageName, StageStatus } from "./types/api";
@@ -20,6 +21,7 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
   es: {
     ...LETTERING_CHOICE_TEXT.es,
     ...PUBLICATION_TEXT.es,
+    ...SAMPLE_LIBRARY_TEXT.es,
     "Page artwork": "Ilustración de la página",
     "Preview only · local styles stay unchanged": "Solo vista previa · los estilos locales no cambian",
     "CREDIT HISTORY": "HISTORIAL DE CRÉDITOS",
@@ -187,19 +189,11 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
     "Adaptation and planning": "Adaptación y planificación",
     "Style text and images": "Texto e imágenes de estilo",
     "Draw and lettering checks": "Dibujo y comprobación del texto",
-    "Specific Codex reasoning model using your local subscription session.": "Modelo de razonamiento Codex específico que usa tu sesión de suscripción local.",
-    "Codex reasoning model; built-in image generation uses the GPT Image 2 selector, not GPT Image 2.5.": "Modelo de razonamiento Codex; la herramienta de imágenes integrada usa el selector GPT Image 2, no GPT Image 2.5.",
-    "Saving settings does not start generation. API models use provider billing; Codex models use your local Codex subscription.": "Guardar no inicia la generación. Los modelos API se facturan por el proveedor; los modelos Codex usan tu suscripción local de Codex.",
-    "Codex is disabled on this server. Start local development with --codex to enable its model choices.": "Codex está desactivado en este servidor. Inicia el desarrollo local con --codex para habilitar sus modelos.",
-    "Saving settings does not start generation. Mix API and Codex models freely; only API calls use credits.": "Guardar la configuración no inicia la generación. Combina modelos de API y Codex libremente; solo las llamadas de API usan créditos.",
-    "Mix API and Codex models freely. Only API calls use credits.": "Combina modelos de API y Codex libremente. Solo las llamadas de API usan créditos.",
     "You can use different models within the same billing source.": "Puedes usar modelos diferentes con la misma fuente de facturación.",
     "API billing": "Facturación API",
-    "Codex subscription": "Suscripción Codex",
     "Models (dev)": "Modelos (dev)",
     "Models for your account": "Modelos de tu cuenta",
     "Model choices could not load. You can still create the project using account models.": "No se pudieron cargar los modelos. Puedes crear el proyecto con los modelos de tu cuenta.",
-    "API models use provider billing; Codex models use your local Codex subscription.": "Los modelos de API se facturan por el proveedor; los modelos Codex usan tu suscripción local de Codex.",
     "Leave a step on account settings, or pin a model for this project. Your account settings will not change.": "Usa la configuración de la cuenta o fija un modelo para este proyecto. La configuración de tu cuenta no cambiará.",
     "Account setting": "Configuración de la cuenta",
     "Models for this project (dev)": "Modelos de este proyecto (dev)",
@@ -1869,6 +1863,7 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
   fr: {
     ...LETTERING_CHOICE_TEXT.fr,
     ...PUBLICATION_TEXT.fr,
+    ...SAMPLE_LIBRARY_TEXT.fr,
     "Page artwork": "Illustration de la page",
     "Preview only · local styles stay unchanged": "Aperçu uniquement · les styles locaux restent inchangés",
     "CREDIT HISTORY": "HISTORIQUE DES CRÉDITS",
@@ -2036,19 +2031,11 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
     "Adaptation and planning": "Adaptation et planification",
     "Style text and images": "Texte et images de style",
     "Draw and lettering checks": "Dessin et vérification du lettrage",
-    "Specific Codex reasoning model using your local subscription session.": "Modèle de raisonnement Codex précis utilisant votre session locale avec abonnement.",
-    "Codex reasoning model; built-in image generation uses the GPT Image 2 selector, not GPT Image 2.5.": "Modèle de raisonnement Codex ; la génération intégrée utilise le sélecteur GPT Image 2, pas GPT Image 2.5.",
-    "Saving settings does not start generation. API models use provider billing; Codex models use your local Codex subscription.": "Enregistrer ne lance aucune génération. Les modèles API sont facturés par le fournisseur ; les modèles Codex utilisent votre abonnement Codex local.",
-    "Codex is disabled on this server. Start local development with --codex to enable its model choices.": "Codex est désactivé sur ce serveur. Lancez le développement local avec --codex pour activer ses modèles.",
-    "Saving settings does not start generation. Mix API and Codex models freely; only API calls use credits.": "Enregistrer les paramètres ne lance pas la génération. Combinez librement les modèles API et Codex ; seuls les appels API utilisent des crédits.",
-    "Mix API and Codex models freely. Only API calls use credits.": "Combinez librement les modèles API et Codex. Seuls les appels API utilisent des crédits.",
     "You can use different models within the same billing source.": "Vous pouvez utiliser différents modèles avec la même source de facturation.",
     "API billing": "Facturation API",
-    "Codex subscription": "Abonnement Codex",
     "Models (dev)": "Modèles (dev)",
     "Models for your account": "Modèles de votre compte",
     "Model choices could not load. You can still create the project using account models.": "Impossible de charger les modèles. Vous pouvez créer le projet avec les modèles du compte.",
-    "API models use provider billing; Codex models use your local Codex subscription.": "Les modèles API utilisent la facturation du fournisseur ; les modèles Codex utilisent votre abonnement Codex local.",
     "Leave a step on account settings, or pin a model for this project. Your account settings will not change.": "Utilisez les paramètres du compte ou fixez un modèle pour ce projet. Les paramètres de votre compte ne changeront pas.",
     "Account setting": "Paramètre du compte",
     "Models for this project (dev)": "Modèles de ce projet (dev)",

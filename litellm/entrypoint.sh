@@ -2,23 +2,21 @@
 # Merged container entrypoint — runs LiteLLM proxy and the uvicorn web app as
 # two processes in one container.
 #
-#   1. Materialize GCP service-account credentials from a base64-encoded
-#      secret (Fly can't bind-mount files; the secret is the runtime source).
-#   2. Start the LiteLLM proxy on 127.0.0.1:4000 in the background. It holds
+#   1. Start the LiteLLM proxy on 127.0.0.1:4000 in the background. It holds
 #      all provider API keys; only the web app talks to it, over loopback.
-#   3. Wait for the proxy's /health/liveliness endpoint to respond so uvicorn
+#   2. Wait for the proxy's /health/liveliness endpoint to respond so uvicorn
 #      doesn't boot before its AI backend is ready (avoids first-request 500s).
-#   4. Run uvicorn alongside a small process supervisor. If LiteLLM exits after
+#   3. Run uvicorn alongside a small process supervisor. If LiteLLM exits after
 #      boot, restart it instead of leaving a healthy-looking web app with a
 #      permanently dead image gateway.
 #
-# Provider keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY,
-# FAL_KEY, VERTEXAI_PROJECT, etc.) and LITELLM_MASTER_KEY/LITELLM_SALT_KEY must
+# Provider keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY,
+# FAL_KEY) and LITELLM_MASTER_KEY/LITELLM_SALT_KEY must
 # be set as Fly secrets on canary-web. They flow into the proxy's environment.
 
 set -e
 
-# Install traps before credential/proxy setup so an intentional stop at any
+# Install traps before proxy setup so an intentional stop at any
 # startup phase exits successfully and cannot trigger Fly's on-failure policy.
 RECOVERY_PYTHON="${CANARY_RECOVERY_PYTHON:-/app/novel_to_comic/.venv/bin/python}"
 RECOVERY_SCRIPT="${CANARY_RECOVERY_SCRIPT:-/app/recovery.py}"
@@ -55,41 +53,7 @@ fi
 sleep "$BACKOFF" &
 wait $!
 
-# 1. GCP service-account credentials for Vertex AI.
-if [ -n "$GCP_CREDENTIALS_B64" ]; then
-  printf '%s' "$GCP_CREDENTIALS_B64" | base64 -d > /app/gcp-credentials.json
-  chmod 600 /app/gcp-credentials.json
-  # Point the Google SDK at the file we just materialized. LiteLLM's vertex_ai
-  # provider loads ADC via google.auth, which honors this env var. Without it
-  # the file sits unread and every Vertex request 500s with
-  # "Your default credentials were not found".
-  export GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json
-fi
-
-# Fail fast with a clear message if Vertex is in use but unreachable — otherwise
-# the LiteLLM proxy boots fine and every extract/panel/image request 500s with
-# a wall of "ModuleNotFoundError: No module named 'google'" tracebacks. The
-# config.yaml routes most text + image stages to vertex_ai/*, so a missing
-# service-account file or a missing google-cloud-aiplatform install breaks the
-# whole pipeline at the first LLM call.
-if [ -n "$VERTEXAI_PROJECT" ]; then
-  if [ ! -f /app/gcp-credentials.json ]; then
-    echo "[entrypoint] VERTEXAI_PROJECT is set ($VERTEXAI_PROJECT) but no GCP" >&2
-    echo "[entrypoint] credentials were provided. Set GCP_CREDENTIALS_B64 to the" >&2
-    echo "[entrypoint] base64 of a service-account JSON. Without it, every Vertex" >&2
-    echo "[entrypoint] model group (extract/panel/prompt/image) 500s at request time." >&2
-    exit 1
-  fi
-  if ! /app/.venv-litellm/bin/python -c "import google.auth, google.cloud.aiplatform" 2>/dev/null; then
-    echo "[entrypoint] Vertex AI is configured but the LiteLLM venv is missing the" >&2
-    echo "[entrypoint] Google deps (google-cloud-aiplatform / google-auth). Vertex" >&2
-    echo "[entrypoint] model groups will 500. Rebuild the image so the Dockerfile's" >&2
-    echo "[entrypoint] google-cloud-aiplatform install line runs." >&2
-    exit 1
-  fi
-fi
-
-# 2. Start LiteLLM proxy in the background.
+# 1. Start LiteLLM proxy in the background.
 #    --num_workers 1 keeps memory bounded; the proxy is not the throughput
 #    bottleneck for this product (one region, low concurrency).
 start_litellm() {
@@ -103,7 +67,7 @@ start_litellm() {
   echo "[entrypoint] litellm proxy started (pid=${LITELLM_PID})"
 }
 
-# 3. Wait for the proxy to become ready (max ~60s — litellm loads ~870MB of
+# 2. Wait for the proxy to become ready (max ~60s — litellm loads ~870MB of
 #    provider SDKs at boot, so cold starts are not instant). Use Python for
 #    the poll — `python:3.12-slim` doesn't ship curl.
 LITELLM_READY_TIMEOUT_SECONDS="${LITELLM_READY_TIMEOUT_SECONDS:-60}"
@@ -141,7 +105,7 @@ else
   recovery gateway_ready
 fi
 
-# 4. Run uvicorn alongside LiteLLM. --proxy-headers trusts X-Forwarded-* from
+# 3. Run uvicorn alongside LiteLLM. --proxy-headers trusts X-Forwarded-* from
 #    Fly's TLS proxy so secure cookies and client-IP detection work.
 /app/novel_to_comic/.venv/bin/pipeline serve \
   --host 0.0.0.0 \

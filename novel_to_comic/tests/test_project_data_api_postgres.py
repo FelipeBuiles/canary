@@ -39,10 +39,17 @@ def test_service_role_retains_project_authority(query):
 
 
 def test_browser_cannot_call_money_mutation_rpc(query):
-    signature = "public.reserve_stage_credits(uuid,uuid,text,integer,uuid,uuid,integer)"
+    signatures = (
+        "public.reserve_stage_credits(uuid,uuid,text,integer,uuid,uuid,integer,numeric,numeric)",
+        "public.authorize_model_call_credits(uuid,uuid,text,integer,uuid,numeric,numeric)",
+        "public.release_model_call_authorization(uuid,text)",
+    )
+    for signature in signatures:
+        for role in ("anon", "authenticated"):
+            assert query(f"select has_function_privilege('{role}', '{signature}', 'EXECUTE');") == "f"
+        assert query(f"select has_function_privilege('service_role', '{signature}', 'EXECUTE');") == "t"
     for role in ("anon", "authenticated"):
-        assert query(f"select has_function_privilege('{role}', '{signature}', 'EXECUTE');") == "f"
-    assert query(f"select has_function_privilege('service_role', '{signature}', 'EXECUTE');") == "t"
+        assert query(f"select has_table_privilege('{role}', 'public.credit_call_authorizations', 'SELECT');") == "f"
 
 
 def test_row_visibility_is_owned_or_explicitly_public(query):

@@ -1,4 +1,5 @@
 import io
+import json
 import zipfile
 from unittest.mock import patch
 
@@ -107,6 +108,27 @@ def test_public_download_bookend_is_always_last(setup):
                 archive.read("page_0001.jpg")
                 == client.get(book["pages"][0]["url"]).content
             )
+
+
+def test_scp_publication_includes_source_credit_in_reader_and_downloads(setup):
+    client, target = setup
+    (target.project_dir / "sample_source.json").write_text(json.dumps({
+        "title": "Merrily, Merrily, Merrily",
+        "author": "TL333s",
+        "source_url": "https://scp-wiki.wikidot.com/merrily-merrily-merrily",
+        "license": "CC BY-SA 3.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+    }))
+    book = publish(client)
+    assert book["source_credit"]["author"] == "TL333s"
+    assert len(book["pages"]) == 2
+    assert client.get(book["pages"][-1]["url"]).status_code == 200
+    pdf = client.get(f"/api/public/books/{book['id']}/download/pdf")
+    assert len(PdfReader(io.BytesIO(pdf.content)).pages) == 3
+    cbz = client.get(f"/api/public/books/{book['id']}/download/cbz")
+    with zipfile.ZipFile(io.BytesIO(cbz.content)) as archive:
+        assert archive.namelist() == ["page_0001.jpg", "page_0002.jpg", "page_0003.jpg"]
+        assert archive.read("page_0002.jpg") == client.get(book["pages"][-1]["url"]).content
 
 
 def test_author_consent_does_not_add_books_to_manual_showcase(setup):
@@ -246,6 +268,31 @@ def test_folder_showcase_supports_reader_downloads_updates_and_removal(setup, tm
     shutil.rmtree(destination)
     assert client.get("/api/public/books").json() == []
     assert client.get(f"/api/public/books/{book.id}").status_code == 404
+
+
+def test_scp_showcase_keeps_credit_after_portable_packaging(setup, tmp_path):
+    import runpy
+    from pathlib import Path
+    from novel_to_comic.server import showcase, publications as store
+    from novel_to_comic.state import save_state
+
+    client, target = setup
+    project, _, state = client.app.dependency_overrides[get_project]()
+    save_state(state, project)
+    (target.project_dir / "sample_source.json").write_text(json.dumps({
+        "title": "Merrily, Merrily, Merrily",
+        "author": "TL333s",
+        "source_url": "https://scp-wiki.wikidot.com/merrily-merrily-merrily",
+        "license": "CC BY-SA 3.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+    }))
+    prepare = runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts" / "prepare_showcase.py"))["prepare"]
+    book = prepare(project, showcase.root() / "01-scp", store.PublicationInput(title="SCP book", author="Artist"))
+    assert book.source_credit["author"] == "TL333s"
+    assert len(book.pages) == 2
+    public = client.get(f"/api/public/books/{book.id}").json()
+    assert public["source_credit"]["license"] == "CC BY-SA 3.0"
+    assert client.get(public["pages"][-1]["url"]).status_code == 200
 
 
 def test_showcase_rejects_unsafe_manifest_and_missing_pages(tmp_path, monkeypatch):

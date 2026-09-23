@@ -9,7 +9,6 @@ import os
 import re
 import shutil
 import tempfile
-import time
 from json import JSONDecodeError
 from pathlib import Path
 from typing import cast
@@ -28,6 +27,7 @@ from fastapi import (
 from pydantic import BaseModel, ValidationError
 
 from novel_to_comic.ai import ai_request_context
+from novel_to_comic.ai.context import current_ai_request_context
 from novel_to_comic.config import Config, mock_mode_active, save_config
 from novel_to_comic.generation_input import GenerationPromptInput
 from novel_to_comic.input_limits import (
@@ -36,6 +36,7 @@ from novel_to_comic.input_limits import (
     decode_remote_story,
     read_source,
 )
+from novel_to_comic import sample_library
 from novel_to_comic.style_contract import (
     page_style_template,
     style_template_for_suggestion,
@@ -84,13 +85,37 @@ from ..generation_jobs import (
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Simple cache in-memory for the short story library catalog
-_story_catalog_cache: list[dict] | None = None
-_story_catalog_last_fetch: float = 0.0
-_CACHE_EXPIRY: int = 86400  # 24 hours
 _INCOMPATIBLE_PROJECT_REASON = (
     "This project was created with an older pipeline version and must be deleted."
 )
+
+
+@router.get("/short-stories")
+def list_short_stories():
+    return sample_library.catalog() + sample_library.archive_catalog()
+
+
+@router.get("/short-stories/{code}")
+async def read_short_story(code: str):
+    sample = sample_library.find(code)
+    if sample is not None:
+        _entry, text = sample
+        return {"code": code, "text": text}
+    if sample_library.find_archive(code) is None:
+        raise HTTPException(404, "Sample story not found")
+    try:
+        content = await _download_remote_story(
+            f"https://www.libraryofshortstories.com/storiesgzip/{code}.txt"
+        )
+        text = decode_remote_story(content)
+    except InputLimitError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to read classic archive story %s", code)
+        raise HTTPException(502, "The classic archive story is unavailable") from exc
+    if not text.strip():
+        raise HTTPException(502, "The classic archive story is empty")
+    return {"code": code, "text": text}
 
 
 def _stage_payload(
@@ -389,6 +414,7 @@ async def _generate_project_cover(
         project_name=project_dir.name,
         workspace_id=str(project_dir.parent),
         stage="cover",
+        job_id=current_ai_request_context().job_id,
     ):
         submission = await submit_non_panel_request(
             config=config, project_dir=project_dir, request=request,
@@ -898,33 +924,6 @@ def delete_project(
     return {"status": "deleted", "id": project_id}
 
 
-@router.get("/short-stories")
-async def list_short_stories():
-    global _story_catalog_cache, _story_catalog_last_fetch
-    now = time.time()
-    if (
-        _story_catalog_cache is not None
-        and (now - _story_catalog_last_fetch) < _CACHE_EXPIRY
-    ):
-        return _story_catalog_cache
-
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.get(
-                "https://www.libraryofshortstories.com/storylist-reduced"
-            )
-            r.raise_for_status()
-            data = r.json()
-            _story_catalog_cache = data
-            _story_catalog_last_fetch = now
-            return data
-    except Exception as exc:
-        logger.exception("Failed to fetch short story catalog")
-        if _story_catalog_cache is not None:
-            return _story_catalog_cache
-        raise HTTPException(502, f"Failed to retrieve story catalog: {exc}") from exc
-
-
 class ImportStoryRequest(BaseModel):
     name: str
     url_or_code: str
@@ -968,27 +967,29 @@ async def import_short_story(
         )
 
     url_or_code = payload.url_or_code.strip()
-    match = re.search(r"onlinereader/([a-zA-Z0-9_\-]+)", url_or_code)
-    if match:
-        story_code = match.group(1)
-    else:
-        if "/" in url_or_code:
-            story_code = url_or_code.split("/")[-1].strip()
-        else:
-            story_code = url_or_code
+    bundled = sample_library.find(url_or_code)
+    match = re.fullmatch(
+        r"https?://(?:www\.)?libraryofshortstories\.com/onlinereader/([a-zA-Z0-9_-]+)/?",
+        url_or_code,
+    )
+    story_code = bundled[0]["code"] if bundled else match.group(1) if match else url_or_code
 
     if not re.fullmatch(r"[a-zA-Z0-9_-]{1,200}", story_code):
         raise HTTPException(400, "Could not parse a valid story code from input")
+    archive_entry = None if bundled else sample_library.find_archive(story_code)
 
-    story_url = f"https://www.libraryofshortstories.com/storiesgzip/{story_code}.txt"
-    try:
-        content_bytes = await _download_remote_story(story_url)
-        story_text = decode_remote_story(content_bytes)
-    except InputLimitError as exc:
-        raise HTTPException(exc.status_code, str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Failed to fetch story text from %s", story_url)
-        raise HTTPException(502, f"Failed to download story text: {exc}") from exc
+    if bundled:
+        story_text = bundled[1]
+    else:
+        story_url = f"https://www.libraryofshortstories.com/storiesgzip/{story_code}.txt"
+        try:
+            content_bytes = await _download_remote_story(story_url)
+            story_text = decode_remote_story(content_bytes)
+        except InputLimitError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+        except Exception as exc:
+            logger.exception("Failed to fetch story text from %s", story_url)
+            raise HTTPException(502, f"Failed to download story text: {exc}") from exc
 
     if not story_text.strip():
         raise HTTPException(400, "Story content is empty")
@@ -1037,6 +1038,26 @@ async def import_short_story(
 
     state = create_initial_state(payload.name, str(dst))
     save_state(state, project_dir)
+    if bundled or archive_entry:
+        entry = bundled[0] if bundled else archive_entry
+        assert entry is not None
+        (project_dir / "sample_source.json").write_text(
+            json.dumps({
+                "code": entry["code"],
+                "title": entry["title"],
+                "author": entry["author"],
+                "source_kind": "curated" if bundled else "archive",
+                "license": entry.get("license"),
+                "license_url": entry.get("license_url"),
+                "source_url": entry["source_url"],
+                "text_source_url": entry.get("text_source_url", f"https://www.libraryofshortstories.com/storiesgzip/{story_code}.txt"),
+                "attribution_url": entry.get("attribution_url"),
+                "sha256": entry["sha256"] if bundled else hashlib.sha256(story_text.encode("utf-8")).hexdigest(),
+                "source_note": entry.get("source_note"),
+                "rights_note": entry.get("rights_note"),
+            }, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
     (project_dir / ".env.example").write_text(
         "# AI gateway keys — copy to a .env at your repo root (not per-project).\n"

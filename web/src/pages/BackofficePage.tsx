@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   Activity,
@@ -68,12 +68,14 @@ import "./BackofficePage.css";
 
 type RangeKey = "7d" | "30d" | "90d";
 type NoticeTone = "ink" | "red" | "gold" | "sage" | "blue";
+const OperatorModelPanel = lazy(() => import("../components/OperatorModelPanel").then(({ OperatorModelPanel }) => ({ default: OperatorModelPanel })));
 
 const NAV_ITEMS: Array<{ key: BackofficeView; label: string; icon: LucideIcon; shortcut: string }> = [
   { key: "overview", label: "Overview", icon: LayoutDashboard, shortcut: "⌘ 1" },
   { key: "users", label: "Users", icon: UsersRound, shortcut: "⌘ 2" },
   { key: "support", label: "Support queue", icon: LifeBuoy, shortcut: "⌘ 3" },
   { key: "analytics", label: "Analytics", icon: BarChart3, shortcut: "⌘ 4" },
+  { key: "models", label: "Stage models", icon: Settings2, shortcut: "⌘ 5" },
 ];
 
 const VIEW_META: Record<BackofficeView, { kicker: string; title: string; description: string }> = {
@@ -96,6 +98,11 @@ const VIEW_META: Record<BackofficeView, { kicker: string; title: string; descrip
     kicker: "Operating picture",
     title: "Analytics",
     description: "See where the press is busy, where creators pause, and what the run is costing.",
+  },
+  models: {
+    kicker: "Generation settings",
+    title: "Stage models",
+    description: "Choose the models for new work across all projects.",
   },
 };
 
@@ -1085,6 +1092,7 @@ export function BackofficePage() {
             {activeView === "users" && <UsersView users={users} onOpenUser={setSelectedUserId} onInvite={() => showNotice("Invite flow is read-only; no email was sent.", "blue")} />}
             {activeView === "support" && <SupportView tickets={tickets} users={users} selectedTicketId={selectedTicketId} onSelectTicket={setSelectedTicketId} onResolve={resolveTicket} onSendReply={sendReply} />}
             {activeView === "analytics" && <AnalyticsView onExport={exportReport} snapshot={snapshot} />}
+            {activeView === "models" && <Suspense fallback={<p role="status">Loading stage models…</p>}><OperatorModelPanel connection={connection} /></Suspense>}
           </div>
         </main>
         <footer className="flex flex-wrap items-center justify-between gap-3 border-t-[2px] border-ink-black/10 bg-pulp-paper px-4 py-4 font-meta text-[0.5rem] font-bold uppercase tracking-[0.12em] text-ink-soft md:px-6 xl:px-9"><span>{snapshot.environment.app_environment} operator workspace · live records</span><span className={cn("flex items-center gap-2", snapshot.environment.stripe_mode === "live" ? "text-hero-red" : "text-archive-sage")}><span className={cn("h-2 w-2", snapshot.environment.stripe_mode === "live" ? "bg-hero-red" : "bg-archive-sage")} /> {snapshot.environment.stripe_mode === "live" ? "Stripe live" : `Stripe ${snapshot.environment.stripe_mode}`}</span></footer>

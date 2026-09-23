@@ -145,7 +145,7 @@ def test_generate_structured_object_returns_dict_and_usage(monkeypatch, _patch_e
         monkeypatch,
         {
             "id": "resp_1",
-            "model": "openai/gpt-5.4-mini",
+            "model": "openai/gpt-6-sol",
             "choices": [{"message": {"content": '{"ok": true}'}}],
             "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
         },
@@ -154,7 +154,7 @@ def test_generate_structured_object_returns_dict_and_usage(monkeypatch, _patch_e
     result = asyncio.run(
         client.generate_structured_object(
             config=Config(),
-            model="gpt-5.6-terra",
+            model="gpt-6-sol",
             system_prompt="Return JSON.",
             user_content="{}",
             feature="test.json",
@@ -170,8 +170,8 @@ def test_generate_structured_object_returns_dict_and_usage(monkeypatch, _patch_e
     assert result.usage is not None
     assert result.usage.call_id
     assert result.usage.provider == "openai"
-    assert result.usage.model == "gpt-5.6-terra"
-    assert result.usage.provider_model == "openai/gpt-5.4-mini"
+    assert result.usage.model == "gpt-6-sol"
+    assert result.usage.provider_model == "openai/gpt-6-sol"
     assert result.usage.input_tokens == 10
     assert result.usage.output_tokens == 3
     response_format = _FakeAsyncClient.last_request["json"]["response_format"]
@@ -194,13 +194,13 @@ def test_gateway_normalizes_narrative_treatment_schema(monkeypatch, _patch_event
     schema = NarrativeTreatment.model_json_schema()
     original = deepcopy(schema)
     _patch_http(monkeypatch, {
-        "model": "gpt-6-astra",
+        "model": "gpt-6-sol",
         "choices": [{"message": {"content": treatment.model_dump_json()}}],
         "usage": {"prompt_tokens": 10, "completion_tokens": 3},
     })
 
     result = asyncio.run(client.generate_structured_object(
-        config=Config(), model="gpt-6-astra", system_prompt="Return JSON.",
+        config=Config(), model="gpt-6-sol", system_prompt="Return JSON.",
         user_content="Write a treatment.", json_schema=schema,
         feature="adapt.narrative_treatment",
     ))
@@ -216,74 +216,16 @@ def test_gateway_normalizes_narrative_treatment_schema(monkeypatch, _patch_event
     assert NarrativeTreatment.model_validate(result.value) == treatment
 
 
-@pytest.mark.parametrize("stream", ["0", "1"])
-@pytest.mark.parametrize("model", ["union-alpha", "openrouter/stealth/union-alpha"])
-def test_union_alpha_treatment_uses_supported_json_mode(
-    monkeypatch, _patch_events, model, stream
-):
-    from copy import deepcopy
-
-    from novel_to_comic.models.adaptation import NarrativeTreatment
-
-    monkeypatch.setenv("CANARY_AI_STREAM_TEXT", stream)
-    schema = NarrativeTreatment.model_json_schema()
-    original = deepcopy(schema)
-    system_prompt = "Write an editorial treatment of the fictional story."
-
-    def handler(request):
-        payload = json.loads(request.content)
-        # Simulate OpenRouter's require_parameters filter: Union Alpha supports
-        # response_format but not the structured_outputs needed by json_schema.
-        if payload.get("response_format", {}).get("type") == "json_schema":
-            return httpx.Response(404, json={"error": {
-                "message": "No endpoints found that support all requested parameters.",
-                "code": 404,
-            }})
-        assert payload["response_format"] == {"type": "json_object"}
-        effective_system = payload["messages"][0]["content"]
-        assert effective_system.startswith(system_prompt)
-        # Decode the entire schema without pinning instruction wording or JSON
-        # whitespace. Defaults and optional fields must not be strict-normalized.
-        prompt_schema, _ = json.JSONDecoder().raw_decode(
-            effective_system[effective_system.index("{"):]
-        )
-        assert prompt_schema == original
-        assert payload.get("stream", False) is (stream == "1")
-        # A valid treatment may omit all defaulted fields: JSON-object mode does
-        # not replace the caller's NarrativeTreatment validation contract.
-        response = {
-            "model": "stealth/union-alpha",
-            "choices": [{"message": {"content":
-                '{"causal_spine":["A choice has consequences."]}'}}],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 3},
-        }
-        if payload.get("stream"):
-            return httpx.Response(200, content="\n".join(_sse_lines(response)))
-        return httpx.Response(200, json=response)
-
-    _mock_transport(monkeypatch, handler)
-    result = asyncio.run(client.generate_structured_object(
-        config=Config(), model=model, system_prompt=system_prompt,
-        user_content="Write a treatment.", json_schema=schema,
-        feature="adapt.narrative_treatment",
-    ))
-
-    assert schema == original
-    treatment = NarrativeTreatment.model_validate(result.value)
-    assert treatment.causal_spine == ("A choice has consequences.",)
-    assert treatment.character_arcs == ()
-
-
-def test_union_alpha_schemaless_json_preserves_image_input_and_max_tokens(
+def test_mimo_schemaless_json_preserves_image_input_and_max_tokens(
     monkeypatch, _patch_events
 ):
     _patch_http(monkeypatch, {
-        "model": "stealth/union-alpha",
+        "model": "xiaomi/mimo-v2.6-pro",
         "choices": [{"message": {"content": '{"text":"A choice."}'}}],
         "usage": {"prompt_tokens": 10, "completion_tokens": 3},
     })
     asyncio.run(client.generate_structured_object(
-        config=Config(), model="union-alpha",
+        config=Config(), model="mimo-v2.6-pro",
         system_prompt="Transcribe the image, then return JSON.",
         user_content="Read the image.", max_output_tokens=128,
         feature="ocr.page_lettering",
@@ -303,14 +245,14 @@ def test_union_alpha_schemaless_json_preserves_image_input_and_max_tokens(
     assert base64.b64decode(encoded) == b"not-a-real-png"
 
 
-def test_union_alpha_plain_text_does_not_request_json(monkeypatch, _patch_events):
+def test_mimo_plain_text_does_not_request_json(monkeypatch, _patch_events):
     _patch_http(monkeypatch, {
-        "model": "stealth/union-alpha",
+        "model": "xiaomi/mimo-v2.6-pro",
         "choices": [{"message": {"content": "A choice has consequences."}}],
         "usage": {"prompt_tokens": 10, "completion_tokens": 3},
     })
     asyncio.run(client.generate_text(
-        config=Config(), model="union-alpha", system_prompt="Summarize the story.",
+        config=Config(), model="mimo-v2.6-pro", system_prompt="Summarize the story.",
         user_content="A character makes a choice.",
     ))
 
@@ -318,15 +260,15 @@ def test_union_alpha_plain_text_does_not_request_json(monkeypatch, _patch_events
     assert "response_format" not in request
     assert request["messages"][0]["content"] == "Summarize the story."
 
-@pytest.mark.parametrize("model", ["glm-5.3-flash", "openrouter/z-ai/glm-5.3-flash"])
-def test_glm_structured_request_keeps_schema_and_supported_max_tokens(
+@pytest.mark.parametrize("model", ["mimo-v2.6-pro", "openrouter/xiaomi/mimo-v2.6-pro"])
+def test_mimo_structured_request_keeps_schema_and_supported_max_tokens(
     monkeypatch, _patch_events, model
 ):
     _patch_http(
         monkeypatch,
         {
-            "id": "glm-response",
-            "model": "z-ai/glm-5.3-flash",
+            "id": "mimo-response",
+            "model": "xiaomi/mimo-v2.6-pro",
             "choices": [{"message": {"content": '{"ok": true}'}}],
             "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
         },
@@ -1503,7 +1445,7 @@ class TestStreamingOptOut:
         monkeypatch.setenv("CANARY_AI_STREAM_TEXT", "1")
         assert client._stream_text_enabled() is True
 
-    @pytest.mark.parametrize("model", ["gpt-5.6-terra", "gpt-6-astra", "claude-fable-5-1", "claude-opus-5"])
+    @pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna", "claude-fable-5-1", "claude-opus-5"])
     def test_opting_out_falls_back_to_a_buffered_request(
         self, monkeypatch, _patch_events, model
     ):

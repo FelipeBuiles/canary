@@ -102,31 +102,17 @@ _RATE_LIMIT_MAX_DELAY = 60.0
 # that clear on a fresh draw at the same temperature.
 _JSON_PARSE_MAX_RETRIES = 2
 
-# Anthropic deprecated the `temperature` request param on Claude Opus 4.7;
-# sending it returns 400. Google also deprecated sampling parameters for
-# Gemini 3.6 Flash, Gemini 3.7 Flash, and Gemini 3.5 Flash-Lite. Keep those
-# aliases out of the OpenAI-compatible payload instead of relying on the
-# gateway to drop them.
+# Reasoning models and current Claude routes do not accept temperature.
 _TEMPERATURE_DEPRECATED_ALIASES = frozenset(
     {
-        "gpt-6-astra",
-        "openai/gpt-6-astra",
+        "gpt-6-sol",
+        "openai/gpt-6-sol",
+        "gpt-6-luna",
+        "openai/gpt-6-luna",
         "claude-fable-5-1",
         "anthropic/claude-fable-5-1",
         "claude-opus-5",
         "anthropic/claude-opus-5",
-        "gpt-5.6-terra",
-        "openai/gpt-5.6-terra",
-        "gpt-5.6-luna",
-        "openai/gpt-5.6-luna",
-        "deepseek-v4.1-flash",
-        "openrouter/deepseek/deepseek-v4.1-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3.6-flash",
-        "gemini-3.8-flash",
-        "vertex_ai/gemini-3.5-flash-lite",
-        "vertex_ai/gemini-3.6-flash",
-        "vertex_ai/gemini-3.8-flash",
     }
 )
 
@@ -135,32 +121,11 @@ _CLAUDE_NATIVE_JSON_ALIASES = frozenset({
     "claude-opus-5", "anthropic/claude-opus-5",
 })
 
-# OpenRouter exposes the output limit for these model groups as ``max_tokens``.
-# Sending the newer OpenAI spelling (``max_completion_tokens``) while the
-# gateway route requires providers to support every parameter leaves GLM and
-# DeepSeek with no eligible endpoints.
+# MiMo's OpenRouter route uses ``max_tokens`` for the output limit.
 _OPENROUTER_MAX_TOKENS_ALIASES = frozenset(
     {
-        "deepseek-v4.1-flash",
-        "openrouter/deepseek/deepseek-v4.1-flash",
-        "glm-5.3-flash",
-        "openrouter/z-ai/glm-5.3-flash",
         "mimo-v2.6-pro",
         "openrouter/xiaomi/mimo-v2.6-pro",
-        "union-alpha",
-        "openrouter/stealth/union-alpha",
-    }
-)
-
-# OpenRouter's stealth/union-alpha endpoints advertise ``response_format`` but
-# not ``structured_outputs``, and the gateway requires every sent parameter to
-# be supported, so strict ``json_schema`` requests leave the model with no
-# eligible endpoints. Request plain ``json_object`` and carry the schema in
-# the system prompt instead.
-_UNION_ALPHA_JSON_OBJECT_ALIASES = frozenset(
-    {
-        "union-alpha",
-        "openrouter/stealth/union-alpha",
     }
 )
 
@@ -593,6 +558,7 @@ async def _stream_with_retry(
     *,
     headers: dict[str, str],
     payload: dict[str, Any],
+    retry_ambiguous: bool = True,
 ) -> tuple[dict[str, Any], httpx.Response]:
     """Streaming counterpart to _post_with_retry, with the same retry budgets."""
     pacer = _RetryPacer()
@@ -603,12 +569,34 @@ async def _stream_with_retry(
         try:
             return await _read_chat_stream(url, headers=headers, payload=payload)
         except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 429 and (
+                not retry_ambiguous or exc.response.status_code not in _RETRYABLE_STATUS_CODES
+            ):
+                if not retry_ambiguous and exc.response.status_code >= 500:
+                    from novel_to_comic.server.credits import retain_ambiguous_job
+                    retain_ambiguous_job(current_ai_request_context().job_id)
+                raise
             rate_limited = exc.response.status_code == 429
             retry_after = _retry_after_seconds(exc.response)
             pacer.record_exception(exc)
         except _TRANSPORT_ERRORS as exc:
+            if not retry_ambiguous and not isinstance(
+                exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+            ):
+                from novel_to_comic.server.credits import retain_ambiguous_job
+                retain_ambiguous_job(current_ai_request_context().job_id)
+                raise AITransportError(
+                    "Text submission outcome is unknown; it was not automatically repeated. "
+                    "Check provider usage before requesting another paid call.",
+                    phase="ambiguous_submission",
+                ) from exc
             pacer.record_exception(exc)
             slow_timeout = isinstance(exc, _SLOW_TIMEOUT_ERRORS)
+        except asyncio.CancelledError:
+            if not retry_ambiguous:
+                from novel_to_comic.server.credits import retain_ambiguous_job
+                retain_ambiguous_job(current_ai_request_context().job_id)
+            raise
         await pacer.pause_or_raise(
             rate_limited=rate_limited,
             retry_after=retry_after,
@@ -1221,16 +1209,31 @@ def _finalize_event(
             estimated_cost_usd,
             usage.cost_usd if usage else 0.0,
         )
-    event_persisted = True
     try:
         from novel_to_comic.server.db import get_db
 
         get_db().table("ai_usage_events").update(update).eq("id", event_id).execute()
     except Exception as exc:
-        event_persisted = False
         logger.warning("ai_usage_events update failed for %s: %s", event_id, exc)
-    if event_persisted and usage is not None and billable and funding != "codex_subscription":
+    if usage is not None and billable and funding != "codex_subscription":
         _settle_event_usage(usage, feature=feature, status=status)
+    elif funding == "api" and not (config is not None and mock_mode_active(config)):
+        from novel_to_comic.server.credits import (
+            is_ambiguous_job, release_model_call_authorization,
+            retain_ambiguous_job,
+        )
+
+        ctx = current_ai_request_context()
+        if cost is not None and cost.source == "unknown_provider_usage":
+            retain_ambiguous_job(ctx.job_id)
+        if ctx.user_id and not is_ambiguous_job(ctx.job_id):
+            try:
+                from novel_to_comic.server.db import get_db
+
+                release_model_call_authorization(get_db(), user_id=ctx.user_id, call_id=event_id)
+            except Exception:
+                retain_ambiguous_job(ctx.job_id)
+                logger.exception("Credit call authorization release failed call_id=%s", event_id)
     if metadata is not None:
         try:
             _log_langfuse_generation(
@@ -1544,6 +1547,9 @@ def _settle_event_usage(usage: UsageRecord, *, feature: str, status: str) -> Non
             getattr(usage, "cost_usd", 0.0) or 0.0,
             exc_info=True,
         )
+        from novel_to_comic.server.credits import retain_ambiguous_job
+
+        retain_ambiguous_job(ctx.job_id)
         try:
             from novel_to_comic.server.metrics import increment
 
@@ -1554,6 +1560,23 @@ def _settle_event_usage(usage: UsageRecord, *, feature: str, status: str) -> Non
         except Exception:
             pass
         return
+
+
+async def _authorize_model_submission(
+    *, event_id: str, estimated_cost_usd: float | None,
+    funding: str, config: Config,
+) -> None:
+    ctx = current_ai_request_context()
+    if not ctx.user_id or funding != "api" or mock_mode_active(config):
+        return
+    from novel_to_comic.server.credits import authorize_model_call
+    from novel_to_comic.server.db import get_db
+
+    await asyncio.to_thread(
+        authorize_model_call, get_db(), user_id=ctx.user_id,
+        job_id=ctx.job_id, call_id=event_id,
+        estimated_cost_usd=estimated_cost_usd,
+    )
 
 
 async def generate_text(
@@ -1821,20 +1844,8 @@ async def _chat_completion(
             },
         })
     response_format: dict[str, Any] | None
-    schema_in_system_prompt = (
-        route is None
-        and model in _UNION_ALPHA_JSON_OBJECT_ALIASES
-        and json_schema is not None
-    )
     effective_system = system_prompt
-    if schema_in_system_prompt:
-        response_format = {"type": "json_object"}
-        effective_system += (
-            "\n\nYou must respond with a single JSON object that conforms to "
-            "the following JSON Schema:\n"
-            + _json_dumps(json_schema)
-        )
-    elif json_schema:
+    if json_schema:
         schema_name = re.sub(r"[^a-zA-Z0-9_-]", "_", feature)[:64]
         response_format = {
             "type": "json_schema",
@@ -1888,13 +1899,14 @@ async def _chat_completion(
             }}
     elif response_format is not None:
         payload["response_format"] = response_format
-    if route is None and max_output_tokens is not None:
+    effective_max_output_tokens = max_output_tokens or 16_384
+    if route is None:
         token_limit_field = (
             "max_tokens"
             if model in _OPENROUTER_MAX_TOKENS_ALIASES
             else "max_completion_tokens"
         )
-        payload[token_limit_field] = max_output_tokens
+        payload[token_limit_field] = effective_max_output_tokens
     # Stream so the read timeout is per-chunk: long adapt repairs exceed the
     # read budget as a single blocking response. include_usage puts the usage
     # block on a final chunk, which streaming otherwise omits.
@@ -1904,7 +1916,10 @@ async def _chat_completion(
         payload["stream_options"] = {"include_usage": True}
 
     estimated_cost_usd = (
-        (estimate_text_cost(model, effective_system + "\n" + user_content) or None)
+        (estimate_text_cost(
+            model, effective_system + "\n" + user_content,
+            output_chars=effective_max_output_tokens * 4,
+        ) or None)
         if route is None else None
     )
     # Everything the terminal handlers reference must exist before the first
@@ -1918,6 +1933,10 @@ async def _chat_completion(
     ]
     response: httpx.Response | None = None
     data: dict[str, Any] = {}
+    paid_call = bool(
+        route is None and current_ai_request_context().user_id and not mock_mode_active(config)
+    )
+    provider_submission_started = False
     insert_task = asyncio.create_task(
         _insert_event_async(
             event_id=event_id,
@@ -1955,6 +1974,10 @@ async def _chat_completion(
         )
         raise
     try:
+        await _authorize_model_submission(
+            event_id=event_id, estimated_cost_usd=estimated_cost_usd,
+            funding=metadata.get("funding", "api"), config=config,
+        )
         endpoint = "/v1/chat/completions"
         # Keep a local breadcrumb alongside the queued Langfuse observation.
         logger.info(
@@ -1984,11 +2007,13 @@ async def _chat_completion(
                 if result.model != route.reasoning_model:
                     raise CodexRoutingError("Codex returned a different reasoning model than requested")
             elif streaming:
+                provider_submission_started = True
                 if retry_transport:
                     data, response = await _stream_with_retry(
                         f"{_base_url(config)}{endpoint}",
                         headers=_headers(config, event_id),
                         payload=payload,
+                        **({"retry_ambiguous": False} if paid_call else {}),
                     )
                 else:
                     data, response = await _read_chat_stream(
@@ -1997,11 +2022,13 @@ async def _chat_completion(
                         payload=payload,
                     )
             else:
+                provider_submission_started = True
                 if retry_transport:
                     response = await _post_with_retry(
                         f"{_base_url(config)}{endpoint}",
                         headers=_headers(config, event_id),
                         json=payload,
+                        **({"retry_ambiguous": False} if paid_call else {}),
                     )
                 else:
                     response = await _http.post(
@@ -2013,6 +2040,9 @@ async def _chat_completion(
             if response is not None and response.status_code >= 400:
                 response.raise_for_status()
         except httpx.HTTPStatusError as exc:
+            if paid_call and exc.response.status_code >= 500:
+                from novel_to_comic.server.credits import retain_ambiguous_job
+                retain_ambiguous_job(current_ai_request_context().job_id)
             gateway_error = _gateway_http_error(
                 exc.response,
                 feature=feature,
@@ -2029,6 +2059,9 @@ async def _chat_completion(
             )
             raise gateway_error from exc
         except _TRANSPORT_ERRORS as exc:
+            if paid_call and not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
+                from novel_to_comic.server.credits import retain_ambiguous_job
+                retain_ambiguous_job(current_ai_request_context().job_id)
             raise _gateway_transport_error(
                 exc,
                 feature=feature,
@@ -2073,6 +2106,9 @@ async def _chat_completion(
                 call_id=event_id,
             )
     except asyncio.CancelledError as exc:
+        if paid_call and provider_submission_started:
+            from novel_to_comic.server.credits import retain_ambiguous_job
+            retain_ambiguous_job(current_ai_request_context().job_id)
         if route is not None:
             metadata["codex_runtime"] = getattr(exc, "metadata", {})
         # Shielded: the task must not return before billing persistence
@@ -2140,6 +2176,11 @@ async def _chat_completion(
                 output_text="",
                 call_id=event_id,
             )
+        if (paid_call and provider_submission_started and usage is None
+                and isinstance(exc, AITransportError)
+                and exc.phase in {"provider_response", "empty_response", "ambiguous_submission"}):
+            from novel_to_comic.server.credits import retain_ambiguous_job
+            retain_ambiguous_job(current_ai_request_context().job_id)
         if isinstance(exc, AIEmptyResponseError):
             exc.usage = usage
         await _finalize_event_shielded(
@@ -2221,6 +2262,10 @@ async def generate_wire_image(
         ref_reads=ref_reads,
     )
     try:
+        await _authorize_model_submission(
+            event_id=ctx.event_id, estimated_cost_usd=ctx.estimated_cost_usd,
+            funding=ctx.metadata.get("funding", "api"), config=config,
+        )
         raw = await provider.generate_wire(
             wire=transport_wire,
             config=config,

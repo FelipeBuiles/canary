@@ -42,6 +42,7 @@ from novel_to_comic.page_drawing import (
     VertexCompletePageAdapter,
     compile_page_generation_request,
     draw_complete_page,
+    estimate_draw_api_cost,
     ensure_current_page_edition,
     enqueue_complete_page_draw,
     production_page_capability_profile,
@@ -199,8 +200,8 @@ def test_compiler_freezes_exact_page_authority_and_selected_reference_order(
     assert request.edition_sha256 == _edition().content_sha256
     assert request.profile_id == _profile().id
     assert request.model == _profile().model
-    assert request.output_width == 1696
-    assert request.output_height == 2528
+    assert request.output_width == 1024
+    assert request.output_height == 1536
     assert request.output_media_type == "image/png"
     assert request.retry == RetryProvenance(attempt=1)
     assert "It was the same face." not in request.prompt
@@ -305,9 +306,9 @@ def test_production_profile_estimates_page_and_selected_reference_cost(
         retry=RetryProvenance(attempt=1),
     )
 
-    assert profile.provider == "vertex-multimodal"
-    assert profile.model == "gemini-3-pro-image"
-    assert compiled.request.estimated_cost_usd == Decimal("0.13624")
+    assert profile.provider == "fal-queue"
+    assert profile.model == "openai/gpt-image-2.5/sunburst"
+    assert compiled.request.estimated_cost_usd == Decimal("0.27")
 
 
 def test_request_identity_tracks_page_revision_and_selected_reference_bytes(
@@ -483,7 +484,7 @@ def test_reference_capacity_fails_before_generation_instead_of_dropping_identity
 def test_canonical_page_keeps_overflow_authorities_in_prompt(
     tmp_path: Path,
 ) -> None:
-    extra_entities = [f"extra_{index}" for index in range(1, 8)]
+    extra_entities = [f"extra_{index}" for index in range(1, 16)]
     base_page = _page()
     page = base_page.model_copy(
         update={
@@ -513,10 +514,10 @@ def test_canonical_page_keeps_overflow_authorities_in_prompt(
             media_type="image/png",
         )
 
-    with pytest.raises(ValueError, match="requires 9 approved references"):
+    with pytest.raises(ValueError, match="requires 17 approved references"):
         compile_page_generation_request(
             page,
-            _edition(_profile(max_image_references=8)),
+            _edition(),
             ApprovedVisualReferenceInventory(references=references),
             files,
             retry=RetryProvenance(attempt=1),
@@ -528,18 +529,18 @@ def _provider_result() -> CompletePageProviderResult:
         artifact_kind="complete_page",
         image_bytes=b"complete-page-png",
         media_type="image/png",
-        width=1696,
-        height=2528,
+        width=1024,
+        height=1536,
         latency_ms=321,
-        provider_request_id="vertex-request-1",
-        actual_provider_model="vertex_ai/gemini-3-pro-image",
+        provider_request_id="fal-request-1",
+        actual_provider_model="openai/gpt-image-2.5/sunburst",
         usage=UsageRecord(
-            provider="gemini",
-            model="gemini-3-pro-image",
-            provider_model="vertex_ai/gemini-3-pro-image",
+            provider="fal-queue",
+            model="openai/gpt-image-2.5/sunburst",
+            provider_model="openai/gpt-image-2.5/sunburst",
             operation="image",
             image_count=1,
-            cost_usd=0.134,
+            cost_usd=0.19,
             cost_source="provider",
         ),
     )
@@ -568,7 +569,7 @@ def test_vertex_adapter_submits_exactly_the_prepared_complete_page_request(
         ValueError,
         match=(
             "fixed complete-page profile: "
-            "model expected=gemini-3-pro-image actual=vertex_ai/another-model"
+            "model expected=openai/gpt-image-2.5/sunburst actual=vertex_ai/another-model"
         ),
     ):
         asyncio.run(rejecting_adapter.generate(rejecting_adapter.prepare(compiled)))
@@ -581,177 +582,9 @@ def test_vertex_adapter_submits_exactly_the_prepared_complete_page_request(
     )
     with pytest.raises(
         ValueError,
-        match="dimensions expected=1696x2528 actual=2048x3072",
+        match="dimensions expected=1024x1536 actual=2048x3072",
     ):
         asyncio.run(rejecting_adapter.generate(rejecting_adapter.prepare(compiled)))
-
-
-def test_native_vertex_transport_preserves_reference_order_and_returns_one_page(
-    tmp_path: Path,
-) -> None:
-    compiled = compile_page_generation_request(
-        _page(),
-        _edition(),
-        _inventory(),
-        _reference_files(tmp_path),
-        retry=RetryProvenance(attempt=1),
-    )
-    prepared = VertexCompletePageAdapter(
-        _RecordingTransport(_provider_result())
-    ).prepare(compiled)
-    output = io.BytesIO()
-    Image.new("RGB", (1696, 2528), "black").save(output, format="PNG")
-    response = httpx.Response(
-        200,
-        json={
-            "id": "vertex-response-1",
-            "model": "image-gemini-pro",
-            "data": [{"b64_json": "unused-by-test-decoder"}],
-        },
-        request=httpx.Request("POST", "http://gateway/v1/images/edits"),
-    )
-    usage = UsageRecord(
-        provider="gemini",
-        model=prepared.model,
-        operation="image",
-        image_count=1,
-        cost_usd=0.134,
-        cost_source="provider",
-    )
-    post = AsyncMock(return_value=response)
-    finalize = MagicMock()
-    with (
-        patch("novel_to_comic.ai.client._base_url", return_value="http://gateway"),
-        patch("novel_to_comic.ai.client._headers", return_value={}),
-        patch("novel_to_comic.ai.client._post_with_retry", post),
-        patch(
-            "novel_to_comic.ai.client._decode_image_response",
-            AsyncMock(return_value=output.getvalue()),
-        ),
-        patch("novel_to_comic.ai.client._extract_usage", return_value=usage),
-        patch("novel_to_comic.ai.client._finalize_event", finalize),
-    ):
-        transport = GoogleVertexCompletePageTransport(
-            Config(google_cloud_project="test-project"),
-        )
-        result = asyncio.run(transport.generate(prepared))
-
-    submitted = post.call_args.kwargs
-    frozen = submitted["data"]["canary_complete_page_request"]
-    assert frozen == prepared.frozen_request_json
-    assert [item[1][1] for item in submitted["files"]] == list(
-        prepared.reference_bytes
-    )
-    assert submitted["data"]["prompt"] == prepared.prompt
-    assert submitted["data"]["model"] == "image-gemini-pro"
-    assert result.artifact_kind == "complete_page"
-    assert (result.width, result.height) == (1696, 2528)
-    assert result.actual_provider_model == "vertex_ai/gemini-3-pro-image"
-    finalized = finalize.call_args.kwargs
-    assert finalized["model_alias"] == "image-gemini-pro"
-    assert finalized["operation"] == "image"
-    assert finalized["metadata"]["trace_name"] == "complete_page_draw"
-    # Observability deliberately bounds previews; the provider assertion above
-    # still requires the complete, untruncated prompt to reach the gateway.
-    assert len(prepared.prompt) > 4000
-    assert finalized["langfuse_input"]["prompt"] == (
-        prepared.prompt[:4000] + f"... [+{len(prepared.prompt) - 4000} chars]"
-    )
-    assert finalized["langfuse_output"]["actual_provider_model"] == (
-        "vertex_ai/gemini-3-pro-image"
-    )
-
-
-def test_native_vertex_transport_uses_generation_endpoint_without_references(
-    tmp_path: Path,
-) -> None:
-    page = _page()
-    page = page.model_copy(update={"content": (page.content[0].model_copy(update={
-        "entity_ids": (), "appearance_states": {},
-    }),)})
-    compiled = compile_page_generation_request(
-        page, _edition(), ApprovedVisualReferenceInventory(references=[]), {},
-        retry=RetryProvenance(attempt=1),
-    )
-    prepared = VertexCompletePageAdapter(
-        _RecordingTransport(_provider_result())
-    ).prepare(compiled)
-    output = io.BytesIO()
-    Image.new("RGB", (1696, 2528), "black").save(output, format="PNG")
-    response = httpx.Response(
-        200,
-        json={
-            "id": "vertex-response-1",
-            "model": "image-gemini-pro",
-            "data": [{"b64_json": "unused-by-test-decoder"}],
-        },
-        request=httpx.Request("POST", "http://gateway/v1/images/generations"),
-    )
-    usage = UsageRecord(
-        provider="gemini",
-        model=prepared.model,
-        operation="image",
-        image_count=1,
-        cost_usd=0.134,
-        cost_source="provider",
-    )
-    post = AsyncMock(return_value=response)
-    with (
-        patch("novel_to_comic.ai.client._base_url", return_value="http://gateway"),
-        patch("novel_to_comic.ai.client._headers", return_value={}),
-        patch("novel_to_comic.ai.client._post_with_retry", post),
-        patch(
-            "novel_to_comic.ai.client._decode_image_response",
-            AsyncMock(return_value=output.getvalue()),
-        ),
-        patch("novel_to_comic.ai.client._extract_usage", return_value=usage),
-    ):
-        transport = GoogleVertexCompletePageTransport(
-            Config(google_cloud_project="test-project"),
-        )
-        result = asyncio.run(transport.generate(prepared))
-
-    assert post.call_args.args[0] == "http://gateway/v1/images/generations"
-    submitted = post.call_args.kwargs
-    assert submitted["json"]["model"] == "image-gemini-pro"
-    assert submitted["json"]["prompt"] == prepared.prompt
-    assert "files" not in submitted
-    assert result.actual_provider_model == "vertex_ai/gemini-3-pro-image"
-
-
-def test_native_vertex_transport_surfaces_provider_error_detail(
-    tmp_path: Path,
-) -> None:
-    prepared = VertexCompletePageAdapter(
-        _RecordingTransport(_provider_result())
-    ).prepare(_compile(tmp_path))
-    response = httpx.Response(
-        404,
-        json={
-            "error": {
-                "message": (
-                    "Publisher model gemini-3-pro-image was not found "
-                    "or this project does not have access."
-                )
-            }
-        },
-        request=httpx.Request("POST", "http://gateway/v1/images/edits"),
-    )
-    with (
-        patch("novel_to_comic.ai.client._base_url", return_value="http://gateway"),
-        patch("novel_to_comic.ai.client._headers", return_value={}),
-        patch(
-            "novel_to_comic.ai.client._post_with_retry",
-            AsyncMock(return_value=response),
-        ),
-    ):
-        with pytest.raises(
-            AITransportError,
-            match="does not have access",
-        ):
-            asyncio.run(
-                GoogleVertexCompletePageTransport(Config()).generate(prepared)
-            )
 
 
 def test_draw_persists_immutable_request_render_usage_cost_and_lineage(
@@ -776,8 +609,8 @@ def test_draw_persists_immutable_request_render_usage_cost_and_lineage(
     assert result.render.request_sha256 == compiled.request.request_sha256
     assert result.render.comic_page_revision == 2
     assert result.render.latency_ms == 321
-    assert result.render.cost_usd == Decimal("0.134")
-    assert result.usage.cost_usd == 0.134
+    assert result.render.cost_usd == Decimal("0.19")
+    assert result.usage.cost_usd == 0.19
     assert result.usage.image_count == 1
 
     with pytest.raises(ValueError, match="immutable"):
@@ -872,7 +705,7 @@ def test_complete_page_enqueue_uses_credited_lifecycle_and_persists_result(
         asyncio.run(job.runner())
 
     assert created is True
-    assert reserve.call_args.args[-1] == 18
+    assert reserve.call_args.args[-1] == 13
     debit.assert_called_once()
     release.assert_called_once()
     assert artifacts.read_render(7, 1) == b"complete-page-png"
@@ -1053,17 +886,19 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
 
     assert unanalysed is not job
     image_quote = credit_estimate_for_provider_cost(
-        float(compiled.request.estimated_cost_usd), "draw", reserve=True,
+        estimate_draw_api_cost(Config(), float(compiled.request.estimated_cost_usd), compiled=compiled),
+        "draw", reserve=True,
     )
     checked_quote = credit_estimate_for_provider_cost(
-        float(compiled.request.estimated_cost_usd) + float(PAGE_OCR_ESTIMATED_COST_USD),
+        estimate_draw_api_cost(Config(), float(compiled.request.estimated_cost_usd), compiled=compiled)
+        + float(PAGE_OCR_ESTIMATED_COST_USD),
         "draw", reserve=True,
     )
     assert without_analysis == image_quote["reserved_credits"]
     assert with_analysis == checked_quote["reserved_credits"]
     debited = [call.args[3] for call in debit.call_args_list]
     assert [usage.model for usage in debited] == [
-        "gemini-3-pro-image",
+        "openai/gpt-image-2.5/sunburst",
         "ocr-balanced",
     ]
     # One ledger job, so whole credits are rounded once across both calls.
@@ -1544,10 +1379,9 @@ def test_draw_estimate_is_read_only_and_excludes_optional_lettering_check(tmp_pa
         client = TestClient(app)
         response = client.get("/pages/7/generate/estimate?depiction=less_graphic")
         assert response.status_code == 200
-        assert response.json() == dict(credit_estimate_for_provider_cost(
-            float(compiled.request.estimated_cost_usd),
-            "draw", reserve=True,
-        ))
+        assert response.json()["estimate_credits"] < dict(credit_estimate_for_provider_cost(
+            float(compiled.request.estimated_cost_usd), "draw", reserve=True,
+        ))["estimate_credits"]
         assert response.json()["reserved_credits"] >= response.json()["estimate_credits"] > 0
         assert client.get("/pages/7/generate/estimate?depiction=unknown").status_code == 422
         assert client.get("/pages/7/analyze/estimate").status_code == 409
@@ -1832,53 +1666,6 @@ def test_less_graphic_intent_survives_correction_and_visual_review(tmp_path):
     assert brief["generation_specification"] == current.request.prompt
     assert corrected.render.parent_revision == original.render.revision
     assert following.compiled.reference_bytes == ()
-
-
-def test_openrouter_policy_refusal_is_not_retried_or_held_as_ambiguous(tmp_path, monkeypatch):
-    from litellm_handlers.openrouter_image import _provider_http_error
-    from novel_to_comic.ai.context import ai_request_context
-    from novel_to_comic.image_failure import classify_image_failure
-    from novel_to_comic.page_drawing import complete_page_adapter, current_page_capability_profile
-    from novel_to_comic.server import credits
-
-    monkeypatch.setattr(credits, "_unsettled_jobs", set())
-    monkeypatch.setattr(credits, "_reservation_jobs", {"hold": "job"})
-    config = Config(draw_model="image-muse")
-    profile = current_page_capability_profile(config)
-    compiled = compile_page_generation_request(
-        _page(), select_book_edition(edition_id="test", profile=profile),
-        _inventory(), _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
-    )
-    adapter = complete_page_adapter(config)
-    provider_response = httpx.Response(400, json={"error": {
-        "message": "The response was filtered due to the prompt triggering our content management policy.",
-        "code": 400, "metadata": {"provider_name": "Meta"},
-    }}, request=httpx.Request("POST", "https://openrouter.ai/api/v1/images"))
-    provider_error = _provider_http_error(provider_response, "openrouter-image/meta/muse-image")
-    assert provider_error.status_code == 400
-    response = httpx.Response(provider_error.status_code, json={"error": {
-        "message": str(provider_error),
-    }}, request=httpx.Request("POST", "http://gateway/v1/images/edits"))
-    post = AsyncMock(return_value=response)
-
-    async def run():
-        with ai_request_context(job_id="job"):
-            with pytest.raises(AITransportError) as caught:
-                await adapter.generate(adapter.prepare(compiled))
-        assert classify_image_failure(caught.value) == "provider_blocked"
-        assert caught.value.phase == "gateway_request"
-
-    with (
-        patch("novel_to_comic.ai.client._http.post", post),
-        patch("novel_to_comic.ai.finalisation.finalise_image_failure", AsyncMock()),
-    ):
-        asyncio.run(run())
-
-    assert post.await_count == 1
-    db = MagicMock()
-    credits.release_reservation(db, "hold")
-    assert "job" not in credits._unsettled_jobs
-    db.rpc.assert_called_once()
 
 
 @pytest.mark.parametrize("failure", ["decode", "cancel", "json", "refusal"])

@@ -74,12 +74,9 @@ paid actions; copying artwork alone is not a recovery backup.
    - Database connection string (for schema bootstrap).
 4. **A Stripe account** (test mode first, live at launch).
 5. **Provider API keys** for whatever models you route through LiteLLM
-   (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`,
-   `FAL_KEY`, etc.). Only set the ones you actually use. These live as fly
+   (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`,
+   `FAL_KEY`). Only set the ones you actually use. These live as Fly
    secrets on `canary-web` now (they used to be on `litellm-gw`).
-6. **A GCP service account JSON** for Vertex (only if you use Vertex models).
-   The repo expects one at `litellm/gcp-credentials.json` locally; you'll
-   base64-encode it into the `GCP_CREDENTIALS_B64` secret.
 
 ## Step 0 — prepare secret file (outside the repo)
 
@@ -110,12 +107,8 @@ CANARY_OPS_TOKEN=<random operator-only token, e.g. openssl rand -hex 32>
 CANARY_BACKOFFICE_ORIGINS=http://localhost:5173  # only when a local desk connects to prod
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
-GEMINI_API_KEY=AIza...
 FAL_KEY=...
 OPENROUTER_API_KEY=sk-or-...      # only if you use OpenRouter
-TOGETHER_API_KEY=...              # only if you use Together
-VERTEXAI_PROJECT=your-gcp-project-id
-GCP_CREDENTIALS_B64=<see next line>
 
 # ─── Web app ───────────────────────────────────────────────────────────
 SUPABASE_URL=https://<project>.supabase.co
@@ -125,10 +118,6 @@ STRIPE_WEBHOOK_SECRET=whsec_...         # from test-mode webhook endpoint
 # SENTRY_DSN=<only if you have a real https://...@... DSN; omit to no-op>
 # LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / OTEL_EXPORTER_OTLP_ENDPOINT
 #   if you wire Langfuse/OTel.
-```
-
-```bash
-echo "GCP_CREDENTIALS_B64=$(base64 < litellm/gcp-credentials.json)" >> ~/.config/canary/canary-web.env
 ```
 
 > **⚠️ Critical key distinction.** Supabase exposes two keys that both look like
@@ -159,6 +148,13 @@ reservation leases and idempotent usage-settlement RPCs are required: startup
 calls lease renewal before admitting work and fails closed if that contract is
 missing. Review compatibility with the running/rollback binary before applying;
 for the first drain-capable upgrade, use the controlled cutover below.
+
+For the per-call credit authorization cutover, drain active jobs before applying
+[`docs/sql/2026-09-22-credit-call-authorization.sql`](sql/2026-09-22-credit-call-authorization.sql)
+or the updated canonical schema. Apply it before starting the matching binary.
+The new reservation RPC requires frozen billing terms; an older binary cannot
+place new holds after this migration. Reconcile any started expired holds before
+resuming paid jobs.
 
 Reservations have a one-hour owner lease renewed every 30 seconds. Only expired
 never-started holds can be reclaimed automatically. Started-expired holds,
@@ -357,13 +353,15 @@ deploy or explicit resume. Drain intent persists in the mounted request journal 
 restart; it is not a distributed lock. Resume is dependency-readiness gated. A status-only idle observation cannot
 replace the authenticated drain-then-idle sequence for normal releases.
 
-### Use the local operator desk
+### Use the operator desk
 
-Open `/backoffice` from the Vite dev server. It asks for `CANARY_OPS_TOKEN`
-instead of embedding the secret in the frontend. Leave the server URL blank for
-local development, or enter the production origin to inspect production from
-the same local desk. A production server must allow that exact local origin in
-`CANARY_BACKOFFICE_ORIGINS`.
+Open `/backoffice` on the deployed app or the local Vite server. It asks for
+`CANARY_OPS_TOKEN` instead of embedding the secret in the frontend. Leave the
+server URL blank to connect to the same origin, or enter the production origin
+from a local desk. A production server must allow that local origin in
+`CANARY_BACKOFFICE_ORIGINS`. **Stage models** changes the defaults for new jobs
+in all projects; it does not change an existing Draw edition. See
+[model settings](reference/account-model-settings.md).
 
 The desk labels the active Stripe mode from the server-only secret key: local
 and staging should use `sk_test_...` (shown as **sandbox**), while production
@@ -544,9 +542,7 @@ One consolidated set, since the proxy and web app share a container:
 
 - **Proxy layer:** `LITELLM_MASTER_KEY`, `LITELLM_SALT_KEY`, plus the provider
   keys you actually use (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-  `GEMINI_API_KEY`, `FAL_KEY`, optionally
-  `OPENROUTER_API_KEY` / `TOGETHER_API_KEY`), `VERTEXAI_PROJECT`,
-  `GCP_CREDENTIALS_B64`. Both processes inherit the container environment, but
+  `FAL_KEY`, optionally `OPENROUTER_API_KEY`). Both processes inherit the container environment, but
   only the loopback proxy uses these keys for provider requests.
 - **Web-app layer:** `LITELLM_API_KEY` (== `LITELLM_MASTER_KEY`), `SUPABASE_URL`,
   `SUPABASE_SECRET_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,

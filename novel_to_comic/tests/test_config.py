@@ -7,12 +7,11 @@ import yaml
 
 from novel_to_comic.config import (
     Config,
-    GEMINI_IMAGE_CONCURRENCY_DEFAULT,
-    GATEWAY_GEMINI_FLASH,
     GATEWAY_IMAGE_BALANCED,
     GATEWAY_IMAGE_FAST,
     GATEWAY_IMAGE_QUALITY,
-    GATEWAY_TERRA,
+    GATEWAY_IMAGE_SUNBURST,
+    GATEWAY_SOL,
     GATEWAY_LUNA,
     config_for_image_model_alias,
     image_model_aliases,
@@ -40,18 +39,9 @@ class TestConfigDefaults:
         cfg = Config()
         assert cfg.dev_mode is False
 
-    def test_image_provider_defaults_to_gemini(self):
-        cfg = Config()
-        assert cfg.image_provider == "gemini"
-
     def test_target_language_defaults_to_en(self):
         cfg = Config()
         assert cfg.target_language == "en"
-
-    def test_negative_prompt_is_populated(self):
-        cfg = Config()
-        assert len(cfg.negative_prompt) > 0
-        assert "ugly" in cfg.negative_prompt or "deformed" in cfg.negative_prompt
 
     def test_style_template_is_populated(self):
         cfg = Config()
@@ -69,12 +59,12 @@ class TestConfigDefaults:
 
     def test_gateway_aliases_are_default_models(self):
         cfg = Config()
-        assert cfg.extraction_model == GATEWAY_GEMINI_FLASH
-        assert cfg.adapt_model == GATEWAY_TERRA
-        assert cfg.plan_model == GATEWAY_TERRA
+        assert cfg.extraction_model == GATEWAY_LUNA
+        assert cfg.adapt_model == GATEWAY_SOL
+        assert cfg.plan_model == GATEWAY_SOL
         assert cfg.prompt_model == GATEWAY_LUNA
-        assert cfg.image_model == GATEWAY_IMAGE_BALANCED
-        assert cfg.draw_model == GATEWAY_IMAGE_BALANCED
+        assert cfg.image_model == GATEWAY_IMAGE_SUNBURST
+        assert cfg.draw_model == GATEWAY_IMAGE_SUNBURST
 
     def test_litellm_defaults_are_populated(self):
         cfg = Config()
@@ -96,10 +86,10 @@ class TestEffectiveImageModel:
 
 class TestImageModelAliases:
     def test_exposes_production_gateway_aliases(self):
-        assert set(image_model_aliases()) == {"image-gemini-pro", "image-gemini-flash-lite", "image-gpt-2", "image-sunburst", "image-flare", "image-muse", "image-seedream-v5-lite"}
+        assert image_model_aliases() == ("image-sunburst",)
 
     def test_validates_supported_alias(self):
-        assert validate_image_model_alias(" image-gpt-2 ") == GATEWAY_IMAGE_QUALITY
+        assert validate_image_model_alias(" image-sunburst ") == GATEWAY_IMAGE_SUNBURST
 
     def test_blank_alias_means_project_default(self):
         assert validate_image_model_alias("") is None
@@ -115,22 +105,12 @@ class TestImageModelAliases:
 
     def test_one_shot_alias_copy_does_not_mutate_original(self):
         cfg = Config(image_model=GATEWAY_IMAGE_FAST)
-        copied = config_for_image_model_alias(cfg, GATEWAY_IMAGE_QUALITY)
+        copied = config_for_image_model_alias(cfg, GATEWAY_IMAGE_SUNBURST)
 
         assert copied is not cfg
-        assert copied.image_model == GATEWAY_IMAGE_QUALITY
+        assert copied.image_model == GATEWAY_IMAGE_SUNBURST
         assert cfg.image_model == GATEWAY_IMAGE_FAST
 
-
-
-class TestUsesGeminiImageProvider:
-    def test_gemini_returns_true(self):
-        cfg = Config(image_provider="gemini")
-        assert cfg.uses_gemini_image_provider() is True
-
-    def test_openai_returns_false(self):
-        cfg = Config(image_provider="openai", image_model="image-sunburst")
-        assert cfg.uses_gemini_image_provider() is False
 
 
 class TestGptImage2Alias:
@@ -186,66 +166,28 @@ class TestLanguageHelpers:
         assert "Español" in instr or "Spanish" in instr
 
 
-class TestEffectiveImageDimensions:
-    def test_no_scaling_when_not_dev_mode(self):
-        cfg = Config(dev_mode=False)
-        w, h = cfg.effective_image_dimensions(1024, 768)
-        assert (w, h) == (1024, 768)
-
-    def test_scales_down_in_dev_mode(self):
-        cfg = Config(dev_mode=True, dev_image_scale=0.5)
-        w, h = cfg.effective_image_dimensions(1024, 768)
-        assert w < 1024 or h < 768
-
-    def test_snaps_to_multiple_of_64(self):
-        cfg = Config(dev_mode=True, dev_image_scale=0.5)
-        w, h = cfg.effective_image_dimensions(1024, 768)
-        assert w % 64 == 0
-        assert h % 64 == 0
-
-    def test_never_drops_below_256(self):
-        cfg = Config(dev_mode=True, dev_image_scale=0.1)
-        w, h = cfg.effective_image_dimensions(128, 128)
-        assert w >= 256
-        assert h >= 256
-
-
 class TestEffectiveImageConcurrency:
     def test_dev_mode_returns_dev_concurrency(self):
         cfg = Config(dev_mode=True, dev_image_concurrency=3)
         assert cfg.effective_image_concurrency() == 3
 
-    def test_gemini_route_uses_conservative_default(self):
+    def test_sunburst_route_uses_general_default(self):
         cfg = Config(dev_mode=False, max_concurrent_requests=5)
-        assert cfg.effective_image_concurrency() == GEMINI_IMAGE_CONCURRENCY_DEFAULT
+        assert cfg.effective_image_concurrency() == 5
 
     def test_explicit_image_concurrency_overrides_provider_default(self):
         cfg = Config(dev_mode=False, image_concurrency=8)
         assert cfg.effective_image_concurrency() == 8
 
-    def test_non_google_returns_max_concurrent_requests(self):
-        cfg = Config(dev_mode=False, max_concurrent_requests=5, image_provider="openai", image_model="image-sunburst")
+    def test_default_uses_max_concurrent_requests(self):
+        cfg = Config(dev_mode=False, max_concurrent_requests=5, image_model="image-sunburst")
         assert cfg.effective_image_concurrency() == 5
 
     def test_minimum_1(self):
-        cfg = Config(dev_mode=False, max_concurrent_requests=0, image_provider="openai", image_model="image-sunburst")
+        cfg = Config(dev_mode=False, max_concurrent_requests=0, image_model="image-sunburst")
         assert cfg.effective_image_concurrency() == 1
         cfg = Config(dev_mode=False, image_concurrency=0)
         assert cfg.effective_image_concurrency() == 1
-
-
-class TestEffectiveImageSteps:
-    def test_dev_mode_caps_steps(self):
-        cfg = Config(dev_mode=True, dev_image_steps=8, image_steps=28)
-        assert cfg.effective_image_steps() == 8
-
-    def test_respects_explicit_steps_override(self):
-        cfg = Config(dev_mode=True, dev_image_steps=8, image_steps=28)
-        assert cfg.effective_image_steps(steps=4) == 4
-
-    def test_non_dev_mode_uses_configured(self):
-        cfg = Config(dev_mode=False, image_steps=20)
-        assert cfg.effective_image_steps() == 20
 
 
 class TestLoadConfig:
@@ -284,10 +226,29 @@ class TestLoadConfig:
         assert cfg.litellm_api_key == "sk-test"
         assert cfg.ai_bill_failed_requests == "never"
 
+    def test_legacy_project_routing_and_credentials_are_ignored(self, monkeypatch):
+        for key in ("LITELLM_BASE_URL", "LITELLM_API_KEY", "AI_BILL_FAILED_REQUESTS"):
+            monkeypatch.delenv(key, raising=False)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            (Path(tmpdir) / "config.yaml").write_text(
+                "adapt_model: legacy-model\n"
+                "image_provider: gemini\n"
+                "litellm_base_url: http://untrusted-gateway:4000\n"
+                "litellm_api_key: sk-untrusted\n"
+                "ai_bill_failed_requests: never\n"
+                "extraction_chunk_chars: 12000\n"
+            )
+            cfg, _ = load_config(Path(tmpdir))
+        assert cfg.adapt_model == GATEWAY_SOL
+        assert cfg.litellm_base_url == "http://localhost:4000"
+        assert cfg.litellm_api_key == "sk-local-canary"
+        assert cfg.ai_bill_failed_requests == "provider_usage_only"
+        assert cfg.extraction_chunk_chars == 12000
+
 
 class TestSaveConfig:
     def test_roundtrip(self):
-        cfg = Config(dev_mode=True, target_language="fr")
+        cfg = Config(dev_mode=True, target_language="fr", extraction_chunk_chars=12000, narrative_max_calls=6)
         with tempfile.TemporaryDirectory() as tmpdir:
             save_config(cfg, Path(tmpdir))
             path = Path(tmpdir) / "config.yaml"
@@ -297,8 +258,13 @@ class TestSaveConfig:
             assert "dev_mode: true" in content
             assert "image_model:" not in content
             assert "quality_preset:" not in content
+            assert "litellm_api_key:" not in content
+            assert "google_cloud_project:" not in content
+            assert "flux_guidance_scale:" not in content
             loaded, _ = load_config(Path(tmpdir))
             assert loaded.target_language == "fr"
+            assert loaded.extraction_chunk_chars == 12000
+            assert loaded.narrative_max_calls == 6
 
 
 def test_gateway_does_not_multiply_client_retry_attempts():

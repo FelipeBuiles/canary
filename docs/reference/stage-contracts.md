@@ -897,7 +897,13 @@ Adapt estimates use the lettering prompt and known blueprint content, exclude
 matching clean-generation checkpoints, and price a full scoped repair scenario
 plus re-review instead of a flat percentage. Unknown outputs and future review
 cache hits remain estimates. Adapt/Plan credit confidence is `variable`; quotes
-and reservations are not a hard provider-spend ceiling.
+are not guaranteed provider prices. Every API-funded model call now needs an
+atomic, job-scoped credit authorization before submission. That authorization
+can extend the hold from unreserved balance; concurrent calls keep separate
+guarantees. Settlement transfers credits from the hold into immutable debit
+rows. A provider charge beyond the held capacity is recorded as unfunded
+usage, and the job cannot authorize another call. Ambiguous paid text
+submissions retain their hold and are not automatically repeated.
 
 Draw durably saves paid image bytes/provenance in `.pending`, then publishes
 the render with an `.unfinished` identity marker. Recovery retains the original

@@ -84,60 +84,19 @@ def test_http_patch_is_present_idempotent_and_fails_closed():
         patch.patch_source("unreviewed upstream layout")
 
 
-def test_real_gateway_and_google_sdk_are_loaded():
-    from google.genai import types
+def test_real_gateway_and_only_supported_custom_handler_are_loaded():
     from litellm.llms.custom_llm import CustomLLM
-    from litellm_handlers import vertex_multimodal as vertex
     from litellm_handlers.fal_provider import FalQueueLLM
-    from litellm_handlers.openrouter_image import OpenRouterImageLLM
+    import yaml
 
     assert version("litellm") == "1.101.0"
-    assert version("google-genai") == "2.24.0"
-    assert vertex.types is types
-    for cls in (vertex.VertexMultimodalLLM, FalQueueLLM, OpenRouterImageLLM):
-        assert issubclass(cls, CustomLLM)
-    kwargs = vertex._image_config_kwargs(4 / 5, "medium")
-    config = types.GenerateContentConfig(image_config=types.ImageConfig(**kwargs))
-    assert config.image_config.aspect_ratio == "4:5"
-    assert config.image_config.image_size == "2K"
-    part = types.Part.from_bytes(data=b"fixture", mime_type="image/png")
-    assert part.inline_data.data == b"fixture"
-
-
-def test_google_usage_maps_into_real_litellm_usage_types():
-    from google.genai import types
-    from litellm.types.utils import ImageUsage
-    from litellm_handlers.vertex_multimodal import _image_usage
-
-    response = types.GenerateContentResponse(usage_metadata={
-        "prompt_token_count": 12, "candidates_token_count": 20,
-        "total_token_count": 32,
-        "prompt_tokens_details": [
-            {"modality": "TEXT", "token_count": 2},
-            {"modality": "IMAGE", "token_count": 10},
-        ],
-    })
-    usage = _image_usage(response, response_cost=0.125)
-    assert isinstance(usage, ImageUsage)
-    assert usage.input_tokens == 12
-    assert usage.output_tokens == 20
-    assert usage.total_tokens == 32
-    assert usage.input_tokens_details.image_tokens == 10
-    assert usage.input_tokens_details.text_tokens == 2
-    assert usage.model_dump()["response_cost"] == 0.125
-
-
-def test_google_errors_keep_retry_classification_without_making_requests():
-    import litellm
-    from litellm_handlers.vertex_multimodal import _translate_vertex_error
-
-    class ProviderError(Exception):
-        code = 429
-        status = "RESOURCE_EXHAUSTED"
-        message = "quota"
-
-    translated = _translate_vertex_error(ProviderError(), "fixture-model")
-    assert isinstance(translated, litellm.RateLimitError)
-    assert translated.status_code == 429
-    original = ValueError("invalid local input")
-    assert _translate_vertex_error(original, "fixture-model") is original
+    assert issubclass(FalQueueLLM, CustomLLM)
+    config = yaml.safe_load((ROOT / "litellm/config.yaml").read_text())
+    assert {route["model_name"] for route in config["model_list"]} == {
+        "gpt-6-sol", "gpt-6-luna", "claude-fable-5-1", "claude-opus-5",
+        "mimo-v2.6-pro", "image-sunburst",
+    }
+    assert config["litellm_settings"]["custom_provider_map"] == [{
+        "provider": "fal-queue",
+        "custom_handler": "litellm_handlers.fal_provider.fal_queue_llm",
+    }]

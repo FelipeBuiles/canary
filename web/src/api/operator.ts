@@ -115,6 +115,13 @@ export interface OperatorConnection {
   token: string;
 }
 
+export interface OperatorModelSettings {
+  selections: Record<string, string>;
+  models: Array<{ id: string; label: string; provider: string; kind: "text" | "image" }>;
+  stages: Array<{ id: string; label: string; description: string; model_ids: string[] }>;
+  note: string;
+}
+
 export interface GrantCreditsInput {
   amountCredits: number;
   reason: string;
@@ -211,6 +218,20 @@ export function fetchOperatorSnapshot(
   connection = readOperatorConnection(),
 ): Promise<OperatorSnapshot> {
   return operatorFetch<OperatorSnapshot>("/api/ops/backoffice/", connection);
+}
+
+export function fetchOperatorModels(connection: OperatorConnection): Promise<OperatorModelSettings> {
+  return operatorFetch<OperatorModelSettings>("/api/ops/backoffice/models", connection);
+}
+
+export function updateOperatorModels(
+  selections: Record<string, string>,
+  connection: OperatorConnection,
+): Promise<OperatorModelSettings> {
+  return operatorFetch<OperatorModelSettings>("/api/ops/backoffice/models", connection, {
+    method: "PATCH",
+    body: JSON.stringify({ selections }),
+  });
 }
 
 export function grantOperatorCredits(

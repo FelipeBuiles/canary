@@ -18,10 +18,8 @@ from novel_to_comic.usage import UsageRecord
 from tests.test_complete_page_draw import _page, _inventory, _reference_files
 
 
-@pytest.mark.parametrize('variant', ['sunburst', 'flare'])
-
-def test_public_image_page_preserves_references_and_sends_fixed_controls(tmp_path, variant):
-    config = Config(draw_model=f'image-{variant}')
+def test_public_image_page_preserves_references_and_sends_fixed_controls(tmp_path):
+    config = Config(draw_model='image-sunburst')
     profile = current_page_capability_profile(config)
     edition = select_book_edition(edition_id='test', profile=profile)
     compiled = compile_page_generation_request(
@@ -45,37 +43,29 @@ def test_public_image_page_preserves_references_and_sends_fixed_controls(tmp_pat
     kwargs = post.call_args.kwargs
     assert kwargs['retry_ambiguous'] is False
     expected = {
-        'model': f'image-{variant}', 'prompt': prepared.prompt, 'size': '1024x1536', 'n': 1,
+        'model': 'image-sunburst', 'prompt': prepared.prompt, 'size': '1024x1536', 'n': 1,
     }
-    if variant == 'sunburst':
-        expected.update({
-            'quality': 'medium', 'output_format': 'png',
-        })
-        manifest = kwargs['data']['canary_wire_request']
-        assert json.loads(manifest) == {
-            'width': 1024, 'height': 1536,
-            'controls': [['quality', 'medium'], ['output_format', 'png'], ['n', 1]],
-        }
-        expected['canary_wire_request'] = manifest
-        # Reproduce custom-provider filtering: only the manifest survives.
-        from litellm_handlers.fal_provider import _build_payload
-        payload = _build_payload(
-            'openai/gpt-image-2.5/sunburst/edit', prepared.prompt, [],
-            {'canary_wire_request': manifest},
-        )
-        assert payload['image_size'] == {'width': 1024, 'height': 1536}
-        assert payload['quality'] == 'medium'
-        assert payload['output_format'] == 'png'
-        assert payload['num_images'] == 1
-    else:
-        expected.update({'quality': 'high', 'output_format': 'png'})
+    expected.update({'quality': 'high', 'output_format': 'png'})
+    manifest = kwargs['data']['canary_wire_request']
+    assert json.loads(manifest) == {
+        'width': 1024, 'height': 1536,
+        'controls': [['quality', 'high'], ['output_format', 'png'], ['n', 1]],
+    }
+    expected['canary_wire_request'] = manifest
+    # Reproduce custom-provider filtering: only the manifest survives.
+    from litellm_handlers.fal_provider import _build_payload
+    payload = _build_payload(
+        'openai/gpt-image-2.5/sunburst/edit', prepared.prompt, [],
+        {'canary_wire_request': manifest},
+    )
+    assert payload['image_size'] == {'width': 1024, 'height': 1536}
+    assert payload['quality'] == 'high'
+    assert payload['output_format'] == 'png'
+    assert payload['num_images'] == 1
     assert kwargs['data'] == expected
     assert [entry[1][1] for entry in kwargs['files']] == list(prepared.reference_bytes)
-    assert result.actual_provider_model == (
-        f'fal-queue/{profile.model}' if variant == 'sunburst'
-        else f'openai/gpt-image-2.5-{variant}'
-    )
-    assert result.usage.provider == ("fal-queue" if variant == 'sunburst' else "openai")
+    assert result.actual_provider_model == f'fal-queue/{profile.model}'
+    assert result.usage.provider == "fal-queue"
     assert result.usage.cost_usd == 0.19
 
 
@@ -85,12 +75,13 @@ def test_sunburst_page_profile_uses_fal_queue():
     assert profile.model == 'openai/gpt-image-2.5/sunburst'
 
 
-def test_variant_cannot_change_frozen_edition():
+def test_retired_image_variant_cannot_be_selected():
     sunburst = current_page_capability_profile(Config(draw_model='image-sunburst'))
-    flare = current_page_capability_profile(Config(draw_model='image-flare'))
     edition = select_book_edition(edition_id='test', profile=sunburst)
+    with pytest.raises(ValueError, match='Unsupported complete-page model selection'):
+        current_page_capability_profile(Config(draw_model='image-flare'))
     with pytest.raises(ValueError, match='fixed for the edition'):
-        select_book_edition(edition_id='test', profile=flare, existing=edition)
+        select_book_edition(edition_id='other', profile=sunburst, existing=edition)
 
 
 @pytest.mark.parametrize('failure', ['timeout', 'wrong_size', 'wrong_model'])

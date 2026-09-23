@@ -4,6 +4,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
 import type { ShortStory } from "../types/api";
 
+const readStory = vi.hoisted(() => vi.fn());
+vi.mock("../api/projects", () => ({ readShortStory: readStory }));
+
 const catalogResult = {
   data: [] as ShortStory[],
   isLoading: false,
@@ -20,6 +23,7 @@ import { UploadStep } from "../components/wizard/UploadStep";
 
 describe("UploadStep keyboard flow", () => {
   beforeEach(() => {
+    readStory.mockReset();
     catalogResult.data = [];
     catalogResult.isLoading = false;
     catalogResult.isError = false;
@@ -40,8 +44,8 @@ describe("UploadStep keyboard flow", () => {
       </I18nProvider>,
     );
 
-    await user.click(screen.getByText("USE ANOTHER SOURCE"));
-    const source = screen.getByPlaceholderText("e.g. story URL or library code");
+    await user.click(screen.getByText("HAVE A STORY CODE OR LINK?"));
+    const source = screen.getByPlaceholderText("e.g. the-open-window");
     await user.type(source, "the-last-incantation{Enter}");
 
     expect((screen.getByLabelText("PROJECT NAME") as HTMLInputElement).value).toBe("The Last Incantation");
@@ -76,21 +80,48 @@ describe("UploadStep keyboard flow", () => {
     );
     const submit = vi.fn();
     render(<I18nProvider><UploadStep onSubmit={vi.fn()} onSubmitImport={submit} isPending={false} error={null} /></I18nProvider>);
-    const choices = screen.getByLabelText("SHORT STORY LIBRARY");
-    expect(within(choices).getAllByRole("button")).toHaveLength(3);
-    await user.click(within(choices).getByRole("button", { name: /The Open Window/ }));
-    await user.click(screen.getByRole("button", { name: "BROWSE ALL STORIES" }));
-    expect(within(choices).getAllByRole("button")).toHaveLength(8);
+    let choices = screen.getByLabelText("Story choices");
+    expect(within(choices).getAllByRole("article")).toHaveLength(8);
+    await user.type(screen.getByRole("searchbox", { name: "Search stories" }), "The Open Window");
+    choices = screen.getByLabelText("Story choices");
+    await user.click(within(choices).getByRole("button", { name: "CHOOSE STORY" }));
+    await user.clear(screen.getByRole("searchbox", { name: "Search stories" }));
     await user.click(screen.getByRole("button", { name: "NEXT" }));
-    expect(within(choices).queryByRole("button", { name: /Story 0000/ })).toBeNull();
-    await user.type(screen.getByRole("searchbox"), "Story 0000");
-    expect(within(choices).getAllByRole("button")).toHaveLength(1);
+    expect(screen.queryByText("Story 0000")).toBeNull();
+    await user.type(screen.getByRole("searchbox", { name: "Search stories" }), "Story 0000");
+    expect(within(screen.getByLabelText("Story choices")).getAllByRole("article")).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "CONTINUE" }));
     expect((screen.getByLabelText("PROJECT NAME") as HTMLInputElement).value).toBe("The Open Window");
     await user.click(screen.getByRole("button", { name: "CONTINUE" }));
     await user.click(screen.getByRole("radio", { name: /Editable lettering/ }));
     await user.click(screen.getByRole("button", { name: "CREATE PROJECT" }));
     expect(submit).toHaveBeenCalledWith("the-open-window", "The Open Window", { target_language: "en", lettering_mode: "editable" });
+  });
+
+  it("opens the complete source and starts from the story the reader chose", async () => {
+    const user = userEvent.setup();
+    catalogResult.data = [{
+      code: "kaitlin-out-of-space", title: "Kaitlin Out of Space", author: "Krishan Coupland",
+      words: 3000, genres: ["sci-fi"], description: "A visitor from the stars.",
+    }];
+    readStory.mockResolvedValue({ code: "kaitlin-out-of-space", text: "KAITLIN OUT OF SPACE\nBy Krishan Coupland\n\nFirst paragraph.\n\nSecond paragraph." });
+    render(<I18nProvider><UploadStep onSubmit={vi.fn()} onSubmitImport={vi.fn()} isPending={false} error={null} /></I18nProvider>);
+
+    await user.click(screen.getByRole("button", { name: "READ STORY" }));
+    expect(await screen.findByText("First paragraph.")).toBeTruthy();
+    expect(screen.getByText("Second paragraph.")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /USE THIS STORY/ }));
+    expect((screen.getByLabelText("PROJECT NAME") as HTMLInputElement).value).toBe("Kaitlin Out of Space");
+    expect(readStory).toHaveBeenCalledWith("kaitlin-out-of-space", expect.any(AbortSignal));
+  });
+
+  it("keeps a story requested before signup selected when the catalog loads", async () => {
+    const user = userEvent.setup();
+    catalogResult.data = [{ code: "an-education", title: "An Education", author: "Angie", words: 955, genres: ["fantasy"] }];
+    render(<I18nProvider><UploadStep initialStoryCode="an-education" onSubmit={vi.fn()} onSubmitImport={vi.fn()} isPending={false} error={null} /></I18nProvider>);
+    expect(screen.getByRole("button", { name: "SELECTED" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    expect((screen.getByLabelText("PROJECT NAME") as HTMLInputElement).value).toBe("An Education");
   });
 
   it("distinguishes loading, catalog failure, and an empty catalog while upload remains available", async () => {

@@ -1,28 +1,15 @@
 import type { ShortStory } from "../types/api";
 
-export type SortKey = "recommended" | "top_rated" | "shortest" | "title" | "year";
+export type SortKey = "relevance" | "shortest" | "longest" | "title";
 
-export interface SortOption {
-  value: SortKey;
-  /** English source label; the component runs it through t() for display. */
-  label: string;
-}
-
-/** Order of the sort dropdown. Recommended leads as the default ordering. */
-export const SORT_OPTIONS: SortOption[] = [
-  { value: "recommended", label: "Recommended" },
-  { value: "top_rated", label: "Top-rated" },
-  { value: "shortest", label: "Shortest" },
+export const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+  { value: "relevance", label: "Best match" },
+  { value: "shortest", label: "Shortest first" },
+  { value: "longest", label: "Longest first" },
   { value: "title", label: "Title (A–Z)" },
-  { value: "year", label: "Year (newest)" },
 ];
 
-/**
- * Unique genres present in the catalog, ordered by frequency (most common
- * first) so the meatiest facets lead the chip row. Derived from the data
- * rather than hardcoded, so it can't drift from the upstream source. Ties
- * break alphabetically for stable output.
- */
+/** Tags come from the shipped catalog, so a new story can add a facet without UI edits. */
 export function deriveGenres(stories: ShortStory[]): string[] {
   const counts = new Map<string, number>();
   for (const story of stories) {
@@ -30,80 +17,62 @@ export function deriveGenres(stories: ShortStory[]): string[] {
       counts.set(genre, (counts.get(genre) ?? 0) + 1);
     }
   }
-  return [...counts.keys()].sort((a, b) => {
-    const byCount = (counts.get(b) ?? 0) - (counts.get(a) ?? 0);
-    return byCount !== 0 ? byCount : a.localeCompare(b);
-  });
+  return [...counts.keys()].sort((a, b) =>
+    (counts.get(b) ?? 0) - (counts.get(a) ?? 0) || a.localeCompare(b),
+  );
 }
 
 const GENRE_LABEL_OVERRIDES: Record<string, string> = {
   "sci-fi": "Sci-Fi",
-  childrens: "Children's",
+  "coming-of-age": "Coming of age",
 };
 
-/** Pretty display for a raw genre slug: "war" -> "War", "sci-fi" -> "Sci-Fi". */
 export function genreLabel(genre: string): string {
-  return (
-    GENRE_LABEL_OVERRIDES[genre] ??
-    genre
-      .split(/[\s-]+/)
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(" ")
-  );
+  return GENRE_LABEL_OVERRIDES[genre] ?? genre
+    .split(/[\s-]+/)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 export interface BrowseParams {
   search: string;
   genres: string[];
   sort: SortKey;
+  source?: "all" | "curated" | "archive";
 }
 
-/**
- * Rank used by the rating-led sorts: higher rating first, with unrated
- * stories collapsing to a sentinel below every real rating so they sink last.
- */
-function ratingRank(story: ShortStory): number {
-  return typeof story.rating === "number" ? story.rating : -1;
+function searchScore(story: ShortStory, terms: string[]): number {
+  if (!terms.length) return 0;
+  const title = story.title.toLocaleLowerCase();
+  const author = story.author.toLocaleLowerCase();
+  const genres = (story.genres ?? []).join(" ").toLocaleLowerCase();
+  const description = `${story.description ?? ""} ${story.showcase_note ?? ""} ${story.publish_source ?? ""} ${story.publish_year ?? ""}`.toLocaleLowerCase();
+  let score = 0;
+  for (const term of terms) {
+    if (title === term) score += 10;
+    else if (title.includes(term)) score += 6;
+    else if (author.includes(term)) score += 4;
+    else if (genres.includes(term)) score += 3;
+    else if (description.includes(term)) score += 1;
+    else return -1;
+  }
+  return score;
 }
 
-const COMPARATORS: Record<SortKey, (a: ShortStory, b: ShortStory) => number> = {
-  // Top-rated first; among equal ratings, the quickest to try; unrated last.
-  recommended: (a, b) =>
-    ratingRank(b) - ratingRank(a) || a.words - b.words || a.title.localeCompare(b.title),
-  // Pure rating, unrated last, ties broken by title.
-  top_rated: (a, b) => ratingRank(b) - ratingRank(a) || a.title.localeCompare(b.title),
-  shortest: (a, b) => a.words - b.words || a.title.localeCompare(b.title),
-  title: (a, b) => a.title.localeCompare(b.title),
-  // Newest first; stories without a publish year sink to the bottom.
-  year: (a, b) =>
-    (b.publish_year ?? -Infinity) - (a.publish_year ?? -Infinity) ||
-    a.title.localeCompare(b.title),
-};
-
-/**
- * Filter then sort the catalog. Search matches title/author/genre substrings;
- * genres filter with OR semantics (a story shows if it matches any selected
- * genre) and AND against the search. Pure — returns a new array and never
- * mutates the input.
- */
-export function browseStories(
-  stories: ShortStory[],
-  { search, genres, sort }: BrowseParams,
-): ShortStory[] {
-  const query = search.trim().toLowerCase();
-  const genreSet = genres.length ? new Set(genres) : null;
-
-  const filtered = stories.filter((story) => {
-    if (genreSet && !(story.genres ?? []).some((genre) => genreSet.has(genre))) {
-      return false;
-    }
-    if (!query) return true;
-    return (
-      story.title.toLowerCase().includes(query) ||
-      story.author.toLowerCase().includes(query) ||
-      (story.genres ?? []).some((genre) => genre.toLowerCase().includes(query))
-    );
-  });
-
-  return filtered.sort(COMPARATORS[sort]);
+/** Match every search term, then rank direct title hits ahead of broader matches. */
+export function browseStories(stories: ShortStory[], { search, genres, sort, source = "all" }: BrowseParams): ShortStory[] {
+  const terms = search.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const genreSet = new Set(genres);
+  return stories
+    .map((story, index) => ({ story, index, score: searchScore(story, terms) }))
+    .filter(({ story, score }) => score >= 0 && (source === "all" || (story.source_kind ?? "curated") === source) && (
+      genreSet.size === 0 || (story.genres ?? []).some((genre) => genreSet.has(genre))
+    ))
+    .sort((a, b) => {
+      if (sort === "shortest") return a.story.words - b.story.words || a.index - b.index;
+      if (sort === "longest") return b.story.words - a.story.words || a.index - b.index;
+      if (sort === "title") return a.story.title.localeCompare(b.story.title) || a.index - b.index;
+      return b.score - a.score || a.index - b.index;
+    })
+    .map(({ story }) => story);
 }

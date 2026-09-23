@@ -50,7 +50,9 @@ describe("Scenewright homepage", () => {
     const heading = await screen.findByRole("heading", { name: "Read a finished book" });
     const section = heading.closest("section");
     expect(section?.previousElementSibling?.id).toBe("continuity");
-    expect(section?.nextElementSibling?.id).toBe("process");
+    expect(section?.nextElementSibling?.classList.contains("landing-story-shelf")).toBe(true);
+    expect(section?.nextElementSibling?.nextElementSibling?.id).toBe("process");
+    expect(screen.getByRole("link", { name: /Explore all stories/ }).getAttribute("href")).toBe("/samples");
     expect(screen.getByRole("link", { name: "Read book" }).getAttribute("href")).toBe("/read/sample");
   });
 
@@ -68,6 +70,20 @@ describe("Scenewright homepage", () => {
     expect(sampleLink.getAttribute("href")).toBe("/signup");
     expect(screen.getByText(/AI-assisted visual adaptation/)).toBeTruthy();
     expect(screen.queryByText(/500 free credits/i)).toBeNull();
+  });
+
+  it("shows licensed source stories separately from finished comic books", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url: string) => ({
+      ok: true,
+      json: async () => String(url).endsWith("/projects/short-stories") ? [{
+        code: "kaitlin-out-of-space", title: "Kaitlin Out of Space", author: "Krishan Coupland",
+        words: 3117, genres: ["sci-fi"], description: "An older woman welcomes a visitor.",
+      }] : [],
+    })));
+    renderHomePage();
+    expect(await screen.findByRole("heading", { name: "Kaitlin Out of Space" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Read and choose/ }).getAttribute("href")).toBe("/samples?story=kaitlin-out-of-space");
+    expect(screen.queryByRole("heading", { name: "Read a finished book" })).toBeNull();
   });
 
   it("makes provisional development pages readable without claiming customer or production proof", () => {

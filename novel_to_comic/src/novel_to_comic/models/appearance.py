@@ -7,7 +7,9 @@ changed facets and identity replacement, never inferred prose keywords.
 
 from typing import Optional, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+from novel_to_comic.models.asset_id import safe_asset_id
 
 
 class StoryPosition(BaseModel):
@@ -45,6 +47,7 @@ class AppearanceState(BaseModel):
     """
 
     id: str  # entity-scoped, e.g. "silver"
+    _safe_id = field_validator("id")(safe_asset_id)
     label: str  # human label, e.g. "Silver hands"
     visual_anchor: str
     visually_significant: bool = False

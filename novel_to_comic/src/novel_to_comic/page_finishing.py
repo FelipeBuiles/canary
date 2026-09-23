@@ -6,13 +6,14 @@ from novel_to_comic.artifact_lock import locked_mutation
 
 import hashlib
 import io
+import json
 import os
 import zipfile
 from collections import defaultdict
 from pathlib import Path
 
 import img2pdf
-from PIL import Image, ImageCms
+from PIL import Image, ImageCms, ImageDraw, ImageFont
 from pypdf import PdfReader
 
 from novel_to_comic.models.adaptation import BookAdaptation
@@ -402,6 +403,93 @@ def _reusable_packages(
     return tuple(reusable)
 
 
+def source_credit_info(project_dir: Path) -> dict | None:
+    """Return the mandatory attribution for a share-alike sample, if present."""
+    source_path = project_dir / "sample_source.json"
+    if not source_path.exists():
+        return None
+    source = json.loads(source_path.read_text(encoding="utf-8"))
+    if not isinstance(source, dict):
+        raise ValueError("Sample source attribution is invalid")
+    if source.get("license") != "CC BY-SA 3.0":
+        return None
+    title, author, source_url, license_url = (
+        source.get(key) for key in ("title", "author", "source_url", "license_url")
+    )
+    if not all(isinstance(value, str) and value.strip() for value in (title, author, source_url, license_url)):
+        raise ValueError("Share-alike sample is missing export attribution")
+    if not source_url.startswith("https://scp-wiki.wikidot.com/"):
+        raise ValueError("Share-alike source needs a specific export credit format")
+    return {"title": title, "author": author, "source_url": source_url, "license": source["license"], "license_url": license_url}
+
+
+def source_credit_page(project_dir: Path, production: FinishProductionSpec) -> bytes | None:
+    """Include a readable share-alike notice in every exported adaptation."""
+    source = source_credit_info(project_dir)
+    if source is None:
+        return None
+    title, author, source_url, license_url = (
+        source[key] for key in ("title", "author", "source_url", "license_url")
+    )
+
+    width, height = production.canvas_width, production.canvas_height
+    image = Image.new("RGB", (width, height), "#f6f0e4")
+    draw = ImageDraw.Draw(image)
+    font_path = Path(__file__).with_name("fonts") / "EBGaramond-SemiBold.ttf"
+    margin = max(8, width // 12)
+    paragraphs = (
+        "SOURCE & LICENSE",
+        f'Based on "{title}" by {author}, from the SCP Wiki.',
+        f"Original story: {source_url}",
+        "This comic adaptation is licensed under Creative Commons Attribution-ShareAlike 3.0 Unported.",
+        license_url,
+    )
+
+    def wrapped_lines(font: ImageFont.FreeTypeFont) -> list[str]:
+        lines: list[str] = []
+        max_width = width - 2 * margin
+        for paragraph in paragraphs:
+            if lines:
+                lines.append("")
+            line = ""
+            for word in paragraph.split():
+                candidate = f"{line} {word}" if line else word
+                if draw.textlength(candidate, font=font) <= max_width:
+                    line = candidate
+                    continue
+                if line:
+                    lines.append(line)
+                    line = ""
+                for character in word:
+                    if line and draw.textlength(line + character, font=font) > max_width:
+                        lines.append(line)
+                        line = ""
+                    line += character
+            if line:
+                lines.append(line)
+        return lines
+
+    for size in range(max(7, min(width // 20, height // 28)), 5, -1):
+        font = ImageFont.truetype(font_path, size)
+        lines = wrapped_lines(font)
+        leading = max(2, size // 3)
+        line_height = size + leading
+        if len(lines) * line_height <= height - 2 * margin:
+            break
+    else:
+        raise ValueError("Share-alike attribution does not fit the export page")
+
+    y = margin
+    for line in lines:
+        if line:
+            draw.text((margin, y), line, font=font, fill="#191714")
+        y += line_height
+    output = io.BytesIO()
+    srgb = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
+    image.save(output, "JPEG", icc_profile=srgb.tobytes(), dpi=(production.dpi, production.dpi), quality=production.jpeg_quality, subsampling=0)
+    return output.getvalue()
+
+
 def _package_exports(
     artifacts: TargetArtifacts,
     page_paths: tuple[Path, ...],
@@ -409,15 +497,18 @@ def _package_exports(
     productions: tuple[FinishProductionSpec, ...],
 ) -> tuple[ExportPackage, ...]:
     packages: list[ExportPackage] = []
-    page_numbers = tuple(range(1, len(page_paths) + 1))
+    credit_page = source_credit_page(artifacts.project_dir, productions[-1])
+    exported_pages: tuple[str | bytes, ...] = tuple(str(path) for path in page_paths) + ((credit_page,) if credit_page else ())
+    export_productions = productions + ((productions[-1],) if credit_page else ())
+    page_numbers = tuple(range(1, len(exported_pages) + 1))
     for format in formats:
         output = artifacts.export_path(format)
         if format == "pdf":
-            _atomic_write(output, img2pdf.convert([str(path) for path in page_paths]))
+            _atomic_write(output, img2pdf.convert(list(exported_pages)))
             pdf = PdfReader(output)
-            if len(pdf.pages) != len(page_paths):
+            if len(pdf.pages) != len(exported_pages):
                 raise ValueError("PDF page count does not match the active book")
-            for page, production in zip(pdf.pages, productions, strict=True):
+            for page, production in zip(pdf.pages, export_productions, strict=True):
                 expected_width = production.canvas_width / production.dpi * 72
                 expected_height = production.canvas_height / production.dpi * 72
                 if (
@@ -428,17 +519,17 @@ def _package_exports(
         elif format == "cbz":
             buffer = io.BytesIO()
             with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-                for page_number, path in zip(page_numbers, page_paths, strict=True):
+                for page_number, page_input in zip(page_numbers, exported_pages, strict=True):
                     archive.writestr(
                         f"page_{page_number:03d}.jpg",
-                        path.read_bytes(),
+                        Path(page_input).read_bytes() if isinstance(page_input, str) else page_input,
                     )
             _atomic_write(output, buffer.getvalue())
             with zipfile.ZipFile(output) as archive:
                 expected = [f"page_{number:03d}.jpg" for number in page_numbers]
                 if archive.namelist() != expected or archive.testzip() is not None:
                     raise ValueError("CBZ order or archive integrity is invalid")
-                for name, production in zip(expected, productions, strict=True):
+                for name, production in zip(expected, export_productions, strict=True):
                     with Image.open(io.BytesIO(archive.read(name))) as image:
                         if image.format != "JPEG":
                             raise ValueError("CBZ pages must use optimized JPEG encoding")

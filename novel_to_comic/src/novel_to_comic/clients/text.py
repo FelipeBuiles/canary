@@ -18,35 +18,14 @@ from novel_to_comic.ai import (
 # ── Model → provider registry ────────────────────────────────────────────────
 # Add new models here.  Do NOT add heuristic prefix-matching.
 
-_TEXT_PROVIDERS = ("gemini", "anthropic", "openai", "openrouter")
+_TEXT_PROVIDERS = ("anthropic", "openai", "openrouter")
 
 MODEL_REGISTRY: dict[str, str] = {
-    # Google Gemini
-    "gemini-3.8-flash": "gemini",
-    "gemini-3.6-flash": "gemini",
-    "gemini-3.5-flash": "gemini",
-    "gemini-3.5-flash-lite": "gemini",
-    "gemini-3.1-flash-preview": "gemini",
-    "gemini-3.1-flash-lite-preview": "gemini",
-    "gemini-2.5-pro": "gemini",
-    "gemini-2.5-flash": "gemini",
-    "gemini-2.5-flash-lite": "gemini",
-    # Anthropic Claude
     "claude-fable-5-1": "anthropic",
     "claude-opus-5": "anthropic",
-    "claude-opus-4-7": "anthropic",
-    "claude-sonnet-4-6": "anthropic",
-    "claude-haiku-4-5": "anthropic",
-    # OpenAI
-    "gpt-6-astra": "openai",
-    "gpt-5.4": "openai",
-    "gpt-5.4-mini": "openai",
-    "gpt-5.6-terra": "openai",
-    "gpt-5.6-luna": "openai",
-    "deepseek-v4.1-flash": "openrouter",
-    "glm-5.3-flash": "openrouter",
+    "gpt-6-sol": "openai",
+    "gpt-6-luna": "openai",
     "mimo-v2.6-pro": "openrouter",
-    "union-alpha": "openrouter",
 }
 
 

@@ -233,7 +233,7 @@ export function ProjectSettingsPage() {
 
             <SettingsRow
               label={t("DEV / DEMO MODE")}
-              hint={t("Runs a smaller, faster generation path for quick testing.")}
+              hint={t("Uses the local development generation concurrency limit.")}
             >
               <SwitchField
                 checked={!!config?.dev_mode}

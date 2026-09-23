@@ -83,6 +83,18 @@ create table if not exists public.ai_usage_events (
   error_json            jsonb       not null default '{}'::jsonb
 );
 
+-- Durable guarantees for concurrent provider submissions within one job.
+create table if not exists public.credit_call_authorizations (
+  usage_call_id text primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  job_id uuid not null,
+  reservation_id uuid not null references public.credit_ledger(id) on delete cascade,
+  amount_credits integer not null check (amount_credits > 0),
+  status text not null default 'pending'
+    check (status in ('pending', 'settled', 'released')),
+  created_at timestamptz not null default now()
+);
+
 -- Durable, privacy-bounded customer journey milestones. The service role is
 -- the only writer; browser events go through the authenticated API so event
 -- names, properties, and payload size remain allowlisted by application code.
@@ -155,6 +167,9 @@ alter table public.credit_ledger
   add column if not exists reservation_owner uuid,
   add column if not exists reservation_expires_at timestamptz,
   add column if not exists reservation_started_at timestamptz,
+  add column if not exists billing_credits_per_usd numeric,
+  add column if not exists billing_markup numeric,
+  add column if not exists unfunded_credits integer not null default 0,
   add column if not exists stripe_checkout_session_id text,
   add column if not exists credit_package_id text,
   add column if not exists gross_amount_cents integer,
@@ -340,6 +355,7 @@ create or replace view public.user_credits
 
 -- Remove the unsafe old overload on upgrades; old binaries must fail closed.
 drop function if exists public.reserve_stage_credits(uuid, uuid, text, integer, uuid);
+drop function if exists public.reserve_stage_credits(uuid, uuid, text, integer, uuid, uuid, integer);
 create or replace function public.reserve_stage_credits(
   p_user_id       uuid,
   p_project_id    uuid,
@@ -347,7 +363,9 @@ create or replace function public.reserve_stage_credits(
   p_amount_credits integer,
   p_job_id        uuid,
   p_owner         uuid,
-  p_lease_seconds integer
+  p_lease_seconds integer,
+  p_credits_per_usd numeric,
+  p_markup numeric
 )
 returns uuid
 language plpgsql
@@ -363,7 +381,8 @@ begin
   end if;
 
   perform pg_advisory_xact_lock(hashtextextended(p_user_id::text, 0));
-  if p_owner is null or p_lease_seconds < 60 or p_lease_seconds > 86400 then
+  if p_owner is null or p_lease_seconds < 60 or p_lease_seconds > 86400
+     or p_credits_per_usd <= 0 or p_markup <= 0 then
     raise exception 'Invalid reservation lease';
   end if;
   -- Only a never-started expired request can be safely reclaimed automatically.
@@ -394,7 +413,8 @@ begin
     status,
     stage,
     description,
-    job_id, reservation_owner, reservation_expires_at
+    job_id, reservation_owner, reservation_expires_at,
+    billing_credits_per_usd, billing_markup
   )
   values (
     p_user_id,
@@ -403,7 +423,8 @@ begin
     'reserved',
     p_stage,
     'Reserved: ' || p_stage,
-    p_job_id, p_owner, clock_timestamp() + make_interval(secs => p_lease_seconds)
+    p_job_id, p_owner, clock_timestamp() + make_interval(secs => p_lease_seconds),
+    p_credits_per_usd, p_markup
   )
   returning id into v_reservation_id;
 
@@ -476,6 +497,92 @@ begin
 end;
 $$;
 
+create unique index if not exists credit_ledger_active_job_hold_idx
+  on public.credit_ledger (user_id, job_id)
+  where status = 'reserved' and reservation_owner is not null;
+
+create or replace function public.authorize_model_call_credits(
+  p_user_id uuid,
+  p_job_id uuid,
+  p_usage_call_id text,
+  p_amount_credits integer,
+  p_owner uuid,
+  p_credits_per_usd numeric,
+  p_markup numeric
+) returns boolean language plpgsql security definer set search_path = public as $$
+declare
+  v_hold public.credit_ledger%rowtype;
+  v_existing public.credit_call_authorizations%rowtype;
+  v_pending integer;
+  v_balance integer;
+  v_extra integer;
+begin
+  if p_user_id is null or p_job_id is null or p_owner is null
+     or p_usage_call_id is null or p_amount_credits <= 0
+     or p_credits_per_usd <= 0 or p_markup <= 0 then
+    raise exception 'Invalid model call authorization';
+  end if;
+  perform pg_advisory_xact_lock(hashtextextended(p_user_id::text, 0));
+  select * into v_existing from public.credit_call_authorizations
+  where usage_call_id = p_usage_call_id;
+  if exists (select 1 from public.credit_ledger where usage_call_id = p_usage_call_id)
+     or exists (select 1 from public.credit_ledger
+       where user_id = p_user_id and job_id = p_job_id and unfunded_credits > 0) then
+    return false;
+  end if;
+  select * into v_hold from public.credit_ledger
+  where user_id = p_user_id and job_id = p_job_id and status = 'reserved'
+    and reservation_owner = p_owner
+    and reservation_expires_at > clock_timestamp()
+  for update;
+  if not found then
+    return false;
+  end if;
+  if v_hold.billing_credits_per_usd is not null
+     and (v_hold.billing_credits_per_usd != p_credits_per_usd
+       or v_hold.billing_markup != p_markup) then
+    raise exception 'Job billing terms changed; restart with a new reservation';
+  end if;
+  if v_existing.usage_call_id is not null then
+    return v_existing.user_id = p_user_id and v_existing.job_id = p_job_id
+      and v_existing.reservation_id = v_hold.id
+      and v_existing.amount_credits = p_amount_credits
+      and v_existing.status = 'pending';
+  end if;
+  select coalesce(sum(amount_credits), 0)::integer into v_pending
+  from public.credit_call_authorizations
+  where reservation_id = v_hold.id and status = 'pending';
+  v_extra := greatest(0, v_pending + p_amount_credits + v_hold.amount_credits);
+  select coalesce(sum(case when status != 'released' then amount_credits else 0 end), 0)::integer
+  into v_balance from public.credit_ledger where user_id = p_user_id;
+  if v_balance < v_extra then
+    return false;
+  end if;
+  update public.credit_ledger
+  set amount_credits = amount_credits - v_extra,
+      reservation_started_at = coalesce(reservation_started_at, clock_timestamp()),
+      billing_credits_per_usd = coalesce(billing_credits_per_usd, p_credits_per_usd),
+      billing_markup = coalesce(billing_markup, p_markup)
+  where id = v_hold.id;
+  insert into public.credit_call_authorizations (
+    usage_call_id, user_id, job_id, reservation_id, amount_credits
+  ) values (
+    p_usage_call_id, p_user_id, p_job_id, v_hold.id, p_amount_credits
+  );
+  return true;
+end;
+$$;
+
+create or replace function public.release_model_call_authorization(
+  p_user_id uuid, p_usage_call_id text
+) returns void language plpgsql security definer set search_path = public as $$
+begin
+  perform pg_advisory_xact_lock(hashtextextended(p_user_id::text, 0));
+  update public.credit_call_authorizations set status = 'released'
+  where user_id = p_user_id and usage_call_id = p_usage_call_id and status = 'pending';
+end;
+$$;
+
 -- ── Atomic model-usage settlement ───────────────────────────────────────────
 -- Model calls are retained as individual audit rows, but whole public credits
 -- are rounded once across the job's cumulative provider cost. The advisory
@@ -516,10 +623,18 @@ set search_path = public
 as $$
 declare
   v_existing_amount integer;
+  v_hold public.credit_ledger%rowtype;
+  v_auth public.credit_call_authorizations%rowtype;
   v_prior_cost numeric := 0;
-  v_prior_debit integer := 0;
+  v_prior_accounted integer := 0;
   v_target_debit integer := 0;
   v_increment integer := 0;
+  v_other_pending integer := 0;
+  v_reserved_capacity integer := 0;
+  v_balance integer := 0;
+  v_charge integer := 0;
+  v_rate numeric;
+  v_markup numeric;
 begin
   if p_funding is null or p_funding not in ('api', 'codex_subscription') then
     raise exception 'Unknown usage funding';
@@ -542,13 +657,26 @@ begin
     return abs(v_existing_amount);
   end if;
 
+  select * into v_auth from public.credit_call_authorizations
+  where usage_call_id = p_usage_call_id for update;
+  if found and (v_auth.user_id != p_user_id or v_auth.job_id != p_job_id) then
+    raise exception 'Model call authorization belongs to a different job';
+  end if;
+  select * into v_hold from public.credit_ledger
+  where user_id = p_user_id and job_id = p_job_id and status = 'reserved'
+    and reservation_owner is not null
+    and (v_auth.reservation_id is null or id = v_auth.reservation_id)
+  for update;
+  v_rate := coalesce(v_hold.billing_credits_per_usd, p_credits_per_usd);
+  v_markup := coalesce(v_hold.billing_markup, p_markup);
+
   -- Subscription evidence is balance-neutral even with contradictory USD or
   -- billable input. It must not enter the cumulative API rounding calculation.
   if p_funding = 'api' then
   select
     coalesce(sum(cost_usd), 0),
-    coalesce(sum(abs(amount_credits)), 0)::integer
-  into v_prior_cost, v_prior_debit
+    coalesce(sum(abs(amount_credits) + unfunded_credits), 0)::integer
+  into v_prior_cost, v_prior_accounted
   from public.credit_ledger
   where user_id = p_user_id
     and job_id = p_job_id
@@ -558,30 +686,52 @@ begin
 
   v_target_debit := ceil(
     (v_prior_cost + greatest(coalesce(p_cost_usd, 0), 0))
-    * greatest(coalesce(p_credits_per_usd, 0), 0)
-    * greatest(coalesce(p_markup, 0), 0)
+    * greatest(coalesce(v_rate, 0), 0)
+    * greatest(coalesce(v_markup, 0), 0)
   )::integer;
   if p_billable and v_target_debit <= 0 then
     v_target_debit := 1;
   end if;
-  v_increment := greatest(0, v_target_debit - v_prior_debit);
+  v_increment := greatest(0, v_target_debit - v_prior_accounted);
+  if v_hold.id is not null then
+    select coalesce(sum(amount_credits), 0)::integer into v_other_pending
+    from public.credit_call_authorizations
+    where reservation_id = v_hold.id and status = 'pending'
+      and usage_call_id != p_usage_call_id;
+    v_reserved_capacity := greatest(0, -v_hold.amount_credits - v_other_pending);
+    v_charge := least(v_increment, v_reserved_capacity);
+    -- Only the pre-submission hold can pay this call. Any provider surprise is
+    -- recorded as unfunded rather than spending other available credits.
+    update public.credit_ledger
+    set amount_credits = amount_credits + v_charge
+    where id = v_hold.id;
+  else
+    -- Legacy/manual settlements without a hold remain bounded by free balance.
+    select coalesce(sum(case when status != 'released' then amount_credits else 0 end), 0)::integer
+    into v_balance from public.credit_ledger where user_id = p_user_id;
+    v_charge := least(v_increment, greatest(v_balance, 0));
+  end if;
   end if;
 
   insert into public.credit_ledger (
     user_id, project_id, amount_credits, status, stage, description,
     usage_call_id, provider, model, provider_model, operation, input_tokens,
     output_tokens, image_count, cost_usd, cost_source, pricing_snapshot, job_id,
-    funding, usage_status
+    funding, usage_status, unfunded_credits
   ) values (
-    p_user_id, p_project_id, -v_increment, 'settled', p_stage, p_description,
+    p_user_id, p_project_id, -v_charge, 'settled', p_stage, p_description,
     p_usage_call_id, p_provider, p_model, p_provider_model, p_operation,
     coalesce(p_input_tokens, 0), coalesce(p_output_tokens, 0),
     coalesce(p_image_count, 0), p_cost_usd, p_cost_source,
     p_pricing_snapshot, p_job_id, p_funding,
-    (select status from public.ai_usage_events where id::text = p_usage_call_id)
+    (select status from public.ai_usage_events where id::text = p_usage_call_id),
+    v_increment - v_charge
   );
 
-  return v_increment;
+  update public.credit_call_authorizations set status = 'settled'
+  where usage_call_id = p_usage_call_id and user_id = p_user_id and status = 'pending';
+
+  return v_charge;
 end;
 $$;
 
@@ -683,6 +833,7 @@ select
   a.cost_usd as provider_cost_usd,
   l.amount_credits,
   case
+    when l.unfunded_credits > 0 then 'unfunded_provider_usage'
     when a.id is not null and a.billable and a.funding = 'api' and l.id is null
       then 'billable_ai_event_without_debit'
     when a.id is null and l.id is not null
@@ -697,7 +848,8 @@ full outer join public.credit_ledger l
 where
   (a.id is not null and a.billable and a.funding = 'api' and l.id is null)
   or (a.id is null and l.usage_call_id is not null)
-  or (a.status != 'succeeded' and l.amount_credits < 0);
+  or (a.status != 'succeeded' and l.amount_credits < 0)
+  or l.unfunded_credits > 0;
 
 create or replace view public.ops_unit_economics_daily
 with (security_invoker = true) as
@@ -758,6 +910,7 @@ group by 1, 2;
 alter table public.projects enable row level security;
 alter table public.credit_ledger enable row level security;
 alter table public.ai_usage_events enable row level security;
+alter table public.credit_call_authorizations enable row level security;
 alter table public.product_events enable row level security;
 alter table public.credit_refunds enable row level security;
 
@@ -815,6 +968,7 @@ grant select on public.ai_usage_events to authenticated;
 
 revoke all on public.product_events from public, anon, authenticated;
 revoke all on public.credit_refunds from public, anon, authenticated;
+revoke all on public.credit_call_authorizations from public, anon, authenticated;
 revoke all on public.ops_ai_cost_daily from public, anon, authenticated;
 revoke all on public.ops_usage_reconciliation from public, anon, authenticated;
 revoke all on public.ops_unit_economics_daily from public, anon, authenticated;
@@ -822,14 +976,23 @@ revoke all on public.ops_product_funnel_daily from public, anon, authenticated;
 
 grant all on public.product_events to service_role;
 grant all on public.credit_refunds to service_role;
+grant all on public.credit_call_authorizations to service_role;
 grant select on public.ops_ai_cost_daily to service_role;
 grant select on public.ops_usage_reconciliation to service_role;
 grant select on public.ops_unit_economics_daily to service_role;
 grant select on public.ops_product_funnel_daily to service_role;
 
-revoke all on function public.reserve_stage_credits(uuid, uuid, text, integer, uuid, uuid, integer)
+revoke all on function public.reserve_stage_credits(uuid, uuid, text, integer, uuid, uuid, integer, numeric, numeric)
   from public, anon, authenticated;
-grant execute on function public.reserve_stage_credits(uuid, uuid, text, integer, uuid, uuid, integer)
+grant execute on function public.reserve_stage_credits(uuid, uuid, text, integer, uuid, uuid, integer, numeric, numeric)
+  to service_role;
+revoke all on function public.authorize_model_call_credits(
+  uuid, uuid, text, integer, uuid, numeric, numeric
+), public.release_model_call_authorization(uuid, text)
+  from public, anon, authenticated;
+grant execute on function public.authorize_model_call_credits(
+  uuid, uuid, text, integer, uuid, numeric, numeric
+), public.release_model_call_authorization(uuid, text)
   to service_role;
 revoke all on function public.renew_credit_reservation_leases(uuid, integer),
   public.check_credit_reservation_lease(uuid, uuid),

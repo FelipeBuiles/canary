@@ -51,7 +51,7 @@ RUN export VITE_SUPABASE_URL="$VITE_SUPABASE_URL" \
 #
 # One container runs two processes:
 #   1. LiteLLM proxy on 127.0.0.1:4000 (holds all provider API keys; the only
-#      process that egresses to OpenAI/Anthropic/Vertex/fal).
+#      process that egresses to OpenAI/Anthropic/OpenRouter/fal).
 #   2. uvicorn web app on 0.0.0.0:8000 (talks to the proxy over loopback).
 #
 # Collapsing the previous two-Fly-app split into one machine keeps provider
@@ -96,6 +96,13 @@ COPY showcase/books/ /app/showcase/books/
 # Copy application source and install the project itself
 COPY novel_to_comic/ ./novel_to_comic/
 RUN cd novel_to_comic && uv sync --extra web --frozen --no-dev
+# The local Codex execution adapter is never present in a production image.
+# Routing authority remains so stray saved Codex selections fail closed.
+RUN rm novel_to_comic/src/novel_to_comic/ai/codex_runtime.py \
+       novel_to_comic/src/novel_to_comic/ai/providers/codex_dev.py \
+       novel_to_comic/src/novel_to_comic/codex_complete_page.py \
+       novel_to_comic/src/novel_to_comic/server/routers/labs.py \
+    && rm -r novel_to_comic/src/novel_to_comic/labs
 RUN /app/novel_to_comic/.venv/bin/python -c "from novel_to_comic.server.showcase import books; books()"
 
 # ─── LiteLLM proxy (loopback subprocess) ────────────────────────────────────
@@ -137,11 +144,11 @@ RUN /app/.venv-litellm/bin/python /app/patch_http_errors.py
 COPY litellm/patch_anthropic_refusals.py /app/patch_anthropic_refusals.py
 RUN /app/.venv-litellm/bin/python /app/patch_anthropic_refusals.py
 
-# LiteLLM config + custom handlers (vertex-multimodal / fal-queue).
+# LiteLLM config + the single retained custom handler (fal-queue).
 # PYTHONPATH makes the handlers importable; config.yaml's custom_provider_map
 # registers them with the proxy at boot.
 COPY litellm/config.yaml /app/config.yaml
-COPY litellm_handlers/ /app/litellm_handlers/
+COPY litellm_handlers/__init__.py litellm_handlers/provider_wire.py litellm_handlers/fal_provider.py /app/litellm_handlers/
 
 # Copy the merged entrypoint (materializes GCP creds → starts litellm → waits
 # for readiness → supervises litellm and the web process together).

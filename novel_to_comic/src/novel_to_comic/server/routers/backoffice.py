@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..db import get_db
 from ..deployment_status import require_ops_token
@@ -16,6 +16,8 @@ from ..product_events import capture_server_event
 from ..release import release_identity
 from ..runtime_environment import stripe_environment_snapshot
 from novel_to_comic.state import STAGE_NAMES, StageStatus, is_stale, load_state
+from novel_to_comic.model_catalog import STAGE_FIELDS as MODEL_STAGE_FIELDS, STAGE_LABELS as MODEL_STAGE_LABELS, STAGE_DESCRIPTIONS as MODEL_STAGE_DESCRIPTIONS, allowed_models, models
+from ..account_models import read_global_selections, update_global_selections
 
 router = APIRouter(dependencies=[Depends(require_ops_token)])
 logger = logging.getLogger("canary.backoffice")
@@ -45,6 +47,11 @@ class GrantCreditsRequest(BaseModel):
         max_length=120,
         pattern=r"^[A-Za-z0-9:_-]+$",
     )
+
+
+class OperatorModelSettingsPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    selections: dict[str, str]
 
 
 def _rows(response: Any) -> list[dict[str, Any]]:
@@ -789,6 +796,37 @@ def _load_snapshot(request: Request) -> dict[str, Any]:
 def backoffice_snapshot(request: Request):
     """Return the live operator snapshot; never return seeded customer data."""
     return _load_snapshot(request)
+
+
+def _operator_model_payload(selections: dict[str, str]) -> dict[str, Any]:
+    return {
+        "selections": selections,
+        "models": models(include_codex=False),
+        "stages": [
+            {"id": stage, "label": MODEL_STAGE_LABELS[stage],
+             "description": MODEL_STAGE_DESCRIPTIONS[stage],
+             "model_ids": list(allowed_models(stage, include_codex=False))}
+            for stage in MODEL_STAGE_FIELDS
+        ],
+        "note": "Applies to new jobs in every account and project. Running jobs and existing Draw editions retain their recorded models.",
+    }
+
+
+@router.get("/models")
+def operator_model_settings(request: Request):
+    try:
+        return _operator_model_payload(read_global_selections(request.app.state.projects_dir))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.patch("/models")
+def patch_operator_model_settings(body: OperatorModelSettingsPatch, request: Request):
+    try:
+        selections = update_global_selections(request.app.state.projects_dir, body.selections)
+        return _operator_model_payload(selections)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 def _grant_row(

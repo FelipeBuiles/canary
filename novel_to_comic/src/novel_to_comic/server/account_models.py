@@ -1,4 +1,4 @@
-"""Account-scoped local development preferences, read once per job request.
+"""Operator model defaults and account-scoped development preferences.
 
 The immutable original-process gate cannot be enabled by a project dotenv file.
 Files live alongside the account's projects, never inside one project. Writes
@@ -14,7 +14,7 @@ from pathlib import Path
 
 from novel_to_comic.codex_dev import CodexRoutingError, process_setting, route_for, validate_local_runtime
 from novel_to_comic.config import Config
-from novel_to_comic.model_catalog import STAGE_FIELDS, default_selections, validate_selections
+from novel_to_comic.model_catalog import STAGE_FIELDS, allowed_models, default_selections, validate_selections
 
 # Creation/import must not bypass the config edit API's trust boundary. These
 # affect provider routing, credentials or billing, not a customer's book.
@@ -44,17 +44,73 @@ def _account_dir(root: Path, user_id: str) -> Path:
     return account
 
 
-def _read(path: Path) -> dict[str, str]:
+def _read_raw(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
     data = json.loads(path.read_text())
     if not isinstance(data, dict) or data.get("version") != 1:
         raise ValueError("Unsupported account model settings version")
-    return validate_selections(data["selections"])
+    selections = data.get("selections")
+    if not isinstance(selections, dict) or any(not isinstance(key, str) or not isinstance(value, str)
+                                              for key, value in selections.items()):
+        raise ValueError("Saved model selections must be a string mapping")
+    return selections
+
+
+def _supported_saved_selections(selections: dict[str, str]) -> dict[str, str]:
+    """Use active saved choices without rewriting historical preferences.
+
+    Retired API aliases must not prevent a project from opening. An explicit
+    Codex subscription choice still fails closed if its route is no longer
+    recognized, rather than silently switching that work to API billing.
+    """
+    supported = {}
+    for stage, model in selections.items():
+        if stage not in STAGE_FIELDS:
+            continue
+        if model.startswith("codex-dev/"):
+            validate_selections({stage: model})
+        if model in allowed_models(stage):
+            supported[stage] = model
+    return supported
+
+
+def _read(path: Path) -> dict[str, str]:
+    return _supported_saved_selections(_read_raw(path))
 
 
 def read_selections(root: Path, user_id: str) -> dict[str, str]:
-    return {**default_selections(), **_read(_account_dir(root, user_id) / ".model-settings.json")}
+    return {**read_global_selections(root), **_read(_account_dir(root, user_id) / ".model-settings.json")}
+
+
+def read_global_selections(root: Path) -> dict[str, str]:
+    """Read the operator defaults applied to new jobs for every account."""
+    return {**default_selections(), **_read(root / ".operator-model-settings.json")}
+
+
+def update_global_selections(root: Path, changes: dict) -> dict[str, str]:
+    """Atomically update production-capable defaults without accepting Codex routes."""
+    validate_selections(changes)
+    if any(model.startswith("codex-dev/") for model in changes.values()):
+        raise ValueError("Codex models cannot be selected as operator defaults")
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / ".operator-model-settings.json"
+    with (root / ".operator-model-settings.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        saved = _read_raw(path)
+        selections = {**read_global_selections(root), **changes}
+        _require_available_routes(selections)
+        fd, temporary = tempfile.mkstemp(prefix=".operator-model-settings-", dir=root)
+        try:
+            with os.fdopen(fd, "w") as output:
+                json.dump({"version": 1, "selections": {**saved, **changes}}, output, indent=2)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+    return selections
 
 
 def _require_available_routes(selections: dict[str, str]) -> None:
@@ -73,12 +129,13 @@ def update_selections(root: Path, user_id: str, changes: dict) -> dict[str, str]
     path = account / ".model-settings.json"
     with (account / ".model-settings.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        selections = {**default_selections(), **_read(path), **changes}
+        saved = _read_raw(path)
+        selections = {**read_global_selections(root), **_supported_saved_selections(saved), **changes}
         _require_available_routes(selections)
         fd, temporary = tempfile.mkstemp(prefix=".model-settings-", dir=account)
         try:
             with os.fdopen(fd, "w") as output:
-                json.dump({"version": 1, "selections": selections}, output, indent=2)
+                json.dump({"version": 1, "selections": {**saved, **changes}}, output, indent=2)
                 output.flush()
                 os.fsync(output.fileno())
             os.replace(temporary, path)
@@ -91,9 +148,10 @@ def update_selections(root: Path, user_id: str, changes: dict) -> dict[str, str]
 def account_config(config: Config, root: Path, user_id: str) -> Config:
     """Snapshot account defaults and gated project choices without shared mutation."""
     enabled = model_settings_enabled()
-    selections = read_selections(root, user_id) if enabled else default_selections()
+    selections = read_global_selections(root)
     if enabled:
-        selections.update(validate_selections(config.dev_model_selections))
+        selections.update(read_selections(root, user_id))
+        selections.update(_supported_saved_selections(config.dev_model_selections))
     _require_available_routes(selections)
     return config.model_copy(deep=True, update={STAGE_FIELDS[k]: v for k, v in selections.items()})
 

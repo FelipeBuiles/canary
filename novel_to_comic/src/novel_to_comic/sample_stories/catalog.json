@@ -1,0 +1,396 @@
+[
+  {
+    "code": "kaitlin-out-of-space",
+    "title": "Kaitlin Out of Space",
+    "author": "Krishan Coupland",
+    "genres": [
+      "sci-fi",
+      "drama"
+    ],
+    "description": "An older woman takes in a silent astronaut who falls into her garden—and finds an unexpected kind of family.",
+    "showcase_note": "Character continuity, transformation, and intimate sci-fi scenes.",
+    "license": "CC0 1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "source_url": "https://krishancoupland.co.uk/portfolio/kaitlin-out-of-space/",
+    "text_source_url": "https://krishancoupland.co.uk/wp-content/uploads/2026/01/Kaitlin-Out-Of-Space-by-Krishan-Coupland.txt",
+    "filename": "kaitlin-out-of-space.txt",
+    "sha256": "69d3d9122bd756e869101f916f40e7b0d6c6c2848338be2b09565e5ad7d9cb2b"
+  },
+  {
+    "code": "merrily-merrily-merrily",
+    "title": "Merrily, Merrily, Merrily",
+    "author": "TL333s",
+    "genres": [
+      "sci-fi",
+      "fantasy"
+    ],
+    "description": "A father and daughter row over a waterfall into a river crossing the cosmos.",
+    "showcase_note": "An intimate family relationship set against impossible cosmic scale.",
+    "license": "CC BY-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "source_url": "https://scp-wiki.wikidot.com/merrily-merrily-merrily",
+    "text_source_url": "https://scp-wiki.wikidot.com/merrily-merrily-merrily",
+    "filename": "merrily-merrily-merrily.txt",
+    "sha256": "29e1045d9ee3eaa0c974a464249a7ba5a9af8c24b79a30341811ad1115ad9d52",
+    "source_note": "Text-only transcription of an SCP Wiki story; page furniture omitted.",
+    "rights_note": "SCP Wiki adaptations require credit to the original author and wiki and must be shared under CC BY-SA 3.0. Canary adds a source and license page to PDF and CBZ exports."
+  },
+  {
+    "code": "the-sea-in-me",
+    "title": "The Sea in Me",
+    "author": "Krishan Coupland",
+    "genres": [
+      "drama",
+      "coming-of-age"
+    ],
+    "description": "A teenage swimmer finds solace in the water while her mother's ambitions tighten around her.",
+    "showcase_note": "Expressive faces, family tension, and water as an emotional setting.",
+    "license": "CC0 1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "source_url": "https://krishancoupland.co.uk/portfolio/the-sea-in-me/",
+    "text_source_url": "https://krishancoupland.co.uk/wp-content/uploads/2026/01/The-Sea-In-Me-by-Krishan-Coupland.txt",
+    "filename": "the-sea-in-me.txt",
+    "sha256": "7c69024b163f91b5dbabb1747e12dbaa6ffdc40f4afd1921830af61ac17ce3d3"
+  },
+  {
+    "code": "elm-and-keep",
+    "title": "Elm and Keep",
+    "author": "@strnglft",
+    "genres": [
+      "fantasy",
+      "adventure"
+    ],
+    "description": "A stranded adventurer discovers a goblin marketplace and an unlikely way out.",
+    "showcase_note": "A vivid first encounter with action, expressive creatures, and visual humor.",
+    "license": "CC0 1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "source_url": "https://www.sonyasupposedly.com/elm-and-keep/",
+    "text_source_url": "https://www.sonyasupposedly.com/elm-and-keep/",
+    "filename": "elm-and-keep.txt",
+    "sha256": "7f093ddce2397e9f32491d42d03fe0b6786593b56407792b55d606ebdd78da22",
+    "source_note": "Text-only transcription of a commissioned Wanderverse story; publisher artwork omitted."
+  },
+  {
+    "code": "scp-5031",
+    "title": "SCP-5031",
+    "author": "PeppersGhost",
+    "genres": [
+      "sci-fi",
+      "drama"
+    ],
+    "description": "An invisible creature labeled a monster learns music, cooking, and companionship.",
+    "showcase_note": "A transformation arc told through chronological experiment logs.",
+    "license": "CC BY-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "source_url": "https://scp-wiki.wikidot.com/scp-5031",
+    "text_source_url": "https://scp-wiki.wikidot.com/scp-5031",
+    "filename": "scp-5031.txt",
+    "sha256": "b77872fbcb5b2a59b54e31c882ef1de432f388975aa1c568584e5372c7a8e7bb",
+    "content_note": "Animal harm in early experiments.",
+    "source_note": "Text-only transcription of an SCP Wiki story; page furniture omitted.",
+    "rights_note": "SCP Wiki adaptations require credit to the original author and wiki and must be shared under CC BY-SA 3.0. Canary adds a source and license page to PDF and CBZ exports."
+  },
+  {
+    "code": "three-second-memory",
+    "title": "Three Second Memory",
+    "author": "Krishan Coupland",
+    "genres": [
+      "sci-fi",
+      "surreal"
+    ],
+    "description": "A toy-store worker discovers a civilization inside a goldfish tank and must decide how to protect it.",
+    "showcase_note": "Wild changes of scale, imaginative spaces, and a moving rescue.",
+    "license": "CC0 1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "source_url": "https://krishancoupland.co.uk/portfolio/three-second-memory/",
+    "text_source_url": "https://krishancoupland.co.uk/wp-content/uploads/2026/01/Three-Second-Memory-by-Krishan-Coupland.txt",
+    "filename": "three-second-memory.txt",
+    "sha256": "397081028a59ad0eca2073774d7aecc31ee8f36a4f92a79cb5404b90f1e543d5"
+  },
+  {
+    "code": "the-house-of-my-grandfather",
+    "title": "The House of My Grandfather",
+    "author": "Krishan Coupland",
+    "genres": [
+      "fantasy",
+      "drama"
+    ],
+    "description": "A family home grows impossible rooms as a grandson wanders through memory and grief.",
+    "showcase_note": "Architecture shifts with memory while one family remains the emotional anchor.",
+    "license": "CC0 1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "source_url": "https://krishancoupland.co.uk/portfolio/the-house-of-my-grandfather/",
+    "text_source_url": "https://krishancoupland.co.uk/wp-content/uploads/2026/01/The-House-Of-My-Grandfather-by-Krishan-Coupland.txt",
+    "filename": "the-house-of-my-grandfather.txt",
+    "sha256": "31a33f07c8e7f5ec9d4f3b8c84d14ee0aa651283d0d943bb2e1a46d513559748"
+  },
+  {
+    "code": "the-spirit-of-the-forest",
+    "title": "The Spirit of the Forest",
+    "author": "Researcher Calloway",
+    "genres": [
+      "fantasy",
+      "horror"
+    ],
+    "description": "A tale told before an experiment recounts a princess, a forest spirit, and a blue key.",
+    "showcase_note": "A fairy tale framed by a stark reveal in a modern facility.",
+    "license": "CC BY-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "source_url": "https://scp-wiki.wikidot.com/the-spirit-of-the-forest",
+    "text_source_url": "https://scp-wiki.wikidot.com/the-spirit-of-the-forest",
+    "filename": "the-spirit-of-the-forest.txt",
+    "sha256": "9525d02e51dc5a1baa8a2910d9bd6df4e6df6c680e576f8a4fe41a41c62e380f",
+    "content_note": "Violence and execution by burning.",
+    "source_note": "Text-only transcription of an SCP Wiki story; page furniture omitted.",
+    "rights_note": "SCP Wiki adaptations require credit to the original author and wiki and must be shared under CC BY-SA 3.0. Canary adds a source and license page to PDF and CBZ exports."
+  },
+  {
+    "code": "an-education",
+    "title": "An Education",
+    "author": "Angie",
+    "genres": [
+      "fantasy",
+      "dialogue"
+    ],
+    "description": "A curious student meets an eccentric teacher whose one forbidden question opens a larger world.",
+    "showcase_note": "A quick fantasy read built around character voices and discovery.",
+    "source_note": "Text transcription of an illustrated Wanderverse vignette; artwork omitted.",
+    "license": "CC0 1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "source_url": "https://wanderverse.org/an-education/",
+    "text_source_url": "https://wanderverse.org/an-education/",
+    "attribution_url": "https://www.sonyasupposedly.com/diversions-abroad/",
+    "filename": "an-education.txt",
+    "sha256": "7d7b85597c389f6b09f066e71175df904a09325231a6eba8a4f79be1a77178f9"
+  },
+  {
+    "code": "drowning-in-ambition",
+    "title": "Drowning in Ambition",
+    "author": "Hikarinu",
+    "genres": [
+      "drama",
+      "workplace"
+    ],
+    "description": "A woman at her desk sets impossible goals while time keeps slipping past.",
+    "showcase_note": "Repeated compositions make a quiet story of burnout visually legible.",
+    "license": "CC BY-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "source_url": "https://scp-wiki.wikidot.com/drowning-in-ambition",
+    "text_source_url": "https://scp-wiki.wikidot.com/drowning-in-ambition",
+    "filename": "drowning-in-ambition.txt",
+    "sha256": "4b68ea0c6a401f6d6a855d003301485905430b7c64f78eb5cb01b7d144d4b554",
+    "content_note": "Workplace burnout.",
+    "source_note": "Text-only transcription of an SCP Wiki story; page furniture omitted.",
+    "rights_note": "SCP Wiki adaptations require credit to the original author and wiki and must be shared under CC BY-SA 3.0. Canary adds a source and license page to PDF and CBZ exports."
+  },
+  {
+    "code": "men-of-the-waste",
+    "title": "Men of the Waste",
+    "author": "Krishan Coupland",
+    "genres": [
+      "fantasy",
+      "drama"
+    ],
+    "description": "On a neglected patch of land, a few stubborn outsiders confront threats and the uncanny.",
+    "showcase_note": "A rough urban landscape turns into an expansive visual world.",
+    "license": "CC0 1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "source_url": "https://krishancoupland.co.uk/portfolio/men-of-the-waste/",
+    "text_source_url": "https://krishancoupland.co.uk/wp-content/uploads/2026/01/Men-Of-The-Waste-by-Krishan-Coupland.txt",
+    "filename": "men-of-the-waste.txt",
+    "sha256": "c5da919037b520ed95395ca154f124d956b00a530feefa9639cb71798c00ae57",
+    "content_note": "Violence."
+  },
+  {
+    "code": "scp-1762",
+    "title": "SCP-1762",
+    "author": "OZ Ouroboros",
+    "genres": [
+      "fantasy",
+      "drama"
+    ],
+    "description": "A box marked 'Here Be Dragons' sends paper visitors and letters from a fading other world.",
+    "showcase_note": "Found documents and paper creatures invite inventive page composition.",
+    "license": "CC BY-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "source_url": "https://scp-wiki.wikidot.com/scp-1762",
+    "text_source_url": "https://scp-wiki.wikidot.com/scp-1762",
+    "filename": "scp-1762.txt",
+    "sha256": "06787e9829b138c4321c7e2b664c41803d6a708d0f0f1167b1db63e2c9f18203",
+    "content_note": "Loss and grief.",
+    "source_note": "Text-only transcription of an SCP Wiki article; source images and page furniture omitted.",
+    "rights_note": "SCP Wiki adaptations require credit to the original author and wiki and must be shared under CC BY-SA 3.0. Canary adds a source and license page to PDF and CBZ exports."
+  },
+  {
+    "code": "when-you-lived-inside-the-walls",
+    "title": "When You Lived Inside the Walls",
+    "author": "Krishan Coupland",
+    "genres": [
+      "horror",
+      "drama"
+    ],
+    "description": "A problem inside the walls grows into an unsettling story about family and what a home can hold.",
+    "showcase_note": "A tight domestic setting with a strong second-person voice.",
+    "content_note": "Disturbing imagery and animal harm.",
+    "license": "CC0 1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "source_url": "https://krishancoupland.co.uk/portfolio/when-you-lived-inside-the-walls/",
+    "text_source_url": "https://krishancoupland.co.uk/wp-content/uploads/2026/01/When-You-Lived-Inside-The-Walls-by-Krishan-Coupland.txt",
+    "filename": "when-you-lived-inside-the-walls.txt",
+    "sha256": "65e0e03e5868f32c180ba9f357c3b052048cccc11463b4c35ebe1d53e3dc3b7c"
+  },
+  {
+    "code": "astronomical",
+    "title": "Astronomical",
+    "author": "Sophia Light",
+    "genres": [
+      "sci-fi",
+      "drama"
+    ],
+    "description": "On a dying world, scientists hear a message from Earth and decide to answer it.",
+    "showcase_note": "A full alien society and a sharp final change of perspective.",
+    "license": "CC BY-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "source_url": "https://scp-wiki.wikidot.com/astronomical",
+    "text_source_url": "https://scp-wiki.wikidot.com/astronomical",
+    "filename": "astronomical.txt",
+    "sha256": "98f50c04467c14d21c4821d8fe2cc2c1d9ac8cb2c392e6299a7d72c3eec9bb96",
+    "content_note": "Planetary collapse and implied violence.",
+    "source_note": "Text-only transcription of an SCP Wiki story; page furniture omitted.",
+    "rights_note": "SCP Wiki adaptations require credit to the original author and wiki and must be shared under CC BY-SA 3.0. Canary adds a source and license page to PDF and CBZ exports."
+  },
+  {
+    "code": "scp-348",
+    "title": "SCP-348",
+    "author": "Zyn",
+    "genres": [
+      "drama",
+      "fantasy"
+    ],
+    "description": "A bowl of soup offers comfort and cryptic notes to sick or lonely children.",
+    "showcase_note": "Small emotional vignettes connected by a simple visual object.",
+    "license": "CC BY-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "source_url": "https://scp-wiki.wikidot.com/scp-348",
+    "text_source_url": "https://scp-wiki.wikidot.com/scp-348",
+    "filename": "scp-348.txt",
+    "sha256": "b5b509779881d5950d5a217335e0bf1a2962e113d1fc0b056ef8c8c716b61e3b",
+    "content_note": "Child illness and neglect.",
+    "source_note": "Text-only transcription of an SCP Wiki article; source images and page furniture omitted.",
+    "rights_note": "SCP Wiki adaptations require credit to the original author and wiki and must be shared under CC BY-SA 3.0. Canary adds a source and license page to PDF and CBZ exports."
+  },
+  {
+    "code": "the-pilots-wife",
+    "title": "The Pilot's Wife",
+    "author": "Krishan Coupland",
+    "genres": [
+      "drama",
+      "relationship"
+    ],
+    "description": "A couple, their dog, and a helicopter move to the desert and try to make a new life together.",
+    "showcase_note": "A short, quiet story with place, gesture, and a small cast.",
+    "license": "CC0 1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "source_url": "https://krishancoupland.co.uk/portfolio/the-pilots-wife/",
+    "text_source_url": "https://krishancoupland.co.uk/wp-content/uploads/2026/01/The-Pilots-Wife-by-Krishan-Coupland.txt",
+    "filename": "the-pilots-wife.txt",
+    "sha256": "404aba546b06845275627b48129b60828e0d5f507b4540ab7aa914750e3bde11"
+  },
+  {
+    "code": "scp-4999",
+    "title": "SCP-4999",
+    "author": "CadaverCommander",
+    "genres": [
+      "horror",
+      "drama"
+    ],
+    "description": "A quiet figure appears beside people who would otherwise die alone.",
+    "showcase_note": "One mysterious figure connects separate human stories.",
+    "license": "CC BY-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "source_url": "https://scp-wiki.wikidot.com/scp-4999",
+    "text_source_url": "https://scp-wiki.wikidot.com/scp-4999",
+    "filename": "scp-4999.txt",
+    "sha256": "2774bdc89baa086e4689b1157429acd202cf025cdd3772a4fb92fc52638c0cb7",
+    "content_note": "Death and smoking.",
+    "source_note": "Text-only transcription of an SCP Wiki article; source images and page furniture omitted.",
+    "rights_note": "SCP Wiki adaptations require credit to the original author and wiki and must be shared under CC BY-SA 3.0. Canary adds a source and license page to PDF and CBZ exports."
+  },
+  {
+    "code": "site-30-s-janitor",
+    "title": "Site-30's Janitor",
+    "author": "JanitorCakeworth",
+    "genres": [
+      "sci-fi",
+      "dark-comedy"
+    ],
+    "description": "A tired janitor's routine clean-up at Site-30 becomes an absurd encounter.",
+    "showcase_note": "Workplace action, small cast, and an unexpected punchline.",
+    "license": "CC BY-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "source_url": "https://scp-wiki.wikidot.com/site-30-s-janitor",
+    "text_source_url": "https://scp-wiki.wikidot.com/site-30-s-janitor",
+    "filename": "site-30-s-janitor.txt",
+    "sha256": "8c130e839e793ef512969bcb8c7c8e367e75f37674d8a815c0fbeb2eafe477bc",
+    "content_note": "Blood and death.",
+    "source_note": "Text-only transcription of an SCP Wiki story; page furniture omitted.",
+    "rights_note": "SCP Wiki adaptations require credit to the original author and wiki and must be shared under CC BY-SA 3.0. Canary adds a source and license page to PDF and CBZ exports."
+  },
+  {
+    "code": "scp-1230",
+    "title": "SCP-1230",
+    "author": "MrPixel",
+    "genres": [
+      "fantasy",
+      "sci-fi"
+    ],
+    "description": "An ordinary-looking book lets sleepers live sprawling fantasy adventures.",
+    "showcase_note": "Dream scenes contrast with a restrained case-file frame.",
+    "license": "CC BY-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "source_url": "https://scp-wiki.wikidot.com/scp-1230",
+    "text_source_url": "https://scp-wiki.wikidot.com/scp-1230",
+    "filename": "scp-1230.txt",
+    "sha256": "a033b841fc54aa9e4a8831bb14d86928cc0a890713d386f9376b017f8a3f30e5",
+    "source_note": "Text-only transcription of an SCP Wiki article; source images and page furniture omitted.",
+    "rights_note": "SCP Wiki adaptations require credit to the original author and wiki and must be shared under CC BY-SA 3.0. Canary adds a source and license page to PDF and CBZ exports."
+  },
+  {
+    "code": "a-seed-drifts-by",
+    "title": "A seed drifts by",
+    "author": "Sonya Mann",
+    "genres": [
+      "fantasy",
+      "microfiction"
+    ],
+    "description": "A seed fairy follows a labyrinth beneath the night sky and meets an enigmatic owl.",
+    "showcase_note": "A brief, gentle exercise in movement, scale, and quiet panels.",
+    "license": "CC0 1.0",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "source_url": "https://www.sonyasupposedly.com/plumule-seed-fairy/",
+    "text_source_url": "https://www.sonyasupposedly.com/plumule-seed-fairy/",
+    "filename": "a-seed-drifts-by.txt",
+    "sha256": "529544514fa83eb37c1ef99cf79210d6613fbcd8ebd2934b1df98b83f0df7a3b",
+    "source_note": "Text-only transcription of an illustrated Wanderverse vignette; artwork omitted."
+  },
+  {
+    "code": "scp-2295",
+    "title": "SCP-2295",
+    "author": "K Mota",
+    "genres": [
+      "sci-fi",
+      "drama"
+    ],
+    "description": "A patchwork bear sews miraculous repairs for people with grave injuries.",
+    "showcase_note": "A distinctive character design and tender medical rescue.",
+    "license": "CC BY-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "source_url": "https://scp-wiki.wikidot.com/scp-2295",
+    "text_source_url": "https://scp-wiki.wikidot.com/scp-2295",
+    "filename": "scp-2295.txt",
+    "sha256": "0c0e98ddf24f24d296ccb4d8fb7bcc46e34a3a6d5e3aba3d0067fd648da227b5",
+    "content_note": "Major injury and surgery.",
+    "source_note": "Text-only transcription of an SCP Wiki article; source images and page furniture omitted.",
+    "rights_note": "SCP Wiki adaptations require credit to the original author and wiki and must be shared under CC BY-SA 3.0. Canary adds a source and license page to PDF and CBZ exports."
+  }
+]

@@ -56,13 +56,8 @@ services:
       LITELLM_API_KEY: ${LITELLM_MASTER_KEY:-sk-local-canary}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       FAL_KEY: ${FAL_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
-      VERTEXAI_PROJECT: ${VERTEXAI_PROJECT:-}
-      VERTEXAI_LOCATION: ${VERTEXAI_LOCATION:-global}
-      GCP_CREDENTIALS_B64: ${GCP_CREDENTIALS_B64:-}
       # ─── Web app ─────────────────────────────────────────────────────────
       AI_BILL_FAILED_REQUESTS: ${AI_BILL_FAILED_REQUESTS:-provider_usage_only}
       SUPABASE_URL: ${SUPABASE_URL:-}
@@ -89,7 +84,7 @@ services:
     build:
       context: .
       dockerfile: litellm/Dockerfile
-    image: canary-litellm:1.101.0-google-genai-2.24.0
+    image: canary-litellm:1.101.0
     command: ["--port", "4000", "--config", "/app/config.yaml"]
     ports:
       - "4000:4000"
@@ -104,13 +99,8 @@ services:
       STORE_MODEL_IN_DB: "True"
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
       FAL_KEY: ${FAL_KEY:-}
-      VERTEXAI_PROJECT: ${VERTEXAI_PROJECT:-}
-      VERTEXAI_LOCATION: ${VERTEXAI_LOCATION:-global}
-      GOOGLE_APPLICATION_CREDENTIALS: /app/gcp-credentials.json
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse-web:3000}
@@ -118,7 +108,6 @@ services:
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
       - ./litellm_handlers:/app/litellm_handlers:ro
-      - ${GOOGLE_APPLICATION_CREDENTIALS_HOST_PATH:-./litellm/gcp-credentials.json}:/app/gcp-credentials.json:ro
     depends_on:
       litellm-db:
         condition: service_healthy

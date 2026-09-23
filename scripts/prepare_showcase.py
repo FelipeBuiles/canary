@@ -38,7 +38,7 @@ def prepare(project: Path, destination: Path, metadata: publications.Publication
             publications.root(staging) / book.id / book.version,
             destination / book.version,
         )
-        publications.write_json(previous, book.model_dump())
+        publications.write_json(previous, book.model_dump(exclude_none=True))
         return book
 
 

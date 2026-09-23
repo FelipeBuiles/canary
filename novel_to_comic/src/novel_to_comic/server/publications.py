@@ -13,7 +13,8 @@ from PIL import Image
 from pydantic import BaseModel, Field, ConfigDict
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.artifact_lock import production_lock
-from novel_to_comic.page_finishing import finish_book
+from novel_to_comic.models.finish import FinishProductionSpec
+from novel_to_comic.page_finishing import finish_book, source_credit_info, source_credit_page
 from novel_to_comic.target_artifacts import TargetArtifacts
 
 
@@ -92,6 +93,28 @@ def publish(
                             "url": f"/api/public/books/{publication_id}/{version}/pages/{page.page_number}",
                         }
                     )
+                credit = source_credit_info(project_dir)
+                if credit:
+                    last = pages[-1]
+                    production = result.preflight.production
+                    spec = FinishProductionSpec(
+                        canvas_width=last["width"],
+                        canvas_height=last["height"],
+                        dpi=production.dpi if production else 300,
+                        jpeg_quality=production.jpeg_quality if production else 88,
+                    )
+                    credit_image = source_credit_page(project_dir, spec)
+                    if credit_image is None:
+                        raise ValueError("Share-alike sample is missing publication attribution")
+                    number = last["number"] + 1
+                    (destination / f"{number}.jpg").write_bytes(credit_image)
+                    pages.append({
+                        "number": number,
+                        "spread_role": "single",
+                        "width": spec.canvas_width,
+                        "height": spec.canvas_height,
+                        "url": f"/api/public/books/{publication_id}/{version}/pages/{number}",
+                    })
                 current = read_json(
                     root(projects_dir) / publication_id / "current.json"
                 )
@@ -105,6 +128,8 @@ def publish(
                         current and current.get("featured") and metadata.allow_feature
                     ),
                 }
+                if credit:
+                    record["source_credit"] = credit
                 # Record the stable identity first; a failed initial publication is still private.
                 write_json(owner, {"id": publication_id})
                 write_json(root(projects_dir) / publication_id / "current.json", record)

@@ -61,8 +61,9 @@ def write_config_fields_doc(fields: list[dict]) -> None:
         "## Priority (highest → lowest)\n",
         "1. Shell environment variables\n",
         "2. Nearest `.env` file (walked up from project_dir)\n",
-        "3. `config.yaml` in project directory\n",
+        "3. Project-owned values in `config.yaml` (model routes and gateway credentials are ignored)\n",
         "4. Pydantic field defaults\n\n",
+        "Production stage models are overlaid from operator settings when a job config is created. "
         "Load with `load_config(project_dir) → (Config, env_file_path)`.\n\n",
         "## Fields\n\n",
         "| Field | Type | Default | Notes |\n",
@@ -155,6 +156,7 @@ def _extract_routes() -> list[dict]:
     # These must stay in sync with the include_router() calls in server/app.py.
     prefix_map = {
         "account_models.py": "/api/account",
+        "backoffice.py": "/api/ops/backoffice",
         "projects.py": "/api/projects",
         "publications.py": "/api/projects/{project_id}",
         "pipeline.py": "/api/projects/{project}",

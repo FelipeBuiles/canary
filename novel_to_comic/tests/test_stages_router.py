@@ -208,6 +208,24 @@ def test_editing_the_story_bible_rederives_the_source_scenes(tmp_path: Path):
     assert rebuilt.scenes[1].first_unit_id == "source_000002"
 
 
+def test_story_bible_rejects_asset_path_traversal_before_persistence(tmp_path: Path):
+    project_dir, state, bible = _story_project(tmp_path)
+    client = _client(tmp_path, project_dir, state)
+    unsafe = bible.model_dump(mode="json")
+    unsafe["characters"] = [{
+        "id": "../../../other/book/refs/hero", "name": "Hero",
+        "visual_anchor": "Hero", "age_range": "adult", "gender": "unknown",
+        "distinguishing_features": [], "default_outfit": "shirt",
+        "first_appearance_scene": "scene_001",
+    }]
+
+    response = client.put("/api/projects/test_project/story-bible", json=unsafe)
+
+    assert response.status_code == 422
+    assert "characters.0.id" in response.json()["detail"]
+    assert read_story_bible(project_dir).characters == []
+
+
 def test_an_unresolvable_edited_anchor_is_rejected_before_it_is_persisted(
     tmp_path: Path,
 ):

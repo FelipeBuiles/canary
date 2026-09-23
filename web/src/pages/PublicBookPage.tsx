@@ -49,6 +49,11 @@ export function PublicBookPage() {
       <p className="mt-4 font-meta">{t("Made with Scenewright")}</p>
       <h2 id="bookend-title" className="mt-5 font-display text-3xl">{t("Every book starts with a story.")}</h2>
       <p className="mt-3 font-body">{t("Bring your story to life.")}</p>
+      {book.source_credit && <aside className="mx-auto mt-7 max-w-prose border-y-2 border-ink-black/20 py-5 text-left text-sm leading-6">
+        <h3 className="font-meta text-xs font-bold uppercase tracking-widest">{t("Source and license")}</h3>
+        <p className="mt-2">{t("Based on")} <a className="underline" href={book.source_credit.source_url} target="_blank" rel="noopener noreferrer">“{book.source_credit.title}”</a> {t("by")} {book.source_credit.author}, {t("from the SCP Wiki")}.</p>
+        <p className="mt-2">{t("This comic adaptation is licensed under")} <a className="underline" href={book.source_credit.license_url} target="_blank" rel="noopener noreferrer">{book.source_credit.license}</a>.</p>
+      </aside>}
       <Link className="public-book-cta" to={referral}>{t("Create yours with Scenewright")}</Link>
       <details className="mt-8">
         <summary className="cursor-pointer p-3 underline">{t("Download this book")}</summary>

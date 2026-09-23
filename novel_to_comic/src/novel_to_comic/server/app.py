@@ -35,7 +35,6 @@ from .routers import (
     export,
     events,
     files,
-    labs,
     operator_billing,
     pages,
     pipeline,
@@ -109,11 +108,12 @@ def _labs_enabled() -> bool:
     """Feature flag for the Labs experimentation router.
 
     Defaults OFF: Labs is an image-model experimentation surface that bypasses
-    the credit system (it bills provider quota directly to operator keys), so
-    it must not ship enabled by default. Set ``CANARY_LABS_ENABLED=true`` to
-    mount the router for local development or an internal deployment."""
+    the credit system (it bills provider quota directly to operator keys).
+    Mount it only in local development with ``CANARY_LABS_ENABLED=true``."""
+    from .account_models import model_settings_enabled
+
     raw = os.environ.get("CANARY_LABS_ENABLED", "false").strip().lower()
-    return raw not in {"0", "false", "no", "off"}
+    return model_settings_enabled() and raw not in {"0", "false", "no", "off"}
 
 
 def _pricing_refresh_ttl_days() -> int:
@@ -579,8 +579,10 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     )
     # Labs is an image-model experimentation surface that bills provider quota
     # directly and is not credit-gated. It defaults OFF; set
-    # CANARY_LABS_ENABLED=true for local dev or an internal deployment.
+    # CANARY_LABS_ENABLED=true for local development.
     if _labs_enabled():
+        from .routers import labs
+
         app.include_router(labs.router, prefix="/api/labs", tags=["labs"])
     else:
         log.info("Labs router disabled (CANARY_LABS_ENABLED not set to truthy)")
