@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 
 import pytest
 from pydantic import ValidationError
@@ -19,6 +20,9 @@ from novel_to_comic.models.source import (
     SourceDocument,
     SourceScene,
     SourceUnit,
+    _TITLE_ABBREVIATIONS,
+    _follows_title_abbreviation,
+    sentence_end_offsets,
 )
 from novel_to_comic.models.story_bible import Scene, StoryBible
 from novel_to_comic.models.page import (
@@ -213,6 +217,38 @@ def test_source_builder_does_not_split_at_mid_word_punctuation() -> None:
         "Visit example.com today. ",
         "Then leave.",
     ]
+
+
+def test_sentence_end_offsets_keep_abbreviation_decimal_and_quote_boundaries() -> None:
+    expected_units = [
+        "Mr. Holmes met Dr. Watson and MRS. Hudson on St. James Street. ",
+        "The fee was 3.50 pounds, or 2.5 guineas... ",
+        '"Really?" ',
+        "she asked. ",
+        "\u201cYes.\u201d ",
+        "(He left.) ",
+        "Prof. Moriarty wrote... ",
+        "then stopped. ",
+        "Holmes vs. Moriarty ended. ",
+        "The Professor. ",
+        "slept. ",
+        "At last. ",
+        "Old Mr\n. Brown waited. ",
+        "Sir Henry's Jr. son... ",
+    ]
+    text = "".join(expected_units)
+
+    offsets = sentence_end_offsets(text)
+
+    starts = (0, *offsets[:-1])
+    assert [text[start:end] for start, end in zip(starts, offsets)] == expected_units
+    for index, mark in enumerate(text):
+        if mark != ".":
+            continue
+        word_match = re.search(r"([A-Za-z]+)$", text[:index])
+        assert _follows_title_abbreviation(text, index) == bool(
+            word_match and word_match.group(1).lower() in _TITLE_ABBREVIATIONS
+        ), index
 
 
 def test_source_builder_rejects_an_unresolvable_scene_anchor() -> None:
