@@ -243,11 +243,6 @@ def audit_pricing(extra_models: list[str] | None = None) -> list[str]:
             cfg.image_model,
             cfg.draw_model,
             cfg.effective_image_model(),
-            "gpt-image-2",
-            "dall-e-3",
-            "black-forest-labs/FLUX.1-kontext-pro",
-            "black-forest-labs/FLUX.2-kontext-pro",
-            "black-forest-labs/FLUX.1-pro",
         ]
     )
     if extra_models:

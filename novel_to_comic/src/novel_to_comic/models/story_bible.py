@@ -6,6 +6,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from novel_to_comic.models.appearance import AppearanceState, StateActivation
+from novel_to_comic.models.asset_id import safe_asset_id
 
 
 class CharacterRelationship(BaseModel):
@@ -30,6 +31,8 @@ class Character(BaseModel):
     # Alternate looks this character takes on mid-story (e.g. stumps, silver
     # hands, restored). Each anchor is self-contained. Empty = one stable look.
     appearance_timeline: list[StateActivation] = []
+
+    _safe_id = field_validator("id")(safe_asset_id)
     # Ordered transitions into the states above. The look before the first
     # activation at-or-before a panel is the base visual_anchor. Resolved per
     # page by explicit adaptation and planning state — never by text matching.
@@ -55,6 +58,8 @@ class Location(BaseModel):
     # mix pre/post in one. Empty = one stable look. State ids must extend the
     # parent location id (e.g. "loc_001_pre") so generated plates never collide.
     appearance_timeline: list[StateActivation] = []
+
+    _safe_id = field_validator("id")(safe_asset_id)
     # Ordered transitions into the states above, resolved per panel by
     # explicit adaptation and planning state — the same mechanism as characters.
 
@@ -134,6 +139,8 @@ class Prop(BaseModel):
     first_appearance_scene: Optional[str] = None
     appearance_states: list[AppearanceState] = []
     appearance_timeline: list[StateActivation] = []
+
+    _safe_id = field_validator("id")(safe_asset_id)
 
 
 class StoryBible(BaseModel):

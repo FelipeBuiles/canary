@@ -35,6 +35,9 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
   const { t } = useI18n();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const sample = searchParams.get("sample");
+  const sampleDestination = sample && /^[a-z0-9-]{1,100}$/.test(sample)
+    ? `/?sample=${encodeURIComponent(sample)}` : "/";
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [studioName, setStudioName] = useState("");
   const [email, setEmail] = useState("");
@@ -44,7 +47,7 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
   const [submitting, setSubmitting] = useState(false);
 
   if (!loading && session) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={sampleDestination} replace />;
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -61,14 +64,17 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
           : {};
         const { error } = await supabase.auth.signUp({
           email: email.trim(), password,
-          options: { data: { studio_name: studioName, ...referral } },
+          options: {
+            data: { studio_name: studioName, ...referral },
+            ...(sampleDestination !== "/" ? { emailRedirectTo: `${window.location.origin}${sampleDestination}` } : {}),
+          },
         });
         if (error) throw error;
         setMessage(t("Check {email} for the confirmation link.").replace("{email}", email.trim()));
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
         if (error) throw error;
-        navigate("/", { replace: true });
+        navigate(sampleDestination, { replace: true });
       }
     } catch (error) {
       setError(error instanceof Error ? error.message : t("We couldn't complete that request. Please try again."));

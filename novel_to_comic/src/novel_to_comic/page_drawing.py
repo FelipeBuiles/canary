@@ -116,8 +116,8 @@ class CompletePageAdapter(Protocol):
     async def generate(self, prepared: PreparedCompletePageRequest) -> CompletePageProviderResult: ...
 
 
-def production_page_capability_profile() -> PageCapabilityProfile:
-    """Return the single evaluated complete-page production profile."""
+def legacy_vertex_page_capability_profile() -> PageCapabilityProfile:
+    """Describe retained Vertex editions without selecting Vertex for new work."""
 
     return PageCapabilityProfile(
         id=COMPLETE_PAGE_PROFILE_ID + "-hybrid-v1",
@@ -163,6 +163,11 @@ def fal_sunburst_page_capability_profile() -> PageCapabilityProfile:
         price_per_page_usd=Decimal(GPT25_PAGE_ESTIMATED_COST_USD),
         price_per_reference_usd=Decimal(GPT25_REFERENCE_ESTIMATED_COST_USD),
     )
+
+
+def production_page_capability_profile() -> PageCapabilityProfile:
+    """Return the only complete-page profile offered for new API work."""
+    return fal_sunburst_page_capability_profile()
 
 
 def muse_page_capability_profile() -> PageCapabilityProfile:
@@ -218,16 +223,11 @@ def current_page_capability_profile(config: Config | None = None) -> PageCapabil
 
 def _editable_page_capability_profile(config: Config | None = None) -> PageCapabilityProfile:
     """Select only from original-process complete-page routing authority."""
-    from novel_to_comic.ai import codex_runtime
     from novel_to_comic.codex_dev import route_for
 
     selected = getattr(config, "draw_model", COMPLETE_PAGE_GATEWAY_MODEL)
     if selected == "image-sunburst":
         return fal_sunburst_page_capability_profile()
-    if selected == "image-flare":
-        return openai_page_capability_profile("gpt-image-2.5-" + selected.removeprefix("image-"))
-    if selected == "image-muse":
-        return muse_page_capability_profile()
     if selected != COMPLETE_PAGE_GATEWAY_MODEL and not selected.startswith("codex-dev/image/"):
         raise ValueError("Unsupported complete-page model selection")
     route = route_for("complete_page", selected)
@@ -235,6 +235,7 @@ def _editable_page_capability_profile(config: Config | None = None) -> PageCapab
         return production_page_capability_profile()
     if route.image_model != "gpt-image-2":
         raise ValueError("Unsupported Codex complete-page image selector")
+    from novel_to_comic.ai import codex_runtime
     binding = json.dumps(
         [route.reasoning_model, sorted(codex_runtime.image_execution_controls())]
         + ([selected] if selected.startswith("codex-dev/image/") else []),
@@ -975,7 +976,7 @@ def estimate_draw_api_cost(
     """Include only the API portions of a page render and optional readback."""
     from novel_to_comic.codex_dev import route_for
 
-    if compiled is not None and compiled.request.provider == "openai":
+    if compiled is not None and compiled.request.provider in {"openai", "fal-queue"}:
         from novel_to_comic.usage import estimate_image_cost
 
         request = compiled.request
@@ -1073,7 +1074,7 @@ def _validate_prepared_page(
 
 
 class VertexCompletePageAdapter:
-    """Strict complete-page adapter over the proven Vertex multimodal transport."""
+    """Validate a frozen complete-page request and its transport result."""
 
     def __init__(self, transport: CompletePageTransport, profile: PageCapabilityProfile | None = None) -> None:
         self._transport = transport
@@ -1081,8 +1082,8 @@ class VertexCompletePageAdapter:
 
     def prepare(self, compiled: CompiledPageGeneration) -> PreparedCompletePageRequest:
         request = compiled.request
-        if request.provider != COMPLETE_PAGE_PROVIDER or request.model != COMPLETE_PAGE_MODEL:
-            raise ValueError("complete-page request is not bound to the production Vertex profile")
+        if request.provider != self._profile.provider or request.model != self._profile.model:
+            raise ValueError("complete-page request is not bound to the adapter profile")
         return _prepare_complete_page(compiled, self._profile)
 
     async def generate(
@@ -1208,7 +1209,7 @@ class GoogleVertexCompletePageTransport:
             if self._profile.provider == "openai":
                 request_data.update({"quality": "high", "output_format": "png"})
             elif self._profile.provider == "fal-queue":
-                request_data.update({"quality": self._config.image_quality, "output_format": "png"})
+                request_data.update({"quality": "high", "output_format": "png"})
                 # Custom-provider routing can strip standard Images fields.
                 # Preserve dimensions and controls through the same manifest
                 # consumed by the FAL handler for other image requests.
@@ -1216,7 +1217,7 @@ class GoogleVertexCompletePageTransport:
                     "width": request.width,
                     "height": request.height,
                     "controls": [
-                        ["quality", self._config.image_quality],
+                        ["quality", "high"],
                         ["output_format", "png"],
                         ["n", 1],
                     ],
@@ -1243,7 +1244,7 @@ class GoogleVertexCompletePageTransport:
                 "model": self._gateway_model,
                 "provider_model": request.model,
                 "size": f"{request.width}x{request.height}",
-                "quality": "high" if self._profile.provider == "openai" else self._config.image_quality,
+                "quality": "high" if self._profile.provider in {"openai", "fal-queue"} else self._config.image_quality,
                 "artifact_kind": "complete_page",
             },
             ref_reads=ref_reads,

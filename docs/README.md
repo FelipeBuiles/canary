@@ -35,6 +35,8 @@ retained as current reference.
 
 ## Current contracts and capability evidence
 
+- [Sample story library](reference/sample-library.md): curated source texts,
+  license provenance, reading, and local import.
 - [Public books](reference/public-books.md): owner publishing, public readers,
   homepage curation, sharing attribution, and optional export back pages.
 
@@ -46,8 +48,8 @@ retained as current reference.
 - [Stage contracts](reference/stage-contracts.md): source-owned stage authority,
   user gates, correction jobs, recovery, and generated-output compatibility.
 - [Agent context](reference/agent-context.md): concise workflow and code navigation.
-- [Account model settings](reference/account-model-settings.md): development-only
-  account controls, API routes, and immutable Draw model profiles.
+- [Model settings](reference/account-model-settings.md): production operator
+  defaults, development account controls, API routes, and Draw profiles.
 - [Codex development capability report](reference/codex-dev-capabilities.md):
   implemented local adapter configuration, restricted execution/funding contracts,
   and scoped live evidence, including experimental complete-page Draw. This is

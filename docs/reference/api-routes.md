@@ -10,8 +10,10 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 |--------|------|---------|------|
 | `GET` | `/api/account/model-settings` | `get_model_settings` | `account_models.py` |
 | `PATCH` | `/api/account/model-settings` | `patch_model_settings` | `account_models.py` |
-| `GET` | `/api/backoffice` | `backoffice_snapshot` | `backoffice.py` |
-| `POST` | `/api/backoffice/users/{user_id}/credits` | `grant_credits` | `backoffice.py` |
+| `GET` | `/api/ops/backoffice` | `backoffice_snapshot` | `backoffice.py` |
+| `GET` | `/api/ops/backoffice/models` | `operator_model_settings` | `backoffice.py` |
+| `PATCH` | `/api/ops/backoffice/models` | `patch_operator_model_settings` | `backoffice.py` |
+| `POST` | `/api/ops/backoffice/users/{user_id}/credits` | `grant_credits` | `backoffice.py` |
 | `GET` | `/api/billing/packages` | `list_packages` | `billing.py` |
 | `POST` | `/api/billing/checkout` | `create_checkout` | `billing.py` |
 | `POST` | `/api/billing/webhook` | `stripe_webhook` | `billing.py` |
@@ -93,6 +95,8 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `POST` | `/api/projects/{project}/approve/{stage}` | `approve` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/reset/{stage}` | `reset_stage` | `pipeline.py` |
 | `GET` | `/api/projects/{project}/stage-error/{stage}` | `get_stage_error` | `pipeline.py` |
+| `GET` | `/api/projects/short-stories` | `list_short_stories` | `projects.py` |
+| `GET` | `/api/projects/short-stories/{code}` | `read_short_story` | `projects.py` |
 | `POST` | `/api/projects` | `create_project` | `projects.py` |
 | `GET` | `/api/projects` | `list_projects` | `projects.py` |
 | `PATCH` | `/api/projects/{project_id}` | `rename_project` | `projects.py` |
@@ -100,7 +104,6 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/projects/{project_id}/cover-estimate` | `project_cover_estimate` | `projects.py` |
 | `POST` | `/api/projects/{project_id}/cover` | `generate_cover` | `projects.py` |
 | `DELETE` | `/api/projects/{project_id}` | `delete_project` | `projects.py` |
-| `GET` | `/api/projects/short-stories` | `list_short_stories` | `projects.py` |
 | `POST` | `/api/projects/import-story` | `import_short_story` | `projects.py` |
 | `GET` | `/api/projects/{project_id}/publication` | `owned` | `publications.py` |
 | `POST` | `/api/projects/{project_id}/publication` | `publish` | `publications.py` |

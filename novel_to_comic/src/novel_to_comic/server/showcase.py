@@ -21,6 +21,7 @@ class ShowcaseBook(PublicationInput):
     version: str = Field(pattern=r"^[0-9a-f]{32}$")
     published_at: str
     pages: list[ShowcasePage] = Field(min_length=1)
+    source_credit: dict[str, str] | None = None
 
 
 def root() -> Path:
@@ -46,7 +47,7 @@ def books() -> list[tuple[dict, Path]]:
             page = directory / f"{number}.jpg"
             if not page.is_file() or not page.resolve().is_relative_to(manifest.parent.resolve()):
                 raise ValueError(f"Missing or external showcase page: {page}")
-        record = book.model_dump()
+        record = book.model_dump(exclude_none=True)
         record.update(allow_feature=True, featured=True)
         for page in record["pages"]:
             page["url"] = f"/api/public/books/{book.id}/{book.version}/pages/{page['number']}"

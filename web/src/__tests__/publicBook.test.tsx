@@ -54,6 +54,23 @@ describe("public books", () => {
     expect(screen.getByRole("img", { name: "Page 1 — Page 1" })).toBeTruthy();
   });
 
+  it("shows SCP source attribution alongside the public comic", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({
+      ...book,
+      source_credit: {
+        title: "Merrily, Merrily, Merrily", author: "TL333s",
+        source_url: "https://scp-wiki.wikidot.com/merrily-merrily-merrily",
+        license: "CC BY-SA 3.0", license_url: "https://creativecommons.org/licenses/by-sa/3.0/",
+      },
+    }) }));
+    wrapper(<Routes><Route path="/read/:id" element={<PublicBookPage />} /></Routes>);
+    await screen.findByRole("dialog", { name: "Book reader" });
+    fireEvent.keyDown(window, { key: "End" });
+    expect(screen.getByRole("heading", { name: "Source and license" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Merrily, Merrily, Merrily/ }).getAttribute("href")).toContain("scp-wiki.wikidot.com");
+    expect(screen.getByRole("link", { name: "CC BY-SA 3.0" }).getAttribute("href")).toContain("creativecommons.org");
+  });
+
   it("shows an unavailable state for an unpublished book", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404 }));
     wrapper(<Routes><Route path="/read/:id" element={<PublicBookPage />} /></Routes>);

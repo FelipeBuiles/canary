@@ -18,13 +18,16 @@ const ResetPasswordPage = lazy(() =>
 );
 const PublicBookPage = lazy(() => import("./pages/PublicBookPage").then(({ PublicBookPage }) => ({ default: PublicBookPage })));
 const HomePage = lazy(() => import("./pages/HomePage").then(({ HomePage }) => ({ default: HomePage })));
+const SampleLibraryPage = lazy(() => import("./pages/SampleLibraryPage").then(({ SampleLibraryPage }) => ({ default: SampleLibraryPage })));
 const TermsPage = lazy(() => import("./pages/legal/TermsPage").then(({ TermsPage }) => ({ default: TermsPage })));
 const PrivacyPage = lazy(() => import("./pages/legal/PrivacyPage").then(({ PrivacyPage }) => ({ default: PrivacyPage })));
 const AcceptableUsePage = lazy(() =>
   import("./pages/legal/AcceptableUsePage").then(({ AcceptableUsePage }) => ({ default: AcceptableUsePage })),
 );
 const Library = lazy(() => import("./pages/Library").then(({ Library }) => ({ default: Library })));
-const LabsRoom = lazy(() => import("./pages/LabsRoom").then(({ LabsRoom }) => ({ default: LabsRoom })));
+const LabsRoom = import.meta.env.DEV
+  ? lazy(() => import("./pages/LabsRoom").then(({ LabsRoom }) => ({ default: LabsRoom })))
+  : null;
 const PrimitiveReference = lazy(() =>
   import("./pages/PrimitiveReference").then(({ PrimitiveReference }) => ({ default: PrimitiveReference })),
 );
@@ -74,9 +77,7 @@ function RootRoute() {
 }
 
 function BackofficeRoute() {
-  // The operator desk intentionally ships as a local development surface only.
-  // It has no hosted entry point until a server-side operator API is added.
-  return import.meta.env.DEV ? lazyRoute(BackofficePage) : <Navigate to="/" replace />;
+  return lazyRoute(BackofficePage);
 }
 
 export function App() {
@@ -84,12 +85,13 @@ export function App() {
     <I18nProvider>
       <Routes>
         <Route path="/read/:id" element={lazyRoute(PublicBookPage)} />
+        <Route path="/samples" element={lazyRoute(SampleLibraryPage)} />
         {/* Public auth routes */}
         <Route path="/login" element={lazyRoute(LoginPage)} />
         <Route path="/signup" element={lazyRoute(SignupPage)} />
         <Route path="/reset-password" element={lazyRoute(ResetPasswordPage)} />
 
-        {/* Local-only operator workspace; never exposed by a production build. */}
+        {/* Operator token gates every backoffice API request. */}
         <Route path="/backoffice" element={<BackofficeRoute />} />
 
         {/* Public homepage for visitors; signed-in users keep `/` as Library. */}
@@ -110,7 +112,7 @@ export function App() {
             </AuthGuard>
           }
         >
-          <Route path="labs" element={lazyRoute(LabsRoom)} />
+          <Route path="labs" element={LabsRoom ? lazyRoute(LabsRoom) : <Navigate to="/" replace />} />
           <Route
             path="dev/primitives"
             element={import.meta.env.DEV ? lazyRoute(PrimitiveReference) : <Navigate to="/" replace />}

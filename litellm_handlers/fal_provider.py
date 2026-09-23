@@ -225,19 +225,14 @@ class FalQueueLLM(CustomLLM):
 def _fal_endpoint(model: str, *, has_images: bool = False) -> str:
     cleaned = (model or "").strip().strip("/")
     cleaned = cleaned.removeprefix("fal-queue/")
-    if cleaned in {
+    if cleaned not in {
         "gpt-image-2.5-sunburst",
         "gpt-image-2.5-sunburst-2026-09-08",
+        "openai/gpt-image-2.5/sunburst",
     }:
-        cleaned = "openai/gpt-image-2.5/sunburst"
-    if cleaned == "openai/gpt-image-2.5/sunburst":
-        return f"{cleaned}/{'edit' if has_images else 'text-to-image'}"
-    # Current ByteDance partner endpoints are rooted at `bytedance/...` rather
-    # than `fal-ai/bytedance/...`. Preserve that provider-owned namespace; the
-    # latter accepts some Lite routes but 404s for Seedream 5 Pro results.
-    if cleaned.startswith(("fal-ai/", "bytedance/")):
-        return cleaned
-    return f"fal-ai/{cleaned}"
+        raise FalQueueError(status_code=400, phase="request_validation",
+                            endpoint=cleaned or "<missing>", detail="unsupported FAL model")
+    return f"openai/gpt-image-2.5/sunburst/{'edit' if has_images else 'text-to-image'}"
 
 
 def _build_payload(endpoint: str, prompt: str, images: list[Any], params: dict[str, Any]) -> dict[str, Any]:
@@ -290,8 +285,6 @@ def _build_payload(endpoint: str, prompt: str, images: list[Any], params: dict[s
     if refs:
         payload["image_urls"] = refs
     endpoint_l = endpoint.lower()
-    if "seedream" in endpoint_l or "nano-banana" in endpoint_l or "flux-2" in endpoint_l:
-        payload["image_urls"] = refs
     for key in (
         "background", "max_images", "output_compression", "output_format",
         "quality", "seed", "sync_mode", "enable_safety_checker",
@@ -312,9 +305,7 @@ def _image_size(size: Any, *, exact_dimensions: bool = False) -> str | dict[str,
     except (TypeError, ValueError):
         return None
     # GPT Image 2.5 on fal accepts custom dimensions (multiples of 16), so
-    # preserve the exact 4:5 style-proof and 2:3 page contracts. Seedream
-    # rejects small custom dimensions; preserve its aspect intent through the
-    # supported presets instead.
+    # preserve the exact 4:5 style-proof and 2:3 page contracts.
     if exact_dimensions and width % 16 == 0 and height % 16 == 0 and width * height >= 655_360:
         return {"width": width, "height": height}
     if width < 1920 or height < 1920:

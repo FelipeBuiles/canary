@@ -19,7 +19,7 @@ from novel_to_comic.target_artifacts import TargetArtifacts
 from .test_complete_page_draw import _page, _inventory, _reference_files
 
 
-@pytest.mark.parametrize('model', [COMPLETE_PAGE_GATEWAY_MODEL, 'image-sunburst', 'image-flare', 'image-muse'])
+@pytest.mark.parametrize('model', [COMPLETE_PAGE_GATEWAY_MODEL])
 def test_each_mode_binds_same_model_and_prices_but_distinct_frozen_requests(tmp_path, model):
     editable = Config(draw_model=model, lettering_mode='editable')
     integrated = Config(draw_model=model, lettering_mode='integrated')

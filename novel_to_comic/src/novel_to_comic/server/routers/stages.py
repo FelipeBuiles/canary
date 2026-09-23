@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from novel_to_comic import artifacts
 from novel_to_comic.briefing import revise_persisted_brief
@@ -62,7 +62,12 @@ def get_story_bible(project=Depends(get_project)):
 @router.put("/story-bible")
 def update_story_bible(body: dict, project=Depends(get_project)):
     project_dir, _config, state = project
-    bible = StoryBible.model_validate(body)
+    try:
+        bible = StoryBible.model_validate(body)
+    except ValidationError as exc:
+        from novel_to_comic.clients.structured_call import validation_error_summary
+
+        raise HTTPException(422, validation_error_summary(exc)) from exc
     target = TargetArtifacts(project_dir)
     # Source scenes are derived from the bible's scene anchors, so an edited
     # bible has to re-derive them or source.json keeps describing scenes that no

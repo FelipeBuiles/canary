@@ -643,27 +643,27 @@ export interface CharacterRefVersionsResponse {
   versions: AssetVersion[];
 }
 
-/**
- * A story from the short-story library catalog (libraryofshortstories.com,
- * proxied via GET /projects/short-stories). Only `code`, `title`, `author`,
- * `words`, and `genres` are guaranteed present across the catalog; everything
- * else is sparse. `code` — not `_id`, which exists on only a handful of
- * curated entries — is the stable unique handle and the import identifier.
- */
+/** A licensed story shipped with Canary and available for local import. */
 export interface ShortStory {
   code: string;
   title: string;
   author: string;
   words: number;
   genres: string[];
-  publish_year?: number;
-  publish_source?: string;
-  rating?: number;
-  series?: string;
-  _id?: string;
-  image?: string;
-  blurb?: string;
+  source_kind?: "curated" | "archive";
+  publish_year?: number | null;
+  publish_source?: string | null;
+  rights_note?: string;
   description?: string;
+  showcase_note?: string;
+  content_note?: string;
+  source_note?: string;
+  license?: string;
+  license_url?: string;
+  source_url?: string;
+  text_source_url?: string;
+  attribution_url?: string;
+  sha256?: string;
 }
 
 export interface CastReferenceInput {

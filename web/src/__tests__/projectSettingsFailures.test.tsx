@@ -92,3 +92,34 @@ it("edits an existing project's model and restores account inheritance without s
   expect(requests.save).toHaveBeenLastCalledWith({ dev_model_selections: {} });
   expect(requests.save).toHaveBeenCalledTimes(3);
 });
+
+it("shows a retired project choice and preserves it when another stage changes", async () => {
+  let saved = { target_language: "en", dev_model_selections: { adapt: "glm-5.3-flash", plan: "gpt-6-luna" } };
+  requests.config.mockImplementation(() => saved);
+  requests.models.mockResolvedValue({
+    enabled: true,
+    selections: { adapt: "gpt-6-sol", plan: "gpt-6-sol" },
+    stages: [
+      { id: "adapt", label: "Adaptation", model_ids: ["gpt-6-sol"] },
+      { id: "plan", label: "Planning", model_ids: ["gpt-6-sol", "gpt-6-luna", "claude-opus-5"] },
+    ],
+    models: [
+      { id: "gpt-6-sol", label: "Sol", provider: "OpenAI", funding: "api" },
+      { id: "gpt-6-luna", label: "Luna", provider: "OpenAI", funding: "api" },
+      { id: "claude-opus-5", label: "Opus", provider: "Anthropic", funding: "api" },
+    ],
+  });
+  requests.save.mockImplementation(async (data) => { saved = { ...saved, ...data }; return saved; });
+
+  const user = userEvent.setup();
+  openSettings();
+  await user.click(screen.getByRole("button", { name: "Models (dev)" }));
+  const adaptation = await screen.findByRole("combobox", { name: "Adaptation" });
+  expect(adaptation).toHaveProperty("value", "glm-5.3-flash");
+  expect(screen.getByRole("option", { name: "Retired model: glm-5.3-flash" })).toHaveProperty("value", "glm-5.3-flash");
+  expect(screen.getByText("This saved model is no longer available. New work uses the account setting until you choose another model.")).toHaveProperty("tagName", "P");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Planning" }), "claude-opus-5");
+  await waitFor(() => expect(requests.save).toHaveBeenLastCalledWith({
+    dev_model_selections: { adapt: "glm-5.3-flash", plan: "claude-opus-5" },
+  }));
+});

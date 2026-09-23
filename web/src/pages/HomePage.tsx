@@ -1,4 +1,6 @@
 import { PublicationShowcase } from "../components/book/PublicationShowcase";
+import { useShortStories } from "../api/queries";
+import { genreLabel } from "../lib/storyBrowser";
 import { Link } from "react-router-dom";
 import { BrandIdentity } from "../components/BrandIdentity";
 import { BrandMark } from "../components/BrandMark";
@@ -135,6 +137,35 @@ function FaqItem({ item }: { item: LandingFaq }) {
   );
 }
 
+function StoryShelfPreview() {
+  const { t } = useI18n();
+  const { data: stories } = useShortStories();
+  const featured = ["kaitlin-out-of-space", "the-sea-in-me", "an-education"]
+    .flatMap((code) => stories?.find((story) => story.code === code) ?? []);
+
+  return (
+    <section className="landing-story-shelf" aria-labelledby="landing-story-shelf-title">
+      <div className="landing-story-shelf__heading">
+        <div>
+          <p className="landing-story-shelf__eyebrow">{t("THE SAMPLE SHELF")}</p>
+          <h2 id="landing-story-shelf-title">{t("Your next comic could start here.")}</h2>
+          <p>{t("Read a complete, adaptation-ready story before you begin. From a quiet alien encounter to family drama and fantasy, each sample tests a different kind of page.")}</p>
+        </div>
+        <Link to="/samples" className="landing-story-shelf__link">{t("Explore all stories")} <span aria-hidden="true">↗</span></Link>
+      </div>
+      {featured.length > 0 && <div className="landing-story-shelf__books">
+        {featured.map((story, index) => <article key={story.code} className="landing-story-shelf__book">
+          <div className="landing-story-shelf__stamp"><span>{String(index + 1).padStart(2, "0")}</span><span>{t(genreLabel(story.genres[0] ?? "Story"))}</span></div>
+          <h3>{story.title}</h3>
+          <p className="landing-story-shelf__author">{story.author} · {story.words.toLocaleString()} {t("words")}</p>
+          {story.description && <p className="landing-story-shelf__description">{t(story.description)}</p>}
+          <Link to={`/samples?story=${encodeURIComponent(story.code)}`} className="landing-story-shelf__read">{t("Read and choose")} <span aria-hidden="true">→</span></Link>
+        </article>)}
+      </div>}
+    </section>
+  );
+}
+
 export function HomePage() {
   const { language, setLanguage } = useI18n();
   const copy = LANDING_COPY[language];
@@ -231,6 +262,7 @@ export function HomePage() {
         </section>
 
         <PublicationShowcase />
+        <StoryShelfPreview />
 
         <section className="landing-process" id="process" aria-labelledby="landing-process-title">
           <div className="landing-section-heading">

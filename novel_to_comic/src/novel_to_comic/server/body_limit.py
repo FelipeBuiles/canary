@@ -1,19 +1,4 @@
-"""Defense-in-depth request-body size cap.
-
-The novel-upload route enforces its own cap while streaming (see
-``projects._save_upload_capped``), but every other JSON endpoint relied on
-Starlette's unbounded default, which buffers the full body in memory. This
-middleware caps the body of every non-exempt request up-front, so a giant JSON
-POST can't exhaust the worker's memory.
-
-Exemptions:
-  - File uploads handled by the streaming cap in projects.py are exempt,
-    since their larger bodies are validated mid-stream.
-
-Configurable via ``CANARY_MAX_BODY_MB`` (default 2 MB). The style-direction
-multipart endpoint has an explicit 11 MiB envelope so its advertised 10 MiB
-image limit remains usable; its route also validates decoded image dimensions.
-"""
+"""Pre-parser request-body limits for JSON and multipart endpoints."""
 
 from __future__ import annotations
 
@@ -23,11 +8,10 @@ from collections.abc import Awaitable, Callable
 from starlette.requests import Request
 from starlette.responses import Response
 
-# Upload routes use _save_upload_capped (streaming, 10 MB) — exempt from the
-# generic cap, which is lower. Matched by path suffix since the upload handler
-# is a POST to /api/projects or /api/projects/import-story.
-_EXEMPT_EXACT = frozenset({"/api/projects", "/api/projects/import-story", "/api/projects/short-stories"})
+from novel_to_comic.input_limits import InputLimits
+
 _STYLE_DIRECTION_BODY_BYTES = 11 * 1024 * 1024
+_MULTIPART_ENVELOPE_BYTES = 1024 * 1024
 
 
 def _max_body_bytes() -> int:
@@ -38,14 +22,10 @@ def _max_body_bytes() -> int:
         return 2 * 1024 * 1024
 
 
-def _is_exempt(path: str) -> bool:
-    if path in _EXEMPT_EXACT:
-        return True
-    return False
-
-
 def _body_cap_bytes(path: str, method: str) -> int:
     """Return the pre-parser body cap for this endpoint."""
+    if method == "POST" and path.rstrip("/") == "/api/projects":
+        return InputLimits.from_env().upload_bytes + _MULTIPART_ENVELOPE_BYTES
     parts = path.rstrip("/").split("/")
     if (
         method == "POST"
@@ -58,15 +38,9 @@ def _body_cap_bytes(path: str, method: str) -> int:
 
 
 async def body_size_limit_middleware(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
-    """Reject oversized request bodies with 413 before the handler reads them.
-
-    The check runs against ``Content-Length`` when present (cheap, header-only).
-    Chunked transfers omit Content-Length; for those we wrap the receive channel
-    so the cap is enforced as bytes stream in — same approach Starlette's own
-    ``LimitedRequest`` uses.
-    """
+    """Reject an oversized body before FastAPI parses it or resolves auth."""
     path = request.url.path
-    if _is_exempt(path) or request.method in ("GET", "HEAD", "OPTIONS"):
+    if request.method in ("GET", "HEAD", "OPTIONS"):
         return await call_next(request)
 
     cap = _body_cap_bytes(path, request.method)
@@ -82,43 +56,17 @@ async def body_size_limit_middleware(request: Request, call_next: Callable[[Requ
         except ValueError:
             pass  # Malformed Content-Length — let the framework handle it.
 
-    # No Content-Length (chunked): enforce as bytes arrive. We interpose on the
-    # ASGI receive callable and abort once the accumulated body exceeds the cap.
-    received_bytes = 0
-    receive = request.receive
-
-    async def _capped_receive():
-        nonlocal received_bytes
-        message = await receive()
-        if message["type"] == "http.request":
-            body = message.get("body", b"")
-            received_bytes += len(body)
-            if received_bytes > cap:
-                # Mutate the message to an empty body and stash the rejection
-                # so the route handler sees a short body; the real response is
-                # sent by the wrapper below. We can't raise here cleanly.
-                raise _BodyTooLarge()
-        return message
-
-    # Stash the wrapped receive on the scope so downstream handlers that call
-    # request.body() pull through the cap. Starlette reads receive from
-    # request._receive; replacing request.receive is not enough. The simplest
-    # robust approach: only enforce Content-Length here (covers the common
-    # abuse vector — a single shot JSON body), and rely on the per-route
-    # streaming cap for uploads. Chunked oversized JSON is an unusual attack.
-    try:
-        request._receive = _capped_receive  # type: ignore[attr-defined]
-        return await call_next(request)
-    except _BodyTooLarge:
-        return Response(
-            content='{"detail":"Request body too large"}',
-            status_code=413,
-            media_type="application/json",
-        )
-    finally:
-        # Restore so the request object isn't mutated if it's reused.
-        request._receive = receive  # type: ignore[attr-defined]
-
-
-class _BodyTooLarge(Exception):
-    """Internal sentinel raised from the wrapped receive channel."""
+    # A client can omit or lie about Content-Length. Read at most cap bytes
+    # before entering routing; BaseHTTPMiddleware replays the cached body to
+    # FastAPI, including Stripe's exact signed webhook payload.
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > cap:
+            return Response(
+                content='{"detail":"Request body too large"}',
+                status_code=413,
+                media_type="application/json",
+            )
+        body.extend(chunk)
+    request._body = bytes(body)  # type: ignore[attr-defined]
+    return await call_next(request)

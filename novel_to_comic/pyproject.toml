@@ -67,6 +67,7 @@ where = ["src"]
   "labs/fixtures/reference_images/*.png",
   "litellm_pricing_overrides.yaml",
   "litellm_model_prices.cached.json",
+  "sample_stories/*.json", "sample_stories/*.txt",
 ]
 
 [tool.pyright]

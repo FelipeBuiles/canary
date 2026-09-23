@@ -7,6 +7,7 @@ export interface Publication {
   allow_feature: boolean;
   featured: boolean;
   published_at: string;
+  source_credit?: { title: string; author: string; source_url: string; license: string; license_url: string } | null;
   pages: { number: number; width: number; height: number; url: string; spread_role?: "single" | "left" | "right" | "spread" }[];
 }
 

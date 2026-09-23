@@ -8,6 +8,8 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
+from novel_to_comic.asset_scope import require_project_asset_path
+
 
 def asset_versions_dir(image_path: Path) -> Path:
     return image_path.parent / "versions" / image_path.stem
@@ -19,6 +21,7 @@ def record_asset_version(
     *,
     reason: str,
 ) -> dict | None:
+    require_project_asset_path(project_dir, image_path)
     if not image_path.exists():
         return None
     versions = asset_versions_dir(image_path)
@@ -61,6 +64,7 @@ def record_asset_version(
 
 
 def list_asset_versions(image_path: Path, project_dir: Path) -> list[dict]:
+    require_project_asset_path(project_dir, image_path)
     versions = asset_versions_dir(image_path)
     manifest = versions / "history.json"
     entries = json.loads(manifest.read_text()).get("entries", []) if manifest.exists() else []
@@ -80,6 +84,7 @@ def restore_asset_version(
     project_dir: Path,
     version: int,
 ) -> None:
+    require_project_asset_path(project_dir, image_path)
     archived = asset_versions_dir(image_path) / f"v{version:03d}{image_path.suffix}"
     if not archived.exists():
         raise FileNotFoundError(f"asset version {version} does not exist")

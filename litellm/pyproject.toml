@@ -8,9 +8,6 @@ dependencies = [
   # The PyPI proxy extra omits the database runtime bundled upstream.
   "prisma>=0.11.0,<1.0",
   "psycopg[binary]>=3.2,<4.0",
-  "google-cloud-aiplatform==2.1.3",
-  "google-auth==2.58.0",
-  "google-genai==2.24.0",
 ]
 
 [dependency-groups]

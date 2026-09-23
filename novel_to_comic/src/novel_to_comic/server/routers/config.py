@@ -19,12 +19,9 @@ _SETTABLE_FIELDS = {
     "target_language",
     "dev_mode",
     "image_quality",
-    "image_steps",
-    "negative_prompt",
     "parallel_batch_size",
     "max_concurrent_requests",
     "cost_limit_usd",
-    "flux_guidance_scale",
 }
 
 
@@ -73,7 +70,15 @@ def update_config(body: dict, request: Request, project=Depends(get_project), us
         previous_draw_model = config.draw_model
         try:
             # Replace the override map: omitted stages inherit account settings.
-            config.dev_model_selections = validate_selections(body["dev_model_selections"])
+            proposed = body["dev_model_selections"]
+            if not isinstance(proposed, dict):
+                raise ValueError("selections must be an object")
+            # An unrelated edit may send back a retired choice that was saved
+            # before the catalog changed. Keep that exact value in the file;
+            # only newly selected stage/model pairs need current validation.
+            validate_selections({stage: model for stage, model in proposed.items()
+                                 if config.dev_model_selections.get(stage) != model})
+            config.dev_model_selections = proposed
             config = account_config(config, request.app.state.projects_dir, user_id)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc

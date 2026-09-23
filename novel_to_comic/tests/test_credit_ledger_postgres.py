@@ -81,6 +81,7 @@ def test_atomic_reservations_across_process_connections(ledger):
             "p_user_id": user, "p_project_id": None, "p_stage": "cast",
             "p_amount_credits": 5, "p_job_id": str(uuid.uuid4()),
             "p_owner": str(uuid.uuid4()), "p_lease_seconds": 3600,
+            "p_credits_per_usd": 100, "p_markup": 1,
         }).execute().data
 
     with ThreadPoolExecutor(2) as pool:
@@ -155,6 +156,7 @@ def test_foreign_live_and_expired_reservations(ledger):
             "p_user_id": user, "p_project_id": None, "p_stage": "cast",
             "p_amount_credits": 1, "p_job_id": str(uuid.uuid4()),
             "p_owner": owner, "p_lease_seconds": 3600,
+            "p_credits_per_usd": 100, "p_markup": 1,
         }).execute().data
     live, expired, started = reserve(live_owner), reserve(expired_owner), reserve(expired_owner)
     assert db.rpc("check_credit_reservation_lease", {"p_reservation_id": live, "p_owner": expired_owner}).execute().data is False
@@ -221,6 +223,118 @@ def test_sql_subscription_dollars_and_billable_flag_cannot_charge_or_poison_api_
     assert db.query(f"select sum(amount_credits) from public.credit_ledger where job_id='{job}';") == "-1"
 
 
+def _model_settlement(user, job, call, cost):
+    return {
+        "p_user_id": user, "p_project_id": None, "p_job_id": job,
+        "p_stage": "cast", "p_description": "model call",
+        "p_usage_call_id": call, "p_provider": "openai",
+        "p_model": "gpt-5.6-terra", "p_provider_model": None,
+        "p_operation": "text", "p_input_tokens": 10,
+        "p_output_tokens": 10, "p_image_count": 0,
+        "p_cost_usd": cost, "p_cost_source": "provider_reported_cost",
+        "p_pricing_snapshot": None, "p_credits_per_usd": 100,
+        "p_markup": 1, "p_billable": True, "p_funding": "api",
+    }
+
+
+def test_concurrent_call_guarantees_top_up_only_from_free_balance(ledger):
+    db, user = ledger
+    job, owner = str(uuid.uuid4()), str(uuid.uuid4())
+    hold = db.rpc("reserve_stage_credits", {
+        "p_user_id": user, "p_project_id": None, "p_stage": "cast",
+        "p_amount_credits": 3, "p_job_id": job,
+        "p_owner": owner, "p_lease_seconds": 3600,
+        "p_credits_per_usd": 100, "p_markup": 1,
+    }).execute().data
+    assert hold
+
+    def authorize(call):
+        return db.rpc("authorize_model_call_credits", {
+            "p_user_id": user, "p_job_id": job, "p_usage_call_id": call,
+            "p_amount_credits": 2, "p_owner": owner,
+            "p_credits_per_usd": 100, "p_markup": 1,
+        }).execute().data
+
+    first, second, third = (str(uuid.uuid4()) for _ in range(3))
+    assert authorize(first) is True
+    assert authorize(second) is True  # Extends the hold by one credit.
+    assert authorize(third) is False
+    assert db.query(f"select balance_credits from public.user_credits where user_id='{user}';") == "1"
+    assert db.rpc("settle_model_usage_credits", _model_settlement(user, job, first, 0.01)).execute().data == 1
+    assert authorize(third) is True  # Settled credit left the hold atomically.
+    assert db.query(f"select balance_credits from public.user_credits where user_id='{user}';") == "0"
+
+
+def test_provider_overrun_never_spends_unreserved_credits(ledger):
+    db, user = ledger
+    job, owner, call = (str(uuid.uuid4()) for _ in range(3))
+    hold = db.rpc("reserve_stage_credits", {
+        "p_user_id": user, "p_project_id": None, "p_stage": "cast",
+        "p_amount_credits": 3, "p_job_id": job,
+        "p_owner": owner, "p_lease_seconds": 3600,
+        "p_credits_per_usd": 100, "p_markup": 1,
+    }).execute().data
+    params = {
+        "p_user_id": user, "p_job_id": job, "p_usage_call_id": call,
+        "p_amount_credits": 2, "p_owner": owner,
+        "p_credits_per_usd": 100, "p_markup": 1,
+    }
+    assert db.rpc("authorize_model_call_credits", params).execute().data is True
+    settle = _model_settlement(user, job, call, 0.04)
+    assert db.rpc("settle_model_usage_credits", settle).execute().data == 3
+    assert db.rpc("settle_model_usage_credits", settle).execute().data == 3
+    assert db.query(f"select unfunded_credits from public.credit_ledger where usage_call_id='{call}';") == "1"
+    assert db.query(f"select balance_credits from public.user_credits where user_id='{user}';") == "2"
+    assert db.rpc("authorize_model_call_credits", {
+        **params, "p_usage_call_id": str(uuid.uuid4()),
+    }).execute().data is False
+    assert db.query(f"select issue from public.ops_usage_reconciliation where usage_call_id='{call}';") == "unfunded_provider_usage"
+
+
+def test_call_rejects_billing_rate_change_within_reserved_job(ledger):
+    db, user = ledger
+    job, owner = str(uuid.uuid4()), str(uuid.uuid4())
+    hold = db.rpc("reserve_stage_credits", {
+        "p_user_id": user, "p_project_id": None, "p_stage": "cast",
+        "p_amount_credits": 2, "p_job_id": job,
+        "p_owner": owner, "p_lease_seconds": 3600,
+        "p_credits_per_usd": 100, "p_markup": 1,
+    }).execute().data
+    assert hold
+    with pytest.raises(RuntimeError, match="billing terms changed"):
+        db.rpc("authorize_model_call_credits", {
+            "p_user_id": user, "p_job_id": job,
+            "p_usage_call_id": str(uuid.uuid4()), "p_amount_credits": 1,
+            "p_owner": owner, "p_credits_per_usd": 200, "p_markup": 1,
+        }).execute()
+    assert db.query(f"select balance_credits from public.user_credits where user_id='{user}';") == "3"
+
+
+def test_unbilled_call_releases_its_pending_guarantee(ledger):
+    db, user = ledger
+    job, owner, first, second = (str(uuid.uuid4()) for _ in range(4))
+    hold = db.rpc("reserve_stage_credits", {
+        "p_user_id": user, "p_project_id": None, "p_stage": "cast",
+        "p_amount_credits": 1, "p_job_id": job,
+        "p_owner": owner, "p_lease_seconds": 3600,
+        "p_credits_per_usd": 100, "p_markup": 1,
+    }).execute().data
+    assert hold
+    params = {
+        "p_user_id": user, "p_job_id": job, "p_usage_call_id": first,
+        "p_amount_credits": 1, "p_owner": owner,
+        "p_credits_per_usd": 100, "p_markup": 1,
+    }
+    assert db.rpc("authorize_model_call_credits", params).execute().data is True
+    db.rpc("release_model_call_authorization", {
+        "p_user_id": user, "p_usage_call_id": first,
+    }).execute()
+    assert db.rpc("authorize_model_call_credits", {
+        **params, "p_usage_call_id": second,
+    }).execute().data is True
+    assert db.query(f"select balance_credits from public.user_credits where user_id='{user}';") == "4"
+
+
 @pytest.mark.parametrize("provider_model", [None, "observed-image-model"])
 def test_subscription_images_do_not_write_credit_ledger(ledger, provider_model):
     db, user = ledger
@@ -242,6 +356,7 @@ def test_deleted_project_hold_does_not_block_recreated_project(ledger, started):
             "p_user_id": user, "p_project_id": project, "p_stage": "extract",
             "p_amount_credits": amount, "p_job_id": str(uuid.uuid4()),
             "p_owner": owner, "p_lease_seconds": 3600,
+            "p_credits_per_usd": 100, "p_markup": 1,
         }).execute().data
     hold = reserve(old_project, 3)
     if started:

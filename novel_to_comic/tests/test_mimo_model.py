@@ -28,3 +28,12 @@ def test_mimo_route_and_model_selection():
 def test_mimo_standard_token_estimate():
     quote = get_pricing_resolver().estimate_text_cost("mimo-v2.6-pro", 1_000_000, 1_000_000)
     assert quote.cost_usd == pytest.approx(1.305)
+
+
+@pytest.mark.parametrize(("model", "expected"), [
+    ("gpt-6-sol", 12.0),
+    ("gpt-6-luna", 0.6),
+])
+def test_openai_six_standard_token_estimate(model, expected):
+    quote = get_pricing_resolver().estimate_text_cost(model, 1_000_000, 1_000_000)
+    assert quote.cost_usd == pytest.approx(expected)

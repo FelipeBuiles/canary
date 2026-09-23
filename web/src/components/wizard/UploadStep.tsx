@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, useEffect, lazy, Suspense } from "react";
+import { useState, useRef, useEffect, lazy, Suspense } from "react";
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
 import { Icon } from "../ui/Icon";
@@ -7,9 +7,9 @@ import { LANGUAGES, useI18n } from "../../i18n";
 import type { LanguageCode } from "../../i18n";
 import { useShortStories } from "../../api/queries";
 import { LetteringChoice, type LetteringMode } from "./LetteringChoice";
+import { SampleLibrary } from "./SampleLibrary";
 import { Select } from "../ui/Select";
 import { FieldLabel, TextField } from "../ui/Field";
-import { browseStories, type SortKey } from "../../lib/storyBrowser";
 
 interface UploadStepProps {
   onSubmit: (file: File, name: string, configOverrides?: Partial<ConfigOverrides>) => void;
@@ -17,18 +17,13 @@ interface UploadStepProps {
   isPending: boolean;
   error: string | null;
   onCancel?: () => void;
+  initialStoryCode?: string | null;
 }
 
 const ProjectModelControls = import.meta.env.DEV ? lazy(() => import("./ProjectModelControls")) : null;
 
 const ACCEPTED = [".txt", ".epub", ".pdf"];
-const PAGE_SIZE = 8;
-const SAMPLE_CHOICES = [
-  { code: "the-gift-of-the-magi", label: "SHORT READ", basis: "A compact story of two gifts and one couple; length comes from the catalog word count." },
-  { code: "the-open-window", label: "DIALOGUE-LED", basis: "A visitor, a conversation, and a surprise: a useful study in expressions and dialogue." },
-  { code: "the-most-dangerous-game", label: "VISUALLY VARIED", basis: "From shipwreck to chateau to jungle pursuit: contrasting settings and physical action." },
-] as const;
-export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCancel }: UploadStepProps) {
+export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCancel, initialStoryCode }: UploadStepProps) {
   const { language, t } = useI18n();
   const [modelControlsOpen, setModelControlsOpen] = useState(false);
   const [modelSelections, setModelSelections] = useState<Record<string, string>>({});
@@ -38,33 +33,19 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
   const [step, setStep] = useState<"source" | "details" | "lettering">("source");
   const [letteringMode, setLetteringMode] = useState<LetteringMode | null>(null);
   const [tab, setTab] = useState<"file" | "library">("library");
-  const [browsing, setBrowsing] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [sortBy, setSortBy] = useState<SortKey>("title");
-  const [page, setPage] = useState(0);
   const [pastedUrlOrCode, setPastedUrlOrCode] = useState("");
   const [selectedStory, setSelectedStory] = useState<ShortStory | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const previousStep = useRef(step);
-  const { data: shortStories, isLoading, isError, refetch, isFetching } = useShortStories();
-  const curatedStories = useMemo(() => SAMPLE_CHOICES.flatMap((choice) => {
-    const story = shortStories?.find((item) => item.code === choice.code);
-    return story ? [{ story, ...choice }] : [];
-  }), [shortStories]);
-  const filteredStories = useMemo(() => browseStories(shortStories ?? [], {
-    search: searchQuery, genres: [], sort: sortBy,
-  }), [shortStories, searchQuery, sortBy]);
-  const pageCount = Math.max(1, Math.ceil(filteredStories.length / PAGE_SIZE));
-  const currentPage = Math.min(page, pageCount - 1);
-  const visibleStories = browsing
-    ? filteredStories.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE)
-    : curatedStories.map(({ story }) => story);
+  const { data: shortStories } = useShortStories();
+  const activeStory = pastedUrlOrCode.trim() ? null
+    : selectedStory ?? shortStories?.find((item) => item.code === initialStoryCode) ?? null;
   const ext = file ? "." + file.name.split(".").pop()?.toLowerCase() : "";
   const extOk = !file || ACCEPTED.includes(ext);
-  const sourceReady = tab === "file" ? Boolean(file && extOk) : Boolean(selectedStory || pastedUrlOrCode.trim());
-  const sourceTitle = tab === "file" ? file?.name : selectedStory?.title ?? pastedUrlOrCode;
+  const sourceReady = tab === "file" ? Boolean(file && extOk) : Boolean(activeStory || pastedUrlOrCode.trim());
+  const sourceTitle = tab === "file" ? file?.name : activeStory?.title ?? pastedUrlOrCode;
   const languageLabel = LANGUAGES.find((item) => item.code === targetLanguage)?.label ?? targetLanguage;
 
   useEffect(() => {
@@ -83,6 +64,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
     e.preventDefault();
     if (isPending || !sourceReady) return;
     if (step === "source") {
+      if (activeStory && !name.trim()) setName(activeStory.title);
       setStep("details");
       return;
     }
@@ -92,7 +74,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
     const overrides: Partial<ConfigOverrides> = { target_language: targetLanguage, lettering_mode: letteringMode };
     if (import.meta.env.DEV && Object.keys(modelSelections).length) overrides.dev_model_selections = modelSelections;
     if (tab === "file" && file) onSubmit(file, name.trim(), overrides);
-    else onSubmitImport(selectedStory?.code ?? pastedUrlOrCode.trim(), name.trim(), overrides);
+    else onSubmitImport(activeStory?.code ?? pastedUrlOrCode.trim(), name.trim(), overrides);
   }
 
   return (
@@ -130,59 +112,22 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                 </div>
               ) : (
                 <>
-                  {browsing ? (
-                    <div className="space-y-3">
-                      <FieldLabel htmlFor="story-search">{t("Search stories by title, author, or genre...")}</FieldLabel>
-                      <TextField id="story-search" type="search" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setPage(0); }} />
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <Select aria-label={t("Sort stories")} value={sortBy} onValueChange={(value) => { setSortBy(value as SortKey); setPage(0); }} options={[{ value: "title", label: t("Title (A–Z)") }, { value: "shortest", label: t("Shortest") }, { value: "year", label: t("Year (newest)") }]} />
-                        <Button type="button" variant="outline" onClick={() => setBrowsing(false)}>{t("BACK TO THREE SAMPLES")}</Button>
-                      </div>
-                    </div>
-                  ) : <p className="text-sm leading-relaxed text-ink-muted">{t("Three starting points, chosen for story length and content—not ratings or predicted results.")}</p>}
-
-                  {isLoading ? <p role="status" className="py-5 text-sm">{t("LOADING SAMPLE STORIES…")}</p> : isError ? (
-                    <div role="alert" className="space-y-3 py-4">
-                      <p className="text-sm text-hero-red">{t("THE SAMPLE LIBRARY COULD NOT LOAD")}</p>
-                      <Button type="button" variant="outline" onClick={() => void refetch()} disabled={isFetching}>{t("TRY AGAIN")}</Button>
-                    </div>
-                  ) : !shortStories?.length ? <p role="status" className="py-5 text-sm">{t("The sample library is empty. You can still upload a manuscript or paste a story URL.")}</p> : (
-                    <>
-                      <div className="space-y-2" aria-label={t("SHORT STORY LIBRARY")}>
-                        {visibleStories.length === 0 ? <p role="status" className="py-4 text-sm">{browsing ? t("NO STORIES FOUND") : t("These featured samples are unavailable. Browse the current catalog instead.")}</p> : visibleStories.map((story) => {
-                          const choice = !browsing ? curatedStories.find((item) => item.code === story.code) : null;
-                          const selected = selectedStory?.code === story.code;
-                          return (
-                            <button key={story.code} type="button" aria-pressed={selected} onClick={() => { setSelectedStory(story); setPastedUrlOrCode(""); setName(story.title); }} className={`block min-h-11 w-full p-4 text-left transition-colors ${selected ? "bg-chip-gold ring-2 ring-inset ring-ink-black" : "bg-surface-container hover:bg-pulp-paper"}`}>
-                              {choice && <span className="block font-meta text-xs font-bold text-ink-muted">{t(choice.label)}</span>}
-                              <span className="mt-1 block font-display text-lg font-bold leading-snug">{story.title}</span>
-                              <span className="mt-1 block text-sm text-ink-muted">{story.author} · {story.words.toLocaleString()} {t("words")}</span>
-                              {choice && <span className="mt-2 block text-sm leading-relaxed text-ink-muted">{t(choice.basis)}</span>}
-                              {selected && <span className="mt-2 flex items-center gap-2 font-meta text-xs font-bold"><Icon name="check" size={14} />{t("SELECTED")}</span>}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      {browsing ? (
-                        <nav aria-label={t("Sample story pages")} className="flex items-center justify-between gap-2">
-                          <Button type="button" variant="outline" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>{t("PREVIOUS")}</Button>
-                          <span role="status" className="text-center text-xs tabular-nums">{t("Page {page} of {total}").replace("{page}", String(currentPage + 1)).replace("{total}", String(pageCount))} · {t("{count} stories").replace("{count}", String(filteredStories.length))}</span>
-                          <Button type="button" variant="outline" disabled={currentPage + 1 >= pageCount} onClick={() => setPage(currentPage + 1)}>{t("NEXT")}</Button>
-                        </nav>
-                      ) : <Button type="button" variant="outline" onClick={() => setBrowsing(true)} className="w-full">{t("BROWSE ALL STORIES")}</Button>}
-                    </>
-                  )}
+                  <SampleLibrary
+                    selectedCode={activeStory?.code}
+                    onSelect={(story) => { setSelectedStory(story); setPastedUrlOrCode(""); setName(story.title); }}
+                    onReadAndSelect={(story) => { setSelectedStory(story); setPastedUrlOrCode(""); setName(story.title); setStep("details"); }}
+                  />
                   <details className="bg-surface-container px-4">
-                    <summary className="min-h-11 cursor-pointer py-3 font-meta text-xs uppercase">{t("USE ANOTHER SOURCE")}</summary>
+                    <summary className="min-h-11 cursor-pointer py-3 font-meta text-xs uppercase">{t("HAVE A STORY CODE OR LINK?")}</summary>
                     <div className="pb-4">
-                      <FieldLabel htmlFor="story-url">{t("PASTE URL OR CODE")}</FieldLabel>
+                      <FieldLabel htmlFor="story-url">{t("Library of Short Stories code or URL")}</FieldLabel>
                       <TextField id="story-url" type="text" value={pastedUrlOrCode} onChange={(e) => {
                         const value = e.target.value;
                         setPastedUrlOrCode(value);
                         setSelectedStory(null);
                         const code = value.match(/onlinereader\/([a-zA-Z0-9_-]+)/)?.[1] ?? value.split("/").pop() ?? "";
                         setName(code.replace(/[^a-zA-Z0-9]+/g, " ").trim().replace(/\b\w/g, (c) => c.toUpperCase()));
-                      }} placeholder={t("e.g. story URL or library code")} />
+                      }} placeholder={t("e.g. the-open-window")} />
                     </div>
                   </details>
                 </>
@@ -200,6 +145,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                 <p className="mt-3 text-sm">{languageLabel}</p>
                 <p className="mt-2 text-sm leading-relaxed text-ink-muted">{t("First review after analysis: your characters, places, story outline, and proposed adaptation brief.")}</p>
               </div>
+              {activeStory?.rights_note && <p className="bg-chip-gold/45 p-4 text-sm leading-6">{t(activeStory.rights_note)}</p>}
               <div><FieldLabel htmlFor="project-name">{t("PROJECT NAME")}</FieldLabel><TextField id="project-name" name="projectName" value={name} onChange={(e) => setName(e.target.value)} required autoComplete="off" disabled={isPending} /></div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div><FieldLabel>{t("OUTPUT LANGUAGE")}</FieldLabel><Select aria-label={t("OUTPUT LANGUAGE")} value={targetLanguage} onValueChange={(value) => setTargetLanguage(value as LanguageCode)} options={LANGUAGES.map((item) => ({ value: item.code, label: item.label }))} disabled={isPending} className="w-full" /></div>

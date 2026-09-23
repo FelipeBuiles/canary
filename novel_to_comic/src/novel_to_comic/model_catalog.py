@@ -1,6 +1,6 @@
 """Explicit account model choices shared by validation and the settings API."""
 from novel_to_comic.config import Config
-from novel_to_comic.codex_dev import selectable_models, selector_available, model_has_vision
+from novel_to_comic.codex_dev import selectable_models, selector_available, model_has_vision, process_setting, validate_local_runtime, CodexRoutingError
 from novel_to_comic.image_models import IMAGE_MODEL_ALIASES, describe_image_model
 
 # Keep controls in pipeline order. Style/Cast share settings; Draw has three
@@ -34,21 +34,22 @@ STAGE_DESCRIPTIONS = {
     "visual_review": "Reviews drawn pages against approved references for visual issues such as character or costume changes.",
 }
 TEXT_MODELS = (
-    {"id": "gpt-6-astra", "label": "GPT-6 Astra", "provider": "OpenAI"},
+    {"id": "gpt-6-sol", "label": "GPT-6 Sol", "provider": "OpenAI"},
+    {"id": "gpt-6-luna", "label": "GPT-6 Luna", "provider": "OpenAI"},
     {"id": "claude-fable-5-1", "label": "Claude Fable 5.1", "provider": "Anthropic"},
     {"id": "claude-opus-5", "label": "Claude Opus 5", "provider": "Anthropic"},
-    {"id": "gpt-5.6-terra", "label": "GPT-5.6 Terra", "provider": "OpenAI"},
-    {"id": "gpt-5.6-luna", "label": "GPT-5.6 Luna", "provider": "OpenAI"},
-    {"id": "gemini-3.8-flash", "label": "Gemini 3.8 Flash", "provider": "Google Vertex AI"},
-    {"id": "deepseek-v4.1-flash", "label": "DeepSeek V4.1 Flash", "provider": "OpenRouter"},
-    {"id": "glm-5.3-flash", "label": "GLM 5.3 Flash", "provider": "OpenRouter"},
     {"id": "mimo-v2.6-pro", "label": "MiMo V2.6 Pro", "provider": "OpenRouter"},
-    {"id": "union-alpha", "label": "Union Alpha", "provider": "OpenRouter"},
 )
-DRAW_MODELS = ("image-gemini-pro", "image-sunburst", "image-flare", "image-muse")
+DRAW_MODELS = ("image-sunburst",)
 
 
 def codex_models() -> list[dict]:
+    if process_setting("CANARY_ENV") != "development":
+        return []
+    try:
+        validate_local_runtime()
+    except CodexRoutingError:
+        return []
     return [{
         "id": f"codex-dev/{kind}/{model}",
         "label": f"Codex · {model}" if kind == "text" else f"Codex images · {model}",
@@ -60,9 +61,9 @@ def codex_models() -> list[dict]:
         if kind == "text" or model_has_vision(model)]
 
 
-def models() -> list[dict]:
+def models(*, include_codex: bool = True) -> list[dict]:
     return [
-        *codex_models(),
+        *(codex_models() if include_codex else []),
         *[dict(model, kind="text", vision=True, funding="api") for model in TEXT_MODELS],
         *[{
             "id": model, "label": describe_image_model(model).display_name,
@@ -72,8 +73,8 @@ def models() -> list[dict]:
     ]
 
 
-def allowed_models(stage: str) -> tuple[str, ...]:
-    codex = tuple(model["id"] for model in codex_models() if model["kind"] == ("image" if stage in {"image", "draw"} else "text") and (stage not in {"ocr", "visual_review"} or model["vision"]))
+def allowed_models(stage: str, *, include_codex: bool = True) -> tuple[str, ...]:
+    codex = tuple(model["id"] for model in codex_models() if model["kind"] == ("image" if stage in {"image", "draw"} else "text") and (stage not in {"ocr", "visual_review"} or model["vision"])) if include_codex else ()
     if stage == "draw":
         return (*DRAW_MODELS, *codex)
     if stage == "image":

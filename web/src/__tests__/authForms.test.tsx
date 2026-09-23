@@ -61,6 +61,21 @@ describe("Auth forms", () => {
     await waitFor(() => expect(auth.signUp).toHaveBeenCalledWith(expect.objectContaining({ options: { data: { studio_name: "Ink studio", referred_by_book: id } } })));
   });
 
+  it("returns a sample reader to the same story after signup", async () => {
+    auth.signUp.mockResolvedValue({ error: null });
+    setup("signup", "?sample=an-education");
+    fireEvent.change(screen.getByLabelText("Studio Name"), { target: { value: "Ink studio" } });
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "author@example.com" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret" } });
+    fireEvent.submit(screen.getByRole("form", { name: "Create account" }));
+    await waitFor(() => expect(auth.signUp).toHaveBeenCalledWith(expect.objectContaining({
+      options: {
+        data: { studio_name: "Ink studio" },
+        emailRedirectTo: `${window.location.origin}/?sample=an-education`,
+      },
+    })));
+  });
+
   it("sends a reset link to the same-origin recovery page and handles rejection", async () => {
     auth.resetPasswordForEmail.mockRejectedValueOnce(new Error("Try again later"))
       .mockResolvedValueOnce({ error: null });

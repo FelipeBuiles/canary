@@ -13,23 +13,16 @@ from typing import Any
 from .costs import settle_labs_result_cost
 from . import storage
 from .providers.base import LabsImageInput, LabsProvider, ProviderError
-from .providers.fal import FalProvider
 from .providers.litellm import LitellmProvider
-from .providers.together import TogetherProvider
 from .registry import LabsModelEntry, get_entry
 
 log = logging.getLogger(__name__)
 
-# Limit per-provider concurrency so we don't hammer fal/together with a wall
-# of requests when running 8 panels × 6 models.
+# Bound local comparison concurrency.
 _PER_PROVIDER_CONCURRENCY = 3
 
 
 def _build_provider(name: str) -> LabsProvider:
-    if name == "fal":
-        return FalProvider()
-    if name == "together":
-        return TogetherProvider()
     if name == "litellm":
         return LitellmProvider()
     raise ValueError(f"Unknown provider: {name}")

@@ -5,6 +5,7 @@ from .plan_detail_support import with_reservations
 import asyncio
 import hashlib
 import io
+import json
 import zipfile
 from decimal import Decimal
 from pathlib import Path
@@ -1112,6 +1113,30 @@ def test_native_pages_export_at_each_verified_canvas_and_configured_dpi(tmp_path
             assert artifacts.render_path(index, 1).read_bytes() == source
             assert artifacts.read_provenance(index, 1).render.cost_usd is None
             assert artifacts.read_provenance(index, 1).usage.cost_usd is None
+
+
+def test_scp_adaptation_exports_visible_attribution_and_share_alike_page(tmp_path):
+    artifacts, _ = _write_valid_book(tmp_path)
+    (tmp_path / "sample_source.json").write_text(json.dumps({
+        "title": "Merrily, Merrily, Merrily",
+        "author": "TL333s",
+        "source_url": "https://scp-wiki.wikidot.com/merrily-merrily-merrily",
+        "license": "CC BY-SA 3.0",
+        "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+    }))
+
+    result = finish_book(artifacts, production=FinishProductionSpec(canvas_width=120, canvas_height=180))
+
+    assert result.preflight.ready_to_export
+    assert all(package.page_numbers == (1, 2) for package in result.packages)
+    assert len(PdfReader(artifacts.export_path("pdf")).pages) == 2
+    with zipfile.ZipFile(artifacts.export_path("cbz")) as archive:
+        assert archive.namelist() == ["page_001.jpg", "page_002.jpg"]
+        with Image.open(io.BytesIO(archive.read("page_002.jpg"))) as credit:
+            assert credit.format == "JPEG"
+            assert credit.size == (120, 180)
+            assert credit.info["icc_profile"]
+            assert credit.getpixel((10, 10)) != (15, 35, 55)
 
 
 @pytest.mark.parametrize("production", [

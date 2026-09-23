@@ -37,7 +37,7 @@ function FirstIssueInvitation({ onStart }: { onStart: () => void }) {
   );
 }
 
-function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+function NewProjectModal({ isOpen, onClose, initialStoryCode }: { isOpen: boolean; onClose: () => void; initialStoryCode?: string | null }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const createProject = useCreateProject();
@@ -101,6 +101,7 @@ function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
           isPending={createProject.isPending || importStory.isPending}
           error={createProject.error?.message || importStory.error?.message || null}
           onCancel={onClose}
+          initialStoryCode={initialStoryCode}
         />
       </div>
     </div>
@@ -109,11 +110,23 @@ function NewProjectModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
 
 export function Library() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const requestedSample = new URLSearchParams(location.search).get("sample");
   const { t } = useI18n();
   const { data: projects, isLoading, error, refetch } = useProjects();
   const generateCover = useGenerateProjectCover();
   const deleteProject = useDeleteProject();
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const modalOpen = newProjectOpen || Boolean(requestedSample);
+
+  function closeNewProject() {
+    setNewProjectOpen(false);
+    if (requestedSample) {
+      const params = new URLSearchParams(location.search);
+      params.delete("sample");
+      navigate({ pathname: location.pathname, search: params.toString() }, { replace: true });
+    }
+  }
   const [search, setSearch] = useState("");
   const visibleProjects = projects?.filter((project) =>
     `${project.project_name} ${project.author ?? ""}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
@@ -218,7 +231,7 @@ export function Library() {
         )}
       </section>
 
-      <NewProjectModal isOpen={newProjectOpen} onClose={() => setNewProjectOpen(false)} />
+      <NewProjectModal isOpen={modalOpen} onClose={closeNewProject} initialStoryCode={requestedSample} />
       <ConfirmModal
         open={incompatibleProject !== null}
         title={t("REMOVE OLD PROJECT")}

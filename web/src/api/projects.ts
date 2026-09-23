@@ -56,6 +56,10 @@ export function listShortStories(): Promise<ShortStory[]> {
   return apiFetch<ShortStory[]>("/projects/short-stories");
 }
 
+export function readShortStory(code: string, signal?: AbortSignal): Promise<{ code: string; text: string }> {
+  return apiFetch<{ code: string; text: string }>(`/projects/short-stories/${encodeURIComponent(code)}`, { signal });
+}
+
 export function importStory(
   name: string,
   urlOrCode: string,

@@ -32,7 +32,7 @@ RUN /app/.venv/bin/python /app/patch_http_errors.py \
     && /app/.venv/bin/python /app/patch_anthropic_refusals.py
 
 COPY litellm/config.yaml /app/config.yaml
-COPY litellm_handlers/ /app/litellm_handlers/
+COPY litellm_handlers/__init__.py litellm_handlers/provider_wire.py litellm_handlers/fal_provider.py /app/litellm_handlers/
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH=/app:/app/litellm_handlers
 EXPOSE 4000

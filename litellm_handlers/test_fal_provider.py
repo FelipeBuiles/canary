@@ -27,6 +27,15 @@ def test_sunburst_uses_fal_operation_endpoint(model, has_images, expected):
     assert _fal_endpoint(model, has_images=has_images) == expected
 
 
+@pytest.mark.parametrize("model", [
+    "bytedance/seedream/v5/lite/edit", "fal-ai/flux-2-pro/edit",
+    "openai/gpt-image-2.5/flare",
+])
+def test_fal_rejects_unlisted_models(model):
+    with pytest.raises(fal_provider.FalQueueError, match="unsupported FAL model"):
+        _fal_endpoint(model, has_images=False)
+
+
 def test_sunburst_payload_preserves_custom_dimensions_and_controls():
     payload = _build_payload(
         "openai/gpt-image-2.5/sunburst/text-to-image",

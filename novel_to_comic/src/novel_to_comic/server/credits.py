@@ -61,6 +61,10 @@ def retain_ambiguous_job(job_id: str | None) -> None:
         _unsettled_jobs.add(job_id)
 
 
+def is_ambiguous_job(job_id: str | None) -> bool:
+    return job_id is not None and job_id in _unsettled_jobs
+
+
 def start_reservation_leases(db: Client) -> None:
     """Fail startup closed on missing lease migration, then renew owned holds."""
     global _lease_thread
@@ -165,14 +169,17 @@ def estimate_stage_credit_reservation(
     stage: str,
 ) -> int:
     """Estimate public credits to reserve for a stage from current project inputs."""
-    if classify_operations(stage_operations(config, stage)) == "codex_subscription":
+    operations = stage_operations(config, stage)
+    if not operations or classify_operations(operations) == "codex_subscription":
         return 0
     if mock_mode_active(config):
         return 0
     cost_usd = estimate_stage_provider_cost_usd(config, project_dir, state, stage)
     base_credits = provider_usd_to_credits(cost_usd)
     if base_credits <= 0:
-        return 0
+        # An API-funded stage still needs a hold before its first paid call.
+        # Unknown call pricing is rejected again at the submission boundary.
+        return 1
     return math.ceil(base_credits * reservation_buffer())
 
 
@@ -487,6 +494,8 @@ def reserve_credits(
                 "p_job_id": job_id,
                 "p_owner": _reservation_owner,
                 "p_lease_seconds": RESERVATION_LEASE_SECONDS,
+                "p_credits_per_usd": credits_per_provider_usd(),
+                "p_markup": model_cost_markup(),
             },
         ).execute()
     except APIError as exc:
@@ -511,6 +520,49 @@ def reserve_credits(
         )
     _reservation_jobs[str(reservation_id)] = job_id
     return str(reservation_id), job_id
+
+
+def authorize_model_call(
+    db: Client,
+    *,
+    user_id: str,
+    job_id: str | None,
+    call_id: str,
+    estimated_cost_usd: float | None,
+) -> None:
+    """Guarantee one API call against the active job hold before submission.
+
+    The database accounts for other in-flight calls and extends the hold only
+    when the user's unreserved balance can cover the additional guarantee.
+    Unknown pricing fails closed before a provider request is submitted.
+    """
+    if not job_id:
+        raise RuntimeError("Paid model call has no credit reservation job")
+    if estimated_cost_usd is None or not math.isfinite(estimated_cost_usd) or estimated_cost_usd <= 0:
+        raise RuntimeError("Paid model call has no usable price estimate")
+    guarantee = max(1, math.ceil(provider_usd_to_credits(estimated_cost_usd) * 2))
+    result = db.rpc("authorize_model_call_credits", {
+        "p_user_id": user_id,
+        "p_job_id": job_id,
+        "p_usage_call_id": call_id,
+        "p_amount_credits": guarantee,
+        "p_owner": _reservation_owner,
+        "p_credits_per_usd": credits_per_provider_usd(),
+        "p_markup": model_cost_markup(),
+    }).execute()
+    if result.data is not True:
+        raise HTTPException(402, {
+            "error": "insufficient_credits",
+            "message": "Insufficient credits for the next model call. The job stopped before submission.",
+        })
+
+
+def release_model_call_authorization(db: Client, *, user_id: str, call_id: str) -> None:
+    """Free a guarantee when a call is known not to be billable."""
+    db.rpc("release_model_call_authorization", {
+        "p_user_id": user_id,
+        "p_usage_call_id": call_id,
+    }).execute()
 
 
 def debit_model_usage(

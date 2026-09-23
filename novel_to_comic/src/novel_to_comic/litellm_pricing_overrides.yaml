@@ -1,7 +1,9 @@
-# Verified 2026-09-10; GPT2.5 estimated_* fields are reservation allowances, not settled prices.
-# Sources: https://developers.openai.com/api/docs/pricing and https://openrouter.ai/api/v1/models
-# DeepSeek uses conservative peak rates. Off-peak rates are half these rates.
+# Current selectable rates are checked against provider model pages. Historical
+# entries remain here only to settle usage from existing projects and editions.
+# GPT Image 2.5 estimated_* fields are reservation allowances, not tariffs.
 aliases:
+  gpt-6-sol: openai/gpt-6-sol
+  gpt-6-luna: openai/gpt-6-luna
   gpt-6-astra: openai/gpt-6-astra
   claude-fable-5-1: anthropic/claude-fable-5-1
   claude-opus-5: anthropic/claude-opus-5
@@ -20,6 +22,22 @@ aliases:
   image-flare: openai/gpt-image-2.5-flare
   image-muse: openrouter/meta/muse-image
 model_overrides:
+  # https://developers.openai.com/api/docs/models/gpt-6-sol (2026-09-22)
+  gpt-6-sol:
+    input_cost_per_token: 2.0e-06
+    cache_read_input_token_cost: 2.0e-07
+    output_cost_per_token: 1.0e-05
+    mode: chat
+    max_input_tokens: 1050000
+    max_output_tokens: 128000
+  # https://developers.openai.com/api/docs/models/gpt-6-luna (2026-09-22)
+  gpt-6-luna:
+    input_cost_per_token: 1.0e-07
+    cache_read_input_token_cost: 1.0e-08
+    output_cost_per_token: 5.0e-07
+    mode: chat
+    max_input_tokens: 1050000
+    max_output_tokens: 128000
   gemini-2.5-pro:
     input_cost_per_token: 1.25e-06
     output_cost_per_token: 1.0e-05

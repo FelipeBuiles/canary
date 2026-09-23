@@ -3,6 +3,10 @@
 from pathlib import Path
 
 from PIL import Image
+import pytest
+from pydantic import ValidationError
+
+from novel_to_comic.models.appearance import AppearanceState
 
 from novel_to_comic.asset_versions import (
     asset_versions_dir,
@@ -61,3 +65,38 @@ def test_restore_brings_back_an_old_version(tmp_path):
         assert img.getpixel((0, 0)) == (10, 10, 10)  # back to the dark original
     # The light version we overwrote was itself archived (restore is reversible).
     assert any(v.get("reason") == "before_restore" for v in list_asset_versions(sheet, tmp_path))
+
+
+def test_asset_versioning_rejects_another_projects_path(tmp_path):
+    owner = tmp_path / "owner" / "book"
+    (owner / "refs").mkdir(parents=True)
+    foreign = tmp_path / "other" / "book" / "refs" / "hero" / "sheet.png"
+    _png(foreign, (5, 5, 5))
+    escaped = owner / "refs" / ".." / ".." / ".." / "other" / "book" / "refs" / "hero" / "sheet.png"
+
+    with pytest.raises(ValueError, match="escapes its project"):
+        record_asset_version(escaped, owner, reason="before_regenerate")
+    assert not (foreign.parent / "versions").exists()
+
+
+def test_appearance_state_id_cannot_escape_reference_directory():
+    with pytest.raises(ValidationError, match="one nonempty path component"):
+        AppearanceState(id="../../other-project", label="Other", visual_anchor="Other")
+
+
+def test_failure_sidecar_rejects_foreign_project_path_before_writing(tmp_path):
+    from novel_to_comic.asset_generation import persist_non_panel_provenance
+    from novel_to_comic.artifacts import asset_failure_path
+
+    owner = tmp_path / "owner" / "book"
+    owner.mkdir(parents=True)
+    foreign = tmp_path / "other" / "book" / "refs" / "hero" / "sheet.png"
+    _png(foreign, (7, 7, 7))
+    escaped = owner / "refs" / ".." / ".." / ".." / "other" / "book" / "refs" / "hero" / "sheet.png"
+
+    with pytest.raises(ValueError, match="escapes its project"):
+        persist_non_panel_provenance(
+            request=None, output_path=escaped, project_dir=owner,
+            request_id=None, error=RuntimeError("request rejected"),
+        )
+    assert not asset_failure_path(foreign).exists()
