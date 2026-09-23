@@ -1,16 +1,16 @@
 """Read-only manuscript view for one planned page (Pages → Source).
 
-A page maps back to the manuscript through three canonical links: its
-content items cite Adapt beats, beats cite source units, and each canonical
-lettering item cites the exact source units it was written from. The
-adaptation ledger says which beat units are depicted rather than lettered.
-Lettering is panel-level; depiction is beat-level, so a depicted unit points
-at every panel on this page that carries its beat.
+A page maps back to the manuscript through canonical links: its content
+items cite Adapt beats, beats cite source units, and each canonical lettering
+item cites the exact source units it was written from. The adaptation ledger
+says which beat units are depicted rather than lettered.
 
-Panel outlines are derived evidence only: OCR panel boxes observed on the
-page's current render. They are never canonical layout and are omitted
-whenever they cannot be tied to planned panels. Nothing here calls a
-provider or writes artifacts.
+The drawing model owns page composition, so planned content items are not
+panels on the art. Only lettering has a verifiable place on the page: an
+editable edition's saved lettering placement, or, for integrated lettering,
+the text region a text check matched on the current render. Depicted detail
+has no recorded position and is never located. Nothing here calls a provider
+or writes artifacts.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from __future__ import annotations
 from difflib import SequenceMatcher
 from typing import Literal
 
-from novel_to_comic.models.draw import RenderAnalysis
+from novel_to_comic.lettering.service import is_hybrid
 from novel_to_comic.models.page import ComicPage
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
 
@@ -77,29 +77,29 @@ def _trimmed(text: str) -> tuple[int, int]:
 
 def _segments(
     text: str,
-    depicted: tuple[str, ...] | None,
+    depicted: bool,
     lettering: list[tuple[str, str]],
 ) -> list[dict]:
     """Split one unit into plain and marked runs.
 
-    ``lettering`` holds (content_id, canonical text) pairs citing this unit.
+    ``lettering`` holds (lettering_item_id, canonical text) pairs citing this unit.
     Verbatim words are marked when the copy quotes the manuscript; a
     paraphrase marks the whole unit, since the citation itself is canonical.
     """
 
     labels: list[tuple[MarkKind, tuple[str, ...]] | None] = [None] * len(text)
-    if depicted is not None:
+    if depicted:
         start, end = _trimmed(text)
         for index in range(start, end):
-            labels[index] = ("depicted", depicted)
-    for content_id, copy in lettering:
+            labels[index] = ("depicted", ())
+    for item_id, copy in lettering:
         spans = _verbatim_spans(text, copy) or [_trimmed(text)]
         for start, end in spans:
             for index in range(start, end):
                 current = labels[index]
                 ids = current[1] if current and current[0] == "lettering" else ()
-                if content_id not in ids:
-                    ids = (*ids, content_id)
+                if item_id not in ids:
+                    ids = (*ids, item_id)
                 labels[index] = ("lettering", ids)
     runs: list[list] = []
     for char, label in zip(text, labels):
@@ -113,10 +113,10 @@ def _segments(
         if label and label[0] == "depicted" and not any(char.isalnum() for char in run_text):
             label = None
         kind, ids = label if label else (None, ())
-        if segments and segments[-1]["kind"] == kind and segments[-1]["content_ids"] == list(ids):
+        if segments and segments[-1]["kind"] == kind and segments[-1]["lettering_item_ids"] == list(ids):
             segments[-1]["text"] += run_text
         else:
-            segments.append({"text": run_text, "kind": kind, "content_ids": list(ids)})
+            segments.append({"text": run_text, "kind": kind, "lettering_item_ids": list(ids)})
     return segments
 
 
@@ -127,70 +127,54 @@ def _box(polygon) -> dict:
     return {"x": x, "y": y, "width": min(1.0, max(xs)) - x, "height": min(1.0, max(ys)) - y}
 
 
-def _panel_boxes(page: ComicPage, analysis: RenderAnalysis) -> dict[str, dict]:
-    """Tie observed panel boxes to planned content items, or return nothing.
+def _placements(target: TargetArtifacts, page: ComicPage) -> tuple[dict[str, dict], dict | None]:
+    """Editable lettering elements by canonical item, as saved for this page.
 
-    Two derived links are accepted: a content item's matched lettering all
-    falls inside one observed panel, and a proven observed reading order whose
-    panel count equals the plan's (used only when it agrees with every
-    lettering-grounded link). Ambiguous items get no outline.
+    Elements are returned whole: the shared lettering engine owns how a
+    placement, fitted size, scale, and rotation become the drawn balloon.
     """
 
-    regions = {region.id: region for region in analysis.observed_regions if region.id.startswith("panel_")}
-    if not regions:
-        return {}
-    region_by_observation = {
-        item.id: item.detected_region_id for item in analysis.ocr_observations
+    try:
+        state = target.read_lettering(page.page_number)
+    except (ArtifactMissing, ArtifactInvalid):
+        return {}, None
+    if state.comic_page_sha256 != page.content_sha256:
+        return {}, None
+    elements = {
+        element.source_lettering_item_id: element.model_dump(mode="json")
+        for element in state.elements
+        if element.source_lettering_item_id is not None and not element.hidden
     }
-    content_by_lettering = {
-        item.id: content.id for content in page.content for item in content.lettering
-    }
-    grounded: dict[str, set[str]] = {}
-    for match in analysis.lettering_matches:
-        region_id = region_by_observation.get(match.observation_id)
-        content_id = content_by_lettering.get(match.lettering_item_id)
-        if content_id is None:
-            continue
-        grounded.setdefault(content_id, set()).add(region_id if region_id and region_id in regions else "")
-    assigned = {
-        content_id: next(iter(found))
-        for content_id, found in grounded.items()
-        if len(found) == 1 and "" not in found
-    }
-    ordered = sorted(page.content, key=lambda item: item.order)
-    if analysis.reading_order_proven and len(analysis.observed_reading_order) == len(ordered):
-        by_order = {
-            content.id: region_id
-            for content, region_id in zip(ordered, analysis.observed_reading_order)
-        }
-        if all(by_order[content_id] == region_id for content_id, region_id in assigned.items()):
-            assigned = by_order
-    claimed: dict[str, int] = {}
-    for region_id in assigned.values():
-        claimed[region_id] = claimed.get(region_id, 0) + 1
-    return {
-        content_id: _box(regions[region_id].polygon)
-        for content_id, region_id in assigned.items()
-        if claimed[region_id] == 1
-    }
+    return elements, {"source": "lettering_placement", "lettering_revision": state.revision}
 
 
-def _current_analysis(target: TargetArtifacts, page: ComicPage) -> RenderAnalysis | None:
+def _text_regions(target: TargetArtifacts, page: ComicPage) -> tuple[dict[str, dict], dict | None]:
+    """Where a text check found each canonical lettering item on the current render."""
+
     revisions = target.provenance_revisions(page.page_number)
     if not revisions:
-        return None
+        return {}, None
     try:
         render = target.read_provenance(page.page_number, revisions[-1]).render
         analysis = target.read_analysis(page.page_number, render.revision)
     except (ArtifactMissing, ArtifactInvalid):
-        # The text check is optional evidence; without it there are no outlines.
-        return None
+        # The text check is optional evidence; without it nothing is located.
+        return {}, None
     if (
         analysis.render_image_sha256 != render.image_sha256
         or analysis.comic_page_sha256 != page.content_sha256
     ):
-        return None
-    return analysis
+        return {}, None
+    regions = {region.id: region for region in analysis.observed_regions}
+    located = {}
+    for match in analysis.lettering_matches:
+        # page_ocr keeps a tight region per observation: ocr_NNN ↔ region_NNN.
+        region = regions.get("region_" + match.observation_id.removeprefix("ocr_"))
+        if region is not None:
+            located[match.lettering_item_id] = _box(region.polygon)
+    if not located:
+        return {}, None
+    return located, {"source": "text_check", "render_revision": render.revision}
 
 
 def page_source_view(target: TargetArtifacts, page_number: int) -> dict:
@@ -208,11 +192,8 @@ def page_source_view(target: TargetArtifacts, page_number: int) -> dict:
 
     units = {unit.id: unit for unit in source.units}
     beats = {beat.id: beat for beat in adaptation.beats}
-    content_by_beat: dict[str, list[str]] = {}
-    for content in sorted(page.content, key=lambda item: item.order):
-        for beat_id in content.beat_ids:
-            content_by_beat.setdefault(beat_id, []).append(content.id)
-    unknown_beats = set(content_by_beat) - set(beats)
+    page_beats = {beat_id for content in page.content for beat_id in content.beat_ids}
+    unknown_beats = page_beats - set(beats)
     if unknown_beats:
         raise PageSourceStale(
             f"Page {page_number} cites beats missing from the adaptation "
@@ -223,21 +204,16 @@ def page_source_view(target: TargetArtifacts, page_number: int) -> dict:
     for content in page.content:
         for item in content.lettering:
             for unit_id in item.source_unit_ids:
-                lettering.setdefault(unit_id, []).append((content.id, item.text))
-    depicted: dict[str, tuple[str, ...]] = {}
-    for entry in adaptation.ledger:
-        if entry.disposition not in _DEPICTED:
-            continue
-        panels = [
-            content_id
-            for beat_id in entry.adapted_beat_ids
-            for content_id in content_by_beat.get(beat_id, ())
-        ]
-        if panels:
-            depicted[entry.source_unit_id] = tuple(dict.fromkeys(panels))
+                lettering.setdefault(unit_id, []).append((item.id, item.text))
+    depicted = {
+        entry.source_unit_id
+        for entry in adaptation.ledger
+        if entry.disposition in _DEPICTED
+        and any(beat_id in page_beats for beat_id in entry.adapted_beat_ids)
+    }
 
     cited = {
-        unit_id for beat_id in content_by_beat for unit_id in beats[beat_id].source_unit_ids
+        unit_id for beat_id in page_beats for unit_id in beats[beat_id].source_unit_ids
     } | set(lettering)
     unknown_units = cited - set(units)
     if unknown_units:
@@ -262,25 +238,29 @@ def page_source_view(target: TargetArtifacts, page_number: int) -> dict:
         passages[-1]["units"].append({
             "id": unit.id,
             "ordinal": unit.ordinal,
-            "segments": _segments(unit.text, depicted.get(unit.id), lettering.get(unit.id, [])),
+            "segments": _segments(unit.text, unit.id in depicted, lettering.get(unit.id, [])),
         })
         previous = unit.ordinal
 
-    analysis = _current_analysis(target, page)
-    boxes = _panel_boxes(page, analysis) if analysis is not None else {}
-    geometry_revision = analysis.render_revision if analysis is not None and boxes else None
+    if is_hybrid(target):
+        elements, geometry = _placements(target, page)
+        regions: dict[str, dict] = {}
+    else:
+        regions, geometry = _text_regions(target, page)
+        elements = {}
+    items = [item for content in sorted(page.content, key=lambda c: c.order) for item in content.lettering]
     return {
         "page_number": page.page_number,
         "page_revision": page.revision,
         "passages": passages,
-        "panels": [
+        "lettering": [
             {
-                "id": content.id,
-                "order": content.order,
-                "panel_role": content.panel_role,
-                "box": boxes.get(content.id),
+                "id": item.id,
+                "text": item.text,
+                "element": elements.get(item.id),
+                "region": regions.get(item.id),
             }
-            for content in sorted(page.content, key=lambda item: item.order)
+            for item in items
         ],
-        "geometry_render_revision": geometry_revision,
+        "geometry": geometry,
     }

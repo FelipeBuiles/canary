@@ -25,8 +25,10 @@ from novel_to_comic.models.draw import (
     PageRenderRevision,
     RenderAnalysis,
 )
-from novel_to_comic.models.page import ComicPage, PageContent
+from novel_to_comic.models.lettering import LetteringElement, PageLettering
+from novel_to_comic.models.page import ComicPage, PageContent, PinnedGeometry
 from novel_to_comic.models.source import SourceDocument, SourceScene, SourceUnit
+from novel_to_comic import page_source
 from novel_to_comic.page_source import page_source_view
 from novel_to_comic.server.routers import pages
 from novel_to_comic.target_artifacts import TargetArtifacts
@@ -140,17 +142,10 @@ def _render(artifacts: TargetArtifacts, page: ComicPage) -> PageRenderRevision:
     return render
 
 
-def _square(x: float, y: float, size: float = 0.3):
-    return ((x, y), (x + size, y), (x + size, y + size), (x, y + size))
-
-
 def _analysis(
     page: ComicPage,
     render: PageRenderRevision,
     *,
-    order: tuple[str, ...] = ("panel_000", "panel_001", "panel_002"),
-    proven: bool = True,
-    letter_regions: tuple[str, str] = ("panel_000", "panel_001"),
     image_sha256: str | None = None,
 ) -> RenderAnalysis:
     return RenderAnalysis(
@@ -159,22 +154,40 @@ def _analysis(
         comic_page_sha256=page.content_sha256,
         ocr_observations=(
             OCRTextObservation(id="ocr_001", text="The idol was older than the sea itself!",
-                               detected_region_id=letter_regions[0]),
-            OCRTextObservation(id="ocr_002", text="No one listened.", detected_region_id=letter_regions[1]),
+                               detected_region_id="panel_000"),
+            OCRTextObservation(id="ocr_002", text="No one listened.", detected_region_id="panel_001"),
         ),
+        # Only the first item was read back; the second has no located text.
         lettering_matches=(
             LetteringMatch(lettering_item_id="letter-1", observation_id="ocr_001",
                            canonical_text="x", observed_text="x"),
-            LetteringMatch(lettering_item_id="letter-2", observation_id="ocr_002",
-                           canonical_text="x", observed_text="x"),
         ),
         observed_regions=(
-            ObservedRegion(id="panel_000", polygon=_square(0.0, 0.0)),
-            ObservedRegion(id="panel_001", polygon=_square(0.5, 0.0)),
-            ObservedRegion(id="panel_002", polygon=_square(0.0, 0.5)),
+            ObservedRegion(id="region_001", polygon=((0.1, 0.2), (0.4, 0.2), (0.4, 0.3), (0.1, 0.3))),
+            ObservedRegion(id="region_002", polygon=((0.6, 0.2), (0.9, 0.2), (0.9, 0.3), (0.6, 0.3))),
+            # Panel boxes are observed too, but say nothing about planned content.
+            ObservedRegion(id="panel_000", polygon=((0, 0), (0.5, 0), (0.5, 0.5), (0, 0.5))),
+            ObservedRegion(id="panel_001", polygon=((0.5, 0), (1, 0), (1, 0.5), (0.5, 0.5))),
         ),
-        observed_reading_order=order if proven else (),
-        reading_order_proven=proven,
+        observed_reading_order=("panel_000", "panel_001"),
+        reading_order_proven=True,
+    )
+
+
+def _element(item_id: str, **update) -> LetteringElement:
+    placement = PinnedGeometry(x=0.1, y=0.6, width=0.5, height=0.2)
+    values = dict(
+        id=f"el-{item_id}", source_lettering_item_id=item_id, role="speech",
+        text_by_locale={"source": "copy"}, suggested_placement=placement, placement=placement,
+        scale=1.5, rotation=-8,
+    )
+    return LetteringElement(**(values | update))
+
+
+def _lettering(page: ComicPage, *elements: LetteringElement, comic_page_sha256: str | None = None):
+    return PageLettering(
+        revision=3, page_number=1, comic_page_sha256=comic_page_sha256 or page.content_sha256,
+        style_sha256="e" * 64, canvas_aspect_ratio=2 / 3, elements=elements,
     )
 
 
@@ -190,14 +203,18 @@ def story(tmp_path):
     return SimpleNamespace(artifacts=artifacts, source=source, adaptation=adaptation, page=page, dir=tmp_path)
 
 
-def _marks(view: dict) -> list[tuple[str, str, list[str]]]:
+def _marks(view: dict) -> list[tuple[str, str, list[str], str]]:
     return [
-        (unit["id"], segment["text"], segment["content_ids"], segment["kind"])
+        (unit["id"], segment["text"], segment["lettering_item_ids"], segment["kind"])
         for passage in view["passages"]
         for unit in passage["units"]
         for segment in unit["segments"]
         if segment["kind"]
     ]
+
+
+def _located(view: dict) -> dict[str, dict | None]:
+    return {item["id"]: item["element"] or item["region"] for item in view["lettering"]}
 
 
 def test_passages_follow_beats_and_skip_unadapted_units(story):
@@ -210,75 +227,84 @@ def test_passages_follow_beats_and_skip_unadapted_units(story):
     # Segments always reassemble the exact manuscript text.
     for passage in view["passages"]:
         for unit in passage["units"]:
-            ordinal = unit["ordinal"]
-            assert "".join(s["text"] for s in unit["segments"]) == UNITS[ordinal - 1]
+            assert "".join(s["text"] for s in unit["segments"]) == UNITS[unit["ordinal"] - 1]
 
 
-def test_lettering_marks_verbatim_words_per_panel_and_depiction_per_beat(story):
+def test_lettering_marks_verbatim_words_and_depiction_is_never_located(story):
     marks = _marks(page_source_view(story.artifacts, 1))
 
     assert marks == [
-        # Depicted units point at every panel on this page carrying their beat.
-        ("source-1", "The harbour lay under a green fog.", ["panel-1", "panel-2"], "depicted"),
-        # Verbatim dialogue highlights only the quoted words, tied to its panel.
-        ("source-2", "the idol was older than the sea itself", ["panel-1"], "lettering"),
+        # Depicted detail has no recorded place on model-composed art.
+        ("source-1", "The harbour lay under a green fog.", [], "depicted"),
+        # Verbatim dialogue highlights only the quoted words.
+        ("source-2", "the idol was older than the sea itself", ["letter-1"], "lettering"),
         # A paraphrased caption cites the whole unit.
-        ("source-3", "Nobody believed him that night.", ["panel-2"], "lettering"),
-        ("source-5", "The rain drummed on the chamber door.", ["panel-3"], "depicted"),
+        ("source-3", "Nobody believed him that night.", ["letter-2"], "lettering"),
+        ("source-5", "The rain drummed on the chamber door.", [], "depicted"),
     ]
 
 
-def test_no_render_means_no_outlines(story):
+def test_undrawn_integrated_page_locates_nothing(story):
     view = page_source_view(story.artifacts, 1)
 
-    assert [panel["id"] for panel in view["panels"]] == ["panel-1", "panel-2", "panel-3"]
-    assert all(panel["box"] is None for panel in view["panels"])
-    assert view["geometry_render_revision"] is None
+    assert [(item["id"], item["text"]) for item in view["lettering"]] == [
+        ("letter-1", "The idol was older than the sea itself!"),
+        ("letter-2", "No one listened."),
+    ]
+    assert _located(view) == {"letter-1": None, "letter-2": None}
+    assert view["geometry"] is None
 
 
-def test_proven_reading_order_outlines_every_planned_panel(story):
+def test_integrated_text_check_locates_matched_lettering_only(story):
     render = _render(story.artifacts, story.page)
     story.artifacts.write_analysis(_analysis(story.page, render))
 
     view = page_source_view(story.artifacts, 1)
 
-    boxes = {panel["id"]: panel["box"] for panel in view["panels"]}
-    assert boxes["panel-1"] == pytest.approx({"x": 0.0, "y": 0.0, "width": 0.3, "height": 0.3})
-    assert boxes["panel-2"] == pytest.approx({"x": 0.5, "y": 0.0, "width": 0.3, "height": 0.3})
-    assert boxes["panel-3"] == pytest.approx({"x": 0.0, "y": 0.5, "width": 0.3, "height": 0.3})
-    assert view["geometry_render_revision"] == 1
+    assert view["lettering"][0]["region"] == pytest.approx({"x": 0.1, "y": 0.2, "width": 0.3, "height": 0.1})
+    assert view["lettering"][1]["region"] is None
+    assert view["geometry"] == {"source": "text_check", "render_revision": 1}
 
 
-def test_order_contradicting_matched_lettering_keeps_only_grounded_panels(story):
-    render = _render(story.artifacts, story.page)
-    story.artifacts.write_analysis(_analysis(
-        story.page, render, order=("panel_001", "panel_000", "panel_002"),
-    ))
-
-    boxes = {panel["id"]: panel["box"] for panel in page_source_view(story.artifacts, 1)["panels"]}
-
-    assert boxes["panel-1"]["x"] == pytest.approx(0.0)
-    assert boxes["panel-2"]["x"] == pytest.approx(0.5)
-    assert boxes["panel-3"] is None
-
-
-def test_unproven_order_outlines_only_lettering_grounded_panels(story):
-    render = _render(story.artifacts, story.page)
-    story.artifacts.write_analysis(_analysis(story.page, render, proven=False))
-
-    boxes = {panel["id"]: panel["box"] for panel in page_source_view(story.artifacts, 1)["panels"]}
-
-    assert boxes["panel-1"] is not None and boxes["panel-2"] is not None
-    assert boxes["panel-3"] is None
-
-
-def test_analysis_of_other_art_is_not_used(story):
+def test_text_check_of_other_art_is_not_used(story):
     render = _render(story.artifacts, story.page)
     story.artifacts.write_analysis(_analysis(story.page, render, image_sha256="f" * 64))
 
     view = page_source_view(story.artifacts, 1)
 
-    assert all(panel["box"] is None for panel in view["panels"])
+    assert _located(view) == {"letter-1": None, "letter-2": None}
+    assert view["geometry"] is None
+
+
+def test_editable_edition_uses_saved_lettering_elements(story, monkeypatch):
+    monkeypatch.setattr(page_source, "is_hybrid", lambda target: True)
+    render = _render(story.artifacts, story.page)
+    # A text check on base art never locates editable lettering.
+    story.artifacts.write_analysis(_analysis(story.page, render))
+    story.artifacts.write_lettering(_lettering(
+        story.page, _element("letter-1"), _element("letter-2", hidden=True),
+    ))
+
+    view = page_source_view(story.artifacts, 1)
+
+    element = view["lettering"][0]["element"]
+    assert element["source_lettering_item_id"] == "letter-1"
+    assert (element["placement"], element["scale"], element["rotation"]) == (
+        {"x": 0.1, "y": 0.6, "width": 0.5, "height": 0.2}, 1.5, -8,
+    )
+    assert view["lettering"][0]["region"] is None
+    assert view["lettering"][1]["element"] is None
+    assert view["geometry"] == {"source": "lettering_placement", "lettering_revision": 3}
+
+
+def test_editable_lettering_saved_for_another_plan_is_not_used(story, monkeypatch):
+    monkeypatch.setattr(page_source, "is_hybrid", lambda target: True)
+    story.artifacts.write_lettering(_lettering(story.page, _element("letter-1"), comic_page_sha256="c" * 64))
+
+    view = page_source_view(story.artifacts, 1)
+
+    assert _located(view) == {"letter-1": None, "letter-2": None}
+    assert view["geometry"] is None
 
 
 @pytest.fixture

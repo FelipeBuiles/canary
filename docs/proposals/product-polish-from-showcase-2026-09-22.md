@@ -36,14 +36,15 @@ Done in the working tree, with provider-free tests. There was no visual pass in 
   "Save lettering" while review is pending, and the gallery shows a "Needs placement" badge.
 - **A7 (September 23):** Pages → page detail has a read-only **Source** tab backed by
   `GET /pages/{n}/source` (`page_source.py`). Passages are the page's beat source units plus
-  lettering citations. Lettering is panel-level: the verbatim words are highlighted, or the whole
-  cited unit when the copy paraphrases it. Ledger `depicted`/`visual_motif` units are beat-level and
-  point at every panel on the page that carries the beat. Hovering or focusing a highlight outlines its
-  panel(s) only when the current render's text check has OCR panel boxes tied to planned panels, either
-  through matched lettering or through a proven reading order whose panel count equals the plan's.
-  Plan and Draw store no canonical panel geometry (`pinned_geometry` is unused). Pages without a
-  text check show no outlines. Stale lineage (source→Adapt→Plan) is rejected with a rerun instruction.
-  **Later:** panel-level depiction would need Plan to cite source units per content item.
+  lettering citations. Lettering highlights mark the verbatim words, or the whole cited unit when the
+  copy paraphrases. Ledger `depicted`/`visual_motif` units are marked as drawn. The drawing model
+  composes each page, so planned content items are not treated as panels on the art, and no panel is
+  outlined. Hovering or focusing a lettering highlight outlines where that lettering sits. Editable
+  editions use the saved lettering element, sized by the shared engine's `elementRect` with scale and
+  rotation. Integrated editions use the text region a text check matched on the current render.
+  Drawn detail has no recorded position and is never located. Stale lineage (source→Adapt→Plan) is
+  rejected with a rerun instruction. **Open:** integrated pages without a text check show no
+  outlines; how the text check itself should run is undecided (it was removed from Draw in `9f2f246`).
 - **B1:** audit is clean. Durable jobs already run on the admitted `Config` snapshot, and only the
   translation recheck re-read disk (already patched).
 - **B2:** `lettering_translation` has its own per-account lane and dispatch lock. Payloads carry

@@ -1,9 +1,10 @@
 import { useState } from "react";
+import { elementRect } from "@lettering-engine";
 import { usePageSource } from "../../api/queries";
 import { pageRenderPreviewUrl } from "../../api/pages";
 import { pageCompositePreviewUrl } from "../../api/lettering";
 import { useI18n } from "../../i18n";
-import type { CompletePageSummary, PageSourceSegment } from "../../types/api";
+import type { CompletePageSummary, PageSourceLettering, PageSourceSegment, PageSourceView } from "../../types/api";
 import { SectionHeader } from "../composites/SectionHeader";
 import { Surface } from "../ui/Surface";
 
@@ -12,15 +13,47 @@ const markClass: Record<"lettering" | "depicted", string> = {
   lettering: "bg-narrator-gold text-ink-black",
   depicted: "bg-transparent text-ink-black underline decoration-hero-red decoration-2 underline-offset-4",
 };
+// Text-check regions are tight around glyphs; pad so the outline clears them.
+const REGION_PAD = 0.008;
 
-function panelList(ids: string[], order: Map<string, number>) {
-  return ids.map((id) => order.get(id)).filter((value): value is number => value != null).join(", ");
+interface Outline { left: number; top: number; width: number; height: number; rotation: number }
+
+/** Outline of one lettering item on the art shown, or null when it cannot be placed. */
+function outlineFor(item: PageSourceLettering): Outline | null {
+  if (item.element) {
+    // The shared engine owns the drawn body; scale and rotation apply about its center.
+    const rect = elementRect(item.element);
+    const width = rect.width * item.element.scale, height = rect.height * item.element.scale;
+    return {
+      left: rect.x + rect.width / 2 - width / 2, top: rect.y + rect.height / 2 - height / 2,
+      width, height, rotation: item.element.rotation,
+    };
+  }
+  if (item.region) {
+    const left = Math.max(0, item.region.x - REGION_PAD), top = Math.max(0, item.region.y - REGION_PAD);
+    return {
+      left, top, rotation: 0,
+      width: Math.min(1, item.region.x + item.region.width + REGION_PAD) - left,
+      height: Math.min(1, item.region.y + item.region.height + REGION_PAD) - top,
+    };
+  }
+  return null;
+}
+
+/** Positions count only when measured on the exact artwork this tab displays. */
+function geometryMatches(data: PageSourceView, item: CompletePageSummary): boolean {
+  const geometry = data.geometry;
+  if (!geometry) return false;
+  if (geometry.source === "lettering_placement") {
+    return item.lettering_mode === "hybrid" && geometry.lettering_revision === item.lettering_revision;
+  }
+  return item.lettering_mode !== "hybrid" && geometry.render_revision === item.active_render?.render.revision;
 }
 
 /**
  * Where this page came from: the manuscript passages its beats and lettering
- * cite. Lettering is panel-level; depiction is beat-level. Panel outlines are
- * derived from the render's text check and appear only for the art shown.
+ * cite. The drawing model composes the page, so only lettering is located on
+ * the art; drawn detail is marked in the text but never pinned to a place.
  */
 export function PageSourcePanel({ project, item }: { project: string; item: CompletePageSummary }) {
   const { t } = useI18n();
@@ -28,11 +61,6 @@ export function PageSourcePanel({ project, item }: { project: string; item: Comp
   const { data, error, isLoading } = usePageSource(project, pageNumber);
   const [active, setActive] = useState<string[]>([]);
   const revision = item.active_render?.render.revision;
-  const order = new Map((data?.panels ?? []).map((panel) => [panel.id, panel.order]));
-  const outlined = data && revision != null && data.geometry_render_revision === revision
-    ? data.panels.filter((panel) => panel.box)
-    : [];
-  const outlinedIds = new Set(outlined.map((panel) => panel.id));
 
   if (isLoading) return <p role="status" className="font-body text-sm text-ink-muted">{t("Loading source passages…")}</p>;
   if (error || !data) {
@@ -43,17 +71,26 @@ export function PageSourcePanel({ project, item }: { project: string; item: Comp
     </Surface>;
   }
 
+  const lettering = new Map(data.lettering.map((entry) => [entry.id, entry]));
+  const outlines = geometryMatches(data, item)
+    ? data.lettering.flatMap((entry) => {
+      const outline = outlineFor(entry);
+      return outline ? [{ id: entry.id, outline }] : [];
+    })
+    : [];
+  const locatedIds = new Set(outlines.map((entry) => entry.id));
+
   // A render helper, not a component: a nested component type would remount
   // every mark on hover and drop keyboard focus.
   function renderMark(key: string, segment: PageSourceSegment, kind: "lettering" | "depicted") {
-    const linked = segment.content_ids.filter((id) => outlinedIds.has(id));
-    const panels = panelList(segment.content_ids, order);
-    const label = kind === "lettering" ? t("Lettered in panel {panels}") : t("Drawn in panel {panels}");
+    const linked = segment.lettering_item_ids.filter((id) => locatedIds.has(id));
+    const copy = segment.lettering_item_ids.map((id) => lettering.get(id)?.text).filter(Boolean).join(" / ");
+    const title = kind === "lettering" && copy ? t("Became lettering: {text}").replace("{text}", copy) : t("Drawn on this page");
     const isActive = linked.length > 0 && linked.some((id) => active.includes(id));
     return <mark
       key={key}
       className={`${markClass[kind]} box-decoration-clone transition-shadow motion-reduce:transition-none ${linked.length > 0 ? "cursor-default focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red" : ""} ${isActive ? "shadow-[0_0_0_2px_var(--color-ink-black)]" : ""}`}
-      title={panels ? label.replace("{panels}", panels) : undefined}
+      title={title}
       data-kind={kind}
       tabIndex={linked.length > 0 ? 0 : undefined}
       onMouseEnter={linked.length > 0 ? () => setActive(linked) : undefined}
@@ -63,33 +100,34 @@ export function PageSourcePanel({ project, item }: { project: string; item: Comp
     >{segment.text}</mark>;
   }
 
-  const art = revision == null ? null : item.lettering_mode === "hybrid"
+  const hybrid = item.lettering_mode === "hybrid";
+  const art = revision == null ? null : hybrid
     ? pageCompositePreviewUrl(project, pageNumber, revision, "reader", item.lettering_revision)
     : pageRenderPreviewUrl(project, pageNumber, revision, "reader");
+  const caption = outlines.length > 0
+    ? t("Point at highlighted lettering to outline where it sits on the page.")
+    : hybrid || data.lettering.length === 0
+      ? t("Lettering positions are not available for this artwork.")
+      : t("Lettering positions appear after this page's text check.");
 
   return <div className="grid gap-8 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] lg:items-start">
     <div className="lg:sticky lg:top-0">
       {art ? <figure className="mx-auto max-w-sm lg:max-w-none">
-        <div className="relative border-[3px] border-ink-black bg-bristol">
+        <div className="relative overflow-hidden border-[3px] border-ink-black bg-bristol">
           <img src={art} alt={`${t("Page")} ${pageNumber}`} className="block h-auto w-full" />
-          {outlined.map((panel) => panel.box && <div
-            key={panel.id}
-            data-testid={`source-panel-${panel.id}`}
+          {outlines.map(({ id, outline }) => <div
+            key={id}
+            data-testid={`source-lettering-${id}`}
             aria-hidden="true"
-            className={`pointer-events-none absolute border-[3px] border-hero-red shadow-[3px_3px_0_var(--color-ink-black)] transition-opacity duration-150 motion-reduce:transition-none ${active.includes(panel.id) ? "opacity-100" : "opacity-0"}`}
+            className={`pointer-events-none absolute border-[3px] border-hero-red shadow-[3px_3px_0_var(--color-ink-black)] transition-opacity duration-150 motion-reduce:transition-none ${active.includes(id) ? "opacity-100" : "opacity-0"}`}
             style={{
-              left: `${panel.box.x * 100}%`, top: `${panel.box.y * 100}%`,
-              width: `${panel.box.width * 100}%`, height: `${panel.box.height * 100}%`,
+              left: `${outline.left * 100}%`, top: `${outline.top * 100}%`,
+              width: `${outline.width * 100}%`, height: `${outline.height * 100}%`,
+              transform: outline.rotation ? `rotate(${outline.rotation}deg)` : undefined,
             }}
-          >
-            <span className="absolute left-0 top-0 bg-hero-red px-1.5 py-0.5 font-meta text-[10px] font-bold text-bristol">{t("Panel")} {panel.order}</span>
-          </div>)}
+          />)}
         </div>
-        <figcaption className="mt-3 font-body text-xs leading-5 text-ink-muted">
-          {outlined.length > 0
-            ? t("Point at a highlight to outline its panel. Outlines come from the page's text check and can be approximate.")
-            : t("Panel outlines are not available for this artwork.")}
-        </figcaption>
+        <figcaption className="mt-3 font-body text-xs leading-5 text-ink-muted">{caption}</figcaption>
       </figure> : <p className="font-body text-sm text-ink-muted">{t("This page has not been drawn yet.")}</p>}
     </div>
     <section className="min-w-0">
