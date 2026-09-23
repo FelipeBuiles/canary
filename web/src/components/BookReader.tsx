@@ -393,7 +393,7 @@ export function BookReader({ project = "", pages, initialPageNumber, onClose, ti
           value={safeIndex}
           onChange={(event) => goTo(Number(event.target.value))}
           aria-label={t("Jump to page")}
-          aria-valuetext={label}
+          aria-valuetext={t("{label} of {total}").replace("{label}", label).replace("{total}", String(pages.length))}
           className="h-11 w-full max-w-xs accent-hero-red md:w-64"
         />
       </footer>
