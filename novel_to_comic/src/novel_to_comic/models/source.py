@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-import re
+import string
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -20,6 +20,28 @@ _TITLE_ABBREVIATIONS = {
     "vs",
 }
 _SENTENCE_CLOSERS = {'"', "'", "\u2019", "\u201d", ")", "]"}
+_ASCII_LETTERS = frozenset(string.ascii_letters)
+_MAX_TITLE_ABBREVIATION = max(len(word) for word in _TITLE_ABBREVIATIONS)
+
+
+def _follows_title_abbreviation(text: str, index: int) -> bool:
+    """Return whether the ASCII word ending before ``index`` is a title.
+
+    Matches ``re.search(r"([A-Za-z]+)$", text[:index])``, including ``$``
+    matching before one trailing newline, but scans at most one letter past
+    the longest abbreviation instead of copying the prefix.
+    """
+
+    end = index
+    if end > 0 and text[end - 1] == "\n":
+        end -= 1
+    start = end
+    limit = max(0, end - _MAX_TITLE_ABBREVIATION - 1)
+    while start > limit and text[start - 1] in _ASCII_LETTERS:
+        start -= 1
+    if end - start > _MAX_TITLE_ABBREVIATION:
+        return False
+    return text[start:end].lower() in _TITLE_ABBREVIATIONS
 
 
 def sentence_end_offsets(text: str) -> tuple[int, ...]:
@@ -42,11 +64,7 @@ def sentence_end_offsets(text: str) -> tuple[int, ...]:
             ):
                 index += 1
                 continue
-            word_match = re.search(r"([A-Za-z]+)$", text[:index])
-            if (
-                word_match
-                and word_match.group(1).lower() in _TITLE_ABBREVIATIONS
-            ):
+            if _follows_title_abbreviation(text, index):
                 index += 1
                 continue
             while index + 1 < len(text) and text[index + 1] == ".":
