@@ -6,6 +6,7 @@ import type {
   CompletePagesResponse,
   CostEstimate,
   FinishPreflight,
+  PageSourceView,
   GenerationJob,
   PageIssue,
   StageValidation,
@@ -35,6 +36,11 @@ export function listCompletePages(project: string): Promise<CompletePagesRespons
 
 export function getCompletePage(project: string, pageNumber: number): Promise<CompletePageDetail> {
   return apiFetch(`${projectPath(project)}/pages/${pageNumber}`);
+}
+
+/** Provider-free read of the manuscript passages this page adapts. */
+export function getPageSource(project: string, pageNumber: number): Promise<PageSourceView> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/source`);
 }
 
 // The delivery version bypasses previously year-cached URLs. The server now

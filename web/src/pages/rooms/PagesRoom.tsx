@@ -61,13 +61,14 @@ import {
 import { isOcrIssue } from "../../components/pages/lettering";
 import { RevisionDraft } from "../../components/pages/RevisionDraft";
 import { PageCheckRecovery } from "../../components/pages/PageCheckRecovery";
+import { PageSourcePanel } from "../../components/pages/PageSourcePanel";
 import { VisualReviewPanel, type VisualReviewDraftSeed } from "../../components/pages/VisualReviewPanel";
 import type { DrawerKind } from "../../lib/stations";
 import { BottomBarPortal } from "../../layout/TopBarSlot";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 
-type ReviewView = "page" | "visual" | "checks" | "lettering";
+type ReviewView = "page" | "source" | "visual" | "checks" | "lettering";
 type PageFilter = "all" | "needs-review" | "drawing" | "failed";
 type PaidPageIntent =
   | { kind: "batch"; retry?: boolean }
@@ -361,6 +362,12 @@ function PageReview({
                 onClick: () => selectView("page"),
               },
               {
+                key: "source",
+                label: t("Source"),
+                active: view === "source",
+                onClick: () => selectView("source"),
+              },
+              {
                 key: "lettering",
                 label: t("Lettering"),
                 active: view === "lettering",
@@ -412,6 +419,12 @@ function PageReview({
                 </Surface>
               )}
             </div>
+
+            {view === "source" && (
+              <div role="region" aria-label={t("Source")}>
+                <PageSourcePanel project={project} item={item} />
+              </div>
+            )}
 
             {view === "lettering" && editSourceRevision != null && <LetteringEditor project={project} pageNumber={item.page.page_number} disabled={pageIsDrawing}/>}
 
@@ -485,7 +498,7 @@ export function PagesRoom() {
   const pageParam = searchParams.get("page") ?? "";
   const selected = /^[1-9]\d*$/.test(pageParam) && Number.isSafeInteger(Number(pageParam)) ? Number(pageParam) : null;
   const reviewParam = searchParams.get("review");
-  const review: ReviewView = reviewParam === "visual" || reviewParam === "checks" || reviewParam === "lettering" ? reviewParam : "page";
+  const review: ReviewView = reviewParam === "source" || reviewParam === "visual" || reviewParam === "checks" || reviewParam === "lettering" ? reviewParam : "page";
   const filterParam = searchParams.get("filter");
   const filter: PageFilter = filterParam === "needs-review" || filterParam === "drawing" || filterParam === "failed" ? filterParam : "all";
   const readingParam = searchParams.get("reading");
