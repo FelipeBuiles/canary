@@ -1,3 +1,4 @@
+import type { LetteringElement } from "@lettering-engine";
 export type StageName =
   | "extract"
   | "brief"
@@ -501,11 +502,11 @@ export interface CompletePageDetail {
   analysis_recovery: PageAnalysisRecovery;
 }
 
-/** A run of one manuscript unit; marked runs cite the planned panels they became. */
+/** A run of one manuscript unit; lettering runs cite the canonical items they became. */
 export interface PageSourceSegment {
   text: string;
   kind: "lettering" | "depicted" | null;
-  content_ids: string[];
+  lettering_item_ids: string[];
 }
 
 export interface PageSourcePassage {
@@ -513,7 +514,7 @@ export interface PageSourcePassage {
   units: { id: string; ordinal: number; segments: PageSourceSegment[] }[];
 }
 
-/** Normalized box derived from the text check; never canonical layout. */
+/** Normalized page box. */
 export interface PageSourceBox {
   x: number;
   y: number;
@@ -521,12 +522,28 @@ export interface PageSourceBox {
   height: number;
 }
 
+/**
+ * Where canonical lettering sits on the art: the saved editable element, or
+ * the text region a text check matched on integrated art. Depicted detail is
+ * never located because the drawing model composes the page.
+ */
+export interface PageSourceLettering {
+  id: string;
+  text: string;
+  element: LetteringElement | null;
+  region: PageSourceBox | null;
+}
+
+export type PageSourceGeometry =
+  | { source: "lettering_placement"; lettering_revision: number }
+  | { source: "text_check"; render_revision: number };
+
 export interface PageSourceView {
   page_number: number;
   page_revision: number;
   passages: PageSourcePassage[];
-  panels: { id: string; order: number; panel_role: string; box: PageSourceBox | null }[];
-  geometry_render_revision: number | null;
+  lettering: PageSourceLettering[];
+  geometry: PageSourceGeometry | null;
 }
 
 export interface RenderAnalysis {

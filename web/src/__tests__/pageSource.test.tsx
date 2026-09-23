@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { LetteringElement } from "@lettering-engine";
 import { PageSourcePanel } from "../components/pages/PageSourcePanel";
 import { I18nProvider } from "../i18n";
 import type { CompletePageSummary, PageSourceView } from "../types/api";
@@ -10,100 +11,131 @@ vi.mock("../api/queries", () => ({
   usePageSource: () => result,
 }));
 
-const box = (x: number, y: number) => ({ x, y, width: 0.4, height: 0.3 });
+const passages: PageSourceView["passages"] = [{
+  scene_title: "The harbour",
+  units: [
+    { id: "source-1", ordinal: 1, segments: [
+      { text: "The harbour lay under a green fog.", kind: "depicted", lettering_item_ids: [] },
+      { text: " ", kind: null, lettering_item_ids: [] },
+    ] },
+    { id: "source-2", ordinal: 2, segments: [
+      { text: "Johansen said ", kind: null, lettering_item_ids: [] },
+      { text: "the idol was older than the sea itself", kind: "lettering", lettering_item_ids: ["letter-1"] },
+      { text: ".", kind: null, lettering_item_ids: [] },
+    ] },
+  ],
+}];
 
-function view(geometryRevision: number | null = 2): PageSourceView {
+function element(): LetteringElement {
+  const placement = { x: 0.1, y: 0.6, width: 0.5, height: 0.2 };
   return {
-    page_number: 1,
-    page_revision: 1,
-    passages: [{
-      scene_title: "The harbour",
-      units: [
-        { id: "source-1", ordinal: 1, segments: [
-          { text: "The harbour lay under a green fog.", kind: "depicted", content_ids: ["panel-1", "panel-2"] },
-          { text: " ", kind: null, content_ids: [] },
-        ] },
-        { id: "source-2", ordinal: 2, segments: [
-          { text: "Johansen said ", kind: null, content_ids: [] },
-          { text: "the idol was older than the sea itself", kind: "lettering", content_ids: ["panel-2"] },
-          { text: ".", kind: null, content_ids: [] },
-        ] },
-      ],
-    }],
-    panels: [
-      { id: "panel-1", order: 1, panel_role: "establishing", box: box(0, 0) },
-      { id: "panel-2", order: 2, panel_role: "standard", box: box(0.5, 0) },
-    ],
-    geometry_render_revision: geometryRevision,
+    id: "el-1", source_lettering_item_id: "letter-1", role: "speech", text_by_locale: { source: "copy" },
+    suggested_placement: placement, placement, hidden: false, style_override: null, tail_target: null,
+    suggested_tail_target: null, rotation: -8, scale: 1.5, z_index: 0, tight_box: false, resolved: null,
+  } as LetteringElement;
+}
+
+function integratedView(renderRevision: number | null = 2): PageSourceView {
+  return {
+    page_number: 1, page_revision: 1, passages,
+    lettering: [{ id: "letter-1", text: "The idol was older than the sea itself!", element: null,
+      region: renderRevision == null ? null : { x: 0.2, y: 0.1, width: 0.3, height: 0.05 } }],
+    geometry: renderRevision == null ? null : { source: "text_check", render_revision: renderRevision },
   };
 }
 
-const item = {
-  page: { page_number: 1, revision: 1, content_sha256: "a", content: [], reading_order: [] },
-  active_render: { render: { revision: 2 } },
-  issues: [],
-  failure: null,
-  analysis_recovery: { status: "checked", requires_paid_call: false },
-  lettering_mode: "baked",
-} as unknown as CompletePageSummary;
-
-function renderPanel() {
-  return render(<I18nProvider><PageSourcePanel project="book" item={item} /></I18nProvider>);
+function editableView(letteringRevision = 4): PageSourceView {
+  return {
+    page_number: 1, page_revision: 1, passages,
+    lettering: [{ id: "letter-1", text: "The idol was older than the sea itself!", element: element(), region: null }],
+    geometry: { source: "lettering_placement", lettering_revision: letteringRevision },
+  };
 }
 
-function outline(id: string) {
-  return screen.getByTestId(`source-panel-${id}`);
+function item(mode: "baked" | "hybrid") {
+  return {
+    page: { page_number: 1, revision: 1, content_sha256: "a", content: [], reading_order: [] },
+    active_render: { render: { revision: 2 } },
+    issues: [], failure: null,
+    analysis_recovery: { status: "checked", requires_paid_call: false },
+    lettering_mode: mode,
+    lettering_revision: mode === "hybrid" ? 4 : null,
+  } as unknown as CompletePageSummary;
 }
+
+function renderPanel(mode: "baked" | "hybrid" = "baked") {
+  return render(<I18nProvider><PageSourcePanel project="book" item={item(mode)} /></I18nProvider>);
+}
+
+const outline = () => screen.getByTestId("source-lettering-letter-1");
 
 describe("Page source view", () => {
   beforeEach(() => {
-    result = { data: view(), error: null, isLoading: false };
+    result = { data: integratedView(), error: null, isLoading: false };
   });
 
-  it("shows the exact manuscript passage with lettering and depiction marked", () => {
+  it("shows the manuscript passage with lettering and drawn detail marked", () => {
     renderPanel();
 
     expect(screen.getByText("The harbour")).toBeTruthy();
     const lettering = screen.getByText("the idol was older than the sea itself");
     expect(lettering.tagName).toBe("MARK");
-    expect(lettering.dataset.kind).toBe("lettering");
-    expect(lettering.getAttribute("title")).toBe("Lettered in panel 2");
+    expect(lettering.getAttribute("title")).toBe("Became lettering: The idol was older than the sea itself!");
     const depicted = screen.getByText("The harbour lay under a green fog.");
     expect(depicted.dataset.kind).toBe("depicted");
-    expect(depicted.getAttribute("title")).toBe("Drawn in panel 1, 2");
+    expect(depicted.getAttribute("title")).toBe("Drawn on this page");
+    // The model composes the page: drawn detail is never pinned to a place.
+    expect(depicted.getAttribute("tabindex")).toBeNull();
     expect(screen.getByText(/Johansen said/).tagName).toBe("SPAN");
   });
 
-  it("outlines only the cited panels while a highlight is pointed at or focused", () => {
+  it("outlines the text-check region of integrated lettering while pointed at or focused", () => {
     renderPanel();
-    expect(outline("panel-1").className).toContain("opacity-0");
-    expect(outline("panel-2").className).toContain("opacity-0");
+    expect(outline().className).toContain("opacity-0");
+    expect(outline().style.left).toBe("19.2%");
 
     const lettering = screen.getByText("the idol was older than the sea itself");
     fireEvent.mouseEnter(lettering);
-    expect(outline("panel-1").className).toContain("opacity-0");
-    expect(outline("panel-2").className).toContain("opacity-100");
+    expect(outline().className).toContain("opacity-100");
     fireEvent.mouseLeave(lettering);
-    expect(outline("panel-2").className).toContain("opacity-0");
-
-    // Keyboard users reach the same outline; depiction spans every panel of its beat.
-    const depicted = screen.getByText("The harbour lay under a green fog.");
-    expect(depicted.getAttribute("tabindex")).toBe("0");
-    fireEvent.focus(depicted);
-    expect(outline("panel-1").className).toContain("opacity-100");
-    expect(outline("panel-2").className).toContain("opacity-100");
-    fireEvent.blur(depicted);
-    expect(outline("panel-1").className).toContain("opacity-0");
+    expect(outline().className).toContain("opacity-0");
+    fireEvent.focus(lettering);
+    expect(outline().className).toContain("opacity-100");
+    fireEvent.blur(lettering);
+    expect(outline().className).toContain("opacity-0");
   });
 
-  it("never draws outlines measured on different art", () => {
-    result = { data: view(1), error: null, isLoading: false };
+  it("outlines editable lettering from its saved element, scaled and rotated about its center", () => {
+    result = { data: editableView(), error: null, isLoading: false };
+    renderPanel("hybrid");
+
+    // 0.5 × 0.2 body at 1.5× around its center (0.35, 0.7).
+    const percent = (value: string) => Number.parseFloat(value);
+    expect(percent(outline().style.left)).toBeCloseTo(-2.5);
+    expect(percent(outline().style.top)).toBeCloseTo(55);
+    expect(percent(outline().style.width)).toBeCloseTo(75);
+    expect(percent(outline().style.height)).toBeCloseTo(30);
+    expect(outline().style.transform).toBe("rotate(-8deg)");
+  });
+
+  it("never outlines positions measured on other artwork", () => {
+    result = { data: editableView(3), error: null, isLoading: false };
+    const { unmount } = renderPanel("hybrid");
+    expect(screen.queryByTestId("source-lettering-letter-1")).toBeNull();
+    expect(screen.getByText("Lettering positions are not available for this artwork.")).toBeTruthy();
+    unmount();
+
+    result = { data: integratedView(1), error: null, isLoading: false };
+    renderPanel();
+    expect(screen.queryByTestId("source-lettering-letter-1")).toBeNull();
+    expect(screen.getByText("the idol was older than the sea itself").getAttribute("tabindex")).toBeNull();
+  });
+
+  it("says when integrated lettering needs a text check to be located", () => {
+    result = { data: integratedView(null), error: null, isLoading: false };
     renderPanel();
 
-    expect(screen.queryByTestId("source-panel-panel-1")).toBeNull();
-    expect(screen.getByText("Panel outlines are not available for this artwork.")).toBeTruthy();
-    const lettering = screen.getByText("the idol was older than the sea itself");
-    expect(lettering.getAttribute("tabindex")).toBeNull();
+    expect(screen.getByText("Lettering positions appear after this page's text check.")).toBeTruthy();
   });
 
   it("explains a rejected lineage with the server's rerun instruction", () => {

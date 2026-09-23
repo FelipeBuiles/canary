@@ -75,10 +75,9 @@ vi.mock("../api/queries", () => ({
   useCompletePage: () => ({ data: undefined }),
   usePageSource: () => ({
     data: {
-      page_number: 1, page_revision: 2, geometry_render_revision: null,
-      panels: [{ id: "panel-1", order: 1, panel_role: "standard", box: null }],
+      page_number: 1, page_revision: 2, geometry: null, lettering: [],
       passages: [{ scene_title: "The market", units: [{ id: "source-1", ordinal: 1, segments: [
-        { text: "Mara argued at the market.", kind: "depicted", content_ids: ["panel-1"] },
+        { text: "Mara argued at the market.", kind: "depicted", lettering_item_ids: [] },
       ] }] }],
     },
     error: null,
@@ -1187,7 +1186,7 @@ describe("PagesRoom", () => {
     expect(screen.getByRole("button", { name: "Source" }).getAttribute("aria-pressed")).toBe("true");
     const region = screen.getByRole("region", { name: "Source" });
     expect(within(region).getByText("Mara argued at the market.").tagName).toBe("MARK");
-    expect(within(region).getByText("Panel outlines are not available for this artwork.")).toBeTruthy();
+    expect(within(region).getByText("Lettering positions are not available for this artwork.")).toBeTruthy();
   });
 
   it("switches between visual and checks views and keeps the draft mounted", () => {
