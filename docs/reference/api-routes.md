@@ -64,6 +64,7 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `PUT` | `/api/lettering/lettering/style` | `put_lettering_style` | `lettering.py` |
 | `GET` | `/api/lettering/pages/{page_number}/composite/{rendition}` | `get_page_composite` | `lettering.py` |
 | `GET` | `/api/lettering/lettering/translation-estimate` | `get_translation_estimate` | `lettering.py` |
+| `POST` | `/api/lettering/lettering/locale` | `post_stored_locale` | `lettering.py` |
 | `POST` | `/api/lettering/lettering/translate` | `post_translation` | `lettering.py` |
 | `POST` | `/api/operator_billing/refunds` | `refund_unused_credit_grant` | `operator_billing.py` |
 | `GET` | `/api/projects/{project}/pages` | `list_pages` | `pages.py` |
@@ -137,6 +138,7 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `POST` | `/api/styles/styles/generate-samples` | `generate_style_samples` | `styles.py` |
 | `POST` | `/api/styles/styles/validation` | `generate_style_validation` | `styles.py` |
 | `PATCH` | `/api/styles/styles/active` | `set_active_style` | `styles.py` |
+| `PATCH` | `/api/styles/styles/{suggestion_id}` | `update_style_presentation` | `styles.py` |
 
 ## SSE Streaming
 

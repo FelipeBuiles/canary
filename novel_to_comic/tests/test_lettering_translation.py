@@ -302,3 +302,38 @@ async def test_translation_recovers_mixed_saved_locales_without_replacing_varian
         assert current.elements[0].model_dump(exclude={"resolved"}) == old.elements[0].model_dump(exclude={"resolved"})
         assert not service.editor_state(artifacts, old.page_number)["needs_save"]
     paid.assert_not_called()
+
+
+def test_stored_language_switch_is_free_synchronous_and_guarded(translated_app, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    app, artifacts, _image, reservations, _releases, calls = translated_app
+    initial = service.ensure_lettering(artifacts, 1)
+    item = initial.elements[0].model_dump()
+    item["text_by_locale"] = {"source": "The door opened.", "es": "La puerta se abrió."}
+    save(artifacts, update(initial, elements=[item]))
+    client = TestClient(app)
+    root = "/api/projects/book/lettering"
+
+    french = client.get(root + "/translation-estimate", params={"target_locale": "fr"}).json()
+    assert french["translate_count"] == 1 and french["current_locale"] == "source"
+    refused = client.post(root + "/locale", json={"target_locale": "fr", "expected_snapshot_sha256": french["snapshot_sha256"]})
+    assert refused.status_code == 409
+    assert artifacts.read_lettering_settings().locale == "source"
+
+    spanish = client.get(root + "/translation-estimate", params={"target_locale": "es"}).json()
+    assert spanish["translate_count"] == 0
+    stale = client.post(root + "/locale", json={"target_locale": "es", "expected_snapshot_sha256": "0" * 64})
+    assert stale.status_code == 412
+    switched = client.post(root + "/locale", json={"target_locale": "es", "expected_snapshot_sha256": spanish["snapshot_sha256"]})
+    assert switched.status_code == 200, switched.text
+    assert switched.json()["changed"] is True
+    state = artifacts.read_lettering(1)
+    assert artifacts.read_lettering_settings().locale == "es"
+    assert state.locale == "es"
+    assert state.reviewed_against_render_revision is None
+    assert state.elements[0].text_by_locale["es"] == "La puerta se abrió."
+    assert not calls and not reservations and app.state.generation_queue.empty()
+
+    again = client.get(root + "/translation-estimate", params={"target_locale": "es"}).json()
+    assert client.post(root + "/locale", json={"target_locale": "es", "expected_snapshot_sha256": again["snapshot_sha256"]}).json()["changed"] is False

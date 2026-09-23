@@ -37,6 +37,7 @@ let stageStatuses: Record<"adapt" | "plan" | "draw", TestStageInfo> = {
 let includeUndrawnPage = false;
 let includeThirdUndrawnPage = false;
 let completePagesUnavailable = false;
+let placementReviewNeeded = false;
 let pageIssues: Array<Record<string, unknown>> | undefined;
 let persistedPageFailure: Record<string, unknown> | null = null;
 let persistedRenderedFailure: Record<string, unknown> | null = null;
@@ -142,6 +143,7 @@ vi.mock("../api/queries", () => ({
         }],
         failure: persistedRenderedFailure,
         analysis_recovery: { status: analysisChecked ? "checked" : "requires_ocr", requires_paid_call: !analysisChecked },
+        lettering_placement_review_needed: placementReviewNeeded,
       }, ...(includeUndrawnPage ? [{
         page: {
           page_number: 2,
@@ -281,6 +283,7 @@ describe("PagesRoom", () => {
     includeUndrawnPage = false;
     includeThirdUndrawnPage = false;
     completePagesUnavailable = false;
+    placementReviewNeeded = false;
     pageIssues = undefined;
     persistedPageFailure = null;
     persistedRenderedFailure = null;
@@ -1233,6 +1236,14 @@ describe("PagesRoom", () => {
     const card = screen.getByRole("button", { name: "Open page 1, revision 2" });
     expect(screen.getByText("Needs visual review")).toBeTruthy();
     expect(card.textContent).not.toContain("Confirmed");
+  });
+
+  it("marks a clean page whose editable lettering still needs a placement check", () => {
+    pageIssues = [];
+    placementReviewNeeded = true;
+    renderRoom();
+
+    expect(screen.getByText("Needs placement")).toBeTruthy();
   });
 
   it("does not infer page acceptance from resolved findings", () => {

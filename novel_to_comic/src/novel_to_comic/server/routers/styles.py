@@ -45,6 +45,10 @@ from novel_to_comic.stages.s2_style import (
     generate_samples_for_indices,
     generate_suggestions,
     custom_direction_candidate,
+    describe_custom_direction,
+    estimate_custom_direction_naming_cost_usd,
+    update_suggestion_fields,
+    DISPLAY_LABEL_MAX_CHARS,
     build_style_sample_request,
     load_style_direction,
     load_suggestions,
@@ -219,6 +223,12 @@ def _style_sample_credit_estimate(
     ))
 
 
+def _direction_operations(config: Config, *, with_neighbors: bool = False):
+    """A faithful direction proof is followed by one vision call that names it."""
+    base = prompt_image_operations(config) if with_neighbors else style_sample_operations(config)
+    return (*base, ("text", config.effective_visual_review_model()))
+
+
 def _direction_credit_estimates(
     config: Config,
     project_dir,
@@ -245,7 +255,10 @@ def _direction_credit_estimates(
 
     def faithful_cost():
         width, height = style_proof_dimensions()
-        return (
+        naming = estimate_custom_direction_naming_cost_usd(
+            config, bible.title if bible is not None else "", template or "",
+        )
+        return naming + (
             estimate_style_proof_cost_usd(
                 config, project_dir, bible, template or config.style_template, candidate_id,
                 reference_size=(reference_size or (1024, 1024)) if reference_count else None,
@@ -267,10 +280,10 @@ def _direction_credit_estimates(
         )
 
     return {
-        "faithful": quote(style_sample_operations(config), faithful_cost),
+        "faithful": quote(_direction_operations(config), faithful_cost),
         "neighbors": quote(prompt_image_operations(config), neighbor_cost, zero_cost_estimate=0),
         "faithful_with_neighbors": quote(
-            prompt_image_operations(config), lambda: faithful_cost() + neighbor_cost(),
+            _direction_operations(config, with_neighbors=True), lambda: faithful_cost() + neighbor_cost(),
         ),
     }
 
@@ -324,6 +337,7 @@ def get_styles(project_id: str, project=Depends(get_project), request: Request =
     active_index, active_id = _active_suggestion(suggestions, config)
     proof_states = {}
     active_style_jobs = []
+    batch_jobs = []
     if request is not None:
         from ..generation_jobs import recovered_generation_jobs
         pkey = project_key(user_id, project_id)
@@ -335,6 +349,8 @@ def get_styles(project_id: str, project=Depends(get_project), request: Request =
                 continue
             if job["status"] in {"queued", "running"}:
                 active_style_jobs.append(job)
+                if job["kind"] == "style_suggest" or job.get("payload", {}).get("with_neighbors"):
+                    batch_jobs.append(job)
             payload = job.get("payload", {})
             proofs = payload.get("proofs", {})
             if payload.get("index") is not None and not proofs:
@@ -398,7 +414,11 @@ def get_styles(project_id: str, project=Depends(get_project), request: Request =
             "is_active": i == active_index,
         })
 
-    return {"suggestions": result, "active_index": active_index, "active_id": active_id, "is_generating": bool(active_style_jobs)}
+    return {
+        "suggestions": result, "active_index": active_index, "active_id": active_id,
+        # Any proof in flight (polling) versus a batch that owns the portfolio (gating).
+        "is_generating": bool(active_style_jobs), "is_suggesting": bool(batch_jobs),
+    }
 
 
 @router.get("/styles/{suggestion_id}/proof/{kind}")
@@ -549,14 +569,17 @@ def _persist_style_direction(project_dir: Path, bible: StoryBible, prepared: dic
     if image_path:
         image_path.write_bytes(prepared["image_bytes"])
     direction_path.write_text(json.dumps(direction, indent=2, sort_keys=True))
-    suggestions = load_suggestions(project_dir)
-    existing_index = suggestion_index_by_id(suggestions, candidate["id"])
-    if existing_index is None:
-        suggestions.append(candidate)
-        save_suggestions(project_dir, suggestions, bible.title)
-        index = len(suggestions)
-    else:
-        index = existing_index
+    # Directions can be admitted while other proofs run; appends are
+    # serialized so every queued proof keeps the index it was given.
+    with production_lock(project_dir):
+        suggestions = load_suggestions(project_dir)
+        existing_index = suggestion_index_by_id(suggestions, candidate["id"])
+        if existing_index is None:
+            suggestions.append(candidate)
+            save_suggestions(project_dir, suggestions, bible.title)
+            index = len(suggestions)
+        else:
+            index = existing_index
     prepared["index"] = index
 
 
@@ -573,7 +596,7 @@ async def create_style_direction(
 ):
     """Persist an author direction and queue one faithful story-specific proof."""
     project_dir, config, state = project
-    operations = prompt_image_operations(config) if with_neighbors else style_sample_operations(config)
+    operations = _direction_operations(config, with_neighbors=with_neighbors)
     classify_operations(operations)
     pkey = project_key(user_id, project_id)
     _assert_no_pipeline_task(request, pkey)
@@ -682,6 +705,7 @@ async def create_style_direction(
                     bible, sample_path, brief=brief, candidate_id=candidate["id"],
                     style_reference=image_path,
                 )
+                await describe_custom_direction(config, project_dir, candidate, sample_path, bible.title)
                 if with_neighbors:
                     current = load_suggestions(project_dir)
                     neighbors, _usage = await generate_suggestions(
@@ -696,8 +720,10 @@ async def create_style_direction(
                     )
                     # Commit the neighbors only after every proof succeeds.
                     # A failed attempt may leave replaceable image files, but a
-                    # retry cannot append duplicate suggestion records.
-                    save_suggestions(project_dir, merged, bible.title)
+                    # retry cannot append duplicate suggestion records. Re-read
+                    # so renames and hides made meanwhile are not reverted.
+                    with production_lock(project_dir):
+                        save_suggestions(project_dir, load_suggestions(project_dir) + neighbors, bible.title)
             if lifecycle_owned:
                 for _ in range(SAMPLE_COUNT if with_neighbors else 1):
                     record_item_done(state, "style")
@@ -713,7 +739,7 @@ async def create_style_direction(
         prune_finished_generation_jobs(request.app)
         job, _created = enqueue_reserved_generation_job(
             request.app, project_name=pkey, kind="style_sample",
-            label=candidate["label"], payload={"id": candidate["id"], "index": index},
+            label=candidate["label"], payload={"id": candidate["id"], "index": index, "with_neighbors": with_neighbors},
             work=_runner, user_id=user_id, project_id=project_id,
             project_dir=project_dir, stage="style",
             debit_description="Style direction", reservation_credits=required,
@@ -836,8 +862,12 @@ async def suggest_styles(
                     config, bible, existing_suggestions=existing_suggestions,
                     custom_direction=direction,
                 )
-                merged = existing_suggestions + new_suggestions
-                save_suggestions(project_dir, merged, bible.title)
+                with production_lock(project_dir):
+                    # Re-read so directions, names and hides saved meanwhile survive.
+                    existing_suggestions = load_suggestions(project_dir)
+                    existing_count = len(existing_suggestions)
+                    merged = existing_suggestions + new_suggestions
+                    save_suggestions(project_dir, merged, bible.title)
                 
                 total_samples = len(new_suggestions)
                 queue.put_nowait({
@@ -1212,3 +1242,43 @@ def set_active_style(
                 properties={"style_id": str(result.get("id") or index)},
             )
         return result
+
+
+@router.patch("/styles/{suggestion_id}")
+def update_style_presentation(
+    suggestion_id: str,
+    body: dict,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),  # noqa: ARG001 — auth gate
+):
+    """Rename or hide a proof. Presentation only: never changes its style or id."""
+    project_dir, config, _state = project
+    unknown = set(body) - {"display_label", "hidden"}
+    if unknown or not body:
+        raise HTTPException(400, "Provide display_label and/or hidden")
+    fields = {}
+    if "display_label" in body:
+        label = body["display_label"]
+        if label is not None and not isinstance(label, str):
+            raise HTTPException(400, "display_label must be a string")
+        label = (label or "").strip()
+        if len(label) > DISPLAY_LABEL_MAX_CHARS:
+            raise HTTPException(400, f"Names must be {DISPLAY_LABEL_MAX_CHARS} characters or fewer")
+        fields["display_label"] = label
+    if "hidden" in body:
+        if not isinstance(body["hidden"], bool):
+            raise HTTPException(400, "hidden must be true or false")
+        fields["hidden"] = body["hidden"]
+    suggestions = load_suggestions(project_dir)
+    index = suggestion_index_by_id(suggestions, suggestion_id)
+    if index is None:
+        raise HTTPException(404, "Style direction not found.")
+    if fields.get("hidden") and _active_suggestion(suggestions, config)[1] == suggestion_id:
+        raise HTTPException(409, "The selected style cannot be hidden")
+    bible = _get_bible(project_dir)
+    updated = update_suggestion_fields(
+        project_dir, suggestion_id, fields, bible.title if bible else "",
+    )
+    if updated is None:
+        raise HTTPException(404, "Style direction not found.")
+    return {"suggestion": updated}

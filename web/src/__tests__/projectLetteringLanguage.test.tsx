@@ -5,10 +5,11 @@ import { I18nProvider } from "../i18n";
 import type { GenerationJob } from "../types/api";
 import type { LetteringTranslationEstimate } from "../api/lettering";
 
-const server = vi.hoisted(() => ({ estimate: vi.fn(), translate: vi.fn(), jobs: [] as GenerationJob[], balance: 100 }));
+const server = vi.hoisted(() => ({ estimate: vi.fn(), translate: vi.fn(), switchLocale: vi.fn(), jobs: [] as GenerationJob[], balance: 100 }));
 vi.mock("../api/lettering", () => ({
   getLetteringTranslationEstimate: server.estimate,
   translateProjectLettering: server.translate,
+  switchStoredLetteringLocale: server.switchLocale,
 }));
 vi.mock("../api/queries", () => ({
   useGenerationJobs: (project: string) => useQuery({ queryKey: ["project", project, "generation-jobs", []], queryFn: async () => ({ jobs: server.jobs }) }),
@@ -120,4 +121,24 @@ it("keeps an unknown submission separate from another translation and explicitly
   await screen.findByText(/Project translation queued/);
   expect(server.translate).toHaveBeenCalledTimes(2);
   expect(server.translate.mock.calls[1]).toEqual(server.translate.mock.calls[0]);
+});
+
+it("switches instantly between languages that are already stored, without a job or credits", async () => {
+  server.estimate.mockImplementation(async (_project: string, locale: "en" | "es" | "fr") => ({
+    ...estimate, target_locale: locale, snapshot_sha256: `snap-${locale}`, estimate_credits: 0, reserved_credits: 0,
+    translate_count: locale === "fr" ? 4 : 0, current_locale: "en",
+  }));
+  server.switchLocale.mockResolvedValue({ locale: "es", changed: true });
+  const { onApplied } = setup();
+  expect(server.estimate).not.toHaveBeenCalled();
+  const disclosure = screen.getByText("Project language", { selector: "summary" }).parentElement!;
+  disclosure.setAttribute("open", "");
+  fireEvent(disclosure, new Event("toggle"));
+  const chips = await screen.findByRole("group", { name: "Stored languages" });
+  expect(within(chips).getByRole("button", { name: "EN" })).toHaveProperty("disabled", true);
+  expect(within(chips).queryByRole("button", { name: "FR" })).toBeNull();
+  fireEvent.click(within(chips).getByRole("button", { name: "ES" }));
+  await waitFor(() => expect(onApplied).toHaveBeenCalledOnce());
+  expect(server.switchLocale).toHaveBeenCalledWith("demo", { target_locale: "es", expected_snapshot_sha256: "snap-es" });
+  expect(server.translate).not.toHaveBeenCalled();
 });

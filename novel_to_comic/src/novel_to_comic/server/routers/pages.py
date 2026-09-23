@@ -29,6 +29,7 @@ from novel_to_comic.page_drawing import (
     ensure_current_page_edition,
     enqueue_complete_page_draw,
     prepare_page_correction,
+    validate_review_request,
 )
 from novel_to_comic.narrative_review import require_draw_narrative_reviews
 from novel_to_comic.page_previews import ensure_page_render_preview
@@ -88,6 +89,21 @@ def _lettering_revision(target, number):
         return target.read_lettering(number).revision
     except (ArtifactMissing, ArtifactInvalid):
         return None
+
+def _lettering_placement_review_needed(target, number, hybrid: bool) -> bool:
+    """Flag drawn editable pages whose saved lettering was not checked against this art."""
+    if not hybrid:
+        return False
+    provenance = _latest_provenance(target, number)
+    if provenance is None or provenance.render.is_stale_for(target.read_page(number)):
+        return False
+    try:
+        state = target.read_lettering(number)
+    except (ArtifactMissing, ArtifactInvalid):
+        return True
+    from novel_to_comic.lettering.service import placement_review_needed
+    return placement_review_needed(state, provenance.render)
+
 
 def _latest_provenance(target: TargetArtifacts, page_number: int):
     revisions = target.provenance_revisions(page_number)
@@ -383,6 +399,7 @@ def list_pages(project=Depends(get_project)):
     except ArtifactMissing as exc:
         raise HTTPException(404, str(exc)) from exc
     _sync_draw_progress(project_dir)
+    hybrid = _hybrid_lettering(target)
     return {
         "pages": [
             {
@@ -391,8 +408,11 @@ def list_pages(project=Depends(get_project)):
                 "issues": _issues(target, selected.page_number),
                 "failure": _page_failure(target, selected.page_number),
                 "analysis_recovery": _analysis_recovery(target, selected.page_number),
-                "lettering_mode": "hybrid" if _hybrid_lettering(target) else "baked",
+                "lettering_mode": "hybrid" if hybrid else "baked",
                 "lettering_revision": _lettering_revision(target, selected.page_number),
+                "lettering_placement_review_needed": _lettering_placement_review_needed(
+                    target, selected.page_number, hybrid
+                ),
             }
             for selected in plan.pages
         ],
@@ -1240,16 +1260,17 @@ def visual_review_estimate(page_number: int, project=Depends(get_project)):
     if _latest_provenance(target, page_number) is None:
         raise HTTPException(409, "Page has no render to review")
     try:
+        edition = ensure_current_page_edition(target, target.read_book_edition(), config, allow_retained_review=True)
         compiled = compile_page_generation_request(
             target.read_page(page_number),
-            ensure_current_page_edition(target, target.read_book_edition(), config, allow_retained_review=True),
+            edition,
             approved_visual_inventory(project_dir),
             approved_reference_files(project_dir),
             retry=RetryProvenance(attempt=1),
             style_template=config.style_template,
             style_reference_path=require_style_reference(project_dir, config.style_template),
         )
-        complete_page_adapter(config).prepare(compiled)
+        validate_review_request(compiled, edition)
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
     return credit_estimate_for_provider_cost(
@@ -1272,12 +1293,13 @@ async def visual_review_page(page_number: int, project_id: str,
         raise HTTPException(409, "Page has no render to review")
     try:
         page = target.read_page(page_number)
+        edition = ensure_current_page_edition(target, target.read_book_edition(), config, allow_retained_review=True)
         compiled = compile_page_generation_request(
-            page, ensure_current_page_edition(target, target.read_book_edition(), config, allow_retained_review=True), approved_visual_inventory(project_dir),
+            page, edition, approved_visual_inventory(project_dir),
             approved_reference_files(project_dir), retry=RetryProvenance(attempt=1), style_template=config.style_template,
             style_reference_path=require_style_reference(project_dir, config.style_template),
         )
-        complete_page_adapter(config).prepare(compiled)
+        validate_review_request(compiled, edition)
         result = await run_credited_page_check(
             user_id=user_id, project_id=project_id, project_dir=project_dir, page_number=page_number,
             estimated_cost_usd=float(PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD),
@@ -1323,13 +1345,14 @@ def read_saved_visual_review(page_number: int, project=Depends(get_project)):
             raise HTTPException(409, "Page has no render to review")
         page = target.read_page(page_number)
         image = target.read_render(page_number, active.render.revision)
+        edition = ensure_current_page_edition(target, target.read_book_edition(), config, allow_retained_review=True)
         compiled = compile_page_generation_request(
-            page, ensure_current_page_edition(target, target.read_book_edition(), config, allow_retained_review=True), approved_visual_inventory(project_dir),
+            page, edition, approved_visual_inventory(project_dir),
             approved_reference_files(project_dir), retry=RetryProvenance(attempt=1),
             style_template=config.style_template,
             style_reference_path=require_style_reference(project_dir, config.style_template),
         )
-        complete_page_adapter(config).prepare(compiled)
+        validate_review_request(compiled, edition)
         try:
             report = validated_saved_visual_review(
                 page=page, render=active.render, image=image, compiled=compiled,

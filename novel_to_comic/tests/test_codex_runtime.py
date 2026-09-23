@@ -633,6 +633,22 @@ def test_text_result_preserves_raw_schema_failure_for_consumer(sdk):
     assert len(sdk.turns) == 1
 
 
+@pytest.mark.parametrize("model", ("gpt-6-sol", "gpt-6-luna"))
+def test_gpt6_text_selection_uses_exact_catalog_model(sdk, model):
+    sdk.models = [_Record(model=model, input_modalities=["text", "image"])]
+    sdk.events = [
+        sdk.types.ItemCompletedNotification(item=_Record(root=sdk.types.AgentMessageThreadItem(
+            id="message-1", type="agentMessage", phase=None, text="ready",
+        ))),
+        _completed(sdk),
+    ]
+    result = asyncio.run(runtime.run_text(model=model, system_prompt="Reply", user_content="Ready?"))
+    assert result.text == "ready"
+    assert result.model == model
+    assert sdk.threads[0]["model"] == model
+    assert sdk.threads[0]["modelProvider"] == runtime.PROVIDER
+
+
 @pytest.fixture
 def supported_host(monkeypatch):
     # Simulated host only; no claim about actual sandbox enforcement.

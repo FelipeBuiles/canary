@@ -4,6 +4,8 @@ import { TextCheckArtwork } from "../../components/pages/TextCheckArtwork";
 import { LetteringEditor } from "../../components/lettering/LetteringEditor";
 import { pageCompositePreviewUrl } from "../../api/lettering";
 import { PageThumbnail } from "../../components/pages/PageThumbnail";
+import { WholeBookReveal } from "../../components/pages/WholeBookReveal";
+import { editionKeyFor } from "../../lib/editionKey";
 import { accountIdentity } from "../../lib/accountEpoch";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -959,7 +961,11 @@ export function PagesRoom() {
           ))}
         </div>
         {visiblePages.length === 0 && <p role="status" className="mb-6 text-sm text-ink-muted">{t("No pages in this filter.")}</p>}
-        <div className="grid grid-cols-1 gap-5 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <WholeBookReveal
+          ready={filter === "all" && pages.length > 1 && drawnPages.length === pages.length && drawingPages.size === 0}
+          editionKey={editionKeyFor(projectId, pages.map((item) => item.page))}
+          className="grid grid-cols-1 gap-5 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+        >
           {visiblePages.map((item) => {
             const revision = item.active_render?.render.revision;
             const pageIsDrawing = drawingPages.has(item.page.page_number);
@@ -993,6 +999,8 @@ export function PagesRoom() {
                     <StatusPill tone="gold">{t("Needs visual review")}</StatusPill>
                   ) : openIssueCount > 0 ? (
                     <StatusPill tone="red">{openIssueCount} {t("FLAGGED")}</StatusPill>
+                  ) : item.lettering_placement_review_needed ? (
+                    <StatusPill tone="gold">{t("Needs placement")}</StatusPill>
                   ) : null}
                 </div>
                 {revision ? (
@@ -1103,7 +1111,7 @@ export function PagesRoom() {
               </EntityCard>
             );
           })}
-        </div>
+        </WholeBookReveal>
       </section>
 
 

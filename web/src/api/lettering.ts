@@ -64,6 +64,8 @@ export interface LetteringTranslationEstimate extends CostEstimate {
   element_count: number;
   translate_count: number;
   preserved_target_count: number;
+  /** The project's active lettering language; "source" is the original copy. */
+  current_locale?: LetteringLocale | "source";
 }
 
 export interface LetteringTranslationRequest {
@@ -77,6 +79,14 @@ export function getLetteringTranslationEstimate(project: string, targetLocale: L
 
 export function translateProjectLettering(project: string, request: LetteringTranslationRequest) {
   return apiFetch<{ job: GenerationJob }>(`${root(project)}/lettering/translate`, {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+/** Free switch to a language every element already stores; 409 when any are missing. */
+export function switchStoredLetteringLocale(project: string, request: LetteringTranslationRequest) {
+  return apiFetch<{ locale: LetteringLocale; changed: boolean }>(`${root(project)}/lettering/locale`, {
     method: "POST",
     body: JSON.stringify(request),
   });

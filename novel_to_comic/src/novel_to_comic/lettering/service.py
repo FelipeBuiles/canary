@@ -322,11 +322,22 @@ def editor_state(artifacts: TargetArtifacts, page_number: int) -> dict:
     }
 
 
+def _engine_stale(state: PageLettering) -> bool:
+    return any(
+        element.resolved is None or element.resolved.engine_version != ENGINE_VERSION
+        for element in state.elements
+    )
+
+
 def placement_review_needed(state: PageLettering, render: PageRenderRevision) -> bool:
-    """Visual acceptance belongs to this saved presentation and artwork only."""
+    """Visual acceptance belongs to this saved presentation and artwork only.
+
+    A layout from an earlier engine renders differently than what was accepted.
+    """
     return (
         state.reviewed_against_render_revision != render.revision
         or state.reviewed_against_image_sha256 != render.image_sha256
+        or _engine_stale(state)
     )
 
 
@@ -563,6 +574,12 @@ def composite_page(
         raise LetteringConflict(
             "Lettering belongs to an earlier plan. Open Lettering and rebuild it explicitly."
         )
+    if _engine_stale(state) and state.style_sha256 == style.content_sha256:
+        # An engine upgrade only changes measurement, not the author's copy,
+        # placement or style. Lay it out again here, as the editor does, rather
+        # than blocking every page until it is opened. Nothing is saved: an
+        # open editor's revision stays valid, and placement still needs review.
+        state = resolve_lettering(state, style)
     # Publication must validate even when a draft preview already populated the cache.
     validate_lettering_render(
         state, style, render.width, render.height, draft_preview=draft_preview

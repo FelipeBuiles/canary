@@ -33,7 +33,7 @@ import {
   runFinishPreflight,
   triggerExport,
 } from "./pages";
-import { createStyleDirection, generateStyleValidation, getStyles, suggestStyles, fetchStyleDirectionEstimate, fetchSuggestStylesEstimate, fetchStyleSampleEstimate, generateStyleSamples, setActiveStyle } from "./styles";
+import { createStyleDirection, generateStyleValidation, getStyles, suggestStyles, fetchStyleDirectionEstimate, fetchSuggestStylesEstimate, fetchStyleSampleEstimate, generateStyleSamples, setActiveStyle, updateStylePresentation } from "./styles";
 import { getProjectConfig, updateProjectConfig } from "./config";
 import {
   listLabsModels,
@@ -773,6 +773,17 @@ export function useGenerateStyleValidation() {
     mutationFn: ({ project, id }: { project: string; id: string }) =>
       generateStyleValidation(project, id),
     onSettled: (_data, _error, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "styles"] });
+    },
+  });
+}
+
+export function useUpdateStylePresentation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, id, changes }: { project: string; id: string; changes: { display_label?: string; hidden?: boolean } }) =>
+      updateStylePresentation(project, id, changes),
+    onSuccess: (_data, { project }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "styles"] });
     },
   });

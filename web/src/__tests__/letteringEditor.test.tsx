@@ -61,6 +61,18 @@ beforeEach(() => {
 });
 afterEach(() => { clients.forEach(client => client.clear()); clients.length = 0; vi.restoreAllMocks(); });
 describe("Pages-room lettering", () => {
+  it("asks the author to confirm placement instead of claiming an unreviewed page is saved", async () => {
+    api.get.mockResolvedValue({ ...initial(), placement_review_needed: true });
+    api.put.mockImplementation(async (_project, _page, state) => ({ ...initial(), state: { ...state, revision: 2 }, saved_revision: 2 }));
+    mount();
+    await ready();
+    expect(screen.getByRole("status").textContent).toBe("Placement not reviewed");
+    expect(screen.queryByRole("button", { name: "Save lettering" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm placement" }));
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
+    await screen.findByText("Saved");
+    expect(screen.getByRole("button", { name: "Save lettering" })).toHaveProperty("disabled", true);
+  });
   it("recovers a read conflict through explicit project translation without losing saved wording or placement", async () => {
     api.get.mockRejectedValue(new ApiError(409, "Page locale differs from project lettering language. Translate project before editing/export."));
     const view = mount();

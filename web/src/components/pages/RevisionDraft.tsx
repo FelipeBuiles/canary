@@ -24,6 +24,8 @@ import { Button } from "../ui/Button";
 import { FieldLabel, TextAreaField } from "../ui/Field";
 import { Surface } from "../ui/Surface";
 import { PageArtwork } from "./PageArtwork";
+import { BeforeAfterWipe } from "./BeforeAfterWipe";
+import { Loupe } from "../ui/Loupe";
 import { AnnotationEditor, type EditorAnnotation } from "./AnnotationEditor";
 import {
   annotationProblem,
@@ -254,7 +256,8 @@ export function RevisionDraft({
   // Whether the page annotator is shown for the focused request; false keeps
   // the artwork a plain fitted image so controls never crowd it.
   const [marking, setMarking] = useState(false);
-  const [comparison, setComparison] = useState<"before" | "after">("after");
+  const [comparison, setComparison] = useState<"wipe" | "before" | "after">("wipe");
+  const [comparisonOpen, setComparisonOpen] = useState(false);
   // Scroll only on explicit mode transitions (start editing, start marking,
   // hide editing). Mark updates and note edits never scroll: the intent flag
   // is consumed once by the effect below, so later renders stay put.
@@ -572,15 +575,20 @@ export function RevisionDraft({
             </div>
           ) : (
             <figure ref={artRef} className="flex h-[max(12rem,calc(100dvh-20rem))] justify-center">
-              <PageArtwork src={canvasSrc} alt={canvasAlt} />
+              <Loupe className="flex h-full w-full justify-center">
+                <PageArtwork src={canvasSrc} alt={canvasAlt} />
+              </Loupe>
             </figure>
           )}
           {compareRevision != null && (
-            <details className="border border-ink-black/20 px-3 py-2">
+            <details className="border border-ink-black/20 px-3 py-2" onToggle={(event) => setComparisonOpen(event.currentTarget.open)}>
               <summary className="cursor-pointer font-meta text-xs font-bold text-ink-muted">
                 {t("COMPARE WITH PREVIOUS RENDER")} ({t("Revision")} {compareRevision} → {t("Revision")} {parentRenderRevision})
               </summary>
               <div role="group" aria-label={t("Revision comparison")} className="mt-3 flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" aria-pressed={comparison === "wipe"} onClick={() => setComparison("wipe")}>
+                  {t("WIPE")}
+                </Button>
                 <Button size="sm" variant="outline" aria-pressed={comparison === "before"} onClick={() => setComparison("before")}>
                   {t("BEFORE")} · {t("Revision")} {compareRevision}
                 </Button>
@@ -589,6 +597,18 @@ export function RevisionDraft({
                 </Button>
               </div>
               <div className="mt-3 grid items-start gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)]">
+                {comparison === "wipe" ? (
+                  <BeforeAfterWipe
+                    beforeSrc={pageRenderPreviewUrl(project, pageNumber, compareRevision, "reader")}
+                    afterSrc={canvasSrc}
+                    beforeAlt={`${t("Complete page")} ${pageNumber}, ${t("previous revision")} ${compareRevision}`}
+                    afterAlt={`${t("Complete page")} ${pageNumber}, ${t("current revision")} ${parentRenderRevision}`}
+                    beforeLabel={`${t("BEFORE")} · ${compareRevision}`}
+                    afterLabel={`${t("AFTER")} · ${parentRenderRevision}`}
+                    visible={comparisonOpen}
+                    firstViewKey={`${project}:${pageNumber}:${compareRevision}:${parentRenderRevision}`}
+                  />
+                ) : (
                 <figure>
                   <img
                     src={comparison === "before" ? pageRenderPreviewUrl(project, pageNumber, compareRevision, "reader") : canvasSrc}
@@ -601,6 +621,7 @@ export function RevisionDraft({
                     {t(comparison === "before" ? "BEFORE" : "AFTER")} · {t("Revision")} {comparison === "before" ? compareRevision : parentRenderRevision}
                   </figcaption>
                 </figure>
+                )}
                 <div className="space-y-3">
                   <p className="text-sm leading-6">{t("A new revision is not a confirmed fix. Compare the requested change and check for unintended differences.")}</p>
                 <SubmittedCorrection

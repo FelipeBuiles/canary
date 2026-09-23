@@ -20,6 +20,7 @@ import {
 import { Check, ArrowDownRight, Columns2, X } from "lucide-react";
 import { BookLetteringPanel } from "../../components/lettering/BookLetteringPanel";
 import { StyleProofCard } from "../../components/style/StyleProofCard";
+import { ProofFlipViewer, ProofWall } from "../../components/style/ProofFlipViewer";
 import { Button } from "../../components/ui/Button";
 import { LazyImage } from "../../components/ui/LazyImage";
 import { StateBlock } from "../../components/ui/StateBlock";
@@ -36,7 +37,7 @@ import {
   useStyleJobStatuses,
 } from "../../store/styleGen";
 import { usePipelineStore } from "../../store/pipeline";
-import type { StyleSuggestion } from "../../api/styles";
+import { isAuthorDirection, styleName, type StyleSuggestion } from "../../api/styles";
 import type { CostEstimate, StoryBible } from "../../types/api";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 
@@ -110,6 +111,9 @@ export function StyleRoom() {
   const [showDirectionComposer, setShowDirectionComposer] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [comparisonView, setComparisonView] = useState<"proof" | "action">("proof");
+  const [proofFilter, setProofFilter] = useState<"all" | "yours" | "suggested">("all");
+  const [proofView, setProofView] = useState<"grid" | "flip" | "wall">("grid");
+  const [flipIndex, setFlipIndex] = useState(0);
   const [pendingCustomInput, setPendingCustomInput] = useState<{
     direction: string;
     image: File | null;
@@ -136,9 +140,13 @@ export function StyleRoom() {
 
   const latestSuggestionJob = generationJobs?.jobs.filter((job) => job.kind === "style_suggest")
     .sort((a, b) => a.queued_at.localeCompare(b.queued_at)).at(-1);
-  const isSuggesting = !!stylesData?.is_generating || latestSuggestionJob?.status === "running"
+  const isSuggesting = !!stylesData?.is_suggesting || latestSuggestionJob?.status === "running"
     || latestSuggestionJob?.status === "queued" || suggestionStatus === "running";
-  const styleActionsDisabled = letteringOpen || isStageGenerating || isSuggesting || suggestStyles.isPending || createStyleDirection.isPending;
+  // Author directions queue behind proofs already drawing; other style work
+  // (refreshes, auditions, a new batch) still waits for them to finish.
+  const proofsInFlight = !!stylesData?.is_generating;
+  const directionActionsDisabled = letteringOpen || isStageGenerating || isSuggesting || suggestStyles.isPending || createStyleDirection.isPending;
+  const styleActionsDisabled = directionActionsDisabled || proofsInFlight;
   const { data: suggestEstimate, error: suggestEstimateError, refetch: refetchSuggestEstimate } = useSuggestStylesEstimate(id, !isSuggesting);
   const { data: directionEstimate, error: directionEstimateError, refetch: refetchDirectionEstimate } = useStyleDirectionEstimate(id, !createStyleDirection.isPending);
   const { data: sampleEstimate } = useStyleSampleEstimate(id, pendingRefresh.length > 0);
@@ -365,6 +373,46 @@ export function StyleRoom() {
   const activeSuggestion = suggestions.find((suggestion) => suggestion.is_active);
   const staleSuggestions = suggestions.filter((suggestion) => suggestion.sample_stale);
   const refreshEstimate = multiplyEstimate(sampleEstimate, pendingRefresh.length);
+  const proofName = (suggestion: StyleSuggestion) => isAuthorDirection(suggestion)
+    ? `${t("Yours")} · ${styleName(suggestion)}`
+    : styleName(suggestion);
+  const shownSuggestions = suggestions.filter((suggestion) => !suggestion.hidden);
+  const hiddenSuggestions = suggestions.filter((suggestion) => suggestion.hidden);
+  const yoursCount = shownSuggestions.filter(isAuthorDirection).length;
+  const suggestedCount = shownSuggestions.length - yoursCount;
+  const effectiveFilter = yoursCount > 0 && suggestedCount > 0 ? proofFilter : "all";
+  const filteredSuggestions = effectiveFilter === "yours"
+    // Newest first: directions are appended, so a higher index is more recent.
+    ? shownSuggestions.filter(isAuthorDirection).sort((a, b) => b.index - a.index)
+    : effectiveFilter === "suggested"
+      ? shownSuggestions.filter((suggestion) => !isAuthorDirection(suggestion))
+      : shownSuggestions;
+  const viewableSuggestions = filteredSuggestions.filter((suggestion) => suggestion.has_sample);
+  const renderProofCard = (suggestion: StyleSuggestion) => (
+    <StyleProofCard
+      key={suggestion.id}
+      suggestion={suggestion}
+      projectName={id}
+      isGenerating={pendingSet.has(suggestion.index) || suggestion.generation_status === "queued" || suggestion.generation_status === "running"}
+      generationDisabled={styleActionsDisabled}
+      selectionDisabled={letteringOpen}
+      queueState={suggestion.generation_status === "queued" || suggestion.generation_status === "running" ? suggestion.generation_status : pendingSet.has(suggestion.index) ? styleJobStatuses[suggestion.index] ?? "queued" : null}
+      fallbackPrompt={buildFallbackStyleSamplePrompt(suggestion, storyBible)}
+      fallbackParameters={{
+        width: projectConfig?.image_width,
+        height: projectConfig?.image_height,
+        steps: effectiveSteps,
+        guidance_scale: projectConfig?.flux_guidance_scale,
+        style_template: suggestion.template,
+      }}
+      isCompared={compareIds.includes(suggestion.id)}
+      compareDisabled={comparedSuggestions.length >= 3 && !compareIds.includes(suggestion.id)}
+      onToggleCompare={() => toggleCompare(suggestion.id)}
+      validationBusy={suggestion.id in validationJobs}
+      onValidate={() => setPendingValidation(suggestion)}
+      onRefresh={() => setPendingRefresh([suggestion])}
+    />
+  );
 
   return (
     <RoomShell project={id}>
@@ -389,7 +437,7 @@ export function StyleRoom() {
                 size="sm"
                 variant="primary"
                 onClick={() => setShowDirectionComposer((visible) => !visible)}
-                disabled={styleActionsDisabled}
+                disabled={directionActionsDisabled}
               >
                 {showDirectionComposer ? t("CLOSE ART DIRECTION") : t("ADD A DIRECTION")}
               </Button>
@@ -467,7 +515,8 @@ export function StyleRoom() {
             customSingleReferenceCost={directionEstimate?.estimates_with_reference.faithful.estimate_credits}
             customNeighborsReferenceCost={directionEstimate?.estimates_with_reference.faithful_with_neighbors.estimate_credits}
             imageReferenceSupported={directionEstimate?.image_reference_supported}
-            busy={styleActionsDisabled || (estimatesMissing && !estimateError)}
+            busy={directionActionsDisabled || (estimatesMissing && !estimateError)}
+            automaticDisabled={proofsInFlight}
             disabled={estimatesMissing || !!estimateError}
             onRetry={estimateError ? retryEstimates : undefined}
             error={suggestionError ?? estimateError?.message}
@@ -494,7 +543,7 @@ export function StyleRoom() {
             </div>
             <div className="flex flex-col justify-center bg-pulp-paper/10 p-5">
               <div className="flex items-center gap-2 font-meta text-xs font-bold text-narrator-gold">{activeSuggestion && <Check size={16} aria-hidden="true" />}{t(activeSuggestion ? "YOUR STYLE" : "YOUR CHOICE")}</div>
-              <p className="mt-3 break-words font-display text-xl font-bold leading-tight">{activeSuggestion?.label ?? t("Which world feels like your story?")}</p>
+              <p className="mt-3 break-words font-display text-xl font-bold leading-tight">{activeSuggestion ? proofName(activeSuggestion) : t("Which world feels like your story?")}</p>
               <p className="mt-2 font-body text-xs leading-6 text-pulp-paper/85">{t(activeSuggestion ? "Selected for your comic. You can still explore the other proofs." : "Use Select this style beneath your favorite proof.")}</p>
             </div>
           </section>
@@ -507,7 +556,8 @@ export function StyleRoom() {
                 customSingleReferenceCost={directionEstimate?.estimates_with_reference.faithful.estimate_credits}
                 customNeighborsReferenceCost={directionEstimate?.estimates_with_reference.faithful_with_neighbors.estimate_credits}
                 imageReferenceSupported={directionEstimate?.image_reference_supported}
-                busy={styleActionsDisabled || (estimatesMissing && !estimateError)}
+                busy={directionActionsDisabled || (estimatesMissing && !estimateError)}
+                automaticDisabled={proofsInFlight}
                 disabled={estimatesMissing || !!estimateError}
                 onRetry={estimateError ? retryEstimates : undefined}
                 error={suggestionError ?? estimateError?.message}
@@ -538,13 +588,13 @@ export function StyleRoom() {
                       src={comparingAction
                         ? suggestion.validation_url!
                         : suggestion.sample_preview_url ?? `/api/projects/${encodeURIComponent(id)}/files/samples/style_${suggestion.index}.png`}
-                      alt={suggestion.label}
+                      alt={proofName(suggestion)}
                       width={320}
                       height={400}
                       aspect="4 / 5"
                       className="object-contain object-center"
                     />
-                    <div className="mt-3 font-display text-[1.1rem] font-black uppercase tracking-[-0.025em]">{suggestion.label}</div>
+                    <div className="mt-3 font-display text-[1.1rem] font-black uppercase tracking-[-0.025em]">{proofName(suggestion)}</div>
                     <dl className="mt-3 space-y-3 text-sm leading-6">
                       <div><dt className="font-bold">{t("Palette")}</dt><dd>{suggestion.palette}</dd></div>
                       <div><dt className="font-bold">{t("Line and finish")}</dt><dd>{suggestion.line_rendering}</dd></div>
@@ -564,36 +614,68 @@ export function StyleRoom() {
               </div>
               {comparedSuggestions.length >= 2 && <a href="#style-comparison" className="inline-flex min-h-11 items-center gap-2 font-meta text-xs font-bold text-hero-red underline underline-offset-4">{t("View comparison")}<ArrowDownRight size={17} aria-hidden="true" /></a>}
               {comparedSuggestions.length > 0 && <div className="flex w-full flex-wrap gap-2">
-                {comparedSuggestions.map((suggestion) => <Button key={suggestion.id} variant="outline" size="xs" onClick={() => toggleCompare(suggestion.id)} aria-label={`${t("Remove from comparison")} · ${suggestion.label}`}><span className="text-left">{suggestion.label}</span><X size={14} className="shrink-0" aria-hidden="true" /></Button>)}
+                {comparedSuggestions.map((suggestion) => <Button key={suggestion.id} variant="outline" size="xs" onClick={() => toggleCompare(suggestion.id)} aria-label={`${t("Remove from comparison")} · ${proofName(suggestion)}`}><span className="text-left">{proofName(suggestion)}</span><X size={14} className="shrink-0" aria-hidden="true" /></Button>)}
               </div>}
             </div>
-            <div data-testid="style-proof-grid" className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-              {suggestions.map((suggestion) => (
-                  <StyleProofCard
-                    key={suggestion.id}
-                    suggestion={suggestion}
-                    projectName={id}
-                    isGenerating={pendingSet.has(suggestion.index) || suggestion.generation_status === "queued" || suggestion.generation_status === "running"}
-                    generationDisabled={styleActionsDisabled}
-                    selectionDisabled={letteringOpen}
-                    queueState={suggestion.generation_status === "queued" || suggestion.generation_status === "running" ? suggestion.generation_status : pendingSet.has(suggestion.index) ? styleJobStatuses[suggestion.index] ?? "queued" : null}
-                    fallbackPrompt={buildFallbackStyleSamplePrompt(suggestion, storyBible)}
-                    fallbackParameters={{
-                      width: projectConfig?.image_width,
-                      height: projectConfig?.image_height,
-                      steps: effectiveSteps,
-                      guidance_scale: projectConfig?.flux_guidance_scale,
-                      style_template: suggestion.template,
-                    }}
-                    isCompared={compareIds.includes(suggestion.id)}
-                    compareDisabled={comparedSuggestions.length >= 3 && !compareIds.includes(suggestion.id)}
-                    onToggleCompare={() => toggleCompare(suggestion.id)}
-                    validationBusy={suggestion.id in validationJobs}
-                    onValidate={() => setPendingValidation(suggestion)}
-                    onRefresh={() => setPendingRefresh([suggestion])}
-                  />
-              ))}
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+            {yoursCount > 0 && suggestedCount > 0 ? (
+              <div role="group" aria-label={t("Filter proofs")} className="flex flex-wrap gap-2">
+                {([
+                  ["all", t("All"), shownSuggestions.length],
+                  ["yours", t("Yours"), yoursCount],
+                  ["suggested", t("Suggested"), suggestedCount],
+                ] as const).map(([value, label, count]) => (
+                  <Button
+                    key={value}
+                    size="xs"
+                    variant={effectiveFilter === value ? "secondary" : "outline"}
+                    aria-pressed={effectiveFilter === value}
+                    onClick={() => setProofFilter(value)}
+                  >
+                    {label} · {count}
+                  </Button>
+                ))}
+              </div>
+            ) : <span />}
+              {viewableSuggestions.length > 1 && (
+                <div role="group" aria-label={t("Proof view")} className="flex gap-2">
+                  {([["grid", t("Grid")], ["flip", t("Flip")], ["wall", t("Wall")]] as const).map(([value, label]) => (
+                    <Button key={value} size="xs" variant={proofView === value ? "secondary" : "outline"} aria-pressed={proofView === value} onClick={() => setProofView(value)}>
+                      {label}
+                    </Button>
+                  ))}
+                </div>
+              )}
             </div>
+            {proofView === "flip" && viewableSuggestions.length > 1 ? (
+              <ProofFlipViewer
+                projectName={id}
+                suggestions={viewableSuggestions}
+                index={flipIndex}
+                onIndexChange={setFlipIndex}
+                selectionDisabled={letteringOpen}
+              />
+            ) : proofView === "wall" && viewableSuggestions.length > 1 ? (
+              <ProofWall
+                projectName={id}
+                suggestions={viewableSuggestions}
+                onOpen={(index) => { setFlipIndex(index); setProofView("flip"); }}
+              />
+            ) : (
+            <div data-testid="style-proof-grid" className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+              {filteredSuggestions.map(renderProofCard)}
+            </div>
+            )}
+            {hiddenSuggestions.length > 0 && (
+              <details className="mt-8 bg-surface-container px-4">
+                <summary className="min-h-11 cursor-pointer py-3 font-meta text-xs font-bold text-ink-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red">
+                  {t("Hidden")} ({hiddenSuggestions.length})
+                </summary>
+                <div data-testid="style-proof-hidden-grid" className="grid grid-cols-1 gap-6 pb-4 md:grid-cols-2 lg:grid-cols-3">
+                  {hiddenSuggestions.map(renderProofCard)}
+                </div>
+              </details>
+            )}
           </section>
 
           {suggestions.length > 0 && suggestions.every((suggestion) => suggestion.has_sample) && (

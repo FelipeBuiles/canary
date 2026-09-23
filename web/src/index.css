@@ -50,6 +50,9 @@
     --motion-settle: 220ms;
     --motion-reveal: 320ms;
     --ease-press: cubic-bezier(0.22, 1, 0.36, 1);
+    /* Five frames at 30 fps with a hard stop, like a platen closing. */
+    --motion-stamp: 170ms;
+    --ease-platen: cubic-bezier(0.2, 0.9, 0.25, 1);
     scrollbar-color: var(--color-ink-soft) var(--color-pulp-paper);
     color: var(--color-ink-black);
     background: var(--color-pulp-paper);
@@ -473,6 +476,55 @@
 .animate-register-stamp {
   transform-origin: center;
   animation: register-stamp var(--motion-settle) var(--ease-press);
+}
+
+/* Rubber stamp: oversize and slightly lifted, then seated with no bounce. */
+.stamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 3px solid currentColor;
+  padding: 0.3rem 0.65rem;
+  background: color-mix(in srgb, var(--color-bristol) 90%, transparent);
+  font-family: var(--font-meta);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transform: rotate(var(--stamp-rotate, -6deg));
+  transform-origin: center;
+}
+.stamp-red { color: var(--color-hero-red); }
+.stamp-ink { color: var(--color-ink-black); }
+
+@keyframes stamp-slam {
+  0% { transform: rotate(var(--stamp-rotate, -6deg)) scale(1.28); opacity: 0; }
+  1% { opacity: 1; }
+  100% { transform: rotate(var(--stamp-rotate, -6deg)) scale(1); opacity: 1; }
+}
+
+.animate-stamp-slam {
+  animation: stamp-slam var(--motion-stamp) var(--ease-platen) both;
+}
+
+@keyframes press-seat {
+  from { transform: scale(1.08); }
+  to { transform: scale(1); }
+}
+
+.animate-press-seat {
+  animation: press-seat var(--motion-stamp) var(--ease-platen);
+}
+
+/* One-time pull-back: the gallery tilts into a wall of every page, holds, then settles. */
+@keyframes whole-book {
+  0%, 55% { transform: perspective(1600px) rotateX(24deg) rotateZ(-3deg) scale(0.6); }
+  100% { transform: none; }
+}
+
+.animate-whole-book {
+  transform-origin: 50% 0;
+  animation: whole-book 1.6s var(--ease-platen);
 }
 
 @keyframes proof-reveal {

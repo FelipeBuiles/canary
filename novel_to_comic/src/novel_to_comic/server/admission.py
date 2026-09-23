@@ -24,6 +24,9 @@ _PAID = re.compile(r"^/(?:run|regen-[^/]+|cover|lettering/translate|approve/(?:b
 _TARGETED = re.compile(r"^/(?:regen-(?!extract)[^/]+|cover|pages/\d+/(?:generate|analyze|visual-review|corrections)|(?:characters|locations)/[^/]+/states/[^/]+/(?:regenerate|regenerate-instructed))$")
 
 
+_STYLE_PRESENTATION = re.compile(r"^/styles/style_[0-9a-f]{16}$")
+
+
 _CAST_REVIEW_REJECTION = "Compare the current character references before approving Cast. Resume Cast to run its visual review."
 
 
@@ -63,6 +66,17 @@ def mutation_conflicts(app, key: str, suffix: str) -> bool:
         return True
     if suffix == "/styles/active":
         return any(job.kind not in {"style_sample", "style_suggest", "style_validation"} for job in jobs)
+    # Naming or hiding a proof is presentation only; the suggestion list is
+    # merged under the artifact lock, so it never waits for artwork.
+    if _STYLE_PRESENTATION.fullmatch(suffix):
+        return False
+    # Author directions append independently under the artifact lock, each with
+    # its own hold, so they queue behind other proofs instead of failing.
+    if suffix == "/styles/direction":
+        return any(job.kind not in {"style_sample", "style_validation"} for job in jobs)
+    # Switching among stored languages rewrites every page's lettering, not art.
+    if suffix == "/lettering/locale":
+        return any(job.kind in {"pipeline_stage", "lettering_translation", "complete_page_draw"} for job in jobs)
     lettering = re.fullmatch(r"/pages/(\d+)/lettering(?:/reset)?", suffix)
     if lettering:
         number = int(lettering.group(1))

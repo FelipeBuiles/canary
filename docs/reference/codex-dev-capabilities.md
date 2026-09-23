@@ -14,7 +14,7 @@ requirement was explicitly relaxed for built-in tools, live probes and
 
 The optional SDK is lazy-loaded; API-only startup does not require it.
 Before using the default development launcher, explicitly install the optional
-SDK and bundled CLI into the existing backend environment, both pinned to 0.147.0:
+SDK and bundled CLI into the existing backend environment, both pinned to 0.156.1:
 
 ```sh
 uv pip install --python novel_to_comic/.venv/bin/python -r scripts/requirements-codex-dev.txt
@@ -24,6 +24,16 @@ uv pip install --python novel_to_comic/.venv/bin/python -r scripts/requirements-
 The [bundled runtime][pypi-runtime], not the separately installed CLI 0.153.4,
 is used by the adapter. Use existing local ChatGPT Codex authentication; do not
 copy credentials or supply API keys to this adapter.
+
+The September 23 upgrade from 0.147.0 to 0.156.1 added `gpt-6-sol` and
+`gpt-6-luna` to the authenticated Codex model catalog. Read-only local preflight
+confirmed both selectors with no next page, checked the adapter's two-pass
+restricted configuration for text and image, and observed image-tool capabilities.
+Ephemeral thread starts for both models retained the exact model and provider,
+no inherited instructions, a read-only sandbox, and disabled sandbox network.
+No generation turn was submitted for this upgrade. The changed runtime version
+changes the execution fingerprint, so an existing Draw edition retains its
+original runtime profile.
 
 From the repository root, start the local stack with:
 
@@ -139,7 +149,7 @@ Review generated pages and OCR findings before Finish. See the scoped
 ## Restricted runtime
 
 The [adapter runtime](../../novel_to_comic/src/novel_to_comic/ai/codex_runtime.py)
-uses the official [0.147.0 async client][client147] and supported config/account/
+uses the official [0.156.1 async client][client156] and supported config/account/
 models/thread/turn APIs. The child receives an exact replacement environment from
 an allowlisted original-process snapshot, not an environment merged with backend
 secrets. Temporary image attachments are read-only; HOME retains intended local
@@ -487,8 +497,8 @@ images do not claim a full-book run or uninterrupted extraction-to-Finish proof.
 [api-guide]: https://developers.openai.com/api/docs/guides/image-generation
 [sunburst]: https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst
 [flare]: https://developers.openai.com/api/docs/models/gpt-image-2.5-flare
-[pypi-sdk]: https://pypi.org/pypi/openai-codex/0.147.0/json
-[pypi-runtime]: https://pypi.org/pypi/openai-codex-cli-bin/0.147.0/json
-[client147]: https://github.com/openai/codex/blob/rust-v0.147.0/sdk/python/src/openai_codex/client.py
+[pypi-sdk]: https://pypi.org/pypi/openai-codex/0.156.1/json
+[pypi-runtime]: https://pypi.org/pypi/openai-codex-cli-bin/0.156.1/json
+[client156]: https://github.com/openai/codex/blob/rust-v0.156.1/sdk/python/src/openai_codex/client.py
 [image147]: https://github.com/openai/codex/blob/rust-v0.147.0/codex-rs/ext/image-generation/src/tool.rs
 [image153]: https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/ext/image-generation/src/tool.rs

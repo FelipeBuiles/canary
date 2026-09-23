@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { GenerationJob } from "../types/api";
@@ -11,11 +11,13 @@ const state = vi.hoisted(() => {
   const mutation = { mutate: vi.fn(), isPending: false };
   const emptyQuery = () => ({ data: undefined });
   return { mutation, emptyQuery, estimateError: null as Error | null, retryEstimate: vi.fn(), labels: ["Ink", "Watercolor", "Noir", "Graphic"],
-    jobs: [] as GenerationJob[], castStatus: undefined as string | undefined, handleRun: vi.fn(), generateCover: vi.fn() };
+    jobs: [] as GenerationJob[], castStatus: undefined as string | undefined, handleRun: vi.fn(), generateCover: vi.fn(),
+    presentation: { mutate: vi.fn(), isPending: false }, suggestions: undefined as Array<Record<string, unknown>> | undefined,
+    stylesMeta: {} as Record<string, boolean> };
 });
 vi.mock("../api/queries", () => ({
-  useStyles: () => ({ data: { suggestions: state.labels.map((label, index) => ({
-    id: label, index, label, template: `Full ${label} direction`, has_sample: true, is_active: false,
+  useStyles: () => ({ data: { ...state.stylesMeta, suggestions: state.suggestions ?? state.labels.map((label, index) => ({
+    id: label, index, label, origin: "generated", template: `Full ${label} direction`, has_sample: true, is_active: false,
   })) }, refetch: vi.fn(), isLoading: false, isError: false }),
   useProjectConfig: state.emptyQuery, useStoryBible: state.emptyQuery,
   useProjectStatus: () => ({ data: state.castStatus ? { style_selected: true, has_cover: false,
@@ -27,7 +29,7 @@ vi.mock("../api/queries", () => ({
   useSuggestStyles: () => state.mutation, useCreateStyleDirection: () => state.mutation,
   useGenerateStyleSamples: () => state.mutation, useGenerateStyleValidation: () => state.mutation,
   useApproveStage: () => state.mutation, useGenerateProjectCover: () => ({ mutate: state.generateCover }),
-  useSetActiveStyle: () => state.mutation,
+  useSetActiveStyle: () => state.mutation, useUpdateStylePresentation: () => state.presentation,
 }));
 vi.mock("../hooks/useRunAction", () => ({ useRunAction: () => ({ handleRun: state.handleRun, isPending: false }) }));
 vi.mock("../components/composites", async (importOriginal) => ({
@@ -41,7 +43,7 @@ vi.mock("../components/composites", async (importOriginal) => ({
 
 function proof(label: string) {
   const heading = screen.getByRole("heading", { name: label, level: 3 });
-  return within(heading.parentElement!);
+  return within(heading.closest("article")!);
 }
 
 describe("StyleRoom comparison", () => {
@@ -130,4 +132,86 @@ it("does not surface an unrelated historic cover failure as a style audition fai
   expect(screen.queryByText("Approve references before creating this cover.")).toBeNull();
   expect(screen.getByRole("heading", { name: "Ink" })).toBeTruthy();
   state.jobs = [];
+});
+
+it("names author directions, filters yours newest first, and tucks hidden proofs away", async () => {
+  state.estimateError = null;
+  state.suggestions = [
+    { id: "ink", index: 1, label: "Midnight ink", origin: "generated", template: "Ink", has_sample: true, is_active: false },
+    { id: "clay", index: 2, label: "Your direction", display_label: "Claymation snowfall", origin: "user_text", template: "claymation, falling snow", has_sample: true, is_active: false },
+    { id: "moth", index: 3, label: "Your direction", display_label: "Moth-wing pastel", origin: "user_text", template: "soft pastel moths", has_sample: true, is_active: false },
+    { id: "noir", index: 4, label: "Noir", origin: "generated", template: "Noir", has_sample: true, is_active: false, hidden: true },
+  ];
+  const user = userEvent.setup();
+  render(<I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
+    <Route path="/projects/:id/style" element={<StyleRoom />} />
+  </Routes></MemoryRouter></I18nProvider>);
+  const grid = screen.getByTestId("style-proof-grid");
+  expect(within(grid).getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent))
+    .toEqual(["Midnight ink", "Claymation snowfall", "Moth-wing pastel"]);
+  expect(proof("Claymation snowfall").getByText("“claymation, falling snow”")).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Yours · 2" }));
+  expect(within(grid).getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent))
+    .toEqual(["Moth-wing pastel", "Claymation snowfall"]);
+  await user.click(proof("Moth-wing pastel").getByRole("button", { name: "COMPARE" }));
+  expect(screen.getByRole("button", { name: "Remove from comparison · Yours · Moth-wing pastel" })).toBeTruthy();
+  const hidden = screen.getByTestId("style-proof-hidden-grid");
+  expect(within(hidden).getByRole("heading", { name: "Noir" })).toBeTruthy();
+  await user.click(within(hidden).getByRole("button", { name: "Show · Noir" }));
+  expect(state.presentation.mutate).toHaveBeenCalledWith(
+    { project: "book", id: "noir", changes: { hidden: false } }, expect.any(Object),
+  );
+  await user.click(proof("Claymation snowfall").getByRole("button", { name: "Rename · Claymation snowfall" }));
+  const input = screen.getByRole("textbox", { name: "Proof name" });
+  await user.clear(input);
+  await user.type(input, "Snow globe{Enter}");
+  expect(state.presentation.mutate).toHaveBeenLastCalledWith(
+    { project: "book", id: "clay", changes: { display_label: "Snow globe" } }, expect.any(Object),
+  );
+  expect(state.mutation.mutate).not.toHaveBeenCalled();
+  state.suggestions = undefined;
+});
+
+it("flips through thirty proofs by keyboard, opens the wall, and selects from the flipbook", async () => {
+  state.estimateError = null;
+  state.mutation.mutate.mockReset();
+  state.suggestions = Array.from({ length: 30 }, (_, index) => ({
+    id: `style-${index}`, index: index + 1, label: `Look ${index + 1}`, origin: "generated",
+    template: "t", has_sample: true, is_active: false,
+  }));
+  const user = userEvent.setup();
+  render(<I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
+    <Route path="/projects/:id/style" element={<StyleRoom />} />
+  </Routes></MemoryRouter></I18nProvider>);
+  await user.click(screen.getByRole("button", { name: "Flip" }));
+  const book = screen.getByRole("group", { name: "Look 1, 1 / 30" });
+  expect(document.activeElement).toBe(book);
+  for (let press = 0; press < 29; press++) fireEvent.keyDown(document.activeElement!, { key: "ArrowRight", repeat: press > 0 });
+  expect(screen.getByRole("group", { name: "Look 30, 30 / 30" })).toBeTruthy();
+  expect(screen.getByRole("img", { name: "Look 30" })).toBeTruthy();
+  fireEvent.keyDown(document.activeElement!, { key: "ArrowRight" });
+  expect(screen.getByRole("group", { name: "Look 1, 1 / 30" })).toBeTruthy();
+
+  await user.click(screen.getByRole("button", { name: "Wall" }));
+  expect(within(screen.getByRole("list", { name: "Proof wall" })).getAllByRole("button")).toHaveLength(30);
+  await user.click(screen.getByRole("button", { name: "Flip to Look 12" }));
+  expect(screen.getByRole("group", { name: "Look 12, 12 / 30" })).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "SELECT THIS STYLE" }));
+  expect(state.mutation.mutate).toHaveBeenCalledWith({ project: "book", id: "style-11" }, expect.any(Object));
+  state.suggestions = undefined;
+});
+
+it("keeps author directions open while single proofs draw, but not during a suggestion batch", () => {
+  state.estimateError = null;
+  state.labels = ["Ink", "Watercolor"];
+  state.stylesMeta = { is_generating: true, is_suggesting: false };
+  const room = () => <I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
+    <Route path="/projects/:id/style" element={<StyleRoom />} />
+  </Routes></MemoryRouter></I18nProvider>;
+  const view = render(room());
+  expect(screen.getByRole("button", { name: "ADD A DIRECTION" })).toHaveProperty("disabled", false);
+  state.stylesMeta = { is_generating: true, is_suggesting: true };
+  view.rerender(room());
+  expect(screen.getByRole("button", { name: "ADD A DIRECTION" })).toHaveProperty("disabled", true);
+  state.stylesMeta = {};
 });

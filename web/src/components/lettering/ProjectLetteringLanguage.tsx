@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, startTransition, useState } from "react";
-import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useMutationState, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, isInsufficientCreditsError } from "../../api/client";
-import { getLetteringTranslationEstimate, translateProjectLettering, type LetteringLocale, type LetteringTranslationEstimate, type LetteringTranslationRequest } from "../../api/lettering";
+import { getLetteringTranslationEstimate, switchStoredLetteringLocale, translateProjectLettering, type LetteringLocale, type LetteringTranslationEstimate, type LetteringTranslationRequest } from "../../api/lettering";
 import { useCreditBalance, useGenerationJobs } from "../../api/queries";
 import type { GenerationJob } from "../../types/api";
 import { LANGUAGES, useI18n } from "../../i18n";
@@ -81,6 +81,35 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
   const busy = !!active || submitting || unknown || refreshing;
   useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
 
+  // Languages every element already stores switch instantly, without a job or credits.
+  const stored = useQueries({
+    queries: LANGUAGES.map((item) => ({
+      queryKey: ["project", project, "lettering-translation-estimate", item.code],
+      queryFn: () => getLetteringTranslationEstimate(project, item.code),
+      // Each quote reads the whole book; only ask once the author opens this panel.
+      enabled: open && !disabled && !busy,
+      staleTime: 30_000,
+    })),
+  });
+  const storedLanguages = LANGUAGES.flatMap((item, index) => {
+    const quote = stored[index].data;
+    return quote && quote.translate_count === 0 ? [{ ...item, quote }] : [];
+  });
+  const currentLocale = stored.find((query) => query.data?.current_locale)?.data?.current_locale;
+  const switchLocale = useMutation({
+    mutationFn: (quote: LetteringTranslationEstimate) => switchStoredLetteringLocale(project, {
+      target_locale: quote.target_locale, expected_snapshot_sha256: quote.snapshot_sha256,
+    }),
+    retry: false,
+    onSuccess: async () => {
+      await qc.invalidateQueries({ predicate: (query) => query.queryKey.includes(project) });
+      await onApplied();
+    },
+    onError: () => {
+      void qc.invalidateQueries({ queryKey: ["project", project, "lettering-translation-estimate"] });
+    },
+  });
+
   const estimate = useQuery({
     queryKey: ["project", project, "lettering-translation-estimate", target],
     queryFn: () => getLetteringTranslationEstimate(project, target as LetteringLocale),
@@ -129,6 +158,29 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
       <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
         <summary className="min-h-11 cursor-pointer py-3 text-sm font-semibold text-ink-black">{t("Project language")}</summary>
         <div className="space-y-3 pb-3 text-sm leading-6">
+          {storedLanguages.some(({ code }) => code !== currentLocale) && (
+            <div role="group" aria-label={t("Stored languages")} className="flex flex-wrap items-center gap-2 py-2">
+              <span className="font-meta text-xs font-bold text-ink-muted">{t("Stored languages")}</span>
+              {storedLanguages.map(({ code, quote }) => {
+                const current = code === currentLocale;
+                return (
+                  <Button
+                    key={code}
+                    size="xs"
+                    variant={current ? "secondary" : "outline"}
+                    aria-pressed={current}
+                    title={LANGUAGES.find((item) => item.code === code)?.label}
+                    disabled={current || disabled || busy || switchLocale.isPending}
+                    onClick={() => switchLocale.mutate(quote)}
+                  >
+                    {code.toUpperCase()}
+                  </Button>
+                );
+              })}
+              {switchLocale.isPending && <span role="status" className="text-xs text-ink-muted">{t("Switching language…")}</span>}
+              {switchLocale.isError && <span role="alert" className="text-xs text-hero-red">{switchLocale.error.message}</span>}
+            </div>
+          )}
           <p className="max-w-prose text-ink-muted">{t("Translate saved lettering across the whole project. Save drafts on every page first.")}</p>
           <div className="flex flex-wrap items-end gap-3">
             <div className="min-w-0 flex-1">
@@ -162,7 +214,8 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
       </details>
       <div className="space-y-2 text-sm leading-6" aria-live="polite">
         {submitting && <p role="status">{t("Submitting translation…")}</p>}
-        {!submitting && active && <p role="status">{latest?.status === "queued" ? t("Project translation queued.") : t("Translating project…")} {jobLanguage}</p>}
+        {!submitting && active && <p role="status">{latest?.status === "queued" ? t("Project translation queued.") : t("Translating project…")} {jobLanguage}
+          {latest?.status === "queued" && latest.waiting_for_other_project && <> {t("Waiting for your work in another project to finish.")}</>}</p>}
         {!submitting && unknown && <div role="alert">
           <p>{t("The submission result is unknown. Check the same request before starting another translation.")}</p>
           <Button size="sm" variant="outline" onClick={() => {

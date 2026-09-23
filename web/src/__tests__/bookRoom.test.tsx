@@ -380,9 +380,9 @@ describe("Book reader", () => {
     renderRoom();
     fireEvent.click(screen.getByRole("button", { name: "Read your book" }));
     fireEvent.keyDown(window, { key: "ArrowRight" });
-    expect(screen.getByRole("slider", { name: "Jump to page" }).getAttribute("aria-valuetext")).toBe("Pages 2–3");
+    expect(screen.getByRole("slider", { name: "Jump to page" }).getAttribute("aria-valuetext")).toBe("Pages 2–3 of 3");
     fireEvent.click(screen.getByRole("button", { name: "SPREADS" }));
-    expect(screen.getByRole("slider", { name: "Jump to page" }).getAttribute("aria-valuetext")).toBe("Page 2");
+    expect(screen.getByRole("slider", { name: "Jump to page" }).getAttribute("aria-valuetext")).toBe("Page 2 of 3");
   });
 
   it("does not hijack keyboard input intended for the page slider", () => {
@@ -392,8 +392,8 @@ describe("Book reader", () => {
     const slider = screen.getByRole("slider", { name: "Jump to page" });
     act(() => slider.focus());
     fireEvent.keyDown(slider, { key: "ArrowRight" });
-    expect(slider.getAttribute("aria-valuetext")).toBe("Page 1");
+    expect(slider.getAttribute("aria-valuetext")).toBe("Page 1 of 3");
     fireEvent.change(slider, { target: { value: "1" } });
-    expect(slider.getAttribute("aria-valuetext")).toBe("Page 2");
+    expect(slider.getAttribute("aria-valuetext")).toBe("Page 2 of 3");
   });
 });

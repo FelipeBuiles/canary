@@ -252,15 +252,16 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
       throw new Error(t("Save this page before changing the book-wide style"));
     acknowledge(next, true);
   }
+  const reviewPending = !dirty && !busy && base.placement_review_needed && !base.source_stale;
   return <div ref={root} className="lettering-editor" onKeyDown={keys}>
     <style>{fontCSS()}</style>
     <Toolbar className="lettering-main-toolbar" bottomRule>
       <Button variant="outline" size="sm" disabled={pageLocked || dirty} title={dirty ? t("Save this page before changing the book-wide style") : undefined} onClick={() => setBookStyleOpen(true)} aria-expanded={bookStyleOpen}>{t("Book lettering style")}</Button>
       <div className="lettering-toolbar-actions">
-        <span role="status" aria-live="polite" className="lettering-save-state">{busy ? t("Saving…") : dirty ? t(draftStored ? "Unsaved · draft kept on this device" : "Unsaved · local recovery unavailable") : t("Saved")}</span>
+        <span role="status" aria-live="polite" className="lettering-save-state">{busy ? t("Saving…") : dirty ? t(draftStored ? "Unsaved · draft kept on this device" : "Unsaved · local recovery unavailable") : reviewPending ? t("Placement not reviewed") : t("Saved")}</span>
         <Button size="xs" variant="outline" disabled={pageLocked || (!history.past.length && !history.gesture)} onClick={() => dispatch({ type: "undo" })}>{t("Undo")}</Button>
         <Button size="xs" variant="outline" disabled={pageLocked || !history.future.length} onClick={() => dispatch({ type: "redo" })}>{t("Redo")}</Button>
-        <Button data-lettering-save size="sm" disabled={pageLocked || !layout.state || (!dirty && !base.placement_review_needed)} onClick={() => void save(loadedArtUrl === artUrl)}>{t("Save lettering")}</Button>
+        <Button data-lettering-save size="sm" disabled={pageLocked || !layout.state || (!dirty && !base.placement_review_needed)} onClick={() => void save(loadedArtUrl === artUrl)}>{reviewPending ? t("Confirm placement") : t("Save lettering")}</Button>
       </div>
     </Toolbar>
     {error && <div role="alert" className="lettering-error"><p>{error}</p><div className="flex flex-wrap gap-2 mt-2"><Button variant="outline" size="xs" onClick={() => void reload()} disabled={busy}>{t("Reload saved version")}</Button>{!fontsReady && <Button size="xs" onClick={() => { setError(null); setFontAttempt(n => n + 1); }}>{t("Retry fonts")}</Button>}</div></div>}
@@ -276,7 +277,7 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
       }}>{t("Keep saved version")}</Button></div></div>}
     {base.source_stale && <div className="lettering-notice"><h4 className="font-bold">{t("The page plan changed")}</h4><p>{t("These placements are preserved, but cannot be published against a different allocation. Rebuild from the current plan to continue.")}</p><Button className="mt-3" variant="outline" disabled={busy} onClick={() => void rebuild()}>{t("Rebuild lettering")}</Button></div>}
     {disabled && <p className="lettering-notice">{t("Artwork is being revised. Your lettering is retained; finish editing after the new render is ready.")}</p>}
-    {base.placement_review_needed && !base.source_stale && <p className="lettering-hint">{t("Check the lettering against this artwork, then save to record your placement review. Suggested positions are starting points, not detected empty spaces.")}</p>}
+    {base.placement_review_needed && !base.source_stale && <p className="lettering-hint">{t("Check the lettering against this artwork, then confirm to record your placement review. Suggested positions are starting points, not detected empty spaces.")}</p>}
     <div className="lettering-context-toolbar"><ProjectLetteringLanguage project={project} disabled={pageLocked || dirty} onBusyChange={setTranslationBusy} onApplied={adoptBookChange} /></div>
     {bookStyleOpen && <BookStyleEditor project={project} initial={base.style} pagePreview={{ state: history.present, artUrl }} disabled={locked || dirty} onClose={() => setBookStyleOpen(false)} onApplied={async () => {
       await adoptBookChange();

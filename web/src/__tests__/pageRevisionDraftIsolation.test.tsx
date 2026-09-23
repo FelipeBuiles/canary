@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "../i18n";
@@ -284,8 +284,11 @@ describe("RevisionDraft across render targets", () => {
 
     const after = screen.getByRole("button", { name: /after.*revision 2/i });
     const before = screen.getByRole("button", { name: /before.*revision 1/i });
-    expect(after.getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("img", { name: "Complete page 1, current revision 2" }).getAttribute("src"))
+    // The wipe opens first and overlays both real revisions.
+    expect(screen.getByRole("button", { name: "WIPE" }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(screen.getByTestId("revision-wipe")).getByRole("img", { name: "Complete page 1, previous revision 1" }).getAttribute("src"))
+      .toContain("/renders/1/");
+    expect(within(screen.getByTestId("revision-wipe")).getByRole("img", { name: "Complete page 1, current revision 2" }).getAttribute("src"))
       .toContain("/renders/2/");
 
     fireEvent.click(before);
