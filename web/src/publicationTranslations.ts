@@ -41,7 +41,12 @@ export const PUBLICATION_TEXT = {
     "Copy this page’s address to share the book.": "Copia la dirección de esta página para compartir el cómic.",
     "Read a finished book": "Lee un libro terminado",
     "Explore complete stories made with Scenewright, from the first page to the last.": "Explora historias completas creadas con Scenewright, de la primera página a la última.",
-    "Read book": "Leer libro"
+    "Read book": "Leer libro",
+    "Book language": "Idioma del cómic",
+    "Original": "Original",
+    "Original language": "Idioma original",
+    "Reader languages": "Idiomas del lector",
+    "Not published in {languages}. Readers only see languages where every page has a saved translation that fits.": "No se publicó en {languages}. Los lectores solo ven idiomas en los que cada página tiene una traducción guardada que cabe."
   },
   "fr": {
     "Later edits stay private until you update the published version.": "Les modifications restent privées jusqu’à la mise à jour de la version publiée.",
@@ -85,6 +90,11 @@ export const PUBLICATION_TEXT = {
     "Copy this page’s address to share the book.": "Copiez l’adresse de cette page pour partager la BD.",
     "Read a finished book": "Lisez un livre terminé",
     "Explore complete stories made with Scenewright, from the first page to the last.": "Découvrez des histoires complètes créées avec Scenewright, de la première à la dernière page.",
-    "Read book": "Lire le livre"
+    "Read book": "Lire le livre",
+    "Book language": "Langue de la BD",
+    "Original": "Original",
+    "Original language": "Langue originale",
+    "Reader languages": "Langues de lecture",
+    "Not published in {languages}. Readers only see languages where every page has a saved translation that fits.": "Non publiée en {languages}. Les lecteurs ne voient que les langues dont chaque page a une traduction enregistrée qui tient dans les bulles."
   }
 };

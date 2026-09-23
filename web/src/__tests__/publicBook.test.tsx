@@ -5,13 +5,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PublicBookPage } from "../pages/PublicBookPage";
 import { BookPublication } from "../components/book/BookPublication";
 import { apiFetch } from "../api/client";
-vi.mock("../i18n", () => ({ useI18n: () => ({ t: (value: string) => value }) }));
+vi.mock("../i18n", () => ({
+  useI18n: () => ({ t: (value: string) => value }),
+  LANGUAGES: [{ code: "en", label: "English" }, { code: "es", label: "Español" }, { code: "fr", label: "Français" }],
+}));
 vi.mock("../api/client", () => ({ apiFetch: vi.fn() }));
 const book = { id: "a".repeat(32), version: "v1", title: "A shared story", author: "Author", description: "A complete comic", allow_feature: false, featured: false, pages: [{ number: 1, width: 120, height: 180, url: "/public-page-1" }, { number: 2, width: 120, height: 180, url: "/public-page-2" }] };
 function wrapper(child: React.ReactNode) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><MemoryRouter initialEntries={[`/read/${book.id}`]}>{child}</MemoryRouter></QueryClientProvider>);
 }
-afterEach(() => { vi.unstubAllGlobals(); vi.resetAllMocks(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.resetAllMocks(); vi.restoreAllMocks(); window.localStorage.clear(); });
+const pageSet = (prefix: string) => book.pages.map(page => ({ ...page, url: `/${prefix}-page-${page.number}` }));
+const multilingual = { ...book, locale: "source", translations: [{ locale: "es", pages: pageSet("es") }, { locale: "fr", pages: pageSet("fr") }] };
 describe("public books", () => {
   it("reads every published page without authentication and includes a back page in downloads", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => book }));
@@ -93,5 +98,70 @@ describe("public books", () => {
     expect(JSON.parse(call![1]!.body as string)).toEqual({ title: "Working title", author: "Author", description: "", allow_feature: false });
     fireEvent.click(screen.getByRole("button", { name: "Unpublish" }));
     await waitFor(() => expect(vi.mocked(apiFetch).mock.calls.some(([, options]) => options?.method === "DELETE")).toBe(true));
+  });
+
+  it("switches between published languages on the same page and remembers the choice", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => multilingual }));
+    wrapper(<Routes><Route path="/read/:id" element={<PublicBookPage />} /></Routes>);
+    const reader = await screen.findByRole("dialog", { name: "Book reader" });
+    const languages = within(reader).getByRole("group", { name: "Book language" });
+    expect(within(languages).getAllByRole("button").map(button => button.textContent)).toEqual(["Original", "ES", "FR"]);
+    expect(within(languages).getByRole("button", { name: "Original language" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(screen.getByRole("img", { name: "Page 2 — Page 2 · Original language" }).getAttribute("src")).toBe("/public-page-2");
+
+    fireEvent.click(within(languages).getByRole("button", { name: "Español" }));
+    expect(within(languages).getByRole("button", { name: "Español" }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(languages).getByRole("button", { name: "Español" }).getAttribute("lang")).toBe("es");
+    expect(screen.getByRole("img", { name: "Page 2 — Page 2 · Español" }).getAttribute("src")).toBe("/es-page-2");
+    expect(screen.queryByRole("img", { name: /· Original language/ })).toBeNull();
+    expect(window.localStorage.getItem("canary.readerLanguage")).toBe("es");
+
+    fireEvent.keyDown(window, { key: "End" });
+    fireEvent.click(screen.getByText("Download this book"));
+    expect(screen.getByRole("link", { name: "PDF" }).getAttribute("href")).toBe(`/api/public/books/${book.id}/download/pdf?locale=es`);
+    fireEvent.click(screen.getByRole("button", { name: "Close reader" }));
+    expect(screen.getByRole("img", { name: "First page of the book" }).getAttribute("src")).toBe("/es-page-1");
+    expect(screen.getByRole("group", { name: "Book language" })).toBeTruthy();
+  });
+
+  it("opens in the viewer's stored language and ignores one this book lacks", async () => {
+    window.localStorage.setItem("canary.readerLanguage", "fr");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => multilingual }));
+    const { unmount } = wrapper(<Routes><Route path="/read/:id" element={<PublicBookPage />} /></Routes>);
+    expect((await screen.findByRole("img", { name: "Page 1 — Page 1 · Français" })).getAttribute("src")).toBe("/fr-page-1");
+    unmount();
+    window.localStorage.setItem("canary.readerLanguage", "en");
+    wrapper(<Routes><Route path="/read/:id" element={<PublicBookPage />} /></Routes>);
+    expect((await screen.findByRole("img", { name: "Page 1 — Page 1 · Original language" })).getAttribute("src")).toBe("/public-page-1");
+  });
+
+  it("still switches languages when browser storage is unavailable", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new DOMException("blocked", "SecurityError"); });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("blocked", "SecurityError"); });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => multilingual }));
+    wrapper(<Routes><Route path="/read/:id" element={<PublicBookPage />} /></Routes>);
+    fireEvent.click(await screen.findByRole("button", { name: "Français" }));
+    expect(screen.getByRole("img", { name: "Page 1 — Page 1 · Français" }).getAttribute("src")).toBe("/fr-page-1");
+  });
+
+  it("offers no language choice for baked or single-language books", async () => {
+    for (const record of [book, { ...book, locale: "es", translations: [] }]) {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => record }));
+      const { unmount } = wrapper(<Routes><Route path="/read/:id" element={<PublicBookPage />} /></Routes>);
+      expect(await screen.findByRole("img", { name: "Page 1 — Page 1" })).toBeTruthy();
+      expect(screen.queryByRole("group", { name: "Book language" })).toBeNull();
+      unmount();
+    }
+  });
+
+  it("tells the author which languages were left out of the publication", async () => {
+    const published = { ...multilingual, unpublished_locales: { en: "missing" } };
+    vi.mocked(apiFetch).mockResolvedValueOnce(null).mockResolvedValueOnce(published).mockResolvedValue(multilingual);
+    wrapper(<BookPublication project="project" title="Working title" ready onPreview={() => {}} />);
+    fireEvent.change(await screen.findByLabelText("Author credit"), { target: { value: "Author" } });
+    fireEvent.click(screen.getByRole("button", { name: "Publish book" }));
+    expect(await screen.findByText(/Not published in EN\./)).toBeTruthy();
+    expect(await screen.findByText("Reader languages: Original · ES · FR")).toBeTruthy();
   });
 });

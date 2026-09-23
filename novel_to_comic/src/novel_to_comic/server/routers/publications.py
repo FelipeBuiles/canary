@@ -128,12 +128,45 @@ def page(
     )
 
 
+def language_pages(record: dict, locale: str | None) -> list[dict]:
+    """The frozen page list for one published language; the default is the primary."""
+    if locale is None or locale == record.get("locale"):
+        return record["pages"]
+    for translation in record.get("translations", ()):
+        if translation["locale"] == locale:
+            return translation["pages"]
+    raise HTTPException(404, "Language not available")
+
+
+@public_router.get("/{book_id}/{version}/locales/{locale}/pages/{number}")
+def translated_page(
+    book_id: str,
+    version: str,
+    locale: str,
+    number: int,
+    base: Path = Depends(get_projects_dir),
+):
+    record = current(base, book_id)
+    if (
+        version != record["version"]
+        or locale == record.get("locale")
+        or number not in [page["number"] for page in language_pages(record, locale)]
+    ):
+        raise HTTPException(404, "Page not available")
+    return FileResponse(
+        page_directory(base, book_id, version) / locale / f"{number}.jpg",
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @public_router.get("/{book_id}/download/{format}")
 @limiter.limit(export_limit)
 def download(
     book_id: str,
     format: Literal["pdf", "cbz"],
     request: Request,
+    locale: str | None = None,
     base: Path = Depends(get_projects_dir),
 ):
     import img2pdf
@@ -142,8 +175,12 @@ def download(
 
     record = current(base, book_id)
     directory = page_directory(base, book_id, record["version"])
+    if locale is not None and locale != record.get("locale"):
+        language_pages(record, locale)  # 404 unless this language was published.
+        directory = directory / locale
     pages = [
-        (directory / f"{page['number']}.jpg").read_bytes() for page in record["pages"]
+        (directory / f"{page['number']}.jpg").read_bytes()
+        for page in language_pages(record, locale)
     ]
     origin = os.environ.get(
         "SCENEWRIGHT_APP_URL", "https://app.scenewright.ink"

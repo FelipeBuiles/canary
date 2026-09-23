@@ -315,3 +315,103 @@ def test_showcase_rejects_unsafe_manifest_and_missing_pages(tmp_path, monkeypatc
     manifest.write_text(json.dumps(record))
     with pytest.raises(ValueError, match="Missing"):
         showcase.books()
+
+
+from novel_to_comic.lettering import service as lettering_service
+from novel_to_comic.lettering.translation import switch_stored_locale, prepare_translation
+from .test_hybrid_lettering import book as hybrid_book, save as save_lettering, update
+
+LONG = "An extremely long caption. " * 100
+
+
+@pytest.fixture
+def hybrid(hybrid_book, tmp_path, monkeypatch):
+    monkeypatch.setenv("CANARY_SHOWCASE_DIR", str(tmp_path / "showcase"))
+    monkeypatch.setattr(publications.limiter, "enabled", False)
+    artifacts, _image = hybrid_book
+    state = PipelineState(
+        project_name="Hybrid", novel_path="input/private.txt",
+        created_at="2026-01-01T00:00:00Z",
+    )
+    base = tmp_path / "public-root"
+    base.mkdir()
+    app = FastAPI()
+    app.include_router(publications.router, prefix="/api/projects/{project_id}")
+    app.include_router(publications.public_router, prefix="/api/public/books")
+    app.dependency_overrides[get_current_user] = lambda: "owner"
+    app.dependency_overrides[get_projects_dir] = lambda: base
+    app.dependency_overrides[get_project_dir] = lambda: artifacts.project_dir
+    app.dependency_overrides[get_project] = lambda: (artifacts.project_dir, Config(), state)
+    return TestClient(app), artifacts
+
+
+def letter(artifacts, texts):
+    initial = lettering_service.ensure_lettering(artifacts, 1)
+    item = initial.elements[0].model_dump()
+    item["text_by_locale"] = texts
+    return save_lettering(artifacts, update(initial, elements=[item]))
+
+
+def test_hybrid_publishes_only_complete_fitting_languages(hybrid):
+    client, artifacts = hybrid
+    # en is missing, fr is stored but overflows; only es is complete and fits.
+    letter(artifacts, {"source": "The door opened.", "es": "La puerta se abrió.", "fr": LONG})
+    book = publish(client)
+    assert book["locale"] == "source"
+    assert [item["locale"] for item in book["translations"]] == ["es"]
+    assert set(book["unpublished_locales"]) == {"en", "fr"}
+    assert "does not fit" in book["unpublished_locales"]["fr"]
+    public = client.get(f"/api/public/books/{book['id']}").json()
+    assert "unpublished_locales" not in public
+    assert public["translations"] == book["translations"]
+
+    spanish = book["translations"][0]["pages"]
+    assert [page["number"] for page in spanish] == [page["number"] for page in book["pages"]]
+    primary = client.get(book["pages"][0]["url"])
+    translated = client.get(spanish[0]["url"])
+    assert translated.status_code == 200
+    assert translated.headers["content-type"] == "image/jpeg"
+    assert translated.content != primary.content
+    root = f"/api/public/books/{book['id']}/{book['version']}/locales"
+    for locale in ("en", "fr", "source", "ES", "de"):
+        assert client.get(f"{root}/{locale}/pages/1").status_code == 404
+    assert client.get(f"{root}/es/pages/99").status_code == 404
+    download = f"/api/public/books/{book['id']}/download/cbz"
+    assert client.get(download, params={"locale": "es"}).status_code == 200
+    assert client.get(download, params={"locale": "fr"}).status_code == 404
+    # The project itself was never switched or rewritten to publish other languages.
+    assert artifacts.read_lettering_settings().locale == "source"
+    assert artifacts.read_lettering(1).locale == "source"
+
+
+def test_published_languages_stay_frozen_until_republished(hybrid):
+    client, artifacts = hybrid
+    letter(artifacts, {"source": "The door opened.", "es": "La puerta se abrió.", "fr": "La porte s'ouvrit."})
+    book = publish(client)
+    assert [item["locale"] for item in book["translations"]] == ["es", "fr"]
+    spanish_url = book["translations"][0]["pages"][0]["url"]
+    before = client.get(spanish_url).content
+    letter(artifacts, {"source": "The door opened.", "es": "Otra puerta.", "fr": "La porte s'ouvrit."})
+    prepared = prepare_translation(artifacts, Config(), "es")
+    switch_stored_locale(artifacts, Config(), "es", prepared.snapshot_sha256)
+    assert client.get(spanish_url).content == before
+    assert client.get(f"/api/public/books/{book['id']}").json()["locale"] == "source"
+
+    updated = publish(client)
+    assert updated["version"] != book["version"]
+    assert updated["locale"] == "es"
+    assert [item["locale"] for item in updated["translations"]] == ["fr"]
+    assert set(updated["unpublished_locales"]) == {"en"}
+    assert client.get(spanish_url).status_code == 404
+    assert client.get(updated["pages"][0]["url"]).content != before
+
+
+def test_baked_editions_publish_without_languages(setup):
+    client, _target = setup
+    book = publish(client)
+    assert "locale" not in book and "translations" not in book
+    assert "unpublished_locales" not in book
+    root = f"/api/public/books/{book['id']}/{book['version']}/locales"
+    assert client.get(f"{root}/es/pages/1").status_code == 404
+    download = f"/api/public/books/{book['id']}/download/pdf"
+    assert client.get(download, params={"locale": "es"}).status_code == 404

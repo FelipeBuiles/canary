@@ -30,6 +30,27 @@ revoke copies readers have already downloaded. Old version files are retained
 on disk; storage reclamation is not yet automated. This uses the same single
 persistent-volume deployment model as working project artifacts, not R2.
 
+## Reader languages
+
+Editable-lettering (hybrid) editions publish every stored language a reader can
+switch to. The project's current lettering language is the primary `pages` set,
+recorded as `locale` (`source` means the original copy). Each other `en`/`es`/`fr`
+language is frozen into the same version under `{version}/{locale}/` and listed in
+`translations`, with the same page numbers. A language qualifies only when every
+lettering element on every page stores it (translation's `translate_count == 0`
+rule, hidden elements included). Its saved placement is laid out again in memory
+and must pass publication validation: no overflow, `missing_glyphs`, `empty_copy`
+or other warnings. A language that fails is left out; the book still publishes,
+and the owner's publish response alone lists `unpublished_locales` with reasons.
+Publishing never switches or rewrites the project's lettering.
+
+Retained baked editions have no `locale` or `translations` and no reader toggle.
+Publications made before this change still read as single-language books; republish
+to add languages. The reader shows the toggle only for two or more languages, keeps
+the current page on a switch, names the language in each page's image label, and
+remembers the viewer's choice in `localStorage` (`canary.readerLanguage`).
+Downloads take `?locale=` for a published language.
+
 ## Manual homepage catalogue
 
 The homepage now reads the repository's `showcase/books/` folder, in alphabetical
@@ -58,7 +79,9 @@ it does not unpublish any separate account-owned publication.
 - `GET /api/public/books`: ordered books from the manual showcase folder.
 - `GET /api/public/books/{book_id}`: allowlisted public manifest.
 - `GET /api/public/books/{book_id}/{version}/pages/{number}`: current-version JPEG.
-- `GET /api/public/books/{book_id}/download/{pdf|cbz}`: published
+- `GET /api/public/books/{book_id}/{version}/locales/{locale}/pages/{number}`: the same page
+  in another published language; 404 for any language not in `translations`.
+- `GET /api/public/books/{book_id}/download/{pdf|cbz}[?locale=]`: published
   edition download with a branded closing page included in every download. It is appended outside
   story numbering and does not alter project exports or production artifacts.
   The closing page includes the existing logo, a QR code, and a clickable PDF
@@ -83,6 +106,7 @@ languages; the printed promotional back page currently uses English.
 ## Verification
 
 `test_publications.py` covers snapshot isolation, stable public IDs, failed
-updates, unfinished editions, unpublishing, account-scoped management, manual showcase packaging and removal, escaped crawler metadata, and mandatory PDF/CBZ back-page order.
+updates, unfinished editions, unpublishing, account-scoped management, manual showcase packaging and removal, escaped crawler metadata, mandatory PDF/CBZ back-page order,
+and reader languages (completeness and fit, frozen versions, baked editions).
 `publicBook.test.tsx` covers anonymous reading, unavailable books, export options,
-and explicit owner publishing/unpublishing.
+the language toggle, and explicit owner publishing/unpublishing.

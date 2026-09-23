@@ -14,8 +14,18 @@ from pydantic import BaseModel, Field, ConfigDict
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.artifact_lock import production_lock
 from novel_to_comic.models.finish import FinishProductionSpec
-from novel_to_comic.page_finishing import finish_book, source_credit_info, source_credit_page
-from novel_to_comic.target_artifacts import TargetArtifacts
+from novel_to_comic.lettering.service import is_hybrid, render_stored_locale
+from novel_to_comic.models.finish import FinishPreflight
+from novel_to_comic.page_finishing import (
+    _normalize_page,
+    finish_book,
+    source_credit_info,
+    source_credit_page,
+)
+from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
+
+# Reader languages; "source" is published only when it is the project's language.
+PUBLIC_LOCALES = ("en", "es", "fr")
 
 
 class PublicationInput(BaseModel):
@@ -47,6 +57,39 @@ def write_json(path: Path, data: dict):
     temporary = path.with_suffix(f".{uuid4().hex}.tmp")
     temporary.write_text(json.dumps(data))
     temporary.replace(path)
+
+
+def _translated_pages(
+    target: TargetArtifacts,
+    preflight: FinishPreflight,
+    locale: str,
+    directory: Path,
+    url: str,
+    primary: list[dict],
+    credit_image: bytes | None,
+) -> list[dict]:
+    """Every page of one stored language, or an error that leaves the language out."""
+    directory.mkdir(parents=True)
+    pages = []
+    production = preflight.production
+    for page, published in zip(preflight.pages, primary):
+        image = render_stored_locale(
+            target, page.page_number, locale, expected_render_revision=page.render_revision
+        )
+        spec = FinishProductionSpec(
+            canvas_width=page.width,
+            canvas_height=page.height,
+            bleed_px=page.bleed_px,
+            dpi=production.dpi if production else 300,
+            jpeg_quality=production.jpeg_quality if production else 88,
+        )
+        _normalize_page(image, directory / f"{page.page_number}.jpg", spec)
+        pages.append(published | {"url": f"{url}/{page.page_number}"})
+    if credit_image is not None:
+        published = primary[-1]
+        (directory / f"{published['number']}.jpg").write_bytes(credit_image)
+        pages.append(published | {"url": f"{url}/{published['number']}"})
+    return pages
 
 
 def publish(
@@ -94,6 +137,7 @@ def publish(
                         }
                     )
                 credit = source_credit_info(project_dir)
+                credit_image = None
                 if credit:
                     last = pages[-1]
                     production = result.preflight.production
@@ -115,6 +159,25 @@ def publish(
                         "height": spec.canvas_height,
                         "url": f"/api/public/books/{publication_id}/{version}/pages/{number}",
                     })
+                languages = {}
+                if is_hybrid(target):
+                    primary = target.read_lettering_settings().locale
+                    languages = {"locale": primary, "translations": [], "unpublished_locales": {}}
+                    for locale in PUBLIC_LOCALES:
+                        if locale == primary:
+                            continue
+                        try:
+                            translated = _translated_pages(
+                                target, result.preflight, locale, destination / locale,
+                                f"/api/public/books/{publication_id}/{version}/locales/{locale}/pages",
+                                pages, credit_image,
+                            )
+                        except (ValueError, ArtifactMissing, ArtifactInvalid) as exc:
+                            # Incomplete or unfit languages stay private; the book still publishes.
+                            shutil.rmtree(destination / locale, ignore_errors=True)
+                            languages["unpublished_locales"][locale] = str(exc)
+                            continue
+                        languages["translations"].append({"locale": locale, "pages": translated})
                 current = read_json(
                     root(projects_dir) / publication_id / "current.json"
                 )
@@ -130,6 +193,9 @@ def publish(
                 }
                 if credit:
                     record["source_credit"] = credit
+                if languages:
+                    record["locale"] = languages["locale"]
+                    record["translations"] = languages["translations"]
                 # Record the stable identity first; a failed initial publication is still private.
                 write_json(owner, {"id": publication_id})
                 write_json(root(projects_dir) / publication_id / "current.json", record)
@@ -138,4 +204,7 @@ def publish(
                 raise
             ctx.record_item_done()
             ctx.progress(1, 1)
+            # Why a language was left out is for the author only, never the public record.
+            if languages:
+                return record | {"unpublished_locales": languages["unpublished_locales"]}
             return record

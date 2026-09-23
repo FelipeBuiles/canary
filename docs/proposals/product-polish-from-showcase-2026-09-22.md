@@ -45,6 +45,11 @@ Done in the working tree, with provider-free tests. There was no visual pass in 
   Drawn detail has no recorded position and is never located. Stale lineage (source→Adapt→Plan) is
   rejected with a rerun instruction. **Open:** integrated pages without a text check show no
   outlines; how the text check itself should run is undecided (it was removed from Draw in `9f2f246`).
+- **A10 (September 23):** hybrid publications freeze every complete, fitting `en`/`es`/`fr`
+  language beside the primary one (`translations` in the manifest, `{version}/{locale}/` files,
+  `…/locales/{locale}/pages/{n}`). The public reader header has a language toggle that keeps
+  the page and remembers the viewer's choice. Baked editions and older publications have no
+  toggle. See [public books](../reference/public-books.md#reader-languages).
 - **B1:** audit is clean. Durable jobs already run on the admitted `Config` snapshot, and only the
   translation recheck re-read disk (already patched).
 - **B2:** `lettering_translation` has its own per-account lane and dispatch lock. Payloads carry
@@ -54,7 +59,7 @@ Done in the working tree, with provider-free tests. There was no visual pass in 
 - **B5:** fresh editions already composite without editor saves (existing test). The real failure
   was engine drift (v9→v10 in `a918055`). Composites now reflow in memory without saving, and placement review is requested.
 - **B7:** the reader slider announces "Page N of M".
-- **Not started:** A10, A12, B4 (each needs planning), and B6 (read-only check: failed proofs
+- **Not started:** A12, B4 (each needs planning), and B6 (read-only check: failed proofs
   already show "Try sample again" behind an estimate).
 
 **Evidence labels:** *Verified* = reproduced or read in code during this session.
