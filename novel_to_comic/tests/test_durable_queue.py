@@ -506,3 +506,40 @@ def test_draw_dispatch_failure_persists_stage_failure(tmp_path, monkeypatch):
     assert final.status == StageStatus.FAILED
     assert final.items_done == 0 and final.items_total == 63
     assert final.error == "Durable generation queue is unavailable"
+
+
+@pytest.mark.parametrize("sibling_queued", [False, True])
+def test_restore_closes_the_style_stage_a_hard_stop_left_running(tmp_path, sibling_queued):
+    """An interrupted Style batch must not leave the room 'generating' forever."""
+    from novel_to_comic.server.generation_jobs import GenerationJob
+    from novel_to_comic.state import StageStatus, begin_stage, create_initial_state, load_state, save_state
+
+    project = tmp_path / "account" / "book"
+    project.mkdir(parents=True)
+    state = create_initial_state("book", "novel.txt")
+    begin_stage(state, "style", total=6)
+    save_state(state, project)
+    app = make_app(tmp_path)
+    DurableQueue(app, "postgresql://unused")  # creates the journal schema
+
+    def style_job(job_id, status):
+        spec = command("style_suggest", project, Config(), lifecycle_owned=True, bible={})
+        spec = spec.model_copy(update={"stage": "style", "user_id": "account", "project_id": "book"})
+        job = GenerationJob(id=job_id, project_name="account:book", kind="style_suggest", label="Styles",
+                            payload={"proofs": {"1": {"status": "complete"}, "2": {"status": "running"}}},
+                            sequence=1, runner=None, command=spec, status=status)
+        job.user_id = "account"
+        with app.state.admission.journal() as db:
+            db.execute("INSERT INTO operation_outbox (id, command) VALUES (?, ?)", (job.id, spec.model_dump_json()))
+        persist_generation_job(app, job)
+
+    style_job("interrupted", "running")
+    if sibling_queued:
+        style_job("waiting", "queued")
+    DurableQueue(make_app(tmp_path), "postgresql://unused").restore()
+    style = load_state(project).stages["style"]
+    if sibling_queued:
+        assert style.status == StageStatus.RUNNING
+    else:
+        assert style.status == StageStatus.FAILED
+        assert style.items_done == 1

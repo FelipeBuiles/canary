@@ -76,3 +76,39 @@ def test_one_speakers_consecutive_lines_join_and_share_one_tail():
     assert lead.tail_target is not None and reply.link_to is None and reply.tail_target is not None
     assert follower.style_override is not None and follower.style_override.shape == "whisper"
     assert lead.style_override is None
+
+
+def test_only_art_only_samples_take_the_software_overlay(tmp_path):
+    import json
+    from novel_to_comic import artifacts
+    from novel_to_comic.stages.s2_style import STYLE_PROOF_ART_CONSTRAINTS, sample_takes_software_lettering
+
+    def sample(name, prompt):
+        path = tmp_path / name
+        path.write_bytes(b"png")
+        if prompt is not None:
+            artifacts.asset_meta_path(path).write_text(json.dumps({"prompt": prompt}))
+        return path
+
+    assert sample_takes_software_lettering(sample("art.png", "Old wording. " + STYLE_PROOF_ART_CONSTRAINTS))
+    assert not sample_takes_software_lettering(sample("baked.png", "Draw the lettering directly into the image."))
+    assert not sample_takes_software_lettering(sample("unknown.png", None))
+
+
+def test_style_proofs_render_without_holding_the_project_lock(tmp_path, monkeypatch):
+    import io
+    from PIL import Image
+    from novel_to_comic import artifact_lock
+    from novel_to_comic.lettering import proof
+    from novel_to_comic.target_artifacts import TargetArtifacts
+
+    key = str(tmp_path.resolve())
+    held = []
+    monkeypatch.setattr(proof, "resolve_style_proof", lambda style, w, h: None)
+    monkeypatch.setattr(proof, "render_lettered_page", lambda *args, **kwargs: (
+        held.append(key in getattr(artifact_lock._local, "held", set())) or b"png"))
+    buffer = io.BytesIO()
+    Image.new("RGB", (40, 50), "#888").save(buffer, "PNG")
+    data, identity = proof.render_style_proof(TargetArtifacts(tmp_path), service.preset_style(), buffer.getvalue())
+    assert data == b"png" and held == [False]
+    assert TargetArtifacts(tmp_path).lettering_proof_path(identity).read_bytes() == b"png"

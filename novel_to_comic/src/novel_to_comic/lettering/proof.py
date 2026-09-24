@@ -12,13 +12,13 @@ import json
 
 from PIL import Image
 
-from novel_to_comic.artifact_lock import locked_mutation
 from novel_to_comic.models.lettering import LetteringElement, LetteringStyle, PageLettering
 from novel_to_comic.models.page import NormalizedPoint, PinnedGeometry
 from novel_to_comic.target_artifacts import TargetArtifacts
+from .direction import mark_emphasis, voice_style
 from .renderer import ENGINE_VERSION, render_lettered_page, resolve_lettering
 
-PROOF_VERSION = "software-style-proof-v2"
+PROOF_VERSION = "software-style-proof-v3"
 SPECIMENS = (
     ("caption", "The night held its breath.", (.05, .04, .47, .14)),
     ("speech", "We keep moving.", (.54, .37, .23, .13)),
@@ -26,6 +26,10 @@ SPECIMENS = (
     ("thought", "Did you hear that?", (.05, .53, .44, .16)),
     ("sfx", "KRAK", (.58, .83, .36, .12)),
 )
+# Software-only showmanship: integrated proofs draw the plain specimen strings
+# above, so their requests (and paid samples) never change with this.
+_STRESS = {"speech": ("moving",)}
+_TAIL_BEND = {"speech": .35, "thought": -.3}
 
 
 def style_proof_state(style: LetteringStyle, width: int, height: int) -> PageLettering:
@@ -33,10 +37,11 @@ def style_proof_state(style: LetteringStyle, width: int, height: int) -> PageLet
     for specimen, text, bounds in SPECIMENS:
         role = "speech" if specimen == "shout" else specimen
         placement = PinnedGeometry(**dict(zip(("x", "y", "width", "height"), bounds)))
-        override = (style.roles.speech.model_copy(update={"shape": "burst", "align": "center", "padding": 5})
+        override = (voice_style(style.roles.speech, "speech", "shout").model_copy(update={"align": "center", "padding": 5})
                     if specimen == "shout" else None)
         elements.append(LetteringElement(
-            id=f"proof-{specimen}", role=role, text_by_locale={"source": text},
+            id=f"proof-{specimen}", role=role,
+            text_by_locale={"source": mark_emphasis(text, _STRESS.get(specimen, ()))},
             placement=placement, suggested_placement=placement,
             style_override=override,
         ))
@@ -62,16 +67,22 @@ def resolve_style_proof(style: LetteringStyle, width: int, height: int) -> PageL
             y = element.placement.y + body.height
             length = body.font_size * (1.25 if element.role == "thought" else .9) / 1000 * state.canvas_aspect_ratio
             target = NormalizedPoint(x=x, y=min(1, y + length))
-            element = element.model_copy(update={"tail_target": target, "suggested_tail_target": target})
+            element = element.model_copy(update={
+                "tail_target": target, "suggested_tail_target": target,
+                "tail_bend": _TAIL_BEND.get(element.id.removeprefix("proof-"), 0),
+            })
         elements.append(element)
     return state.model_copy(update={"elements": tuple(elements)})
 
 
-@locked_mutation
 def render_style_proof(
     target: TargetArtifacts, style: LetteringStyle, image: bytes,
 ) -> tuple[bytes, str]:
-    """Return a cached derivative keyed by art, exact style, engine and specimens."""
+    """Return a cached derivative keyed by art, exact style, engine and specimens.
+
+    Content-addressed, so the renderer runs without the production lock; only
+    the cache write takes it. Six proofs render side by side, not in a queue.
+    """
     identity = hashlib.sha256(json.dumps([
         hashlib.sha256(image).hexdigest(), style.content_sha256, ENGINE_VERSION,
         PROOF_VERSION, SPECIMENS,

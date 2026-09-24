@@ -178,7 +178,8 @@
         "text_stroke_width": 2,
         "warp": "wave",
         "warp_amount": 0.4,
-        "jitter": 0.15
+        "jitter": 0.15,
+        "letter_spacing": 2.5
       }
     },
     {

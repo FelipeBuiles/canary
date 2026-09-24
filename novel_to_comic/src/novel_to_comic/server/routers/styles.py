@@ -53,6 +53,7 @@ from novel_to_comic.stages.s2_style import (
     load_style_direction,
     load_suggestions,
     missing_sample_indices,
+    sample_takes_software_lettering,
     save_suggestions,
     style_direction_image,
     estimate_style_proof_cost_usd,
@@ -335,6 +336,7 @@ def get_styles(project_id: str, project=Depends(get_project), request: Request =
     )) if bible else set()
 
     active_index, active_id = _active_suggestion(suggestions, config)
+    editable = project_lettering_mode(TargetArtifacts(project_dir), config) == "editable"
     proof_states = {}
     active_style_jobs = []
     batch_jobs = []
@@ -391,9 +393,14 @@ def get_styles(project_id: str, project=Depends(get_project), request: Request =
         proof_revision = lettering_style.content_sha256
         result.append({
             **s,
+            # A stale art-only sample still takes today's software lettering:
+            # the overlay is free and lands in the spaces that art reserved.
             "sample_preview_url": (
                 f"{proof_base}/sample?style={proof_revision}"
-                if sample_exists and bible is not None and i not in stale_indices else None
+                if sample_exists and bible is not None and (
+                    i not in stale_indices
+                    or (editable and sample_takes_software_lettering(sample_path))
+                ) else None
             ),
             "lettering_source": "generated" if s.get("lettering_design") else "preset",
             "index": i,
@@ -443,13 +450,16 @@ def get_style_lettering_proof(
             # Integrated proof requests already draw their lettering into the image.
             return Response(source.read_bytes(), media_type="image/png", headers={"Cache-Control": "private, no-cache"})
         style = _proof_style(project[0], suggestion, active=suggestion["is_active"])
-        try:
-            data, identity = render_style_proof(TargetArtifacts(project[0]), style, source.read_bytes())
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        return Response(data, media_type="image/png", headers={
-            "Cache-Control": "private, no-cache", "ETag": f'"{identity}"',
-        })
+        art = source.read_bytes()
+    # The overlay is a content-addressed derivative: render it outside the lock
+    # so a cold proof never stalls the rest of the project (or the other proofs).
+    try:
+        data, identity = render_style_proof(TargetArtifacts(project[0]), style, art)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return Response(data, media_type="image/png", headers={
+        "Cache-Control": "private, no-cache", "ETag": f'"{identity}"',
+    })
 
 
 @router.get("/styles/suggest-estimate")
