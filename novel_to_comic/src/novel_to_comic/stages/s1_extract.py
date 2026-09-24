@@ -507,7 +507,62 @@ def _parse_extraction(raw: object, novel_text: str) -> StoryBible:
                         "use distinct beats or scenes so every state has a visible interval."
                     )
                 positions.add(position)
+    _check_character_looks(result.get("characters", []))
     return StoryBible.model_validate(result)
+
+
+# A Character renders as one body; a plural name signals a merged group.
+_GROUP_NAME = re.compile(
+    r"^(?:the\s+)?(?:two|three|four|five|six|several|many|both|pair\s+of|group\s+of|couple\s+of)\b"
+    r"|^(?:the\s+)?(?:\w+\s+)?(?:twins|officers|policemen|guards|soldiers)$",
+    re.IGNORECASE,
+)
+# Image providers refuse these; uncanny anatomy must be expressed non-explicitly.
+_EXPLICIT_ANATOMY = re.compile(r"\b(?:genital|genitals|genitalia|nipples?|penis|vagina|vulva|pubic|areolae?)\b",
+                               re.IGNORECASE)
+
+
+def _tag_set(anchor: str) -> frozenset[str]:
+    return frozenset(tag.strip().casefold() for tag in anchor.split(",") if tag.strip())
+
+
+def _check_character_looks(characters: list[dict]) -> None:
+    """Reject merged groups, explicit anatomy tags and duplicate state looks."""
+    errors = []
+    for character in characters:
+        cid, name = character.get("id"), str(character.get("name", ""))
+        if _GROUP_NAME.search(name.strip()):
+            errors.append(
+                f"{cid} '{name}' names a group. Each character is one individual: give each "
+                "individually staged member its own singular entry, or keep interchangeable "
+                "members as background figures in scene summaries."
+            )
+        base = str(character.get("visual_anchor", ""))
+        looks = [("base", base, None)] + [
+            (state.get("id"), str(state.get("visual_anchor", "")), state.get("continuity_guard"))
+            for state in character.get("appearance_states", [])
+        ]
+        for look_id, anchor, guard in looks:
+            if _EXPLICIT_ANATOMY.search(f"{anchor} {guard or ''}"):
+                errors.append(
+                    f"{cid}/{look_id} tags genitals or nipples. Remove them; describe uncanny "
+                    "anatomy non-explicitly and tag only what the look visibly shows."
+                )
+        seen = {_tag_set(base): "base"}
+        for state in character.get("appearance_states", []):
+            # Demeanor-only states (no changed facets) legitimately reuse an anchor.
+            if state.get("canonical_equivalent") or not state.get("changed_facets"):
+                continue
+            tags = _tag_set(str(state.get("visual_anchor", "")))
+            if tags in seen:
+                errors.append(
+                    f"{cid}/{state.get('id')} declares a physical change but repeats the {seen[tags]} "
+                    "look. Re-activate the existing "
+                    "state (or a canonical_equivalent state for the base) instead of a duplicate."
+                )
+            seen.setdefault(tags, state.get("id"))
+    if errors:
+        raise ValueError("Character look errors: " + " ".join(errors))
 
 
 async def _extract_with_retry(

@@ -17,6 +17,7 @@ from typing import Literal, Sequence
 from novel_to_comic.models.page import ComicPage, NormalizedPoint, PinnedGeometry
 
 Side = Literal["left", "right"]
+Rect = tuple[float, float, float, float]  # x, y, width, height in page space.
 
 MARGIN_X = 0.02
 MARGIN_Y = 0.014
@@ -39,6 +40,8 @@ class Entry:
     width: float
     height: float
     tail_hint: NormalizedPoint | None = None  # Plan's own pointer, if any.
+    anchor: Rect | None = None  # The speaker's head, when the page read found it.
+    avoid: tuple[Rect, ...] = ()  # Every head in the panel.
 
 
 def usable(page: ComicPage, panels: Sequence[PinnedGeometry]) -> bool:
@@ -177,21 +180,71 @@ def preferred_origin(
     return x, y
 
 
-def layout_page(page: ComicPage, panels: Sequence[PinnedGeometry], size_of) -> dict:
-    """Arrange every item in its drawn panel; ``size_of(item, reservation, panel)``."""
+def speaker_heads(
+    page: ComicPage, panels: Sequence[PinnedGeometry], heads: Sequence, assigned: dict[str, int]
+) -> tuple[dict[int, tuple[Rect, ...]], dict[str, Rect]]:
+    """Heads per drawn panel, and the speaker's head for each onscreen line.
+
+    A head labelled with the speaker's cast ID wins. An unlabelled head counts
+    only when it is the panel's only head and the line's speaker is the only
+    one speaking in that panel.
+    """
+    in_panel: dict[int, list] = {}
+    for head in heads:
+        index = _nearest(panels, head.x + head.width / 2, head.y + head.height / 2)
+        in_panel.setdefault(index, []).append(head)
+    voices: dict[int, set[str]] = {}
+    for part in page.content:
+        for item in part.lettering:
+            if item.delivery == "onscreen" and item.speaker_entity_id:
+                voices.setdefault(assigned[item.id], set()).add(item.speaker_entity_id)
+    anchors: dict[str, Rect] = {}
+    for part in page.content:
+        for item in part.lettering:
+            speaker = item.speaker_entity_id if item.delivery == "onscreen" else None
+            local = in_panel.get(assigned[item.id], [])
+            if speaker is None or not local:
+                continue
+            labelled = [h for h in local if h.entity_id == speaker]
+            if not labelled and len(local) == 1 and local[0].entity_id is None \
+                    and voices.get(assigned[item.id]) == {speaker}:
+                labelled = local
+            if labelled:
+                head = max(labelled, key=lambda h: h.width * h.height)
+                anchors[item.id] = (head.x, head.y, head.width, head.height)
+    return (
+        {index: tuple((h.x, h.y, h.width, h.height) for h in local) for index, local in in_panel.items()},
+        anchors,
+    )
+
+
+def layout_page(
+    page: ComicPage, panels: Sequence[PinnedGeometry], size_of, heads: Sequence = ()
+) -> dict:
+    """Arrange every item in its drawn panel; ``size_of(item, reservation, panel)``.
+
+    ``heads`` (the page read's ObservedFigures) centre a speaker's balloon over
+    their head and keep every balloon off faces; without them Plan's position
+    and the speaker-order lean are used.
+    """
     reservations = {r.lettering_item_id: r for r in page.lettering_reservations or ()}
     assigned = assign_panels(page, panels)
     sides = speaker_sides(page)
+    avoid, anchors = speaker_heads(page, panels, heads, assigned)
     by_panel: dict[int, list[Entry]] = {}
     for part in sorted(page.content, key=lambda part: part.order):
         for item in part.lettering:
             index, reservation = assigned[item.id], reservations[item.id]
             width, height = size_of(item, reservation, panels[index])
             x, y = preferred_origin(reservation, panels, index, width, height)
+            anchor = anchors.get(item.id)
+            if anchor is not None:
+                x = anchor[0] + anchor[2] / 2 - width / 2
             by_panel.setdefault(index, []).append(Entry(
                 id=item.id, role=ROLE[item.kind], side=sides[item.id],
                 wants_tail=wants_tail(item), x=x, y=y, width=width, height=height,
-                tail_hint=reservation.tail_target,
+                tail_hint=reservation.tail_target, anchor=anchor,
+                avoid=avoid.get(index, ()),
             ))
     layout = {}
     for index, entries in by_panel.items():
@@ -228,6 +281,8 @@ def arrange(
         height = min(entry.height, bottom - top)
         x = max(left, min(entry.x, right - width))
         y = max(top, min(entry.y, bottom - height))
+        bounds = (left, top, right, bottom)
+        x, y = clear_of(x, y, width, height, entry.avoid, bounds)
         if placed:
             prev = placed[-1]
             y = max(y, prev[1] if x >= prev[0] + prev[2] else prev[1] + prev[3] * 0.5)
@@ -236,6 +291,8 @@ def arrange(
                 if not blocking:
                     break
                 y = max(o[1] + o[3] for o in blocking) + GAP
+            # Reading order may push it back onto a face: step sideways only.
+            x, y = clear_of(x, y, width, height, entry.avoid, bounds, vertical=False)
         y = max(top, min(y, bottom - height))
         placed.append((x, y, width, height))
         rect = PinnedGeometry(
@@ -243,7 +300,10 @@ def arrange(
             width=width, height=height,
         )
         tail = None
-        if entry.wants_tail:
+        if entry.wants_tail and entry.anchor is not None:
+            tail = toward_head(rect, entry.anchor)
+            stems.append(_stem(rect, tail))
+        elif entry.wants_tail:
             hint = entry.tail_hint
             # Plan's pointer was written blind to the art; keep it only when it
             # stays in this drawn panel and outside the balloon.
@@ -260,6 +320,46 @@ def arrange(
                 stems.append(_stem(rect, tail))
         result[entry.id] = (rect, tail)
     return result
+
+
+def clear_of(
+    x: float, y: float, width: float, height: float, heads: Sequence[Rect],
+    bounds: tuple[float, float, float, float], *, vertical: bool = True,
+) -> tuple[float, float]:
+    """The nearest spot that covers no face, inside ``bounds``; else unchanged.
+
+    Keep in parity with engine.mjs clearOfHeads.
+    """
+    if not any(_overlaps((x, y, width, height), head) for head in heads):
+        return x, y
+    left, top, right, bottom = bounds
+    candidates = []
+    for hx, hy, hw, hh in heads:
+        candidates += [(hx - width - GAP, y), (hx + hw + GAP, y)]
+        if vertical:
+            candidates += [(x, hy - height - GAP), (x, hy + hh + GAP)]
+    fitting = [
+        (cx, cy) for cx, cy in candidates
+        if left - 1e-9 <= cx and cx + width <= right + 1e-9
+        and top - 1e-9 <= cy and cy + height <= bottom + 1e-9
+        and not any(_overlaps((cx, cy, width, height), head) for head in heads)
+    ]
+    if not fitting:
+        return x, y
+    return min(fitting, key=lambda c: (c[0] - x) ** 2 + (c[1] - y) ** 2)
+
+
+def toward_head(body: PinnedGeometry, head: Rect) -> NormalizedPoint:
+    """Tail tip on the edge of the speaker's head nearest the balloon.
+
+    Keep in parity with engine.mjs tailTowardHead.
+    """
+    hx, hy, hw, hh = head
+    cx, cy = body.x + body.width / 2, body.y + body.height / 2
+    px, py = min(max(cx, hx), hx + hw), min(max(cy, hy), hy + hh)
+    if _contains(body, px, py):  # Balloon over the head: aim at its middle.
+        px, py = hx + hw / 2, hy + hh / 2
+    return NormalizedPoint(x=max(0.0, min(1.0, px)), y=max(0.0, min(1.0, py)))
 
 
 def _stem(body: PinnedGeometry, tail: NormalizedPoint):

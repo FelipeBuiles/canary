@@ -23,6 +23,10 @@ FontName = Literal[
     "Fredoka",
     "Orbitron",
     "Bungee",
+    "Baloo 2",
+    "Exo 2",
+    "Shrikhand",
+    "Creepster",
 ]
 RoleName = Literal["caption", "speech", "thought", "sfx"]
 Color = Annotated[str, Field(pattern=r"^(#[0-9a-fA-F]{6}|transparent)$")]
@@ -43,10 +47,38 @@ class RoleStyle(BaseModel):
     stroke_width: float = Field(default=1.6, ge=0, le=12)
     padding: float = Field(default=11, ge=0, le=40)
     corner_radius: float = Field(default=12, ge=0, le=80)
-    shape: Literal["box", "round", "balloon", "ellipse", "cloud", "whisper", "burst", "none"] = "balloon"
+    shape: Literal[
+        "box", "round", "balloon", "ellipse", "cloud", "whisper", "burst", "wavy", "electric", "none"
+    ] = Field(
+        default="balloon",
+        description="balloon: speech; cloud: thought; burst: shout; whisper: dashed; "
+        "wavy: weak or woozy voice; electric: radio, phone or machine voice; box/round: captions.",
+    )
     letter_spacing: float = Field(default=0, ge=-1, le=12)
     text_stroke: Color = "transparent"
     text_stroke_width: float = Field(default=0, ge=0, le=12)
+    text_case: Literal["as_written", "upper"] = Field(
+        default="as_written", description="upper: classic all-caps comic lettering. Copy stays as written."
+    )
+    tail_width: float = Field(default=1, ge=0.4, le=2.5, description="Balloon tail root width multiplier.")
+    halo_color: Color = "transparent"
+    halo_width: float = Field(
+        default=0, ge=0, le=16,
+        description="Outer knockout outline around the balloon, or around the letters when shape is none.",
+    )
+    shadow: Literal["none", "drop", "extrude"] = Field(
+        default="none", description="drop: offset shadow; extrude: solid 3D depth. Applies like the halo."
+    )
+    shadow_color: Color = "#181818"
+    shadow_x: float = Field(default=4, ge=-40, le=40)
+    shadow_y: float = Field(default=4, ge=-40, le=40)
+    gradient_color: Color = Field(
+        default="transparent", description="Letters fade vertically from color to this color."
+    )
+    warp: Literal["none", "arc", "wave"] = "none"
+    warp_amount: float = Field(default=0.5, ge=-1, le=1, description="Warp strength; negative bends the other way.")
+    jitter: float = Field(default=0, ge=0, le=1, description="Seeded per-letter bounce, for sound effects.")
+    skew: float = Field(default=0, ge=-30, le=30, description="Letter lean in degrees; positive leans forward.")
 
     @model_validator(mode="after")
     def _font_range(self):
@@ -126,6 +158,8 @@ class ResolvedLineMetrics(BaseModel):
     width: float = Field(ge=0)
     ascent: float = Field(ge=0)
     descent: float = Field(ge=0)
+    # Glyph start offsets plus the line end, only for letters placed one by one.
+    glyph_x: tuple[float, ...] | None = Field(default=None, max_length=401)
 
 
 class ResolvedLettering(BaseModel):
@@ -158,6 +192,10 @@ class LetteringElement(BaseModel):
     style_override: RoleStyle | None = None
     tail_target: NormalizedPoint | None = None
     suggested_tail_target: NormalizedPoint | None = None
+    # Sideways bow of the tail's spine; 0 is straight.
+    tail_bend: float = Field(default=0, ge=-1, le=1)
+    # Joins this balloon to an earlier balloon of the same page into one silhouette.
+    link_to: str | None = Field(default=None, max_length=100)
     rotation: float = Field(default=0, ge=-180, le=180)
     scale: float = Field(default=1, ge=0.25, le=3)
     z_index: int = Field(default=0, ge=-1000, le=1000)
@@ -193,4 +231,13 @@ class PageLettering(RevisionedArtifact):
         ]
         if len(ids) != len(set(ids)) or len(sources) != len(set(sources)):
             raise ValueError("lettering element and source IDs must be unique")
+        links = {item.id: item.link_to for item in self.elements if item.link_to is not None}
+        for start in links:
+            seen, cursor = set(), start
+            while cursor in links:
+                target = links[cursor]
+                if cursor in seen or target == cursor or target not in ids:
+                    raise ValueError("balloon links must join existing balloons without loops")
+                seen.add(cursor)
+                cursor = target
         return self

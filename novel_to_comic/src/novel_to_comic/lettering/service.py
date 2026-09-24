@@ -6,7 +6,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from PIL import Image
 
@@ -28,6 +28,8 @@ from novel_to_comic.style_contract import (
 )
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 from . import placement
+from .direction import direction_for, joined_to, mark_emphasis, voice_style
+from .page_read import read_for_render
 from .panels import detect_panels
 from .renderer import (
     ENGINE_VERSION,
@@ -71,39 +73,98 @@ def active_render(artifacts: TargetArtifacts, page_number: int):
     return render
 
 
+# Hand-lettered dialogue convention: all caps, a comic face, snug balloons.
+_COMIC_VOICE = {"font": "Comic Neue", "min_font_size": 17, "max_font_size": 21, "text_case": "upper"}
+# Book-wide lettering looks. Each patches the literary defaults per role.
+PRESETS: dict[str, tuple[str, dict[str, dict]]] = {
+    "literary": ("Literary classic", {}),
+    "classic": ("Classic comic", {
+        "caption": {"font": "Comic Neue", "min_font_size": 17, "max_font_size": 23, "text_case": "upper"},
+        "speech": _COMIC_VOICE,
+        "thought": _COMIC_VOICE,
+        "sfx": {"color": "#ffe14d", "gradient_color": "#ff8a1f", "shadow": "extrude",
+                "shadow_color": "#8c2a0e", "shadow_x": 4, "shadow_y": 5,
+                "halo_color": "#181818", "halo_width": 1.2, "jitter": 0.2},
+    }),
+    "golden_age": ("Golden age", {
+        "caption": {"font": "Comic Neue", "font_weight": 700, "fill": "#ffe36e", "stroke_width": 2,
+                    "min_font_size": 17, "max_font_size": 22, "text_case": "upper"},
+        "speech": {**_COMIC_VOICE, "stroke_width": 2},
+        "thought": {**_COMIC_VOICE, "stroke_width": 2},
+        "sfx": {"color": "#ff3b2f", "gradient_color": "#ffc93c", "text_stroke_width": 3,
+                "shadow": "extrude", "shadow_color": "#181818", "shadow_x": 5, "shadow_y": 6,
+                "jitter": 0.3, "skew": -6},
+    }),
+    "pulp": ("Pulp ink", {
+        "caption": {"font": "Special Elite", "fill": "#fff0b8", "min_font_size": 18, "max_font_size": 24,
+                    "shadow": "drop", "shadow_x": 3, "shadow_y": 3},
+        "speech": _COMIC_VOICE,
+        "thought": _COMIC_VOICE,
+        "sfx": {"font": "Bungee", "color": "#fff0b8", "gradient_color": "#f5b642",
+                "shadow": "drop", "shadow_x": 6, "shadow_y": 6, "skew": 8},
+    }),
+    "manga": ("Manga", {
+        "caption": {"font": "Comic Neue", "fill": "#ffffff", "min_font_size": 16, "max_font_size": 20,
+                    "stroke_width": 1.2, "text_case": "upper"},
+        "speech": {**_COMIC_VOICE, "shape": "ellipse", "stroke_width": 1.3},
+        "thought": {**_COMIC_VOICE, "shape": "wavy", "stroke_width": 1.2},
+        "sfx": {"color": "#181818", "text_stroke": "#ffffff", "text_stroke_width": 3.5,
+                "halo_color": "#181818", "halo_width": 1.2, "skew": -10, "jitter": 0.35},
+    }),
+    "noir": ("Noir", {
+        "caption": {"font": "Special Elite", "fill": "#1b1b1b", "color": "#efe9dc", "stroke": "#1b1b1b",
+                    "min_font_size": 17, "max_font_size": 22},
+        "speech": _COMIC_VOICE,
+        "thought": {**_COMIC_VOICE, "shape": "round", "fill": "#e9e6df", "corner_radius": 16},
+        "sfx": {"color": "#f4f1ea", "text_stroke_width": 3, "shadow": "drop",
+                "shadow_x": 5, "shadow_y": 5, "skew": 6},
+    }),
+    "horror": ("Horror", {
+        "caption": {"font": "Special Elite", "fill": "#efe3c8", "color": "#3a2418", "stroke": "#3a2418",
+                    "min_font_size": 17, "max_font_size": 22, "shadow": "drop", "shadow_color": "#0d0806",
+                    "shadow_x": 3, "shadow_y": 3},
+        "speech": _COMIC_VOICE,
+        "thought": {**_COMIC_VOICE, "shape": "wavy", "fill": "#f3efe6"},
+        "sfx": {"font": "Creepster", "color": "#e0303f", "gradient_color": "#5c0a14",
+                "text_stroke": "#0a0a0a", "text_stroke_width": 2, "warp": "wave",
+                "warp_amount": 0.35, "jitter": 0.2},
+    }),
+    "scifi": ("Sci-fi", {
+        "caption": {"font": "Exo 2", "fill": "#0f1d2b", "color": "#bfefff", "stroke": "#5ad1ff",
+                    "shape": "round", "corner_radius": 6, "min_font_size": 16, "max_font_size": 21},
+        "speech": {"font": "Exo 2", "min_font_size": 16, "max_font_size": 20, "text_case": "upper"},
+        "thought": {"font": "Exo 2", "min_font_size": 16, "max_font_size": 20, "text_case": "upper"},
+        "sfx": {"font": "Orbitron", "color": "#b8f4ff", "gradient_color": "#2a7fff",
+                "text_stroke": "#06202a", "halo_color": "#b8f4ff", "halo_width": 1, "skew": 10},
+    }),
+    "storybook": ("Storybook", {
+        "caption": {"font": "Baloo 2", "fill": "#fff6e0", "shape": "round", "corner_radius": 14,
+                    "min_font_size": 17, "max_font_size": 23},
+        "speech": {"font": "Baloo 2", "min_font_size": 17, "max_font_size": 22},
+        "thought": {"font": "Baloo 2", "min_font_size": 17, "max_font_size": 22},
+        "sfx": {"font": "Shrikhand", "color": "#ff6f61", "gradient_color": "#ffb347",
+                "text_stroke": "#3b1f1a", "text_stroke_width": 2, "shadow": "drop",
+                "shadow_color": "#3b1f1a", "shadow_x": 3, "shadow_y": 4, "warp": "arc", "warp_amount": 0.4},
+    }),
+    "minimal": ("Quiet modern", {
+        "caption": {"font": "Comic Neue", "fill": "#ffffff", "stroke_width": 1,
+                    "min_font_size": 17, "max_font_size": 24},
+        "speech": {"font": "Comic Neue", "min_font_size": 17, "max_font_size": 21,
+                   "stroke_width": 1, "corner_radius": 18},
+        "thought": {"font": "Comic Neue", "min_font_size": 17, "max_font_size": 21},
+    }),
+}
+
+
 def preset_style(
     name: str = "literary", *, direction: str = "", revision: int = 1
 ) -> LetteringStyle:
+    label, patches = PRESETS.get(name) or PRESETS["literary"]
     roles = LetteringRoles().model_dump()
-    labels = {
-        "literary": "Literary classic",
-        "classic": "Classic comic",
-        "pulp": "Pulp ink",
-        "minimal": "Quiet modern",
-    }
-    if name not in labels:
-        name = "literary"
-    if name != "literary":
-        for role in ("speech", "thought"):
-            roles[role].update(font="Comic Neue", min_font_size=17, max_font_size=21)
-    if name == "classic":
-        roles["caption"].update(font="Comic Neue", min_font_size=17, max_font_size=25)
-    elif name == "pulp":
-        roles["caption"].update(
-            font="Special Elite", fill="#fff0b8", min_font_size=18, max_font_size=24
-        )
-        roles["sfx"].update(font="Bungee", color="#fff0b8")
-    elif name == "minimal":
-        roles["caption"].update(
-            font="Comic Neue",
-            fill="#ffffff",
-            stroke_width=1,
-            min_font_size=17,
-            max_font_size=24,
-        )
-        roles["speech"].update(stroke_width=1, corner_radius=18)
+    for role, patch in patches.items():
+        roles[role].update(patch)
     return LetteringStyle(
-        revision=revision, label=labels[name], source_direction=direction, roles=roles
+        revision=revision, label=label, source_direction=direction, roles=roles
     )
 
 
@@ -197,10 +258,15 @@ def seed_lettering(
     revision: int = 1,
     locale: str = "source",
     panels: Sequence[PinnedGeometry] | None = None,
+    heads: Sequence = (),
+    sources: Mapping[str, str] | None = None,
 ) -> PageLettering:
     """First-draft placement. ``panels`` (gutters of the base art) keep each item
-    inside its drawn panel; without them Plan's reservations are used as-is.
+    inside its drawn panel; ``heads`` (a stored page read) put speech over its
+    speaker and off faces. Without panels Plan's reservations are used as-is.
     Either way these are seeds for the author, never reviewed placement.
+    ``sources`` (source unit text) lets each seed take the voice its prose
+    tags give it; see ``direction``.
     """
     if page.lettering_reservations is None:
         raise LetteringConflict(
@@ -212,12 +278,16 @@ def seed_lettering(
     layout = None
     if panels is not None and placement.usable(page, panels):
         layout = placement.layout_page(
-            page, panels, lambda item, reservation, panel: placement.frame_size(reservation, panel)
+            page, panels, lambda item, reservation, panel: placement.frame_size(reservation, panel),
+            heads,
         )
     elements = []
     for panel in sorted(page.content, key=lambda part: part.order):
         for index, item in enumerate(panel.lettering):
             reservation = reservation_by_id[item.id]
+            role = placement.ROLE[item.kind]
+            voice = direction_for(item, sources or {})
+            joined = index > 0 and joined_to(panel.lettering[index - 1], item)
             if layout is not None:
                 # The tail is Plan's pointer when it fits the drawn panel.
                 suggestion, tail_target = layout[item.id]
@@ -228,16 +298,24 @@ def seed_lettering(
                 tail_target = reservation.tail_target
                 if tail_target is None and placement.wants_tail(item):
                     tail_target = default_tail_target(suggestion)
+            if joined:
+                tail_target = None  # A joined balloon speaks through its lead's tail.
             elements.append(
                 LetteringElement(
                     id=item.id,
                     source_lettering_item_id=item.id,
-                    role=placement.ROLE[item.kind],
-                    text_by_locale={"source": item.text},
+                    role=role,
+                    # Stress is display markup; the canonical words are untouched.
+                    text_by_locale={"source": mark_emphasis(item.text, voice.emphasis)},
                     suggested_placement=suggestion,
                     placement=suggestion,
                     tail_target=tail_target,
                     suggested_tail_target=tail_target,
+                    style_override=(
+                        voice_style(getattr(style.roles, role), role, voice.voice)
+                        if voice.voice else None
+                    ),
+                    link_to=panel.lettering[index - 1].id if joined else None,
                     z_index=len(elements),
                 )
             )
@@ -252,7 +330,7 @@ def seed_lettering(
     )
 
 
-_FRAME_SLACK = 0.002  # Keeps the measured wrap feasible after shrinking the frame.
+_FRAME_SLACK = 0.002  # Keeps the measured wrap feasible when the page edge trims a frame.
 
 
 def settle_seeds(
@@ -260,12 +338,15 @@ def settle_seeds(
     page: ComicPage,
     style: LetteringStyle,
     panels: Sequence[PinnedGeometry] | None,
+    heads: Sequence = (),
 ) -> PageLettering:
     """Resolve a fresh seed, then arrange it again with measured balloon sizes.
 
-    Tight balloons anchor at their frame's top-left, so a right-leaning seed
-    only lands on the right once its real size is known. Frames shrink to the
-    balloon; an element whose wrap would change keeps its first frame size.
+    Tight balloons anchor at their frame's top-left, so a balloon lands where
+    it is arranged once its real size is known and its frame's corner moves
+    there. Frames keep Plan's roomier size so longer translations still fit;
+    only the page edge trims them. An element whose wrap would change keeps
+    its first frame and may shift left or up to stay on the page.
     """
     first = resolve_lettering(state, style)
     if panels is None or not placement.usable(page, panels):
@@ -281,15 +362,14 @@ def settle_seeds(
             return element.resolved.width, element.resolved.height
         return element.placement.width, element.placement.height
 
-    layout = placement.layout_page(page, panels, size_of)
+    layout = placement.layout_page(page, panels, size_of, heads)
 
     def moved(element: LetteringElement, keep_frame: bool) -> LetteringElement:
         body, tail = layout[element.id]
-        width, height = (
-            (element.placement.width, element.placement.height)
-            if keep_frame or not fits(element)
-            else (body.width + _FRAME_SLACK, body.height + _FRAME_SLACK)
-        )
+        width, height = element.placement.width, element.placement.height
+        if fits(element) and not keep_frame:
+            width = max(min(width, 1 - body.x), min(1 - body.x, body.width + _FRAME_SLACK))
+            height = max(min(height, 1 - body.y), min(1 - body.y, body.height + _FRAME_SLACK))
         frame = PinnedGeometry(
             x=min(body.x, 1 - min(1.0, width)), y=min(body.y, 1 - min(1.0, height)),
             width=min(1.0, width), height=min(1.0, height),
@@ -325,6 +405,20 @@ def page_panels(artifacts: TargetArtifacts, page_number: int, render) -> tuple[P
         return detect_panels(image)
 
 
+def source_texts(artifacts: TargetArtifacts, page: ComicPage) -> dict[str, str]:
+    """Source prose cited by this page's lettering, for voice direction only."""
+    cited = {
+        unit for panel in page.content for item in panel.lettering for unit in item.source_unit_ids
+    }
+    if not cited:
+        return {}
+    try:
+        units = artifacts.read_source().units
+    except ArtifactMissing:
+        return {}
+    return {unit.id: unit.text for unit in units if unit.id in cited}
+
+
 def seed_page(
     artifacts: TargetArtifacts,
     page: ComicPage,
@@ -334,11 +428,19 @@ def seed_page(
     revision: int = 1,
     locale: str = "source",
 ) -> PageLettering:
-    """Resolved first-draft lettering for the current art. Placement review stays pending."""
+    """Resolved first-draft lettering for the current art. Placement review stays pending.
+
+    Uses a stored page read for this exact art when there is one; never requests one.
+    """
     panels = page_panels(artifacts, page.page_number, render)
+    read = read_for_render(artifacts, page.page_number, render)
+    heads = (read.heads or ()) if read is not None else ()
     return settle_seeds(
-        seed_lettering(page, render, style, revision=revision, locale=locale, panels=panels),
-        page, style, panels,
+        seed_lettering(
+            page, render, style, revision=revision, locale=locale, panels=panels, heads=heads,
+            sources=source_texts(artifacts, page),
+        ),
+        page, style, panels, heads,
     )
 
 
@@ -413,6 +515,7 @@ def editor_state(artifacts: TargetArtifacts, page_number: int) -> dict:
         "source_stale": source_stale,
         "needs_save": reflow,
         "placement_review_needed": source_stale or placement_review_needed(state, render),
+        "evidence": placement_evidence(artifacts, page, render),
         "canonical": {
             item.id: {
                 "text": item.text,
@@ -423,6 +526,66 @@ def editor_state(artifacts: TargetArtifacts, page_number: int) -> dict:
             }
             for part in page.content
             for item in part.lettering
+        },
+    }
+
+
+def placement_evidence(
+    artifacts: TargetArtifacts, page: ComicPage, render
+) -> dict:
+    """What the editor's live placement checks read; free and provider-free.
+
+    Panels come from the art's gutters. ``page_read`` is the stored text
+    check for exactly this art (heads, stray lettering, in-world writing), or
+    None when the page has not been checked. Hints only, never acceptance.
+    """
+    read = read_for_render(artifacts, page.page_number, render)
+    speakers = {
+        item.id: item.speaker_entity_id if item.delivery == "onscreen" else None
+        for part in page.content for item in part.lettering
+    }
+    names = {
+        item.speaker_entity_id: item.speaker
+        for part in page.content for item in part.lettering
+        if item.speaker_entity_id and item.speaker
+    }
+    rect = lambda r: {"x": r.x, "y": r.y, "width": r.width, "height": r.height}  # noqa: E731
+    return {
+        "panels": [rect(p) for p in page_panels(artifacts, page.page_number, render)],
+        "speakers": speakers,
+        "speaker_names": names,
+        "page_read": None if read is None else {
+            "render_revision": read.render_revision,
+            "heads": None if read.heads is None else [
+                {"id": h.id, "entity_id": h.entity_id, **rect(h)} for h in read.heads
+            ],
+            "stray_lettering": [{"text": m.text, **rect(m)} for m in read.stray_lettering],
+            "in_world_text": [{"text": m.text, **rect(m)} for m in read.in_world_text],
+        },
+    }
+
+
+def suggested_placements(artifacts: TargetArtifacts, page_number: int) -> dict:
+    """A fresh first draft for the current art, as a proposal only.
+
+    Nothing is saved: the editor applies it as an undoable draft change and
+    the author still confirms placement. Suggested placement stays the seed.
+    """
+    if not is_hybrid(artifacts):
+        raise LetteringConflict("This edition's words are part of the artwork.")
+    render = active_render(artifacts, page_number)
+    page = artifacts.read_page(page_number)
+    seeded = seed_page(
+        artifacts, page, render, ensure_style(artifacts),
+        locale=artifacts.read_lettering_settings().locale,
+    )
+    return {
+        "render_revision": render.revision,
+        "render_image_sha256": render.image_sha256,
+        "uses_faces": bool((read := read_for_render(artifacts, page_number, render)) and read.heads),
+        "elements": {
+            element.id: {"placement": element.placement, "tail_target": element.tail_target}
+            for element in seeded.elements
         },
     }
 

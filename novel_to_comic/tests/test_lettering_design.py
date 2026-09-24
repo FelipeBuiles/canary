@@ -129,7 +129,7 @@ def test_provisional_pointer_is_inside_page_and_outside_body(bounds):
 
 def test_seed_preserves_plan_targets_and_does_not_invent_offscreen_speakers():
     box = PinnedGeometry(x=.15, y=.15, width=.35, height=.16)
-    items = [SimpleNamespace(id=f"item-{i}", kind=kind, text="A line.", delivery=delivery)
+    items = [SimpleNamespace(id=f"item-{i}", kind=kind, text="A line.", delivery=delivery, source_unit_ids=(), speaker_entity_id=None)
              for i, (kind, delivery) in enumerate((("dialogue", "onscreen"), ("thought", "onscreen"), ("dialogue", "offscreen"), ("caption", "narration")))]
     reservations = [SimpleNamespace(lettering_item_id=item.id, bounds=box, tail_target=None) for item in items]
     page = SimpleNamespace(content=[SimpleNamespace(order=1, lettering=items)], lettering_reservations=reservations, page_number=1, content_sha256="a"*64)

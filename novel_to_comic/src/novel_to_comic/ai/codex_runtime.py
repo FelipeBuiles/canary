@@ -112,10 +112,7 @@ class CodexRuntimeError(RuntimeError):
         provider = self.metadata.get("provider_error", {})
         reason = provider.get("message") if isinstance(provider, dict) else None
         if code == "image_tool_failed":
-            tool_error = self.metadata.get("image_tool_error", {})
-            reason = ": ".join(filter(None, (
-                tool_error.get("code"), tool_error.get("message"),
-            ))) or reason
+            reason = _image_tool_failure_reason(self.metadata) or reason
         if code == "runtime_timeout" and self.metadata.get("timeout_seconds"):
             message = f"{code}: Canary stopped the request after {self.metadata['timeout_seconds']} seconds without a completed result."
             if reason:
@@ -133,6 +130,32 @@ class CodexRuntimeError(RuntimeError):
 
 class CodexRuntimeRefusalError(CodexRuntimeError, AIRefusalError):
     """Explicit provider refusal retaining Codex submission and usage evidence."""
+
+
+def _image_tool_failure_reason(metadata: dict[str, Any]) -> str | None:
+    """Explain a failed image item from its typed failure, tool output, or silence.
+
+    Codex reports quota exhaustion as a typed item failure. A failed item with
+    no typed failure, no tool message, and no output is how the image tool
+    surfaces a safety rejection, so name it rather than leaving a bare code.
+    """
+    failure = metadata.get("image_tool_failure")
+    if isinstance(failure, dict) and failure.get("type") == "usageLimitExceeded":
+        reason = "usageLimitExceeded: the Codex image usage limit was reached"
+        if isinstance(failure.get("resets_at"), int):
+            reason += f" (resets at unix {failure['resets_at']})"
+        return reason
+    tool_error = metadata.get("image_tool_error", {})
+    if not isinstance(tool_error, dict):
+        tool_error = {}
+    reason = ": ".join(filter(None, (tool_error.get("code"), tool_error.get("message"))))
+    if not reason and tool_error.get("result_kind") in {"missing", "empty"}:
+        reason = ("the image tool failed without an image or a reason; "
+                  "the request was likely silently rejected by the provider's safety system")
+    assistant = metadata.get("assistant_response_diagnostic")
+    if reason and isinstance(assistant, str) and assistant:
+        reason += f". Assistant response (not a provider error): {assistant}"
+    return reason or None
 
 
 def _runtime_error(code: str, metadata: dict[str, Any]) -> CodexRuntimeError:
@@ -174,6 +197,19 @@ def _provider_error(error: Any, request: dict[str, Any]) -> dict[str, Any]:
     message = _diagnostic_message(getattr(error, "message", None), request)
     if message:
         diagnostic["message"] = message
+    return diagnostic
+
+
+def _image_tool_failure(failure: Any) -> dict[str, Any] | None:
+    """Allowlist the SDK's typed image failure; never serialize the raw model."""
+    root = getattr(failure, "root", failure)
+    kind = getattr(root, "type", None)
+    if not isinstance(kind, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", kind):
+        return None
+    diagnostic: dict[str, Any] = {"type": kind}
+    resets_at = getattr(root, "resets_at", None)
+    if type(resets_at) is int:
+        diagnostic["resets_at"] = resets_at
     return diagnostic
 
 
@@ -839,6 +875,9 @@ async def _execute(root: Path, request: dict[str, Any], evidence: dict[str, Any]
                             if item.status != "completed":
                                 evidence["image_tool_status"] = item.status
                                 evidence["image_tool_error"] = _image_tool_error(item.result, request)
+                                failure = _image_tool_failure(getattr(item, "failure", None))
+                                if failure:
+                                    evidence["image_tool_failure"] = failure
                                 diagnostic = _diagnostic_message(text, request)
                                 if diagnostic:
                                     evidence["assistant_response_diagnostic"] = diagnostic

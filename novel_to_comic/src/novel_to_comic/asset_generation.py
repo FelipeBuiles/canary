@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -257,7 +258,10 @@ def _actual_dimensions(path: Path) -> tuple[int | None, int | None]:
         return None, None
 
 
-def _meta_payload(request: NonPanelRequest, provenance: dict[str, Any], *, error: BaseException | None = None) -> dict[str, Any]:
+def _meta_payload(
+    request: NonPanelRequest, provenance: dict[str, Any], *,
+    error: BaseException | None = None, attempts: int = 1,
+) -> dict[str, Any]:
     payload = {
         "version": 1,
         "kind": request.input.asset_kind,
@@ -293,6 +297,7 @@ def _meta_payload(request: NonPanelRequest, provenance: dict[str, Any], *, error
     if error is not None:
         classification = classify_image_failure(error)
         payload.update({
+            "attempts": attempts,
             "classification": classification,
             "recoverable": classification != "configuration_error",
             "user_message": user_message_for_image_failure(classification),
@@ -302,6 +307,43 @@ def _meta_payload(request: NonPanelRequest, provenance: dict[str, Any], *, error
             },
         })
     return payload
+
+
+# An unchanged request that the provider declined is expected to be declined
+# again. Opaque errors get one more try before they are held as well.
+_HELD_FAILURES = frozenset({"provider_blocked"})
+_HELD_AFTER_REPEAT = frozenset({"generation_error", "empty_response"})
+
+
+def read_asset_failure(output_path: Path) -> dict[str, Any] | None:
+    try:
+        failure = json.loads(artifacts.asset_failure_path(output_path).read_text())
+    except (OSError, ValueError):
+        return None
+    return failure if isinstance(failure, dict) else None
+
+
+def _failure_fingerprint(failure: dict[str, Any] | None) -> str | None:
+    provenance = failure.get("provenance") if failure else None
+    return provenance.get("execution_fingerprint") if isinstance(provenance, dict) else None
+
+
+def held_asset_failure(output_path: Path, request: NonPanelRequest) -> dict[str, Any] | None:
+    """Return the stored failure when resubmitting this exact request would repeat it.
+
+    Stage resumes skip held assets instead of spending time or credits on a
+    known outcome. Changing the asset's direction produces a new fingerprint,
+    and explicit per-asset regeneration never consults this hold.
+    """
+    failure = read_asset_failure(output_path)
+    if failure is None or _failure_fingerprint(failure) != request.wire.execution_fingerprint:
+        return None
+    classification = failure.get("classification")
+    attempts = failure.get("attempts")
+    attempts = attempts if type(attempts) is int else 1
+    if classification in _HELD_FAILURES or (classification in _HELD_AFTER_REPEAT and attempts >= 2):
+        return failure
+    return None
 
 
 def asset_matches_request(output_path: Path, request: NonPanelRequest) -> bool:
@@ -350,11 +392,16 @@ def persist_non_panel_provenance(
         funding=usage.funding if usage else ("codex_subscription" if request.wire.provider_key == "codex-dev" else "api"),
         response_metadata=result.response_metadata if result else None,
     )
-    payload = _meta_payload(request, provenance, error=error)
     if error is not None:
-        artifacts.write_asset_failure(output_path, payload)
+        previous = read_asset_failure(output_path)
+        attempts = 1
+        if _failure_fingerprint(previous) == request.wire.execution_fingerprint:
+            prior = previous.get("attempts") if previous else None
+            attempts = (prior if type(prior) is int else 1) + 1
+        artifacts.write_asset_failure(output_path, _meta_payload(request, provenance, error=error, attempts=attempts))
     else:
-        artifacts.write_asset_meta(output_path, payload)
+        artifacts.write_asset_meta(output_path, _meta_payload(request, provenance))
+        artifacts.asset_failure_path(output_path).unlink(missing_ok=True)
 
 
 async def submit_non_panel_request(
@@ -432,5 +479,6 @@ __all__ = [
     "ProjectCoverInput", "PropReferenceInput", "compile_non_panel_request",
     "common_image_provenance", "estimate_non_panel_request", "failed_image_provenance",
     "persist_non_panel_provenance", "reference_plan_for_assets", "style_reference_plan",
-    "submit_non_panel_request", "asset_matches_request",
+    "submit_non_panel_request", "asset_matches_request", "held_asset_failure",
+    "read_asset_failure",
 ]

@@ -38,8 +38,21 @@ export interface InFlightPage {
   started_at: string;
 }
 
+/** A Cast reference that stopped the stage, with its stored failure reason. */
+export interface CastFailure {
+  item_id: string;
+  asset_type: "character" | "location" | "prop" | null;
+  entity_id: string | null;
+  state_id: string | null;
+  label: string;
+  classification: string | null;
+  attempts: number | null;
+  message: string;
+}
+
 export interface StageInfo {
   approval_blocker?: string | null;
+  failures?: CastFailure[];
   status: StageStatus;
   items_done: number;
   items_total: number;

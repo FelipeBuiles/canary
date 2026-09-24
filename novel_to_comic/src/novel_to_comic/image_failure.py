@@ -78,6 +78,7 @@ def classify_image_failure(
         "resource_exhausted",
         "rate limit",
         "ratelimit",
+        "usage limit",
         "quota",
     )):
         return "rate_limited"

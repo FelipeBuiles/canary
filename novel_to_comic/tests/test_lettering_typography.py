@@ -19,6 +19,7 @@ from novel_to_comic.lettering.service import preset_style
 from novel_to_comic.models.lettering import (
     LetteringElement,
     PageLettering,
+    ResolvedLettering,
     ResolvedLineMetrics,
 )
 
@@ -82,7 +83,7 @@ def test_real_glyph_layout_matches_server_and_fits_the_drawn_contour(typography,
     }""", {"state": state.model_dump(mode="json"), "style": style.model_dump(mode="json")})
     assert not value["defects"]
     for actual, expected in zip(value["resolved"]["elements"], server.elements):
-        assert actual["resolved"] == expected.resolved.model_dump(mode="json")
+        assert ResolvedLettering.model_validate(actual["resolved"]) == expected.resolved
         assert not expected.resolved.overflow
     short, long, caption = server.elements
     assert short.resolved.lines == ("Yes? What is", "your business, sir?")
@@ -93,7 +94,10 @@ def test_real_glyph_layout_matches_server_and_fits_the_drawn_contour(typography,
     assert caption.resolved.height < caption.placement.height
 
 
-@pytest.mark.parametrize("shape,seed", [("ellipse", "oval"), *[("cloud", f"cloud-{i}") for i in range(6)]])
+@pytest.mark.parametrize("shape,seed", [
+    ("ellipse", "oval"), *[("cloud", f"cloud-{i}") for i in range(6)],
+    *[("burst", f"burst-{i}") for i in range(4)],
+])
 def test_curved_shapes_contain_padded_ink_through_every_row_band(typography, browser_page, shape, seed):
     state, style = typography
     value = browser_page.evaluate("""({state,style,shape,seed})=>{
@@ -128,13 +132,13 @@ def test_tail_is_part_of_one_contour_in_all_directions_and_transforms(typography
     value = browser_page.evaluate("""({state,style})=>{
       const e=window.engine, measure=e.canvasMeasure(), defects=[];
       let cases=0;
-      for(const shape of ['balloon','ellipse','cloud','box','round'])
+      for(const shape of ['balloon','ellipse','cloud','box','round','burst','wavy','electric','whisper'])
       for(const rotation of [0,35,-60]) for(const scale of [.8,1,1.4])
       for(let i=0;i<8;i++) {
         const draft=structuredClone(state); draft.elements=[draft.elements[0]];
         const element=draft.elements[0];
         element.tight_box=false; element.placement={x:.35,y:.35,width:.3,height:.16};
-        element.rotation=rotation; element.scale=scale;
+        element.rotation=rotation; element.scale=scale; element.tail_bend=[0,.7,-.45][i%3];
         element.style_override={...style.roles.speech,shape,fill:'transparent'};
         element.tail_target={x:.5+.34*Math.cos(i*Math.PI/4),y:.43+.3*Math.sin(i*Math.PI/4)};
         const resolved=e.resolvePage(draft,style,measure),svg=e.renderOverlay(resolved,style);
@@ -151,7 +155,7 @@ def test_tail_is_part_of_one_contour_in_all_directions_and_transforms(typography
       }
       return {cases,defects};
     }""", {"state": state.model_dump(mode="json"), "style": style.model_dump(mode="json")})
-    assert value["cases"] == 360
+    assert value["cases"] == 648
     assert value["defects"] == []
 
 
@@ -225,3 +229,116 @@ def test_thought_sample_balances_lines_and_renders_the_measured_font(typography,
     assert value["ratio"] < 1.45
     assert value["families"] == [font, font]
     assert value["widths"] == pytest.approx(value["metrics"], abs=1)
+
+
+def test_burst_valleys_stay_outside_the_fitted_ellipse(browser_page):
+    """Burst rows fit inside a 0.78 ellipse; no seeded spike valley may cut it."""
+    defects = browser_page.evaluate("""()=>{
+      const e=window.engine, measure=e.canvasMeasure(), defects=[];
+      const style={revision:1,content_sha256:'s',label:'x',source_direction:'',roles:{}};
+      for(const [w,h] of [[.3,.12],[.2,.2],[.5,.1],[.12,.3]]) for(let i=0;i<12;i++) {
+        const role={font:'Comic Neue',font_weight:400,min_font_size:12,max_font_size:14,line_height:1,align:'center',
+          color:'#181818',fill:'#ffffff',stroke:'#181818',stroke_width:0,padding:0,corner_radius:0,shape:'burst',
+          letter_spacing:0,text_stroke:'transparent',text_stroke_width:0};
+        const rect={x:.1,y:.1,width:w,height:h};
+        const state={revision:1,content_sha256:'',page_number:1,comic_page_sha256:'0'.repeat(64),style_sha256:'s',
+          locale:'source',canvas_aspect_ratio:1,reviewed_against_render_revision:null,reviewed_against_image_sha256:null,
+          elements:[{id:'burst-'+i,source_lettering_item_id:null,role:'caption',text_by_locale:{source:'A'},
+            suggested_placement:rect,placement:rect,hidden:false,style_override:role,tail_target:null,
+            suggested_tail_target:null,rotation:0,scale:1,z_index:0,tight_box:false,resolved:null}]};
+        const resolved=e.resolvePage(state,style,measure);
+        document.getElementById('out').innerHTML=e.renderOverlay(resolved,style);
+        const body=document.querySelector('[data-balloon-body]');
+        const cx=(rect.x+w/2)*1000, cy=(rect.y+h/2)*1000;
+        for(let a=0;a<360;a+=2) {
+          const x=cx+Math.cos(a*Math.PI/180)*w*500*.78, y=cy+Math.sin(a*Math.PI/180)*h*500*.78;
+          if(!body.isPointInFill(new DOMPoint(x-rect.x*1000,y-rect.y*1000))) { defects.push({w,h,i,a}); break; }
+        }
+      }
+      return defects;
+    }""")
+    assert defects == []
+
+
+def test_emphasis_and_capitals_lay_out_identically_in_the_server_and_stay_inside(typography, browser_page):
+    state, style = typography
+    styled = style.model_copy(update={"roles": style.roles.model_copy(update={
+        "speech": style.roles.speech.model_copy(update={"text_case": "upper", "font": "Comic Neue"}),
+    })})
+    draft = state.model_copy(update={"style_sha256": styled.content_sha256, "elements": tuple(
+        element.model_copy(update={"text_by_locale": {"source": "You *really* think we can get out of here *alive*? \\*Honestly*"}})
+        if element.id == "short" else element for element in state.elements
+    )})
+    server = resolve_lettering(draft, styled)
+    short = next(element for element in server.elements if element.id == "short")
+    assert short.resolved.text.startswith("You *really*")
+    assert "\ue000REALLY\ue000" in " ".join(short.resolved.lines)
+    assert "*HONESTLY*" in " ".join(short.resolved.lines)
+    value = browser_page.evaluate("""({state,style})=>{
+      const e=window.engine, resolved=e.resolvePage(state,style,e.canvasMeasure());
+      document.getElementById('out').innerHTML=e.renderOverlay(resolved,style);
+      const element=resolved.elements.find(item=>item.id==='short'), defects=[];
+      const body=document.querySelector('[data-lettering-id="short"] [data-balloon-body]');
+      for(const m of element.resolved.line_metrics) for(const x of [m.x,m.x+m.width]) for(const y of [m.baseline-m.ascent,m.baseline+m.descent])
+        if(!body.isPointInFill(new DOMPoint(x,y))) defects.push({x,y});
+      return {resolved:element.resolved,defects,italic:document.querySelectorAll('[data-lettering-id="short"] tspan[font-style="italic"]').length};
+    }""", {"state": draft.model_dump(mode="json"), "style": styled.model_dump(mode="json")})
+    assert value["defects"] == []
+    assert value["italic"] == 2
+    assert ResolvedLettering.model_validate(value["resolved"]) == short.resolved
+
+
+def test_linked_balloons_merge_into_one_silhouette(typography, browser_page):
+    state, style = typography
+    first = LetteringElement(id="first", role="speech", text_by_locale={"source": "Wait."},
+        placement={"x": .2, "y": .2, "width": .25, "height": .1}, suggested_placement={"x": .2, "y": .2, "width": .25, "height": .1})
+    second = LetteringElement(id="second", role="speech", text_by_locale={"source": "Listen."}, link_to="first",
+        placement={"x": .38, "y": .3, "width": .25, "height": .1}, suggested_placement={"x": .38, "y": .3, "width": .25, "height": .1})
+    draft = state.model_copy(update={"elements": (first, second)})
+    resolved = resolve_lettering(draft, style)
+    value = browser_page.evaluate("""({state,style})=>{
+      const e=window.engine;
+      document.getElementById('out').innerHTML=e.renderOverlay(state,style);
+      const group=document.querySelector('[data-lettering-link]'), bridge=document.querySelector('[data-balloon-bridge]');
+      const boxes=state.elements.map(item=>{const r=item.resolved,p=item.placement;return [p.x*1000+r.width*500,p.y*1350+r.height*675];});
+      const mid=[(boxes[0][0]+boxes[1][0])/2,(boxes[0][1]+boxes[1][1])/2];
+      return {group:!!group, texts:group?.querySelectorAll('[data-lettering-id]').length, bridged:!!bridge && bridge.isPointInStroke!==undefined,
+        inside:[...document.querySelectorAll('path')].some(path=>path.getAttribute('stroke')==='none' && path.isPointInFill(new DOMPoint(...mid)))};
+    }""", {"state": resolved.model_dump(mode="json"), "style": style.model_dump(mode="json")})
+    assert value == {"group": True, "texts": 2, "bridged": True, "inside": True}
+
+
+@pytest.mark.parametrize("links", [{"a": "a"}, {"a": "missing"}, {"a": "b", "b": "a"}])
+def test_balloon_links_reject_self_missing_and_loops(links):
+    geometry = {"x": .1, "y": .1, "width": .2, "height": .1}
+    elements = [LetteringElement(id=name, role="speech", text_by_locale={"source": name}, placement=geometry,
+        suggested_placement=geometry, link_to=links.get(name)) for name in ("a", "b")]
+    with pytest.raises(ValidationError, match="balloon links"):
+        PageLettering(revision=1, page_number=1, comic_page_sha256="a" * 64, style_sha256="b" * 64,
+            canvas_aspect_ratio=.75, elements=elements)
+
+
+@pytest.mark.parametrize("shape", ["balloon", "whisper", "wavy", "electric"])
+def test_balloon_family_contains_its_ink_inside_ripples_and_teeth(typography, browser_page, shape):
+    """Balloon-derived bodies fit bare ink plus clearance, not padded bands."""
+    state, style = typography
+    value = browser_page.evaluate("""({state,style,shape})=>{
+      const e=window.engine, measure=e.canvasMeasure(), defects=[];
+      for(const role of ['caption','speech','thought']) for(const tight of [true,false])
+      for(const align of ['left','center','right']) for(const seed of ['a','b','c']) {
+        const draft=structuredClone(state); draft.elements=[draft.elements[1]];
+        const element=draft.elements[0];
+        element.id=shape+seed; element.role=role; element.tight_box=tight; element.tail_target=null;
+        element.style_override={...style.roles.speech,shape,align};
+        const resolved=e.resolvePage(draft,style,measure), r=resolved.elements[0].resolved;
+        document.getElementById('out').innerHTML=e.renderOverlay(resolved,style);
+        const body=document.querySelector('[data-balloon-body]'), inset=element.style_override.stroke_width/2;
+        if(r.overflow) defects.push({role,tight,align,seed,reason:'fit'});
+        for(const [line,m] of r.line_metrics.entries())
+          for(let y=m.baseline-m.ascent-inset+.01;y<m.baseline+m.descent+inset;y+=.5)
+          for(const x of [m.x-inset+.01,m.x+m.width+inset-.01])
+            if(!body.isPointInFill(new DOMPoint(x,y))) defects.push({role,tight,align,seed,line,x,y});
+      }
+      return defects;
+    }""", {"state": state.model_dump(mode="json"), "style": style.model_dump(mode="json"), "shape": shape})
+    assert value == []

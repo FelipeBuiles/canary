@@ -16,10 +16,12 @@ from novel_to_comic.lettering.service import (
     composite_page,
     editor_state,
     ensure_style,
+    PRESETS,
     preset_style,
     reset_lettering,
     save_lettering,
     save_style,
+    suggested_placements,
 )
 from novel_to_comic.target_artifacts import (
     ArtifactInvalid,
@@ -102,6 +104,13 @@ def reset_page_lettering(
     return editor_state(target, page_number)
 
 
+@router.get("/pages/{page_number}/lettering/suggestions")
+@_errors
+def get_lettering_suggestions(page_number: int, project=Depends(get_project)):
+    """A provider-free redraft of this page's placement; the editor applies it as a draft."""
+    return suggested_placements(TargetArtifacts(project[0]), page_number)
+
+
 def _require_editable_style(target: TargetArtifacts) -> None:
     from novel_to_comic.config import load_config
 
@@ -124,7 +133,7 @@ def get_lettering_style(project=Depends(get_project)):
         "style": ensure_style(target),
         "presets": {
             name: preset_style(name)
-            for name in ("literary", "classic", "pulp", "minimal")
+            for name in PRESETS
         },
     }
 

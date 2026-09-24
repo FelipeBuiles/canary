@@ -190,6 +190,78 @@ def test_cast_item_failure_cannot_complete_checkpoint(tmp_path, failed_group):
     assert any(event["type"] == "stage_fail" for event in events)
 
 
+@pytest.mark.parametrize("provider_error,held_after", [
+    ("image_tool_failed: the request was likely silently rejected by the provider's safety system", 1),
+    ("image_tool_failed", 2),
+])
+def test_cast_resume_holds_unchanged_state_request_that_keeps_failing(tmp_path, monkeypatch, provider_error, held_after):
+    from novel_to_comic.models.story_bible import AppearanceState
+    from novel_to_comic.stage_runtime import StageRuntime
+    from novel_to_comic.state import create_initial_state
+
+    config, bible, _ = _cast(tmp_path)
+    bible.characters[0].appearance_states = [AppearanceState(
+        id="bare", label="Suit gone", visual_anchor="no spacesuit", visually_significant=True,
+        changed_facets=("clothing",))]
+    artifacts.write_story_bible(tmp_path, bible)
+    submissions = []
+
+    async def refuse(**kwargs):
+        submissions.append(kwargs["output_path"])
+        raise RuntimeError(provider_error)
+
+    monkeypatch.setattr("novel_to_comic.asset_generation.execute_frozen_request", refuse)
+
+    def resume():
+        ctx = StageRuntime("cast", create_initial_state("test", "novel.txt"), tmp_path, on_event=lambda _: None)
+        asyncio.run(s3_cast._generate_character_state_refs(
+            config, tmp_path, bible, ctx, style_ref=tmp_path / "samples/style_1.png"))
+        return ctx.stage_state
+
+    for _ in range(held_after):
+        stage = resume()
+        assert stage.items_failed == ["sailor:bare"]
+    assert len(submissions) == held_after
+    stage = resume()
+    assert stage.items_failed == ["sailor:bare"]
+    assert len(submissions) == held_after  # held: the unchanged request is not resubmitted
+
+    [failure] = s3_cast.cast_failure_details(tmp_path, stage)
+    assert failure["label"] == "Gustaf — Suit gone"
+    assert failure["attempts"] == held_after
+    if held_after == 1:
+        assert failure["classification"] == "provider_blocked"
+        assert "Change its direction" in failure["message"]
+        assert "Change its direction" in s3_cast.cast_approval_blocker(config, tmp_path, stage)
+
+    # Changing the direction yields a new request, which Resume submits again.
+    bible.characters[0].appearance_states[0].visual_anchor = "no spacesuit, wrapped in a blanket"
+    resume()
+    assert len(submissions) == held_after + 1
+
+
+def test_successful_asset_clears_stale_failure_sidecar(tmp_path, monkeypatch):
+    from novel_to_comic.stage_runtime import StageRuntime
+    from novel_to_comic.state import create_initial_state
+
+    config, bible, _ = _cast(tmp_path)
+    sheet = artifacts.character_ref_sheet_path(tmp_path, "sailor")
+    sheet.unlink()
+    artifacts.write_asset_failure(sheet, {"classification": "timed_out"})
+
+    async def draw(**kwargs):
+        Image.new("RGB", (64, 64), "blue").save(kwargs["output_path"])
+        return ApiResult(value=kwargs["output_path"])
+
+    monkeypatch.setattr("novel_to_comic.asset_generation.execute_frozen_request", draw)
+    monkeypatch.setattr(s3_cast, "_crop_sheet_to_poses", lambda path: None)
+    ctx = StageRuntime("cast", create_initial_state("test", "novel.txt"), tmp_path, on_event=lambda _: None)
+    asyncio.run(s3_cast._generate_character_refs(
+        config, tmp_path, bible, ctx, ["sailor"], tmp_path / "samples/style_1.png"))
+    assert sheet.is_file()
+    assert not artifacts.asset_failure_path(sheet).exists()
+
+
 def test_cast_approval_requires_appearances_even_with_current_identity_review(tmp_path):
     from novel_to_comic.models.story_bible import AppearanceState
     from novel_to_comic.state import StageState, StageStatus
@@ -205,7 +277,9 @@ def test_cast_approval_requires_appearances_even_with_current_identity_review(tm
         Image.new("RGB", (32, 32), "orange").save(appearance)
         assert s3_cast.cast_approval_blocker(config, tmp_path, stage) is None
         stage.items_failed = ["sailor:altered"]
-        assert "missing work" in s3_cast.cast_approval_blocker(config, tmp_path, stage)
+        blocker = s3_cast.cast_approval_blocker(config, tmp_path, stage)
+        assert blocker.startswith("Gustaf — Altered appearance:")
+        assert "Resume Cast" in blocker
 
 
 def test_cast_approval_requires_current_visual_review(tmp_path):
@@ -231,7 +305,8 @@ def test_status_and_approval_share_cast_blocker_without_changing_old_checkpoint(
     monkeypatch.setattr(projects, "get_db", lambda: db)
     status = projects.project_status(request, "test", (tmp_path, config, state), "account")
     blocker = status["stages"]["cast"]["approval_blocker"]
-    assert "missing work" in blocker
+    assert "Resume Cast" in blocker
+    assert [failure["item_id"] for failure in status["stages"]["cast"]["failures"]] == ["sailor:alternate"]
     with pytest.raises(HTTPException) as error:
         asyncio.run(pipeline.approve("cast", "test", request, (tmp_path, config, state), "account"))
     assert error.value.status_code == 409

@@ -100,7 +100,9 @@ class StyleSuggestion(BaseModel):
     line_rendering: str
     lighting_value: str
     lettering: str
-    lettering_preset: Literal["literary", "classic", "pulp", "minimal"] = Field(
+    lettering_preset: Literal[
+        "literary", "classic", "golden_age", "pulp", "manga", "noir", "horror", "scifi", "storybook", "minimal"
+    ] = Field(
         description="Post-production preset for THIS style. Required inside each styles item, never at the batch root."
     )
     lettering_design: LetteringDesign = Field(
@@ -227,20 +229,31 @@ _SYSTEM_PROMPT = (
     "language, not generic 'expressive characters'), portfolio_role, "
     "palette, line_rendering, lighting_value, lettering, lettering_preset, lettering_design, page_framing, "
     "sequential_art_strengths, story_fit, risk, and template. Inside EACH styles item, choose lettering_preset: literary "
-    "(serif captions and serif speech), classic (comic type), pulp (typewriter captions/bold effects), "
-    "or minimal (quiet modern). Never put lettering_preset beside styles at the root. "
+    "(serif captions and serif speech), classic (all-caps comic hand, hot extruded effects), golden_age "
+    "(yellow captions, primary-color effects), pulp (typewriter captions/bold effects), manga (ovals, "
+    "black-and-white leaning effects), noir (dark captions), horror (parchment captions, dripping effects), "
+    "scifi (tech captions and effects), storybook (rounded, warm), or minimal (quiet modern). "
+    "Never put lettering_preset beside styles at the root. "
     "Different candidates may choose different presets; this is the editable post-production style, consistent with lettering prose. "
     "lettering_design is an OBJECT with label and roles: caption, speech, thought, sfx. "
     "Design all four roles using the provided schema; the preset is only a starting point. "
     "Choose only bundled fonts: Comic Neue, EB Garamond, Bangers, Special Elite, M PLUS 1p, "
-    "Fredoka, Orbitron, Bungee. Use 1000-unit page-width typography: normally 16-24 for body "
+    "Fredoka, Orbitron, Bungee, Baloo 2, Exo 2, Shrikhand, Creepster. Use 1000-unit page-width typography: normally 16-24 for body "
     "copy and 36-72 for effects, readable floors >=12. Keep text/background contrast high. "
     "Give narration intentional padding, fill and border; speech a balloon; thoughts a "
     "rounded cloud; effects an intentional display font and contrasting text outline, "
     "not the same generic loud font for every aesthetic. Shapes include box, round, "
-    "balloon, ellipse, cloud, whisper (dashed balloon), burst (shouting), and none. "
+    "balloon, ellipse, cloud, whisper (dashed balloon), burst (shouting), wavy (weak or "
+    "dreamy), electric (radio or machine) and none. Individual shouts, whispers and radio "
+    "voices are applied per line later: design each role's everyday voice. "
     "Sound effects use shape none and transparent fill: expressive outlined letters, "
-    "never a shout balloon. Reserve burst shapes for shouted speech. Center speech "
+    "never a shout balloon. Make them feel printed: a letter outline (text_stroke), and "
+    "where the aesthetic wants it a gradient_color fade, an extrude or drop shadow, a "
+    "halo second outline, an arc or wave warp, a little jitter bounce (0.1-0.4) or a "
+    "skew lean (-15 to 15). Keep speech and captions free of warp, jitter and skew. "
+    "text_case upper gives the classic all-caps comic hand; keep as_written for literary "
+    "or prose-led books and for mixed-case scripts. Captions may take a subtle drop "
+    "shadow. Reserve burst shapes for shouted speech. Center speech "
     "and thought copy. Keep thought padding compact, normally 5-8 units for 16-24 "
     "unit text; the cloud contour already provides additional breathing room. "
     "Use six-digit hex colors or transparent, never CSS/font names outside the schema. "
@@ -303,7 +316,9 @@ def normalize_suggestion(
         "risk": suggestion.get("risk") or "",
         "template": suggestion.get("template") or "",
     }
-    if suggestion.get("lettering_preset") in {"literary", "classic", "pulp", "minimal"}:
+    if suggestion.get("lettering_preset") in {
+        "literary", "classic", "golden_age", "pulp", "manga", "noir", "horror", "scifi", "storybook", "minimal",
+    }:
         normalized["lettering_preset"] = suggestion["lettering_preset"]
     if suggestion.get("lettering_design") is not None:
         normalized["lettering_design"] = LetteringDesign.model_validate(

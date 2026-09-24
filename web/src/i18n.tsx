@@ -1,6 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { PUBLICATION_TEXT } from "./publicationTranslations";
 import { LETTERING_CHOICE_TEXT } from "./letteringChoiceTranslations";
+import { LETTERING_STUDIO_TEXT } from "./letteringStudioTranslations";
 import { SAMPLE_LIBRARY_TEXT } from "./sampleLibraryTranslations";
 import { PAGE_SOURCE_TEXT } from "./pageSourceTranslations";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
@@ -21,6 +22,7 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
   en: {},
   es: {
     ...LETTERING_CHOICE_TEXT.es,
+    ...LETTERING_STUDIO_TEXT.es,
     ...PUBLICATION_TEXT.es,
     ...SAMPLE_LIBRARY_TEXT.es,
     ...PAGE_SOURCE_TEXT.es,
@@ -505,6 +507,11 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
     "Alternate appearances": "Apariencias alternativas",
     "Generating appearance…": "Generando apariencia…",
     "Not generated yet": "Aún sin generar",
+    "Declined — review & adjust": "Rechazada — revisar y ajustar",
+    "Failed — review & adjust": "Falló — revisar y ajustar",
+    "LAST ATTEMPT FAILED": "EL ÚLTIMO INTENTO FALLÓ",
+    "CAST STOPPED": "EL REPARTO SE DETUVO",
+    "These references did not finish. Everything else is kept.": "Estas referencias no terminaron. Todo lo demás se conserva.",
     "View appearance": "Ver apariencia",
     "APPEARANCE STATES": "ESTADOS DE APARIENCIA",
     "Action comparison becomes available when each compared direction has a completed action audition.": "La comparación de acción estará disponible cuando cada dirección comparada tenga una prueba de acción terminada.",
@@ -1899,6 +1906,7 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
   },
   fr: {
     ...LETTERING_CHOICE_TEXT.fr,
+    ...LETTERING_STUDIO_TEXT.fr,
     ...PUBLICATION_TEXT.fr,
     ...SAMPLE_LIBRARY_TEXT.fr,
     ...PAGE_SOURCE_TEXT.fr,
@@ -2376,6 +2384,11 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
     "Alternate appearances": "Apparences alternatives",
     "Generating appearance…": "Création de l’apparence…",
     "Not generated yet": "Pas encore générée",
+    "Declined — review & adjust": "Refusée — examiner et ajuster",
+    "Failed — review & adjust": "Échec — examiner et ajuster",
+    "LAST ATTEMPT FAILED": "LA DERNIÈRE TENTATIVE A ÉCHOUÉ",
+    "CAST STOPPED": "LA DISTRIBUTION S’EST ARRÊTÉE",
+    "These references did not finish. Everything else is kept.": "Ces références ne sont pas terminées. Tout le reste est conservé.",
     "View appearance": "Voir l’apparence",
     "APPEARANCE STATES": "ÉTATS D’APPARENCE",
     "Action comparison becomes available when each compared direction has a completed action audition.": "La comparaison d’action sera disponible quand chaque direction comparée aura un essai d’action terminé.",

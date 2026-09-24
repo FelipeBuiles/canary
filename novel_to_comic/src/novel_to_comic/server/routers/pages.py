@@ -34,7 +34,7 @@ from novel_to_comic.page_drawing import (
 from novel_to_comic.narrative_review import require_draw_narrative_reviews
 from novel_to_comic.page_previews import ensure_page_render_preview
 from novel_to_comic.page_source import PageSourceStale, page_source_view
-from novel_to_comic.page_ocr import GatewayPageOCRAdapter
+from novel_to_comic.page_ocr import GatewayPageOCRAdapter  # noqa: F401  (tests patch it here)
 from novel_to_comic.page_review import (
     accept_editorial_page_issue,
     dismiss_page_issue,
@@ -821,6 +821,7 @@ async def analyze_page(
     try:
         from ..credited_job import run_credited_page_check
         from novel_to_comic.config import PAGE_OCR_ESTIMATED_COST_USD
+        from novel_to_comic.lettering.page_read import page_read_adapter
         def cached_work():
             if hashlib.sha256(image).hexdigest() != active.render.image_sha256:
                 raise HTTPException(409, "Saved artwork bytes do not match render lineage")
@@ -847,7 +848,7 @@ async def analyze_page(
             operations=page_check_operations(config),
             work=lambda: analyze_complete_page(
                 page=page, render=active.render, image=image,
-                ocr=GatewayPageOCRAdapter(config, page_number=page_number), artifacts=target,
+                ocr=page_read_adapter(config, target, page), artifacts=target,
             ),
         )
     except ValueError as exc:

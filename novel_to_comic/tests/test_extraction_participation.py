@@ -306,3 +306,45 @@ def test_unresolved_missing_evidence_is_reported_together_for_one_correction():
     with pytest.raises(_UnresolvedSceneOpenings) as error:
         _parse_extraction(payload, SOURCE)
     assert [scene_id for scene_id, _, _ in error.value.openings] == ['now', 'crossing']
+
+
+def _state(state_id, anchor, **extra):
+    return {"id": state_id, "label": state_id, "visual_anchor": anchor, "visually_significant": True,
+            "changed_facets": ["clothing"], "replaces_identity": False, **extra}
+
+
+@pytest.mark.parametrize("name", ["The Two Police Officers", "Pair of Guards", "The Palace Guards", "the twins"])
+def test_extraction_rejects_a_group_merged_into_one_character(name):
+    payload = _payload()
+    payload["characters"][3]["name"] = name
+    with pytest.raises(ValueError, match="names a group"):
+        _parse_extraction(payload, SOURCE)
+
+
+def test_extraction_keeps_singular_role_names():
+    payload = _payload()
+    payload["characters"][3]["name"] = "Captain of the Guards"
+    assert _parse_extraction(payload, SOURCE).characters[2].name == "Captain of the Guards"
+
+
+def test_extraction_rejects_explicit_anatomy_tags():
+    payload = _payload()
+    payload["characters"][0]["appearance_states"] = [
+        _state("dressed", "1man, adult male, bare skin with no belly button or genitals, old t-shirt"),
+    ]
+    with pytest.raises(ValueError, match="Ari/dressed tags genitals"):
+        _parse_extraction(payload, SOURCE)
+
+
+def test_extraction_rejects_duplicate_looks_but_allows_a_canonical_return():
+    payload = _payload()
+    payload["characters"][0]["visual_anchor"] = "1man, adult male, white spacesuit, helmet"
+    payload["characters"][0]["appearance_states"] = [
+        _state("suit_off", "1man, adult male, grey t-shirt"),
+        _state("suit_again", "1man, adult male, helmet, white spacesuit"),
+    ]
+    with pytest.raises(ValueError, match="Ari/suit_again declares a physical change but repeats the base"):
+        _parse_extraction(payload, SOURCE)
+
+    payload["characters"][0]["appearance_states"][1]["canonical_equivalent"] = True
+    assert len(_parse_extraction(payload, SOURCE).characters[0].appearance_states) == 2

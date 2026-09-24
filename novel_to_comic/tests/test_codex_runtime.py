@@ -355,6 +355,37 @@ def test_failed_image_retains_tool_reason_without_retry(sdk, result, classificat
     assert sdk.interrupts == [("thread-1", "turn-1")]
 
 
+def test_silent_failed_image_is_classified_as_provider_block(sdk):
+    from novel_to_comic.image_failure import classify_image_failure
+
+    sdk.events = [_usage(sdk), _image_event(sdk, status="failed", encoded="")]
+    with pytest.raises(runtime.CodexRuntimeError) as failure:
+        _generate()
+    error = failure.value
+    assert error.code == "image_tool_failed"
+    assert error.metadata["image_tool_error"]["result_kind"] == "empty"
+    assert "silently rejected" in str(error)
+    assert classify_image_failure(error) == "provider_blocked"
+    assert len(sdk.turns) == 1
+
+
+def test_failed_image_usage_limit_is_rate_limited(sdk):
+    from novel_to_comic.image_failure import classify_image_failure
+
+    item = sdk.types.ImageGenerationThreadItem(
+        id="image-1", type="imageGeneration", status="failed", result="", revised_prompt=None,
+        saved_path=None,
+        failure=_Record(root=_Record(type="usageLimitExceeded", limit_id="images", resets_at=1790000000)),
+    )
+    sdk.events = [_usage(sdk), sdk.types.ItemCompletedNotification(item=_Record(root=item))]
+    with pytest.raises(runtime.CodexRuntimeError) as failure:
+        _generate()
+    error = failure.value
+    assert error.metadata["image_tool_failure"] == {"type": "usageLimitExceeded", "resets_at": 1790000000}
+    assert "silently rejected" not in str(error)
+    assert classify_image_failure(error) == "rate_limited"
+
+
 @pytest.mark.parametrize("result", [
     "Failure: A red square sk-private-token https://private.example/token\nprivate tail",
     json.dumps({"error": {"message": "Failure: A red square sk-private-token"}, "request": "private body"}),

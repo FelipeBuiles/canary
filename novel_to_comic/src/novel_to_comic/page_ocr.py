@@ -7,12 +7,14 @@ falsify a render, and Draw's exact-lettering invariant would validate itself.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from novel_to_comic.config import Config
 from novel_to_comic.models.draw import (
+    ObservedFigure,
     ObservedRegion,
     OCRExtraction,
     OCRTextObservation,
@@ -45,12 +47,34 @@ _INSTRUCTION = (
     "Return exactly the root object "
     '{"lettering":[{"text":"exact words","role":"comic_lettering",'
     '"box":{"x":0.0,"y":0.0,"width":0.1,"height":0.1}}],'
-    '"panels":[{"x":0.0,"y":0.0,"width":1.0,"height":1.0}]}. '
+    '"panels":[{"x":0.0,"y":0.0,"width":1.0,"height":1.0}],'
+    '"figures":[{"subject":"unknown","head":{"x":0.0,"y":0.0,"width":0.1,"height":0.1}}]}. '
     "The lettering list includes every visible text item and its role. "
-    "Use empty arrays when no text or no unambiguous rectangular panels exist. "
+    "Use empty arrays when no text, no unambiguous rectangular panels or no heads exist. "
     "Panel boxes use x, y, width, height directly, never a nested box. "
+    "Figures list every clearly visible head of a person or creature; each head "
+    "box covers hair to chin. "
     "Return only this JSON object, with no other root fields."
 )
+
+# The same look at the page also locates heads, so one call serves text checks
+# and lettering placement. Portraits are labelled by opaque cast IDs, never by
+# name or wording, so the text read stays blind to the script.
+_SUBJECTS = (
+    " After the page image come labelled cast portraits, in this order: {labels}. "
+    "Set subject to a portrait's label only when that head is clearly the same "
+    "character; otherwise use \"unknown\". Portraits are identity guides only: "
+    "never report text, heads or panels from them."
+)
+
+
+@dataclass(frozen=True)
+class CastPortrait:
+    """A small approved portrait that lets the page read label heads."""
+
+    entity_id: str
+    image: bytes
+    media_type: str = "image/png"
 
 
 
@@ -135,11 +159,40 @@ class _ObservedLettering(BaseModel):
         }
 
 
+class _ObservedHead(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    subject: str = "unknown"
+    head: _ObservedBox
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_box_variants(cls, value: Any) -> Any:
+        """Accept "box"/"box_2d" and [y_min, x_min, y_max, x_max] heads."""
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        box = normalized.pop("head", None) or normalized.pop("box", None) or normalized.pop("box_2d", None)
+        if isinstance(box, (list, tuple)) and len(box) == 4:
+            try:
+                y_min, x_min, y_max, x_max = (float(item) for item in box)
+            except (TypeError, ValueError):
+                return value
+            scale = 1000.0 if max(abs(float(item)) for item in box) > 1 else 1.0
+            box = {"x": x_min / scale, "y": y_min / scale,
+                   "width": (x_max - x_min) / scale, "height": (y_max - y_min) / scale}
+        if isinstance(box, dict):
+            box = {k: max(0.0, min(1.0, float(v))) if isinstance(v, (int, float)) else v for k, v in box.items()}
+        normalized["head"] = box
+        return normalized
+
+
 class _PageOCRDraft(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     lettering: tuple[_ObservedLettering, ...]
     panels: tuple[_ObservedBox, ...] = ()
+    figures: tuple[_ObservedHead, ...] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -176,8 +229,31 @@ def _panel_order(panels: tuple[_ObservedBox, ...]) -> tuple[int, ...]:
     return tuple(ordered)
 
 
-def build_extraction(draft: _PageOCRDraft) -> OCRExtraction:
-    """Convert raw observations into derived evidence with stable IDs."""
+def _figures(
+    draft: _PageOCRDraft, subjects: frozenset[str] | None
+) -> tuple[ObservedFigure, ...]:
+    result = []
+    for index, item in enumerate(draft.figures, start=1):
+        box = item.head
+        subject = item.subject.strip()
+        known = subject if subject != "unknown" and (subjects is None or subject in subjects) else None
+        result.append(ObservedFigure(
+            id=f"figure_{index:03d}", entity_id=known, x=box.x, y=box.y,
+            width=min(box.width, 1 - box.x) or box.width,
+            height=min(box.height, 1 - box.y) or box.height,
+        ))
+    return tuple(result)
+
+
+def build_extraction(
+    draft: _PageOCRDraft, subjects: frozenset[str] | None = None
+) -> OCRExtraction:
+    """Convert raw observations into derived evidence with stable IDs.
+
+    ``subjects`` are the portrait labels sent with the page; any other head
+    label is dropped to "unknown". A replayed response without them keeps its
+    labels as recorded.
+    """
 
     indexed = list(enumerate(draft.lettering, start=1))
     panel_order = _panel_order(draft.panels)
@@ -217,15 +293,19 @@ def build_extraction(draft: _PageOCRDraft) -> OCRExtraction:
         observed_regions=regions,
         observed_reading_order=tuple(f"panel_{index:03d}" for index in panel_order) if proven else (),
         reading_order_proven=proven,
+        figures=_figures(draft, subjects),
     )
 
 
 class GatewayPageOCRAdapter:
     """Read one complete page render through the configured vision model."""
 
-    def __init__(self, config: Config, *, page_number: int) -> None:
+    def __init__(
+        self, config: Config, *, page_number: int, portraits: tuple[CastPortrait, ...] = ()
+    ) -> None:
         self._config = config
         self._page_number = page_number
+        self._portraits = portraits
         self._artifacts = None
         self._render = None
 
@@ -247,21 +327,32 @@ class GatewayPageOCRAdapter:
     async def extract(self, image: bytes) -> ApiResult[OCRExtraction]:
         from novel_to_comic.clients.text import generate_json
 
+        instruction = _INSTRUCTION
+        if self._portraits:
+            instruction += _SUBJECTS.format(
+                labels=", ".join(p.entity_id for p in self._portraits)
+            )
         result = await generate_json(
             config=self._config,
             model=self._config.effective_page_ocr_model(),
             system_prompt=_SYSTEM_PROMPT,
             # The page number carries no canonical wording; it lets the
             # zero-cost replay service resolve which fixture page this is.
-            user_content=f"{_INSTRUCTION}\ncanary_page_number: {self._page_number}",
+            user_content=f"{instruction}\ncanary_page_number: {self._page_number}",
             temperature=0.0,
             feature=PAGE_OCR_FEATURE,
             json_schema=_PageOCRDraft.model_json_schema(),
             response_sink=self._persist_response,
             retry_invalid_json=False,
-            image_attachments=((image, "image/png"),),
+            image_attachments=(
+                (image, "image/png"),
+                *((p.image, p.media_type) for p in self._portraits),
+            ),
         )
         return ApiResult(
-            value=build_extraction(_PageOCRDraft.model_validate(result.value)),
+            value=build_extraction(
+                _PageOCRDraft.model_validate(result.value),
+                frozenset(p.entity_id for p in self._portraits),
+            ),
             usage=result.usage,
         )

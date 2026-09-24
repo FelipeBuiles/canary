@@ -10,10 +10,11 @@ const run = vi.fn();
 let stageStatus = "pending";
 let approvalBlocker: string | null = null;
 let selectedStyle = true;
+let failures: unknown[] = [];
 vi.mock("../hooks/useRunAction", () => ({ useRunAction: () => ({ handleRun: run, isPending: false }) }));
 vi.mock("../api/queries", () => ({
   useStoryBible: () => ({ data: { characters: [], locations: [], props: [] }, isLoading: false }),
-  useProjectStatus: () => ({ data: { style_selected: selectedStyle, stages: { cast: { status: stageStatus, approval_blocker: approvalBlocker } } } }),
+  useProjectStatus: () => ({ data: { style_selected: selectedStyle, stages: { cast: { status: stageStatus, approval_blocker: approvalBlocker, failures } } } }),
   useApproveStage: () => ({ mutate: vi.fn(), isPending: false }),
   useResetStale: () => ({ mutate: vi.fn(), isPending: false }),
   useStageEstimate: () => ({ data: { estimate_credits: 20, reserved_credits: 30, reservation_multiplier: 1.5, confidence: "variable" } }),
@@ -29,9 +30,24 @@ function renderCast() {
   return render(<MemoryRouter initialEntries={["/project/demo/cast"]}><I18nProvider><Routes><Route path="/project/:id/cast" element={<CastRoom />} /></Routes></I18nProvider></MemoryRouter>);
 }
 
-beforeEach(() => { run.mockReset(); stageStatus = "pending"; approvalBlocker = null; selectedStyle = true; });
+beforeEach(() => { run.mockReset(); stageStatus = "pending"; approvalBlocker = null; selectedStyle = true; failures = []; });
 
 describe("cast consent", () => {
+  it("names the reference that stopped Cast and why instead of a bare resume prompt", () => {
+    stageStatus = "failed";
+    const message = "The image provider declined this scene but did not say which detail caused it. Your work is unchanged. Change its direction, or regenerate it from its card.";
+    approvalBlocker = `Kaitlin — Naked, suit gone: ${message}`;
+    failures = [{
+      item_id: "kaitlin:naked", asset_type: "character", entity_id: "kaitlin", state_id: "naked",
+      label: "Kaitlin — Naked, suit gone", classification: "provider_blocked", attempts: 1, message,
+    }];
+    renderCast();
+    const notice = screen.getByRole("alert", { name: "CAST STOPPED" });
+    expect(within(notice).getByRole("link", { name: "Kaitlin — Naked, suit gone" }).getAttribute("href")).toBe("#cast-character-kaitlin");
+    expect(within(notice).getByText(message)).toBeTruthy();
+    expect(screen.getByText(approvalBlocker)).toBeTruthy();
+  });
+
   it("offers review instead of another generation once individually generated references are ready", () => {
     stageStatus = "awaiting_review";
     renderCast();
