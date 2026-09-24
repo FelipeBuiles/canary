@@ -29,6 +29,21 @@ def _checkpoint(directory, owned, proofs, error=None):
         save_state(state, directory)
 
 
+STYLE_OPERATIONS = frozenset({"style_sample", "style_validation", "style_suggest", "style_direction"})
+
+
+def settle_interrupted_style(job, directory) -> None:
+    """A hard stop skips execute_style's own failure checkpoint; apply it on restore.
+
+    Without this the Style stage stays "running" forever: the room shows
+    generating and blocks every retry, although no work exists. Idempotent:
+    ``_checkpoint`` only acts on a stage that is still running.
+    """
+    if (directory / "state.json").exists():
+        _checkpoint(directory, job.command.arguments.get("lifecycle_owned", False),
+                    job.payload.get("proofs", {}), job.error or "Style generation interrupted")
+
+
 async def execute_style(app, job, directory, config):
     args = job.command.arguments
     operation = job.command.operation

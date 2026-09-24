@@ -1007,7 +1007,10 @@ function lettersMarkup(p,paint) {
       const turn=Math.atan(slope)*180/Math.PI*(role.warp==="wave" ? .55 : 1)+(random()-.5)*2*shake*12;
       dy+=(random()-.5)*2*shake*size*.1;
       const grow=1+(random()-.5)*2*shake*.1;
-      const transform=`translate(${number(cx)} ${number(baseline+dy)}) rotate(${number(turn)})${lean} scale(${number(grow)}) translate(${number(-cx)} ${number(-baseline)})`;
+      // Arcs turn letters on the baseline, like type set on a curve; waves and
+      // bounces turn them about their middle so neighbours never collide.
+      const pivot=role.warp==="arc" ? baseline : baseline-size*.36;
+      const transform=`translate(${number(cx)} ${number(pivot+dy)}) rotate(${number(turn)})${lean} scale(${number(grow)}) translate(${number(-cx)} ${number(-pivot)})`;
       const text=glyph.em ? `<tspan font-style="italic" font-weight="700">${escape(glyph.text)}</tspan>` : escape(glyph.text);
       return `<text x="${number(gx)}" y="${number(baseline)}" text-anchor="start" ${attrs} transform="${transform}">${text}</text>`;
     }).join("");

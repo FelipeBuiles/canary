@@ -10,7 +10,7 @@ from typing import Mapping, Sequence
 
 from PIL import Image
 
-from novel_to_comic.artifact_lock import locked_mutation
+from novel_to_comic.artifact_lock import locked_mutation, production_lock
 from novel_to_comic.config import Config, load_config
 from novel_to_comic.models.draw import PageRenderRevision
 from novel_to_comic.models.lettering import (
@@ -125,9 +125,11 @@ PRESETS: dict[str, tuple[str, dict[str, dict]]] = {
                     "shadow_x": 3, "shadow_y": 3},
         "speech": _COMIC_VOICE,
         "thought": {**_COMIC_VOICE, "shape": "wavy", "fill": "#f3efe6"},
-        "sfx": {"font": "Creepster", "color": "#e0303f", "gradient_color": "#5c0a14",
-                "text_stroke": "#0a0a0a", "text_stroke_width": 2, "warp": "wave",
-                "warp_amount": 0.35, "jitter": 0.2},
+        # A pale knockout keeps dripping red legible over dark, firelit art.
+        "sfx": {"font": "Creepster", "color": "#ff5a5f", "gradient_color": "#8e1022",
+                "text_stroke": "#0a0a0a", "text_stroke_width": 2.5, "halo_color": "#f3e6c8",
+                "halo_width": 1.4, "warp": "wave", "warp_amount": 0.22, "jitter": 0.12,
+                "letter_spacing": 2.5},
     }),
     "scifi": ("Sci-fi", {
         "caption": {"font": "Exo 2", "fill": "#0f1d2b", "color": "#bfefff", "stroke": "#5ad1ff",
@@ -847,7 +849,21 @@ def render_stored_locale(
     return data
 
 
-@locked_mutation
+# Pages whose saved layout predates the current engine are laid out again for
+# every preview. Remember those layouts, so a gallery of thumbnails does not
+# relaunch the renderer for each page on each view.
+_RELAID: dict[tuple[str, str], PageLettering] = {}
+
+
+def _current_layout(state: PageLettering, style: LetteringStyle) -> PageLettering:
+    key = (state.content_sha256, style.content_sha256)
+    if key not in _RELAID:
+        if len(_RELAID) >= 256:
+            _RELAID.clear()
+        _RELAID[key] = resolve_lettering(state, style)
+    return _RELAID[key]
+
+
 def composite_page(
     artifacts: TargetArtifacts,
     page_number: int,
@@ -856,43 +872,47 @@ def composite_page(
     expected_render_revision: int | None = None,
     draft_preview: bool = False,
 ) -> tuple[Path, str | None]:
-    render = active_render(artifacts, page_number)
-    if rendition not in {"full", "reader", "thumbnail"}:
-        raise ValueError("Unknown preview rendition.")
-    if (
-        expected_render_revision is not None
-        and render.revision != expected_render_revision
-    ):
-        raise LetteringConflict(
-            "The selected artwork changed. Refresh the page preview."
-        )
-    if not is_hybrid(artifacts):
-        if rendition == "full":
-            return artifacts.render_path(page_number, render.revision), None
-        from novel_to_comic.page_previews import ensure_page_render_preview
+    """Lettered page preview. Reads and decisions hold the production lock; the
+    renderer does not, because composites are content-addressed derivatives
+    (a slow render must not stall every other request for the project)."""
+    with production_lock(artifacts.project_dir):
+        render = active_render(artifacts, page_number)
+        if rendition not in {"full", "reader", "thumbnail"}:
+            raise ValueError("Unknown preview rendition.")
+        if (
+            expected_render_revision is not None
+            and render.revision != expected_render_revision
+        ):
+            raise LetteringConflict(
+                "The selected artwork changed. Refresh the page preview."
+            )
+        if not is_hybrid(artifacts):
+            if rendition == "full":
+                return artifacts.render_path(page_number, render.revision), None
+            from novel_to_comic.page_previews import ensure_page_render_preview
 
-        return ensure_page_render_preview(
-            artifacts,
-            page_number=page_number,
-            render_revision=render.revision,
-            rendition=rendition,
-        ), None
-    state = ensure_lettering(artifacts, page_number)
-    if state.locale != artifacts.read_lettering_settings().locale:
-        raise LetteringConflict(
-            "Page locale differs from project lettering language. Open Lettering and save its reflow, or translate the project before exporting."
-        )
-    style = ensure_style(artifacts)
-    if state.comic_page_sha256 != artifacts.read_page(page_number).content_sha256:
-        raise LetteringConflict(
-            "Lettering belongs to an earlier plan. Open Lettering and rebuild it explicitly."
-        )
+            return ensure_page_render_preview(
+                artifacts,
+                page_number=page_number,
+                render_revision=render.revision,
+                rendition=rendition,
+            ), None
+        state = ensure_lettering(artifacts, page_number)
+        if state.locale != artifacts.read_lettering_settings().locale:
+            raise LetteringConflict(
+                "Page locale differs from project lettering language. Open Lettering and save its reflow, or translate the project before exporting."
+            )
+        style = ensure_style(artifacts)
+        if state.comic_page_sha256 != artifacts.read_page(page_number).content_sha256:
+            raise LetteringConflict(
+                "Lettering belongs to an earlier plan. Open Lettering and rebuild it explicitly."
+            )
     if _engine_stale(state) and state.style_sha256 == style.content_sha256:
         # An engine upgrade only changes measurement, not the author's copy,
         # placement or style. Lay it out again here, as the editor does, rather
         # than blocking every page until it is opened. Nothing is saved: an
         # open editor's revision stays valid, and placement still needs review.
-        state = resolve_lettering(state, style)
+        state = _current_layout(state, style)
     # Publication must validate even when a draft preview already populated the cache.
     validate_lettering_render(
         state, style, render.width, render.height, draft_preview=draft_preview

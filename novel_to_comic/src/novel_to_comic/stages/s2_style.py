@@ -877,6 +877,25 @@ STYLE_PROOF_ART_CONSTRAINTS = (
 )
 
 
+# What makes a proof safe for the free software overlay: the sample was drawn
+# with no words, and with the four specimen spaces kept quiet. Older samples
+# that satisfy both can show current lettering before their art is refreshed.
+_ART_ONLY_CLAUSES = (
+    "Do not draw any lettering, words, captions, speech balloons, thought clouds, sound effects",
+    "narration (.05,.04,.47,.14), speech (.54,.37,.40,.13), thought (.05,.53,.44,.16), effect (.58,.83,.36,.12)",
+)
+assert all(clause in STYLE_PROOF_ART_CONSTRAINTS for clause in _ART_ONLY_CLAUSES)
+
+
+def sample_takes_software_lettering(sample_path: Path) -> bool:
+    """True when the stored request proves this sample is art-only with reserved spaces."""
+    try:
+        prompt = artifacts.read_asset_meta(sample_path).get("prompt")
+    except (OSError, ValueError, artifacts.ArtifactMissing):
+        return False
+    return isinstance(prompt, str) and all(clause in prompt for clause in _ART_ONLY_CLAUSES)
+
+
 def _style_proof_direction(config: Config, project_dir: Path | None = None) -> tuple[str, str]:
     """The frozen project mode governs both request identity and proof delivery."""
     from novel_to_comic.lettering.proof import SPECIMENS

@@ -11,6 +11,7 @@ import asyncio
 import fcntl
 import hashlib
 import json
+from pathlib import Path
 import logging
 import os
 import time
@@ -93,6 +94,22 @@ class DurableQueue:
                 job.finished_at = datetime.now(timezone.utc)
                 persist_generation_job(self.app, job)
             self.app.state.generation_jobs[job.id] = job
+        self._settle_interrupted_styles()
+
+    def _settle_interrupted_styles(self):
+        """Close the Style stage of work a hard stop interrupted (see settle_interrupted_style)."""
+        from .project_paths import project_directory
+        from .style_jobs import STYLE_OPERATIONS, settle_interrupted_style
+
+        jobs = [job for job in self.app.state.generation_jobs.values() if job.command.operation in STYLE_OPERATIONS]
+        waiting = {job.command.project_dir for job in jobs if job.status == "queued"}
+        for job in jobs:
+            if job.status != "failed" or job.phase != "outcome_unknown" or job.command.project_dir in waiting:
+                continue
+            directory = Path(job.command.project_dir)
+            if directory != project_directory(self.app.state.projects_dir, job.command.user_id, directory.name):
+                continue
+            settle_interrupted_style(job, directory)
 
     async def execute(self, context, *, operation_id: str):
         from .generation_jobs import run_generation_job
