@@ -57,3 +57,95 @@
   .lettering-modal-body .lettering-viewport { height: 100%; min-height: 0; }
   .lettering-modal-body .lettering-inspector { height: 100%; max-height: none; min-height: 0; }
 }
+
+/* Placement check: evidence over the art, and plain-language findings in the inspector. */
+.lettering-guides { position: absolute; inset: 0; pointer-events: none; z-index: 2900; overflow: hidden; }
+.lettering-guide-face { position: absolute; border: 1.5px dashed #fff; outline: 1.5px dashed #176180; outline-offset: -1.5px; border-radius: 40%; }
+.lettering-guide-face > span { position: absolute; left: 50%; top: 100%; transform: translate(-50%, 4px); white-space: nowrap; font-size: 11px; font-weight: 700; line-height: 1; padding: 3px 6px; color: #fff; background: #176180e6; }
+.lettering-guide-focus { position: absolute; border: 2px solid #b43422; box-shadow: 0 0 0 9999px #211f1c33, 0 0 0 2px #fff; animation: lettering-guide-in .22s ease-out; }
+.lettering-guide-focus.is-consider { border-color: #9a6a12; }
+@keyframes lettering-guide-in { from { opacity: 0; transform: scale(1.08); } to { opacity: 1; transform: none; } }
+.lettering-check { padding: 4px 16px 12px; border-bottom: 1px solid var(--lettering-rule); }
+.lettering-check > summary { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.lettering-check-badge { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px; font-variant-numeric: tabular-nums; }
+.lettering-check-badge.is-fix { color: #fff; background: #b43422; }.lettering-check-badge.is-consider { color: #684115; background: #fff0c7; }.lettering-check-badge.is-clear { color: #1d5b3b; background: #e2f2e7; }
+.lettering-check-body { display: grid; gap: 10px; }
+.lettering-check-source { font-size: 12px; line-height: 1.5; color: var(--color-ink-muted, #65605a); }
+.lettering-check-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.lettering-check-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 8px 8px 0; border-left: 3px solid #b43422; background: #b434220a; }
+.lettering-check-item.is-consider { border-left-color: #c28a1f; background: #c28a1f0d; }
+.lettering-check-item.is-focused { box-shadow: inset 0 0 0 1px #176180; }
+.lettering-check-target { display: flex; gap: 8px; align-items: start; text-align: left; padding-left: 10px; min-height: 44px; }
+.lettering-check-dot { display: none; }
+.lettering-check-title { display: block; font-size: 13px; font-weight: 700; line-height: 1.4; }
+.lettering-check-where { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-ink-black, #211f1c); }
+.lettering-check-detail { display: block; font-size: 12px; line-height: 1.45; color: var(--color-ink-muted, #65605a); }
+.lettering-check-relayout,.lettering-check-run { display: grid; gap: 4px; justify-items: start; }
+@media (prefers-reduced-motion: reduce) { .lettering-guide-focus { animation: none; } }
+
+/* Lettering studio: voices, balloon shapes and type, previewed with the real engine.
+   Tiles are Bristol sheets over a Ben-Day "artwork" ground so white letters stay legible. */
+.lettering-style-controls { gap: 18px; }
+.lettering-style-section { display: grid; gap: 10px; min-width: 0; }
+.lettering-style-heading { font-family: var(--font-meta, "Lexend"); font-size: 11px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; color: var(--color-ink-black, #1b1c15); display: flex; align-items: center; gap: 8px; }
+.lettering-style-heading::after { content: ""; flex: 1; height: 2px; background: color-mix(in srgb, var(--color-ink-black, #1b1c15) 8%, transparent); }
+.lettering-style-section > .lettering-hint { margin-top: -6px; }
+.lettering-tile-grid { display: grid; gap: 6px; min-width: 0; }
+.lettering-tile-grid.is-voices { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.lettering-tile-grid.is-shapes { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.lettering-tile { display: grid; grid-template-rows: auto auto; min-width: 0; padding: 3px; text-align: center; background: var(--color-bristol, #fff); border: 2px solid color-mix(in srgb, var(--color-ink-black, #1b1c15) 8%, transparent); cursor: pointer; transition: border-color var(--motion-press, .12s) ease, transform var(--motion-press, .12s) ease, box-shadow var(--motion-press, .12s) ease; }
+.lettering-tile:hover:not(:disabled) { border-color: color-mix(in srgb, var(--color-ink-black, #1b1c15) 26%, transparent); }
+.lettering-tile:active:not(:disabled) { transform: translate(1px, 1px); }
+.lettering-tile[aria-checked="true"] { border-color: var(--color-ink-black, #1b1c15); box-shadow: 3px 3px 0 0 var(--color-ink-black, #1b1c15); }
+.lettering-tile[aria-checked="true"] .lettering-tile-label { background: var(--color-narrator-gold, #fae361); color: var(--color-ink-black, #1b1c15); }
+.lettering-tile-art { position: relative; display: grid; place-items: center; height: 64px; overflow: hidden; background: radial-gradient(circle, #1b1c1514 1px, transparent 1.4px) 0 0 / 6px 6px, #d9d3c4; }
+.lettering-tile.is-compact .lettering-tile-art { height: 42px; }
+.lettering-swatch { position: absolute; inset: 6px 4px; display: block; }
+.lettering-swatch > svg { display: block; width: 100%; height: 100%; overflow: hidden; }
+.lettering-tile-label { display: block; padding: 3px 2px 1px; font-family: var(--font-meta, "Lexend"); font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--color-ink-muted, #514f46); }
+.lettering-tile-fallback { font-size: 10px; line-height: 1.2; padding: 2px; color: var(--color-ink-muted, #514f46); }
+.lettering-font-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.lettering-font { min-height: 40px; padding: 4px 6px; font-size: 15px; line-height: 1.1; color: var(--color-ink-black, #1b1c15); background: var(--color-bristol, #fff); border: 2px solid color-mix(in srgb, var(--color-ink-black, #1b1c15) 8%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.lettering-font:hover { border-color: color-mix(in srgb, var(--color-ink-black, #1b1c15) 26%, transparent); }
+.lettering-font[aria-checked="true"] { border-color: var(--color-ink-black, #1b1c15); background: var(--color-narrator-gold, #fae361); }
+.lettering-segmented { display: flex; min-height: 40px; border: 2px solid var(--color-ink-black, #1b1c15); background: var(--color-bristol, #fff); }
+.lettering-segmented > button { flex: 1 1 0; min-width: 0; display: grid; place-items: center; padding: 4px 6px; font-family: var(--font-meta, "Lexend"); font-size: 12px; font-weight: 600; color: var(--color-ink-black, #1b1c15); cursor: pointer; }
+.lettering-segmented > button + button { border-left: 2px solid color-mix(in srgb, var(--color-ink-black, #1b1c15) 12%, transparent); }
+.lettering-segmented > button:hover:not([aria-checked="true"]) { background: var(--color-pulp-paper, #fcfaed); }
+.lettering-segmented > button[aria-checked="true"] { background: var(--color-ink-black, #1b1c15); color: var(--color-bristol, #fff); }
+.lettering-ink { display: flex; align-items: center; gap: 8px; min-height: 40px; }
+.lettering-color { border: 2px solid var(--color-ink-black, #1b1c15); padding: 2px; }
+.lettering-slider { display: grid; gap: 2px; min-width: 0; }
+.lettering-slider-head { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.lettering-slider-head .ui-field-label { margin-bottom: 0; }
+.lettering-slider-value { font-family: var(--font-meta, "Lexend"); font-size: 12px; font-variant-numeric: tabular-nums; color: var(--color-ink-muted, #514f46); }
+.lettering-slider input[type=range] { width: 100%; min-height: 28px; accent-color: #176180; }
+.lettering-shadow-pad { display: grid; grid-template-columns: repeat(3, 20px); grid-auto-rows: 20px; gap: 3px; }
+.lettering-shadow-pad > button { border: 2px solid color-mix(in srgb, var(--color-ink-black, #1b1c15) 22%, transparent); background: var(--color-bristol, #fff); cursor: pointer; }
+.lettering-shadow-pad > button:hover { border-color: var(--color-ink-black, #1b1c15); }
+.lettering-shadow-pad > button[aria-checked="true"] { background: var(--color-ink-black, #1b1c15); border-color: var(--color-ink-black, #1b1c15); }
+.lettering-shadow-origin { background: var(--color-narrator-gold, #fae361); border: 2px solid var(--color-ink-black, #1b1c15); }
+.lettering-style-group { border-top: 2px solid color-mix(in srgb, var(--color-ink-black, #1b1c15) 8%, transparent); }
+.lettering-style-group > summary { display: flex; align-items: center; gap: 8px; font-family: var(--font-meta, "Lexend"); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; }
+.lettering-style-group-body { display: grid; gap: 12px; padding: 4px 0 8px; }
+.lettering-dot { width: 7px; height: 7px; background: var(--color-hero-red, #b51822); }
+.lettering-copy-head { display: flex; align-items: end; justify-content: space-between; gap: 8px; }
+.lettering-copy-head .ui-field-label { margin-bottom: 4px; }
+.lettering-emphasis { width: 34px; height: 30px; margin-bottom: 4px; display: grid; place-items: center; font-family: var(--font-display, "Anybody"); font-size: 16px; color: var(--color-ink-black, #1b1c15); background: var(--color-bristol, #fff); border: 2px solid var(--color-ink-black, #1b1c15); cursor: pointer; }
+.lettering-emphasis:hover:not(:disabled) { background: var(--color-narrator-gold, #fae361); }
+.lettering-emphasis:active:not(:disabled) { transform: translate(1px, 1px); }
+.lettering-pointer-controls { display: grid; gap: 8px; }
+.lettering-tile:focus-visible, .lettering-font:focus-visible, .lettering-segmented > button:focus-visible, .lettering-shadow-pad > button:focus-visible, .lettering-emphasis:focus-visible { outline: 2px solid #176180; outline-offset: 2px; }
+@media (max-width: 420px) { .lettering-tile-grid.is-shapes { grid-template-columns: repeat(4, minmax(0, 1fr)); } .lettering-font-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (prefers-reduced-motion: reduce) { .lettering-tile, .lettering-emphasis { transition: none; } .lettering-tile:active, .lettering-emphasis:active { transform: none; } }
+.lettering-style-group > summary { list-style: none; }
+.lettering-style-group > summary::-webkit-details-marker { display: none; }
+.lettering-style-group > summary::before { content: ""; width: 0; height: 0; border-left: 6px solid currentColor; border-top: 4px solid transparent; border-bottom: 4px solid transparent; transition: transform var(--motion-press, .12s) ease; }
+.lettering-style-group[open] > summary::before { transform: rotate(90deg); }
+.lettering-ink.is-off .lettering-color { opacity: .3; filter: grayscale(1); }
+.lettering-tile-grid.is-roles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.lettering-tile-grid.is-presets { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.lettering-tile-art.is-specimen { height: 104px; }
+.lettering-tile:disabled { cursor: not-allowed; opacity: .55; }
+.lettering-add-form { display: grid; gap: 10px; }
+@media (max-width: 420px) { .lettering-tile-grid.is-roles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

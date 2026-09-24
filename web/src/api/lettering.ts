@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { LetteringStyle, PageLettering } from "@lettering-engine";
+import type { LetteringStyle, PageLettering, PageReadHead, PageReadMark, Point, Rect } from "@lettering-engine";
 import type { CostEstimate, GenerationJob } from "../types/api";
 export type { LetteringStyle, PageLettering, LetteringElement, RoleStyle, RoleName, Rect, Point } from "@lettering-engine";
 export interface HybridLetteringResponse {
@@ -19,6 +19,27 @@ export interface HybridLetteringResponse {
     delivery: string;
     panel_number: number;
   }>;
+  evidence: LetteringEvidence;
+}
+/** Free placement evidence for the current art; hints only, never placement review. */
+export interface LetteringEvidence {
+  panels: Rect[];
+  speakers: Record<string, string | null>;
+  speaker_names: Record<string, string>;
+  /** The stored text check for exactly this art, or null before one runs. */
+  page_read: {
+    render_revision: number;
+    /** null: this check ran before it located faces. */
+    heads: PageReadHead[] | null;
+    stray_lettering: PageReadMark[];
+    in_world_text: PageReadMark[];
+  } | null;
+}
+export interface LetteringSuggestions {
+  render_revision: number;
+  render_image_sha256: string;
+  uses_faces: boolean;
+  elements: Record<string, { placement: Rect; tail_target: Point | null }>;
 }
 export type LetteringResponse = HybridLetteringResponse | {
   mode: "baked";
@@ -41,6 +62,7 @@ export const resetPageLettering = (project: string, page: number, base: HybridLe
     expected_revision: base.saved_revision, expected_image_sha256: base.render_image_sha256,
   })
 });
+export const getLetteringSuggestions = (project: string, page: number) => apiFetch<LetteringSuggestions>(`${path(project, page)}/suggestions`);
 export const getBookLetteringStyle = (project: string) => apiFetch<{
   style: LetteringStyle;
   presets: Record<string, LetteringStyle>;

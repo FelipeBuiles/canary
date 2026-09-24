@@ -79,8 +79,8 @@ async def _operate(app, job, directory, config):
         compiled = CompiledPageGeneration(frozen,
             tuple(read_blob(directory, digest) for digest in args["references"]),
             read_blob(directory, args.get("edit_source")))
-        from novel_to_comic.page_ocr import GatewayPageOCRAdapter
-        ocr = GatewayPageOCRAdapter(config, page_number=page.page_number) if args.get("ocr") else None
+        from novel_to_comic.lettering.page_read import page_read_adapter
+        ocr = page_read_adapter(config, target, page) if args.get("ocr") else None
         work, settled = page_draw_execution(
             project_dir=directory, compiled=compiled, adapter=complete_page_adapter(config),
             artifacts=target, page=page, ocr=ocr,

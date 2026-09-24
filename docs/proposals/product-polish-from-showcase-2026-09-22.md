@@ -63,7 +63,14 @@ Done in the working tree, with provider-free tests. There was no visual pass in 
   from the base art (`lettering/panels.py`) and fit Plan's reservations inside the drawn panel
   (`lettering/placement.py`). Onscreen speech starts at the panel top, reading order is kept, and
   tails stay in their panel without crossing. Seeds remain unreviewed. Baseline and after on The Egg:
-  `scripts/measure_lettering_placement.py [--legacy]`. Stage 2 (vision pass for heads) is proposed only.
+  `scripts/measure_lettering_placement.py [--legacy]`.
+- **B4 stage 2 (September 23):** the optional text check's single OCR call also locates heads,
+  labelled against up to four small cast portraits of the page's onscreen speakers
+  (`lettering/page_read.py`). Seeds centre speech over its speaker's head and aim tails at it. The
+  editor's Placement check (`placementChecks` in `engine.mjs`) lists panel crossings, covered faces,
+  mis-aimed or missing tails, covered in-world text and drawn-in lettering, with undoable fixes and
+  a draft "Redo layout around faces". Checks are hints; placement review stays manual. Reads saved
+  before this change record `figures_read: false` and show heads as unknown, not absent.
 - **Not started:** A12 (needs planning), and B6 (read-only check: failed proofs
   already show "Try sample again" behind an estimate).
 

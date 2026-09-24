@@ -1,7 +1,7 @@
 {
   "style": {
     "revision": 1,
-    "content_sha256": "962a8f20b2a6d0a9b5be5325f65571a004241749257371f14ec8ee9a3f2f5a56",
+    "content_sha256": "1eed0a0530b58827c169b2abf90192c05c58f43f7e4ca54608d27a6addc91c44",
     "label": "Literary classic",
     "source_direction": "",
     "roles": {
@@ -21,7 +21,20 @@
         "shape": "box",
         "letter_spacing": 0.0,
         "text_stroke": "transparent",
-        "text_stroke_width": 0.0
+        "text_stroke_width": 0.0,
+        "text_case": "as_written",
+        "tail_width": 1.0,
+        "halo_color": "transparent",
+        "halo_width": 0.0,
+        "shadow": "none",
+        "shadow_color": "#181818",
+        "shadow_x": 4.0,
+        "shadow_y": 4.0,
+        "gradient_color": "transparent",
+        "warp": "none",
+        "warp_amount": 0.5,
+        "jitter": 0.0,
+        "skew": 0.0
       },
       "speech": {
         "font": "EB Garamond",
@@ -39,7 +52,20 @@
         "shape": "balloon",
         "letter_spacing": 0.0,
         "text_stroke": "transparent",
-        "text_stroke_width": 0.0
+        "text_stroke_width": 0.0,
+        "text_case": "as_written",
+        "tail_width": 1.0,
+        "halo_color": "transparent",
+        "halo_width": 0.0,
+        "shadow": "none",
+        "shadow_color": "#181818",
+        "shadow_x": 4.0,
+        "shadow_y": 4.0,
+        "gradient_color": "transparent",
+        "warp": "none",
+        "warp_amount": 0.5,
+        "jitter": 0.0,
+        "skew": 0.0
       },
       "thought": {
         "font": "EB Garamond",
@@ -57,7 +83,20 @@
         "shape": "cloud",
         "letter_spacing": 0.0,
         "text_stroke": "transparent",
-        "text_stroke_width": 0.0
+        "text_stroke_width": 0.0,
+        "text_case": "as_written",
+        "tail_width": 1.0,
+        "halo_color": "transparent",
+        "halo_width": 0.0,
+        "shadow": "none",
+        "shadow_color": "#181818",
+        "shadow_x": 4.0,
+        "shadow_y": 4.0,
+        "gradient_color": "transparent",
+        "warp": "none",
+        "warp_amount": 0.5,
+        "jitter": 0.0,
+        "skew": 0.0
       },
       "sfx": {
         "font": "Bangers",
@@ -75,7 +114,20 @@
         "shape": "none",
         "letter_spacing": 0.0,
         "text_stroke": "#181818",
-        "text_stroke_width": 2.5
+        "text_stroke_width": 2.5,
+        "text_case": "as_written",
+        "tail_width": 1.0,
+        "halo_color": "transparent",
+        "halo_width": 0.0,
+        "shadow": "none",
+        "shadow_color": "#181818",
+        "shadow_x": 4.0,
+        "shadow_y": 4.0,
+        "gradient_color": "transparent",
+        "warp": "none",
+        "warp_amount": 0.5,
+        "jitter": 0.0,
+        "skew": 0.0
       }
     }
   },
@@ -84,7 +136,7 @@
     "content_sha256": "32525f1e2b6de649449599126c2f8365704cc5730aa7ffa4ba4a9eeb8db70937",
     "page_number": 1,
     "comic_page_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "style_sha256": "962a8f20b2a6d0a9b5be5325f65571a004241749257371f14ec8ee9a3f2f5a56",
+    "style_sha256": "1eed0a0530b58827c169b2abf90192c05c58f43f7e4ca54608d27a6addc91c44",
     "locale": "source",
     "canvas_aspect_ratio": 0.6666666666666666,
     "elements": [

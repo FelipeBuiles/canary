@@ -13,9 +13,9 @@ import { LetteringStyleControls } from "../components/lettering/LetteringStyleCo
 import { letteringDraftKey, writeLetteringDraft } from "../lib/letteringHistory";
 import type { HybridLetteringResponse, LetteringTranslationEstimate } from "../api/lettering";
 import type { GenerationJob } from "../types/api";
-const api = vi.hoisted(() => ({ get: vi.fn(), put: vi.fn(), reset: vi.fn(), style: vi.fn(), putStyle: vi.fn(), language: vi.fn(), estimate: vi.fn(), translate: vi.fn(), jobs: [] as GenerationJob[] }));
-vi.mock("../api/lettering", () => ({ getPageLettering: api.get, putPageLettering: api.put, resetPageLettering: api.reset, getBookLetteringStyle: api.style, putBookLetteringStyle: api.putStyle, getLetteringTranslationEstimate: api.estimate, translateProjectLettering: api.translate }));
-vi.mock("../api/pages", () => ({ pageRenderUrl: () => "/fixture-art.png" }));
+const api = vi.hoisted(() => ({ analyze: vi.fn(), analyzeEstimate: vi.fn(), suggestions: vi.fn(), get: vi.fn(), put: vi.fn(), reset: vi.fn(), style: vi.fn(), putStyle: vi.fn(), language: vi.fn(), estimate: vi.fn(), translate: vi.fn(), jobs: [] as GenerationJob[] }));
+vi.mock("../api/lettering", () => ({ getPageLettering: api.get, putPageLettering: api.put, resetPageLettering: api.reset, getBookLetteringStyle: api.style, putBookLetteringStyle: api.putStyle, getLetteringTranslationEstimate: api.estimate, translateProjectLettering: api.translate, getLetteringSuggestions: api.suggestions }));
+vi.mock("../api/pages", () => ({ pageRenderUrl: () => "/fixture-art.png", analyzeCompletePage: api.analyze, getPageAnalysisEstimate: api.analyzeEstimate }));
 vi.mock("../api/queries", () => ({
   useGenerationJobs: (project: string) => useQuery({ queryKey: ["project", project, "generation-jobs", []], queryFn: async () => ({ jobs: api.jobs }) }),
   useCreditBalance: () => useQuery({ queryKey: ["credits", "balance"], queryFn: async () => ({ balance_credits: 100 }) }),
@@ -33,7 +33,12 @@ const initial = (): HybridLetteringResponse => ({
     state: PageLettering;
     style: LetteringStyle;
   }, saved_revision: 1, render_revision: 1, render_image_sha256: "b".repeat(64), source_stale: false, needs_save: false, placement_review_needed: false,
-  canonical: { "source-1": { text: "The door opened.", kind: "caption", speaker: null, delivery: "narration", panel_number: 1 } }
+  canonical: { "source-1": { text: "The door opened.", kind: "caption", speaker: null, delivery: "narration", panel_number: 1 } },
+  evidence: { panels: [{ x: .01, y: .01, width: .98, height: .98 }], speakers: { "source-1": null }, speaker_names: { hero: "Ana" }, page_read: null },
+});
+const ANA = { id: "figure_001", entity_id: "hero", x: .14, y: .09, width: .06, height: .04 };
+const checked = (patch: Partial<NonNullable<HybridLetteringResponse["evidence"]["page_read"]>> = {}): HybridLetteringResponse => ({
+  ...initial(), evidence: { ...initial().evidence, page_read: { render_revision: 1, heads: [ANA], stray_lettering: [], in_world_text: [], ...patch } },
 });
 const translationEstimate: LetteringTranslationEstimate = {
   estimate_credits: 12, reserved_credits: 18, reservation_multiplier: 1.5, confidence: "variable", funding: "api",
@@ -54,6 +59,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   api.jobs = [];
   api.estimate.mockResolvedValue(translationEstimate);
+  api.analyzeEstimate.mockResolvedValue({ estimate_credits: 1, reserved_credits: null, reservation_multiplier: 1, confidence: "fixed" });
   api.translate.mockResolvedValue({ job: translationJob });
   api.get.mockResolvedValue(initial());
   api.style.mockResolvedValue({ style: initial().style, presets: { literary: initial().style } });
@@ -299,7 +305,7 @@ describe("Pages-room lettering", () => {
     const page = (await screen.findByRole("img", { name: "Page artwork" })).parentElement!;
     expect(page.textContent).toContain("The door opened.");
     const book = within(screen.getByRole("group", { name: "Book lettering style" }));
-    fireEvent.change(book.getByRole("combobox", { name: "Font" }), { target: { value: "Special Elite" } });
+    fireEvent.click(within(book.getByRole("radiogroup", { name: "Font" })).getByRole("radio", { name: "Special Elite" }));
     expect(page.querySelector("svg")?.innerHTML).toContain("Special Elite");
     expect(api.putStyle).not.toHaveBeenCalled();
     expect(api.put).not.toHaveBeenCalled();
@@ -346,7 +352,7 @@ describe("Pages-room lettering", () => {
   });
   it("allows clearing a numeric field without snapping back on the first key", () => {
     const onChange = vi.fn();
-    render(<I18nProvider><LetteringStyleControls value={initial().style.roles.caption} onChange={onChange} /></I18nProvider>);
+    render(<I18nProvider><LetteringStyleControls role="caption" value={initial().style.roles.caption} onChange={onChange} /></I18nProvider>);
     const field = screen.getByRole("spinbutton", { name: "Size" }) as HTMLInputElement;
     fireEvent.focus(field);
     fireEvent.change(field, { target: { value: "" } });
@@ -376,8 +382,7 @@ describe("Pages-room lettering", () => {
     mount();
     await ready();
     fireEvent.click(screen.getByRole("button", { name: "Add lettering" }));
-    fireEvent.change(screen.getByRole("combobox", { name: "Type of lettering" }), { target: { value: "thought" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add thought" }));
     const copy = screen.getByLabelText(/Words on the page/) as HTMLTextAreaElement;
     await waitFor(() => expect(document.activeElement).toBe(copy));
     expect(copy.value).toBe("");
@@ -415,7 +420,7 @@ describe("Pages-room lettering", () => {
     fireEvent.focus(size);
     fireEvent.change(size, { target: { value: "" } });
     expect(size.value).toBe("");
-    fireEvent.change(book.getByRole("combobox", { name: "Type of lettering" }), { target: { value: "sfx" } });
+    fireEvent.click(within(book.getByRole("radiogroup", { name: "Type of lettering" })).getByRole("radio", { name: "Sound effect" }));
     expect((book.getByRole("spinbutton", { name: "Size" }) as HTMLInputElement).value).toBe(String(initial().style.roles.sfx.max_font_size));
   });
   it("keeps page edits locked until translated lettering is adopted", async () => {
@@ -428,7 +433,7 @@ describe("Pages-room lettering", () => {
     act(() => language.onBusyChange(true));
     const adopting = language.onApplied();
     expect((screen.getByLabelText(/Words on the page/) as HTMLTextAreaElement).matches(":disabled")).toBe(true);
-    expect((screen.getByRole("combobox", { name: "Type of lettering" }) as HTMLSelectElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Add caption" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "Book lettering style" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "Save lettering" }) as HTMLButtonElement).disabled).toBe(true);
     const translated = initial();
@@ -467,4 +472,73 @@ describe("Pages-room lettering", () => {
     expect(api.put).not.toHaveBeenCalled();
   });
 
+});
+
+describe("placement check", () => {
+  const check = () => screen.getByText("Placement check", { selector: "summary span" }).closest("details")!;
+  it("runs the optional face and text check at its estimate, then reports faces without saving or reviewing", async () => {
+    api.get.mockResolvedValueOnce(initial()).mockResolvedValue(checked());
+    api.analyze.mockResolvedValue({});
+    mount();
+    await ready();
+    const run = await within(check()).findByRole("button", { name: "Check faces & text · ~1 credits" });
+    fireEvent.click(run);
+    await within(check()).findByText("Checked against this artwork · 1 face found");
+    expect(api.analyze).toHaveBeenCalledWith("book", 1);
+    expect(within(check()).getByText("Covers Ana’s face")).toBeTruthy();
+    expect(within(check()).queryByRole("button", { name: /Check faces & text/ })).toBeNull();
+    expect(api.put).not.toHaveBeenCalled();
+    expect(screen.getByText("Saved")).toBeTruthy();
+  });
+  it("fixes a covered face as an undoable draft change", async () => {
+    api.get.mockResolvedValue(checked());
+    mount();
+    await ready();
+    expect(within(check()).getByText("1 to fix")).toBeTruthy();
+    fireEvent.click(within(check()).getByRole("button", { name: "Move off face" }));
+    await within(check()).findByText("Looks clear");
+    expect(screen.getByRole("status", { name: "" }).textContent).toMatch(/Unsaved/);
+    expect(api.put).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await within(check()).findByText("Covers Ana’s face");
+  });
+  it("points at the finding on the artwork and shows faces on request", async () => {
+    api.get.mockResolvedValue(checked());
+    const view = mount();
+    await ready();
+    fireEvent.click(within(check()).getByRole("button", { name: /Covers Ana’s face/ }));
+    expect(view.container.querySelector(".lettering-guide-focus.is-fix")).toBeTruthy();
+    expect(view.container.querySelector(".lettering-guide-face")).toBeNull();
+    fireEvent.click(within(check()).getByLabelText("Show faces found"));
+    expect(view.container.querySelector(".lettering-guide-face")?.textContent).toBe("Ana");
+  });
+  it("reports lettering drawn into the art without offering a fake fix", async () => {
+    api.get.mockResolvedValue(checked({ heads: [], stray_lettering: [{ text: "BOOM", x: .6, y: .7, width: .1, height: .05 }] }));
+    mount();
+    await ready();
+    const item = within(check()).getByText(/Lettering drawn into the art: “BOOM”/).closest("li")!;
+    expect(within(item).queryAllByRole("button")).toHaveLength(1);
+  });
+  it("says so when the saved check predates faces, instead of claiming none were found", async () => {
+    api.get.mockResolvedValue(checked({ heads: null }));
+    mount();
+    await ready();
+    expect(within(check()).getByText(/ran before faces were read/)).toBeTruthy();
+    expect(within(check()).queryByText(/Covers/)).toBeNull();
+    expect(within(check()).queryByRole("button", { name: /Redo layout/ })).toBeNull();
+  });
+  it("redoes the layout around faces as a draft for planned lettering only", async () => {
+    api.get.mockResolvedValue(checked());
+    api.suggestions.mockResolvedValue({ render_revision: 1, render_image_sha256: "b".repeat(64), uses_faces: true, elements: { "lettering-1": { placement: { x: .4, y: .3, width: .3, height: .1 }, tail_target: null } } });
+    mount();
+    await ready();
+    fireEvent.click(within(check()).getByRole("button", { name: "Redo layout around faces" }));
+    await within(check()).findByText("Looks clear");
+    expect(api.put).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Save lettering" }));
+    await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
+    const [, , state, , markReviewed] = api.put.mock.calls[0];
+    expect(state.elements[0].placement.x).toBeCloseTo(.4);
+    expect(markReviewed).toBe(false);
+  });
 });

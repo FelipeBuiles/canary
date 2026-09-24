@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent, type KeyboardEvent, type CSSProperties } from "react";
-import { elementRect, renderOverlay, type LetteringElement, type PageLettering, type LetteringStyle } from "@lettering-engine";
+import { elementRect, renderOverlay, type LetteringElement, type PageLettering, type LetteringStyle, type Rect } from "@lettering-engine";
 import { Button } from "../ui/Button";
 import { Toolbar } from "../composites/Toolbar";
 import { useI18n } from "../../i18n";
@@ -17,6 +17,8 @@ interface Props {
   commit: () => void;
   cancel: () => void;
   change: (id: string, patch: Partial<LetteringElement>) => void;
+  /** Evidence drawn over the art: faces from the page read and the focused check's mark. */
+  guides?: { faces: Array<Rect & { label: string }>; focus: (Rect & { severity: "fix" | "consider" }) | null };
 }
 interface Drag {
   id: string;
@@ -35,7 +37,8 @@ function resizeHandlePosition(element: LetteringElement, aspect: number) {
     y: box.y + box.height / 2 + dx * aspect * Math.sin(angle) + dy * Math.cos(angle),
   };
 }
-export function LetteringCanvas({ state, style, artUrl, selected, disabled, onArtReady, select, focusText, begin, preview, commit, cancel, change }: Props) {
+const at = (rect: Rect): CSSProperties => ({ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%` });
+export function LetteringCanvas({ state, style, artUrl, selected, disabled, onArtReady, select, focusText, begin, preview, commit, cancel, change, guides }: Props) {
   const { t } = useI18n();
   const viewport = useRef<HTMLDivElement>(null), page = useRef<HTMLDivElement>(null);
   const drag = useRef<Drag | null>(null), pan = useRef<{
@@ -158,6 +161,10 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
         }}>
           <img key={artUrl} src={artUrl} alt={t("Immutable base artwork")} className="lettering-base-art" draggable={false} onError={() => { setArtFailed(true); onArtReady(null); }} onLoad={() => { setArtFailed(false); onArtReady(artUrl); }} />
           <div className="lettering-svg" aria-hidden="true" dangerouslySetInnerHTML={{ __html: renderOverlay(state, style) }} />
+          {guides && <div className="lettering-guides" aria-hidden="true">
+            {guides.faces.map((face, index) => <span key={index} className="lettering-guide-face" style={at(face)}><span>{face.label}</span></span>)}
+            {guides.focus && <span className={`lettering-guide-focus is-${guides.focus.severity}`} style={at(guides.focus)} />}
+          </div>}
           {state.elements.filter(e => !e.hidden).map((element, index) => {
             const rect = elementRect(element);
             return <button key={element.id} type="button" className={`lettering-hit ${selected === element.id ? "is-selected" : ""} ${element.resolved?.overflow ? "has-overflow" : ""}`} data-element-id={element.id} disabled={disabled || panMode} aria-pressed={selected === element.id} aria-label={`${t("Select lettering")} ${index + 1}: ${element.resolved?.text ?? ""}`} style={{ left: `${rect.x * 100}%`, top: `${rect.y * 100}%`, width: `${rect.width * 100}%`, height: `${rect.height * 100}%`, transform: `rotate(${element.rotation}deg) scale(${element.scale})`, zIndex: Math.max(1, element.z_index + 1001) }} onClick={event => { event.stopPropagation(); select(element.id); }} onDoubleClick={focusText} onPointerDown={event => down(event, element, "move")} onPointerMove={move} onPointerUp={end} onPointerCancel={abort} onLostPointerCapture={end} onKeyDown={event => nudge(event, element, "move")} />;

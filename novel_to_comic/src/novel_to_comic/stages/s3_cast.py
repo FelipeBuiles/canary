@@ -37,6 +37,7 @@ from novel_to_comic.asset_generation import (
     PropReferenceInput,
     asset_matches_request,
     compile_non_panel_request,
+    held_asset_failure,
     style_reference_plan,
     submit_non_panel_request,
 )
@@ -231,6 +232,23 @@ def require_character_inputs(config: Config, project_dir: Path, char_id: str, *,
 
 def _location_plate_dimensions(config: Config) -> tuple[int | None, int | None]:
     return RefStrategy.for_config(config).location_plate_dimensions()
+
+
+HELD_FAILURE_GUIDANCE = (
+    "Resume Cast will not resubmit the unchanged request. Change this reference's "
+    "direction, or regenerate it from its card."
+)
+
+
+def _skip_held_failure(ctx: StageRuntime, output_path: Path, request, item_id: str, label: str) -> bool:
+    """Record a known-failing unchanged request as failed without resubmitting it."""
+    failure = held_asset_failure(output_path, request)
+    if failure is None:
+        return False
+    ctx.record_item_failed(item_id)
+    ctx.log(f"Skipped {label}: {failure.get('user_message') or 'the last attempt failed.'} "
+            f"{HELD_FAILURE_GUIDANCE}", level="error")
+    return True
 
 
 def _location_plate_jobs(loc) -> list[tuple[str, str, str | None]]:
@@ -734,6 +752,8 @@ async def _generate_character_refs(
                         pass
                 ctx.record_item_done(cost=0.0)
                 ctx.log(f"Using existing ref sheet for {char.name}", level="dim")
+            elif _skip_held_failure(ctx, output_path, request, char.id, f"ref sheet for {char.name}"):
+                pass
             else:
                 try:
                     ctx.log(f"Generating ref sheet for {char.name}")
@@ -827,6 +847,9 @@ async def _generate_character_state_refs(
                         pass
                 ctx.record_item_done(cost=0.0)
                 ctx.log(f"Using existing {state_id} ref for {char.name}", level="dim")
+            elif _skip_held_failure(ctx, output_path, wire, f"{char.id}:{state_id}",
+                                    f"{state_obj.label if state_obj else state_id} ref for {char.name}"):
+                pass
             else:
                 try:
                     ctx.log(f"Generating {state_id} ref for {char.name}")
@@ -910,6 +933,8 @@ async def _generate_location_plates(
             if asset_matches_request(output_path, wire):
                 ctx.record_item_done(cost=0.0)
                 ctx.log(f"Using existing location plate for {label}", level="dim")
+            elif _skip_held_failure(ctx, output_path, wire, stem, f"location plate for {label}"):
+                pass
             else:
                 try:
                     ctx.log(f"Generating location plate for {label}")
@@ -983,6 +1008,8 @@ async def _generate_prop_refs(
             if asset_matches_request(output_path, request):
                 ctx.record_item_done(cost=0.0)
                 ctx.log(f"Using existing prop ref for {prop.name}", level="dim")
+            elif _skip_held_failure(ctx, output_path, request, prop.id, f"prop ref for {prop.name}"):
+                pass
             else:
                 try:
                     ctx.log(f"Generating prop ref for {prop.name}")
@@ -1016,6 +1043,9 @@ async def _generate_prop_refs(
                     wire = _compile_state_asset_wire(config, spec, project_dir)
                     if asset_matches_request(output_path, wire):
                         ctx.record_item_done(cost=0.0)
+                    elif _skip_held_failure(ctx, output_path, wire, f"{prop.id}:{state.id}",
+                                            f"prop state {prop.name}/{state.label}"):
+                        pass
                     else:
                         async with semaphore:
                             result = await _generate_state_asset_wire(config, spec, output_path, project_dir, feature="cast.prop_state_ref", request=wire)
@@ -1081,7 +1111,7 @@ async def run(
                     await review_cast(config, project_dir, story_bible, ctx)
                 else:
                     ctx.record_item_failed("cast_visual_review")
-                    ctx.log("Cast visual review needs all canonical character sheets", level="error")
+                    ctx.log("Cast visual review waits until every character reference finishes", level="error")
             ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
 
         if should_generate_plates:
@@ -1091,9 +1121,7 @@ async def run(
             await _generate_prop_refs(config, project_dir, story_bible, ctx, prop_ids)
 
         if ctx.stage_state.items_failed:
-            raise ValueError(
-                "Some Cast references or checks did not finish. Resume Cast to finish the missing work; current references are reused."
-            )
+            raise ValueError(cast_failure_summary(cast_failure_details(project_dir, ctx.stage_state)))
 
         # Pin the style template hash so downstream stages (draw, especially)
         # can detect if the style was edited after cast plates were generated.
@@ -1209,14 +1237,100 @@ def estimate_state_reference_count(
     ).ref_count
 
 
+INCOMPLETE_CAST_MESSAGE = (
+    "Some Cast references or checks did not finish. Resume Cast to finish the "
+    "missing work; current references are reused."
+)
+
+
+def _failed_cast_asset(bible: StoryBible | None, project_dir: Path, item_id: str) -> tuple[dict, Path | None]:
+    """Map a Cast ``items_failed`` id to its asset identity, label, and output path."""
+    characters = {c.id: c for c in bible.characters} if bible else {}
+    locations = {loc.id: loc for loc in bible.locations} if bible else {}
+    props = {prop.id: prop for prop in bible.props} if bible else {}
+    entity_id, _, state_id = item_id.partition(":")
+    if "/states/" in item_id:
+        entity_id, _, state_id = item_id.partition("/states/")
+    state_id = state_id or None
+
+    def _state_label(entity) -> str:
+        state = next((s for s in entity.appearance_states or [] if s.id == state_id), None)
+        return f"{entity.name} — {state.label if state else state_id}"
+
+    if entity_id in characters:
+        char = characters[entity_id]
+        return ({"asset_type": "character", "entity_id": entity_id, "state_id": state_id,
+                 "label": _state_label(char) if state_id else char.name},
+                artifacts.character_state_ref_sheet_path(project_dir, entity_id, state_id) if state_id
+                else artifacts.character_ref_sheet_path(project_dir, entity_id))
+    if entity_id in locations:
+        loc = locations[entity_id]
+        return ({"asset_type": "location", "entity_id": entity_id, "state_id": state_id,
+                 "label": _state_label(loc) if state_id else loc.name},
+                artifacts.location_state_plate_path(project_dir, entity_id, state_id) if state_id
+                else artifacts.location_plate_path(project_dir, entity_id))
+    if entity_id in props:
+        prop = props[entity_id]
+        return ({"asset_type": "prop", "entity_id": entity_id, "state_id": state_id,
+                 "label": _state_label(prop) if state_id else prop.name},
+                artifacts.prop_state_ref_path(project_dir, entity_id, state_id) if state_id
+                else artifacts.prop_ref_path(project_dir, entity_id))
+    return {"asset_type": None, "entity_id": None, "state_id": None, "label": item_id}, None
+
+
+def cast_failure_details(project_dir: Path, stage_state) -> list[dict]:
+    """Explain each failed Cast reference from its stored failure sidecar.
+
+    Read-only and provider-free, so status polling can show which reference
+    stopped Cast and why instead of a bare "resume" prompt. The visual review
+    only waits on the others, so it is not listed as a failure of its own.
+    """
+    from novel_to_comic.asset_generation import read_asset_failure
+
+    bible = artifacts.read_story_bible_safe(project_dir)
+    details = []
+    for item_id in stage_state.items_failed:
+        if item_id == "cast_visual_review":
+            continue
+        identity, path = _failed_cast_asset(bible, project_dir, item_id)
+        failure = read_asset_failure(path) if path is not None else None
+        classification = failure.get("classification") if failure else None
+        attempts = failure.get("attempts") if failure else None
+        message = (failure or {}).get("user_message") or "This reference did not finish. Resume Cast to retry it."
+        if classification == "provider_blocked":
+            message += " Change its direction, or regenerate it from its card."
+        details.append({
+            "item_id": item_id, **identity,
+            "classification": classification,
+            "attempts": attempts if type(attempts) is int else (1 if failure else None),
+            "message": message,
+        })
+    return details
+
+
+def cast_failure_summary(details: list[dict]) -> str:
+    """One actionable sentence naming what stopped Cast, for errors and gates."""
+    if not details:
+        return INCOMPLETE_CAST_MESSAGE
+    first = details[0]
+    summary = f"{first['label']}: {first['message']}"
+    if len(details) > 1:
+        others = ", ".join(detail["label"] for detail in details[1:4])
+        more = len(details) - 4
+        summary += f" Also unfinished: {others}{f' and {more} more' if more > 0 else ''}."
+    return summary
+
+
 def cast_approval_blocker(config: Config, project_dir: Path, stage_state) -> str | None:
     """Shared, read-only checkpoint gate for status and approval.
 
     Include appearance states: the identity review compares canonical sheets
     and cannot by itself certify the rest of the Cast inventory.
     """
-    incomplete = "Some Cast references or checks did not finish. Resume Cast to finish the missing work; current references are reused."
-    if stage_state.items_failed or stage_state.items_done < stage_state.items_total:
+    incomplete = INCOMPLETE_CAST_MESSAGE
+    if stage_state.items_failed:
+        return cast_failure_summary(cast_failure_details(project_dir, stage_state))
+    if stage_state.items_done < stage_state.items_total:
         return incomplete
     bible = artifacts.read_story_bible_safe(project_dir)
     if bible is None:

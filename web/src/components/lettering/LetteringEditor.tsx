@@ -1,16 +1,22 @@
 import { useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { defaultTailTarget, elementRect, canvasMeasure, fontCSS, loadFonts, renderOverlay, resolvePage, roleFor, textFor } from "@lettering-engine";
-import { getPageLettering, putPageLettering, resetPageLettering, getBookLetteringStyle, putBookLetteringStyle, type HybridLetteringResponse, type PageLettering, type LetteringElement, type LetteringStyle, type RoleName, } from "../../api/lettering";
+import { defaultTailTarget, elementRect, canvasMeasure, fontCSS, loadFonts, placementChecks, renderOverlay, resolvePage, styleFor, textFor, type PlacementCheck } from "@lettering-engine";
+import { getLetteringSuggestions, getPageLettering, putPageLettering, resetPageLettering, getBookLetteringStyle, putBookLetteringStyle, type HybridLetteringResponse, type PageLettering, type LetteringElement, type LetteringStyle, type RoleName, } from "../../api/lettering";
 import { pageRenderUrl } from "../../api/pages";
 import { clearLetteringDraft, editableSignature, historyReducer, initialHistory, letteringDraftKey, readLetteringDraft, writeLetteringDraft } from "../../lib/letteringHistory";
 import { Button } from "../ui/Button";
-import { FieldLabel, SelectField, TextAreaField } from "../ui/Field";
+import { FieldLabel, TextAreaField } from "../ui/Field";
 import { Surface } from "../ui/Surface";
 import { Toolbar } from "../composites/Toolbar";
 import { LetteringCanvas } from "./LetteringCanvas";
 import { LetteringStyleControls } from "./LetteringStyleControls";
+import { LetteringPresetTiles, LetteringRoleTiles } from "./LetteringPickers";
+import { BalloonJoin, EmphasisButton, TailCurve } from "./LetteringBalloonControls";
+import { joinedPlacement, toggleEmphasis } from "./letteringTools";
+import { sampleWords } from "./letteringVoices";
 import { ProjectLetteringLanguage } from "./ProjectLetteringLanguage";
+import { PlacementCheckPanel } from "./PlacementCheckPanel";
+import { engineEvidence, useChecks } from "../../lib/placementChecks";
 import { useI18n } from "../../i18n";
 import "./lettering.css";
 const roleNames: Record<RoleName, string> = { caption: "Caption", speech: "Speech", thought: "Thought", sfx: "Sound effect" };
@@ -57,9 +63,10 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
     const draft = readLetteringDraft(draftKey);
     return draft && editableSignature(draft.state) !== editableSignature(initial.state) ? draft : null;
   });
-  const [draftStored, setDraftStored] = useState(true), [bookStyleOpen, setBookStyleOpen] = useState(false), [addOpen, setAddOpen] = useState(false), [addRole, setAddRole] = useState<RoleName>("caption");
+  const [draftStored, setDraftStored] = useState(true), [bookStyleOpen, setBookStyleOpen] = useState(false), [addOpen, setAddOpen] = useState(false);
   const [loadedArtUrl, setLoadedArtUrl] = useState<string | null>(null);
   const [translationBusy, setTranslationBusy] = useState(false);
+  const [showFaces, setShowFaces] = useState(false), [focusedCheck, setFocusedCheck] = useState<{ key: string; check: PlacementCheck } | null>(null);
   const artUrl = pageRenderUrl(project, pageNumber, base.render_revision);
   const textarea = useRef<HTMLTextAreaElement>(null), root = useRef<HTMLDivElement>(null);
   const dirty = editableSignature(history.present) !== editableSignature(base.state) || base.needs_save;
@@ -81,6 +88,10 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
   }, [history.present, base.style, measure]);
   const current = layout.state?.elements.find(e => e.id === selected) ?? null;
   const canonical = current?.source_lettering_item_id ? base.canonical[current.source_lettering_item_id] : null;
+  const checks = useChecks(layout.state, base.evidence);
+  const heads = base.evidence.page_read?.heads ?? null;
+  // A focused finding stays on the canvas only while it is still reported.
+  const focus = focusedCheck && checks.some(check => check.code === focusedCheck.check.code && check.element_id === focusedCheck.check.element_id) ? focusedCheck.check : null;
   const issues = layout.state?.elements.filter(e => !e.hidden && (e.resolved?.overflow || e.resolved?.warnings.length)) ?? [];
   useEffect(() => {
     let live = true;
@@ -115,6 +126,47 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
   }, [dirty]);
   function changeState(state: PageLettering, preview = false) { dispatch({ type: preview ? "preview" : "change", value: state }); setError(null); }
   function patch(id: string, patch: Partial<LetteringElement>, preview = false) { changeState({ ...history.present, elements: history.present.elements.map(e => e.id === id ? { ...e, ...patch } : e) }, preview); }
+  function withFixes(state: PageLettering, fixes: PlacementCheck[]): PageLettering {
+    const patches = new Map<string, Partial<LetteringElement>>();
+    for (const check of fixes) if (check.element_id && check.fix) patches.set(check.element_id, { ...patches.get(check.element_id), ...check.fix });
+    return { ...state, elements: state.elements.map(e => patches.has(e.id) ? { ...e, ...patches.get(e.id) } : e) };
+  }
+  function fixCheck(check: PlacementCheck) {
+    if (pageLocked || !check.element_id || !check.fix) return;
+    patch(check.element_id, check.fix);
+    setSelected(check.element_id);
+    setFocusedCheck(null);
+  }
+  function fixAll() {
+    if (pageLocked || !measure) return;
+    // Move bodies first, then aim tails from where the bodies landed: one undo step.
+    const movable = checks.filter(check => check.severity === "fix" && check.fix?.placement);
+    let next = withFixes(history.present, movable);
+    try {
+      const aims = placementChecks(resolvePage(next, base.style, measure), engineEvidence(base.evidence)).filter(check => check.severity === "fix" && check.fix?.tail_target);
+      next = withFixes(next, aims);
+    } catch (error) { setError(message(error)); return; }
+    changeState(next);
+    setFocusedCheck(null);
+  }
+  async function relayout() {
+    const suggestion = await getLetteringSuggestions(project, pageNumber);
+    if (suggestion.render_image_sha256 !== base.render_image_sha256)
+      throw new Error(t("The artwork changed. Reload the page before redoing the layout."));
+    // Planned balloons only; wording, styles and added lettering stay as they are.
+    changeState({ ...history.present, elements: history.present.elements.map(e => {
+      const seed = suggestion.elements[e.id];
+      return seed && e.source_lettering_item_id ? { ...e, placement: seed.placement, tail_target: seed.tail_target, rotation: 0, scale: 1, tight_box: true } : e;
+    }) });
+    setFocusedCheck(null);
+  }
+  async function refreshEvidence() {
+    const next = await getPageLettering(project, pageNumber);
+    if (next.mode !== "hybrid") throw new Error(next.message);
+    if (next.render_image_sha256 === base.render_image_sha256) setBase(old => ({ ...old, evidence: next.evidence }));
+    void client.invalidateQueries({ predicate: query => query.queryKey.includes(project) && query.queryKey[0] !== "page-lettering" });
+    setShowFaces(true);
+  }
   function acknowledge(next: HybridLetteringResponse, clearHistory = false) {
     setBase(next);
     dispatch({ type: clearHistory ? "reset" : "acknowledge", value: next.state });
@@ -195,9 +247,19 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
       return; if (current.source_lettering_item_id)
       patch(current.id, { hidden: !current.hidden });
     else {
-      changeState({ ...history.present, elements: history.present.elements.filter(e => e.id !== current.id) });
+      // Balloons joined to a removed lead stand on their own again.
+      changeState({ ...history.present, elements: history.present.elements.filter(e => e.id !== current.id).map(e => e.link_to === current.id ? { ...e, link_to: null } : e) });
       setSelected(null);
     }
+  }
+  // Stress the selected words (or the word at the caret) and keep them selected.
+  function emphasize() {
+    const field = textarea.current;
+    if (!field || !current || pageLocked) return;
+    const locale = history.present.locale, next = toggleEmphasis(field.value, field.selectionStart, field.selectionEnd);
+    if (next.text === field.value) return;
+    patch(current.id, { text_by_locale: { ...current.text_by_locale, [locale]: next.text } });
+    requestAnimationFrame(() => { field.focus(); field.setSelectionRange(next.start, next.end); });
   }
   function keys(event: KeyboardEvent<HTMLDivElement>) {
     if (pageLocked)
@@ -284,11 +346,19 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
       setBookStyleOpen(false);
     }} />}
     {!fontsReady ? <p role="status">{t("Loading the book’s bundled typefaces…")}</p> : layout.state && <div className="lettering-workspace" hidden={bookStyleOpen}>
-      <LetteringCanvas state={layout.state} style={base.style} artUrl={artUrl} onArtReady={setLoadedArtUrl} selected={selected} disabled={pageLocked} select={setSelected} focusText={() => textarea.current?.focus()} begin={() => dispatch({ type: "begin" })} preview={(id, value) => patch(id, value, true)} commit={() => dispatch({ type: "commit" })} cancel={() => dispatch({ type: "cancel" })} change={patch} />
+      <LetteringCanvas guides={{
+        faces: showFaces && heads ? heads.map(head => ({ ...head, label: (head.entity_id && base.evidence.speaker_names[head.entity_id]) || t("Face") })) : [],
+        focus: focus ? { ...focus.mark, severity: focus.severity } : null,
+      }} state={layout.state} style={base.style} artUrl={artUrl} onArtReady={setLoadedArtUrl} selected={selected} disabled={pageLocked} select={setSelected} focusText={() => textarea.current?.focus()} begin={() => dispatch({ type: "begin" })} preview={(id, value) => patch(id, value, true)} commit={() => dispatch({ type: "commit" })} cancel={() => dispatch({ type: "cancel" })} change={patch} />
       <aside className="lettering-inspector" aria-label={t("Lettering controls")}>
+        <PlacementCheckPanel project={project} pageNumber={pageNumber} state={layout.state} evidence={base.evidence} checks={checks} locale={history.present.locale} disabled={pageLocked} focused={focusedCheck?.key ?? null} showFaces={showFaces} onShowFaces={setShowFaces}
+          onFocus={(key, check) => { setFocusedCheck(old => old?.key === key ? null : { key, check }); if (check.element_id) setSelected(check.element_id); }}
+          onFix={fixCheck} onFixAll={fixAll} onRelayout={relayout} onChecked={refreshEvidence} />
         {current ? <fieldset disabled={pageLocked} className="lettering-element-controls">
           <legend className="lettering-section-title">{t(roleNames[current.role])}{current.hidden && <span>{t("Hidden")}</span>}</legend>
-          <div><FieldLabel htmlFor="lettering-copy">{t("Words on the page")} · {history.present.locale === "source" ? t("source") : history.present.locale}</FieldLabel><TextAreaField ref={textarea} id="lettering-copy" className="lettering-copy-field" value={current.text_by_locale[history.present.locale] ?? ""} placeholder={history.present.locale !== "source" ? current.text_by_locale.source : t("Write some words…")} maxLength={10000} onFocus={() => dispatch({ type: "begin" })} onBlur={() => dispatch({ type: "commit" })} onChange={e => patch(current.id, { text_by_locale: { ...current.text_by_locale, [history.present.locale]: e.target.value } }, true)} />
+          <div><div className="lettering-copy-head"><FieldLabel htmlFor="lettering-copy">{t("Words on the page")} · {history.present.locale === "source" ? t("source") : history.present.locale}</FieldLabel><EmphasisButton onToggle={emphasize} /></div><TextAreaField ref={textarea} id="lettering-copy" className="lettering-copy-field" value={current.text_by_locale[history.present.locale] ?? ""} placeholder={history.present.locale !== "source" ? current.text_by_locale.source : t("Write some words…")} maxLength={10000} onFocus={() => dispatch({ type: "begin" })} onBlur={() => dispatch({ type: "commit" })} onKeyDown={event => {
+            if ((event.metaKey || event.ctrlKey) && ["b", "i"].includes(event.key.toLowerCase())) { event.preventDefault(); emphasize(); }
+          }} onChange={e => patch(current.id, { text_by_locale: { ...current.text_by_locale, [history.present.locale]: e.target.value } }, true)} />
           </div>
           <div className="lettering-small-actions">{canonical && history.present.locale === "source" && <Button variant="outline" size="xs" onClick={() => patch(current.id, { text_by_locale: { ...current.text_by_locale, source: canonical.text } })}>{t("Reset copy")}</Button>}
             <Button variant="outline" size="xs" onClick={() => patch(current.id, { placement: current.suggested_placement, tail_target: current.suggested_tail_target, rotation: 0, scale: 1, tight_box: true })}>{t("Reset placement")}</Button>
@@ -298,8 +368,14 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
           {(!canonical || canonical.delivery === "onscreen") && ["speech", "thought"].includes(current.role) && <div className="lettering-pointer-controls">
             <label className="lettering-checkbox"><input type="checkbox" checked={!!current.tail_target} onChange={e => patch(current.id, { tail_target: e.target.checked ? (current.suggested_tail_target ?? defaultTailTarget(elementRect(current))) : null })} />{t("Balloon tail · drag its round handle")}</label>
             <Button variant="outline" size="xs" onClick={() => patch(current.id, { tail_target: defaultTailTarget(elementRect(current)) })}>{t("Reset pointer")}</Button>
-            <p className="lettering-hint">{t("Point toward the speaker. Initial pointers are suggestions, not detected faces.")}</p>
+            {current.tail_target && <TailCurve value={current.tail_bend ?? 0} onBegin={() => dispatch({ type: "begin" })} onPreview={bend => patch(current.id, { tail_bend: bend }, true)} onCommit={() => dispatch({ type: "commit" })} />}
+            <p className="lettering-hint">{heads?.length ? t("Point toward the speaker. The placement check knows where faces are and can aim it for you.") : t("Point toward the speaker. Initial pointers are suggestions, not detected faces.")}</p>
           </div>}
+          {["speech", "thought"].includes(current.role) && <BalloonJoin current={current} elements={layout.state.elements} locale={history.present.locale} onJoin={id => {
+            const lead = id ? layout.state?.elements.find(e => e.id === id) : null;
+            const placement = lead ? joinedPlacement(lead, current) : null;
+            patch(current.id, { link_to: id, ...(placement ? { placement } : {}) });
+          }} />}
           <details><summary>{t("Position & layer")}</summary><div className="mt-3 space-y-3">
           <label className="lettering-checkbox"><input type="checkbox" checked={current.tight_box} onChange={e => patch(current.id, { tight_box: e.target.checked })} />{t("Snug box around text")}</label>
 
@@ -307,7 +383,7 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
               <div><FieldLabel htmlFor="lettering-scale">{t("Scale")}</FieldLabel><input id="lettering-scale" aria-label={t("Scale")} type="range" min={.25} max={3} step={.05} value={current.scale} onFocus={() => dispatch({ type: "begin" })} onBlur={() => dispatch({ type: "commit" })} onPointerDown={() => dispatch({ type: "begin" })} onPointerUp={() => dispatch({ type: "commit" })} onChange={e => patch(current.id, { scale: +e.target.value }, true)} /><span className="lettering-hint">{Math.round(current.scale * 100)}%</span></div></div>
             <div className="lettering-small-actions"><Button size="xs" variant="outline" disabled={current.z_index <= -1000} onClick={() => patch(current.id, { z_index: current.z_index - 1 })}>{t("Send backward")}</Button><Button size="xs" variant="outline" disabled={current.z_index >= 1000} onClick={() => patch(current.id, { z_index: current.z_index + 1 })}>{t("Bring forward")}</Button></div>
           </div></details>
-          <details open key={current.id} className="lettering-local-style"><summary>{t("Style · this element only")}</summary><div className="mt-3"><p className="lettering-style-scope">{t(current.style_override ? "Custom style" : "Using book style")}</p><LetteringStyleControls key={current.id} value={roleFor(current, base.style)} onChange={style => patch(current.id, { style_override: style })} />{current.style_override && <Button variant="outline" size="xs" className="mt-3" onClick={() => patch(current.id, { style_override: null })}>{t("Use book style")}</Button>}</div></details>
+          <details open key={current.id} className="lettering-local-style"><summary>{t("Style · this element only")}</summary><div className="mt-3"><p className="lettering-style-scope">{t(current.style_override ? "Custom style" : "Using book style")}</p><LetteringStyleControls key={current.id} role={current.role} value={styleFor(current, base.style)} base={styleFor({ ...current, style_override: null }, base.style)} onUseBase={() => patch(current.id, { style_override: null })} measure={measure} sample={sampleWords(textFor(current, history.present.locale), current.role)} onChange={style => patch(current.id, { style_override: style })} />{current.style_override && <Button variant="outline" size="xs" className="mt-3" onClick={() => patch(current.id, { style_override: null })}>{t("Use book style")}</Button>}</div></details>
         </fieldset> : <p className="lettering-hint p-4">{t("Select lettering on the artwork, or add new words.")}</p>}
         <section className="lettering-list-section">
           <details><summary>{t("Reading order")} <span className="lettering-list-count">{history.present.elements.length}</span></summary>
@@ -315,7 +391,11 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
               <span className="lettering-order-number">{index + 1}</span><span className="min-w-0"><span className="lettering-list-role">{t(roleNames[element.role])}{element.hidden ? ` · ${t("Hidden")}` : element.resolved?.overflow ? ` · ${t("Needs attention")}` : ""}</span><span className="lettering-list-copy">{textFor(element, history.present.locale) || t("Write some words…")}</span></span></button></li>)}</ol>
           </details>
           <Button variant="outline" size="sm" disabled={pageLocked || history.present.elements.length >= 200} onClick={() => setAddOpen(value => !value)} aria-expanded={addOpen} aria-controls="lettering-add-form">{t("Add lettering")}</Button>
-          {addOpen && <form id="lettering-add-form" className="lettering-add-form" onSubmit={event => { event.preventDefault(); if (!pageLocked && history.present.elements.length < 200) add(addRole); }}><FieldLabel htmlFor="lettering-add-role">{t("Type of lettering")}</FieldLabel><SelectField id="lettering-add-role" value={addRole} disabled={pageLocked} onChange={event => setAddRole(event.target.value as RoleName)}>{(Object.keys(roleNames) as RoleName[]).map(role => <option key={role} value={role}>{t(roleNames[role])}</option>)}</SelectField><div className="lettering-small-actions"><Button size="sm" type="submit" disabled={pageLocked || history.present.elements.length >= 200}>{t("Add")}</Button><Button size="sm" variant="outline" onClick={() => setAddOpen(false)}>{t("Cancel")}</Button></div></form>}
+          {addOpen && <div id="lettering-add-form" className="lettering-add-form">
+            <p className="lettering-hint">{t("Choose what to add. It appears on the page in this book’s style, ready for words.")}</p>
+            <LetteringRoleTiles mode="add" label={t("Type of lettering")} style={base.style} measure={measure} disabled={pageLocked || history.present.elements.length >= 200} onPick={role => { if (!pageLocked && history.present.elements.length < 200) add(role); }} />
+            <div className="lettering-small-actions"><Button size="sm" variant="outline" onClick={() => setAddOpen(false)}>{t("Cancel")}</Button></div>
+          </div>}
         </section>
       </aside>
     </div>}
@@ -365,7 +445,7 @@ export function BookStyleEditor({ project, initial, pagePreview, disabled, onClo
   }
   const [presetName, setPresetName] = useState(""), [presetRevision, setPresetRevision] = useState(0);
   const measure = useMemo(() => fontsReady ? canvasMeasure() : null, [fontsReady]);
-  const sample = t(({ caption: "A story takes shape.", speech: "There you are! I have a story to tell you.", thought: "What if the story took a different turn?", sfx: "CRASH!" })[role]);
+  const sample = t(({ caption: "A story takes shape.", speech: "There you are! I have a *story* to tell you.", thought: "What if the story took a *different* turn?", sfx: "CRASH!" })[role]);
   const preview = useMemo(() => {
     if (!measure) return { svg: "", overflow: false, error: null };
     const placement = { x: .36, y: .28, width: .28, height: .24 };
@@ -415,10 +495,11 @@ export function BookStyleEditor({ project, initial, pagePreview, disabled, onClo
     {error && <p role="alert" className="lettering-error">{error}</p>}<div className="lettering-small-actions"><Button disabled={disabled || busy || !fontsReady || !!preview.error || !!pageSample?.error || !!preview.overflow} onClick={() => void apply()}>{busy ? t("Reflowing the book…") : t("Apply to book")}</Button><Button variant="outline" disabled={busy} onClick={close}>{t("Cancel")}</Button>{!fontsReady && error && <Button variant="outline" onClick={() => { setError(null); setFontAttempt(n => n + 1); }}>{t("Retry fonts")}</Button>}</div>
     <fieldset aria-label={t("Book lettering style")} disabled={disabled || busy} className="lettering-book-style-fields">
       <div className="lettering-book-controls">
-        <div><FieldLabel htmlFor="lettering-preset">{t("Preset")}</FieldLabel><SelectField id="lettering-preset" value={presetName} disabled={presets.isPending || presets.isError} onChange={event => { const name = event.target.value, preset = presets.data?.presets[name]; if (preset) { setStyle({ ...preset, source_direction: initial.source_direction, revision: initial.revision }); setPresetName(name); setPresetRevision(value => value + 1); } }}><option value="" disabled>{presets.isPending ? t("Loading presets…") : t("Custom style")}</option>{Object.entries(presets.data?.presets ?? {}).map(([name, preset]) => <option key={name} value={name}>{t(preset.label)}</option>)}</SelectField></div>
+        <div><span className="ui-field-label">{t("Book look")}</span><p className="lettering-hint mb-2">{presets.isPending ? t("Loading presets…") : presetName ? t("Starting from a preset. Fine-tune any role below.") : t("Custom style. Pick a look to start over from it.")}</p>
+          {presets.data && <LetteringPresetTiles presets={presets.data.presets} value={presetName} measure={measure} onPick={name => { const preset = presets.data?.presets[name]; if (preset) { setStyle({ ...preset, source_direction: initial.source_direction, revision: initial.revision }); setPresetName(name); setPresetRevision(value => value + 1); } }} />}</div>
         {presets.isError && <div role="alert"><p className="lettering-hint">{message(presets.error)}</p><Button variant="outline" size="xs" onClick={() => void presets.refetch()}>{t("Try again")}</Button></div>}
-        <div><FieldLabel htmlFor="lettering-style-role">{t("Type of lettering")}</FieldLabel><SelectField id="lettering-style-role" value={role} onChange={e => setRole(e.target.value as RoleName)}>{(Object.keys(roleNames) as RoleName[]).map(role => <option key={role} value={role}>{t(roleNames[role])}</option>)}</SelectField></div>
-        <LetteringStyleControls key={`${role}:${presetRevision}`} idPrefix="book-lettering" value={style.roles[role]} onChange={value => { setStyle({ ...style, roles: { ...style.roles, [role]: value } }); setPresetName(""); }} />
+        <div><span className="ui-field-label">{t("Type of lettering")}</span><LetteringRoleTiles mode="choose" label={t("Type of lettering")} style={style} measure={measure} value={role} onPick={setRole} /></div>
+        <LetteringStyleControls key={`${role}:${presetRevision}`} idPrefix="book-lettering" role={role} value={style.roles[role]} base={saved.roles[role]} baseLabel="Saved style" measure={measure} sample={sampleWords(sample, role)} onChange={value => { setStyle({ ...style, roles: { ...style.roles, [role]: value } }); setPresetName(""); }} />
         {initial.source_direction && <details><summary>{t("Selected creative direction")}</summary><p className="lettering-hint mt-2">{initial.source_direction}</p></details>}
       </div>
       <figure className="lettering-book-preview"><figcaption>{t("Live sample")} · {t(roleNames[role])}</figcaption>{pagePreview && pageSample && <>

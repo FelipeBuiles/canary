@@ -262,6 +262,17 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `detected_region_id` | `str | None` | `None` |
 | `role` | `Literal['comic_lettering', 'incidental_text']` | `'comic_lettering'` |
 
+## ObservedFigure _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(min_length=1)` |
+| `entity_id` | `str | None` | `None` |
+| `x` | `float` | `Field(ge=0, le=1)` |
+| `y` | `float` | `Field(ge=0, le=1)` |
+| `width` | `float` | `Field(gt=0, le=1)` |
+| `height` | `float` | `Field(gt=0, le=1)` |
+
 ## OCRExtraction _(draw.py)_
 
 | Field | Type | Default |
@@ -271,6 +282,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `observed_regions` | `tuple[ObservedRegion, ...]` | `()` |
 | `observed_reading_order` | `tuple[str, ...]` | `()` |
 | `reading_order_proven` | `bool` | `False` |
+| `figures` | `tuple[ObservedFigure, ...]` | `()` |
 
 ## OCRProviderResponse _(draw.py)_
 
@@ -296,6 +308,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `render_image_sha256` | `str` | `Field(min_length=64, max_length=64)` |
 | `extraction` | `OCRExtraction` |  |
 | `usage` | `UsageRecord | None` | `None` |
+| `figures_read` | `bool` | `False` |
 
 ## LetteringMatch _(draw.py)_
 
@@ -571,10 +584,23 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `stroke_width` | `float` | `Field(default=1.6, ge=0, le=12)` |
 | `padding` | `float` | `Field(default=11, ge=0, le=40)` |
 | `corner_radius` | `float` | `Field(default=12, ge=0, le=80)` |
-| `shape` | `Literal['box', 'round', 'balloon', 'ellipse', 'cloud', 'whisper', 'burst', 'none']` | `'balloon'` |
+| `shape` | `Literal['box', 'round', 'balloon', 'ellipse', 'cloud', 'whisper', 'burst', 'wavy', 'electric', 'none']` | `Field(default='balloon', description='balloon: ...` |
 | `letter_spacing` | `float` | `Field(default=0, ge=-1, le=12)` |
 | `text_stroke` | `Color` | `'transparent'` |
 | `text_stroke_width` | `float` | `Field(default=0, ge=0, le=12)` |
+| `text_case` | `Literal['as_written', 'upper']` | `Field(default='as_written', description='upper:...` |
+| `tail_width` | `float` | `Field(default=1, ge=0.4, le=2.5, description='B...` |
+| `halo_color` | `Color` | `'transparent'` |
+| `halo_width` | `float` | `Field(default=0, ge=0, le=16, description='Oute...` |
+| `shadow` | `Literal['none', 'drop', 'extrude']` | `Field(default='none', description='drop: offset...` |
+| `shadow_color` | `Color` | `'#181818'` |
+| `shadow_x` | `float` | `Field(default=4, ge=-40, le=40)` |
+| `shadow_y` | `float` | `Field(default=4, ge=-40, le=40)` |
+| `gradient_color` | `Color` | `Field(default='transparent', description='Lette...` |
+| `warp` | `Literal['none', 'arc', 'wave']` | `'none'` |
+| `warp_amount` | `float` | `Field(default=0.5, ge=-1, le=1, description='Wa...` |
+| `jitter` | `float` | `Field(default=0, ge=0, le=1, description='Seede...` |
+| `skew` | `float` | `Field(default=0, ge=-30, le=30, description='Le...` |
 
 ## LetteringRoles _(lettering.py)_
 
@@ -601,6 +627,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `width` | `float` | `Field(ge=0)` |
 | `ascent` | `float` | `Field(ge=0)` |
 | `descent` | `float` | `Field(ge=0)` |
+| `glyph_x` | `tuple[float, ...] | None` | `Field(default=None, max_length=401)` |
 
 ## ResolvedLettering _(lettering.py)_
 
@@ -632,6 +659,8 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `style_override` | `RoleStyle | None` | `None` |
 | `tail_target` | `NormalizedPoint | None` | `None` |
 | `suggested_tail_target` | `NormalizedPoint | None` | `None` |
+| `tail_bend` | `float` | `Field(default=0, ge=-1, le=1)` |
+| `link_to` | `str | None` | `Field(default=None, max_length=100)` |
 | `rotation` | `float` | `Field(default=0, ge=-180, le=180)` |
 | `scale` | `float` | `Field(default=1, ge=0.25, le=3)` |
 | `z_index` | `int` | `Field(default=0, ge=-1000, le=1000)` |

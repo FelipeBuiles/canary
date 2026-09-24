@@ -15,7 +15,7 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "resolveJsonModule": true,
-    "paths": {"@lettering-engine": ["../novel_to_comic/src/novel_to_comic/lettering/engine.d.mts"]},
+    "paths": {"@lettering-engine": ["../novel_to_comic/src/novel_to_comic/lettering/engine.d.mts"], "@lettering-voices": ["../novel_to_comic/src/novel_to_comic/lettering/voices.json"]},
 
     /* Linting */
     "noUnusedLocals": true,

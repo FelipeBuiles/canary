@@ -39,7 +39,11 @@ Return only characters physically participating here, locations used here, and
 significant props present here. Include one-scene participants and plot objects:
 later sections may establish recurrence. Relationships may reference registry IDs.
 For existing entities, return only id, NEW appearance_states, NEW
-appearance_timeline activations, and NEW relationships. Omit unchanged fields:
+appearance_timeline activations, and NEW relationships. A return to a look already in the registry
+(the base look or an existing state) is only a new activation of that state:
+reuse its ID, or declare one canonical_equivalent state for a return to the base
+look when the registry has none. Never add a state duplicating an existing look,
+and never copy a previous state's tags that the new look hides. Omit unchanged fields:
 code supplies the established identity and state definitions verbatim from the
 registry. Never retype names, anchors, first appearances, outfits or existing
 state definitions. A recurring character with no changes is just {"id":"..."}.

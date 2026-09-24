@@ -306,6 +306,24 @@ class OCRTextObservation(BaseModel):
     role: Literal["comic_lettering", "incidental_text"] = "comic_lettering"
 
 
+class ObservedFigure(BaseModel):
+    """One visible head on the art, read in the same call as the page's text.
+
+    ``entity_id`` is set only when the head matched one of the labelled cast
+    portraits sent with the page. Seeds and placement hints only; never
+    visual acceptance.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
+
+    id: str = Field(min_length=1)
+    entity_id: str | None = None
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    width: float = Field(gt=0, le=1)
+    height: float = Field(gt=0, le=1)
+
+
 class OCRExtraction(BaseModel):
     """Deterministic adapter output; all geometry remains derived evidence."""
 
@@ -316,6 +334,7 @@ class OCRExtraction(BaseModel):
     observed_regions: tuple[ObservedRegion, ...] = ()
     observed_reading_order: tuple[str, ...] = ()
     reading_order_proven: bool = False
+    figures: tuple[ObservedFigure, ...] = ()
 
     @model_validator(mode="after")
     def _validate_evidence_references(self) -> "OCRExtraction":
@@ -340,6 +359,9 @@ class OCRExtraction(BaseModel):
             raise ValueError("observed reading-order IDs must be unique")
         if any(item not in known_regions for item in self.observed_reading_order):
             raise ValueError("observed reading order cites an unknown region")
+        figure_ids = [figure.id for figure in self.figures]
+        if len(figure_ids) != len(set(figure_ids)):
+            raise ValueError("observed figure IDs must be unique")
         return self
 
 
@@ -368,6 +390,8 @@ class RawOCRObservation(BaseModel):
     render_image_sha256: str = Field(min_length=64, max_length=64)
     extraction: OCRExtraction
     usage: UsageRecord | None = None
+    # Reads made before the check located heads have no figures; that is unknown, not "none".
+    figures_read: bool = False
 
 
 class LetteringMatch(BaseModel):

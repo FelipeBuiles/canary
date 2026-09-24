@@ -355,6 +355,7 @@ async def analyze_page_render(
     raw = RawOCRObservation(
         page_number=page.page_number, render_revision=render.revision,
         render_image_sha256=render.image_sha256, extraction=read.value, usage=read.usage,
+        figures_read=True,
     )
     artifacts.write_raw_ocr(raw)
     analysis = _validate_observations(page=page, render=render, raw=raw, artifacts=artifacts)

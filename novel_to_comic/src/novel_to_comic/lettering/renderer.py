@@ -11,7 +11,7 @@ from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 from novel_to_comic.models.lettering import LetteringStyle, PageLettering
 
-ENGINE_VERSION = "lettering-svg-v10"
+ENGINE_VERSION = "lettering-svg-v11"
 _ROOT = Path(__file__).parent
 _FONT_ROOT = _ROOT.parent / "fonts"
 # Every call runs outside any caller's asyncio loop. Each isolated browser is
@@ -41,6 +41,10 @@ def _fonts() -> str:
         "Fredoka": "Fredoka-SemiBold.ttf",
         "Orbitron": "Orbitron-Bold.ttf",
         "Bungee": "Bungee-Regular.ttf",
+        "Baloo 2": "Baloo2-SemiBold.ttf",
+        "Exo 2": "Exo2-SemiBold.ttf",
+        "Shrikhand": "Shrikhand-Regular.ttf",
+        "Creepster": "Creepster-Regular.ttf",
     }
     return "\n".join(
         f'@font-face{{font-family:"{name}";src:url(data:font/ttf;base64,'

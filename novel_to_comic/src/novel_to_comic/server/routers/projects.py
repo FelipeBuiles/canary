@@ -774,9 +774,13 @@ def project_status(
             project_dir, name, state, is_task_alive=name in active_stages
         )
     stages["cast"]["approval_blocker"] = None
-    if not running and state.stages["cast"].status in {StageStatus.AWAITING_REVIEW, StageStatus.COMPLETE}:
-        from novel_to_comic.stages.s3_cast import cast_approval_blocker
+    stages["cast"]["failures"] = []
+    if not running and state.stages["cast"].status in {
+        StageStatus.AWAITING_REVIEW, StageStatus.COMPLETE, StageStatus.FAILED,
+    }:
+        from novel_to_comic.stages.s3_cast import cast_approval_blocker, cast_failure_details
         stages["cast"]["approval_blocker"] = cast_approval_blocker(config, project_dir, state.stages["cast"])
+        stages["cast"]["failures"] = cast_failure_details(project_dir, state.stages["cast"])
     total_estimated = sum(state.stages[n].estimated_cost_usd for n in STAGE_NAMES)
     db_row = (
         get_db()
