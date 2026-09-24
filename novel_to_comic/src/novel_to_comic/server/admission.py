@@ -25,6 +25,7 @@ _TARGETED = re.compile(r"^/(?:regen-(?!extract)[^/]+|cover|pages/\d+/(?:generate
 
 
 _STYLE_PRESENTATION = re.compile(r"^/styles/style_[0-9a-f]{16}$")
+_APPROVAL = re.compile(r"^/approve/[a-z_]+$")
 
 
 _CAST_REVIEW_REJECTION = "Compare the current character references before approving Cast. Resume Cast to run its visual review."
@@ -66,6 +67,11 @@ def mutation_conflicts(app, key: str, suffix: str) -> bool:
         return True
     if suffix == "/styles/active":
         return any(job.kind not in {"style_sample", "style_suggest", "style_validation"} for job in jobs)
+    # Approving a checkpoint changes no artwork. The cover that Cast starts on
+    # completion reads only finished references, and anything approval chains
+    # (Adapt) queues behind it, so the cover never holds approval back.
+    if _APPROVAL.fullmatch(suffix):
+        return any(job.kind != "project_cover" for job in jobs)
     # Naming or hiding a proof is presentation only; the suggestion list is
     # merged under the artifact lock, so it never waits for artwork.
     if _STYLE_PRESENTATION.fullmatch(suffix):

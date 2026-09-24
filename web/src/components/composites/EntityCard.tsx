@@ -14,6 +14,12 @@ interface EntityCardProps {
   ariaLabel?: string;
   ariaPressed?: boolean;
   className?: string;
+  /**
+   * Span this many rows of a parent grid and align each child to them
+   * (CSS subgrid), so sibling cards line up section by section. Children are
+   * placed directly, one per row, and own their padding.
+   */
+  subgridRows?: number;
 }
 
 const PADDING_CLASS: Record<EntityCardPadding, string> = {
@@ -33,6 +39,7 @@ export function EntityCard({
   ariaLabel,
   ariaPressed,
   className,
+  subgridRows,
 }: EntityCardProps) {
   const borderClass = active
     ? "border-ink-black shadow-ink"
@@ -56,8 +63,11 @@ export function EntityCard({
       tabIndex={onClick ? 0 : undefined}
       aria-label={ariaLabel}
       aria-pressed={onClick ? ariaPressed : undefined}
+      style={subgridRows ? { gridRow: `span ${subgridRows}` } : undefined}
       className={cn(
-        "relative flex flex-col overflow-hidden border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red",
+        "relative overflow-hidden",
+        subgridRows ? "grid grid-rows-subgrid gap-y-0" : "flex flex-col",
+        "border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red",
         borderClass,
         active && "-translate-x-[2px] -translate-y-[2px]",
         interactive && !active && "hover:-translate-y-[2px]",
@@ -72,7 +82,9 @@ export function EntityCard({
         />
       )}
       {media}
-      <div className={cn("flex flex-1 flex-col min-h-0", PADDING_CLASS[padding])}>{children}</div>
+      {subgridRows
+        ? children
+        : <div className={cn("flex flex-1 flex-col min-h-0", PADDING_CLASS[padding])}>{children}</div>}
       {footer}
     </article>
   );

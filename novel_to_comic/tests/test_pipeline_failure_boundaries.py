@@ -258,3 +258,40 @@ def test_jobs_endpoint_restores_queued_page_visibility_from_durable_command(tmp_
     assert result["jobs"][0]["is_current_page"] is True
     assert "command" not in result["jobs"][0]
     assert not target.request_revisions(compiled.request.page_number)
+
+
+@run_async
+@pytest.mark.parametrize("needs_repair", [True, False])
+async def test_continuing_plan_repairs_an_adaptation_no_plan_can_satisfy(tmp_path, monkeypatch, needs_repair):
+    # Kaitlin Out of Space: a tightened Adapt contract rejected the published
+    # script. The user can only Continue Plan, so the server must route that
+    # action through Adapt's targeted repair and then chain Plan itself.
+    state = PipelineState(project_name="book", novel_path="novel.txt", created_at="2026-01-01T00:00:00Z")
+    for name in ("extract", "brief", "style", "cast", "adapt"):
+        state.stages[name] = StageState(status=StageStatus.COMPLETE)
+    state.stages["plan"] = StageState(status=StageStatus.FAILED, error="compound_appearance_change")
+    save_state(state, tmp_path)
+    repaired = {"done": False}
+    ran = []
+
+    async def credited(**kwargs):
+        await kwargs["run"]()
+        return "held-job"
+
+    async def run(stage, config, project_dir, active_state, queue):
+        ran.append(stage)
+        if stage == "adapt":
+            repaired["done"] = True
+        active_state.stages[stage].status = StageStatus.COMPLETE
+
+    from novel_to_comic.stages import s4_adapt
+    monkeypatch.setattr(s4_adapt, "published_adaptation_needs_repair",
+                        lambda project_dir: needs_repair and not repaired["done"])
+    monkeypatch.setattr(pipeline, "run_credited_stage", credited)
+    monkeypatch.setattr(pipeline, "_run_stage", run)
+    monkeypatch.setattr(pipeline, "capture_server_event", lambda *args, **kwargs: None)
+
+    await pipeline._run_stage_with_credits("plan", Config(), tmp_path, state, EventChannel(), "account", "book")
+
+    assert ran == (["adapt", "plan"] if needs_repair else ["plan"])
+    assert state.stages["plan"].status == StageStatus.COMPLETE

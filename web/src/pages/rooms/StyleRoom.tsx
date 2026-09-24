@@ -120,7 +120,9 @@ export function StyleRoom() {
     mode: StyleDirectionMode;
   } | null>(null);
   const [pendingValidation, setPendingValidation] = useState<StyleSuggestion | null>(null);
-  const [pendingRefresh, setPendingRefresh] = useState<StyleSuggestion[]>([]);
+  // Proofs awaiting confirmation to be queued again: outdated ones to refresh,
+  // or missing ones (failed or never drawn) to retry.
+  const [pendingProofs, setPendingProofs] = useState<{ kind: "refresh" | "retry"; suggestions: StyleSuggestion[] } | null>(null);
 
   const styleStage = status?.stages.style;
   const isStageGenerating = styleStage?.status === "running";
@@ -142,14 +144,16 @@ export function StyleRoom() {
     .sort((a, b) => a.queued_at.localeCompare(b.queued_at)).at(-1);
   const isSuggesting = !!stylesData?.is_suggesting || latestSuggestionJob?.status === "running"
     || latestSuggestionJob?.status === "queued" || suggestionStatus === "running";
-  // Author directions queue behind proofs already drawing; other style work
-  // (refreshes, auditions, a new batch) still waits for them to finish.
+  // Author directions, retries, and refreshes queue behind proofs already
+  // drawing (each proof is its own job); auditions and a new batch still wait.
   const proofsInFlight = !!stylesData?.is_generating;
-  const directionActionsDisabled = letteringOpen || isStageGenerating || isSuggesting || suggestStyles.isPending || createStyleDirection.isPending;
+  const batchInFlight = isStageGenerating || isSuggesting || suggestStyles.isPending;
+  const directionActionsDisabled = letteringOpen || batchInFlight || createStyleDirection.isPending;
+  const proofQueueDisabled = directionActionsDisabled || generateSamples.isPending;
   const styleActionsDisabled = directionActionsDisabled || proofsInFlight;
   const { data: suggestEstimate, error: suggestEstimateError, refetch: refetchSuggestEstimate } = useSuggestStylesEstimate(id, !isSuggesting);
   const { data: directionEstimate, error: directionEstimateError, refetch: refetchDirectionEstimate } = useStyleDirectionEstimate(id, !createStyleDirection.isPending);
-  const { data: sampleEstimate } = useStyleSampleEstimate(id, pendingRefresh.length > 0);
+  const { data: sampleEstimate } = useStyleSampleEstimate(id, !!pendingProofs);
 
   const estimateError = suggestEstimateError ?? directionEstimateError;
   const estimatesMissing = !suggestEstimate || !directionEstimate;
@@ -371,8 +375,16 @@ export function StyleRoom() {
     && comparedSuggestions.every((style) => style.has_validation && style.validation_url);
   const comparingAction = comparisonView === "action" && actionComparisonAvailable;
   const activeSuggestion = suggestions.find((suggestion) => suggestion.is_active);
-  const staleSuggestions = suggestions.filter((suggestion) => suggestion.sample_stale);
-  const refreshEstimate = multiplyEstimate(sampleEstimate, pendingRefresh.length);
+  const proofQueued = (suggestion: StyleSuggestion) => pendingSet.has(suggestion.index)
+    || suggestion.generation_status === "queued" || suggestion.generation_status === "running";
+  const staleSuggestions = suggestions.filter((suggestion) => suggestion.sample_stale && !proofQueued(suggestion));
+  // Hidden proofs were set aside on purpose; retry them from their own card.
+  const missingSuggestions = batchInFlight ? [] : suggestions.filter(
+    (suggestion) => !suggestion.has_sample && !suggestion.hidden && !proofQueued(suggestion),
+  );
+  const pendingProofCount = pendingProofs?.suggestions.length ?? 0;
+  const pendingProofEstimate = multiplyEstimate(sampleEstimate, pendingProofCount);
+  const retryingProofs = pendingProofs?.kind === "retry";
   const proofName = (suggestion: StyleSuggestion) => isAuthorDirection(suggestion)
     ? `${t("Yours")} · ${styleName(suggestion)}`
     : styleName(suggestion);
@@ -393,8 +405,10 @@ export function StyleRoom() {
       key={suggestion.id}
       suggestion={suggestion}
       projectName={id}
-      isGenerating={pendingSet.has(suggestion.index) || suggestion.generation_status === "queued" || suggestion.generation_status === "running"}
+      isGenerating={proofQueued(suggestion)}
       generationDisabled={styleActionsDisabled}
+      retryDisabled={proofQueueDisabled}
+      awaitingBatch={batchInFlight}
       selectionDisabled={letteringOpen}
       queueState={suggestion.generation_status === "queued" || suggestion.generation_status === "running" ? suggestion.generation_status : pendingSet.has(suggestion.index) ? styleJobStatuses[suggestion.index] ?? "queued" : null}
       fallbackPrompt={buildFallbackStyleSamplePrompt(suggestion, storyBible)}
@@ -410,7 +424,8 @@ export function StyleRoom() {
       onToggleCompare={() => toggleCompare(suggestion.id)}
       validationBusy={suggestion.id in validationJobs}
       onValidate={() => setPendingValidation(suggestion)}
-      onRefresh={() => setPendingRefresh([suggestion])}
+      onRefresh={() => setPendingProofs({ kind: "refresh", suggestions: [suggestion] })}
+      onRetry={() => setPendingProofs({ kind: "retry", suggestions: [suggestion] })}
     />
   );
 
@@ -472,6 +487,27 @@ export function StyleRoom() {
         </div>
       )}
 
+      {missingSuggestions.length > 0 && (
+        <div role="status" className="mt-6 flex flex-wrap items-center justify-between gap-4 border-[2px] border-hero-red/35 bg-hero-red/10 p-4">
+          <div>
+            <div className="font-meta text-[0.68rem] font-bold tracking-[0.1em] text-hero-red">
+              {missingSuggestions.length === 1 ? t("ONE PROOF DIDN'T FINISH") : `${missingSuggestions.length} ${t("PROOFS DIDN'T FINISH")}`}
+            </div>
+            <p className="mt-1 max-w-3xl text-[0.84rem] leading-6 text-ink-black/72">
+              {t("Queue them all at once. Finished proofs stay as they are, and each new one appears as soon as it's ready.")}
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={proofQueueDisabled}
+            onClick={() => setPendingProofs({ kind: "retry", suggestions: missingSuggestions })}
+          >
+            {missingSuggestions.length === 1 ? t("TRY SAMPLE AGAIN") : `${t("RETRY ALL")} (${missingSuggestions.length})`}
+          </Button>
+        </div>
+      )}
+
       {staleSuggestions.length > 0 && (
         <Surface border="soft" shadow="none" padding="md" className="mt-6">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -486,8 +522,8 @@ export function StyleRoom() {
             <Button
               variant="outline"
               size="sm"
-              disabled={styleActionsDisabled || anyGenerating}
-              onClick={() => setPendingRefresh(staleSuggestions)}
+              disabled={proofQueueDisabled}
+              onClick={() => setPendingProofs({ kind: "refresh", suggestions: staleSuggestions })}
             >
               {t("REFRESH ALL")} ({staleSuggestions.length})
             </Button>
@@ -662,7 +698,7 @@ export function StyleRoom() {
                 onOpen={(index) => { setFlipIndex(index); setProofView("flip"); }}
               />
             ) : (
-            <div data-testid="style-proof-grid" className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+            <div data-testid="style-proof-grid" className="grid grid-cols-1 gap-x-6 md:grid-cols-2 lg:grid-cols-3">
               {filteredSuggestions.map(renderProofCard)}
             </div>
             )}
@@ -671,7 +707,7 @@ export function StyleRoom() {
                 <summary className="min-h-11 cursor-pointer py-3 font-meta text-xs font-bold text-ink-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red">
                   {t("Hidden")} ({hiddenSuggestions.length})
                 </summary>
-                <div data-testid="style-proof-hidden-grid" className="grid grid-cols-1 gap-6 pb-4 md:grid-cols-2 lg:grid-cols-3">
+                <div data-testid="style-proof-hidden-grid" className="grid grid-cols-1 gap-x-6 pb-4 md:grid-cols-2 lg:grid-cols-3">
                   {hiddenSuggestions.map(renderProofCard)}
                 </div>
               </details>
@@ -718,35 +754,42 @@ export function StyleRoom() {
       />
 
       <ConfirmDrawer
-        open={pendingRefresh.length > 0}
-        title={pendingRefresh.length > 1 ? t("Refresh outdated proofs?") : t("Refresh this proof?")}
-        body={t("Regenerates the selected proof using the current rendering rules. The existing image remains available unless generation succeeds.")}
-        cost={refreshEstimate}
-        confirmLabel={pendingRefresh.length > 1 ? t("REFRESH ALL") : t("REFRESH PROOF")}
-        busy={generateSamples.isPending || !refreshEstimate}
+        open={!!pendingProofs}
+        title={retryingProofs
+          ? pendingProofCount > 1 ? t("Retry the missing proofs?") : t("Retry this proof?")
+          : pendingProofCount > 1 ? t("Refresh outdated proofs?") : t("Refresh this proof?")}
+        body={retryingProofs
+          ? t("Queues a new proof for each direction that didn't finish. Proofs already drawing keep going.")
+          : t("Regenerates the selected proof using the current rendering rules. The existing image remains available unless generation succeeds.")}
+        cost={pendingProofEstimate}
+        confirmLabel={retryingProofs
+          ? pendingProofCount > 1 ? `${t("RETRY ALL")} (${pendingProofCount})` : t("TRY SAMPLE AGAIN")
+          : pendingProofCount > 1 ? t("REFRESH ALL") : t("REFRESH PROOF")}
+        busy={generateSamples.isPending || !pendingProofEstimate}
         onConfirm={() => {
-          if (!pendingRefresh.length) return;
-          const selections = pendingRefresh;
+          if (!pendingProofs) return;
+          const pending = pendingProofs;
           generateSamples.mutate(
-            { project: projectName, ids: selections.map((suggestion) => suggestion.id) },
+            { project: projectName, ids: pending.suggestions.map((suggestion) => suggestion.id) },
             {
               onSuccess: (data) => {
+                if (pending.kind === "retry") setSampleError(null);
                 add(projectName, data.indices);
                 attachJobs(projectName, data.jobs);
-                setPendingRefresh([]);
+                setPendingProofs(null);
               },
               onError: (error) => {
                 if (maybeShowInsufficientCredits(error, {
-                  actionLabel: "Refresh style proof",
-                  onRetry: () => setPendingRefresh(selections),
+                  actionLabel: pending.kind === "retry" ? "Retry style proofs" : "Refresh style proof",
+                  onRetry: () => setPendingProofs(pending),
                 })) return;
                 setSampleError(error.message);
-                setPendingRefresh([]);
+                setPendingProofs(null);
               },
             },
           );
         }}
-        onClose={() => setPendingRefresh([])}
+        onClose={() => setPendingProofs(null)}
       />
       <ConfirmDrawer
         open={showSuggestConfirm}

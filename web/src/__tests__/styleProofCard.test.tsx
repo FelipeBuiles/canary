@@ -28,9 +28,9 @@ const suggestion: StyleSuggestion = {
 function props(overrides: Partial<ComponentProps<typeof StyleProofCard>> = {}): ComponentProps<typeof StyleProofCard> {
   return {
     suggestion, projectName: "My story", isGenerating: false, generationDisabled: false,
-    selectionDisabled: false, queueState: null, fallbackPrompt: "Full proof prompt",
+    retryDisabled: false, selectionDisabled: false, queueState: null, fallbackPrompt: "Full proof prompt",
     fallbackParameters: {}, isCompared: false, onToggleCompare: vi.fn(),
-    validationBusy: false, onValidate: vi.fn(), onRefresh: vi.fn(), ...overrides,
+    validationBusy: false, onValidate: vi.fn(), onRefresh: vi.fn(), onRetry: vi.fn(), ...overrides,
   };
 }
 
@@ -142,4 +142,23 @@ it("distinguishes an unrequested proof from a failed proof", () => {
   expect(screen.getByRole("button", { name: "SELECT THIS STYLE" })).toHaveProperty("disabled", true);
   view.rerender(card(props({ suggestion: { ...suggestion, has_sample: false, generation_status: "failed" } })));
   expect(screen.getAllByText("SAMPLE PROOF FAILED").length).toBeGreaterThan(0);
+});
+
+it("offers the retry inside the empty proof and keeps it open while other proofs draw", async () => {
+  const input = props({ generationDisabled: true, suggestion: { ...suggestion, has_sample: false, generation_status: "failed" } });
+  const view = render(card(input));
+  expect(screen.queryByRole("button", { name: /View proof and direction/ })).toBeNull();
+  expect(screen.getByRole("button", { name: "COMPARE" })).toHaveProperty("disabled", true);
+  await userEvent.click(screen.getByRole("button", { name: "TRY SAMPLE AGAIN" }));
+  expect(input.onRetry).toHaveBeenCalledOnce();
+  expect(input.onRefresh).not.toHaveBeenCalled();
+  view.rerender(card({ ...input, retryDisabled: true }));
+  expect(screen.getByRole("button", { name: "TRY SAMPLE AGAIN" })).toHaveProperty("disabled", true);
+  view.rerender(card({ ...input, isGenerating: true, queueState: "queued" }));
+  expect(screen.queryByRole("button", { name: "TRY SAMPLE AGAIN" })).toBeNull();
+});
+
+it("keeps a failed proof retryable while a batch draws the others", () => {
+  render(card(props({ awaitingBatch: true, suggestion: { ...suggestion, has_sample: false, generation_status: "failed" } })));
+  expect(screen.getByRole("button", { name: "TRY SAMPLE AGAIN" })).toBeTruthy();
 });

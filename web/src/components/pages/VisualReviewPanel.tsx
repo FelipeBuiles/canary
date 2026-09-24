@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useI18n } from "../../i18n";
+import { readableAnchor } from "../../lib/visualAnchor";
 import type { PageIssue } from "../../types/api";
 import { useCachedVisualReview, useReviewPageVisuals, useVisualReviewEstimate } from "../../api/pageRevisions";
 import {
@@ -48,7 +49,7 @@ function ReferenceCard({ project, reference }: { project: string; reference: Vis
       <span className="min-w-0">
         <span className="block truncate font-body text-xs font-bold">{label}</span>
         {reference.visual_anchor && (
-          <span className="block truncate font-body text-xs text-ink-muted">{reference.visual_anchor}</span>
+          <span className="block truncate font-body text-xs text-ink-muted">{readableAnchor(reference.visual_anchor)}</span>
         )}
         {!reference.image_path && (
           <span className="block font-body text-xs text-ink-muted">{t("Reference portrait unavailable")}</span>

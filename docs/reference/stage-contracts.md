@@ -307,7 +307,17 @@ State conditioning uses explicit `changed_facets` and `replaces_identity`.
 Preserve `visual_anchor` and `continuity_guard` verbatim through Cast and Draw.
 
 Adapt's appearance changes carry forward until changed; explicit Plan state
-citations remain authoritative for intentional earlier-state imagery. Plan
+citations remain authoritative for intentional earlier-state imagery. A beat
+changes each entity's appearance at most once (`compound_appearance_change`),
+because page content holds one state per entity; a transformation sequence is
+one beat per resulting state. Plan rejects an adaptation that breaks this, or
+cites a state Cast never approved, before its first paid call, attributing the
+failure to Adapt. Users cannot rerun Adapt from a failed Plan, so recovery is
+orchestrated: starting or continuing Plan while the current Adapt contract
+rejects the published script runs Adapt first. Adapt resumes that script as
+its failed candidate and repairs only the cited shards (never regenerating the
+book); its completion auto-chains Plan. Beats that move one entity into different states cannot share
+a content item (`appearance_state_conflict`, Plan-repairable). Plan
 drafts author non-lettering `continuity_intent` for scene transitions, staging,
 and held-object ownership. Canonicalization folds it into `ComicPage.layout_intent`
 as ordered panel staging, not a new `PageContent.continuity_intent` field.

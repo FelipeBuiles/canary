@@ -56,7 +56,7 @@ export function RoomHeader({
             {lead && (
               <>
                 <span aria-hidden="true" className="hidden h-8 w-[2px] shrink-0 bg-ink-black/16 lg:block" />
-                <span className="hidden min-w-0 max-w-[46rem] font-body text-[0.8rem] font-semibold leading-snug text-ink-muted line-clamp-2 lg:[display:-webkit-box]">
+                <span className="hidden min-w-0 max-w-[46rem] text-balance font-body text-[0.8rem] font-semibold leading-snug text-ink-muted line-clamp-2 lg:[display:-webkit-box]">
                   {typeof lead === "string" ? t(lead) : lead}
                 </span>
               </>

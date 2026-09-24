@@ -18,6 +18,8 @@ interface ApprovalBarProps {
   secondary?: ReactNode;
   /** Optional short status/warning line shown instead of the cost line. */
   note?: string;
+  /** Why the primary action was refused, shown beside the button that caused it. */
+  error?: string | null;
 }
 
 /**
@@ -35,6 +37,7 @@ export function ApprovalBar({
   busy,
   secondary,
   note,
+  error,
 }: ApprovalBarProps) {
   const { t } = useI18n();
   const { data: balance } = useCreditBalance();
@@ -63,7 +66,11 @@ export function ApprovalBar({
             </span>
             {next}
           </div>
-          {costLine && (
+          {error ? (
+            <p role="alert" className="mt-1 font-body text-xs font-semibold leading-snug text-hero-red">
+              {error}
+            </p>
+          ) : costLine && (
             <div className="mt-1 font-meta text-xs font-semibold tracking-[0.04em] text-ink-muted">
               {costLine}
             </div>

@@ -38,7 +38,9 @@ vi.mock("../components/composites", async (importOriginal) => ({
   RoomHeader: ({ actions }: { actions: ReactNode }) => <header>{actions}</header>,
   ApprovalBar: ({ onPrimary, primaryDisabled, estimateCredits }: { onPrimary: () => void; primaryDisabled: boolean; estimateCredits: number }) =>
     <button disabled={primaryDisabled} onClick={onPrimary}>Continue for {estimateCredits}</button>,
-  ConfirmDrawer: () => null, RerunStageAction: () => null,
+  ConfirmDrawer: ({ open, title, confirmLabel, onConfirm }: { open: boolean; title: string; confirmLabel: string; onConfirm: () => void }) =>
+    open ? <div role="dialog" aria-label={title}><button onClick={onConfirm}>{confirmLabel}</button></div> : null,
+  RerunStageAction: () => null,
 }));
 
 function proof(label: string) {
@@ -213,5 +215,30 @@ it("keeps author directions open while single proofs draw, but not during a sugg
   state.stylesMeta = { is_generating: true, is_suggesting: true };
   view.rerender(room());
   expect(screen.getByRole("button", { name: "ADD A DIRECTION" })).toHaveProperty("disabled", true);
+  state.stylesMeta = {};
+});
+
+it("queues every missing proof at once, even while another proof is drawing", async () => {
+  state.estimateError = null;
+  state.mutation.mutate.mockReset();
+  state.stylesMeta = { is_generating: true, is_suggesting: false };
+  state.suggestions = [
+    { id: "ink", index: 1, label: "Ink", origin: "generated", template: "Ink", has_sample: true, is_active: false },
+    { id: "noir", index: 2, label: "Noir", origin: "generated", template: "Noir", has_sample: false, generation_status: "failed", is_active: false },
+    { id: "pastel", index: 3, label: "Pastel", origin: "generated", template: "Pastel", has_sample: false, generation_status: "not_requested", is_active: false },
+    { id: "clay", index: 4, label: "Clay", origin: "generated", template: "Clay", has_sample: false, generation_status: "running", is_active: false },
+    { id: "moth", index: 5, label: "Moth", origin: "generated", template: "Moth", has_sample: false, generation_status: "failed", is_active: false, hidden: true },
+  ];
+  const user = userEvent.setup();
+  render(<I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
+    <Route path="/projects/:id/style" element={<StyleRoom />} />
+  </Routes></MemoryRouter></I18nProvider>);
+  expect(screen.getByText("2 PROOFS DIDN'T FINISH")).toBeTruthy();
+  expect(proof("Noir").getByRole("button", { name: "TRY SAMPLE AGAIN" })).toHaveProperty("disabled", false);
+  await user.click(screen.getByRole("button", { name: "RETRY ALL (2)" }));
+  const drawer = screen.getByRole("dialog", { name: "Retry the missing proofs?" });
+  await user.click(within(drawer).getByRole("button", { name: "RETRY ALL (2)" }));
+  expect(state.mutation.mutate).toHaveBeenCalledWith({ project: "book", ids: ["noir", "pastel"] }, expect.any(Object));
+  state.suggestions = undefined;
   state.stylesMeta = {};
 });

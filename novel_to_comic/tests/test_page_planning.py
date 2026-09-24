@@ -3277,7 +3277,7 @@ def test_an_unapproved_appearance_state_is_attributed_to_adapt_not_repaired(
     )
 
     assert isinstance(outcome, PlanInvariantError)
-    assert len(calls) == 1
+    assert calls == []
     validation = artifacts.read_validation("plan")
     failure = next(
         failure
@@ -3292,6 +3292,111 @@ def test_an_unapproved_appearance_state_is_attributed_to_adapt_not_repaired(
     )
     assert validation.attempt_history[0].invariant_codes == (
         "unapproved_appearance_state",
+    )
+
+
+def _shapeshift_inventory() -> ApprovedVisualReferenceInventory:
+    return ApprovedVisualReferenceInventory(
+        references=[
+            *_soaked_inventory().references,
+            ApprovedVisualReference(
+                id="ref_johansen_frozen",
+                entity_id="character_johansen",
+                appearance_state_id="johansen_frozen",
+                visual_anchor="gaunt Norwegian sailor; ice-crusted pea coat",
+            ),
+        ]
+    )
+
+
+def test_a_compound_appearance_change_fails_before_any_plan_spend(
+    tmp_path: Path,
+) -> None:
+    # Production failure (Kaitlin Out of Space): one beat chained two states
+    # for one entity. No content allocation can cite both, yet Plan generated
+    # a full draft and paid a repair round before failing. It is Adapt's to fix.
+    payload = _soaked_adaptation().model_dump(mode="json")
+    payload["content_sha256"] = ""
+    payload["beats"][0]["appearance_changes"].append(
+        AppearanceChange(
+            entity_id="character_johansen",
+            from_state_id="johansen_soaked",
+            to_state_id="johansen_frozen",
+            description="The spray freezes on his coat.",
+        ).model_dump(mode="json")
+    )
+
+    artifacts, calls, outcome = _run_plan(
+        BookAdaptation.model_validate(payload),
+        _shapeshift_inventory(),
+        _two_page_response({"entity_ids": ["character_johansen", "location_alert"]}),
+        tmp_path,
+    )
+
+    assert isinstance(outcome, PlanInvariantError)
+    assert calls == []
+    validation = artifacts.read_validation("plan")
+    assert [(f.code, f.owner_stage) for f in validation.invariant_failures] == [
+        ("compound_appearance_change", "adapt"),
+    ]
+    assert "No page plan can satisfy this" in validation.invariant_failures[0].evidence[-1]
+
+
+def test_beats_changing_one_entity_differently_cannot_share_content() -> None:
+    payload = _soaked_adaptation().model_dump(mode="json")
+    payload["content_sha256"] = ""
+    payload["beats"][1]["appearance_changes"] = [
+        AppearanceChange(
+            entity_id="character_johansen",
+            from_state_id="johansen_soaked",
+            to_state_id="johansen_frozen",
+            description="The spray freezes on his coat.",
+        ).model_dump(mode="json")
+    ]
+    adaptation = BookAdaptation.model_validate(payload)
+    page = ComicPage(
+        page_number=1,
+        revision=1,
+        adaptation_revision=adaptation.revision,
+        adaptation_sha256=adaptation.content_sha256,
+        page_turn_role="release",
+        spread_role="single",
+        emphasis="release",
+        density_intent="standard",
+        layout_intent="Approach gives way to escape.",
+        content=[
+            PageContent(
+                id="page_001_content_001",
+                order=1,
+                beat_ids=["beat_0001", "beat_0002"],
+                visual_intent="Johansen turns the Alert through heavy spray.",
+                lettering=[item for beat in adaptation.beats for item in beat.lettering],
+                entity_ids=["character_johansen", "location_alert"],
+                appearance_states={"character_johansen": "johansen_frozen"},
+            )
+        ],
+        reading_order=["page_001_content_001", "lettering_0001", "lettering_0002"],
+    )
+
+    validation = validate_book_plan(
+        adaptation,
+        _shapeshift_inventory(),
+        ApprovedPageRange(minimum=1, maximum=1),
+        [page],
+    )
+
+    codes = [failure.code for failure in validation.invariant_failures]
+    assert "appearance_state_allocation" not in codes
+    failure = next(
+        failure for failure in validation.invariant_failures
+        if failure.code == "appearance_state_conflict"
+    )
+    assert failure.owner_stage == "plan"
+    assert failure.artifact_ids == (
+        "page_001_content_001",
+        "character_johansen",
+        "beat_0001",
+        "beat_0002",
     )
 
 

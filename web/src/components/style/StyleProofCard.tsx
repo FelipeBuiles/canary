@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Expand, EyeOff, Eye, Pencil, ScanLine } from "lucide-react";
+import { Check, Expand, EyeOff, Eye, Pencil, RotateCcw, ScanLine } from "lucide-react";
 import { useImageGenerationMeta, useSetActiveStyle, useUpdateStylePresentation } from "../../api/queries";
 import { isAuthorDirection, styleName, type StyleSuggestion } from "../../api/styles";
 import { useI18n } from "../../i18n";
@@ -21,11 +21,15 @@ const ROLE_LABELS: Record<string, string> = {
   faithful: "YOUR DIRECTION",
 };
 
+const ICON_BUTTON = "flex min-h-11 min-w-11 items-center justify-center text-ink-muted hover:text-ink-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red disabled:opacity-40";
+
 export function StyleProofCard({
   suggestion,
   projectName,
   isGenerating,
   generationDisabled,
+  retryDisabled,
+  awaitingBatch = false,
   selectionDisabled,
   queueState,
   fallbackPrompt,
@@ -36,11 +40,17 @@ export function StyleProofCard({
   validationBusy,
   onValidate,
   onRefresh,
+  onRetry,
 }: {
   suggestion: StyleSuggestion;
   projectName: string;
   isGenerating: boolean;
+  /** Blocks auditions, which wait for proofs already drawing. */
   generationDisabled: boolean;
+  /** Blocks queueing this proof again (retry or refresh); other proofs in flight do not. */
+  retryDisabled: boolean;
+  /** A batch (stage run or suggestion) is still drawing proofs that have not arrived. */
+  awaitingBatch?: boolean;
   selectionDisabled: boolean;
   queueState: "queued" | "running" | null;
   fallbackPrompt: string;
@@ -51,6 +61,7 @@ export function StyleProofCard({
   validationBusy: boolean;
   onValidate: () => void;
   onRefresh: () => void;
+  onRetry: () => void;
 }) {
   const { t } = useI18n();
   const name = styleName(suggestion);
@@ -95,8 +106,9 @@ export function StyleProofCard({
     return () => window.clearTimeout(timer);
   }, [isGenerating]);
 
-  const showLoading = isGenerating || (!suggestion.has_sample && generationDisabled);
-  const sampleRetryAvailable = !suggestion.has_sample && !isGenerating && !generationDisabled;
+  const showLoading = isGenerating
+    || (!suggestion.has_sample && awaitingBatch && suggestion.generation_status !== "failed");
+  const sampleRetryAvailable = !suggestion.has_sample && !isGenerating;
   const isActive = suggestion.is_active;
   const canSelect = suggestion.has_sample && !isActive && !isGenerating && !selectionDisabled && !setActive.isPending;
 
@@ -128,140 +140,193 @@ export function StyleProofCard({
     );
   };
 
+  const failed = suggestion.generation_status === "failed";
+  const openDetails = () => setIsDetailsOpen(true);
+
   return (
     <>
-      <EntityCard
-        active={isActive}
-        padding="tight"
-        className="min-w-0"
-        media={
-          <div className={`relative bg-surface-container ${arrival.className}`} onAnimationEnd={arrival.onAnimationEnd}>
-            {showLoading ? (
-              <FlowingDotsPlaceholder
-                aspect="4 / 5"
-                className="h-full w-full"
-                label={queueState === "queued" ? t("QUEUED") : t("GENERATING SAMPLES…")}
-              />
-            ) : imgFailed ? (
-              <div className="flex aspect-[4/5] w-full flex-col items-center justify-center">
-                <div className="font-meta text-[0.58rem] font-bold tracking-[0.1em] text-ink-muted">
-                  {suggestion.has_sample ? t("PROOF IMAGE UNAVAILABLE") : t(suggestion.generation_status === "failed" ? "SAMPLE PROOF FAILED" : "PROOF NOT GENERATED")}
-                </div>
+      {/* Five rows, aligned across the grid: proof · name · fit · actions · details. */}
+      {/* The grid has no row gap (a subgrid would absorb it into each section); the margin spaces rows. */}
+      <EntityCard active={isActive} subgridRows={5} className="mb-8 min-w-0">
+        <div className={`relative bg-surface-container ${arrival.className}`} onAnimationEnd={arrival.onAnimationEnd}>
+          {showLoading ? (
+            <FlowingDotsPlaceholder
+              aspect="4 / 5"
+              className="h-full w-full"
+              label={queueState === "queued" ? t("QUEUED") : t("GENERATING SAMPLES…")}
+            />
+          ) : imgFailed ? (
+            <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-4 p-6 text-center">
+              <div className={`font-meta text-[0.62rem] font-bold tracking-[0.1em] ${failed && !suggestion.has_sample ? "text-hero-red" : "text-ink-muted"}`}>
+                {suggestion.has_sample ? t("PROOF IMAGE UNAVAILABLE") : t(failed ? "SAMPLE PROOF FAILED" : "PROOF NOT GENERATED")}
               </div>
-            ) : (
-              <Loupe>
-                <LazyImage
-                  src={displayedProofUrl}
-                  alt={name}
-                  loading="lazy"
-                  width={320}
-                  height={400}
-                  aspect="4 / 5"
-                  containerClassName="w-full"
-                  className="object-contain object-center"
-                  onError={() => setImgFailed(true)}
-                />
-              </Loupe>
-            )}
-
-            {isActive && (
-              <Stamp play={selectionConfirmed} onSettled={() => setSelectionConfirmed(false)} className="absolute left-3 top-4 shadow-ink-sm">
-                <Check size={14} aria-hidden="true" />{t("YOUR STYLE")}
-              </Stamp>
-            )}
-
-            <div className="absolute right-3 top-3 flex gap-1.5">
+              {sampleRetryAvailable && (
+                <Button variant="outline" size="xs" disabled={retryDisabled} onClick={onRetry}>
+                  <RotateCcw size={14} aria-hidden="true" />{t("TRY SAMPLE AGAIN")}
+                </Button>
+              )}
+            </div>
+          ) : (
+            <Loupe>
+              <LazyImage
+                src={displayedProofUrl}
+                alt={name}
+                loading="lazy"
+                width={320}
+                height={400}
+                aspect="4 / 5"
+                containerClassName="w-full"
+                className="object-contain object-center"
+                onError={() => setImgFailed(true)}
+              />
+              {/* The proof itself opens the full view; the corner mark only signals it. */}
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); setIsDetailsOpen(true); }}
+                onClick={openDetails}
                 aria-label={`${t("View proof and direction")} · ${name}`}
-                className="flex min-h-11 items-center justify-center border-[2px] border-bristol bg-ink-black px-3 font-meta text-[0.68rem] font-bold tracking-[0.08em] text-bristol transition-colors hover:bg-hero-red"
+                className="group absolute inset-0 flex cursor-zoom-in items-start justify-end p-3 in-[.cursor-none]:cursor-none focus-visible:outline-[3px] focus-visible:-outline-offset-[3px] focus-visible:outline-hero-red"
               >
-                <Expand size={14} className="mr-2" aria-hidden="true" />{t("VIEW PROOF")}
+                <span
+                  aria-hidden="true"
+                  className="flex h-9 w-9 items-center justify-center border-[2px] border-bristol bg-ink-black/75 text-bristol transition-colors group-hover:bg-hero-red group-focus-visible:bg-hero-red"
+                >
+                  <Expand size={15} />
+                </span>
               </button>
-            </div>
-          </div>
-        }
-      >
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="bg-pulp-paper px-2 py-1 font-meta text-[0.65rem] font-bold tracking-[0.06em] text-ink-muted">
-            {yours ? t("YOURS") : t(ROLE_LABELS[suggestion.role ?? ""] ?? "DIRECTION")}
-          </span>
-          {suggestion.medium && <span className="text-xs leading-5 text-ink-muted">{suggestion.medium}</span>}
+            </Loupe>
+          )}
+
+          {isActive && (
+            <Stamp play={selectionConfirmed} onSettled={() => setSelectionConfirmed(false)} className="pointer-events-none absolute left-3 top-4 shadow-ink-sm">
+              <Check size={14} aria-hidden="true" />{t("YOUR STYLE")}
+            </Stamp>
+          )}
         </div>
-        {renaming ? (
-          <form
-            className="mt-3 flex flex-wrap items-center gap-2"
-            onSubmit={(event) => { event.preventDefault(); saveName(); }}
-          >
-            <input
-              autoFocus
-              aria-label={t("Proof name")}
-              value={draftName}
-              maxLength={60}
-              onChange={(event) => setDraftName(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== "Escape") return;
-                event.preventDefault();
-                setRenaming(false);
-              }}
-              className="min-h-11 min-w-0 flex-[1_1_12rem] border-[2px] border-ink-black bg-bristol px-3 font-display text-lg font-black text-ink-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red"
-            />
-            <Button type="submit" size="xs" disabled={presentation.isPending || !draftName.trim()}>{t("SAVE NAME")}</Button>
-            <Button type="button" variant="outline" size="xs" onClick={() => setRenaming(false)}>{t("CANCEL")}</Button>
-          </form>
-        ) : (
-          <div className="mt-3 flex items-start justify-between gap-2">
-            <h3 className="min-w-0 text-balance font-display text-[1.7rem] font-black leading-[1.08] tracking-[-0.03em] text-ink-black">
+
+        <div className="min-w-0 px-5 pt-4">
+          <div className="flex min-h-9 items-center gap-2">
+            <span className="shrink-0 bg-pulp-paper px-2 py-1 font-meta text-[0.65rem] font-bold tracking-[0.06em] text-ink-muted">
+              {yours ? t("YOURS") : t(ROLE_LABELS[suggestion.role ?? ""] ?? "DIRECTION")}
+            </span>
+            {suggestion.medium && <span className="min-w-0 truncate text-xs leading-5 text-ink-muted" title={suggestion.medium}>{suggestion.medium}</span>}
+            <span className="-mr-2 ml-auto flex shrink-0 items-center">
+              {yours && !renaming && (
+                <button
+                  type="button"
+                  onClick={() => { setDraftName(name); setRenaming(true); }}
+                  aria-label={`${t("Rename")} · ${name}`}
+                  title={t("Rename")}
+                  className={ICON_BUTTON}
+                >
+                  <Pencil size={15} aria-hidden="true" />
+                </button>
+              )}
+              {!isActive && (
+                <button
+                  type="button"
+                  disabled={presentation.isPending}
+                  onClick={() => updatePresentation({ hidden: !suggestion.hidden })}
+                  aria-label={`${t(suggestion.hidden ? "Show" : "Hide")} · ${name}`}
+                  title={t(suggestion.hidden ? "Show" : "Hide")}
+                  className={ICON_BUTTON}
+                >
+                  {suggestion.hidden ? <Eye size={15} aria-hidden="true" /> : <EyeOff size={15} aria-hidden="true" />}
+                </button>
+              )}
+            </span>
+          </div>
+          {renaming ? (
+            <form
+              className="mt-2 flex flex-wrap items-center gap-2"
+              onSubmit={(event) => { event.preventDefault(); saveName(); }}
+            >
+              <input
+                autoFocus
+                aria-label={t("Proof name")}
+                value={draftName}
+                maxLength={60}
+                onChange={(event) => setDraftName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Escape") return;
+                  event.preventDefault();
+                  setRenaming(false);
+                }}
+                className="min-h-11 min-w-0 flex-[1_1_12rem] border-[2px] border-ink-black bg-bristol px-3 font-display text-lg font-black text-ink-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red"
+              />
+              <Button type="submit" size="xs" disabled={presentation.isPending || !draftName.trim()}>{t("SAVE NAME")}</Button>
+              <Button type="button" variant="outline" size="xs" onClick={() => setRenaming(false)}>{t("CANCEL")}</Button>
+            </form>
+          ) : (
+            <h3 className="mt-2 line-clamp-3 text-balance font-display text-[1.45rem] font-black leading-[1.08] tracking-[-0.03em] text-ink-black" title={name}>
               {name}
             </h3>
-            {yours && (
-              <button
-                type="button"
-                onClick={() => { setDraftName(name); setRenaming(true); }}
-                aria-label={`${t("Rename")} · ${name}`}
-                className="flex min-h-11 min-w-11 shrink-0 items-center justify-center text-ink-muted hover:text-ink-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red"
-              >
-                <Pencil size={16} aria-hidden="true" />
-              </button>
-            )}
-          </div>
-        )}
-        {yours && suggestion.origin !== "user_image" && suggestion.template && (
-          <blockquote className="mt-2 line-clamp-3 border-l-[3px] border-narrator-gold pl-3 font-body text-sm italic leading-6 text-ink-black/75" title={suggestion.template}>
-            “{suggestion.template}”
-          </blockquote>
-        )}
-        <div className="mt-5 flex flex-wrap gap-2">
-          <Button
-            variant={isActive ? "secondary" : "primary"}
-            size="sm"
-            disabled={!canSelect}
-            onClick={handleSelect}
-            aria-pressed={isActive}
-            className={`flex-[2_1_12rem] ${isActive ? "disabled:opacity-100 disabled:bg-narrator-gold disabled:text-ink-black" : ""}`}
-            aria-busy={setActive.isPending}
-          >
-            {isActive && <Check size={16} aria-hidden="true" />}
-            {setActive.isPending ? t("SELECTING…") : isActive ? t("YOUR STYLE") : t("SELECT THIS STYLE")}
-          </Button>
-          <Button variant="outline" size="sm" className="flex-[1_1_6rem]" disabled={compareDisabled} title={compareDisabled ? t("Three proofs added. Remove one to compare another.") : undefined} onClick={onToggleCompare} aria-pressed={isCompared}>
-            {isCompared && <Check size={14} aria-hidden="true" />}
-            {isCompared ? t("COMPARING") : t("COMPARE")}
-          </Button>
+          )}
+          {yours && suggestion.origin !== "user_image" && suggestion.template && (
+            <blockquote className="mt-2 line-clamp-2 border-l-[3px] border-narrator-gold pl-3 font-body text-sm italic leading-6 text-ink-black/75" title={suggestion.template}>
+              “{suggestion.template}”
+            </blockquote>
+          )}
         </div>
-        {(selectionError || presentationError) && (
-          <p role="alert" className="mt-3 bg-hero-red/10 p-3 text-sm leading-6 text-hero-red">
-            {selectionError ?? presentationError}
-          </p>
-        )}
-        {suggestion.story_fit && (
-          <div className="mt-6">
-            <div className="font-meta text-[0.65rem] font-bold tracking-[0.06em] text-ink-muted">{t("WHY IT FITS")}</div>
-            <p className="mt-2 font-body text-sm leading-6 text-ink-black">{suggestion.story_fit}</p>
+
+        <div className="min-w-0 px-5 pt-4">
+          {suggestion.story_fit && (
+            <>
+              <div className="font-meta text-[0.65rem] font-bold tracking-[0.06em] text-ink-muted">{t("WHY IT FITS")}</div>
+              <p className="mt-1.5 font-body text-sm leading-6 text-ink-black">{suggestion.story_fit}</p>
+            </>
+          )}
+        </div>
+
+        <div className="min-w-0 px-5 pt-5">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant={isActive ? "secondary" : "primary"}
+              size="sm"
+              disabled={!canSelect}
+              onClick={handleSelect}
+              aria-pressed={isActive}
+              className={`flex-[2_1_10rem] ${isActive ? "disabled:opacity-100 disabled:bg-narrator-gold disabled:text-ink-black" : ""}`}
+              aria-busy={setActive.isPending}
+            >
+              {isActive && <Check size={16} aria-hidden="true" />}
+              {setActive.isPending ? t("SELECTING…") : isActive ? t("YOUR STYLE") : t("SELECT THIS STYLE")}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-[1_1_6rem]"
+              disabled={!isCompared && (compareDisabled || !suggestion.has_sample)}
+              title={compareDisabled && !isCompared ? t("Three proofs added. Remove one to compare another.") : undefined}
+              onClick={onToggleCompare}
+              aria-pressed={isCompared}
+            >
+              {isCompared && <Check size={14} aria-hidden="true" />}
+              {isCompared ? t("COMPARING") : t("COMPARE")}
+            </Button>
           </div>
-        )}
-        <div className="mt-5 space-y-2">
+          {(selectionError || presentationError) && (
+            <p role="alert" className="mt-3 bg-hero-red/10 p-3 text-sm leading-6 text-hero-red">
+              {selectionError ?? presentationError}
+            </p>
+          )}
+        </div>
+
+        <div className="min-w-0 space-y-2 px-5 pb-5 pt-5">
+          {suggestion.sample_stale && (
+            <div className="flex items-center justify-between gap-3 bg-pulp-paper px-3 py-2">
+              <span className="font-meta text-[0.62rem] font-bold tracking-[0.08em] text-ink-black/65">
+                {t("REFRESH AVAILABLE")}
+              </span>
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={retryDisabled || isGenerating}
+                onClick={onRefresh}
+              >
+                {t("REFRESH PROOF")}
+              </Button>
+            </div>
+          )}
           <details className="group bg-surface-container px-3">
             <summary className="min-h-11 cursor-pointer py-3 font-meta text-xs font-bold text-ink-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red">
               {t("VISUAL DIRECTION")}
@@ -319,54 +384,6 @@ export function StyleProofCard({
             </div>
           </details>
         </div>
-
-        {suggestion.sample_stale && (
-          <div className="mt-4 flex items-center justify-between gap-3 bg-pulp-paper px-3 py-2.5">
-            <span className="font-meta text-[0.62rem] font-bold tracking-[0.08em] text-ink-black/65">
-              {t("REFRESH AVAILABLE")}
-            </span>
-            <Button
-              variant="outline"
-              size="xs"
-              disabled={generationDisabled || isGenerating}
-              onClick={onRefresh}
-            >
-              {t("REFRESH PROOF")}
-            </Button>
-          </div>
-        )}
-
-        {!isActive && (
-          <div className="mt-3 flex justify-end">
-            <button
-              type="button"
-              disabled={presentation.isPending}
-              onClick={() => updatePresentation({ hidden: !suggestion.hidden })}
-              aria-label={`${t(suggestion.hidden ? "Show" : "Hide")} · ${name}`}
-              className="inline-flex min-h-11 items-center gap-2 px-2 font-meta text-xs font-bold text-ink-muted hover:text-ink-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red disabled:opacity-40"
-            >
-              {suggestion.hidden ? <Eye size={14} aria-hidden="true" /> : <EyeOff size={14} aria-hidden="true" />}
-              {t(suggestion.hidden ? "SHOW" : "HIDE")}
-            </button>
-          </div>
-        )}
-
-        {sampleRetryAvailable && (
-          <div className="mt-4 flex items-center justify-between gap-3 border-[2px] border-hero-red/35 bg-hero-red/10 px-3 py-2.5">
-            <span className="font-meta text-[0.62rem] font-bold tracking-[0.08em] text-hero-red">
-              {t(suggestion.generation_status === "failed" ? "SAMPLE PROOF FAILED" : "PROOF NOT GENERATED")}
-            </span>
-            <Button
-              variant="outline"
-              size="xs"
-              disabled={generationDisabled || isGenerating}
-              onClick={onRefresh}
-            >
-              {t("TRY SAMPLE AGAIN")}
-            </Button>
-          </div>
-        )}
-
       </EntityCard>
       <GenerationDetailsModal
         isOpen={isDetailsOpen}

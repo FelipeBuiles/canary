@@ -16,7 +16,7 @@ vi.mock("../api/client", async (original) => ({
     if (options?.method && options.method !== "GET") { server.submit(path); throw new Error(`Unexpected mutation: ${path}`); }
     if (path.includes("/jobs")) return { jobs: server.jobs };
     if (path.includes("story_bible") || path.includes("story-bible")) return {
-      characters: [{ id: "cat", name: "Companion", visual_anchor: anchor, age_range: "adult", gender: "female", distinguishing_features: ["fluffy fur"], relationships: [], appearance_states: [], default_outfit: "" }], locations: [{ id: "hall", name: "Great Hall", visual_anchor: "Stone pillars.", time_of_day: "night", mood: "ominous", appearance_states: [] }], props: [{ id: "key", name: "Brass Key", visual_anchor: "Three brass teeth.", first_appearance_scene: null }],
+      characters: [{ id: "cat", name: "Companion", visual_anchor: anchor, age_range: "adult", gender: "female", distinguishing_features: ["fluffy fur"], relationships: [], appearance_states: [], default_outfit: "" }], locations: [{ id: "hall", name: "Great Hall", visual_anchor: "Stone pillars.", time_of_day: "night", mood: "ominous", appearance_states: [] }], props: [{ id: "key", name: "Brass Key", visual_anchor: "Three brass teeth.", first_appearance_scene: "part0002_scene_014" }],
     };
     if (path.endsWith("/status")) return { style_selected: true, stages: { cast: { status: "complete" } } };
     if (path.includes("estimate")) {
@@ -40,14 +40,11 @@ function renderCast() {
   return mount(client);
 }
 
-it("finds references across types and retains expanded details and unsaved corrections when filtering", async () => {
+it("finds references across types and keeps cards and unsaved corrections mounted when filtering", async () => {
   const user = userEvent.setup();
   renderCast();
   const search = await screen.findByRole("searchbox", { name: "Find a reference" });
-  const toggle = screen.getAllByText("Visual details")[0];
-  await user.click(toggle);
-  const details = toggle.closest("details")!;
-  expect(details.open).toBe(true);
+  const card = screen.getByRole("heading", { name: "Companion" }).closest("article")!;
   await user.click(screen.getByRole("button", { name: "Review & adjust · Companion" }));
   await user.type(within(screen.getByRole("dialog")).getByRole("textbox"), "Keep the whiskers longer.");
   await user.keyboard("{Escape}");
@@ -67,8 +64,7 @@ it("finds references across types and retains expanded details and unsaved corre
   await user.click(screen.getByRole("button", { name: "Clear search" }));
   expect((search as HTMLInputElement).value).toBe("");
   expect(screen.getAllByRole("button", { name: /^Review & adjust ·/ })).toHaveLength(3);
-  expect(screen.getAllByText("Visual details")[0].closest("details")).toBe(details);
-  expect(details.open).toBe(true);
+  expect(screen.getByRole("heading", { name: "Companion" }).closest("article")).toBe(card);
   await user.click(screen.getByRole("button", { name: "Review & adjust · Companion" }));
   expect((within(screen.getByRole("dialog")).getByRole("textbox") as HTMLTextAreaElement).value).toBe("Keep the whiskers longer.");
   expect(server.submit).not.toHaveBeenCalled();
@@ -94,4 +90,13 @@ it("offers section destinations and explicit review controls without starting ge
     await user.keyboard("{Escape}");
   }
   expect(server.submit).not.toHaveBeenCalled();
+});
+
+it("aligns each card's sections and names where a prop first appears in reader terms", async () => {
+  renderCast();
+  const heading = await screen.findByRole("heading", { name: "Brass Key" });
+  const card = heading.closest("article")!;
+  expect(card.classList.contains("grid-rows-subgrid")).toBe(true);
+  expect(within(card).getByText("First seen: Part 2, scene 14")).toBeTruthy();
+  expect(within(card).getByText("Three brass teeth.")).toBeTruthy();
 });

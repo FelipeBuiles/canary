@@ -481,6 +481,45 @@ def _appearance_state_authority_failures(
     return failures
 
 
+def compound_appearance_change_failures(
+    adaptation: BookAdaptation,
+) -> list[InvariantFailure]:
+    """Reject a beat that puts one entity through several appearance states.
+
+    A beat is one drawable moment, and Plan materializes it as page content
+    with exactly one state per entity. A chain inside a beat (A -> B -> C) is
+    therefore unsatisfiable downstream: no allocation can cite both B and C for
+    the same entity, so Plan would pay for repairs it cannot win. The fix is an
+    Adapt edit — one beat per resulting state — so Adapt owns the failure.
+    """
+
+    failures: list[InvariantFailure] = []
+    for beat in adaptation.beats:
+        states_by_entity: dict[str, list[str]] = {}
+        for change in beat.appearance_changes:
+            states_by_entity.setdefault(change.entity_id, []).append(change.to_state_id)
+        for entity_id, state_ids in states_by_entity.items():
+            if len(state_ids) < 2:
+                continue
+            failures.append(InvariantFailure(
+                id=f"adapt_failure_compound_appearance_change_{beat.id}_{entity_id}",
+                owner_stage="adapt",
+                code="compound_appearance_change",
+                message=(
+                    "A beat may change each entity's appearance at most once; "
+                    "split a transformation sequence into one beat per resulting state."
+                ),
+                source_unit_ids=beat.source_unit_ids,
+                artifact_ids=[beat.id, entity_id, *state_ids],
+                evidence=[
+                    f"Beat {beat.id!r} changes {entity_id!r} through "
+                    f"{' -> '.join(state_ids)} in one drawable moment; each state "
+                    "needs its own consecutive beat."
+                ],
+            ))
+    return failures
+
+
 class _AdaptCheckpoint(BaseModel):
     """Hash-keyed cache entry for one paid Adapt response."""
 
@@ -1734,7 +1773,9 @@ def build_adaptation_blueprint_prompt(
         "Record an appearance change only when the Story Bible declares its "
         "entity-scoped state ID. Base appearances have no state ID: do not turn "
         "an ordinary description, first sighting, or default outfit into a named "
-        "appearance change. "
+        "appearance change. A beat shows each entity in one appearance: record at "
+        "most one appearance change per entity per beat, and split a sequence of "
+        "transformations into consecutive beats, one per resulting state. "
         "Do not write dialogue, captions, thoughts, SFX, "
         "pages, panels, or layouts: another locked expansion pass writes the final "
         "words without changing this structure. Do not return a canonical ledger. "
@@ -1891,7 +1932,8 @@ def estimate_book_adaptation_cost(
     repair writes complete scoped drafts, not 25% of the original work.
     """
     published = _published_adaptation_for_review(artifacts, story_instruction)
-    if published is not None:
+    published_repair = _published_repair_work(source, story_bible, brief, published, model=model)
+    if published is not None and published_repair is None:
         from novel_to_comic.narrative_review import estimate_narrative_review
 
         context = adaptation_context(source, brief, published)
@@ -1900,7 +1942,7 @@ def estimate_book_adaptation_cost(
         except ValueError:
             return estimate_narrative_review(model, context, passes=1)
         return 0.0
-    resume_work = (_resume_adaptation_work(
+    resume_work = published_repair or (_resume_adaptation_work(
         source, story_bible, brief, artifacts=artifacts, model=model, instruction=story_instruction,
     ) if artifacts is not None else None)
     instruction_suffix = story_instruction_section(story_instruction, stage="adapt")
@@ -1920,6 +1962,16 @@ def estimate_book_adaptation_cost(
     ))
     repair = 0.0
     shards = resume_work.shards if resume_work else _adaptation_shards(source, model=model)
+    repair_shards = set(range(len(shards)))
+    if published_repair is not None:
+        # The failures are known up front; only their shards are rewritten.
+        _, beat_to_shard = _merged_draft(_partition_reviewed_candidate(published_repair.candidate, shards))
+        repair_shards = set(_affected_shards(
+            AdaptationValidation(invariant_failures=published_adaptation_contract_failures(
+                source, story_bible, brief, published_repair.candidate,
+            )),
+            beat_to_shard=beat_to_shard, shard_source_ids=shards,
+        ))
     requirements = partition_requirements_by_shard(source, brief, shards)
     unit_by_id = {u.id: u for u in source.units}
     speakers = {c.id for c in story_bible.characters}
@@ -1968,6 +2020,8 @@ def estimate_book_adaptation_cost(
                 clean += estimate_text_cost(model, lettering_prompt, output_chars=lettering_chars)
                 if blueprint is None:
                     clean += estimate_text_cost(model, blueprint_chars)
+        if index not in repair_shards:
+            continue
         repair_prompt = build_book_adaptation_prompt(
             source, story_bible, brief, treatment, primary_source_unit_ids=ids,
             owned_requirement_ids=requirements[index], shard_index=index + 1, shard_count=len(shards),
@@ -3350,6 +3404,48 @@ def _save_adaptation_work(artifacts, work, source, story_bible, brief, instructi
     _write_checkpoint(artifacts, name=f"candidate/{lineage}", input_sha256=lineage, payload=work)
 
 
+def published_adaptation_contract_failures(
+    source: SourceDocument,
+    story_bible: StoryBible,
+    brief: AdaptationBrief,
+    published: BookAdaptation,
+) -> tuple[InvariantFailure, ...]:
+    """Current-contract failures in a script published from the current inputs.
+
+    A tightened Adapt invariant can reject a script that passed when it was
+    published. Stale inputs are a different problem (regeneration, not
+    repair), so they report nothing here.
+    """
+    if (published.source_sha256 != source.source_sha256
+            or published.brief_revision != brief.revision
+            or published.brief_sha256 != brief.content_sha256):
+        return ()
+    return validate_book_adaptation(
+        source, brief, published, story_bible=story_bible,
+    ).invariant_failures
+
+
+def _published_repair_work(source, story_bible, brief, published, *, model):
+    """Targeted-repair work for a published script the current contract rejects.
+
+    Pure: no provider calls or artifact writes, so the estimate prices exactly
+    the work a run would resume.
+    """
+    if published is None or not published_adaptation_contract_failures(
+        source, story_bible, brief, published,
+    ):
+        return None
+    candidate = BookAdaptation.model_validate({
+        **published.model_dump(mode="json"), "content_sha256": "", "editorial_issues": [],
+    })
+    shards = _adaptation_shards(source, model=model)
+    try:
+        _partition_reviewed_candidate(candidate, shards)
+    except ValueError:
+        return None
+    return _AdaptWorkCheckpoint(candidate=candidate, shards=shards)
+
+
 def _published_adaptation_for_review(artifacts, instruction):
     """Resume a published script without rebuilding it from generation checkpoints."""
     if (artifacts is None or instruction.strip()
@@ -3382,6 +3478,15 @@ async def produce_book_adaptation(
     instruction_suffix = story_instruction_section(story_instruction, stage="adapt")
     require_approved_brief(brief)
     published = _published_adaptation_for_review(artifacts, story_instruction)
+    published_repair = _published_repair_work(source, story_bible, brief, published, model=model)
+    if published_repair is not None:
+        # A tightened contract rejects the published script. Re-validating and
+        # raising here dead-ends every retry, and the user has no Adapt control
+        # once Plan is running, so resume it as the failed candidate: the
+        # ordinary repair loop rewrites only shards cited by the failures.
+        _save_adaptation_work(artifacts, published_repair, source, story_bible, brief, story_instruction)
+        ctx.log("The saved adaptation breaks a current contract; repairing only the affected beats.")
+        published = None
     if published is not None:
         from novel_to_comic.generation_budget import budgeted_generator
 
@@ -3883,6 +3988,9 @@ def _repair_prompt(
         "synchronized event. Treat structural validation failures as structural "
         "edits, not just prose edits: for unknown_entity, remove each named unknown "
         "ID from entity_ids and use only visible Story Bible entity IDs; for "
+        "compound_appearance_change, split the beat into consecutive beats, one per "
+        "resulting appearance state, dividing its source provenance and lettering "
+        "between them; for "
         "faithful_rushed_reaction_or_aftermath, retain the cited reveal and mark its "
         "source-backed response beat with story_functions=reaction or aftermath. "
         "An on-beat source-cited thought or realization is that response: preserve it "
@@ -4035,6 +4143,7 @@ def validate_book_adaptation(
                 evidence=(f"Unknown entity IDs: {sorted(unknown_entities)!r}",),
             ))
         failures.extend(_appearance_state_authority_failures(adaptation, story_bible))
+    failures.extend(compound_appearance_change_failures(adaptation))
     if adaptation.source_sha256 != source.source_sha256:
         failures.append(
             InvariantFailure(

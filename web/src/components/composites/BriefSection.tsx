@@ -6,17 +6,20 @@ import { FieldLabel, TextAreaField } from "../ui/Field";
 import { EntityCard } from "./EntityCard";
 
 /** Readable editorial content with an explicit, keyboard-accessible edit mode. */
-export function BriefSection({ id, title, value, onChange, featured = false }: {
+export function BriefSection({ id, title, value, onChange, featured = false, numbered = false }: {
   id: string;
   title: string;
   value: string | string[];
   onChange: (value: string) => void;
   featured?: boolean;
+  /** Ordered requirements (essential events) read as a numbered sequence. */
+  numbered?: boolean;
 }) {
   const { t } = useI18n();
   const [editing, setEditing] = useState(false);
   const toggle = useRef<HTMLDivElement>(null);
   const items = Array.isArray(value) ? value.filter((item) => item.trim()) : [];
+  const List = numbered ? "ol" : "ul";
   return (
     <EntityCard className={featured ? "shadow-paper" : ""}>
       <div ref={toggle} className="mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -37,12 +40,14 @@ export function BriefSection({ id, title, value, onChange, featured = false }: {
             onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); setEditing(false); toggle.current?.querySelector("button")?.focus(); } }}
             aria-describedby={`${id}-hint`} />
           <p id={`${id}-hint`} className="mt-2 font-body text-xs leading-5 text-ink-muted">{t(Array.isArray(value) ? "One item per line. Use Save brief to keep your changes." : "Use Save brief to keep your changes.")}</p>
-        </> : Array.isArray(value) ? items.length ? <ul className="space-y-4">
+        </> : Array.isArray(value) ? items.length ? <List className="space-y-4">
           {items.map((item, index) => <li key={index} className="flex gap-3">
-            <span aria-hidden="true" className="mt-2.5 h-1.5 w-1.5 shrink-0 bg-hero-red" />
-            <p className={`max-w-[70ch] whitespace-pre-wrap break-words font-body ${featured ? "text-base leading-7" : "text-sm leading-6"}`}>{item}</p>
+            {numbered
+              ? <span aria-hidden="true" className="w-6 shrink-0 pt-px font-meta text-xs font-bold leading-6 tabular-nums text-hero-red">{String(index + 1).padStart(2, "0")}</span>
+              : <span aria-hidden="true" className="mt-2.5 h-1.5 w-1.5 shrink-0 bg-hero-red" />}
+            <p className={`min-w-0 max-w-[70ch] whitespace-pre-wrap break-words font-body ${featured ? "text-base leading-7" : "text-sm leading-6"}`}>{item}</p>
           </li>)}
-        </ul> : <p className="font-body text-sm text-ink-muted">{t("Nothing specified yet. Edit to add your direction.")}</p>
+        </List> : <p className="font-body text-sm text-ink-muted">{t("Nothing specified yet. Edit to add your direction.")}</p>
           : <p className="max-w-[70ch] whitespace-pre-wrap break-words font-body text-sm leading-7">{value || t("Nothing specified yet. Edit to add your direction.")}</p>}
       </div>
     </EntityCard>

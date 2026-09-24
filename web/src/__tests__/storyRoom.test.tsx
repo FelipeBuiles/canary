@@ -107,16 +107,19 @@ describe("StoryRoom", () => {
     expect(screen.getByRole("heading", { name: "CONFIRM THE STORY & BRIEF" })).toBeTruthy();
     expect(screen.getByText("The Last Incantation")).toBeTruthy();
     expect(screen.getByText("The investigation closes its causal loop")).toBeTruthy();
+    // Essential events are ordered requirements; the other lists are not.
+    expect(screen.getByText("The final discovery").closest("ol")).toBeTruthy();
+    expect(screen.getByText("The investigation closes its causal loop").closest("ul")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Inside your story" })).toBeTruthy();
     expect(screen.getByRole("button", { name: /^Scenes\s*1$/ }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByText("Elena finds the forbidden ledger.")).toBeTruthy();
     expect(screen.getByText("Elena")).toBeTruthy();
     expect(screen.getByText("The Archive")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^Characters\s*1$/ }));
-    expect(screen.getByText("Silver-streaked dark hair")).toBeTruthy();
+    expect(screen.getByText("Silver-streaked dark hair.")).toBeTruthy();
     expect(screen.queryByText("Elena finds the forbidden ledger.")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /^Places\s*1$/ }));
-    expect(screen.getByText("Salt-stained stone stacks")).toBeTruthy();
+    expect(screen.getByText("Salt-stained stone stacks.")).toBeTruthy();
     expect(screen.queryByText("a".repeat(64))).toBeNull();
   });
 

@@ -190,6 +190,34 @@ def test_cast_item_failure_cannot_complete_checkpoint(tmp_path, failed_group):
     assert any(event["type"] == "stage_fail" for event in events)
 
 
+def test_cast_visual_review_runs_after_plates_and_props(tmp_path):
+    # The review is one slow model call over character sheets. Reused plates
+    # and props count first, and their failures never hold the review back.
+    from contextlib import ExitStack
+    from novel_to_comic.stage_runtime import StageRuntime
+    from novel_to_comic.state import create_initial_state
+
+    config, bible, _ = _cast(tmp_path)
+    state = create_initial_state("test", "novel.txt")
+    ctx = StageRuntime("cast", state, tmp_path, on_event=lambda event: None)
+    calls = []
+
+    def helper(name):
+        async def run(*args):
+            calls.append(name)
+            if name == "_generate_location_plates":
+                ctx.record_item_failed("harbor")
+        return run
+    with ExitStack() as stack:
+        for name in ("ensure_design", "_generate_character_refs", "_generate_character_state_refs",
+                     "review_cast", "_generate_location_plates", "_generate_prop_refs"):
+            stack.enter_context(patch.object(s3_cast, name, new_callable=AsyncMock, side_effect=helper(name)))
+        with pytest.raises(ValueError, match="Resume Cast"):
+            asyncio.run(s3_cast.run(config, tmp_path, ctx))
+    assert calls[-3:] == ["_generate_location_plates", "_generate_prop_refs", "review_cast"]
+    assert "cast_visual_review" not in state.stages["cast"].items_failed
+
+
 @pytest.mark.parametrize("provider_error,held_after", [
     ("image_tool_failed: the request was likely silently rejected by the provider's safety system", 1),
     ("image_tool_failed", 2),
