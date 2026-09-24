@@ -437,9 +437,16 @@ def test_retained_page_hash_and_profile_stay_readable_without_adding_reservation
     restored = ComicPage.model_validate(payload)
     assert restored.lettering_reservations is None
     assert restored.model_dump(mode="json") == json.loads(json.dumps(payload))
+    from novel_to_comic.config import (
+        COMPLETE_PAGE_MODEL, COMPLETE_PAGE_PROFILE_ID, COMPLETE_PAGE_PROVIDER,
+    )
+
+    # A retained baked Gemini edition, recognized by its full identity.
     profile = production_page_capability_profile().model_copy(
         update={
-            "id": "nano-banana-pro-complete-page-v1",
+            "id": COMPLETE_PAGE_PROFILE_ID,
+            "provider": COMPLETE_PAGE_PROVIDER,
+            "model": COMPLETE_PAGE_MODEL,
             "exact_visible_lettering": True,
         }
     )

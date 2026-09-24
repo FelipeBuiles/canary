@@ -46,7 +46,8 @@ async def _probe(args: argparse.Namespace, parser: argparse.ArgumentParser) -> i
     try:
         if args.preflight_only:
             result = await runtime._run({"kind": "image", "model": args.reasoning_model,
-                "prompt": "", "references": [], "request_id": run_id, "preflight_only": True})
+                "prompt": "", "references": [], "operation": "create",
+                "reference_authorities": [], "request_id": run_id, "preflight_only": True})
             report.update(status="completed", metadata=result["metadata"])
         elif args.probe == "structured-text":
             from PIL import Image, ImageDraw, ImageFont

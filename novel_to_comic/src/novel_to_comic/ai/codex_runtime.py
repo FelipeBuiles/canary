@@ -766,7 +766,16 @@ async def _execute(root: Path, request: dict[str, Any], evidence: dict[str, Any]
             _save_evidence(root, evidence)
             if effective_features.get("image_generation") is not True:
                 raise CodexRuntimeError("effective_image_generation_unavailable")
-            if any(effective_features.get(feature) is True for feature in _DISABLED_FEATURES):
+            enabled_tools = {feature for feature in _DISABLED_FEATURES
+                             if effective_features.get(feature) is True}
+            # Codex 0.156.1 reports unified_exec enabled even when configured
+            # false. Its tool registry registers exec/write_stdin only when
+            # shell_tool is enabled, so the independent shell gate controls
+            # exposure. Keep failing closed if that gate is not explicitly off.
+            if effective_features.get("shell_tool") is False:
+                enabled_tools.discard("unified_exec")
+            if enabled_tools:
+                evidence["enabled_tool_conflicts"] = sorted(enabled_tools)
                 raise CodexRuntimeError("effective_tool_isolation_failed")
         if request.get("preflight_only"):
             return {"model": thread.model, "metadata": evidence}
@@ -923,6 +932,10 @@ async def _child(root: Path) -> None:
     except BaseException as exc:
         if isinstance(exc, CodexRuntimeError):
             evidence.update(exc.metadata)
+        else:
+            # Keep the failure class for local diagnostics without recording SDK
+            # exception text, which may include a response or request payload.
+            evidence["exception_type"] = type(exc).__name__
         code = exc.code if isinstance(exc, CodexRuntimeError) else (
             "runtime_timeout" if isinstance(exc, asyncio.TimeoutError) else
             "runtime_cancelled" if isinstance(exc, asyncio.CancelledError) else

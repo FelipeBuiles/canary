@@ -183,6 +183,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
         generate=generate,
         max_generation_calls=config.narrative_max_calls,
         story_instruction=instruction,
+        concurrency=config.effective_text_concurrency(),
     )
     if directive is not None:
         target.clear_story_directive("plan")

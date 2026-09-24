@@ -803,6 +803,7 @@ async def _produce_book_plan_one_shot(
     generate: StructuredGenerator,
     author_pins: tuple[AuthorGeometryPin, ...] | list[AuthorGeometryPin] = (),
     story_instruction: str = "",
+    concurrency: int = 4,
 ) -> BookPlan:
     """Generate, validate, and persist one global canonical book plan."""
 
@@ -861,7 +862,7 @@ async def _produce_book_plan_one_shot(
                 artifacts.write_plan_review_draft(PlanReviewDraft(adaptation_sha256=adaptation.content_sha256, rhythm_summary=draft.rhythm_summary, pages=pages))
                 review_failures = await review_narrative(
                     planning_context(adaptation, pages), generate=generate, ctx=ctx,
-                    artifacts=artifacts, model=model, instruction=story_instruction,
+                    artifacts=artifacts, model=model, instruction=story_instruction, concurrency=concurrency,
                 )
                 validation = reviewed_validation(validation, review_failures, artifacts=artifacts, phase="plan", context=planning_context(adaptation, pages))
             history.append(_attempt_record(attempt, validation))
@@ -912,6 +913,7 @@ async def _generate_page_map(
     model: str,
     story_instruction: str = "",
     review_instruction: str | None = None,
+    concurrency: int = 4,
 ) -> tuple[_BookPageMap, list[ValidationAttempt]]:
     prompt = _build_page_map_prompt(
         adaptation, target_range
@@ -951,7 +953,7 @@ async def _generate_page_map(
         if not validation.invariant_failures:
             review_failures = await review_narrative(
                 planning_context(adaptation, page_map.pages, phase="plan_map"),
-                generate=generate, ctx=ctx, artifacts=artifacts, model=model, instruction=story_instruction if review_instruction is None else review_instruction,
+                generate=generate, ctx=ctx, artifacts=artifacts, model=model, instruction=story_instruction if review_instruction is None else review_instruction, concurrency=concurrency,
             )
             validation = reviewed_validation(validation, review_failures, artifacts=artifacts, phase="plan_map", context=planning_context(adaptation, page_map.pages, phase="plan_map"))
         history.append(_attempt_record(attempt, validation))
@@ -1314,6 +1316,7 @@ async def _produce_book_plan_two_pass(
     generate: StructuredGenerator,
     author_pins: tuple[AuthorGeometryPin, ...] | list[AuthorGeometryPin],
     story_instruction: str = "",
+    concurrency: int = 4,
 ) -> BookPlan:
     author_instruction = story_instruction
     pin_by_beat = _validate_author_pins(adaptation, author_pins)
@@ -1377,7 +1380,7 @@ async def _produce_book_plan_two_pass(
             batches = await run_paid_shards(
                 [lambda start=start, stop=stop: generate_batch(start, stop)
                  for start, stop in ranges],
-                limit=4,
+                limit=concurrency,
             )
         except PlanInvariantError as error:
             _persist_validation(
@@ -1397,7 +1400,7 @@ async def _produce_book_plan_two_pass(
             artifacts.write_plan_review_draft(PlanReviewDraft(adaptation_sha256=adaptation.content_sha256, rhythm_summary=draft.rhythm_summary, pages=pages))
             review_failures = await review_narrative(
                 planning_context(adaptation, pages), generate=generate, ctx=ctx,
-                artifacts=artifacts, model=model, instruction=author_instruction,
+                artifacts=artifacts, model=model, instruction=author_instruction, concurrency=concurrency,
             )
             validation = reviewed_validation(validation, review_failures, artifacts=artifacts, phase="plan", context=planning_context(adaptation, pages))
 
@@ -1454,7 +1457,7 @@ async def _produce_book_plan_two_pass(
             artifacts.write_plan_review_draft(PlanReviewDraft(adaptation_sha256=adaptation.content_sha256, rhythm_summary=draft.rhythm_summary, pages=pages))
             review_failures = await review_narrative(
                 planning_context(adaptation, pages), generate=generate, ctx=ctx,
-                artifacts=artifacts, model=model, instruction=author_instruction,
+                artifacts=artifacts, model=model, instruction=author_instruction, concurrency=concurrency,
             )
             validation = reviewed_validation(validation, review_failures, artifacts=artifacts, phase="plan", context=planning_context(adaptation, pages))
         validation = reviewed_validation(validation, validation.invariant_failures, artifacts=artifacts, phase="plan_map", context=planning_context(adaptation, page_map.pages, phase="plan_map"))
@@ -1506,6 +1509,7 @@ async def produce_book_plan(
     author_pins: tuple[AuthorGeometryPin, ...] | list[AuthorGeometryPin] = (),
     story_instruction: str = "",
     max_generation_calls: int | None = None,
+    concurrency: int = 4,
 ) -> BookPlan:
     """Produce one canonical plan through the cheapest quality-safe workflow."""
 
@@ -1534,6 +1538,7 @@ async def produce_book_plan(
             generate=generate,
             author_pins=author_pins,
             story_instruction=story_instruction,
+            concurrency=concurrency,
         )
     return await _produce_book_plan_two_pass(
         adaptation,
@@ -1545,6 +1550,7 @@ async def produce_book_plan(
         generate=generate,
         author_pins=author_pins,
         story_instruction=story_instruction,
+        concurrency=concurrency,
     )
 
 
@@ -1898,12 +1904,17 @@ def _canonical_pages(
             if tuple(r.lettering_item_id for r in content.lettering_reservations) != content.lettering_ids:
                 raise ValueError("Every assigned lettering ID needs exactly one reservation; rerun Plan.")
             # Adapt owns delivery and attribution. A named narrator, quoted
-            # voice, or offscreen speaker is not a visible balloon-tail target.
-            # Normalize model-authored (including cached) layout metadata before
-            # constructing ComicPage; never change the canonical lettering.
+            # voice, or offscreen speaker is not a visible balloon-tail target,
+            # and an onscreen tail can only point at Adapt's speaker (always
+            # made visible below). Normalize model-authored (including cached)
+            # layout metadata before constructing ComicPage; a tail aimed at a
+            # different figure is dropped. Never change the canonical lettering.
             reservations.extend(
                 reservation.model_copy(update={"speaker_entity_id": None, "tail_target": None})
-                if item.delivery != "onscreen" else reservation
+                if item.delivery != "onscreen" or item.speaker_entity_id is None
+                else reservation.model_copy(update={"speaker_entity_id": item.speaker_entity_id, "tail_target": None})
+                if reservation.speaker_entity_id not in {None, item.speaker_entity_id}
+                else reservation
                 for reservation, item in zip(content.lettering_reservations, lettering, strict=True)
             )
             entity_ids, states, unapproved = _derived_state_citations(

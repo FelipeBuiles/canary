@@ -173,10 +173,12 @@ def route_for(kind: str, model: str) -> CodexRoute | None:
     validate_startup()
     if not selected:
         raise CodexRoutingError("Explicit Codex selection is absent from the process route map")
-    from novel_to_comic.image_models import GATEWAY_IMAGE_BALANCED
-
-    if kind == "complete_page" and model != GATEWAY_IMAGE_BALANCED:
-        raise CodexRoutingError("Complete-page development routing requires the original-process image-gemini-pro selection")
+    if kind == "complete_page":
+        # A page profile is chosen by the Draw selection itself; an alias route
+        # would price a Codex page while Draw still selects the API profile.
+        raise CodexRoutingError(
+            "Complete-page Codex routing requires an explicit codex-dev/image/<model> Draw selection"
+        )
     return CodexRoute(_TEXT[model]) if kind == "text" else CodexRoute(_IMAGE_REASONING, "gpt-image-2")
 
 

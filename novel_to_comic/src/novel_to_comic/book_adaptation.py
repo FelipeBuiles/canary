@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
 from typing import Any, Literal
 from uuid import uuid4
@@ -2613,6 +2613,7 @@ async def _generate_book_drafts(
     known_speaker_ids: set[str],
     source_scopes: list[tuple[str, ...]] | None = None,
     required_requirements: list[tuple[str, ...]] | None = None,
+    concurrency: int = _ADAPT_MAX_CONCURRENCY,
 ) -> list[_BookDraft]:
     completed = 0
     # Shards stream concurrently, so the reported fraction is how much of the
@@ -2656,7 +2657,7 @@ async def _generate_book_drafts(
     drafts = await run_paid_shards(
         [lambda index=index, prompt=prompt: generate_one(index, prompt)
          for index, prompt in enumerate(prompts)],
-        limit=_ADAPT_MAX_CONCURRENCY,
+        limit=concurrency,
     )
     ctx.activity(fraction=1.0, detail=detail, force=True)
     return drafts
@@ -3370,6 +3371,7 @@ async def produce_book_adaptation(
     generate: StructuredGenerator,
     story_instruction: str = "",
     max_generation_calls: int | None = None,
+    concurrency: int = _ADAPT_MAX_CONCURRENCY,
 ) -> BookAdaptation:
     """Generate, validate, cost, and persist Adapt's one canonical artifact."""
 
@@ -3406,7 +3408,7 @@ async def produce_book_adaptation(
                     )
                     ctx.log("Refreshing the review of the saved adaptation; the script is retained.")
                     failures = await review_narrative(
-                        context, generate=generate, ctx=ctx, artifacts=artifacts, model=model,
+                        context, generate=generate, ctx=ctx, artifacts=artifacts, model=model, concurrency=concurrency,
                     )
                 validation = reviewed_validation(
                     validation, failures, artifacts=artifacts, phase="adapt", context=context,
@@ -3623,7 +3625,7 @@ async def produce_book_adaptation(
             generated_drafts = await run_paid_pipeline(
                 [lambda index=index: generate_blueprint(index) for index in range(len(shards))],
                 generate_lettering,
-                limit=_ADAPT_MAX_CONCURRENCY,
+                limit=concurrency,
             )
             ctx.activity(fraction=1.0, detail="writing locked lettering", force=True)
             drafts = [
@@ -3638,6 +3640,7 @@ async def produce_book_adaptation(
                 )
             ]
         history: list[ValidationAttempt] = []
+        previous_failures: tuple[InvariantFailure, ...] = ()
         pending_repair_batch = resume_work.pending_repair if resume_work else None
         for validation_attempt in range(1, _MAX_ADAPT_VALIDATION_ATTEMPTS + 1):
             draft, beat_to_shard = _merged_draft(drafts)
@@ -3669,7 +3672,7 @@ async def produce_book_adaptation(
                 ), source, story_bible, brief, story_instruction)
                 review_failures = await review_narrative(
                     adaptation_context(source, brief, candidate), generate=generate,
-                    ctx=ctx, artifacts=artifacts, model=model, instruction=story_instruction,
+                    ctx=ctx, artifacts=artifacts, model=model, instruction=story_instruction, concurrency=concurrency,
                 )
                 validation = reviewed_validation(validation, review_failures, artifacts=artifacts, phase="adapt", context=adaptation_context(source, brief, candidate))
             history.append(_attempt_record(validation_attempt, validation))
@@ -3686,11 +3689,16 @@ async def produce_book_adaptation(
             artifacts.write_failed_adaptation_candidate(candidate)
             _persist_validation(artifacts, validation, attempts=validation_attempt, history=tuple(history))
             if (
-                not _may_repair_validation_attempt(validation_attempt, history)
+                not _may_repair_validation_attempt(
+                    validation_attempt, history,
+                    previous_failures=previous_failures,
+                    current_failures=validation.invariant_failures,
+                )
                 or any(f.code == "narrative_review_invalid" for f in validation.invariant_failures)
             ):
                 # Malformed editorial evidence cannot justify rewriting story.
                 break
+            previous_failures = validation.invariant_failures
             drafts = _partition_reviewed_candidate(candidate, shards)
             affected = _affected_shards(
                 validation,
@@ -3725,6 +3733,7 @@ async def produce_book_adaptation(
                 fresh_namespace=repair_namespace,
             )
             generated_repairs = await _generate_book_drafts(
+                concurrency=concurrency,
                 prompts=repair_prompts,
                 source_scopes=repair_scopes,
                 required_requirements=[_repair_required_requirements(candidate, scope) for scope in repair_scopes],
@@ -3908,6 +3917,9 @@ def _attempt_record(
 def _may_repair_validation_attempt(
     attempt: int,
     history: list[ValidationAttempt],
+    *,
+    previous_failures: Sequence[InvariantFailure] = (),
+    current_failures: Sequence[InvariantFailure] = (),
 ) -> bool:
     """Keep repair bounded while handling a newly exposed review defect.
 
@@ -3916,6 +3928,10 @@ def _may_repair_validation_attempt(
     changed set of evidence-backed narrative review failures appears. This avoids
     a manual Resume when a correction makes demonstrable progress. Repeating the
     same review result cannot consume another provider call.
+
+    Review failures are identified by code and cited artifacts, not code alone:
+    a repair that fixes one ``missing_context`` gap while the review exposes a
+    different one is progress, not a repeated result.
     """
     if attempt < _MAX_ADAPT_ATTEMPTS:
         return True
@@ -3923,11 +3939,19 @@ def _may_repair_validation_attempt(
         return False
     current = set(history[-1].invariant_codes)
     previous = set(history[-2].invariant_codes)
+    if not current or current == {"narrative_review_invalid"}:
+        return False
+    narrative_only = all(code.startswith("narrative_review_") for code in current)
+    if current != previous:
+        return current < previous or narrative_only
+
+    def identities(failures: Sequence[InvariantFailure]) -> set[tuple[str, tuple[str, ...]]]:
+        return {(f.code, tuple(sorted(f.artifact_ids))) for f in failures}
+
     return (
-        current != previous
-        and bool(current)
-        and (current < previous or all(code.startswith("narrative_review_") for code in current))
-        and current != {"narrative_review_invalid"}
+        narrative_only
+        and bool(current_failures)
+        and identities(current_failures) != identities(previous_failures)
     )
 
 

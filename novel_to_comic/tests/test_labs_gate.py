@@ -36,8 +36,26 @@ def test_labs_disabled_when_flag_false(monkeypatch, tmp_path, value):
     )
 
 
+def _original_process(monkeypatch, **settings):
+    from types import MappingProxyType
+
+    from novel_to_comic import codex_dev
+
+    process = dict.fromkeys(codex_dev._PROCESS)
+    process.update(settings)
+    monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType(process))
+
+
 @pytest.mark.parametrize("value", ["true", "1", "yes", "on"])
 def test_labs_enabled_when_flag_true(monkeypatch, tmp_path, value):
+    _original_process(monkeypatch, CANARY_ENV="development")
     monkeypatch.setenv("CANARY_LABS_ENABLED", value)
     app = create_app(Path(str(tmp_path)), dev=True)
     assert _has_labs_routes(app)
+
+
+def test_labs_flag_cannot_enable_labs_outside_original_process_development(monkeypatch, tmp_path):
+    _original_process(monkeypatch, CANARY_ENV="production")
+    monkeypatch.setenv("CANARY_LABS_ENABLED", "true")
+    app = create_app(Path(str(tmp_path)), dev=True)
+    assert not _has_labs_routes(app)

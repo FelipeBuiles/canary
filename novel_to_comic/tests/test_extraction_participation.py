@@ -4,6 +4,7 @@ import pytest
 
 from novel_to_comic.stages.s1_extract import (
     _ParticipationQuoteMismatch,
+    _UnresolvedSceneOpenings,
     _parse_extraction,
     _participation_quote_correction,
 )
@@ -128,48 +129,67 @@ def test_extraction_recovers_missing_evidence_for_a_rostered_participant():
     assert now.character_ids == ["Ari"]
 
 
-def test_extraction_rejects_ungrounded_or_missing_participation():
+def test_ungrounded_evidence_reports_its_unresolved_scene_opening():
     payload = _payload()
     payload["scenes"][0]["source_start_quote"] = "Not a source sentence."
+    payload["character_participation"][1]["source_quote"] = "Jo walked into the room."
+    with pytest.raises(_UnresolvedSceneOpenings, match="Unresolved scene IDs: now$") as error:
+        _parse_extraction(payload, SOURCE)
+    assert error.value.openings == (("now", "Not a source sentence.", None),)
+    correction = _participation_quote_correction(error.value)
+    assert "scene_id='now', source_start_quote='Not a source sentence.'" in correction
+    assert "never the registry or earlier text" in correction
+    assert "entire corrected Story Bible JSON object" in correction
+    payload = _payload()
+    payload["scenes"][0]["source_start_quote"] = "Not a source sentence."
+    payload["character_participation"].pop(0)
+    with pytest.raises(_UnresolvedSceneOpenings, match="now"):
+        _parse_extraction(payload, SOURCE)
+
+
+def test_ungrounded_evidence_in_an_invalid_scene_still_reports_the_quote():
+    payload = _payload()
+    payload["scenes"][0]["source_start_quote"] = None
     payload["character_participation"][1]["source_quote"] = "Jo walked into the room."
     with pytest.raises(_ParticipationQuoteMismatch, match="verbatim") as error:
         _parse_extraction(payload, SOURCE)
     assert error.value.pair == ("Jo", "now")
-    assert error.value.source_quote == "Jo walked into the room."
     correction = _participation_quote_correction(error.value)
-    assert "character_id='Jo'" in correction
-    assert "scene_id='now'" in correction
     assert "source_quote='Jo walked into the room.'" in correction
     assert "Do not reconstruct, normalize, or paraphrase it." in correction
-    assert "entire corrected Story Bible JSON object" in correction
     assert "never return a character_participation entry or field by itself" in correction
-    payload = _payload()
-    payload["scenes"][0]["source_start_quote"] = "Not a source sentence."
-    payload["character_participation"].pop(1)
-    with pytest.raises(ValueError, match="Missing participation evidence"):
-        _parse_extraction(payload, SOURCE)
 
 
-def test_extraction_reports_all_invalid_participation_quotes_for_one_repair():
+def test_extraction_reports_all_unresolved_openings_for_one_repair():
     payload = _payload()
     payload["scenes"][0]["source_start_quote"] = "Not a source sentence."
     payload["scenes"][1]["source_start_quote"] = "Another missing source sentence."
     payload["character_participation"][0]["source_quote"] = "Ari opened the gate!"
     payload["character_participation"][3]["source_quote"] = "Ren abandoned the sailor."
 
-    with pytest.raises(_ParticipationQuoteMismatch) as error:
+    with pytest.raises(_UnresolvedSceneOpenings) as error:
         _parse_extraction(payload, SOURCE)
 
-    assert [(pair, quote) for pair, quote, _ in error.value.mismatches] == [
-        (("Ari", "now"), "Ari opened the gate!"),
-        (("Ren", "memory"), "Ren abandoned the sailor."),
-    ]
-    assert error.value.mismatches[0][2] == "Ari opened the gate."
-    assert error.value.mismatches[1][2] is None
+    assert error.value.openings == (
+        ("now", "Not a source sentence.", None),
+        ("memory", "Another missing source sentence.", None),
+    )
     correction = _participation_quote_correction(error.value)
-    assert "source_quote='Ari opened the gate!'" in correction
-    assert "source_quote='Ren abandoned the sailor.'" in correction
-    assert "exact_source_replacement='Ari opened the gate.'" in correction
+    assert "source_start_quote='Not a source sentence.'" in correction
+    assert "source_start_quote='Another missing source sentence.'" in correction
+
+
+def test_background_evidence_for_an_undefined_character_is_dropped_locally():
+    payload = _payload()
+    payload["character_participation"].append({
+        "character_id": "stranger", "scene_id": "now",
+        "classification": "background_only", "source_quote": "A photograph of Jo stood on the shelf.",
+    })
+    bible = _parse_extraction(payload, SOURCE)
+    assert "stranger" not in {character.id for character in bible.characters}
+    payload["character_participation"][-1]["classification"] = "direct_action"
+    with pytest.raises(ValueError, match="Undefined character IDs: \\['stranger'\\]"):
+        _parse_extraction(payload, SOURCE)
 
 
 def test_extraction_preserves_nonhuman_anchor_verbatim_despite_adult_gender_metadata():
@@ -218,12 +238,13 @@ def test_scene_evidence_resolution_does_not_depend_on_book_or_character_metadata
     payload.pop('total_scenes')
     payload['characters'][0]['gender'] = None
     payload['characters'][0]['default_outfit'] = None
-    quotes = _resolved_scene_anchor_quotes(payload, SOURCE)
+    quotes, unresolved = _resolved_scene_anchor_quotes(payload, SOURCE)
+    assert not unresolved
     assert set(quotes) == {'now', 'memory', 'crossing'}
     assert quotes['crossing'] == 'The keeper raised a lantern and explained the crossing.'
     # One malformed opening must not suppress unrelated resolved scenes either.
     payload['scenes'][1]['source_start_quote'] = None
-    assert set(_resolved_scene_anchor_quotes(payload, SOURCE)) == {'now', 'crossing'}
+    assert set(_resolved_scene_anchor_quotes(payload, SOURCE)[0]) == {'now', 'crossing'}
 
 
 @pytest.mark.parametrize('scene_count', [None, 99])
@@ -263,7 +284,7 @@ def test_duplicate_participation_does_not_skip_evidence_validation():
     payload['scenes'][0]['source_start_quote'] = 'No matching source opening.'
     payload['character_participation'].append({
         **payload['character_participation'][0], 'source_quote': 'An invented event.'})
-    with pytest.raises(_ParticipationQuoteMismatch):
+    with pytest.raises(_UnresolvedSceneOpenings):
         _parse_extraction(payload, SOURCE)
 
 
@@ -282,8 +303,6 @@ def test_unresolved_missing_evidence_is_reported_together_for_one_correction():
     payload['scenes'][2]['source_start_quote'] = 'Missing last opening.'
     payload['character_participation'] = [row for row in payload['character_participation']
                                           if row['character_id'] not in {'Ari', 'keeper'}]
-    with pytest.raises(ValueError, match='Missing participation evidence') as error:
+    with pytest.raises(_UnresolvedSceneOpenings) as error:
         _parse_extraction(payload, SOURCE)
-    assert 'Ari / now' in str(error.value)
-    assert 'keeper / crossing' in str(error.value)
-    assert 'source_start_quote' in str(error.value)
+    assert [scene_id for scene_id, _, _ in error.value.openings] == ['now', 'crossing']

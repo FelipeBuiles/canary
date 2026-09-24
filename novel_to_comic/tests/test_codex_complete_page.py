@@ -23,6 +23,13 @@ from novel_to_comic.target_artifacts import TargetArtifacts
 from tests.test_complete_page_draw import _page
 
 
+CODEX_DRAW = "codex-dev/image/gpt-5.5"
+
+
+def _codex_config():
+    return Config(draw_model=CODEX_DRAW)
+
+
 @pytest.fixture
 
 def dev_routes(monkeypatch):
@@ -30,8 +37,7 @@ def dev_routes(monkeypatch):
     process.update(CANARY_CODEX_DEV_ENABLED="1", CANARY_ENV="development")
     monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType(process))
     monkeypatch.setattr(codex_dev, "_SETTINGS_ERROR", None)
-    monkeypatch.setattr(codex_dev, "_IMAGES", frozenset({"image-gemini-pro"}))
-    monkeypatch.setattr(codex_dev, "_IMAGE_REASONING", "gpt-5.5")
+    monkeypatch.setattr(codex_dev, "_IMAGES", frozenset())
     monkeypatch.setattr(codex_dev, "_TEXT", MappingProxyType({
         Config().effective_page_ocr_model(): "gpt-5.6-terra",
     }))
@@ -68,7 +74,7 @@ def _authorities(tmp_path, count):
 def _compiled(page, inventory, files, config=None, **kwargs):
     return page_drawing.compile_page_generation_request(
         page, page_drawing.select_book_edition(
-            edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(config),
+            edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(config or _codex_config()),
         ), inventory, files, retry=RetryProvenance(attempt=1), **kwargs,
     )
 
@@ -112,7 +118,7 @@ def test_production_profile_and_old_serialized_hashes_remain_compatible(monkeypa
 
 
 def test_profile_binds_reasoner_and_runtime_and_cannot_rewrite_an_edition(tmp_path, monkeypatch, dev_routes):
-    profile = page_drawing.current_page_capability_profile()
+    profile = page_drawing.current_page_capability_profile(_codex_config())
     assert (profile.provider, profile.model, profile.max_attempts) == ("codex-dev", "gpt-image-2", 1)
     assert page_drawing.page_profile_uses_native_dimensions(profile)
     artifacts = TargetArtifacts(tmp_path)
@@ -120,17 +126,16 @@ def test_profile_binds_reasoner_and_runtime_and_cannot_rewrite_an_edition(tmp_pa
     artifacts.write_book_edition(production)
     before = artifacts.book_edition_path.read_bytes()
     with pytest.raises(ValueError):
-        page_drawing.ensure_current_page_edition(artifacts, production)
+        page_drawing.ensure_current_page_edition(artifacts, production, _codex_config())
     assert artifacts.book_edition_path.read_bytes() == before
     edition = page_drawing.select_book_edition(edition_id="dev", profile=profile)
-    monkeypatch.setattr(codex_dev, "_IMAGE_REASONING", "gpt-5.6-terra")
-    assert page_drawing.current_page_capability_profile().id != profile.id
+    other_reasoner = page_drawing.current_page_capability_profile(Config(draw_model="codex-dev/image/gpt-5.6-terra"))
+    assert other_reasoner.id != profile.id
     with pytest.raises(ValueError):
-        page_drawing.select_book_edition(edition_id=edition.id, profile=profile, existing=edition)
-    monkeypatch.setattr(codex_dev, "_IMAGE_REASONING", "gpt-5.5")
+        page_drawing.select_book_edition(edition_id=edition.id, profile=other_reasoner, existing=edition)
     controls = codex_runtime.image_execution_controls()
     monkeypatch.setattr(codex_runtime, "image_execution_controls", lambda: (*controls, ("changed-runtime-control", "enabled")))
-    assert page_drawing.current_page_capability_profile().id != profile.id
+    assert page_drawing.current_page_capability_profile(_codex_config()).id != profile.id
     with pytest.raises(ValueError):
         page_drawing.select_book_edition(edition_id=edition.id, profile=profile, existing=edition)
 
@@ -138,7 +143,7 @@ def test_profile_binds_reasoner_and_runtime_and_cannot_rewrite_an_edition(tmp_pa
 def test_five_references_keep_original_bytes_and_six_use_a_lossless_sheet(tmp_path, dev_routes, monkeypatch):
     page, inventory, files = _authorities(tmp_path, 5)
     compiled = _compiled(page, inventory, files)
-    prepared = page_drawing.complete_page_adapter(Config()).prepare(compiled)
+    prepared = page_drawing.complete_page_adapter(_codex_config()).prepare(compiled)
     assert tuple(ref.id for ref in prepared.references) == tuple(ref.id for ref in inventory.references)
     assert prepared.reference_bytes == tuple(files[ref.id].path.read_bytes() for ref in inventory.references)
     assert compiled.request.lettering == ()
@@ -147,7 +152,7 @@ def test_five_references_keep_original_bytes_and_six_use_a_lossless_sheet(tmp_pa
     assert compiled.request.estimated_cost_usd == 0
     page, inventory, files = _authorities(tmp_path, 6)
     compiled = _compiled(page, inventory, files)
-    prepared = page_drawing.complete_page_adapter(Config()).prepare(compiled)
+    prepared = page_drawing.complete_page_adapter(_codex_config()).prepare(compiled)
     assert len(prepared.references) == len(prepared.reference_bytes) == 5
     assert "REFERENCE SHEETS" in prepared.prompt
     for ref in inventory.references:
@@ -171,7 +176,7 @@ def test_incompatible_stored_reference_requests_cast_rerun(tmp_path, dev_routes)
     compiled = _compiled(page, inventory, files)
 
     with pytest.raises(ValueError, match="Rerun Cast"):
-        page_drawing.complete_page_adapter(Config()).prepare(compiled)
+        page_drawing.complete_page_adapter(_codex_config()).prepare(compiled)
 
 
 def test_draw_estimate_maps_incompatible_reference_to_conflict(tmp_path, monkeypatch, dev_routes):
@@ -191,7 +196,7 @@ def test_draw_estimate_maps_incompatible_reference_to_conflict(tmp_path, monkeyp
 
     app = FastAPI()
     app.include_router(pages.router)
-    app.dependency_overrides[get_project] = lambda: (tmp_path, Config(), None)
+    app.dependency_overrides[get_project] = lambda: (tmp_path, _codex_config(), None)
     response = TestClient(app).get("/pages/generate/estimate")
 
     assert response.status_code == 409
@@ -214,7 +219,7 @@ def test_correction_parent_consumes_one_of_five_image_inputs(tmp_path, dev_route
             _compiled(page, inventory, files, correction=correction, edit_source_bytes=parent)
     else:
         compiled = _compiled(page, inventory, files, correction=correction, edit_source_bytes=parent)
-        prepared = page_drawing.complete_page_adapter(Config()).prepare(compiled)
+        prepared = page_drawing.complete_page_adapter(_codex_config()).prepare(compiled)
         assert prepared.edit_source_bytes == parent
         assert len(prepared.reference_bytes) <= 4
         if authority_count == 4:
@@ -249,7 +254,7 @@ def test_start_draw_packs_references_for_both_entry_paths(tmp_path, monkeypatch,
     async def start():
         result = await pipeline._start_stage(
             SimpleNamespace(app=app), "project", "draw", False,
-            (tmp_path, Config(), None), "user", queue_pages=queue_pages,
+            (tmp_path, _codex_config(), None), "user", queue_pages=queue_pages,
         )
         await asyncio.gather(*app.state.running_tasks.values())
         return result
@@ -270,7 +275,7 @@ def test_start_draw_marks_preflight_rejection_before_dispatch(tmp_path, monkeypa
     with pytest.raises(HTTPException) as caught:
         asyncio.run(pipeline._start_stage(
             SimpleNamespace(), "project", "draw", False,
-            (tmp_path, Config(), None), "user",
+            (tmp_path, _codex_config(), None), "user",
         ))
     assert caught.value.status_code == 409
     assert caught.value.detail == {
@@ -304,7 +309,7 @@ def test_queue_all_later_reference_overflow_has_no_enqueue_or_credit_hold(tmp_pa
     with pytest.raises(ValueError):
         asyncio.run(pages.enqueue_all_undrawn_pages(
             SimpleNamespace(app=app), project_id="project", user_id="user",
-            project_dir=tmp_path, config=Config(),
+            project_dir=tmp_path, config=_codex_config(),
         ))
     enqueue.assert_not_called()
     reserve.assert_not_called()
@@ -327,7 +332,7 @@ def test_batch_subscription_quote_is_zero_and_subscription_even_when_empty(tmp_p
     monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
     app = FastAPI()
     app.include_router(pages.router)
-    app.dependency_overrides[get_project] = lambda: (tmp_path, Config(), None)
+    app.dependency_overrides[get_project] = lambda: (tmp_path, _codex_config(), None)
     response = TestClient(app).get("/pages/generate/estimate")
     assert response.status_code == 200
     quote = response.json()
@@ -346,7 +351,7 @@ def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(
     from novel_to_comic.usage import ApiResult
 
     page, inventory, files = _authorities(tmp_path, 2)
-    config = Config(draw_model=f"codex-dev/image/{reasoner}") if reasoner else Config()
+    config = Config(draw_model=f"codex-dev/image/{reasoner}") if reasoner else _codex_config()
     proof = tmp_path / "samples" / "style_1.png"
     compiled = _compiled(page, inventory, files, config=config, style_reference_path=proof)
     adapter = page_drawing.complete_page_adapter(config)
@@ -443,14 +448,14 @@ def test_explicit_retry_estimate_after_failed_codex_draw(tmp_path, monkeypatch, 
     artifacts = TargetArtifacts(tmp_path)
     artifacts.write_page(page)
     artifacts.write_book_edition(page_drawing.select_book_edition(
-        edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(),
+        edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(_codex_config()),
     ))
     artifacts.write_request(original.request, request_revision=1)
     monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
     monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
     app = FastAPI()
     app.include_router(pages.router)
-    app.dependency_overrides[get_project] = lambda: (tmp_path, Config(), None)
+    app.dependency_overrides[get_project] = lambda: (tmp_path, _codex_config(), None)
 
     client = TestClient(app)
     edition_bytes = artifacts.book_edition_path.read_bytes()
@@ -461,7 +466,7 @@ def test_explicit_retry_estimate_after_failed_codex_draw(tmp_path, monkeypatch, 
         assert response.json()["funding"] == "codex_subscription"
         assert artifacts.request_revisions(page.page_number) == tuple(range(1, attempt))
         _, _, compiled = pages._prepare_initial_generation(
-            (tmp_path, Config(), None), page.page_number, "canonical",
+            (tmp_path, _codex_config(), None), page.page_number, "canonical",
         )
         assert compiled.request.retry == RetryProvenance(
             attempt=attempt, retries_request_sha256=prior.request_sha256,
@@ -486,7 +491,7 @@ def test_codex_draw_failure_submits_once_even_on_explicit_retry(
     artifacts.write_request(original.request, request_revision=1)
     retried = page_drawing.compile_page_generation_request(
         page, page_drawing.select_book_edition(
-            edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(),
+            edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(_codex_config()),
         ), inventory, files, retry=pages._generation_retry(artifacts, page.page_number),
     )
     error = codex_runtime.CodexRuntimeError(
@@ -499,7 +504,7 @@ def test_codex_draw_failure_submits_once_even_on_explicit_retry(
 
     with pytest.raises(codex_runtime.CodexRuntimeError):
         asyncio.run(page_drawing.draw_complete_page(
-            retried, adapter=page_drawing.complete_page_adapter(Config()),
+            retried, adapter=page_drawing.complete_page_adapter(_codex_config()),
             artifacts=artifacts, page=page,
         ))
     runtime.assert_awaited_once()
@@ -522,14 +527,14 @@ def test_failed_codex_correction_can_be_explicitly_retried(tmp_path, dev_routes)
     artifacts.write_request(original.request, request_revision=2)
     retried = page_drawing.compile_page_generation_request(
         page, page_drawing.select_book_edition(
-            edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(),
+            edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(_codex_config()),
         ), inventory, files,
         retry=pages._aggregated_correction_retry(
             artifacts, page_number=page.page_number, issue_ids=correction.issue_ids,
         ),
         correction=correction, edit_source_bytes=parent,
     )
-    prepared = page_drawing.complete_page_adapter(Config()).prepare(retried)
+    prepared = page_drawing.complete_page_adapter(_codex_config()).prepare(retried)
     assert retried.request.retry == RetryProvenance(
         attempt=2, retries_request_sha256=original.request.request_sha256,
     )
@@ -595,7 +600,7 @@ def test_native_draw_rejects_wrong_page_shape_without_retry_or_publication(
     artifacts = TargetArtifacts(tmp_path / "project")
     with pytest.raises(codex_runtime.CodexRuntimeError, match="page_aspect_ratio_mismatch"):
         asyncio.run(page_drawing.draw_complete_page(
-            compiled, adapter=page_drawing.complete_page_adapter(Config()),
+            compiled, adapter=page_drawing.complete_page_adapter(_codex_config()),
             artifacts=artifacts, page=page,
         ))
     runtime.assert_awaited_once()

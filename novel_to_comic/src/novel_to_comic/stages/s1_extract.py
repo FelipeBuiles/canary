@@ -75,8 +75,36 @@ class _ParticipationQuoteMismatch(ValueError):
         super().__init__(message)
 
 
+class _UnresolvedSceneOpenings(ValueError):
+    """Scene openings that do not resolve, in order, within the extracted source."""
+
+    def __init__(self, openings: list[tuple[str, str, str | None]]) -> None:
+        self.openings = tuple(openings)
+        super().__init__(
+            "Scene source_start_quote values must be copied verbatim, in order, from the "
+            "source text being extracted. Unresolved scene IDs: "
+            + ", ".join(scene_id for scene_id, _, _ in self.openings)
+        )
+
+
 def _participation_quote_correction(error: Exception) -> str:
     """Return targeted repair guidance without exposing source text in stage errors."""
+    if isinstance(error, _UnresolvedSceneOpenings):
+        invalid_openings = "\n".join(
+            f"- scene_id={scene_id!r}, source_start_quote={quote!r}"
+            + (f", exact_source_replacement={candidate!r}" if candidate else "")
+            for scene_id, quote, candidate in error.openings
+        )
+        return (
+            "\nThe scene source_start_quote values below do not occur in the source text you were asked "
+            "to extract (the SOURCE SECTION when one is supplied; never the registry or earlier text). "
+            "Every scene must describe events from that source text, in order, and its source_start_quote "
+            "must copy the complete first sentence of the scene character-for-character. Use "
+            "exact_source_replacement verbatim when it is supplied. If a scene describes events that are "
+            "not in the source text, remove it and extract the source text's actual events instead, "
+            "updating character_participation to match. Return the entire corrected Story Bible JSON object.\n"
+            f"UNRESOLVED SCENE OPENINGS:\n{invalid_openings}\n"
+        )
     if not isinstance(error, _ParticipationQuoteMismatch):
         return ""
     invalid_evidence = "\n".join(
@@ -129,8 +157,23 @@ class _SceneOpening(BaseModel):
     source_start_offset: int | None = Field(default=None, ge=0)
 
 
-def _resolved_scene_anchor_quotes(result: dict, novel_text: str) -> dict[str, str]:
-    """Resolve exact, scene-scoped source text for private evidence recovery."""
+def _unresolved_openings(
+    openings: dict[str, str], novel_text: str,
+) -> _UnresolvedSceneOpenings:
+    return _UnresolvedSceneOpenings([
+        (scene_id, quote, _nearest_source_quote(novel_text, quote))
+        for scene_id, quote in openings.items()
+    ])
+
+
+def _resolved_scene_anchor_quotes(
+    result: dict, novel_text: str,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Resolve exact, scene-scoped source text for private evidence recovery.
+
+    Returns resolved and unresolved openings. An unresolved opening is the
+    actionable fault behind ungrounded evidence for that scene.
+    """
     openings = []
     for scene in result.get("scenes", []):
         try:
@@ -140,11 +183,11 @@ def _resolved_scene_anchor_quotes(result: dict, novel_text: str) -> dict[str, st
             # they must not hide recoverable evidence in unrelated scenes.
             continue
     unresolved = set(align_scene_openings(openings, novel_text))
-    return {
-        scene.id: scene.source_start_quote
-        for scene in openings
-        if scene.id not in unresolved
-    }
+    quotes = {scene.id: scene.source_start_quote for scene in openings}
+    return (
+        {scene_id: quote for scene_id, quote in quotes.items() if scene_id not in unresolved},
+        {scene_id: quote for scene_id, quote in quotes.items() if scene_id in unresolved},
+    )
 
 
 
@@ -330,6 +373,18 @@ def _parse_extraction(raw: object, novel_text: str) -> StoryBible:
     participation = _ExtractionParticipation.model_validate(result).character_participation
     # Work on a separate payload so schema-correction feedback retains the evidence.
     result = json.loads(json.dumps(result))
+    defined_characters = {
+        character.get("id") for character in result.get("characters", [])
+        if isinstance(character, dict)
+    }
+    # Background-only evidence for an undefined character carries no visual
+    # decision: such a character would be excluded anyway. Dropping it saves a
+    # full correction round trip; staged evidence for one still fails below.
+    participation = [
+        evidence for evidence in participation
+        if evidence.character_id in defined_characters
+        or evidence.classification != "background_only"
+    ]
     if isinstance(result.get("scenes"), list):
         result["total_scenes"] = len(result["scenes"])
     for character in result.get("characters", []):
@@ -342,7 +397,10 @@ def _parse_extraction(raw: object, novel_text: str) -> StoryBible:
     visible: set[tuple[str, str]] = set()
     mismatches: list[tuple[tuple[str, str], str, str | None]] = []
     normalized_source = clean(novel_text)
-    scene_anchor_quotes = _resolved_scene_anchor_quotes(result, novel_text)
+    scene_anchor_quotes, unresolved_openings = _resolved_scene_anchor_quotes(result, novel_text)
+    # A quote or roster entry that cannot be grounded in an unresolved scene is
+    # a symptom; the opening is the fault. Report it so one repair fixes both.
+    failed_openings: dict[str, str] = {}
     unknown_characters = {e.character_id for e in participation if e.character_id not in characters}
     unknown_characters.update(
         cid for scene in scenes.values() for cid in scene["character_ids"] if cid not in characters
@@ -368,6 +426,8 @@ def _parse_extraction(raw: object, novel_text: str) -> StoryBible:
             # exact opening sentence rather than retrying a transcription task.
             if source_quote and evidence.scene_id in scene_anchor_quotes:
                 evidence.source_quote = scene_anchor_quotes[evidence.scene_id]
+            elif source_quote and evidence.scene_id in unresolved_openings:
+                failed_openings[evidence.scene_id] = unresolved_openings[evidence.scene_id]
             else:
                 mismatches.append((
                     pair,
@@ -377,6 +437,17 @@ def _parse_extraction(raw: object, novel_text: str) -> StoryBible:
         classified.add(pair)
         if evidence.classification != "background_only":
             visible.add(pair)
+    for scene in scenes.values():
+        if scene["id"] in unresolved_openings and any(
+            (character_id, scene["id"]) not in classified for character_id in scene["character_ids"]
+        ):
+            failed_openings[scene["id"]] = unresolved_openings[scene["id"]]
+    if failed_openings:
+        raise _unresolved_openings(
+            {scene_id: quote for scene_id, quote in unresolved_openings.items()
+             if scene_id in failed_openings},
+            novel_text,
+        )
     if mismatches:
         raise _ParticipationQuoteMismatch(mismatches)
     missing_evidence = []
@@ -456,13 +527,11 @@ async def _extract_with_retry(
     def parse(raw: object) -> StoryBible:
         bible = _parse_extraction(prepare(raw) if prepare else raw, novel_text)
         aligned = bible.model_copy(deep=True)
-        unresolved = align_scene_anchors(aligned, novel_text)
+        unresolved = set(align_scene_anchors(aligned, novel_text))
         if unresolved:
-            raise ValueError(
-                "Story Bible scenes must remain in source-text order and every "
-                "source_start_quote must resolve to a monotonically later complete "
-                "source sentence. Unresolved scene IDs: "
-                + ", ".join(unresolved)
+            raise _unresolved_openings(
+                {scene.id: scene.source_start_quote for scene in bible.scenes if scene.id in unresolved},
+                novel_text,
             )
         if validate is not None:
             validate(aligned)
@@ -477,7 +546,7 @@ async def _extract_with_retry(
             f"Here is the original novel text, followed by your previous JSON output "
             f"and the specific errors. Please output corrected JSON only.\n\n"
             f"NOVEL TEXT AND CONTEXT:\n{user_content or novel_text}\n\n"
-            f"YOUR PREVIOUS JSON:\n{json.dumps(result, indent=2)}\n\n"
+            f"YOUR PREVIOUS JSON:\n{json.dumps(result, ensure_ascii=False)}\n\n"
             f"VALIDATION ERRORS:\n{error}\n\n"
             f"{quote_instruction}\n"
             f"Output corrected JSON only, no explanation."

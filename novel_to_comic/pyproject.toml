@@ -54,6 +54,8 @@ build-backend = "setuptools.build_meta"
 # (e.g. test_vertex_native.py) require optional extras (google-genai) and aren't
 # part of the unit suite — collecting them breaks CI on a clean checkout.
 testpaths = ["tests"]
+# Gateway handler contracts (root litellm_handlers/) are tested here too.
+pythonpath = [".."]
 
 [tool.setuptools.packages.find]
 where = ["src"]

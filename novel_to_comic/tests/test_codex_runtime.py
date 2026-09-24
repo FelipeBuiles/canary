@@ -267,6 +267,31 @@ def test_effective_tool_reenabled_on_later_feature_page_blocks_turn(sdk):
     assert sdk.turns == []
 
 
+@pytest.mark.parametrize("shell_enabled", [False, None, True])
+def test_unified_exec_flag_is_safe_only_with_effective_shell_tool_off(sdk, shell_enabled):
+    request = {
+        "kind": "image", "model": "exact-model", "prompt": "", "references": [],
+        "operation": "create", "reference_authorities": [], "request_id": "preflight",
+        "preflight_only": True,
+    }
+    sdk.feature_pages[None].data = [
+        _Record(name="image_generation", enabled=True),
+        _Record(name="unified_exec", enabled=True),
+    ]
+    if shell_enabled is not None:
+        sdk.feature_pages[None].data.append(_Record(name="shell_tool", enabled=shell_enabled))
+    if shell_enabled is False:
+        result = asyncio.run(runtime._run(request))
+        assert result["metadata"]["effective_features"]["unified_exec"] is True
+    else:
+        with pytest.raises(runtime.CodexRuntimeError, match="effective_tool_isolation_failed") as failure:
+            asyncio.run(runtime._run(request))
+        assert failure.value.metadata["enabled_tool_conflicts"] == (
+            ["unified_exec"] if shell_enabled is None else ["shell_tool", "unified_exec"]
+        )
+    assert sdk.turns == []
+
+
 def test_first_terminal_image_returns_without_agent_prose_or_regeneration(sdk):
     data = _png(size=(13, 29))
     sdk.events = [_usage(sdk), _image_event(sdk, data=data)]
