@@ -33,6 +33,7 @@ from novel_to_comic.models.page import (
 )
 from novel_to_comic.models.validation import EditorialIssue
 from novel_to_comic.page_planning import (
+    _MAX_PLAN_ATTEMPTS,
     _BookPlanDraft,
     _BookPageMap,
     _detail_batch_prompt,
@@ -548,14 +549,17 @@ def test_map_schema_corrections_do_not_consume_narrative_revision(tmp_path, monk
             asyncio.run(produce_book_plan(adaptation, _inventory(), ApprovedPageRange(minimum=24, maximum=24),
                 artifacts=target, ctx=ctx, model="test", generate=generate))
         saved = target.read_validation("plan")
-        assert saved.attempts == 2 and len(saved.attempt_history) == 2
+        assert saved.attempts == _MAX_PLAN_ATTEMPTS
+        assert len(saved.attempt_history) == _MAX_PLAN_ATTEMPTS
         assert not target.plan_path.exists()
+        # Two schema corrections are extra calls; neither consumes a narrative attempt.
+        assert len(calls) == _MAX_PLAN_ATTEMPTS + 2 and len(reviews) == _MAX_PLAN_ATTEMPTS
     else:
         _, history = asyncio.run(_generate_page_map(adaptation, ApprovedPageRange(minimum=24, maximum=24),
             generate=generate, ctx=ctx, artifacts=target, model="test"))
         assert history[0].invariant_codes == ("narrative_review_rushed_sequence",)
         assert history[1].invariant_codes == ()
-    assert len(calls) == 4 and len(reviews) == 2
+        assert len(calls) == 4 and len(reviews) == 2
 
 
 def test_invalid_reference_detail_stops_after_bounded_correction_with_page_location(tmp_path):
@@ -588,7 +592,7 @@ def test_invalid_reference_detail_stops_after_bounded_correction_with_page_locat
                              created_at=datetime.now(timezone.utc)), tmp_path),
             story_instruction="Keep the sailor's earlier appearance in this recollection.",
         ))
-    assert len(calls) == 2
+    assert len(calls) == _MAX_PLAN_ATTEMPTS
     failures = exc.value.validation.invariant_failures
     assert [f.code for f in failures] == ["reference_authority"]
     assert "page_009_content_001" in failures[0].artifact_ids
@@ -3642,7 +3646,7 @@ def test_invalid_detail_destination_gets_one_bounded_correction(tmp_path):
             ctx=StageRuntime("plan", PipelineState(project_name="assignment", novel_path="novel.txt",
                              created_at=datetime.now(timezone.utc)), tmp_path),
         ))
-    assert len(calls) == 2
+    assert len(calls) == _MAX_PLAN_ATTEMPTS
     assert error.value.validation.invariant_failures[0].code == "beat_allocation"
     assert "targets panel 5" in error.value.validation.invariant_failures[0].evidence[0]
 
@@ -3682,10 +3686,10 @@ def test_detail_schema_repair_preserves_allocation_feedback_and_resume_progress(
     if resume_after_failure:
         with pytest.raises(PlanInvariantError):
             run()
-        assert len(calls) == 2
+        assert len(calls) == _MAX_PLAN_ATTEMPTS
         resumed = True
         draft = run()
-        assert len(calls) == 3
+        assert len(calls) == _MAX_PLAN_ATTEMPTS + 1  # resume reuses every failed response
     else:
         draft = run()
         assert len(calls) == 4
@@ -3695,7 +3699,26 @@ def test_detail_schema_repair_preserves_allocation_feedback_and_resume_progress(
     # The now-valid response is reused on a later run.
     if resume_after_failure:
         assert run() == draft
-        assert len(calls) == 3
+        assert len(calls) == _MAX_PLAN_ATTEMPTS + 1
+
+
+def test_onscreen_reservation_speaker_follows_canonical_attribution(tmp_path):
+    # Production Plan runs failed on this layout-only slip; Adapt owns the speaker.
+    adaptation = _onscreen_adaptation()
+    response = plan_response(_two_page_response({"entity_ids": ["location_alert"]}))
+    panel = response["pages"][1]["content"][0]
+    panel["entity_ids"] = ["location_alert"]
+    placement = panel["lettering_reservations"][0]
+    placement.update(speaker_entity_id="location_alert", tail_target={"x": 0.5, "y": 0.5})
+
+    artifacts, calls, plan = _run_plan(adaptation, _inventory(), response, tmp_path)
+    assert isinstance(plan, BookPlan)
+    assert len(calls) == 1
+    page = artifacts.read_page(2)
+    assert page.content[0].lettering == adaptation.beats[1].lettering
+    saved = page.lettering_reservations[0]
+    assert saved.speaker_entity_id == adaptation.beats[1].lettering[0].speaker_entity_id
+    assert saved.tail_target is None
 
 
 @pytest.mark.parametrize("delivery", ["narration", "quoted_text", "offscreen", "display", "onscreen"])
@@ -3728,3 +3751,48 @@ def test_reservation_visibility_follows_canonical_delivery(tmp_path, delivery):
     _, resumed_calls, resumed = _run_plan(adaptation, _inventory(), response, tmp_path)
     assert isinstance(resumed, BookPlan)
     assert resumed_calls == []
+
+
+@pytest.mark.parametrize("concurrency", [4, 5])
+def test_detail_batches_run_up_to_the_configured_concurrency(tmp_path: Path, concurrency: int) -> None:
+    # 40 pages form five detail batches; a fixed pool of four left the fifth
+    # waiting a whole batch round.
+    adaptation = _long_adaptation(40)
+    in_flight = peak = 0
+
+    async def generate(**request):
+        nonlocal in_flight, peak
+        if request["feature"] == "plan.map":
+            return ApiResult(value=plan_response({
+                "rhythm_summary": "Forty measured pages.",
+                "pages": [
+                    {"beat_ids": [f"beat_{index:04d}"], "lettering_ids": [f"lettering_{index:04d}"],
+                     "emphasis": "initial", "density_intent": "standard",
+                     "rhythm_intent": f"Advance event {index}."}
+                    for index in range(1, 41)
+                ],
+            }), usage=None)
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+        match = re.search(r'"target_page_numbers":\[(.*?)\]', request["user_content"])
+        pages = [
+            {"emphasis": "initial", "density_intent": "standard",
+             "rhythm_intent": f"Advance page {number}.", "layout_intent": "One moment.",
+             "content": [{"beat_ids": [f"beat_{number:04d}"], "lettering_ids": [f"lettering_{number:04d}"],
+                          "panel_role": "standard", "visual_intent": f"Event {number} happens.",
+                          "entity_ids": []}]}
+            for number in (int(value) for value in match.group(1).split(","))
+        ]
+        return ApiResult(value=detail_response({"rhythm_summary": "Local detail.", "pages": pages}), usage=None)
+
+    plan = asyncio.run(produce_book_plan(
+        adaptation, _inventory(), ApprovedPageRange(minimum=40, maximum=40),
+        artifacts=TargetArtifacts(tmp_path),
+        ctx=StageRuntime("plan", PipelineState(project_name="pool", novel_path="novel.txt",
+                         created_at=datetime.now(timezone.utc)), tmp_path),
+        model="test-planner", generate=generate, concurrency=concurrency,
+    ))
+    assert len(plan.pages) == 40
+    assert peak == concurrency

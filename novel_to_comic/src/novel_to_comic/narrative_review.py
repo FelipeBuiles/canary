@@ -486,6 +486,19 @@ def _substantiated_blocker(finding: NarrativeFinding, window: dict) -> bool:
     return len({p.artifact_id for p in finding.passages}) >= minimum
 
 
+def _blocks(finding: NarrativeFinding, window: dict, owner: str) -> bool:
+    """Only a reviewer that sees the relevant authority can block its owner.
+
+    Plan reviews carry the adapted script, never the source, so they cannot
+    verify whether copy or events are source-supported. Adapt's source-backed
+    review already governs those; a Plan-time finding routed to Adapt stays
+    visible as an editorial issue instead of failing a stage that cannot fix it.
+    """
+    if owner == "plan" and finding.repair_stage == "adapt":
+        return False
+    return _substantiated_blocker(finding, window)
+
+
 def _finding_identity(finding: NarrativeFinding) -> tuple:
     """Identify one cited defect when neighboring review windows overlap.
 
@@ -523,7 +536,7 @@ class _ReviewProtocolError(ValueError):
     """Stop admitting windows after protocol repairs are exhausted."""
 
 
-async def review_narrative(context, *, generate, ctx, artifacts, model, instruction=""):
+async def review_narrative(context, *, generate, ctx, artifacts, model, instruction="", concurrency=4):
     phase = context["phase"]
     owner = "adapt" if phase == "adapt" else "plan"
     generate = checkpointed_generator(
@@ -610,7 +623,7 @@ async def review_narrative(context, *, generate, ctx, artifacts, model, instruct
 
         verdict, validation_error = await checked_verdict(prompt)
         if verdict is not None and any(
-            f.code == "missing_context" and _substantiated_blocker(f, window)
+            f.code == "missing_context" and _blocks(f, window, owner)
             for f in verdict.findings
         ):
             # A valid quotation proves that text exists, not that surrounding
@@ -649,7 +662,7 @@ async def review_narrative(context, *, generate, ctx, artifacts, model, instruct
         await run_paid_shards(
             [lambda index=index, window=window: review_window(index, window)
              for index, window in enumerate(windows, 1)],
-            limit=4,
+            limit=concurrency,
         )
     except _ReviewProtocolError:
         # Admitted siblings have finished checkpointing. Persist the invalid
@@ -690,7 +703,7 @@ async def review_narrative(context, *, generate, ctx, artifacts, model, instruct
             # Only requirement-only findings need the broader fallback scope.
             concrete_anchors = [a for a in finding.artifact_ids if a not in _requirement_anchors(context)]
             repair_anchors = concrete_anchors or finding.artifact_ids
-            blocking = _substantiated_blocker(finding, window)
+            blocking = _blocks(finding, window, owner)
             identity = _finding_identity(finding)
             if identity in reported_finding_identities:
                 continue
@@ -703,7 +716,10 @@ async def review_narrative(context, *, generate, ctx, artifacts, model, instruct
                     owner_stage=finding.repair_stage if blocking else owner,
                     code=f"narrative_review_{finding.code}",
                     message=("Evidence-backed narrative defect requires review before drawing."
-                             if blocking else "Optional narrative improvement; does not block completion."),
+                             if blocking else
+                             "Script concern noted during Plan; Adapt's source-backed review governs copy and events."
+                             if owner == "plan" and finding.repair_stage == "adapt" else
+                             "Optional narrative improvement; does not block completion."),
                     artifact_ids=finding.artifact_ids,
                     source_unit_ids=tuple(
                         dict.fromkeys(

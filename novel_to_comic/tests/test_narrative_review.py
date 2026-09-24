@@ -711,7 +711,9 @@ def test_draw_entry_points_stop_before_preparation_without_reviews(
     prepare.assert_not_called()
 
 
-def test_plan_defect_owned_by_adapt_does_not_trigger_useless_replanning(tmp_path):
+def test_plan_time_script_finding_is_advisory_and_does_not_replan(tmp_path):
+    # Plan's reviewer sees the script, never the source, so it cannot verify
+    # copy or events; Adapt's source-backed review already governs them.
     a = _long_adaptation(2)
     book_calls = 0
 
@@ -733,20 +735,24 @@ def test_plan_defect_owned_by_adapt_does_not_trigger_useless_replanning(tmp_path
             )
         )
 
-    with pytest.raises(PlanInvariantError) as error:
-        asyncio.run(
-            produce_book_plan(
-                a,
-                _inventory(),
-                ApprovedPageRange(minimum=1, maximum=4),
-                artifacts=TargetArtifacts(tmp_path),
-                ctx=runtime(tmp_path, "plan"),
-                model="test",
-                generate=generate,
-            )
+    artifacts = TargetArtifacts(tmp_path)
+    plan = asyncio.run(
+        produce_book_plan(
+            a,
+            _inventory(),
+            ApprovedPageRange(minimum=1, maximum=4),
+            artifacts=artifacts,
+            ctx=runtime(tmp_path, "plan"),
+            model="test",
+            generate=generate,
         )
+    )
+    assert plan.pages
     assert book_calls == 1
-    assert error.value.validation.invariant_failures[0].owner_stage == "adapt"
+    review = artifacts.read_narrative_review("plan")
+    assert not review.failures
+    assert [i.code for i in review.editorial_issues] == ["narrative_review_missing_context"]
+    assert "Adapt's source-backed review" in review.editorial_issues[0].message
 
 
 def test_author_instruction_is_reviewed_and_part_of_cache_identity(tmp_path):

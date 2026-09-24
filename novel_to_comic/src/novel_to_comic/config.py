@@ -205,7 +205,7 @@ class Config(BaseModel):
 
     # Pipeline settings
     parallel_batch_size: int = 5
-    max_concurrent_requests: int = 5
+    max_concurrent_requests: int = 5  # Parallel Adapt/Plan text requests; image fallback when image_concurrency is unset
     cost_limit_usd: Optional[float] = None
 
     def effective_image_model(self) -> str:
@@ -252,6 +252,10 @@ class Config(BaseModel):
             "location IDs, and JSON keys exactly as specified. Character and place names should stay "
             "as written unless the source text already localizes them."
         )
+
+    def effective_text_concurrency(self) -> int:
+        """Parallel structured text requests (Adapt shards, reviews, Plan batches)."""
+        return max(1, self.max_concurrent_requests)
 
     def effective_image_concurrency(self) -> int:
         if self.dev_mode:

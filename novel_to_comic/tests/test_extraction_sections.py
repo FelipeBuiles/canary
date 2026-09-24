@@ -69,6 +69,22 @@ def test_sentence_partition_preserves_all_original_offsets_and_unicode():
     assert document.scenes[-1].last_unit_id == document.units[-1].id
 
 
+def test_partition_balances_sections_instead_of_leaving_a_runt_tail():
+    # A source just over the limit once produced a 578-character final section
+    # that the model replaced with other supplied text.
+    text = 'Ari walked to the old gate and waited there. ' * 368
+    parts = sections.split_source(text, 16000)
+    assert ''.join(parts) == text
+    assert len(parts) == 2
+    assert all(len(part) <= 16000 for part in parts)
+    assert min(len(part) for part in parts) > 0.45 * len(text)
+
+
+def test_section_requests_carry_no_second_source_passage():
+    import inspect
+    assert 'source_heading' not in inspect.getsource(sections.extract_sections).split('organization_content')[0]
+
+
 def test_oversized_sentence_fails_before_any_call():
     with pytest.raises(ValueError, match="sentence formatting"):
         sections.split_source("Ari " + "x" * 5000 + ".", 4000)

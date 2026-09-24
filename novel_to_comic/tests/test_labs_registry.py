@@ -1,14 +1,9 @@
 from novel_to_comic.labs.registry import get_entry
 
 
-def test_seedream_v5_direct_models_use_current_fal_endpoint_ids() -> None:
-    assert get_entry("seedream-v5-lite-edit").endpoint == "bytedance/seedream/v5/lite/edit"
-    assert get_entry("seedream-v5-pro-edit").endpoint == "bytedance/seedream/v5/pro/edit"
-
-
-def test_production_gpt_image_entry_uses_gateway_alias() -> None:
-    entry = get_entry("gpt-image-2-production")
-    assert entry.endpoint == "image-gpt-2"
+def test_sunburst_entry_uses_the_production_gateway_alias() -> None:
+    entry = get_entry("sunburst")
+    assert entry.endpoint == "image-sunburst"
     assert entry.provider == "litellm"
 
 

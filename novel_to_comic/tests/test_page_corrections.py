@@ -749,13 +749,13 @@ class _Transport:
             artifact_kind="complete_page",
             image_bytes=b"corrected-page-png",
             media_type="image/png",
-            width=1696,
-            height=2528,
+            width=1024,
+            height=1536,
             latency_ms=10,
             provider_request_id="provider-1",
-            actual_provider_model="vertex_ai/gemini-3-pro-image",
+            actual_provider_model="openai/gpt-image-2.5/sunburst",
             usage=UsageRecord(
-                provider="fixture", model="gemini-3-pro-image", operation="image",
+                provider="fixture", model="openai/gpt-image-2.5/sunburst", operation="image",
                 image_count=1, cost_usd=0.5, cost_source="provider",
             ),
         )

@@ -53,14 +53,14 @@ def test_classification_allows_mixed_jobs_without_weakening_local_gate(monkeypat
     routes = _isolated_settings(
         monkeypatch, CANARY_CODEX_DEV_ENABLED="1", CANARY_ENV="development",
         CANARY_CODEX_DEV_TEXT_ROUTES=json.dumps({"gpt-5.6-terra": "gpt-5.6-terra", "gpt-5.6-luna": "gpt-5.4"}),
-        CANARY_CODEX_DEV_IMAGE_ROUTES='["image-gemini-pro"]',
     )
     assert routes.classify_operations(()) == "api"
     assert routes.classify_operations((("text", "gpt-5.6-terra"),)) == "codex_subscription"
-    assert routes.classify_operations((("complete_page", "image-gemini-pro"),)) == "codex_subscription"
+    codex_page = ("complete_page", "codex-dev/image/gpt-5.5")
+    assert routes.classify_operations((codex_page,)) == "codex_subscription"
     for operations in (
         (("text", "gpt-5.6-terra"), ("text", "deepseek-v4.1-flash")),
-        (("complete_page", "image-gemini-pro"), ("text", "gemini-3.8-flash")),
+        (codex_page, ("text", "gemini-3.8-flash")),
     ):
         assert routes.classify_operations(operations) == "api"
     assert routes.classify_operations((("text", "gpt-5.6-terra"), ("text", "gpt-5.6-luna"))) == "codex_subscription"
@@ -203,7 +203,7 @@ def test_wire_client_dispatches_by_frozen_provider_key(monkeypatch, tmp_path):
         return Provider()
     async def begin(**kwargs):
         assert kwargs["params"] == {"custom_control": "preserved"}
-        return SimpleNamespace(event_id="event", metadata={"request": "unchanged"})
+        return SimpleNamespace(event_id="event", estimated_cost_usd=None, metadata={"request": "unchanged"})
     output = tmp_path / "output.png"
     expected = ApiResult(value=output, usage=UsageRecord(provider="custom", model="image-custom", operation="image"))
     async def success(**kwargs):

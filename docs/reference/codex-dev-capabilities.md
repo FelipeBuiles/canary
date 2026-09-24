@@ -72,7 +72,9 @@ To override routing, set `CANARY_CODEX_DEV_TEXT_ROUTES` (a JSON alias-to-model m
 `CANARY_CODEX_DEV_IMAGE_ROUTES` (a JSON alias list), or
 `CANARY_CODEX_DEV_IMAGE_REASONING_MODEL` in the launching environment. Explicit
 values replace the corresponding defaults, not merge with them. Select only the
-aliases you want to route through Codex; other operations retain API routing. Project `config.yaml`, project `.env`, browser input and
+aliases you want to route through Codex; other operations retain API routing.
+Complete-page Draw ignores alias routes: select `codex-dev/image/<model>` explicitly,
+because the Draw selection itself fixes the edition's page profile. Project `config.yaml`, project `.env`, browser input and
 `Config.dev_mode` cannot authorize routing.
 
 **Stop an existing backend manually before switching modes or changing route
@@ -171,6 +173,12 @@ sandbox network are checked; utility tools remain allowed. Remote inference stil
 needs network access. The built-in image extension writes its source-fixed
 `~/.codex/generated_images` subtree: workspace read-only policy does **not** mean
 no filesystem writes anywhere.
+
+Codex 0.156.1 can report the stable `unified_exec` flag as enabled even when its
+config entry is false. The adapter accepts that flag only when the effective
+`shell_tool` flag is explicitly false. The pinned Codex tool registry checks
+`shell_tool` before registering either exec or write-stdin; all other blocked
+effective features still fail the preflight.
 
 Runtime v6 supplies explicit `image_tool_arguments`, separate from Canary's
 internal `image_specification`. Only the native tool arguments are instructions

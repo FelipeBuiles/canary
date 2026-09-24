@@ -78,8 +78,9 @@ def test_sunburst_page_profile_uses_fal_queue():
 def test_retired_image_variant_cannot_be_selected():
     sunburst = current_page_capability_profile(Config(draw_model='image-sunburst'))
     edition = select_book_edition(edition_id='test', profile=sunburst)
-    with pytest.raises(ValueError, match='Unsupported complete-page model selection'):
-        current_page_capability_profile(Config(draw_model='image-flare'))
+    for retired in ('image-flare', 'image-muse'):
+        with pytest.raises(ValueError, match='Unsupported complete-page model selection'):
+            current_page_capability_profile(Config(draw_model=retired))
     with pytest.raises(ValueError, match='fixed for the edition'):
         select_book_edition(edition_id='other', profile=sunburst, existing=edition)
 

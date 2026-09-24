@@ -4270,3 +4270,25 @@ def test_structural_repair_gets_one_more_pass_only_when_blocking_codes_decrease(
     assert not _may_repair_validation_attempt(2, [first, first])
     regressed = ValidationAttempt(attempt=2, invariant_codes=("source_order",))
     assert not _may_repair_validation_attempt(2, [first, regressed])
+
+
+def test_second_repair_follows_changed_review_findings_not_just_codes():
+    from novel_to_comic.book_adaptation import _may_repair_validation_attempt
+    from novel_to_comic.models.validation import InvariantFailure, ValidationAttempt
+
+    def gap(beat):
+        return InvariantFailure(id=f"adapt_review_{beat}", owner_stage="adapt",
+                                code="narrative_review_missing_context", message="gap",
+                                artifact_ids=[beat], evidence=["gap"])
+
+    same_code = [ValidationAttempt(attempt=n, invariant_codes=("narrative_review_missing_context",))
+                 for n in (1, 2)]
+    # The repair closed beat_0003's gap; the review exposed a different one.
+    assert _may_repair_validation_attempt(2, same_code, previous_failures=(gap("beat_0003"),),
+                                          current_failures=(gap("beat_0011"),))
+    # The same cited defect survived its repair: another call cannot help.
+    assert not _may_repair_validation_attempt(2, same_code, previous_failures=(gap("beat_0003"),),
+                                              current_failures=(gap("beat_0003"),))
+    assert not _may_repair_validation_attempt(2, same_code)
+    assert not _may_repair_validation_attempt(3, same_code, previous_failures=(gap("beat_0003"),),
+                                              current_failures=(gap("beat_0011"),))

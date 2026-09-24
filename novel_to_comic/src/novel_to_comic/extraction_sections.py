@@ -7,6 +7,7 @@ entity authorities are validated and merged locally, never rewritten by it.
 from __future__ import annotations
 
 import json
+import math
 import time
 from collections import Counter
 
@@ -21,7 +22,9 @@ from novel_to_comic.source_extraction import source_units
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import estimate_text_cost
 
-SECTION_OUTPUT_TOKENS = 16000
+# Reasoning models spend part of this cap before emitting JSON; 16k truncated
+# (finish_reason=length) a section in production. Billing follows actual usage.
+SECTION_OUTPUT_TOKENS = 32000
 SECTION_INSTRUCTIONS = """
 SECTION EXTRACTION overrides the whole-novel scope and scene-count/three-act
 instructions above. Extract ONLY the supplied SOURCE SECTION, including its
@@ -81,12 +84,18 @@ class BookOrganization(BaseModel):
 def split_source(text: str, limit: int) -> list[str]:
     """Partition without lost/duplicated characters or mid-sentence cuts.
 
+    Sections are balanced around equal shares of the source. Greedy filling
+    left runt tails (a few sentences) whose sparse context invited the model to
+    extract other supplied text instead of the section.
+
     A single source unit larger than the budget is rejected before generation;
     silently splitting it would violate the immutable-source contract.
     """
+    count = max(1, math.ceil(len(text) / limit))
     sections: list[str] = []
     pending: list[str] = []
     size = 0
+    consumed = 0
     for unit in source_units(text):
         if len(unit.text) > limit:
             raise ValueError(
@@ -94,11 +103,14 @@ def split_source(text: str, limit: int) -> list[str]:
                 f"({len(unit.text):,} > {limit:,} characters). Check the source's "
                 "sentence formatting or increase extraction_chunk_chars before rerunning."
             )
-        if pending and size + len(unit.text) > limit:
+        # Cut before the unit whose midpoint crosses the next equal-share boundary.
+        boundary = len(text) * (len(sections) + 1) / count
+        if pending and (size + len(unit.text) > limit or consumed + len(unit.text) / 2 > boundary):
             sections.append("".join(pending))
             pending, size = [], 0
         pending.append(unit.text)
         size += len(unit.text)
+        consumed += len(unit.text)
     if pending:
         sections.append("".join(pending))
     if not sections:
@@ -303,8 +315,10 @@ async def extract_sections(config, project_dir, ctx, novel_text, system_prompt) 
         ctx.log(f"Extracting source section {index}/{len(sections)} ({len(section):,} characters)...")
         ctx.activity(detail=f"Source section {index}/{len(sections)}", force=True)
         content = json.dumps({
+            # No separate book-opening excerpt: section 1 begins with it, later
+            # sections inherit title/author, and a second source-like passage
+            # was extracted in place of short sections.
             "section": index, "section_count": len(sections), "id_prefix": prefix,
-            "source_heading": novel_text[:1000],
             "previous_chapter": bible.scenes[-1].chapter if bible else None,
             "registry": registry_context(bible), "source_section": section,
         }, ensure_ascii=False)

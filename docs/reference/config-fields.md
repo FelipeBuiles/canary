@@ -40,5 +40,5 @@ Production stage models are overlaid from operator settings when a job config is
 | `style_sample_brief_enabled` | `bool` | `True` |  |
 | `style_template` | `str` | `'High quality visual storytelling. Dramatic natural light...` |  |
 | `parallel_batch_size` | `int` | `5` |  |
-| `max_concurrent_requests` | `int` | `5` |  |
+| `max_concurrent_requests` | `int` | `5` | Parallel Adapt/Plan text requests; image fallback when image_concurrency is unset |
 | `cost_limit_usd` | `Optional[float]` | `None` |  |

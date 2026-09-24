@@ -195,7 +195,8 @@ unresolved opening-quote cause for a single targeted correction.
 
 Adapt pipelines each shard's validated blueprint into its locked-lettering
 request immediately, without waiting for unrelated blueprints. Both operations
-share a four-request admission pool. They retain their original prompts,
+share one admission pool sized by `max_concurrent_requests` (default 5), which
+also bounds narrative review windows and Plan detail batches. They retain their original prompts,
 checkpoint identities, and source scopes; final drafts merge in source order.
 Failure or cancellation closes admission, including ready lettering, while
 already admitted operations finish accounting and persistence.
@@ -365,7 +366,7 @@ array must be empty; the reviewer still checks the story and reports defects in
 substitutes for the detected signals. Duplicate assessments remain checked in
 Python, with explicit missing, unexpected, and duplicate ID diagnostics.
 
-Independent review windows run with at most four admitted operations. They
+Independent review windows run with at most `max_concurrent_requests` admitted operations. They
 inspect the same fixed candidate; no window consumes or acts on another's
 verdict. Findings merge in window order with the existing evidence-based
 deduplication, so completion timing cannot change repair ownership. Exhausted
@@ -387,7 +388,9 @@ context gap requires at least one passage. An explicit requirement violation
 must also name an approved requirement. A missing or unverifiable evidence claim
 remains advisory. This raises the admission bar for blocking judgments without
 claiming automated literary certainty. Structural invariants and malformed or
-stale review checks remain blocking.
+stale review checks remain blocking. Plan reviews see the adapted script, not the
+source, so a Plan-time finding routed to Adapt (copy or events) is advisory:
+Adapt's source-backed review governs the script, and Plan cannot repair it.
 
 When a published Adapt script has an outdated or missing review, **Resume
 adaptation** revalidates current source/Brief/Cast constraints and refreshes the
