@@ -1,9 +1,9 @@
 import { CastRegenAction } from "../../components/composites/CastRegenAction";
 import { CastIdentityReview } from "../../components/composites/CastIdentityReview";
-import { ArrowUpRight, Search, Users, MapPin, Box, LoaderCircle, ImagePlus } from "lucide-react";
+import { ArrowUpRight, Search, Users, MapPin, Box, LoaderCircle, ImagePlus, Expand } from "lucide-react";
 import { FieldLabel, TextField } from "../../components/ui/Field";
 import { useReferenceJob } from "../../hooks/useReferenceJob";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   useApproveStage,
@@ -33,13 +33,13 @@ import { Button } from "../../components/ui/Button";
 import { ImageModal } from "../../components/ui/ImageModal";
 import { GenerationDetailsPanel } from "../../components/ui/GenerationDetailsModal";
 import { LazyImage } from "../../components/ui/LazyImage";
-import { StatusPill } from "../../components/ui/StatusPill";
 import type { AppearanceState, CastFailure, CastReferenceInput, Character, GenerationJob, Location, Prop } from "../../types/api";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { useI18n } from "../../i18n";
 import { FlowingDotsPlaceholder } from "../../components/ui/FlowingDotsPlaceholder";
 import { StaleStageNotice } from "../../components/composites";
 import { getCastCheckpointAction } from "../../lib/castCheckpoint";
+import { readableAnchor } from "../../lib/visualAnchor";
 
 function queuedLabel(job: GenerationJob | null) {
   if (!job) return "QUEUED";
@@ -255,7 +255,7 @@ function StateAppearanceModal({ projectName, entityId, kind, state, failure, sta
   return <ImageModal isOpen onClose={onClose} src={src} alt={state.label} title={state.label}
     imageAvailable={!job.imgFailed} emptyLabel={t("NOT GENERATED")}
     sidebar={<div className="space-y-5">
-      <p className="font-body text-sm leading-6 text-ink-black">{state.visual_anchor}</p>
+      <AnchorSection anchor={state.visual_anchor} />
       {failure && !busy && <p role="alert" className="border-l-4 border-hero-red pl-3 font-body text-sm leading-6 text-ink-black">
         <span className="block font-meta text-xs font-bold text-hero-red">{t("LAST ATTEMPT FAILED")}</span>{failure.message}</p>}
       <img src={src} alt="" className="hidden" onError={() => job.setImgFailed(true)} />
@@ -330,6 +330,179 @@ function RefVersionHistory({
       {restore.error && <p role="alert" className="mt-2 font-body text-sm text-hero-red">{restore.error.message}</p>}
       </div>
     </div>
+  );
+}
+
+/** A reference's look in reader terms, with the verbatim prompt tags one click away. */
+function AnchorSection({ anchor }: { anchor: string }) {
+  const { t } = useI18n();
+  const readable = readableAnchor(anchor);
+  return (
+    <section aria-label={t("VISUAL ANCHOR")}>
+      <h3 className="font-meta text-xs text-ink-muted">{t("VISUAL ANCHOR")}</h3>
+      <p className="mt-1 break-words text-sm leading-6 text-ink-black">{readable}</p>
+      {readable !== anchor && (
+        <details className="mt-1">
+          <summary className="min-h-11 cursor-pointer py-3 font-meta text-xs text-ink-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red">
+            {t("Prompt tags")}
+          </summary>
+          <p className="break-words font-mono text-xs leading-5 text-ink-muted">{anchor}</p>
+        </details>
+      )}
+    </section>
+  );
+}
+
+/** Rows every cast card spans so siblings align: image · name · look · traits · alternates · action. */
+const CAST_CARD_ROWS = 6;
+// No row gap: a subgrid would absorb it into every section. Cards space
+// themselves with a bottom margin instead.
+const CAST_GRID = "grid grid-cols-1 gap-x-5";
+// Each card's wrapper carries its anchor and search visibility, and passes the
+// CAST_CARD_ROWS rows through (Tailwind needs the literal row-span-6).
+const CAST_GRID_ITEM = "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0";
+
+/** "part0001_scene_003" → "Part 1, scene 3"; any other id stays as written. */
+function sceneLabel(sceneId: string, t: (key: string) => string) {
+  const match = /^part0*(\d+)_scene_0*(\d+)$/.exec(sceneId);
+  return match
+    ? t("Part {part}, scene {scene}").replace("{part}", match[1]).replace("{scene}", match[2])
+    : sceneId;
+}
+
+function CastCard({
+  projectName,
+  entityId,
+  name,
+  aspect,
+  imageSrc,
+  imageWidth,
+  imageHeight,
+  probe,
+  generating,
+  queued,
+  generatingCaption,
+  missing,
+  missingLabel,
+  stageRegenerating,
+  onOpen,
+  onImageError,
+  meta,
+  tags,
+  summary,
+  alternates,
+  error,
+}: {
+  projectName: string;
+  entityId: string;
+  name: string;
+  aspect: "square" | "wide";
+  imageSrc: string;
+  imageWidth: number;
+  imageHeight: number;
+  probe: ReactNode;
+  generating: boolean;
+  queued: boolean;
+  generatingCaption: string;
+  missing: boolean;
+  missingLabel: string;
+  stageRegenerating: boolean;
+  onOpen: () => void;
+  onImageError: () => void;
+  meta?: string;
+  tags: string[];
+  summary?: string;
+  alternates: ReactNode;
+  error: string | null;
+}) {
+  const { t } = useI18n();
+  const { data: status } = useProjectStatus(projectName);
+  const failure = !generating && !stageRegenerating ? castFailureFor(status?.stages?.cast?.failures, entityId, null) : undefined;
+  const ratio = aspect === "wide" ? "16 / 9" : "1 / 1";
+  const ratioClass = aspect === "wide" ? "aspect-[16/9]" : "aspect-square";
+
+  return (
+    <EntityCard subgridRows={CAST_CARD_ROWS} className="min-w-0">
+      <button
+        type="button"
+        className="group relative block w-full cursor-zoom-in bg-surface-container text-left focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-hero-red disabled:cursor-wait"
+        onClick={onOpen}
+        disabled={generating}
+        aria-label={`${t("Open image")} · ${name}`}
+      >
+        {probe}
+        {generating ? (
+          <FlowingDotsPlaceholder
+            aspect={ratio}
+            className="h-full"
+            label={queued ? t("QUEUED") : t("DRAWING…")}
+            caption={generatingCaption}
+          />
+        ) : missing ? (
+          <div className={`flex ${ratioClass} h-full w-full flex-col items-center justify-center gap-2 p-4 text-center`}>
+            <div className={`font-meta text-xs font-bold tracking-[0.08em] ${failure ? "text-hero-red" : "text-ink-muted"}`}>
+              {failure ? t("LAST ATTEMPT FAILED") : missingLabel}
+            </div>
+            <div className="font-meta text-xs tracking-[0.06em] text-ink-black/70">{t("OPEN TO GENERATE")}</div>
+          </div>
+        ) : (
+          <>
+            <LazyImage
+              preserveAspectBox
+              src={imageSrc}
+              alt={name}
+              loading="lazy"
+              width={imageWidth}
+              height={imageHeight}
+              aspect={ratio}
+              containerClassName={`${ratioClass} w-full`}
+              className="object-contain"
+              onError={onImageError}
+            />
+            <span
+              aria-hidden="true"
+              className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center border-[2px] border-bristol bg-ink-black/75 text-bristol transition-colors group-hover:bg-hero-red group-focus-visible:bg-hero-red"
+            >
+              <Expand size={15} />
+            </span>
+          </>
+        )}
+      </button>
+
+      <div className="min-w-0 px-5 pt-4">
+        <h3 className="line-clamp-2 text-balance font-display text-[1.45rem] font-black leading-[1.08] tracking-[-0.03em] text-ink-black" title={name}>
+          {name}
+        </h3>
+        {meta && <p className="mt-1.5 font-body text-sm text-ink-muted">{meta}</p>}
+      </div>
+
+      <div className="min-w-0 px-5 pt-3">
+        {summary && <p className="line-clamp-3 break-words font-body text-sm leading-6 text-ink-black/80">{summary}</p>}
+      </div>
+
+      <div className="min-w-0 px-5">
+        {tags.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 pt-3">
+            {tags.map((tag) => <Tag key={tag}>{tag}</Tag>)}
+          </div>
+        )}
+      </div>
+
+      <div className="min-w-0 px-5">{alternates}</div>
+
+      <div className="min-w-0 px-5 pb-5 pt-5">
+        <Button variant="outline" size="sm" className="w-full" disabled={generating} onClick={onOpen} aria-label={`${t("Review & adjust")} · ${name}`}>
+          <ArrowUpRight size={16} aria-hidden="true" />{t("Review & adjust")}
+        </Button>
+        {error && (
+          <div role="alert" className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-sm leading-relaxed text-bristol">
+            <strong className="block">{t("REGENERATION FAILED")}</strong>
+            {error}
+            <span className="mt-1 block">{t("The current reference has not been replaced. Review your change and try again.")}</span>
+          </div>
+        )}
+      </div>
+    </EntityCard>
   );
 }
 
@@ -425,86 +598,38 @@ function CharacterCastCard({
 
   return (
     <>
-      <EntityCard
-        padding="tight"
-        className="group/cast-card min-w-0"
-        media={
-          <button
-            type="button"
-            className="relative block w-full cursor-pointer bg-surface-container text-left focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-hero-red disabled:cursor-wait"
-            onClick={() => setIsModalOpen(true)}
-            disabled={isGenerating}
-            aria-label={`${t("Open image")} · ${character.name}`}
-          >
-            {probe}
-            {isGenerating ? (
-              <FlowingDotsPlaceholder
-                aspect="1 / 1"
-                className="h-full"
-                label={isQueued ? t("QUEUED") : t("DRAWING…")}
-                caption={activeJob ? t("GENERATING NEW REF") : t("REBUILDING CAST REF")}
-              />
-            ) : imgFailed && !hasImage ? (
-              <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-surface-container">
-                <div className="font-meta text-xs font-bold tracking-[0.08em] text-ink-muted">{t("NO REF IMAGE")}</div>
-                <div className="font-meta text-xs tracking-[0.06em] text-hero-red">{t("OPEN TO GENERATE")}</div>
-              </div>
-            ) : (
-              <>
-                <LazyImage
-                  preserveAspectBox
-                  src={`${refUrl}?t=${timestamp}`}
-                  alt={character.name}
-                  loading="lazy"
-                  width={320}
-                  height={320}
-                  aspect="1/1"
-                  containerClassName="aspect-square w-full"
-                  className="object-contain transition-opacity group-hover/cast-card:opacity-90"
-                  onError={() => setImgFailed(true)}
-                />
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
-                  <span className="border border-bristol bg-transparent px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-bristol">
-                    ↗ {t("Full size")}
-                  </span>
-                </div>
-              </>
-            )}
-            <StatusPill tone="red" className="absolute right-4 top-4">
-              {t("REF")}
-            </StatusPill>
-          </button>
-        }
-      >
-        <h3 className="font-display text-2xl font-black leading-tight tracking-[-0.03em] text-ink-black">
-          {character.name}
-        </h3>
-        <details className="mt-4 bg-surface-container px-3"><summary className="min-h-11 cursor-pointer py-3 font-meta text-xs font-bold">{t("Visual details")}</summary><p className="pb-4 break-words text-sm leading-6 text-ink-black">{character.visual_anchor}</p></details>
-        <div className="mt-3 font-body text-sm text-ink-muted">
-          {[character.age_range, character.gender].filter(Boolean).join(" · ")}
-        </div>
-        <div className="mt-4 flex flex-wrap gap-1.5">
-          {character.distinguishing_features.slice(0, 3).map((f) => (
-            <Tag key={f}>{f}</Tag>
-          ))}
-        </div>
-        <StateRefRow
-          projectName={projectName}
-          entityId={character.id}
-          kind="character"
-          states={character.appearance_states}
-          stageRegenerating={stageRegenerating}
-          refreshToken={timestamp.toString()}
-        />
-        <div className="mt-auto pt-5"><Button variant="outline" size="sm" className="w-full" disabled={isGenerating} onClick={() => setIsModalOpen(true)} aria-label={`${t("Review & adjust")} · ${character.name}`}><ArrowUpRight size={16} aria-hidden="true" />{t("Review & adjust")}</Button></div>
-        {regenError && (
-          <div role="alert" className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-sm leading-relaxed text-bristol">
-            <strong className="block">{t("REGENERATION FAILED")}</strong>
-            {regenError}
-            <span className="mt-1 block">{t("The current reference has not been replaced. Review your change and try again.")}</span>
-          </div>
+      <CastCard
+        projectName={projectName}
+        entityId={character.id}
+        name={character.name}
+        aspect="square"
+        imageSrc={`${refUrl}?t=${timestamp}`}
+        imageWidth={320}
+        imageHeight={320}
+        probe={probe}
+        generating={isGenerating}
+        queued={!!isQueued}
+        generatingCaption={activeJob ? t("GENERATING NEW REF") : t("REBUILDING CAST REF")}
+        missing={imgFailed && !hasImage}
+        missingLabel={t("NO REF IMAGE")}
+        stageRegenerating={stageRegenerating}
+        onOpen={() => setIsModalOpen(true)}
+        onImageError={() => setImgFailed(true)}
+        meta={[character.age_range, character.gender].filter(Boolean).join(" · ")}
+        tags={character.distinguishing_features.slice(0, 3)}
+        summary={readableAnchor(character.visual_anchor)}
+        alternates={(
+          <StateRefRow
+            projectName={projectName}
+            entityId={character.id}
+            kind="character"
+            states={character.appearance_states}
+            stageRegenerating={stageRegenerating}
+            refreshToken={timestamp.toString()}
+          />
         )}
-      </EntityCard>
+        error={regenError}
+      />
       <ImageModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -515,10 +640,7 @@ function CharacterCastCard({
         title={character.name.toUpperCase()}
         sidebar={(
           <div className="space-y-5">
-            <section aria-label={t("VISUAL ANCHOR")}>
-              <h3 className="font-meta text-xs text-ink-muted">{t("VISUAL ANCHOR")}</h3>
-              <p className="mt-1 break-words text-sm leading-6 text-ink-black">{character.visual_anchor}</p>
-            </section>
+            <AnchorSection anchor={character.visual_anchor} />
             <CastRegenAction
               projectName={projectName} assetType="character" assetId={character.id}
               assetLabel={character.name}
@@ -689,81 +811,37 @@ function LocationPlateCard({
 
   return (
     <>
-      <EntityCard
-        padding="tight"
-        className="group/cast-card min-w-0"
-        media={
-          <button
-            type="button"
-            className="relative block w-full cursor-pointer bg-surface-container text-left focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-hero-red disabled:cursor-wait"
-            onClick={() => setIsModalOpen(true)}
-            disabled={isGenerating}
-            aria-label={`${t("Open image")} · ${location.name}`}
-          >
-            {probe}
-            {isGenerating ? (
-              <FlowingDotsPlaceholder
-                aspect="16 / 9"
-                className="h-full"
-                label={isQueued ? t("QUEUED") : t("DRAWING…")}
-                caption={activeJob ? t("GENERATING NEW PLATE") : t("REBUILDING LOCATION PLATE")}
-              />
-            ) : imgFailed && !hasImage ? (
-              <div className="flex aspect-[16/9] w-full flex-col items-center justify-center gap-2 bg-surface-container">
-                <div className="font-meta text-xs font-bold tracking-[0.08em] text-ink-muted">{t("NO PLATE IMAGE")}</div>
-                <div className="font-meta text-xs tracking-[0.06em] text-hero-red">{t("OPEN TO GENERATE")}</div>
-              </div>
-            ) : (
-              <>
-                <LazyImage
-                  preserveAspectBox
-                  src={`${plateUrl}?t=${timestamp}`}
-                  alt={location.name}
-                  loading="lazy"
-                  width={480}
-                  height={270}
-                  aspect="16/9"
-                  containerClassName="aspect-[16/9] w-full"
-                  className="object-contain transition-opacity group-hover/cast-card:opacity-90"
-                  onError={() => setImgFailed(true)}
-                />
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
-                  <span className="border border-bristol bg-transparent px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-bristol">
-                    ↗ {t("Full size")}
-                  </span>
-                </div>
-              </>
-            )}
-          </button>
-        }
-      >
-        <h3 className="font-display text-2xl font-black leading-tight tracking-[-0.03em] text-ink-black">
-          {location.name}
-        </h3>
-        <div className="mt-4 flex flex-wrap gap-1.5">
-          {location.time_of_day && (
-            <Tag>{location.time_of_day}</Tag>
-          )}
-          <Tag>{location.mood}</Tag>
-        </div>
-        <StateRefRow
-          projectName={projectName}
-          entityId={location.id}
-          kind="location"
-          states={location.appearance_states}
-          stageRegenerating={stageRegenerating}
-          refreshToken={timestamp.toString()}
-        />
-        <details className="mt-4 bg-surface-container px-3"><summary className="min-h-11 cursor-pointer py-3 font-meta text-xs font-bold">{t("Visual details")}</summary><p className="pb-4 break-words text-sm leading-6 text-ink-black">{location.visual_anchor}</p></details>
-        <div className="mt-auto pt-5"><Button variant="outline" size="sm" className="w-full" disabled={isGenerating} onClick={() => setIsModalOpen(true)} aria-label={`${t("Review & adjust")} · ${location.name}`}><ArrowUpRight size={16} aria-hidden="true" />{t("Review & adjust")}</Button></div>
-        {regenError && (
-          <div role="alert" className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-sm leading-relaxed text-bristol">
-            <strong className="block">{t("REGENERATION FAILED")}</strong>
-            {regenError}
-            <span className="mt-1 block">{t("The current reference has not been replaced. Review your change and try again.")}</span>
-          </div>
+      <CastCard
+        projectName={projectName}
+        entityId={location.id}
+        name={location.name}
+        aspect="wide"
+        imageSrc={`${plateUrl}?t=${timestamp}`}
+        imageWidth={480}
+        imageHeight={270}
+        probe={probe}
+        generating={isGenerating}
+        queued={!!isQueued}
+        generatingCaption={activeJob ? t("GENERATING NEW PLATE") : t("REBUILDING LOCATION PLATE")}
+        missing={imgFailed && !hasImage}
+        missingLabel={t("NO PLATE IMAGE")}
+        stageRegenerating={stageRegenerating}
+        onOpen={() => setIsModalOpen(true)}
+        onImageError={() => setImgFailed(true)}
+        tags={[location.time_of_day, location.mood].filter((tag): tag is string => !!tag)}
+        summary={readableAnchor(location.visual_anchor)}
+        alternates={(
+          <StateRefRow
+            projectName={projectName}
+            entityId={location.id}
+            kind="location"
+            states={location.appearance_states}
+            stageRegenerating={stageRegenerating}
+            refreshToken={timestamp.toString()}
+          />
         )}
-      </EntityCard>
+        error={regenError}
+      />
       <ImageModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -792,10 +870,7 @@ function LocationPlateCard({
               refreshKey={timestamp} busy={isGenerating || isInstructionBusy}
               onRestored={() => { setTimestamp(Date.now()); setImgFailed(false); }} />
             <StateRefRow projectName={projectName} entityId={location.id} kind="location" states={location.appearance_states} stageRegenerating={stageRegenerating} refreshToken={timestamp} />
-            <div>
-              <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">VISUAL ANCHOR</div>
-              <p className="text-[0.82rem] leading-6 text-ink-black">{location.visual_anchor}</p>
-            </div>
+            <AnchorSection anchor={location.visual_anchor} />
             <div className="flex flex-wrap gap-3">
               {location.time_of_day && (
                 <div>
@@ -913,75 +988,29 @@ function PropRefCard({
 
   return (
     <>
-      <EntityCard
-        padding="tight"
-        className="group/cast-card h-full"
-        media={
-          <button
-            type="button"
-            className="relative block w-full cursor-pointer bg-surface-container text-left focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-hero-red disabled:cursor-wait"
-            onClick={() => setIsModalOpen(true)}
-            disabled={isGenerating}
-            aria-label={`${t("Open image")} · ${prop.name}`}
-          >
-            {probe}
-            {isGenerating ? (
-              <FlowingDotsPlaceholder
-                aspect="1 / 1"
-                className="h-full"
-                label={isQueued ? t("QUEUED") : t("DRAWING…")}
-                caption={activeJob ? t("GENERATING NEW PROP") : t("REBUILDING PROP REF")}
-              />
-            ) : imgFailed && !hasImage ? (
-              <div className="flex aspect-square w-full flex-col items-center justify-center gap-2 bg-surface-container">
-                <div className="font-meta text-xs font-bold tracking-[0.08em] text-ink-muted">{t("NO REF IMAGE")}</div>
-                <div className="font-meta text-xs tracking-[0.06em] text-hero-red">{t("OPEN TO GENERATE")}</div>
-              </div>
-            ) : (
-              <>
-                <LazyImage
-                  preserveAspectBox
-                  src={`${refUrl}?t=${timestamp}`}
-                  alt={prop.name}
-                  loading="lazy"
-                  width={400}
-                  height={400}
-                  aspect="1/1"
-                  containerClassName="aspect-square w-full"
-                  className="object-contain transition-opacity group-hover/cast-card:opacity-90"
-                  onError={() => setImgFailed(true)}
-                />
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-black/42 opacity-0 transition-opacity duration-150 group-hover/cast-card:opacity-100">
-                  <span className="border border-bristol bg-transparent px-5 py-2 font-meta text-[0.72rem] tracking-[0.12em] text-bristol">
-                    ↗ {t("Full size")}
-                  </span>
-                </div>
-              </>
-            )}
-            <StatusPill tone="red" className="absolute right-4 top-4">
-              {t("PROP")}
-            </StatusPill>
-          </button>
-        }
-      >
-        <h3 className="font-display text-2xl font-black leading-tight tracking-[-0.03em] text-ink-black">
-          {prop.name}
-        </h3>
-        {prop.first_appearance_scene && (
-          <div className="mt-2 font-body text-[0.92rem] font-semibold text-ink-black/55">
-            First seen: {prop.first_appearance_scene}
-          </div>
-        )}
-        <details className="mt-4 bg-surface-container px-3"><summary className="min-h-11 cursor-pointer py-3 font-meta text-xs font-bold">{t("Visual details")}</summary><p className="pb-4 break-words text-sm leading-6 text-ink-black">{prop.visual_anchor}</p></details>
-        <div className="mt-auto pt-5"><Button variant="outline" size="sm" className="w-full" disabled={isGenerating} onClick={() => setIsModalOpen(true)} aria-label={`${t("Review & adjust")} · ${prop.name}`}><ArrowUpRight size={16} aria-hidden="true" />{t("Review & adjust")}</Button></div>
-        {regenError && (
-          <div role="alert" className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-sm leading-relaxed text-bristol">
-            <strong className="block">{t("REGENERATION FAILED")}</strong>
-            {regenError}
-            <span className="mt-1 block">{t("The current reference has not been replaced. Review your change and try again.")}</span>
-          </div>
-        )}
-      </EntityCard>
+      <CastCard
+        projectName={projectName}
+        entityId={prop.id}
+        name={prop.name}
+        aspect="square"
+        imageSrc={`${refUrl}?t=${timestamp}`}
+        imageWidth={400}
+        imageHeight={400}
+        probe={probe}
+        generating={isGenerating}
+        queued={!!isQueued}
+        generatingCaption={activeJob ? t("GENERATING NEW PROP") : t("REBUILDING PROP REF")}
+        missing={imgFailed && !hasImage}
+        missingLabel={t("NO REF IMAGE")}
+        stageRegenerating={stageRegenerating}
+        onOpen={() => setIsModalOpen(true)}
+        onImageError={() => setImgFailed(true)}
+        meta={prop.first_appearance_scene ? `${t("First seen")}: ${sceneLabel(prop.first_appearance_scene, t)}` : undefined}
+        tags={[]}
+        summary={readableAnchor(prop.visual_anchor)}
+        alternates={null}
+        error={regenError}
+      />
       <ImageModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -1006,10 +1035,7 @@ function PropRefCard({
               onRegenerate={startRegen}
               onRegenerateWithInstruction={submitInstruction}
             />
-            <div>
-              <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">VISUAL ANCHOR</div>
-              <p className="text-[0.82rem] leading-6 text-ink-black">{prop.visual_anchor}</p>
-            </div>
+            <AnchorSection anchor={prop.visual_anchor} />
             {prop.first_appearance_scene && (
               <div>
                 <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">FIRST APPEARANCE</div>
@@ -1035,16 +1061,32 @@ function castFailureFor(failures: CastFailure[] | undefined, entityId: string, s
 }
 
 /** Names each reference that stopped Cast and why, so Resume is never a blind retry. */
-export function CastFailureNotice({ failures }: { failures: CastFailure[] }) {
+export function CastFailureNotice({ failures, onResume, resumeDisabled = false }: {
+  failures: CastFailure[];
+  /** Offered beside the list so every missing reference can be retried at once. */
+  onResume?: () => void;
+  resumeDisabled?: boolean;
+}) {
   const { t } = useI18n();
   if (failures.length === 0) return null;
-  const anchor = (failure: CastFailure) => failure.asset_type === "character" && failure.entity_id
-    ? `#cast-character-${failure.entity_id}`
-    : failure.asset_type === "location" ? "#cast-places" : "#cast-props";
+  const anchor = (failure: CastFailure) => {
+    const section = failure.asset_type === "character" ? "character" : failure.asset_type === "location" ? "location" : "prop";
+    if (failure.entity_id) return `#cast-${section}-${failure.entity_id}`;
+    return failure.asset_type === "character" ? "#cast-characters" : failure.asset_type === "location" ? "#cast-places" : "#cast-props";
+  };
   return (
     <section role="alert" aria-labelledby="cast-failures-title" className="border-[3px] border-hero-red bg-surface-container p-4 md:p-5">
-      <h2 id="cast-failures-title" className="font-meta text-xs font-bold tracking-[0.12em] text-hero-red">{t("CAST STOPPED")}</h2>
-      <p className="mt-2 font-body text-sm text-ink-black">{t("These references did not finish. Everything else is kept.")}</p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 id="cast-failures-title" className="font-meta text-xs font-bold tracking-[0.12em] text-hero-red">{t("CAST STOPPED")}</h2>
+          <p className="mt-2 font-body text-sm text-ink-black">{t("These references did not finish. Everything else is kept.")}</p>
+        </div>
+        {onResume && (
+          <Button variant="outline" size="sm" disabled={resumeDisabled} onClick={onResume}>
+            {t("RESUME CAST")}
+          </Button>
+        )}
+      </div>
       <ul className="mt-3 space-y-3">
         {failures.map((failure) => (
           <li key={failure.item_id} className="font-body text-sm leading-6 text-ink-black">
@@ -1097,6 +1139,7 @@ export function CastRoom() {
     if (checkpointAction === "resume" || canStartCast) {
       setConfirmCast(true);
     } else if (checkpointAction === "approve") {
+      setActionError(null);
       approveStage.mutate(
         { project: id, stage: "cast" },
         {
@@ -1202,7 +1245,13 @@ export function CastRoom() {
         />
       )}
 
-      {!stageRegenerating && <CastFailureNotice failures={stageInfo?.failures ?? []} />}
+      {!stageRegenerating && (
+        <CastFailureNotice
+          failures={stageInfo?.failures ?? []}
+          onResume={checkpointAction === "resume" ? () => setConfirmCast(true) : undefined}
+          resumeDisabled={isPipelineRunning || !status?.style_selected || !castResumeEstimate}
+        />
+      )}
 
       <section className="space-y-10">
         {bible.characters.length > 0 && <CastIdentityReview projectId={id} characters={bible.characters} onShowCharacter={() => setSearch("")}
@@ -1213,9 +1262,9 @@ export function CastRoom() {
             title="CHARACTER REFS"
             description="Portrait proofs keep faces, clothing, and silhouettes consistent from scene to scene."
           />
-          <div className="grid items-start gap-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+          <div className={`${CAST_GRID} sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4`}>
             {bible.characters.map((char) => (
-              <div id={`cast-character-${char.id}`} tabIndex={-1} key={char.id} hidden={!matches(char)} className="min-w-0 scroll-mt-24">
+              <div id={`cast-character-${char.id}`} tabIndex={-1} key={char.id} hidden={!matches(char)} className={CAST_GRID_ITEM}>
               <CharacterCastCard
                 character={char}
                 projectName={id}
@@ -1232,9 +1281,9 @@ export function CastRoom() {
             title="LOCATION PLATES"
             description="Wide environment plates anchor geography, architecture, light, and atmosphere."
           />
-          <div className="grid items-start gap-5 md:grid-cols-2 xl:grid-cols-3">
+          <div className={`${CAST_GRID} md:grid-cols-2 xl:grid-cols-3`}>
             {bible.locations.map((loc) => (
-              <div key={loc.id} hidden={!matches(loc)} className="min-w-0">
+              <div id={`cast-location-${loc.id}`} tabIndex={-1} key={loc.id} hidden={!matches(loc)} className={CAST_GRID_ITEM}>
               <LocationPlateCard
                 location={loc}
                 projectName={id}
@@ -1248,9 +1297,9 @@ export function CastRoom() {
         {bible.props.length > 0 && (
           <div id="cast-props" tabIndex={-1} hidden={!!search.trim() && matchingProps === 0}>
             <SectionHeader variant="underline" title="PROP REFS" />
-            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div className={`${CAST_GRID} sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4`}>
               {bible.props.map((prop) => (
-                <div key={prop.id} hidden={!matches(prop)} className="min-w-0">
+                <div id={`cast-prop-${prop.id}`} tabIndex={-1} key={prop.id} hidden={!matches(prop)} className={CAST_GRID_ITEM}>
                 <PropRefCard
                   prop={prop}
                   projectName={id}
@@ -1263,7 +1312,7 @@ export function CastRoom() {
         )}
       </section>
 
-      {(actionError || resetError || approveStage.error) && <p role="alert" className="font-body text-sm text-hero-red">{actionError ?? resetError?.message ?? approveStage.error?.message}</p>}
+      {resetError && <p role="alert" className="font-body text-sm text-hero-red">{resetError.message}</p>}
       {!status?.style_selected && <p className="font-body text-sm text-ink-muted">{t("Choose a style before starting cast references.")}</p>}
       <ConfirmDrawer
         open={confirmCast}
@@ -1297,6 +1346,7 @@ export function CastRoom() {
         onPrimary={handleContinueToPages}
         primaryDisabled={approveStage.isPending || isPipelineRunning || (!canStartCast && checkpointAction === "wait") || ((canStartCast || checkpointAction === "resume") && (!status?.style_selected || !castResumeEstimate))}
         busy={approveStage.isPending || isPipelineRunning}
+        error={actionError}
         secondary={<RerunStageAction project={id} stage="cast" label="cast" disabled={stageRegenerating} />}
       />
     </RoomShell>

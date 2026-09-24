@@ -37,6 +37,7 @@ from novel_to_comic.book_adaptation import (
     build_narrative_treatment_prompt,
     normalize_treatment,
     partition_requirements_by_shard,
+    estimate_book_adaptation_cost,
     produce_book_adaptation,
     recoverable_adaptation_candidate,
     validate_book_adaptation,
@@ -57,6 +58,7 @@ from novel_to_comic.models.adaptation import (
     LetteringItem,
     NarrativeTreatment,
 )
+from novel_to_comic.config import Config
 from novel_to_comic.models.source import SourceDocument, SourceScene, SourceUnit
 from novel_to_comic.models.story_bible import Character, Scene, StoryBible
 from novel_to_comic.models.validation import InvariantFailure
@@ -1473,6 +1475,116 @@ def test_repair_scope_closes_transitively_over_shared_beats() -> None:
     assert _closed_repair_scope(draft, ("a",), ("a", "b", "c", "d")) == ("a", "b", "c")
     with pytest.raises(ValueError, match="unowned source"):
         _closed_repair_scope(draft, ("a",), ("a", "b"))
+
+
+def test_a_beat_may_change_an_entity_appearance_only_once() -> None:
+    # Production shape (Kaitlin Out of Space, beat_0032): one beat chained two
+    # shapeshifts. Plan gives each content one state per entity, so the chain
+    # was unsatisfiable there; Adapt must split it into one beat per state.
+    payload = _book_adaptation().model_dump()
+    payload["content_sha256"] = ""
+    payload["beats"][0]["appearance_changes"] = [
+        {
+            "entity_id": "witness",
+            "from_state_id": None,
+            "to_state_id": "witness_rain_soaked",
+            "description": "Rain soaks the witness.",
+        },
+        {
+            "entity_id": "witness",
+            "from_state_id": "witness_rain_soaked",
+            "to_state_id": "witness_shaken",
+            "description": "The witness begins to shake.",
+        },
+    ]
+    candidate = BookAdaptation.model_validate(payload)
+
+    result = validate_book_adaptation(_source_document(), _approved_brief(), candidate)
+
+    failure = next(
+        failure for failure in result.invariant_failures
+        if failure.code == "compound_appearance_change"
+    )
+    assert failure.owner_stage == "adapt"
+    assert failure.source_unit_ids == candidate.beats[0].source_unit_ids
+    assert failure.artifact_ids == (
+        candidate.beats[0].id,
+        "witness",
+        "witness_rain_soaked",
+        "witness_shaken",
+    )
+
+
+def test_a_published_script_broken_by_a_tightened_contract_resumes_as_targeted_repair(
+    tmp_path: Path,
+) -> None:
+    # Kaitlin Out of Space: a published adaptation predates
+    # compound_appearance_change. Re-validating and raising dead-ended every
+    # retry and the only exit regenerated the book. It must resume as the
+    # failed candidate and spend only on a scoped repair.
+    from novel_to_comic.models.appearance import AppearanceState
+
+    source, brief = _source_document(), _approved_brief()
+    witness = Character(
+        id="witness", name="Witness", visual_anchor="1woman, adult, grey coat",
+        age_range="40s", gender="female", distinguishing_features=["grey coat"],
+        default_outfit="grey coat", first_appearance_scene="scene_001",
+        appearance_states=[
+            AppearanceState(id="witness_rain_soaked", label="Soaked",
+                            visual_anchor="1woman, adult, grey coat", visually_significant=True),
+            AppearanceState(id="witness_shaken", label="Shaken",
+                            visual_anchor="1woman, adult, grey coat", visually_significant=True),
+        ],
+    )
+    bible = _story_bible().model_copy(update={"characters": [witness]})
+    payload = _book_adaptation().model_dump(mode="json")
+    payload["content_sha256"] = ""
+    payload["beats"][0]["appearance_changes"] = [
+        {"entity_id": "witness", "from_state_id": None,
+         "to_state_id": "witness_rain_soaked", "description": "Rain soaks the witness."},
+        {"entity_id": "witness", "from_state_id": "witness_rain_soaked",
+         "to_state_id": "witness_shaken", "description": "The witness begins to shake."},
+    ]
+    published = BookAdaptation.model_validate(payload)
+    assert [f.code for f in validate_book_adaptation(
+        source, brief, published, story_bible=bible,
+    ).invariant_failures] == ["compound_appearance_change"]
+    target = TargetArtifacts(tmp_path)
+    target.write_adaptation(published)
+    original = target.adaptation_path.read_bytes()
+
+    priced = Config().effective_adapt_model()
+    repair_estimate = estimate_book_adaptation_cost(
+        source, bible, brief, model=priced, artifacts=target,
+    )
+    fresh_estimate = estimate_book_adaptation_cost(source, bible, brief, model=priced)
+    assert 0 < repair_estimate < fresh_estimate
+
+    class Stop(Exception):
+        pass
+
+    requests: list[dict] = []
+
+    async def generate(**request):
+        requests.append(request)
+        raise Stop
+
+    with pytest.raises(Stop):
+        asyncio.run(produce_book_adaptation(
+            source, bible, brief, artifacts=target,
+            ctx=StageRuntime("adapt", PipelineState(
+                project_name="door", novel_path="novel.txt",
+                created_at=datetime.now(timezone.utc),
+            ), tmp_path),
+            model="test", generate=generate,
+        ))
+
+    # The first paid call is the scoped repair, not treatment or blueprint.
+    assert len(requests) == 1
+    assert requests[0]["feature"] == "adapt.book"
+    assert "compound_appearance_change" in json.dumps(requests[0])
+    assert target.adaptation_path.read_bytes() == original
+    assert target.read_failed_adaptation_candidate().beats == published.beats
 
 
 def test_canonicalization_derives_a_wrong_appearance_origin() -> None:

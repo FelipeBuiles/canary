@@ -161,6 +161,22 @@ async def _run_stage_with_credits(
     **_unused_kwargs,
 ) -> None:
     admit_stage_action(config, stage)
+    if stage == "plan" and not rerun:
+        from novel_to_comic.stages.s4_adapt import published_adaptation_needs_repair
+
+        if published_adaptation_needs_repair(project_dir):
+            # No plan can satisfy an adaptation Adapt's current contract
+            # rejects, and Continue on Plan is the only control the user has.
+            # Route through Adapt's targeted repair; its completion auto-chains
+            # Plan, which re-checks and runs normally.
+            logger.info("Plan routed through Adapt repair project=%s", project_dir.name)
+            state.stages["plan"] = StageState()
+            save_state(state, project_dir)
+            await _run_stage_with_credits(
+                "adapt", config, project_dir, state, queue, user_id, project_id,
+                rerun=False, request=request,
+            )
+            return
     if request is not None:
         from ..generation_jobs import persist_generation_job
         for active in request.app.state.generation_jobs.values():

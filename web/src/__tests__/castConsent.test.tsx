@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
 
 const run = vi.fn();
+const approve = vi.fn();
 let stageStatus = "pending";
 let approvalBlocker: string | null = null;
 let selectedStyle = true;
@@ -15,7 +16,7 @@ vi.mock("../hooks/useRunAction", () => ({ useRunAction: () => ({ handleRun: run,
 vi.mock("../api/queries", () => ({
   useStoryBible: () => ({ data: { characters: [], locations: [], props: [] }, isLoading: false }),
   useProjectStatus: () => ({ data: { style_selected: selectedStyle, stages: { cast: { status: stageStatus, approval_blocker: approvalBlocker, failures } } } }),
-  useApproveStage: () => ({ mutate: vi.fn(), isPending: false }),
+  useApproveStage: () => ({ mutate: approve, isPending: false }),
   useResetStale: () => ({ mutate: vi.fn(), isPending: false }),
   useStageEstimate: () => ({ data: { estimate_credits: 20, reserved_credits: 30, reservation_multiplier: 1.5, confidence: "variable" } }),
   useCreditBalance: () => ({ data: undefined }),
@@ -30,7 +31,7 @@ function renderCast() {
   return render(<MemoryRouter initialEntries={["/project/demo/cast"]}><I18nProvider><Routes><Route path="/project/:id/cast" element={<CastRoom />} /></Routes></I18nProvider></MemoryRouter>);
 }
 
-beforeEach(() => { run.mockReset(); stageStatus = "pending"; approvalBlocker = null; selectedStyle = true; failures = []; });
+beforeEach(() => { run.mockReset(); approve.mockReset(); stageStatus = "pending"; approvalBlocker = null; selectedStyle = true; failures = []; });
 
 describe("cast consent", () => {
   it("names the reference that stopped Cast and why instead of a bare resume prompt", () => {
@@ -55,6 +56,18 @@ describe("cast consent", () => {
     expect(screen.getByRole("button", { name: "LOOKS RIGHT — CONTINUE →" }).hasAttribute("disabled")).toBe(false);
     expect(run).not.toHaveBeenCalled();
     expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("explains a refused approval beside the button that was pressed", async () => {
+    const user = userEvent.setup();
+    stageStatus = "awaiting_review";
+    approve.mockImplementation((_vars, options) => options.onError(new Error("Wait for all project jobs to finish before changing this project.")));
+    renderCast();
+    const continueButton = screen.getByRole("button", { name: "LOOKS RIGHT — CONTINUE →" });
+    await user.click(continueButton);
+    expect(approve).toHaveBeenCalledWith({ project: "demo", stage: "cast" }, expect.anything());
+    const alert = within(continueButton.closest("footer")!).getByRole("alert");
+    expect(alert.textContent).toBe("Wait for all project jobs to finish before changing this project.");
   });
 
   it("does not spend on entry and requires confirmation after showing the estimate and hold", async () => {
@@ -98,6 +111,21 @@ it("replaces premature Continue with a confirmed resume for an incomplete checkp
   expect(screen.queryByRole("button", { name: "LOOKS RIGHT — CONTINUE →" })).toBeNull();
   expect(screen.getByText(approvalBlocker)).toBeTruthy();
   await userEvent.click(screen.getByRole("button", { name: /RESUME CAST/ }));
+  expect(run).not.toHaveBeenCalled();
+  expect(screen.getByRole("alertdialog")).toBeTruthy();
+});
+
+it("links each failed reference to its own card and offers one confirmed resume beside the list", async () => {
+  stageStatus = "failed";
+  failures = [
+    { item_id: "hall", asset_type: "location", entity_id: "hall", state_id: null, label: "Great Hall", classification: "provider_error", attempts: 1, message: "Timed out." },
+    { item_id: "key", asset_type: "prop", entity_id: "key", state_id: null, label: "Brass Key", classification: "provider_error", attempts: 1, message: "Timed out." },
+  ];
+  renderCast();
+  const notice = screen.getByRole("alert", { name: "CAST STOPPED" });
+  expect(within(notice).getByRole("link", { name: "Great Hall" }).getAttribute("href")).toBe("#cast-location-hall");
+  expect(within(notice).getByRole("link", { name: "Brass Key" }).getAttribute("href")).toBe("#cast-prop-key");
+  await userEvent.click(within(notice).getByRole("button", { name: "RESUME CAST" }));
   expect(run).not.toHaveBeenCalled();
   expect(screen.getByRole("alertdialog")).toBeTruthy();
 });

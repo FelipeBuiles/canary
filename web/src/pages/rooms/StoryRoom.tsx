@@ -19,7 +19,7 @@ import { Button } from "../../components/ui/Button";
 import { FieldLabel, TextAreaField, TextField } from "../../components/ui/Field";
 import { BriefSection } from "../../components/composites/BriefSection";
 import { StoryExplorer } from "../../components/composites/StoryExplorer";
-import { ArrowDownRight, BookOpen, Pencil } from "lucide-react";
+import { ArrowDownRight, BookOpen, ChevronRight } from "lucide-react";
 import { useI18n } from "../../i18n";
 import type { AdaptationBrief, StoryDecision } from "../../types/api";
 
@@ -316,45 +316,59 @@ function StoryEditor({ id, data, brief, stageStatus }: {
           variant="underline"
           title={t("ADAPTATION BRIEF")}
           description={t("Make this story yours. Review the direction below, then edit anything you want your comic to keep.")}
-        />
-        <div className="flex flex-wrap items-center justify-between gap-4 bg-surface-container p-4">
-          <div className="flex items-center gap-3"><Pencil size={18} aria-hidden="true" /><p className="font-body text-sm">{t("Every section below is editable.")}</p></div>
-          <div className="flex flex-wrap items-center gap-4">
+          actions={<>
             <p role="status" className="font-meta text-xs text-ink-muted">
               {busy ? t("Saving brief…") : dirty ? restored ? t("Restored unsaved draft") : t("Unsaved changes") : t("All changes saved")}
             </p>
             <Button type="submit" size="sm" variant="outline" disabled={busy || !dirty || invalidRange || conflict}>{t("SAVE BRIEF")}</Button>
-          </div>
-        </div>
+          </>}
+        />
         {saveError && <p role="alert" className="font-body text-sm text-hero-red">{saveError}</p>}
         {storageError && <p role="alert" className="font-body text-sm text-hero-red">{t("Draft recovery is unavailable in this browser. Save before leaving.")}</p>}
         {conflict && <p role="alert" className="font-body text-sm text-hero-red">{t("This brief changed elsewhere. Your draft is preserved; reload to review the latest revision before saving.")}</p>}
         {invalidRange && <p role="alert" className="font-body text-sm text-hero-red">{t("Choose a minimum of at least 1 page and a maximum no smaller than the minimum.")}</p>}
         <fieldset disabled={busy} className="space-y-8">
           <legend className="sr-only">{t("ADAPTATION BRIEF")}</legend>
-        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
-          <BriefSection id="story-promises" title={t("STORY PROMISES")} value={draft.story_promises} onChange={(value) => change("story_promises", splitLines(value))} featured />
-          <div className="space-y-6">
-            <BriefSection id="tone" title={t("TONE")} value={draft.tone} onChange={(value) => change("tone", value)} />
-            <div className="bg-surface-container p-5">
-              <h3 className="font-display text-xl font-black uppercase">{t("Target length")}</h3>
-              <p className="mb-5 mt-2 font-body text-sm text-ink-muted">{t("A flexible guide. The finished book may be shorter or longer to preserve the story and its pacing.")}</p>
-              <div className="grid grid-cols-2 gap-4">
-                <div><FieldLabel htmlFor="minimum-pages">{t("Page target: from")}</FieldLabel><TextField id="minimum-pages" type="number" min={1} value={draft.target_page_min} onChange={(event) => change("target_page_min", Number(event.target.value))} /></div>
-                <div><FieldLabel htmlFor="maximum-pages">{t("Page target: to")}</FieldLabel><TextField id="maximum-pages" type="number" min={draft.target_page_min} value={draft.target_page_max} onChange={(event) => change("target_page_max", Number(event.target.value))} /></div>
+          {/* Two independent stacks, not a row grid: short sections never leave
+              holes beside long ones. What must happen reads in the wide column;
+              how it should feel sits beside it. */}
+          <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
+            <div className="min-w-0 space-y-6">
+              <BriefSection id="story-promises" title={t("STORY PROMISES")} value={draft.story_promises} onChange={(value) => change("story_promises", splitLines(value))} featured />
+              <BriefSection id="essential-events" title={t("ESSENTIAL EVENTS")} value={draft.essential_events} onChange={(value) => change("essential_events", splitLines(value))} numbered />
+              <BriefSection id="character-turns" title={t("CHARACTER TURNS")} value={draft.character_turns} onChange={(value) => change("character_turns", splitLines(value))} />
+            </div>
+            <div className="min-w-0 space-y-6">
+              <BriefSection id="tone" title={t("TONE")} value={draft.tone} onChange={(value) => change("tone", value)} />
+              <div className="bg-surface-container p-5">
+                <h3 className="font-display text-xl font-black uppercase">{t("Target length")}</h3>
+                <p className="mb-5 mt-2 font-body text-sm text-ink-muted">{t("A flexible guide. The finished book may be shorter or longer to preserve the story and its pacing.")}</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div><FieldLabel htmlFor="minimum-pages">{t("Page target: from")}</FieldLabel><TextField id="minimum-pages" type="number" min={1} value={draft.target_page_min} onChange={(event) => change("target_page_min", Number(event.target.value))} /></div>
+                  <div><FieldLabel htmlFor="maximum-pages">{t("Page target: to")}</FieldLabel><TextField id="maximum-pages" type="number" min={draft.target_page_min} value={draft.target_page_max} onChange={(event) => change("target_page_max", Number(event.target.value))} /></div>
+                </div>
               </div>
+              <BriefSection id="themes" title={t("THEMES")} value={draft.themes} onChange={(value) => change("themes", splitLines(value))} />
+              <BriefSection id="desired-emphasis" title={t("DESIRED EMPHASIS")} value={draft.desired_emphasis} onChange={(value) => change("desired_emphasis", splitLines(value))} />
             </div>
           </div>
-        </div>
-        <div className="grid items-start gap-6 lg:grid-cols-2">
-          {(["themes", "desired_emphasis", "essential_events", "character_turns"] as const).map((key) => <BriefSection key={key} id={key.replaceAll("_", "-")} title={t(BRIEF_FIELD_LABELS[key]!)} value={draft[key]} onChange={(value) => change(key, splitLines(value))} />)}
-        </div>
-        <details className="bg-surface-container p-5">
-          <summary className="min-h-11 cursor-pointer py-3 font-meta text-sm font-bold">{t("More editorial details")}</summary>
-          <div className="mt-4 grid items-start gap-5 lg:grid-cols-2">
-            {(["point_of_view", "narrator_treatment", "motifs", "protected_language", "ambiguities"] as const).map((key) => <BriefSection key={key} id={key.replaceAll("_", "-")} title={t(BRIEF_FIELD_LABELS[key]!)} value={draft[key]} onChange={(value) => change(key, Array.isArray(draft[key]) ? splitLines(value) : value)} />)}
-          </div>
-        </details>
+          <details className="group border-t-2 border-ink-black/15 pt-2">
+            <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-baseline gap-x-4 gap-y-1 py-3 [&::-webkit-details-marker]:hidden">
+              <span className="inline-flex items-center gap-2 font-display text-xl font-black uppercase">
+                <ChevronRight size={20} aria-hidden="true" className="text-hero-red transition-transform group-open:rotate-90 motion-reduce:transition-none" />
+                {t("More editorial details")}
+              </span>
+              <span className="font-body text-sm text-ink-muted">{t("Point of view, narrator, motifs, protected language and ambiguities.")}</span>
+            </summary>
+            <div className="mt-4 grid items-start gap-6 lg:grid-cols-2">
+              <div className="min-w-0 space-y-6">
+                {(["point_of_view", "narrator_treatment", "ambiguities"] as const).map((key) => <BriefSection key={key} id={key.replaceAll("_", "-")} title={t(BRIEF_FIELD_LABELS[key]!)} value={draft[key]} onChange={(value) => change(key, Array.isArray(draft[key]) ? splitLines(value) : value)} />)}
+              </div>
+              <div className="min-w-0 space-y-6">
+                {(["motifs", "protected_language"] as const).map((key) => <BriefSection key={key} id={key.replaceAll("_", "-")} title={t(BRIEF_FIELD_LABELS[key]!)} value={draft[key]} onChange={(value) => change(key, splitLines(value))} />)}
+              </div>
+            </div>
+          </details>
         </fieldset>
       </form>
       <StoryExplorer story={data.story_bible} />

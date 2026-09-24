@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from novel_to_comic.generation_checkpoints import discard_checkpointed_response
 from novel_to_comic.ai.context import ai_source_context
+from novel_to_comic.book_adaptation import compound_appearance_change_failures
 from novel_to_comic.narrative_instructions import PLAN_DEPICTION_GUIDANCE
 from novel_to_comic.editorial import story_instruction_section
 from novel_to_comic.models.adaptation import BookAdaptation, LetteringItem
@@ -817,6 +818,7 @@ async def _produce_book_plan_one_shot(
     estimate = estimate_book_plan_cost(adaptation, references, target_range,
                                       model=model, story_instruction=story_instruction)
     with ctx.execute(total=1, estimated_cost_usd=estimate):
+        _raise_on_adaptation_preconditions(adaptation, references, artifacts)
         attempt_prompt = prompt
         pages: tuple[ComicPage, ...] = ()
         validation = PlanValidation()
@@ -1334,6 +1336,7 @@ async def _produce_book_plan_two_pass(
         story_instruction=story_instruction,
     )
     with ctx.execute(total=0, estimated_cost_usd=estimate):
+        _raise_on_adaptation_preconditions(adaptation, references, artifacts)
         try:
             page_map, history = await _generate_page_map(
                 adaptation,
@@ -1712,6 +1715,76 @@ def _approved_state_pairs(
     }
 
 
+def _adaptation_precondition_failures(
+    adaptation: BookAdaptation,
+    references: ApprovedVisualReferenceInventory,
+) -> tuple[InvariantFailure, ...]:
+    """Adapt-owned facts that make every possible Plan invalid.
+
+    Plan's appearance checks are only satisfiable when each beat changes an
+    entity at most once and every changed-to state has a Cast authority. Both
+    depend on Adapt alone, so they are checked before the first paid Plan call
+    instead of being discovered after generation and "repaired" by Plan.
+    """
+
+    approved_pairs = _approved_state_pairs(references)
+    failures = list(compound_appearance_change_failures(adaptation))
+    seen: set[tuple[str, str]] = set()
+    for beat in adaptation.beats:
+        for change in beat.appearance_changes:
+            pair = (change.entity_id, change.to_state_id)
+            if pair in approved_pairs or pair in seen:
+                continue
+            seen.add(pair)
+            failures.append(_unapproved_appearance_state_failure(
+                beat.id, change.entity_id, change.to_state_id,
+            ))
+    return tuple(
+        failure.model_copy(update={"evidence": (
+            *failure.evidence,
+            "No page plan can satisfy this; the adaptation (or, for a missing "
+            "state authority, Cast) must be corrected before Plan runs.",
+        )})
+        for failure in failures
+    )
+
+
+def _raise_on_adaptation_preconditions(
+    adaptation: BookAdaptation,
+    references: ApprovedVisualReferenceInventory,
+    artifacts: TargetArtifacts,
+) -> None:
+    failures = _adaptation_precondition_failures(adaptation, references)
+    if failures:
+        validation = PlanValidation(invariant_failures=failures)
+        history = (_attempt_record(1, validation),)
+        _persist_validation(artifacts, validation, attempts=1, history=history)
+        raise PlanInvariantError(validation, history=history)
+
+
+def _unapproved_appearance_state_failure(
+    beat_id: str, entity_id: str, state_id: str,
+) -> InvariantFailure:
+    return InvariantFailure(
+        id=f"adapt_failure_unapproved_appearance_state_{beat_id}_{state_id}",
+        # Owned by Adapt on purpose: no page allocation can make an
+        # unapproved (entity, state) pair valid, so repairing Plan
+        # would just burn another expensive attempt.
+        owner_stage="adapt",
+        code="unapproved_appearance_state",
+        message=(
+            "An adapted appearance change must cite a Cast-approved "
+            "entity appearance state."
+        ),
+        artifact_ids=[beat_id, entity_id, state_id],
+        evidence=[
+            f"Beat {beat_id!r} changes {entity_id!r} into "
+            f"{state_id!r}, which the approved reference "
+            "inventory does not contain."
+        ],
+    )
+
+
 def _reference_authority_failures(
     pages: tuple[ComicPage, ...] | tuple[_PageDraft, ...],
     references: ApprovedVisualReferenceInventory,
@@ -1994,27 +2067,7 @@ def _canonical_pages(
         raise PlanInvariantError(
             PlanValidation(
                 invariant_failures=tuple(
-                    InvariantFailure(
-                        id=(
-                            "adapt_failure_unapproved_appearance_state_"
-                            f"{beat_id}_{state_id}"
-                        ),
-                        # Owned by Adapt on purpose: no page allocation can make an
-                        # unapproved (entity, state) pair valid, so repairing Plan
-                        # would just burn another expensive attempt.
-                        owner_stage="adapt",
-                        code="unapproved_appearance_state",
-                        message=(
-                            "An adapted appearance change must cite a Cast-approved "
-                            "entity appearance state."
-                        ),
-                        artifact_ids=[beat_id, entity_id, state_id],
-                        evidence=[
-                            f"Beat {beat_id!r} changes {entity_id!r} into "
-                            f"{state_id!r}, which the approved reference "
-                            "inventory does not contain."
-                        ],
-                    )
+                    _unapproved_appearance_state_failure(beat_id, entity_id, state_id)
                     for beat_id, entity_id, state_id in unapproved_changes
                 )
             )
@@ -2404,11 +2457,57 @@ def validate_book_plan(
     beat_by_id = {beat.id: beat for beat in adaptation.beats}
     for page in pages:
         for content in page.content:
+            # One content item has one state per entity. Beats that move the
+            # same entity into different states cannot share it, and "cite
+            # both IDs" is impossible advice, so name the real repair.
+            changed_states: dict[str, dict[str, str]] = {}
+            for beat_id in content.beat_ids:
+                beat = beat_by_id.get(beat_id)
+                for change in beat.appearance_changes if beat is not None else ():
+                    changed_states.setdefault(change.entity_id, {})[beat_id] = change.to_state_id
+            conflicted = {
+                entity_id: by_beat
+                for entity_id, by_beat in changed_states.items()
+                if len(set(by_beat.values())) > 1
+            }
+            for entity_id, by_beat in conflicted.items():
+                failures.append(
+                    InvariantFailure(
+                        id=(
+                            "plan_failure_appearance_state_conflict_"
+                            f"{content.id}_{entity_id}"
+                        ),
+                        owner_stage="plan",
+                        code="appearance_state_conflict",
+                        message=(
+                            "One page content item cannot show an entity in two "
+                            "appearance states; allocate the changing beats to "
+                            "separate content items."
+                        ),
+                        source_unit_ids=tuple(dict.fromkeys(
+                            source_id
+                            for beat_id in by_beat
+                            for source_id in beat_by_id[beat_id].source_unit_ids
+                        )),
+                        artifact_ids=[content.id, entity_id, *by_beat],
+                        evidence=[
+                            f"Content {content.id!r} carries beats "
+                            + ", ".join(
+                                f"{beat_id!r} ({state_id!r})"
+                                for beat_id, state_id in by_beat.items()
+                            )
+                            + f", which put {entity_id!r} in different states. "
+                            "Give each of those beats its own content item."
+                        ],
+                    )
+                )
             for beat_id in content.beat_ids:
                 beat = beat_by_id.get(beat_id)
                 if beat is None:
                     continue
                 for change in beat.appearance_changes:
+                    if change.entity_id in conflicted:
+                        continue
                     if (
                         change.entity_id not in content.entity_ids
                         or content.appearance_states.get(change.entity_id) != change.to_state_id

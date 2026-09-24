@@ -1089,6 +1089,7 @@ async def run(
     if should_generate_prop_refs:
         total_items += sum(1 + sum(state.visually_significant and not state.canonical_equivalent for state in p.appearance_states) for p in story_bible.props if not prop_ids or p.id in prop_ids)
 
+    review_ready = False
     with ctx.execute(total=total_items):
         if should_generate_refs:
             if chars_for_count:
@@ -1105,13 +1106,14 @@ async def run(
             await _generate_character_state_refs(
                 config, project_dir, story_bible, ctx, char_ids, character_style_ref
             )
-            if chars_for_count:
-                if (not ctx.stage_state.items_failed and
-                        all(artifacts.character_ref_sheet_path(project_dir, c.id).exists() for c in story_bible.characters)):
-                    await review_cast(config, project_dir, story_bible, ctx)
-                else:
-                    ctx.record_item_failed("cast_visual_review")
-                    ctx.log("Cast visual review waits until every character reference finishes", level="error")
+            # Only character failures hold the review back; decide before
+            # plates and props can add failures of their own.
+            review_ready = bool(chars_for_count) and not ctx.stage_state.items_failed and all(
+                artifacts.character_ref_sheet_path(project_dir, c.id).exists() for c in story_bible.characters
+            )
+            if chars_for_count and not review_ready:
+                ctx.record_item_failed("cast_visual_review")
+                ctx.log("Cast visual review waits until every character reference finishes", level="error")
             ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
 
         if should_generate_plates:
@@ -1119,6 +1121,13 @@ async def run(
 
         if should_generate_prop_refs:
             await _generate_prop_refs(config, project_dir, story_bible, ctx, prop_ids)
+
+        # The review compares character sheets only and is one slow model call.
+        # Running it last lets reused plates and props count at once on resume,
+        # and a failed review can no longer stop plates from being drawn.
+        if review_ready:
+            await review_cast(config, project_dir, story_bible, ctx)
+            ctx.progress(ctx.stage_state.items_done, ctx.stage_state.items_total)
 
         if ctx.stage_state.items_failed:
             raise ValueError(cast_failure_summary(cast_failure_details(project_dir, ctx.stage_state)))

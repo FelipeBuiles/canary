@@ -8,6 +8,7 @@ from novel_to_comic import artifacts
 from novel_to_comic.book_adaptation import (
     estimate_book_adaptation_cost,
     produce_book_adaptation,
+    published_adaptation_contract_failures,
 )
 from novel_to_comic.clients.text import generate_json
 from novel_to_comic.config import Config
@@ -88,6 +89,31 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState, *, fr
         artifacts=None if fresh else target,
         story_instruction=directive.instruction if directive is not None else "",
     )
+
+
+def published_adaptation_needs_repair(project_dir: Path) -> bool:
+    """Whether Adapt's current contract rejects the published script.
+
+    Offline and free. Server orchestration uses it to route a Plan run through
+    Adapt's targeted repair: a user who can only continue Plan must never be
+    left holding an adaptation that no plan can satisfy.
+    """
+    from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing
+
+    target = TargetArtifacts(project_dir)
+    if (not target.adaptation_path.exists()
+            or target.failed_adaptation_candidate_path.exists()
+            or target.peek_story_directive("adapt") is not None):
+        return False
+    try:
+        return bool(published_adaptation_contract_failures(
+            target.read_source(),
+            artifacts.read_story_bible(project_dir),
+            target.read_brief(),
+            target.read_adaptation(),
+        ))
+    except (ArtifactMissing, ArtifactInvalid, FileNotFoundError):
+        return False
 
 
 STAGE = Stage(

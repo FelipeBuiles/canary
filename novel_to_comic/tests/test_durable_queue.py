@@ -62,6 +62,17 @@ def test_resource_conflicts_allow_independent_lettering_and_style_selection(tmp_
     assert mutation_conflicts(app, "account:book", "/config")
 
 
+def test_cover_drawn_after_cast_does_not_hold_back_checkpoint_approval(tmp_path):
+    app = make_app(tmp_path)
+    app.state.generation_jobs["cover"] = SimpleNamespace(project_name="account:book", kind="project_cover",
+                                                        status="running", payload={})
+    assert not mutation_conflicts(app, "account:book", "/approve/cast")
+    assert mutation_conflicts(app, "account:book", "/config")
+    app.state.generation_jobs["plate"] = SimpleNamespace(project_name="account:book", kind="location_plate_regen",
+                                                        status="queued", payload={})
+    assert mutation_conflicts(app, "account:book", "/approve/cast")
+
+
 def test_stored_language_switch_waits_only_for_work_that_rewrites_lettering(tmp_path):
     app = make_app(tmp_path)
     app.state.generation_jobs["style"] = SimpleNamespace(project_name="account:book", kind="style_sample",

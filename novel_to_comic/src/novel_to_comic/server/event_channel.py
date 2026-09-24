@@ -16,8 +16,16 @@ class EventChannel:
             queue.put_nowait(event)
 
     def subscribe(self) -> asyncio.Queue:
+        """Replay only the run still in flight.
+
+        A channel outlives its run and is reused by later jobs. Replaying a
+        finished run's begin/progress/fail events makes a fresh subscriber
+        (opened because an unrelated job is running) re-live that run.
+        """
         queue = asyncio.Queue(maxsize=256)
-        for event in self.history:
+        history = list(self.history)
+        finished = [index for index, event in enumerate(history) if event.get("type") == "pipeline_done"]
+        for event in history[finished[-1] + 1 if finished else 0:]:
             queue.put_nowait(event)
         self.subscribers.add(queue)
         return queue

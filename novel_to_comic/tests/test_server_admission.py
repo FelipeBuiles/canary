@@ -112,14 +112,31 @@ async def test_admission_serializes_delete_with_queue_publication_and_drain(tmp_
 async def test_each_tab_receives_pipeline_events_and_reconnect_history():
     channel = EventChannel()
     first, second = channel.subscribe(), channel.subscribe()
-    events = [{"type": "stage_start", "stage": "cast"}, {"type": "pipeline_done"}]
-    for event in events:
-        channel.put_nowait(event)
-    assert [await first.get(), await first.get()] == events
-    assert [await second.get(), await second.get()] == events
+    start, progress = {"type": "stage_start", "stage": "cast"}, {"type": "stage_progress", "stage": "cast", "done": 1}
+    channel.put_nowait(start)
+    channel.put_nowait(progress)
     channel.unsubscribe(first)
     reconnect = channel.subscribe()
-    assert [await reconnect.get(), await reconnect.get()] == events
+    assert [await reconnect.get(), await reconnect.get()] == [start, progress]
+    channel.put_nowait({"type": "pipeline_done"})
+    assert [await second.get() for _ in range(3)] == [start, progress, {"type": "pipeline_done"}]
+
+
+def test_subscriber_after_a_finished_run_replays_only_the_run_in_flight():
+    # A cast run failed and finished; a later regen job keeps the project busy,
+    # so the room subscribes again. Replaying the old stage_fail flipped the
+    # room between running and failed on every reconnect.
+    channel = EventChannel()
+    for event in (
+        {"type": "stage_begin", "stage": "cast"},
+        {"type": "stage_fail", "stage": "cast", "message": "declined"},
+        {"type": "pipeline_done"},
+    ):
+        channel.put_nowait(event)
+    assert channel.subscribe().empty()
+    later = {"type": "stage_begin", "stage": "adapt"}
+    channel.put_nowait(later)
+    assert channel.subscribe().get_nowait() == later
 
 
 def test_recoverable_job_status_survives_process_restart(tmp_path):

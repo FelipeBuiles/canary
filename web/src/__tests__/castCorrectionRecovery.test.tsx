@@ -10,6 +10,7 @@ import type * as Client from "../api/client";
 
 const server = vi.hoisted(() => ({ jobs: [] as GenerationJob[], submit: vi.fn() }));
 const anchor = "1cat, tortoiseshell persian cat, flat face, fluffy fur, black fur, beige fur, white fur";
+const readable = "Tortoiseshell persian cat, flat face, fluffy fur, black fur, beige fur, white fur.";
 vi.mock("../api/client", async (original) => ({
   ...await original<typeof Client>(),
   apiFetch: async (path: string, options?: RequestInit) => {
@@ -43,9 +44,12 @@ it("keeps canonical identity and a failed correction visible after closing and r
   const pending = new Promise<unknown>((resolve) => { admit = resolve; });
   server.submit.mockReturnValue(pending);
   let view = mount(client);
-  expect(await screen.findByText(anchor)).toBeTruthy();
+  expect(await screen.findByText(readable)).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "Open image · Companion" }));
-  expect(within(screen.getByRole("region", { name: "VISUAL ANCHOR" })).getByText(anchor)).toBeTruthy();
+  // The reader-facing look, with the verbatim prompt tags kept one click away.
+  const identity = within(screen.getByRole("region", { name: "VISUAL ANCHOR" }));
+  expect(identity.getByText(readable)).toBeTruthy();
+  expect(identity.getByText(anchor).closest("details")).toBeTruthy();
   const draft = "Restore the canonical cat anatomy.";
   await user.type(screen.getByRole("textbox"), draft);
   await user.click(await screen.findByRole("button", { name: /REGENERATE WITH CHANGE.*credits/ }));
@@ -57,7 +61,7 @@ it("keeps canonical identity and a failed correction visible after closing and r
   expect(screen.queryByText("LAST CHANGE APPLIED")).toBeNull();
   view.unmount();
   view = mount(client);
-  expect(await screen.findByText(anchor)).toBeTruthy();
+  expect(await screen.findByText(readable)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Open image · Companion" }).hasAttribute("disabled")).toBe(true);
   const job: GenerationJob = { id: "correction", project_name: "fixture", kind: "character_ref_regen", label: "Companion", payload: { char_id: "cat", instruction: draft }, status: "queued", queue_position: 1, queued_at: new Date().toISOString(), started_at: null, finished_at: null, error: null };
   server.jobs = [job];
