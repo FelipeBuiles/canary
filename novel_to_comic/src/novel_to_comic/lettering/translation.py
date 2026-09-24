@@ -21,7 +21,7 @@ from novel_to_comic.style_contract import POST_LETTERING_MARKER, post_production
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 from novel_to_comic.usage import estimate_text_cost
 from .renderer import resolve_lettering
-from .service import LetteringConflict, _replace, active_render, is_hybrid, preset_style, seed_lettering
+from .service import LetteringConflict, _replace, active_render, is_hybrid, preset_style, seed_page
 
 TargetLocale = Literal["en", "es", "fr"]
 MAX_BATCH_CHARS = 12000
@@ -100,7 +100,7 @@ def prepare_translation(artifacts: TargetArtifacts, config: Config, target_local
                 state = artifacts.read_lettering(page.page_number)
                 saved = state.content_sha256
             except ArtifactMissing:
-                state = seed_lettering(page, render, style, locale=settings.locale)
+                state = seed_page(artifacts, page, render, style, locale=settings.locale)
                 saved = None
             if state.comic_page_sha256 != page.content_sha256:
                 raise LetteringConflict(f"Page {page.page_number} lettering belongs to an earlier plan. Rebuild it explicitly first.")

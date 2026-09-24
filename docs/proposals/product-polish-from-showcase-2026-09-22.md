@@ -59,7 +59,12 @@ Done in the working tree, with provider-free tests. There was no visual pass in 
 - **B5:** fresh editions already composite without editor saves (existing test). The real failure
   was engine drift (v9→v10 in `a918055`). Composites now reflow in memory without saving, and placement review is requested.
 - **B7:** the reader slider announces "Page N of M".
-- **Not started:** A12, B4 (each needs planning), and B6 (read-only check: failed proofs
+- **B4 stage 1 (September 23):** fresh and reset seeds for editable editions read panel gutters
+  from the base art (`lettering/panels.py`) and fit Plan's reservations inside the drawn panel
+  (`lettering/placement.py`). Onscreen speech starts at the panel top, reading order is kept, and
+  tails stay in their panel without crossing. Seeds remain unreviewed. Baseline and after on The Egg:
+  `scripts/measure_lettering_placement.py [--legacy]`. Stage 2 (vision pass for heads) is proposed only.
+- **Not started:** A12 (needs planning), and B6 (read-only check: failed proofs
   already show "Try sample again" behind an estimate).
 
 **Evidence labels:** *Verified* = reproduced or read in code during this session.

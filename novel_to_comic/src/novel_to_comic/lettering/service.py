@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+from typing import Sequence
 
 from PIL import Image
 
@@ -26,6 +27,8 @@ from novel_to_comic.style_contract import (
     post_production_lettering_direction,
 )
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
+from . import placement
+from .panels import detect_panels
 from .renderer import (
     ENGINE_VERSION,
     render_lettered_page,
@@ -187,8 +190,18 @@ def default_tail_target(rect: PinnedGeometry) -> NormalizedPoint | None:
 
 
 def seed_lettering(
-    page: ComicPage, render, style: LetteringStyle, *, revision: int = 1, locale: str = "source"
+    page: ComicPage,
+    render,
+    style: LetteringStyle,
+    *,
+    revision: int = 1,
+    locale: str = "source",
+    panels: Sequence[PinnedGeometry] | None = None,
 ) -> PageLettering:
+    """First-draft placement. ``panels`` (gutters of the base art) keep each item
+    inside its drawn panel; without them Plan's reservations are used as-is.
+    Either way these are seeds for the author, never reviewed placement.
+    """
     if page.lettering_reservations is None:
         raise LetteringConflict(
             "This plan has no lettering reservations. Rerun Plan for a hybrid edition."
@@ -196,26 +209,30 @@ def seed_lettering(
     reservation_by_id = {
         item.lettering_item_id: item for item in page.lettering_reservations
     }
+    layout = None
+    if panels is not None and placement.usable(page, panels):
+        layout = placement.layout_page(
+            page, panels, lambda item, reservation, panel: placement.frame_size(reservation, panel)
+        )
     elements = []
     for panel in sorted(page.content, key=lambda part: part.order):
         for index, item in enumerate(panel.lettering):
             reservation = reservation_by_id[item.id]
-            suggestion = _suggestion(
-                reservation, panel, index, len(panel.lettering), len(page.content)
-            )
-            tail_target = reservation.tail_target
-            if tail_target is None and item.kind in {"dialogue", "thought"} and item.delivery == "onscreen":
-                tail_target = default_tail_target(suggestion)
+            if layout is not None:
+                # The tail is Plan's pointer when it fits the drawn panel.
+                suggestion, tail_target = layout[item.id]
+            else:
+                suggestion = _suggestion(
+                    reservation, panel, index, len(panel.lettering), len(page.content)
+                )
+                tail_target = reservation.tail_target
+                if tail_target is None and placement.wants_tail(item):
+                    tail_target = default_tail_target(suggestion)
             elements.append(
                 LetteringElement(
                     id=item.id,
                     source_lettering_item_id=item.id,
-                    role={
-                        "dialogue": "speech",
-                        "caption": "caption",
-                        "thought": "thought",
-                        "sfx": "sfx",
-                    }[item.kind],
+                    role=placement.ROLE[item.kind],
                     text_by_locale={"source": item.text},
                     suggested_placement=suggestion,
                     placement=suggestion,
@@ -235,6 +252,96 @@ def seed_lettering(
     )
 
 
+_FRAME_SLACK = 0.002  # Keeps the measured wrap feasible after shrinking the frame.
+
+
+def settle_seeds(
+    state: PageLettering,
+    page: ComicPage,
+    style: LetteringStyle,
+    panels: Sequence[PinnedGeometry] | None,
+) -> PageLettering:
+    """Resolve a fresh seed, then arrange it again with measured balloon sizes.
+
+    Tight balloons anchor at their frame's top-left, so a right-leaning seed
+    only lands on the right once its real size is known. Frames shrink to the
+    balloon; an element whose wrap would change keeps its first frame size.
+    """
+    first = resolve_lettering(state, style)
+    if panels is None or not placement.usable(page, panels):
+        return first
+    measured = {element.id: element for element in first.elements}
+
+    def fits(element: LetteringElement) -> bool:
+        return element.tight_box and element.resolved is not None and not element.resolved.overflow
+
+    def size_of(item, reservation, panel):
+        element = measured[item.id]
+        if fits(element):
+            return element.resolved.width, element.resolved.height
+        return element.placement.width, element.placement.height
+
+    layout = placement.layout_page(page, panels, size_of)
+
+    def moved(element: LetteringElement, keep_frame: bool) -> LetteringElement:
+        body, tail = layout[element.id]
+        width, height = (
+            (element.placement.width, element.placement.height)
+            if keep_frame or not fits(element)
+            else (body.width + _FRAME_SLACK, body.height + _FRAME_SLACK)
+        )
+        frame = PinnedGeometry(
+            x=min(body.x, 1 - min(1.0, width)), y=min(body.y, 1 - min(1.0, height)),
+            width=min(1.0, width), height=min(1.0, height),
+        )
+        if element.tail_target is None:
+            tail = None  # Captions, offscreen and narrated copy have no tail.
+        return element.model_copy(update={
+            "placement": frame, "suggested_placement": frame,
+            "tail_target": tail, "suggested_tail_target": tail, "resolved": None,
+        })
+
+    second = resolve_lettering(
+        _replace(first, elements=[moved(e, False) for e in first.elements]), style
+    )
+    changed = {
+        element.id
+        for element in second.elements
+        if fits(measured[element.id]) and (
+            element.resolved is None
+            or element.resolved.lines != measured[element.id].resolved.lines
+            or element.resolved.font_size != measured[element.id].resolved.font_size
+        )
+    }
+    if not changed:
+        return second
+    return resolve_lettering(
+        _replace(first, elements=[moved(e, e.id in changed) for e in first.elements]), style
+    )
+
+
+def page_panels(artifacts: TargetArtifacts, page_number: int, render) -> tuple[PinnedGeometry, ...]:
+    with Image.open(io.BytesIO(artifacts.read_render(page_number, render.revision))) as image:
+        return detect_panels(image)
+
+
+def seed_page(
+    artifacts: TargetArtifacts,
+    page: ComicPage,
+    render,
+    style: LetteringStyle,
+    *,
+    revision: int = 1,
+    locale: str = "source",
+) -> PageLettering:
+    """Resolved first-draft lettering for the current art. Placement review stays pending."""
+    panels = page_panels(artifacts, page.page_number, render)
+    return settle_seeds(
+        seed_lettering(page, render, style, revision=revision, locale=locale, panels=panels),
+        page, style, panels,
+    )
+
+
 @locked_mutation
 def ensure_lettering(artifacts: TargetArtifacts, page_number: int) -> PageLettering:
     if not is_hybrid(artifacts):
@@ -245,14 +352,12 @@ def ensure_lettering(artifacts: TargetArtifacts, page_number: int) -> PageLetter
         return artifacts.read_lettering(page_number)
     except ArtifactMissing:
         style = ensure_style(artifacts)
-        state = resolve_lettering(
-            seed_lettering(
-                artifacts.read_page(page_number),
-                active_render(artifacts, page_number),
-                style,
-                locale=artifacts.read_lettering_settings().locale,
-            ),
+        state = seed_page(
+            artifacts,
+            artifacts.read_page(page_number),
+            active_render(artifacts, page_number),
             style,
+            locale=artifacts.read_lettering_settings().locale,
         )
         artifacts.write_lettering(state)
         return state
@@ -464,15 +569,13 @@ def reset_lettering(
             "The page changed. Reload before rebuilding its lettering."
         )
     style = ensure_style(artifacts)
-    state = resolve_lettering(
-        seed_lettering(
-            artifacts.read_page(page_number),
-            render,
-            style,
-            revision=previous.revision + 1,
-            locale=artifacts.read_lettering_settings().locale,
-        ),
+    state = seed_page(
+        artifacts,
+        artifacts.read_page(page_number),
+        render,
         style,
+        revision=previous.revision + 1,
+        locale=artifacts.read_lettering_settings().locale,
     )
     artifacts.write_lettering(state)
     return state
