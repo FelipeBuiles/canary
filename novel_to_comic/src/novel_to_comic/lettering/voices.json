@@ -1,0 +1,212 @@
+{
+  "_comment": "Letterer's voices: how words are said. Shared by the Pages editor and page seeding. Each patch restyles the book's role style after clearing effects; text_case and tail_width stay the book's.",
+  "speech": [
+    {
+      "id": "shout",
+      "label": "Shout",
+      "hint": "A spiky burst for yelling",
+      "patch": {
+        "shape": "burst",
+        "font_weight": 700,
+        "padding": 6
+      }
+    },
+    {
+      "id": "whisper",
+      "label": "Whisper",
+      "hint": "Dashed and hushed",
+      "patch": {
+        "shape": "whisper",
+        "color": "#4f4a42",
+        "stroke_width": 1.2,
+        "font_weight": 400
+      }
+    },
+    {
+      "id": "radio",
+      "label": "Radio",
+      "hint": "Phones, radios and machines",
+      "patch": {
+        "shape": "electric"
+      }
+    },
+    {
+      "id": "weak",
+      "label": "Weak",
+      "hint": "Wobbly: hurt, sick or woozy",
+      "patch": {
+        "shape": "wavy"
+      }
+    },
+    {
+      "id": "eerie",
+      "label": "Eerie",
+      "hint": "A dark voice from beyond",
+      "patch": {
+        "shape": "wavy",
+        "fill": "#1f1b16",
+        "color": "#f2ecd9",
+        "stroke": "#1f1b16",
+        "font_weight": 700
+      }
+    }
+  ],
+  "thought": [
+    {
+      "id": "dream",
+      "label": "Dream",
+      "hint": "A soft, rippled thought",
+      "patch": {
+        "shape": "wavy",
+        "fill": "#f7f4ff"
+      }
+    },
+    {
+      "id": "inner",
+      "label": "Inner voice",
+      "hint": "A quiet box for inner monologue",
+      "patch": {
+        "shape": "round",
+        "corner_radius": 18,
+        "fill": "#eef3f8"
+      }
+    }
+  ],
+  "caption": [
+    {
+      "id": "location",
+      "label": "Location",
+      "hint": "Bold place and time tags",
+      "patch": {
+        "text_case": "upper",
+        "font_weight": 700,
+        "fill": "#1b1b1b",
+        "color": "#f4efe2",
+        "stroke": "#1b1b1b",
+        "letter_spacing": 0.6
+      }
+    },
+    {
+      "id": "flashback",
+      "label": "Flashback",
+      "hint": "Sepia paper for the past",
+      "patch": {
+        "font": "Special Elite",
+        "fill": "#efe3c8",
+        "color": "#4a3b2a",
+        "stroke": "#8a6d4b"
+      }
+    },
+    {
+      "id": "journal",
+      "label": "Journal",
+      "hint": "Typed notes with a lifted shadow",
+      "patch": {
+        "font": "Special Elite",
+        "fill": "#fffdf5",
+        "shadow": "drop",
+        "shadow_color": "#9e9580",
+        "shadow_x": 3,
+        "shadow_y": 3
+      }
+    }
+  ],
+  "sfx": [
+    {
+      "id": "impact",
+      "label": "Impact",
+      "hint": "Hot, extruded and bouncing",
+      "patch": {
+        "font": "Bangers",
+        "color": "#ffe14d",
+        "gradient_color": "#ff7a1a",
+        "text_stroke": "#181818",
+        "text_stroke_width": 3,
+        "shadow": "extrude",
+        "shadow_color": "#8c2a0e",
+        "shadow_x": 4,
+        "shadow_y": 5,
+        "halo_color": "#181818",
+        "halo_width": 1.2,
+        "jitter": 0.25,
+        "text_case": "upper"
+      }
+    },
+    {
+      "id": "crash",
+      "label": "Crash",
+      "hint": "Leaning white letters, hard shadow",
+      "patch": {
+        "font": "Bangers",
+        "color": "#ffffff",
+        "text_stroke": "#181818",
+        "text_stroke_width": 3,
+        "shadow": "drop",
+        "shadow_color": "#181818",
+        "shadow_x": 6,
+        "shadow_y": 6,
+        "skew": 12,
+        "jitter": 0.35,
+        "text_case": "upper"
+      }
+    },
+    {
+      "id": "pop",
+      "label": "Pop",
+      "hint": "Round, bright and arched",
+      "patch": {
+        "font": "Shrikhand",
+        "color": "#ffffff",
+        "gradient_color": "#9be7ff",
+        "text_stroke": "#16324f",
+        "text_stroke_width": 2.5,
+        "halo_color": "#ffffff",
+        "halo_width": 2,
+        "warp": "arc",
+        "warp_amount": 0.45
+      }
+    },
+    {
+      "id": "eerie",
+      "label": "Eerie",
+      "hint": "Dripping letters on a wave",
+      "patch": {
+        "font": "Creepster",
+        "color": "#b6e36b",
+        "gradient_color": "#3f6b1a",
+        "text_stroke": "#0b0f08",
+        "text_stroke_width": 2,
+        "warp": "wave",
+        "warp_amount": 0.4,
+        "jitter": 0.15
+      }
+    },
+    {
+      "id": "tech",
+      "label": "Tech",
+      "hint": "Cold, fast and leaning",
+      "patch": {
+        "font": "Orbitron",
+        "color": "#b8f4ff",
+        "gradient_color": "#2a7fff",
+        "text_stroke": "#06202a",
+        "text_stroke_width": 2.5,
+        "halo_color": "#b8f4ff",
+        "halo_width": 1,
+        "skew": 10
+      }
+    },
+    {
+      "id": "soft",
+      "label": "Soft",
+      "hint": "Gentle pats and plops",
+      "patch": {
+        "font": "Fredoka",
+        "color": "#ffffff",
+        "text_stroke": "#181818",
+        "text_stroke_width": 1.5,
+        "jitter": 0.2
+      }
+    }
+  ]
+}
