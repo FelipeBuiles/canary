@@ -1,6 +1,7 @@
 # Current selectable rates are checked against provider model pages. Historical
 # entries remain here only to settle usage from existing projects and editions.
-# GPT Image 2.5 estimated_* fields are reservation allowances, not tariffs.
+# GPT Image 2.5 estimated_* fields are reservation allowances, not tariffs;
+# expected_* fields settle completed requests whose provider charge is unreported.
 aliases:
   gpt-6-sol: openai/gpt-6-sol
   gpt-6-luna: openai/gpt-6-luna
@@ -254,10 +255,31 @@ model_overrides:
       high:
         1024x1536: 1750
       medium:
+        # FAL publishes $0.01029 (343 tokens) for medium 1024x1536; ~25% headroom.
+        1024x1536: 430
+        # Cover. FAL publishes $0.00903 (301 tokens) for medium 1024x768;
+        # portrait assumed equal. ~25% headroom.
+        768x1024: 380
         1024x1280: 480
         1024x1024: 550
         1344x768: 320
         1536x1024: 320
+    # Settlement estimate for a completed request whose provider charge is not
+    # reported (no FAL billing event). Central observations, never headroom:
+    # quotes reserve with the estimated_* fields above; charges use these.
+    # 2026-09-22 FAL billing for four medium pages (2–5 references) fits
+    # ~1200 image-input tokens per reference.
+    expected_input_tokens_per_reference: 1200
+    expected_image_tokens_by_quality_and_size:
+      high:
+        1024x1536: 1372
+      medium:
+        1024x1536: 343
+        768x1024: 301
+        1024x1280: 378
+        1024x1024: 439
+        1344x768: 255
+        1536x1024: 255
   openai/gpt-image-2.5/sunburst:
     input_cost_per_token: 5.0e-06
     image_input_cost_per_token: 8.0e-06
@@ -272,10 +294,23 @@ model_overrides:
       high:
         1024x1536: 1750
       medium:
+        1024x1536: 430
+        768x1024: 380
         1024x1280: 480
         1024x1024: 550
         1344x768: 320
         1536x1024: 320
+    expected_input_tokens_per_reference: 1200
+    expected_image_tokens_by_quality_and_size:
+      high:
+        1024x1536: 1372
+      medium:
+        1024x1536: 343
+        768x1024: 301
+        1024x1280: 378
+        1024x1024: 439
+        1344x768: 255
+        1536x1024: 255
   gpt-image-2.5-flare:
     input_cost_per_token: 5.0e-06
     image_input_cost_per_token: 8.0e-06

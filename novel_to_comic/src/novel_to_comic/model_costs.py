@@ -10,9 +10,11 @@ import math
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
+
+from novel_to_comic.codex_dev import is_subscription
 
 logger = logging.getLogger(__name__)
 
@@ -151,15 +153,15 @@ class PricingResolver:
         provider_cost_source: str | None = None,
         funding: str = "api",
     ) -> CostBreakdown:
-        if funding == "codex_subscription":
+        if is_subscription(funding):
             # Monetary liability, not an observation of provider spend or quota.
             # Do not resolve an API alias/tariff for subscription execution.
             return CostBreakdown(
                 cost_usd=0.0,
-                source="codex_subscription",
+                source=funding,
                 model_alias=model_alias,
                 provider_model=provider_model or model_alias,
-                pricing_snapshot="codex_subscription",
+                pricing_snapshot=funding,
                 funding=funding,
             )
         if funding != "api":
@@ -229,8 +231,14 @@ class PricingResolver:
         width: int | None = None,
         height: int | None = None,
         ref_image_sizes: list[tuple[int, int]] | None = None,
+        basis: Literal["reservation", "expected"] = "reservation",
     ) -> CostBreakdown:
         """Project the USD cost of `count` image requests.
+
+        ``reservation`` is the conservative quote used for holds. ``expected``
+        settles a completed request whose provider charge was not reported: it
+        uses central measured consumption when configured for the exact
+        quality/geometry, otherwise the reservation estimate.
 
         For models priced per-token (e.g. gpt-image-2), translates the request
         into estimated input/output tokens and uses the same per-token math the
@@ -255,7 +263,12 @@ class PricingResolver:
         # Measured consumption applies only to the observed quality/geometry.
         # Unknown settings retain the conservative allowance below; these
         # estimates never participate in actual-usage settlement.
+        prefix = "estimated"
         measured = pricing.get("estimated_image_tokens_by_quality_and_size") or {}
+        if basis == "expected" and pricing.get("expected_image_tokens_by_quality_and_size"):
+            expected = pricing["expected_image_tokens_by_quality_and_size"]
+            if (expected.get((quality or "auto").lower()) or {}).get(f"{width}x{height}") is not None:
+                prefix, measured = "expected", expected
         output_estimate = (measured.get((quality or "auto").lower()) or {}).get(
             f"{width}x{height}"
         )
@@ -263,11 +276,11 @@ class PricingResolver:
             return CostBreakdown(
                 cost_usd=(
                     count * float(output_estimate) * output_per_token
-                    + ref_count * float(pricing.get("estimated_input_tokens_per_reference") or 0)
+                    + ref_count * float(pricing.get(f"{prefix}_input_tokens_per_reference") or 0)
                     * float(pricing.get("image_input_cost_per_token") or input_per_token)
                     + prompt_tokens * input_per_token
                 ),
-                source="measured_consumption_estimate",
+                source=f"{'expected' if prefix == 'expected' else 'measured'}_consumption_estimate",
                 model_alias=model,
                 provider_model=resolved,
                 pricing_snapshot=self.pricing_snapshot,

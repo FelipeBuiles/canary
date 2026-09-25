@@ -261,7 +261,7 @@ export function CreditsPage() {
             )}
           </div>
         </div>
-        <p className="mb-4 max-w-prose font-body text-sm leading-6 text-ink-muted">{t("Open holds are still reserved, including attempts awaiting billing reconciliation. They are separate from final charges.")}</p>
+        <p className="mb-4 font-body text-sm leading-6 text-ink-muted">{t("Open holds are still reserved, including attempts awaiting billing reconciliation. They are separate from final charges.")}</p>
         {historyError && <Surface tone="pulp" padding="md" shadow="none" role="alert" className="mb-4"><p className="font-body text-sm">Credit history could not be refreshed. Any activity shown below was loaded earlier.</p><Button variant="outline" size="sm" className="mt-3" onClick={() => void refetchHistory()}>Retry history</Button></Surface>}
         {historyLoading ? (
           <div className="space-y-2">

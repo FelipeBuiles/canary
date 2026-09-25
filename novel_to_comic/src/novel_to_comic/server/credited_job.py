@@ -22,7 +22,7 @@ from fastapi import FastAPI
 
 from novel_to_comic.ai import ai_request_context
 from novel_to_comic.config import Config
-from novel_to_comic.codex_dev import classify_operations
+from novel_to_comic.codex_dev import classify_operations, is_subscription
 from .codex_admission import Operations, stage_operations
 from novel_to_comic.frozen_requests import (
     FrozenRequestError,
@@ -227,7 +227,7 @@ def enqueue_reserved_generation_job(
 ) -> tuple[GenerationJob, bool]:
     """Queue one request with a hold spanning execution, failure, or cancellation."""
     funding = classify_operations(operations)
-    if funding == "codex_subscription":
+    if is_subscription(funding):
         reservation_credits = 0
         if existing_hold is not None and existing_hold[0] is not None:
             raise ValueError("Subscription jobs cannot inherit an API credit hold")

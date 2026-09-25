@@ -121,7 +121,7 @@ export function LetteringIssueCard({ issue }: { issue: PageIssue }) {
           )}
         </StatusPill>
         <p className="mt-3 font-body text-sm font-bold">{t(ocrIssueTitle(issue))}</p>
-        <p className="mt-1 max-w-[62ch] font-body text-xs leading-5 text-ink-black/75">
+        <p className="mt-1 font-body text-xs leading-5 text-ink-black/75">
           {t("Possible wording difference. The checker can misread text; compare it with the saved artwork before making changes.")}
         </p>
       </div>

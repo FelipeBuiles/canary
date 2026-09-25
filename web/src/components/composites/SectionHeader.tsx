@@ -38,7 +38,7 @@ export function SectionHeader({
           {actions && <span className="ml-auto flex items-center gap-2">{actions}</span>}
         </div>
         {description && (
-          <p className="mt-2 max-w-[72ch] font-body text-[0.9rem] leading-6 text-ink-black/70">
+          <p className="mt-2 font-body text-[0.9rem] leading-6 text-ink-black/70">
             {typeof description === "string" ? t(description) : description}
           </p>
         )}
@@ -62,7 +62,7 @@ export function SectionHeader({
         {actions && <div className="flex items-center gap-2">{actions}</div>}
       </div>
       {description && (
-        <p className="mt-2 max-w-[72ch] font-body text-[0.9rem] leading-6 text-ink-black/70">
+        <p className="mt-2 font-body text-[0.9rem] leading-6 text-ink-black/70">
           {typeof description === "string" ? t(description) : description}
         </p>
       )}

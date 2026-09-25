@@ -511,6 +511,22 @@ def _parse_extraction(raw: object, novel_text: str) -> StoryBible:
     return StoryBible.model_validate(result)
 
 
+def _text_only_damage_states(bible: StoryBible) -> StoryBible:
+    """Blood and wounds reuse the canonical reference instead of a state sheet.
+
+    A generated state sheet becomes the character's identity authority in every
+    panel of that state, so it also fixes pose and anything touching the body.
+    Surface damage reads correctly from the canonical sheet plus the state text.
+    Applied once to the merged bible: sections repeat known states verbatim.
+    """
+    for character in bible.characters:
+        for state in character.appearance_states:
+            facets = set(state.changed_facets)
+            if facets and facets <= {"damage"} and not state.replaces_identity:
+                state.visually_significant = False
+    return bible
+
+
 # A Character renders as one body; a plural name signals a merged group.
 _GROUP_NAME = re.compile(
     r"^(?:the\s+)?(?:two|three|four|five|six|several|many|both|pair\s+of|group\s+of|couple\s+of)\b"
@@ -705,6 +721,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
             ctx.save()
             ctx.progress(3, 4)
 
+        story_bible = _text_only_damage_states(story_bible)
         artifacts.write_story_bible(project_dir, story_bible)
         produce_source_document(
             TargetArtifacts(project_dir),

@@ -35,9 +35,10 @@ from novel_to_comic.ai.finalisation import (
     finalise_image_success,
 )
 from novel_to_comic.config import Config, mock_mode_active
-from novel_to_comic.codex_dev import CodexRoutingError, route_for
+from novel_to_comic.codex_dev import CodexRoute, CodexRoutingError, is_subscription, route_for
 from novel_to_comic.provider_wire import ProviderWireRequest
 from novel_to_comic.text_models import text_wire
+from novel_to_comic.model_costs import get_pricing_resolver
 from novel_to_comic.usage import (
     ApiResult,
     UsageRecord,
@@ -709,6 +710,11 @@ def _extract_response_cost(
     data: dict[str, Any],
     headers: httpx.Headers | None = None,
 ) -> tuple[float | None, str | None]:
+    # A custom gateway handler that knows the provider's actual charge (the
+    # FAL billing event) reports it with its own source label.
+    provider_cost = data.get("provider_cost_usd")
+    if provider_cost is not None and data.get("provider_cost_source"):
+        return float(provider_cost), str(data["provider_cost_source"])
     hidden = data.get("_hidden_params")
     if isinstance(hidden, dict):
         value = hidden.get("response_cost")
@@ -1078,12 +1084,13 @@ def _finalize_event(
     langfuse_scheduler: Any = None,
 ) -> None:
     funding = usage.funding if usage is not None else (metadata or {}).get("funding", "api")
-    if funding == "codex_subscription" and usage is None:
+    if is_subscription(funding) and usage is None:
         usage = UsageRecord(
-            provider="codex", model=model_alias, call_id=event_id,
+            provider="claude" if funding == "claude_subscription" else "codex",
+            model=model_alias, call_id=event_id,
             provider_model=(metadata or {}).get("codex_reasoning_model") if operation == "text" else None,
-            operation=operation, cost_usd=None, cost_source="codex_subscription",
-            funding="codex_subscription",
+            operation=operation, cost_usd=None, cost_source=funding,
+            funding=funding,
         )
     provider_model = str(
         (response_data or {}).get("model")
@@ -1093,7 +1100,7 @@ def _finalize_event(
     if funding == "codex_subscription" and operation == "image":
         provider_model = usage.provider_model if usage else None
     cost = calculate_cost_breakdown(usage) if usage is not None else None
-    cost_usd = usage.cost_usd if funding == "codex_subscription" else (cost.cost_usd if cost is not None else None)
+    cost_usd = usage.cost_usd if is_subscription(funding) else (cost.cost_usd if cost is not None else None)
     if cost is not None and cost.source == "unknown_provider_usage":
         cost_usd = None
     billable = bool(
@@ -1148,7 +1155,9 @@ def _finalize_event(
         "provider": usage.provider if usage else _provider_from_model(provider_model),
         "provider_model": provider_model,
         "litellm_model": provider_model,
-        "provider_response_id": (response_data or {}).get("id"),
+        "provider_response_id": (
+            (response_data or {}).get("provider_request_id") or (response_data or {}).get("id")
+        ),
         "input_tokens": usage.input_tokens if usage else 0,
         "output_tokens": usage.output_tokens if usage else 0,
         "total_tokens": (usage.input_tokens + usage.output_tokens) if usage else 0,
@@ -1190,7 +1199,7 @@ def _finalize_event(
         get_db().table("ai_usage_events").update(update).eq("id", event_id).execute()
     except Exception as exc:
         logger.warning("ai_usage_events update failed for %s: %s", event_id, exc)
-    if usage is not None and billable and funding != "codex_subscription":
+    if usage is not None and billable and not is_subscription(funding):
         _settle_event_usage(usage, feature=feature, status=status)
     elif funding == "api" and not (config is not None and mock_mode_active(config)):
         from novel_to_comic.server.credits import (
@@ -1487,7 +1496,7 @@ def _settle_event_usage(usage: UsageRecord, *, feature: str, status: str) -> Non
     from upstream callers collapse to a single ledger row.
     """
     ctx = current_ai_request_context()
-    if not ctx.user_id or usage.funding == "codex_subscription":
+    if not ctx.user_id or is_subscription(usage.funding):
         return
     if status == "succeeded":
         description = f"Model call: {feature}"
@@ -1771,22 +1780,51 @@ async def generate_structured_object(
     ) from last_exc
 
 
+def _claude_token_usage(usage: dict[str, Any]) -> dict[str, Any]:
+    # Anthropic reports cache reads and writes outside input_tokens; count
+    # them in, as the gateway does for the API route.
+    return {
+        "prompt_tokens": sum(usage.get(field) or 0 for field in (
+            "input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")),
+        "completion_tokens": usage.get("output_tokens"),
+        "cached_tokens": usage.get("cache_read_input_tokens"),
+    }
+
+
 def _codex_text_usage(
-    event_id: str, model: str, reasoning_model: str, tokens: dict[str, Any],
+    event_id: str, model: str, route: CodexRoute, tokens: dict[str, Any],
 ) -> UsageRecord:
+    if isinstance(tokens.get("usage"), dict):
+        # Claude runtime evidence nests Anthropic usage.
+        tokens = _claude_token_usage(tokens["usage"])
+    cached = tokens.get("cached_tokens")
     return UsageRecord(
-        provider="codex", model=model, provider_model=reasoning_model,
+        provider="claude" if route.runtime == "claude" else "codex",
+        model=model, provider_model=route.reasoning_model,
         call_id=event_id, operation="text",
         input_tokens=int(tokens.get("prompt_tokens") or tokens.get("input_tokens") or 0),
         output_tokens=int(tokens.get("completion_tokens") or tokens.get("output_tokens") or 0),
-        cost_usd=None, cost_source="codex_subscription", funding="codex_subscription",
+        cached_text_tokens=cached if type(cached) is int else None,
+        cost_usd=None, cost_source=route.funding, funding=route.funding,
     )
 
 
 def _codex_error_usage(
-    event_id: str, model: str, reasoning_model: str, error: BaseException,
+    event_id: str, model: str, route: CodexRoute, error: BaseException,
 ) -> UsageRecord:
-    return _codex_text_usage(event_id, model, reasoning_model, getattr(error, "metadata", {}) or {})
+    return _codex_text_usage(event_id, model, route, getattr(error, "metadata", {}) or {})
+
+
+def _api_equivalent_cost(model: str, usage: UsageRecord) -> float | None:
+    """What the same tokens cost on the API route, for side-by-side comparison.
+
+    Priced exactly as an API call's usage is, never settled or reserved.
+    """
+    breakdown = get_pricing_resolver().calculate(
+        model_alias=model, operation="text", input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens, provider_model=usage.provider_model,
+    )
+    return None if breakdown.source == "unknown_pricing" else breakdown.cost_usd
 
 
 async def _chat_completion(
@@ -1811,7 +1849,8 @@ async def _chat_completion(
     metadata = _metadata(feature, operation, model, event_id)
     if route is not None:
         metadata.update({
-            "funding": "codex_subscription",
+            "funding": route.funding,
+            "subscription_runtime": route.runtime,
             "codex_reasoning_model": route.reasoning_model,
             "unsupported_controls": {
                 "temperature": temperature,
@@ -1970,7 +2009,35 @@ async def _chat_completion(
             event_id,
         )
         try:
-            if route is not None:
+            if route is not None and route.runtime == "claude":
+                from novel_to_comic.ai.claude_runtime import run_text as run_claude_text
+
+                # The API route's model controls, so the two runs are comparable.
+                claude_wire = text_wire(route.reasoning_model)
+                claude_limit = (max_output_tokens or 16_384) + claude_wire.thinking_headroom_tokens
+                if claude_wire.max_output_tokens:
+                    claude_limit = min(claude_limit, claude_wire.max_output_tokens)
+                claude_result = await run_claude_text(
+                    model=route.reasoning_model,
+                    system_prompt=effective_system,
+                    user_content=user_content,
+                    json_schema=json_schema,
+                    image_attachments=image_attachments,
+                    effort=claude_wire.effort,
+                    max_output_tokens=claude_limit,
+                )
+                metadata["codex_runtime"] = claude_result.metadata
+                data = {
+                    "model": claude_result.model,
+                    "choices": [{"message": {"content": claude_result.text}, "finish_reason": "stop"}],
+                    "usage": _claude_token_usage({
+                        "input_tokens": claude_result.input_tokens,
+                        "output_tokens": claude_result.output_tokens,
+                        "cache_read_input_tokens": claude_result.cache_read_input_tokens,
+                        "cache_creation_input_tokens": claude_result.cache_creation_input_tokens,
+                    }),
+                }
+            elif route is not None:
                 from novel_to_comic.ai.codex_runtime import run_text
 
                 result = await run_text(
@@ -2070,9 +2137,11 @@ async def _chat_completion(
             raise _text_response_error(data, model=model, feature=feature,
                                        event_id=event_id, response=response, empty=empty)
         usage = (
-            _codex_text_usage(event_id, model, route.reasoning_model, data.get("usage") or {})
+            _codex_text_usage(event_id, model, route, data.get("usage") or {})
             if route is not None else _extract_usage(data, event_id, model, operation, response.headers)
         )
+        if route is not None and route.runtime == "claude":
+            metadata["api_equivalent_cost_usd"] = _api_equivalent_cost(route.reasoning_model, usage)
         if (
             route is None
             and not usage.input_tokens
@@ -2104,7 +2173,7 @@ async def _chat_completion(
             model_alias=model,
             latency_ms=int((time.perf_counter() - started) * 1000),
             error=exc,
-            usage=_codex_error_usage(event_id, model, route.reasoning_model, exc) if route else None,
+            usage=_codex_error_usage(event_id, model, route, exc) if route else None,
             error_response=response,
             config=config,
             operation=operation,
@@ -2119,7 +2188,7 @@ async def _chat_completion(
         # buffered content to re-parse here.
         logger.warning("AI text refusal diagnostics=%s", exc.diagnostics)
         usage = (
-            _codex_error_usage(event_id, model, route.reasoning_model, exc)
+            _codex_error_usage(event_id, model, route, exc)
             if route else (_extract_usage(data, event_id, model, operation) if data else None)
         )
         await _finalize_event_shielded(
@@ -2141,14 +2210,14 @@ async def _chat_completion(
         )
         raise
     except Exception as exc:
-        usage = _codex_error_usage(event_id, model, route.reasoning_model, exc) if route else None
+        usage = _codex_error_usage(event_id, model, route, exc) if route else None
         if route is None and data.get("usage"):
             usage = _extract_usage(data, event_id, model, operation,
                                    response.headers if response is not None else None)
         if route is not None:
             metadata["codex_runtime"] = getattr(exc, "metadata", None) or metadata.get("codex_runtime", {})
             if data.get("usage"):
-                usage = _codex_text_usage(event_id, model, route.reasoning_model, data["usage"])
+                usage = _codex_text_usage(event_id, model, route, data["usage"])
         if usage is None and route is None and config.ai_bill_failed_requests == "estimate_all" and response is not None:
             usage = estimate_text_usage(
                 provider="litellm",

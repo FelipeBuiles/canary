@@ -36,7 +36,10 @@ def test_provider_dollars_override_calculation():
 
 
 @pytest.mark.parametrize('payload', [{}, {'usage': {'input_tokens': 1200, 'output_tokens': 2000}},
-    {'usage': _usage({'text_tokens': 200, 'image_tokens': 1000, 'cached_tokens': 550})}])
+    {'usage': _usage({'text_tokens': 200, 'image_tokens': 1000, 'cached_tokens': 550})},
+    # LiteLLM's default ImageResponse usage (FAL reports none): not a free image.
+    {'usage': {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0,
+               'input_tokens_details': {'image_tokens': 0, 'text_tokens': 0}}}])
 def test_missing_usage_or_cache_split_cannot_settle(payload):
     record = _extract_usage(payload, 'call', 'image-sunburst', 'image')
     assert record.cost_usd is None
@@ -88,7 +91,7 @@ def test_measured_style_estimate_is_bounded_and_never_changes_settlement():
     ("image-flare", "medium", 1024, 1280),
     ("image-sunburst", "high", 1024, 1280),
     ("image-sunburst", "auto", 1024, 1280),
-    ("image-sunburst", "medium", 768, 1024),
+    ("image-sunburst", "medium", 1536, 1536),
 ])
 def test_unmeasured_image_settings_keep_conservative_allowance(model, quality, width, height):
     from novel_to_comic.model_costs import get_pricing_resolver
@@ -113,3 +116,38 @@ def test_measured_draw_quote_covers_observed_usage_without_flat_allowance():
     )
     assert flare.source == 'configured_reservation_allowance'
     assert flare.cost_usd == .25
+
+
+def test_gateway_reported_provider_charge_settles_with_its_own_label():
+    record = _extract_usage({'provider_cost_usd': 0.0593, 'provider_cost_source': 'fal_billing_event',
+        'usage': {'input_tokens': 0, 'output_tokens': 0}}, 'call', 'image-sunburst', 'image',
+        httpx.Headers({'x-litellm-response-cost': '0.0593'}))
+    breakdown = calculate_cost_breakdown(record)
+    assert (breakdown.cost_usd, breakdown.source) == (0.0593, 'fal_billing_event')
+
+
+def test_medium_page_quote_and_expected_settlement_use_their_own_tables():
+    from novel_to_comic.model_costs import get_pricing_resolver
+
+    resolver = get_pricing_resolver()
+    kwargs = dict(quality='medium', width=1024, height=1536, prompt_tokens=2000, ref_count=4)
+    quote = resolver.estimate_image_cost('image-sunburst', 1, **kwargs)
+    expected = resolver.estimate_image_cost('image-sunburst', 1, basis='expected', **kwargs)
+    assert quote.source == 'measured_consumption_estimate'
+    # 430 output + 4 x 2000 reference tokens + 2000 prompt tokens.
+    assert quote.cost_usd == pytest.approx(430 * 3e-5 + 8000 * 8e-6 + 2000 * 5e-6)
+    assert expected.source == 'expected_consumption_estimate'
+    # 343 output (FAL's published medium portrait) + 4 x 1200 reference tokens.
+    assert expected.cost_usd == pytest.approx(343 * 3e-5 + 4800 * 8e-6 + 2000 * 5e-6)
+    # 2026-09-22 FAL billing: medium pages with 4-5 references cost $0.059-0.067.
+    assert .05 < expected.cost_usd < .07 < quote.cost_usd
+
+
+def test_expected_basis_without_measurements_keeps_the_reservation_estimate():
+    from novel_to_comic.model_costs import get_pricing_resolver
+
+    resolver = get_pricing_resolver()
+    quote = resolver.estimate_image_cost('image-sunburst', 1, quality='medium', width=1536, height=1536)
+    expected = resolver.estimate_image_cost('image-sunburst', 1, quality='medium', width=1536, height=1536,
+                                            basis='expected')
+    assert expected == quote

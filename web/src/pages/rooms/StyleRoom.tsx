@@ -574,7 +574,7 @@ export function StyleRoom() {
           <section className="grid gap-6 bg-ink-black p-6 text-pulp-paper shadow-paper md:grid-cols-[minmax(0,1fr)_minmax(0,0.55fr)] md:p-8">
             <div>
               <h2 className="font-display text-3xl font-black uppercase leading-tight tracking-[-0.03em] md:text-4xl">{t("STYLE PROOFS")}</h2>
-              <p className="mt-3 max-w-[60ch] font-body text-sm leading-7 text-pulp-paper/85">{t("One story, different visual directions. Explore the artwork, compare your favorites, then choose the look your comic will carry.")}</p>
+              <p className="mt-3 font-body text-sm leading-7 text-pulp-paper/85">{t("One story, different visual directions. Explore the artwork, compare your favorites, then choose the look your comic will carry.")}</p>
               {storyBible?.title && <p className="mt-4 font-meta text-xs text-narrator-gold">{storyBible.title}</p>}
             </div>
             <div className="flex flex-col justify-center bg-pulp-paper/10 p-5">

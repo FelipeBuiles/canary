@@ -57,6 +57,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       FAL_KEY: ${FAL_KEY:-}
+      FAL_ADMIN_KEY: ${FAL_ADMIN_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
       # ─── Web app ─────────────────────────────────────────────────────────
@@ -103,6 +104,7 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
       FAL_KEY: ${FAL_KEY:-}
+      FAL_ADMIN_KEY: ${FAL_ADMIN_KEY:-}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_HOST: ${LANGFUSE_HOST:-http://langfuse-web:3000}

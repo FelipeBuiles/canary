@@ -1045,7 +1045,7 @@ function LabsRoomContent({ models, fixture }: { models: LabsModel[]; fixture: La
             <h1 className="font-display text-[clamp(3rem,6vw,5rem)] font-black uppercase leading-[0.85] tracking-[-0.04em] text-ink-black">
               Labs
             </h1>
-            <p className="mt-3 max-w-[60ch] font-body text-base leading-7 text-ink-muted">
+            <p className="mt-3 font-body text-base leading-7 text-ink-muted">
               Run the same scene through multiple image-generation models in
               parallel. Tune the style guide, pick the candidates, compare the
               output side-by-side.

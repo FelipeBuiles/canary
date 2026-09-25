@@ -45,11 +45,11 @@ def test_public_image_page_preserves_references_and_sends_fixed_controls(tmp_pat
     expected = {
         'model': 'image-sunburst', 'prompt': prepared.prompt, 'size': '1024x1536', 'n': 1,
     }
-    expected.update({'quality': 'high', 'output_format': 'png'})
+    expected.update({'quality': 'medium', 'output_format': 'png'})
     manifest = kwargs['data']['canary_wire_request']
     assert json.loads(manifest) == {
         'width': 1024, 'height': 1536,
-        'controls': [['quality', 'high'], ['output_format', 'png'], ['n', 1]],
+        'controls': [['quality', 'medium'], ['output_format', 'png'], ['n', 1]],
     }
     expected['canary_wire_request'] = manifest
     # Reproduce custom-provider filtering: only the manifest survives.
@@ -59,7 +59,7 @@ def test_public_image_page_preserves_references_and_sends_fixed_controls(tmp_pat
         {'canary_wire_request': manifest},
     )
     assert payload['image_size'] == {'width': 1024, 'height': 1536}
-    assert payload['quality'] == 'high'
+    assert payload['quality'] == 'medium'
     assert payload['output_format'] == 'png'
     assert payload['num_images'] == 1
     assert kwargs['data'] == expected
@@ -70,9 +70,74 @@ def test_public_image_page_preserves_references_and_sends_fixed_controls(tmp_pat
 
 
 def test_sunburst_page_profile_uses_fal_queue():
+    from novel_to_comic.page_drawing import page_image_quality
+
     profile = current_page_capability_profile(Config(draw_model='image-sunburst'))
     assert profile.provider == 'fal-queue'
     assert profile.model == 'openai/gpt-image-2.5/sunburst'
+    assert page_image_quality(profile.id, profile.provider) == 'medium'
+    integrated = current_page_capability_profile(Config(draw_model='image-sunburst', lettering_mode='integrated'))
+    assert page_image_quality(integrated.id, integrated.provider) == 'medium'
+    # Retained high-quality editions keep the quality they were drawn at.
+    assert page_image_quality('gpt-image-2.5-sunburst-fal-complete-page-high-hybrid-v1', 'fal-queue') == 'high'
+
+
+def _generate_sunburst_page(tmp_path, response_json, usage=None):
+    config = Config(draw_model='image-sunburst')
+    profile = current_page_capability_profile(config)
+    compiled = compile_page_generation_request(
+        _page(), select_book_edition(edition_id='test', profile=profile),
+        _inventory(), _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
+    )
+    adapter = complete_page_adapter(config)
+    image = io.BytesIO()
+    Image.new('RGB', (1024, 1536)).save(image, format='PNG')
+    response = httpx.Response(200, json=response_json, request=httpx.Request('POST', 'http://gateway'))
+    patches = [
+        patch('novel_to_comic.ai.client._post_with_retry', AsyncMock(return_value=response)),
+        patch('novel_to_comic.ai.client._decode_image_response', AsyncMock(return_value=image.getvalue())),
+        patch('novel_to_comic.ai.client._finalize_event_shielded', AsyncMock()),
+    ]
+    if usage is not None:
+        patches.append(patch('novel_to_comic.ai.client._extract_usage', return_value=usage))
+    for item in patches:
+        item.start()
+    try:
+        return compiled, asyncio.run(adapter.generate(adapter.prepare(compiled)))
+    finally:
+        for item in patches:
+            item.stop()
+
+
+def test_fal_page_settles_the_billed_charge_and_keeps_the_request_id(tmp_path):
+    _compiled, result = _generate_sunburst_page(tmp_path, {
+        'data': [{'b64_json': 'x'}], 'provider_request_id': 'fal-req-1',
+        'provider_cost_usd': 0.0593, 'provider_cost_source': 'fal_billing_event',
+        'usage': {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0,
+                  'input_tokens_details': {'image_tokens': 0, 'text_tokens': 0}},
+    })
+    assert result.provider_request_id == 'fal-req-1'
+    assert result.usage.cost_usd == 0.0593
+    assert result.usage.cost_source == 'fal_billing_event'
+
+
+def test_fal_page_without_billing_event_settles_a_labelled_request_estimate(tmp_path):
+    from novel_to_comic.page_drawing import estimate_page_request_cost_usd
+
+    # LiteLLM's default ImageResponse usage is all zeros: not a free request.
+    compiled, result = _generate_sunburst_page(tmp_path, {
+        'data': [{'b64_json': 'x'}], 'provider_request_id': 'fal-req-2',
+        'usage': {'input_tokens': 0, 'output_tokens': 0, 'total_tokens': 0,
+                  'input_tokens_details': {'image_tokens': 0, 'text_tokens': 0}},
+    })
+    expected = estimate_page_request_cost_usd(compiled, basis='expected')
+    assert result.provider_request_id == 'fal-req-2'
+    assert result.usage.cost_source == 'request_estimate'
+    assert result.usage.cost_usd == pytest.approx(expected)
+    # Central estimate: below the reservation quote, and far below the old
+    # $0.25 + $0.01/reference profile price.
+    assert expected < estimate_page_request_cost_usd(compiled)
+    assert expected < 0.25
 
 
 def test_retired_image_variant_cannot_be_selected():
@@ -164,14 +229,18 @@ def test_page_quote_uses_current_pricing_and_counts_correction_source(tmp_path):
     )
     frozen = compiled.request.model_dump_json()
     expected = estimate_image_cost(
-        compiled.request.model, 1, quality='high', width=1024, height=1536,
+        compiled.request.model, 1, quality='medium', width=1024, height=1536,
         ref_count=len(compiled.request.references), prompt_text=compiled.request.prompt,
     )
-    quote = estimate_draw_api_cost(config, float(compiled.request.estimated_cost_usd), compiled=compiled, ocr=False)
+    quote = estimate_draw_api_cost(config, compiled, ocr=False)
     assert quote == pytest.approx(expected)
-    assert quote < float(compiled.request.estimated_cost_usd)
+    # Medium output is quoted from its measured table, not the $0.25 allowance.
+    assert quote < 0.25
+    # Pricing is never frozen into new editions or requests.
+    assert profile.price_per_page_usd == profile.price_per_reference_usd == 0
+    assert compiled.request.estimated_cost_usd == 0
     correction = replace(compiled, edit_source_bytes=b'parent page')
-    assert estimate_draw_api_cost(config, 0, compiled=correction, ocr=False) == pytest.approx(quote + .016)
+    assert estimate_draw_api_cost(config, correction, ocr=False) == pytest.approx(quote + .016)
     assert correction_credit_estimate(correction, config=config, reserve=True)['estimate_credits'] > 0
     assert compiled.request.model_dump_json() == frozen
     complete_page_adapter(config).prepare(compiled)
@@ -215,7 +284,7 @@ def test_sunburst_stage_and_batch_quotes_use_the_same_measured_page_cost(tmp_pat
         assert response.status_code == 200
         assert response.json() == expected
         assert estimate_cost(config, tmp_path, None) == pytest.approx(
-            estimate_draw_api_cost(config, 0, compiled=compiled),
+            estimate_draw_api_cost(config, compiled),
         )
 
 

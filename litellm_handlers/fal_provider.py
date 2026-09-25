@@ -7,6 +7,7 @@ import base64
 import binascii
 import json
 import logging
+import math
 import mimetypes
 import os
 import re
@@ -38,6 +39,8 @@ except ModuleNotFoundError:
         pass
 
 FAL_QUEUE_BASE = "https://queue.fal.run"
+FAL_BILLING_EVENTS_URL = "https://api.fal.ai/v1/models/billing-events"
+BILLING_POLL_INTERVAL_S = 2.0
 POLL_INTERVAL_S = 1.5
 POLL_TIMEOUT_S = 300.0
 GET_RETRY_COUNT = 2
@@ -188,6 +191,7 @@ class FalQueueLLM(CustomLLM):
                     endpoint=endpoint,
                     request_id=request_id,
                 )
+                cost_usd = await _billing_cost(http, request_id, endpoint=endpoint)
         except asyncio.CancelledError:
             logger.warning(
                 "FAL image request cancelled endpoint=%s request_id=%s",
@@ -218,8 +222,87 @@ class FalQueueLLM(CustomLLM):
         model_response._hidden_params["model"] = endpoint
         model_response._hidden_params["custom_llm_provider"] = "fal-queue"
         model_response._hidden_params["provider_request_id"] = request_id
-        model_response._hidden_params["response_cost"] = None
+        model_response._hidden_params["response_cost"] = cost_usd
+        # FAL returns no token usage. Carry the request ID and, when available,
+        # the billed amount in the body so Canary settles the actual charge.
+        model_response.provider_request_id = request_id
+        if cost_usd is not None:
+            model_response.provider_cost_usd = cost_usd
+            model_response.provider_cost_source = "fal_billing_event"
         return model_response
+
+
+async def _billing_cost(
+    client: httpx.AsyncClient,
+    request_id: str,
+    *,
+    endpoint: str = "<unknown>",
+) -> float | None:
+    """Read FAL's billed total for one completed request, or None.
+
+    Requires an Admin-scoped ``FAL_ADMIN_KEY``. The image is already paid for
+    and delivered, so lookup failures are logged and never raised; Canary then
+    settles a labelled request estimate instead.
+    """
+    key = (os.environ.get("FAL_ADMIN_KEY") or "").strip()
+    if not key:
+        return None
+    try:
+        timeout_s = float(os.environ.get("FAL_BILLING_LOOKUP_TIMEOUT_S", "20"))
+    except ValueError:
+        timeout_s = 20.0
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    while True:
+        try:
+            response = await client.get(
+                FAL_BILLING_EVENTS_URL,
+                headers={"Authorization": f"Key {key}"},
+                params={"request_id": request_id, "limit": 50},
+            )
+        except httpx.RequestError as exc:
+            logger.warning("FAL billing lookup transport error endpoint=%s request_id=%s error=%s",
+                           endpoint, request_id, type(exc).__name__)
+            response = None
+        if response is not None and response.status_code in {401, 403}:
+            logger.error("FAL billing lookup unauthorized endpoint=%s request_id=%s status=%s; "
+                         "FAL_ADMIN_KEY needs Admin scope", endpoint, request_id, response.status_code)
+            return None
+        if response is not None and response.status_code < 400:
+            cost = _billing_total(response, request_id)
+            if cost is not None:
+                logger.info("FAL billing event endpoint=%s request_id=%s cost_usd=%.6f",
+                            endpoint, request_id, cost)
+                return cost
+        elif response is not None:
+            logger.warning("FAL billing lookup failed endpoint=%s request_id=%s status=%s detail=%s",
+                           endpoint, request_id, response.status_code, _response_detail(response) or "<none>")
+        if time.monotonic() + BILLING_POLL_INTERVAL_S > deadline:
+            logger.warning("FAL billing event unavailable endpoint=%s request_id=%s after %.0fs",
+                           endpoint, request_id, timeout_s)
+            return None
+        await asyncio.sleep(BILLING_POLL_INTERVAL_S)
+
+
+def _billing_total(response: httpx.Response, request_id: str) -> float | None:
+    """Sum the request's billing events; any malformed event voids the total."""
+    try:
+        data = response.json()
+    except (TypeError, ValueError):
+        return None
+    events = data.get("billing_events") if isinstance(data, dict) else None
+    if not isinstance(events, list):
+        return None
+    matched = [event for event in events if isinstance(event, dict) and event.get("request_id") == request_id]
+    if not matched:
+        return None
+    total = 0.0
+    for event in matched:
+        value = event.get("cost_total")
+        if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value) or value < 0:
+            logger.error("FAL billing event has invalid cost_total request_id=%s", request_id)
+            return None
+        total += float(value)
+    return total
 
 
 def _fal_endpoint(model: str, *, has_images: bool = False) -> str:

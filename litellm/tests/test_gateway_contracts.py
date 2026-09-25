@@ -197,3 +197,47 @@ def test_opus_5_5_route_keeps_client_effort_format_and_thinking_summaries(monkey
     assert "temperature" not in body
     assert "tool_choice" not in body
     assert body["messages"][-1]["role"] == "user"
+
+
+@pytest.mark.parametrize("edit", [False, True])
+def test_fal_billed_cost_and_request_id_survive_litellm_image_wrappers(monkeypatch, edit):
+    import asyncio
+    import io
+    import json
+    import litellm
+    from litellm.utils import custom_llm_setup
+    from litellm_handlers import fal_provider
+
+    async def submit(*args, **kwargs):
+        return {"request_id": "req-9", "status_url": "s", "response_url": "r"}
+
+    async def done(*args, **kwargs):
+        return None
+
+    async def fetch(*args, **kwargs):
+        return {"images": [{"url": "data:image/png;base64,aGVsbG8="}]}
+
+    async def billing(*args, **kwargs):
+        return 0.0593
+
+    monkeypatch.setattr(fal_provider, "_submit", submit)
+    monkeypatch.setattr(fal_provider, "_poll", done)
+    monkeypatch.setattr(fal_provider, "_fetch_result", fetch)
+    monkeypatch.setattr(fal_provider, "_billing_cost", billing)
+    monkeypatch.setattr(litellm, "custom_provider_map", [
+        {"provider": "fal-queue", "custom_handler": fal_provider.fal_queue_llm},
+    ])
+    custom_llm_setup()
+    model = "fal-queue/openai/gpt-image-2.5/sunburst"
+    call = (
+        litellm.aimage_edit(model=model, prompt="p", image=[io.BytesIO(b"\x89PNG")], api_key="k")
+        if edit else litellm.aimage_generation(model=model, prompt="p", api_key="k", size="1024x1536")
+    )
+    response = asyncio.run(call)
+
+    # The proxy sets x-litellm-response-cost from this and returns the body.
+    assert response._hidden_params["response_cost"] == 0.0593
+    body = json.loads(response.model_dump_json())
+    assert body["provider_request_id"] == "req-9"
+    assert body["provider_cost_usd"] == 0.0593
+    assert body["provider_cost_source"] == "fal_billing_event"

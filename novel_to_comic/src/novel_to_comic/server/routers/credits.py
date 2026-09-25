@@ -8,6 +8,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 
+from novel_to_comic.codex_dev import is_subscription
+
 from ..auth import get_current_user
 from ..credits import get_balance_credits
 from ..db import get_db
@@ -103,7 +105,7 @@ def _group_history_runs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if reservation and not released:
             status = "in_flight"
         elif any(
-            row.get("funding") == "codex_subscription"
+            is_subscription(row.get("funding"))
             and row.get("usage_status") in {"failed", "cancelled", "refused"}
             for row in settled
         ):

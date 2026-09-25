@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getAccountModelSettings, updateAccountModelSettings } from "../api/modelSettings";
+import { MODEL_FUNDING_GROUPS, fundingLabel } from "../modelFunding";
 import { ApiError } from "../api/client";
 import { useI18n } from "../i18n";
 import { Surface } from "./ui/Surface";
@@ -47,10 +48,10 @@ export function AccountModelPanel() {
   }} className="space-y-5">
     <header>
       <h2 className="font-display text-2xl font-black tracking-tight">{t("Models for your account")}</h2>
-      <p className="mt-2 max-w-prose font-body text-sm leading-6 text-ink-muted">{t("Choose account defaults for each part of production. New work uses these defaults unless a project has its own model choice.")}</p>
-      <p className="mt-2 max-w-prose font-body text-sm leading-6 text-ink-muted">{t("Changing the Draw model requires a new edition or project. Existing pages are never switched automatically.")}</p>
-      <p className="mt-2 max-w-prose font-body text-sm leading-6 text-ink-muted">{t("Saving settings does not start generation. Mix API and Codex models freely; only API calls use credits.")}</p>
-      {settings.codex_enabled === false && <p className="mt-2 max-w-prose font-body text-sm leading-6 text-ink-muted">{t("Codex is disabled on this server. Start local development with --codex to enable its model choices.")}</p>}
+      <p className="mt-2 font-body text-sm leading-6 text-ink-muted">{t("Choose account defaults for each part of production. New work uses these defaults unless a project has its own model choice.")}</p>
+      <p className="mt-2 font-body text-sm leading-6 text-ink-muted">{t("Changing the Draw model requires a new edition or project. Existing pages are never switched automatically.")}</p>
+      <p className="mt-2 font-body text-sm leading-6 text-ink-muted">{t("Saving settings does not start generation. Mix API and Codex models freely; only API calls use credits.")}</p>
+      {settings.codex_enabled === false && <p className="mt-2 font-body text-sm leading-6 text-ink-muted">{t("Codex is disabled on this server. Start local development with --codex to enable its model choices.")}</p>}
     </header>
     <Surface border="soft" shadow="none">
       {settings.stages.map((stage) => {
@@ -67,9 +68,9 @@ export function AccountModelPanel() {
           }}
           className="w-full bg-bristol font-body text-sm"
         >
-          {(["api", "codex_subscription"] as const).map((funding) => {
+          {MODEL_FUNDING_GROUPS.map(({ funding, label }) => {
             const choices = stage.model_ids.filter((id) => (settings.models.find((model) => model.id === id)?.funding ?? "api") === funding);
-            return choices.length > 0 && <optgroup key={funding} label={t(funding === "api" ? "API billing" : "Codex subscription")}>
+            return choices.length > 0 && <optgroup key={funding} label={t(label)}>
               {choices.map((id) => {
                 const model = settings.models.find((option) => option.id === id);
                 return <option key={id} value={id} disabled={model?.available === false}>{model?.label ?? id}</option>;
@@ -77,7 +78,7 @@ export function AccountModelPanel() {
             </optgroup>;
           })}
         </SelectField>
-        <p className="mt-2 font-body text-xs leading-5 text-ink-muted">{selected?.provider} · {t(selected?.funding === "codex_subscription" ? "Codex subscription" : "API billing")}</p>
+        <p className="mt-2 font-body text-xs leading-5 text-ink-muted">{selected?.provider} · {t(fundingLabel(selected?.funding))}</p>
         {selected?.description && <p className="mt-1 font-body text-xs leading-5 text-ink-muted">{t(selected.description)}</p>}
       </SettingsRow>;
       })}

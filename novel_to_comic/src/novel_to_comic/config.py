@@ -55,6 +55,7 @@ COMPLETE_PAGE_OUTPUT_WIDTH = 1696
 COMPLETE_PAGE_OUTPUT_HEIGHT = 2528
 COMPLETE_PAGE_MAX_PROMPT_CHARACTERS = 32_000
 COMPLETE_PAGE_MAX_ATTEMPTS = 3
+# Retained edition identity values (see the GPT25/Muse note below).
 COMPLETE_PAGE_BASE_COST_USD = "0.134"
 COMPLETE_PAGE_REFERENCE_COST_USD = "0.00112"
 
@@ -68,7 +69,9 @@ GATEWAY_PAGE_OCR = GATEWAY_LUNA
 PAGE_OCR_ESTIMATED_COST_USD = "0.004"
 # Optional page + approved-reference comparison allowance.
 PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD = "0.02"
-# Conservative reservation allowances, not measured provider prices.
+# Frozen into retained Draw edition profiles and requests, so they must stay
+# byte-identical for those editions to validate. Never used for quotes,
+# reservations, or charges; page pricing lives in litellm_pricing_overrides.yaml.
 GPT25_PAGE_ESTIMATED_COST_USD = "0.25"
 GPT25_REFERENCE_ESTIMATED_COST_USD = "0.01"
 MUSE_PAGE_ESTIMATED_COST_USD = "0.01"

@@ -277,7 +277,7 @@ function ConnectionScreen({
       <Surface border="soft" shadow="paper" className="w-full max-w-[620px] overflow-hidden">
         <div className="border-b-[2px] border-ink-black bg-ink-black px-6 py-6 text-bristol md:px-8">
           <div className="flex items-center gap-3"><BrandMark className="h-10 w-10" variant="reversed" /><div><div className="font-display text-[1.35rem] font-black uppercase leading-none">Scenewright</div><div className="mt-1 font-meta text-[0.52rem] font-bold uppercase tracking-[0.16em] text-bristol/58">Operator desk</div></div></div>
-          <div className="mt-8 flex items-start gap-3"><LockKeyhole className="mt-0.5 shrink-0 text-narrator-gold" size={19} /><div><div className="font-meta text-[0.58rem] font-bold uppercase tracking-[0.15em] text-narrator-gold">Private control surface</div><h1 className="mt-2 font-display text-[2.1rem] font-black leading-[0.94] tracking-[-0.045em]">Connect to the server.</h1><p className="mt-3 max-w-[48ch] font-body text-[0.82rem] leading-5 text-bristol/70">This desk reads real Supabase records and can write manual credit grants. It stays local, but the server connection still requires your operations token.</p></div></div>
+          <div className="mt-8 flex items-start gap-3"><LockKeyhole className="mt-0.5 shrink-0 text-narrator-gold" size={19} /><div><div className="font-meta text-[0.58rem] font-bold uppercase tracking-[0.15em] text-narrator-gold">Private control surface</div><h1 className="mt-2 font-display text-[2.1rem] font-black leading-[0.94] tracking-[-0.045em]">Connect to the server.</h1><p className="mt-3 font-body text-[0.82rem] leading-5 text-bristol/70">This desk reads real Supabase records and can write manual credit grants. It stays local, but the server connection still requires your operations token.</p></div></div>
         </div>
         <form onSubmit={submit} className="space-y-5 px-6 py-6 md:px-8">
           <div>
@@ -289,7 +289,7 @@ function ConnectionScreen({
             <input id="backoffice-ops-token" type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="CANARY_OPS_TOKEN" autoComplete="current-password" className="mt-2 h-12 w-full border-[2px] border-ink-black/18 bg-bristol px-3 font-body text-[0.78rem] text-ink-black outline-none placeholder:text-ink-soft hover:border-ink-black/40 focus:border-hero-red" />
           </div>
           {error && <div role="alert" className="border-[2px] border-hero-red bg-chip-red px-3 py-3 font-body text-[0.74rem] font-semibold leading-5 text-hero-red">{error}</div>}
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t-[2px] border-ink-black/10 pt-5"><p className="max-w-[38ch] font-body text-[0.68rem] leading-5 text-ink-soft">For a local panel pointed at production, allow its origin with <code className="font-meta text-[0.6rem] text-ink-black">CANARY_BACKOFFICE_ORIGINS</code>.</p><Button type="submit" size="sm" disabled={!token.trim() || loading}>{loading ? <><RefreshCw size={14} className="animate-spin" /> Connecting</> : <><LockKeyhole size={14} /> Connect</>}</Button></div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t-[2px] border-ink-black/10 pt-5"><p className="font-body text-[0.68rem] leading-5 text-ink-soft">For a local panel pointed at production, allow its origin with <code className="font-meta text-[0.6rem] text-ink-black">CANARY_BACKOFFICE_ORIGINS</code>.</p><Button type="submit" size="sm" disabled={!token.trim() || loading}>{loading ? <><RefreshCw size={14} className="animate-spin" /> Connecting</> : <><LockKeyhole size={14} /> Connect</>}</Button></div>
         </form>
       </Surface>
     </div>
@@ -316,7 +316,7 @@ function PageHeading({
         <h1 className="font-display text-[clamp(2rem,3.5vw,3.7rem)] font-black leading-[0.94] tracking-[-0.045em] text-ink-black">
           {meta.title}
         </h1>
-        <p className="mt-3 max-w-[68ch] font-body text-[0.9rem] leading-6 text-ink-muted">{meta.description}</p>
+        <p className="mt-3 font-body text-[0.9rem] leading-6 text-ink-muted">{meta.description}</p>
       </div>
       {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
     </header>
@@ -822,7 +822,7 @@ function SupportView({
         <Surface border="soft" shadow="none" className="border-dashed px-6 py-16 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center border-[2px] border-ink-black bg-narrator-gold"><LifeBuoy size={19} /></div>
           <h2 className="mt-4 font-display text-[1.35rem] font-black">Support inbox is not connected yet</h2>
-          <p className="mx-auto mt-2 max-w-[48ch] font-body text-[0.78rem] leading-5 text-ink-muted">Customer support records still need a durable store. The live operator surface does show generation and provider errors under Users and Overview.</p>
+          <p className="mx-auto mt-2 font-body text-[0.78rem] leading-5 text-ink-muted">Customer support records still need a durable store. The live operator surface does show generation and provider errors under Users and Overview.</p>
         </Surface>
       </>
     );

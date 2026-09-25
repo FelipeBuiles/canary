@@ -169,12 +169,14 @@ def build_character_state_spec(
     if state.continuity_guard:
         prompt_parts.append(state.continuity_guard)
     composition = (
-        "One wide turnaround reference sheet: in the left third, a head-and-shoulders "
+        "One wide appearance-state reference sheet: in the left third, a head-and-shoulders "
         "three-quarter portrait above a head-and-shoulders side profile; in the right two "
-        "thirds, full-body front, three-quarter, and back standing views at one scale. "
-        "Use only poses compatible with the active-state anatomy, age, and proportions. "
-        "The selected style owns rendering. Same active identity and appearance in all "
-        "five views, each fully contained within its own region. No text or labels."
+        "thirds, one full-body front view in a neutral design stance compatible with the "
+        "active-state anatomy. Show only how this state looks on the body, face, hair and "
+        "clothing; leave out objects that pierce, pin, bind or are held, other people, "
+        "scenery, and the situation itself, keeping only their visible marks. The selected "
+        "style owns rendering. Same active identity and appearance in all three views, each "
+        "fully contained within its own region. No text or labels."
     )
     prompt_parts.append(composition)
     direction_parts.append(composition)
@@ -190,12 +192,22 @@ def build_character_state_spec(
         overridden_facets=tuple(sorted(overridden)), replaces_identity=state.replaces_identity, style_path=_relative(style_path, project_dir),
         style_sha256=_sha256(style_path), configured_route_model=config.effective_image_model(),
         configured_route=image_model_profile_for_config(config).route.value,
-        requested_shape="landscape", effective_width=1536, effective_height=1024,
+        requested_shape="landscape", effective_width=state_reference_dimensions(config, "character")[0],
+        effective_height=state_reference_dimensions(config, "character")[1],
         state_addendum=addendum, state_addendum_revision=_revision(instructions),
         lineage_status=LineageStatus.UNVERIFIED,
         rendered_prompt="\n\n".join(part for part in prompt_parts if part),
         state_direction="\n\n".join(part for part in direction_parts if part),
     )
+
+
+def state_reference_dimensions(config: Config, asset_kind: str) -> tuple[int | None, int | None]:
+    """Generation size of one state reference; specs and quotes share it."""
+    if asset_kind == "character":
+        return 1536, 1024
+    if asset_kind == "location":
+        return RefStrategy.for_config(config).location_plate_dimensions()
+    return 1024, 1024
 
 
 def build_location_state_spec(
@@ -211,7 +223,7 @@ def build_location_state_spec(
     composition = "Wide environment plate. Active-state conditions win. No characters or text."
     prompt_parts.append(composition)
     direction_parts.append(composition)
-    width, height = RefStrategy.for_config(config).location_plate_dimensions()
+    width, height = state_reference_dimensions(config, "location")
     parent_hash = _sha256(parent)
     return StateAssetGenerationSpec(
         asset_kind="location_state_plate", entity_id=loc.id, state_id=state.id,
@@ -768,6 +780,7 @@ def build_prop_state_spec(config: Config, project_dir: Path, prop, state: Appear
         replaces_identity=state.replaces_identity,
         style_path=_relative(style_path, project_dir), style_sha256=_sha256(style_path),
         configured_route_model=config.effective_image_model(), configured_route=image_model_profile_for_config(config).route.value,
-        requested_shape="square", effective_width=1024, effective_height=1024,
+        requested_shape="square", effective_width=state_reference_dimensions(config, "prop")[0],
+        effective_height=state_reference_dimensions(config, "prop")[1],
         lineage_status=LineageStatus.UNVERIFIED, rendered_prompt=direction + "\n" + state.visual_anchor, state_direction=direction,
     )

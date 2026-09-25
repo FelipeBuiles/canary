@@ -18,7 +18,7 @@ from postgrest.exceptions import APIError
 
 from novel_to_comic.config import Config, mock_mode_active
 from novel_to_comic.state import PipelineState
-from novel_to_comic.codex_dev import classify_operations
+from novel_to_comic.codex_dev import Funding, classify_operations, is_subscription
 from .codex_admission import image_operations, prompt_image_operations, stage_operations
 from novel_to_comic.usage import (
     UsageRecord,
@@ -121,7 +121,7 @@ class CreditEstimate(TypedDict):
     reserved_credits: int | None
     reservation_multiplier: float
     confidence: CostConfidence
-    funding: Literal["api", "codex_subscription"]
+    funding: Funding
 
 def credits_per_provider_usd() -> float:
     """Public credits charged per $1 of raw provider cost before markup."""
@@ -153,7 +153,7 @@ def usage_to_credit_debit(usage: UsageRecord) -> tuple[int, float]:
     This is the only place where provider USD is converted to public credits.
     Keep purchase package math separate so margin is not applied twice.
     """
-    if usage.funding == "codex_subscription" or usage.cost_source == "mock":
+    if is_subscription(usage.funding) or usage.cost_source == "mock":
         return 0, 0.0
     cost_usd = calculate_cost(usage)
     credits = provider_usd_to_credits(cost_usd)
@@ -170,7 +170,7 @@ def estimate_stage_credit_reservation(
 ) -> int:
     """Estimate public credits to reserve for a stage from current project inputs."""
     operations = stage_operations(config, stage)
-    if not operations or classify_operations(operations) == "codex_subscription":
+    if not operations or is_subscription(classify_operations(operations)):
         return 0
     if mock_mode_active(config):
         return 0
@@ -190,7 +190,7 @@ def estimate_stage_credit_cost(
     stage: str,
 ) -> int:
     """Unbuffered projected final cost in public credits."""
-    if classify_operations(stage_operations(config, stage)) == "codex_subscription":
+    if is_subscription(classify_operations(stage_operations(config, stage))):
         return 0
     if mock_mode_active(config):
         return 0
@@ -218,7 +218,7 @@ def credit_estimate_for_provider_cost(
     *,
     reserve: bool,
     zero_cost_estimate: int = 0,
-    funding: Literal["api", "codex_subscription"] = "api",
+    funding: Funding = "api",
 ) -> CreditEstimate:
     """Build the canonical CreditEstimate for one provider-cost figure.
 
@@ -228,11 +228,11 @@ def credit_estimate_for_provider_cost(
     to 1 so the pre-check still runs.
     """
     estimate = (
-        0 if funding == "codex_subscription"
+        0 if is_subscription(funding)
         else max(1, provider_usd_to_credits(cost_usd)) if cost_usd > 0 else zero_cost_estimate
     )
     multiplier = reservation_buffer()
-    if reserve or funding == "codex_subscription":
+    if reserve or is_subscription(funding):
         reserved: int | None = math.ceil(estimate * multiplier) if estimate > 0 else 0
     else:
         reserved = None
@@ -253,7 +253,7 @@ def estimate_adaptation_restart(config: Config, project_dir: Path, state: Pipeli
     from novel_to_comic.stages.s4_adapt import estimate_cost
 
     funding = classify_operations(stage_operations(config, "adapt"))
-    cost = 0.0 if mock_mode_active(config) or funding == "codex_subscription" else estimate_cost(
+    cost = 0.0 if mock_mode_active(config) or is_subscription(funding) else estimate_cost(
         config, project_dir, state, fresh=True,
     )
     return credit_estimate_for_provider_cost(cost, "adapt", reserve=True, funding=funding)
@@ -287,7 +287,7 @@ def estimate_stage_provider_cost_usd(
     state: PipelineState,
     stage: str,
 ) -> float:
-    if classify_operations(stage_operations(config, stage)) == "codex_subscription":
+    if is_subscription(classify_operations(stage_operations(config, stage))):
         return 0.0
     from novel_to_comic.stages import REGISTRY
     stage_obj = REGISTRY.get(stage)
@@ -305,7 +305,7 @@ class UnifiedCostResolver:
     ) -> CreditEstimate:
         """Add the separately billed prompt rewrite to an image estimate."""
         funding = classify_operations(prompt_image_operations(config))
-        if funding == "codex_subscription":
+        if is_subscription(funding):
             return credit_estimate_for_provider_cost(0.0, stage, reserve=False, funding=funding)
         if mock_mode_active(config):
             return CreditEstimate(
@@ -361,14 +361,15 @@ class UnifiedCostResolver:
     ) -> CreditEstimate:
         """Estimate the credits needed to regenerate a single cast asset (character sheet or plate)."""
         funding = classify_operations(image_operations(config))
-        if funding == "codex_subscription":
+        if is_subscription(funding):
             return credit_estimate_for_provider_cost(0.0, "cast", reserve=False, funding=funding)
         if mock_mode_active(config):
             return credit_estimate_for_provider_cost(0.0, "cast", reserve=False)
         from novel_to_comic.cast_reference_inputs import saved_reference_inputs
         entity_id, _, state_id = asset_id.partition(":")
+        kind_for_asset = {"character_ref_regen": "character", "location_plate_regen": "location", "prop_ref_regen": "prop"}
         if additional_reference_count is None:
-            kind = {"character_ref_regen": "character", "location_plate_regen": "location", "prop_ref_regen": "prop"}[asset_type]
+            kind = kind_for_asset[asset_type]
             additional_reference_count = len(saved_reference_inputs(project_dir, kind, entity_id, state_id or None))
         ref_count = 1  # selected style authority
         if asset_type in {"character_ref_regen", "location_plate_regen"} and ":" in asset_id:
@@ -382,11 +383,20 @@ class UnifiedCostResolver:
                 entity_id,
                 state_id,
             )
+        from novel_to_comic.state_assets import state_reference_dimensions
+
+        # Canonical sheets and plates share their state references' sizes.
+        width, height = (
+            state_reference_dimensions(config, kind_for_asset[asset_type])
+            if asset_type in kind_for_asset else (None, None)
+        )
         cost_usd = estimate_image_cost(
             config.effective_image_model(),
             1,
             quality=getattr(config, "image_quality", None),
             ref_count=ref_count + additional_reference_count,
+            width=width,
+            height=height,
         )
         return credit_estimate_for_provider_cost(
             cost_usd, "cast", reserve=False, zero_cost_estimate=1
@@ -583,7 +593,7 @@ def debit_model_usage(
     are reconciled by retrying the immutable, idempotent database operation.
     """
     # Local Codex diagnostics live in AI usage events, never the credit ledger.
-    if usage.funding == "codex_subscription":
+    if is_subscription(usage.funding):
         return
     if calculate_cost_breakdown(usage).source == "unknown_provider_usage":
         retain_ambiguous_job(job_id)

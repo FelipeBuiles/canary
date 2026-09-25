@@ -48,7 +48,7 @@ TEXT_MODELS = (
     # Thinking is always on (disabling it is a 400 at every effort). ``high``
     # keeps parity with the Opus 5 route it replaces.
     TextModel("claude-opus-5-5", "Claude Opus 5.5", "Anthropic", "anthropic",
-              temperature=False, claude_native_json=True, effort="high",
+              temperature=False, claude_native_json=True, effort="low",
               thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
               max_output_tokens=128_000),
     TextModel("mimo-v2.6-pro", "MiMo V2.6 Pro", "OpenRouter", "openrouter",

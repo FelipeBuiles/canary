@@ -193,3 +193,130 @@ def test_sync_mode_data_uri_result_does_not_make_a_second_network_request():
 
     assert image == b"hello"
     assert client.calls == []
+
+
+class _BillingClient:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    async def get(self, url, headers=None, params=None):
+        self.calls.append((url, headers, params))
+        response = self.responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
+
+
+def _events(*events):
+    return _Response(200, {"billing_events": list(events), "has_more": False, "next_cursor": None})
+
+
+def test_billing_lookup_is_skipped_without_admin_key(monkeypatch):
+    monkeypatch.delenv("FAL_ADMIN_KEY", raising=False)
+    client = _BillingClient([])
+
+    assert asyncio.run(fal_provider._billing_cost(client, "req-1")) is None
+    assert client.calls == []
+
+
+def test_billing_lookup_sums_only_the_requested_events(monkeypatch):
+    monkeypatch.setenv("FAL_ADMIN_KEY", "admin-key")
+    client = _BillingClient([_events(
+        {"request_id": "req-1", "cost_total": 0.0412},
+        {"request_id": "req-1", "cost_total": 0.0181},
+        {"request_id": "other", "cost_total": 9.0},
+    )])
+
+    assert asyncio.run(fal_provider._billing_cost(client, "req-1")) == pytest.approx(0.0593)
+    url, headers, params = client.calls[0]
+    assert url == fal_provider.FAL_BILLING_EVENTS_URL
+    assert headers == {"Authorization": "Key admin-key"}
+    assert params["request_id"] == "req-1"
+
+
+def test_billing_lookup_polls_until_the_event_appears(monkeypatch):
+    monkeypatch.setenv("FAL_ADMIN_KEY", "admin-key")
+    monkeypatch.setattr(fal_provider, "BILLING_POLL_INTERVAL_S", 0)
+    client = _BillingClient([
+        _events(),
+        httpx.ReadTimeout("slow"),
+        _Response(503, {"error": "busy"}),
+        _events({"request_id": "req-1", "cost_total": 0.05}),
+    ])
+
+    assert asyncio.run(fal_provider._billing_cost(client, "req-1")) == 0.05
+    assert len(client.calls) == 4
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_billing_lookup_stops_on_missing_admin_scope(monkeypatch, status):
+    monkeypatch.setenv("FAL_ADMIN_KEY", "not-admin")
+    monkeypatch.setattr(fal_provider, "BILLING_POLL_INTERVAL_S", 0)
+    client = _BillingClient([_Response(status, {"detail": "forbidden"})])
+
+    assert asyncio.run(fal_provider._billing_cost(client, "req-1")) is None
+    assert len(client.calls) == 1
+
+
+def test_billing_lookup_gives_up_at_the_deadline(monkeypatch):
+    monkeypatch.setenv("FAL_ADMIN_KEY", "admin-key")
+    monkeypatch.setenv("FAL_BILLING_LOOKUP_TIMEOUT_S", "0")
+    client = _BillingClient([_events()])
+
+    assert asyncio.run(fal_provider._billing_cost(client, "req-1")) is None
+    assert len(client.calls) == 1
+
+
+@pytest.mark.parametrize("cost", [None, "0.05", -0.01, float("nan"), True])
+def test_malformed_billing_event_voids_the_total(monkeypatch, cost):
+    monkeypatch.setenv("FAL_ADMIN_KEY", "admin-key")
+    monkeypatch.setenv("FAL_BILLING_LOOKUP_TIMEOUT_S", "0")
+    client = _BillingClient([_events(
+        {"request_id": "req-1", "cost_total": 0.04},
+        {"request_id": "req-1", "cost_total": cost},
+    )])
+
+    assert asyncio.run(fal_provider._billing_cost(client, "req-1")) is None
+
+
+def _completed_queue(monkeypatch, cost_usd):
+    async def submit(http, endpoint, payload, api_key):
+        return {"request_id": "req-9", "status_url": "s", "response_url": "r"}
+
+    async def poll(*args, **kwargs):
+        return None
+
+    async def fetch(*args, **kwargs):
+        return {"images": [{"url": "data:image/png;base64,aGVsbG8="}]}
+
+    async def billing(http, request_id, *, endpoint):
+        assert request_id == "req-9"
+        return cost_usd
+
+    monkeypatch.setattr(fal_provider, "_submit", submit)
+    monkeypatch.setattr(fal_provider, "_poll", poll)
+    monkeypatch.setattr(fal_provider, "_fetch_result", fetch)
+    monkeypatch.setattr(fal_provider, "_billing_cost", billing)
+
+
+@pytest.mark.parametrize("cost_usd", [0.0593, None])
+def test_completed_image_reports_request_id_and_billed_cost(monkeypatch, cost_usd):
+    _completed_queue(monkeypatch, cost_usd)
+
+    class _ModelResponse:
+        def __init__(self):
+            self._hidden_params = {}
+
+    response = asyncio.run(fal_provider.FalQueueLLM()._image_edit_async(
+        model="openai/gpt-image-2.5/sunburst", image=[], prompt="p",
+        model_response=_ModelResponse(), api_key="k", optional_params={}, timeout=5,
+    ))
+
+    assert response.provider_request_id == "req-9"
+    assert response._hidden_params["response_cost"] == cost_usd
+    if cost_usd is None:
+        assert not hasattr(response, "provider_cost_usd")
+    else:
+        assert response.provider_cost_usd == cost_usd
+        assert response.provider_cost_source == "fal_billing_event"

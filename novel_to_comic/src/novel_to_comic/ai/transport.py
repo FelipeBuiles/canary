@@ -24,16 +24,21 @@ def text_transport_limits(model: str) -> TextTransportLimits:
     from novel_to_comic.codex_dev import CodexRoutingError, route_for
 
     try:
-        codex = route_for("text", model) is not None
+        route = route_for("text", model)
+        runtime = route.runtime if route is not None else None
     except CodexRoutingError:
         # Submission raises the actionable routing error; sizing only needs
         # to know which transport the selector names.
-        codex = model.startswith("codex-dev/")
-    if not codex:
+        runtime = ("claude" if model.startswith("claude-dev/")
+                   else "codex" if model.startswith("codex-dev/") else None)
+    if runtime is None:
         return TextTransportLimits()
-    from novel_to_comic.ai import codex_runtime
+    if runtime == "claude":
+        from novel_to_comic.ai import claude_runtime as subscription_runtime
+    else:
+        from novel_to_comic.ai import codex_runtime as subscription_runtime
 
     return TextTransportLimits(
-        parallel_calls=codex_runtime.PARALLEL_CALLS,
-        call_deadline_seconds=codex_runtime.TEXT_TIMEOUT_SECONDS,
+        parallel_calls=subscription_runtime.PARALLEL_CALLS,
+        call_deadline_seconds=subscription_runtime.TEXT_TIMEOUT_SECONDS,
     )

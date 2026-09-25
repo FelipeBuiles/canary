@@ -67,7 +67,7 @@ export function StoryExplorer({ story }: StoryExplorerProps) {
         <article className="min-w-0">
           {beat && <p className="mb-1.5 font-meta text-[0.65rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{beat}</p>}
           <Heading className="font-display text-lg font-bold leading-tight md:text-xl">{scene.title}</Heading>
-          <p className="mt-3 max-w-[75ch] whitespace-pre-line text-sm leading-7 text-ink-black">{scene.summary}</p>
+          <p className="mt-3 whitespace-pre-line text-sm leading-7 text-ink-black">{scene.summary}</p>
         </article>
         {(location || cast.length > 0 || multipleChapters) && (
           <div className="col-start-2 flex min-w-0 flex-wrap gap-x-5 gap-y-2 text-xs leading-5 text-ink-muted xl:col-start-3 xl:flex-col xl:border-l xl:border-ink-black/15 xl:pl-5 xl:pt-1">
@@ -86,7 +86,7 @@ export function StoryExplorer({ story }: StoryExplorerProps) {
         <h2 id={headingId} className="font-display text-2xl font-black uppercase tracking-tight md:text-3xl">
           {t("Inside your story")}
         </h2>
-        <p className="mt-2 max-w-[80ch] text-sm leading-6 text-ink-muted">
+        <p className="mt-2 text-sm leading-6 text-ink-muted">
           {t("Explore the scenes, characters and places extracted from your manuscript. These source details are read-only; shape the adaptation in the brief above.")}
         </p>
       </div>
@@ -112,7 +112,7 @@ export function StoryExplorer({ story }: StoryExplorerProps) {
                   {group.scenes.map(sceneRow)}
                 </ol>
                 {group.turningPoint && (
-                  <p className="mt-4 max-w-[75ch] border-l-4 border-narrator-gold py-1 pl-4 text-sm leading-6 text-ink-black md:ml-[5.5rem]">
+                  <p className="mt-4 border-l-4 border-narrator-gold py-1 pl-4 text-sm leading-6 text-ink-black md:ml-[5.5rem]">
                     <span className="mr-2 font-meta text-[0.65rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("Turning point")}</span>
                     {group.turningPoint}
                   </p>

@@ -1,5 +1,7 @@
 import { apiFetch } from "./client";
 
+import type { ModelFunding } from "../modelFunding";
+
 export interface AccountModelSettings {
   enabled: boolean;
   funding?: string;
@@ -7,7 +9,7 @@ export interface AccountModelSettings {
   warnings?: string[];
   selections: Record<string, string>;
   stages: Array<{ id: string; label: string; description?: string; model_ids: string[] }>;
-  models: Array<{ id: string; label: string; kind: "text" | "image"; provider: string; vision: boolean; funding?: "api" | "codex_subscription"; available?: boolean; description?: string }>;
+  models: Array<{ id: string; label: string; kind: "text" | "image"; provider: string; vision: boolean; funding?: ModelFunding; available?: boolean; description?: string }>;
 }
 
 export function getAccountModelSettings() {

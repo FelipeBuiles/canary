@@ -34,7 +34,7 @@ export function StaleRenderRedraw({ project, pageNumber, disabled, onJobQueued }
   return (
     <section role="region" aria-label={t("Redraw needed")} className="border-l-[4px] border-hero-red bg-bristol px-4 py-4 md:px-5">
       <p className="font-meta text-xs font-bold uppercase tracking-[0.1em] text-hero-red">{t("Page re-planned — redraw needed")}</p>
-      <p className="mt-2 max-w-[70ch] font-body text-sm leading-6">
+      <p className="mt-2 font-body text-sm leading-6">
         {t("This page’s plan changed after it was drawn, so its lettering, checks and export wait for new art. Redraw it from the revised plan; the current art stays in the page’s history.")}
       </p>
       <Button className="mt-3" size="sm" disabled={disabled || generate.isPending}

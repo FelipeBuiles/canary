@@ -1,6 +1,7 @@
 import { apiFetch } from "./client";
 import type { LetteringStyle, PageLettering, PageReadHead, PageReadMark, Point, Rect } from "@lettering-engine";
 import type { CostEstimate, GenerationJob } from "../types/api";
+import type { ModelFunding } from "../modelFunding";
 export type { LetteringStyle, PageLettering, LetteringElement, RoleStyle, RoleName, Rect, Point } from "@lettering-engine";
 export interface HybridLetteringResponse {
   mode: "hybrid";
@@ -79,7 +80,7 @@ export function pageCompositePreviewUrl(project: string, page: number, revision:
 export type LetteringLocale = "en" | "es" | "fr";
 
 export interface LetteringTranslationEstimate extends CostEstimate {
-  funding: "api" | "codex_subscription";
+  funding: ModelFunding;
   target_locale: LetteringLocale;
   snapshot_sha256: string;
   page_count: number;

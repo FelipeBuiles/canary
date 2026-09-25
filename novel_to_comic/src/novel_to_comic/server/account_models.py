@@ -12,7 +12,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from novel_to_comic.codex_dev import CodexRoutingError, process_setting, route_for, validate_local_runtime
+from novel_to_comic.codex_dev import CodexRoutingError, is_subscription_selector, process_setting, route_for, validate_local_runtime
 from novel_to_comic.config import Config
 from novel_to_comic.model_catalog import STAGE_FIELDS, allowed_models, default_selections, validate_selections
 
@@ -68,7 +68,7 @@ def _supported_saved_selections(selections: dict[str, str]) -> dict[str, str]:
     for stage, model in selections.items():
         if stage not in STAGE_FIELDS:
             continue
-        if model.startswith("codex-dev/"):
+        if is_subscription_selector(model):
             validate_selections({stage: model})
         if model in allowed_models(stage):
             supported[stage] = model
@@ -91,8 +91,8 @@ def read_global_selections(root: Path) -> dict[str, str]:
 def update_global_selections(root: Path, changes: dict) -> dict[str, str]:
     """Atomically update production-capable defaults without accepting Codex routes."""
     validate_selections(changes)
-    if any(model.startswith("codex-dev/") for model in changes.values()):
-        raise ValueError("Codex models cannot be selected as operator defaults")
+    if any(is_subscription_selector(model) for model in changes.values()):
+        raise ValueError("Subscription models cannot be selected as operator defaults")
     root.mkdir(parents=True, exist_ok=True)
     path = root / ".operator-model-settings.json"
     with (root / ".operator-model-settings.lock").open("a") as lock:
@@ -117,7 +117,7 @@ def _require_available_routes(selections: dict[str, str]) -> None:
     for stage, model in selections.items():
         operation = "complete_page" if stage == "draw" else "image" if stage == "image" else "text"
         route = route_for(operation, model)
-        if route is not None and not model.startswith("codex-dev/"):
+        if route is not None and not is_subscription_selector(model):
             raise ValueError(f"{model} is overridden by the server's Codex route map; remove that override before selecting API models")
 
 

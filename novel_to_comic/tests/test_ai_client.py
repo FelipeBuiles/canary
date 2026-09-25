@@ -1898,7 +1898,7 @@ def test_opus_5_5_sends_effort_without_schema_and_caps_thinking_headroom(
     sent = _FakeAsyncClient.last_request["json"]
     # Thinking cannot be disabled; the app never sends a thinking override,
     # sampling controls, or forced tool choice for this route.
-    assert sent["output_config"] == {"effort": "high"}
+    assert sent["output_config"] == {"effort": text_wire("claude-opus-5-5").effort}
     assert "thinking" not in sent
     assert "temperature" not in sent
     assert "tool_choice" not in sent and "response_format" not in sent
@@ -2024,3 +2024,62 @@ def test_glm_receives_complete_locked_lettering_schema(monkeypatch, _patch_event
     assert sent["type"] == "json_schema"
     assert sent["json_schema"]["strict"] is True
     assert sent["json_schema"]["schema"] == strict_output_schema(schema)
+
+
+@pytest.mark.parametrize("reported", [False, True])
+def test_fal_style_image_settles_billed_charge_or_labelled_request_estimate(
+    tmp_path, _patch_events, reported,
+):
+    """FAL reports no token usage; never settle its images at $0."""
+    import io
+    from PIL import Image
+
+    from novel_to_comic.ai.finalisation import begin_image_call, finalise_image_success
+    from novel_to_comic.ai.providers.base import ProviderRawResult
+    from novel_to_comic.usage import estimate_image_cost
+
+    params = {
+        "model": "image-sunburst", "canary_requested_width": 1024,
+        "canary_requested_height": 1280, "quality": "medium",
+    }
+    prompt = "a style proof " * 50
+    refs = [(tmp_path / "ref.png", b"ref-bytes")]
+    image = io.BytesIO()
+    Image.new("RGB", (8, 8)).save(image, format="PNG")
+    response = {
+        "data": [{"b64_json": "x"}], "provider_request_id": "fal-req-7",
+        "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
+                  "input_tokens_details": {"image_tokens": 0, "text_tokens": 0}},
+    }
+    if reported:
+        response.update(provider_cost_usd=0.021, provider_cost_source="fal_billing_event")
+
+    async def run():
+        ctx = await begin_image_call(
+            config=Config(), model="image-sunburst", feature="style.sample",
+            prompt=prompt, params=params, ref_reads=refs,
+        )
+        result = await finalise_image_success(
+            ctx=ctx, config=Config(), model="image-sunburst", feature="style.sample",
+            output_path=tmp_path / "out.png",
+            raw=ProviderRawResult(image_bytes=image.getvalue(), raw_response=response,
+                                  provider_request_id="fal-req-7"),
+        )
+        return ctx, result
+
+    ctx, result = asyncio.run(run())
+
+    geometry = dict(quality="medium", width=1024, height=1280, ref_count=1, prompt_text=prompt)
+    # Quotes and holds use the submitted geometry, not the $0.25 fallback.
+    assert ctx.estimated_cost_usd == pytest.approx(estimate_image_cost("image-sunburst", 1, **geometry))
+    assert ctx.estimated_cost_usd < 0.1
+    if reported:
+        assert (result.usage.cost_usd, result.usage.cost_source) == (0.021, "fal_billing_event")
+    else:
+        assert result.usage.cost_source == "request_estimate"
+        assert result.usage.cost_usd == pytest.approx(
+            estimate_image_cost("image-sunburst", 1, basis="expected", **geometry)
+        )
+    finalized = _patch_events[-1][1]
+    assert finalized["usage"] == result.usage
+    assert result.provider_request_id == "fal-req-7"

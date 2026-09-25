@@ -136,7 +136,7 @@ export function VisualReviewPanel({
       <h3 className="font-display text-lg font-black uppercase leading-6">
         {t("Does this page match your cast and scene?")}
       </h3>
-      <p className="max-w-[62ch] font-body text-sm leading-6">
+      <p className="font-body text-sm leading-6">
         {t("Compare the drawn page against the approved cast and setting portraits. Anything below is a concrete mismatch you can send to the redraw draft.")}
       </p>
 

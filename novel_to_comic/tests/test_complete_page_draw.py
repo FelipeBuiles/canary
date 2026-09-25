@@ -306,9 +306,17 @@ def test_production_profile_estimates_page_and_selected_reference_cost(
         retry=RetryProvenance(attempt=1),
     )
 
+    from novel_to_comic.page_drawing import estimate_page_request_cost_usd
+    from novel_to_comic.usage import estimate_image_cost
+
     assert profile.provider == "fal-queue"
     assert profile.model == "openai/gpt-image-2.5/sunburst"
-    assert compiled.request.estimated_cost_usd == Decimal("0.27")
+    # The frozen request carries no price; quotes come from pricing config.
+    assert compiled.request.estimated_cost_usd == Decimal("0")
+    assert estimate_page_request_cost_usd(compiled) == pytest.approx(estimate_image_cost(
+        profile.model, 1, quality="medium", width=1024, height=1536,
+        ref_count=len(compiled.request.references), prompt_text=compiled.request.prompt,
+    ))
 
 
 def test_request_identity_tracks_page_revision_and_selected_reference_bytes(
@@ -704,8 +712,12 @@ def test_complete_page_enqueue_uses_credited_lifecycle_and_persists_result(
         )
         asyncio.run(job.runner())
 
+    from novel_to_comic.server.credits import credit_estimate_for_provider_cost
+
     assert created is True
-    assert reserve.call_args.args[-1] == 13
+    assert reserve.call_args.args[-1] == credit_estimate_for_provider_cost(
+        estimate_draw_api_cost(Config(), compiled), "draw", reserve=True,
+    )["reserved_credits"]
     debit.assert_called_once()
     release.assert_called_once()
     assert artifacts.read_render(7, 1) == b"complete-page-png"
@@ -884,11 +896,11 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
 
     assert unanalysed is not job
     image_quote = credit_estimate_for_provider_cost(
-        estimate_draw_api_cost(Config(), float(compiled.request.estimated_cost_usd), compiled=compiled),
+        estimate_draw_api_cost(Config(), compiled),
         "draw", reserve=True,
     )
     checked_quote = credit_estimate_for_provider_cost(
-        estimate_draw_api_cost(Config(), float(compiled.request.estimated_cost_usd), compiled=compiled)
+        estimate_draw_api_cost(Config(), compiled)
         + float(PAGE_OCR_ESTIMATED_COST_USD),
         "draw", reserve=True,
     )
@@ -1376,8 +1388,9 @@ def test_draw_estimate_is_read_only_and_excludes_optional_lettering_check(tmp_pa
         client = TestClient(app)
         response = client.get("/pages/7/generate/estimate?depiction=less_graphic")
         assert response.status_code == 200
+        # Medium pages are quoted well below the retired flat $0.25 allowance.
         assert response.json()["estimate_credits"] < dict(credit_estimate_for_provider_cost(
-            float(compiled.request.estimated_cost_usd), "draw", reserve=True,
+            0.25, "draw", reserve=True,
         ))["estimate_credits"]
         assert response.json()["reserved_credits"] >= response.json()["estimate_credits"] > 0
         assert client.get("/pages/7/generate/estimate?depiction=unknown").status_code == 422

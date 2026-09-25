@@ -36,6 +36,10 @@ Text and vision choices are `gpt-6-sol`, `gpt-6-luna`,
 `claude-fable-5-1`, `claude-opus-5-5`, `mimo-v2.6-pro`, and `deepseek-v4.1-flash`.
 Image and Draw choices are `image-sunburst` only. The gateway maps these to
 OpenAI, Anthropic, OpenRouter/Xiaomi, Together AI, and FAL respectively.
+New Draw editions render pages at medium quality; Style/Cast images use
+`image_quality` (default medium). Set an Admin-scoped `FAL_ADMIN_KEY` on the
+gateway so Sunburst images settle at FAL's billed charge; without it they settle
+at a labelled request estimate (see [stage contracts](stage-contracts.md)).
 `novel_to_comic/src/novel_to_comic/text_models.py` lists the selectable text aliases and the
 request fields each accepts; every alias needs a gateway route and a pricing
 alias. The DeepSeek route turns off Together's default thinking with
@@ -96,7 +100,24 @@ credits. A disabled saved Codex choice fails before generation. The production
 image omits the Codex execution modules and Labs router; the operator catalog
 never lists Codex models.
 
-API and Codex routes can be mixed in a development job. API reservations cover
+The optional Claude Code adapter uses explicit `claude-dev/text/<model>`
+choices (text only; default allowlist `claude-opus-5-5`, override with
+`CANARY_CLAUDE_DEV_MODELS` as a JSON list). It requires
+`CANARY_CLAUDE_DEV_ENABLED=1` (`./scripts/dev.sh --claude-code`), a local
+runtime, the `claude` CLI, and a claude.ai login; `claude auth status` must
+report a claude.ai first-party login before each prompt is sent. Each call runs
+`claude --print` in an empty directory with no tools, MCP servers, user or
+project settings, CLAUDE.md, or session persistence, and an environment that
+never carries `ANTHROPIC_*` credentials. It sends the API route's effort and
+output limit from `text_models.py`, and schemas through Claude Code's
+`--json-schema`. Usage is `claude_subscription`-funded and does not settle
+credits. Usage events record the served model's tokens (including cache reads
+and writes), Claude Code's own cost estimate, and `api_equivalent_cost_usd`,
+the same tokens priced as an API call, for comparing the two routes. Claude
+Code's system prompt and structured-output mechanics differ from the API
+route, so comparisons measure the model through Claude Code, not the raw API.
+
+API and subscription routes can be mixed in a development job. API reservations cover
 API work only. Request hashes identify input, not provider deduplication, and
 ambiguous image submissions are not retried automatically. Automated tests use
 mocked providers and do not establish account access or image quality.

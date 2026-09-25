@@ -16,6 +16,7 @@ DEFAULT_CODEX_IMAGE_ROUTES='[]'
 
 MODE="api"
 EXPLICIT_MODE=""
+CLAUDE_CODE=false
 CHECK_ONLY=false
 OBSERVABILITY=false
 START_DOCKER=true
@@ -34,6 +35,8 @@ Options:
   --codex                Enable local Codex model choices (SDK required)
   --api                  Use normal live paid API routing (default)
   --mock                 Use the zero-cost local model replay service
+  --claude-code          Also offer Claude Code text models through your local
+                         claude.ai login (API or Codex mode; claude CLI required)
   --fixture DIR          Completed project used by mock replay
   --observability        Also start/check the optional Langfuse stack
   --no-docker            Do not automatically start missing Docker services
@@ -69,6 +72,10 @@ while [ "$#" -gt 0 ]; do
       EXPLICIT_MODE="$requested_mode"
       shift
       ;;
+    --claude-code)
+      CLAUDE_CODE=true
+      shift
+      ;;
     --fixture)
       if [ "$#" -lt 2 ]; then
         echo "[dev] --fixture requires a directory" >&2
@@ -101,6 +108,11 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ "$CLAUDE_CODE" = true ] && [ "$MODE" = "mock" ]; then
+  echo "[dev] --claude-code cannot be combined with --mock" >&2
+  exit 2
+fi
 
 if [ "${FIXTURE#/}" = "$FIXTURE" ]; then
   FIXTURE="$REPO_ROOT/$FIXTURE"
@@ -146,10 +158,12 @@ import sys
 try:
     payload = json.load(sys.stdin)
     mode = sys.argv[1]
+    claude_code = sys.argv[2] == "true"
     dependency = "mock_models" if mode == "mock" else "litellm"
     compatible = (
         isinstance(payload, dict)
         and payload.get("model_mode") == mode
+        and payload.get("claude_code", False) is claude_code
         and payload.get("pipeline_contract") == "eight-stage-v2"
         and isinstance(payload.get("checks"), dict)
         and dependency in payload["checks"]
@@ -158,7 +172,7 @@ try:
 except (ValueError, TypeError):
     compatible = False
 sys.exit(0 if compatible else 1)
-' "$MODE"
+' "$MODE" "$CLAUDE_CODE"
 }
 
 wait_for_http() {
@@ -219,6 +233,9 @@ if [ "$MODE" = "codex" ]; then
   echo "[dev] selected routes use Codex allowance; experimental Draw: new editions, max 5 inputs, native dimensions"
 elif [ "$MODE" = "api" ]; then
   echo "[dev] normal live paid API routing; Codex is disabled"
+fi
+if [ "$CLAUDE_CODE" = true ]; then
+  echo "[dev] Claude Code choices use your claude.ai subscription (text only); runs 'claude auth status' before each call"
 fi
 echo
 
@@ -338,6 +355,10 @@ elif [ "$CHECK_ONLY" = false ] && [ "$required_failed" = false ]; then
     export CANARY_LOCAL_DIAGNOSTICS=true
     export CANARY_ENV="${CANARY_ENV-development}"
     export CANARY_CODEX_DEV_ENABLED=0
+    export CANARY_CLAUDE_DEV_ENABLED=0
+    if [ "$CLAUDE_CODE" = true ]; then
+      export CANARY_CLAUDE_DEV_ENABLED=1
+    fi
     export CANARY_MOCK_GENERATIONS_ENABLED=false
     if [ "$MODE" = "mock" ]; then
       export CANARY_MOCK_GENERATIONS_ENABLED=true

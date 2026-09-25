@@ -31,9 +31,9 @@ def _point_in(point, rect) -> bool:
     return rect.x <= point.x <= rect.x + rect.width and rect.y <= point.y <= rect.y + rect.height
 
 
-def _gutter_page(size=(600, 900)) -> Image.Image:
-    """White paper, three bordered panels: one wide tier over two side by side."""
-    image = Image.new("RGB", size, "white")
+def _gutter_page(size=(600, 900), paper="white") -> Image.Image:
+    """Plain paper, three bordered panels: one wide tier over two side by side."""
+    image = Image.new("RGB", size, paper)
     draw = ImageDraw.Draw(image)
     w, h = size
     for panel in PANELS:
@@ -44,6 +44,15 @@ def _gutter_page(size=(600, 900)) -> Image.Image:
 
 def test_gutters_yield_panels_in_reading_order():
     panels = detect_panels(_gutter_page())
+    assert len(panels) == 3
+    for found, expected in zip(panels, PANELS):
+        assert found.model_dump() == pytest.approx(expected.model_dump(), abs=0.01)
+
+
+@pytest.mark.parametrize("paper", [(236, 228, 208), (226, 218, 198)])
+def test_cream_paper_gutters_yield_panels(paper):
+    # Tinted paper sits below paper white; the margin gives its tone.
+    panels = detect_panels(_gutter_page(paper=paper))
     assert len(panels) == 3
     for found, expected in zip(panels, PANELS):
         assert found.model_dump() == pytest.approx(expected.model_dump(), abs=0.01)

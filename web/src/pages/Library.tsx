@@ -20,7 +20,7 @@ function FirstIssueInvitation({ onStart }: { onStart: () => void }) {
     <section className="grid overflow-hidden border-[3px] border-ink-black bg-bristol shadow-paper lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
       <div className="px-6 py-8 sm:p-10">
         <h1 className="font-display text-[2.5rem] font-black uppercase leading-[0.95] tracking-[-0.035em] text-ink-black sm:text-[3.25rem]">{t("Your story. Your first issue.")}</h1>
-        <p className="mt-5 max-w-[42ch] font-body text-base leading-7 text-ink-muted">{t("Bring a manuscript or choose a sample story. Shape the brief, choose the look, and review your pages before finishing your book.")}</p>
+        <p className="mt-5 font-body text-base leading-7 text-ink-muted">{t("Bring a manuscript or choose a sample story. Shape the brief, choose the look, and review your pages before finishing your book.")}</p>
         <Button size="lg" className="mt-7" onClick={onStart}>{t("NEW PRODUCTION")}</Button>
         <p className="mt-3 text-sm text-ink-muted">{t("Prepare your source first. Generation begins only when you choose to start it.")}</p>
         <ol aria-label={t("THE PRODUCTION LINE")} className="mt-8 flex flex-wrap gap-x-5 gap-y-3">

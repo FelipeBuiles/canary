@@ -65,6 +65,23 @@ _CHARACTER_REFERENCE_LAYOUT = (
     "narrative sequence",
 )
 
+# A state sheet becomes the character's authority in every panel of that state,
+# so it carries only the changed look: one design stance, no situation. Pose,
+# support and anything touching the body come from each panel. The heads keep
+# the canonical sheet's crop regions.
+_STATE_REFERENCE_LAYOUT = (
+    "one clean wide appearance-state reference sheet",
+    "exactly one character identity",
+    "exactly three depictions of that same character",
+    "left third, stacked: a head-and-shoulders three-quarter portrait on top and a "
+    "head-and-shoulders side profile below it",
+    "right two thirds: one full-body front view in a neutral design stance, centered",
+    "show only how the body, face, hair and clothing look in this state; objects that "
+    "pierce, pin, bind or are held, other people, scenery, and the event or situation "
+    "that caused the state are left out, keeping only their visible marks on the body",
+    "the views are simultaneous design views of a look, not a scene or a pose to copy",
+)
+
 _CHARACTER_REFERENCE_PERFORMANCE = (
     "Every view uses a relaxed neutral expression and a resting design pose; acting is "
     "chosen per panel, not by the reference. Only an explicitly described state affect "
@@ -148,10 +165,11 @@ def _appearance_lock_clauses(prompt: GenerationPromptInput) -> list[str]:
         if not getattr(subject, "appearance_locked", False):
             continue
         name = subject.name
+        # The changed look is fixed; the reference's pose and framing are not.
         clause = (
-            f"{name} is shown in a fixed altered appearance — render {name} EXACTLY "
-            f"as described and as the reference image; do not restore {name}'s default "
-            f"look or add features not shown"
+            f"{name} is shown in a fixed altered appearance — render the described "
+            f"changes to {name}'s body, face, hair and clothing exactly; do not restore "
+            f"{name}'s default look or add features not described"
         )
         # Verbatim guards are emitted with their protected entity anchors.
         clauses.append(clause)
@@ -190,7 +208,9 @@ def generate_system_constraints(
     character_count = len(subjects)
     character_label = labels["character"] if character_count == 1 else labels["characters"]
     if asset_kind == "character_ref":
-        lines = [*_CHARACTER_REFERENCE_LAYOUT, labels["no_lettering"]]
+        state_sheet = any(getattr(subject, "appearance_state_id", None) for subject in subjects)
+        layout = _STATE_REFERENCE_LAYOUT if state_sheet else _CHARACTER_REFERENCE_LAYOUT
+        lines = [*layout, labels["no_lettering"]]
         # A character's everyday demeanor is acting, owned by Plan per panel; a
         # canonical sheet that bakes it in makes every panel wear the same face.
         for subject in subjects:
@@ -205,7 +225,7 @@ def generate_system_constraints(
         # A state reference may intentionally require fever, delirium, or another
         # altered affect. Preserve it, but do not let the model amplify beyond the
         # authored state description.
-        if any(getattr(subject, "appearance_state_id", None) for subject in subjects):
+        if state_sheet:
             lines.append(
                 "honor any explicitly authored appearance-state affect, but do not "
                 "intensify it beyond the state description"

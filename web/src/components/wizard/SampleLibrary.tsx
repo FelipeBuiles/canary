@@ -132,7 +132,7 @@ export function SampleLibrary({ initialReadCode, selectedCode, onSelect, onReadA
         </div>
         <span className="font-meta text-xs text-ink-muted">{t("{curated} selected · {archive} classics").replace("{curated}", String(curatedCount)).replace("{archive}", String(archiveCount))}</span>
       </div>
-      <p className="max-w-[70ch] text-sm leading-6 text-ink-muted">{t("Browse selected modern stories and the full classic archive. Read the original before starting a project.")}</p>
+      <p className="text-sm leading-6 text-ink-muted">{t("Browse selected modern stories and the full classic archive. Read the original before starting a project.")}</p>
       <div className="grid gap-3 bg-surface-container p-4 sm:grid-cols-[minmax(0,1fr)_190px] sm:items-end">
         <div>
           <FieldLabel htmlFor="story-search">{t("Search stories")}</FieldLabel>

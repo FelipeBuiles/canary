@@ -57,6 +57,19 @@ describe("Reading document details", () => {
     expect(screen.queryByText("Page turn")).toBeNull();
   });
 
+  it("keeps pacing visible while layout instructions are optional", () => {
+    const detail = page(3);
+    detail.page.rhythm_intent = "A quiet pause before the reveal.";
+    detail.page.page_turn_role = "reveal";
+    renderPlan([detail]);
+    expect(screen.getByText(detail.page.rhythm_intent).closest("details")).toBeNull();
+    expect(screen.getByText("Reveal")).toBeTruthy();
+    const layout = screen.getByText("Layout for page 3").closest("details")!;
+    expect(layout.open).toBe(false);
+    fireEvent.click(layout.querySelector("summary")!);
+    expect(layout.open).toBe(true);
+  });
+
   it("distinguishes loading details from an unavailable detail response", () => {
     const view = renderPlan(undefined, true);
     expect(screen.getAllByRole("status").map((item) => item.textContent)).toEqual(Array(3).fill("Loading page details…"));
@@ -73,7 +86,10 @@ describe("Reading document details", () => {
       beats: [{ id: "beat-1", order: 1, summary: "Mara makes a promise.", lettering: [{ id: "line-1", text: "I will return." }], transitions: [{ description: "Dawn breaks." }] }],
     };
     render(<I18nProvider><AdaptationDetails adaptation={adaptation} /></I18nProvider>);
-    expect(screen.getByText("Mara makes a promise.").closest("details")).toBeNull();
+    const beat = screen.getByText("Mara makes a promise.").closest("details");
+    expect(beat?.open).toBe(false);
+    fireEvent.click(beat!.querySelector("summary")!);
+    expect(beat?.open).toBe(true);
     expect(screen.getByText("Mara learns to trust.").closest("details")?.querySelector("summary")?.textContent).toContain("Character arcs");
     expect(screen.getByText("The village rebuilds.")).toBeTruthy();
     expect(screen.getByText("I will return.")).toBeTruthy();

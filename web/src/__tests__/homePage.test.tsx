@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
@@ -17,6 +17,15 @@ const storage: Storage = {
   setItem: (key, value) => storageValues.set(key, value),
 };
 
+function stubReducedMotion(reduce: boolean) {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: reduce && query.includes("prefers-reduced-motion"),
+    media: query,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  }));
+}
+
 function renderHomePage() {
   return render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter>
@@ -28,7 +37,10 @@ function renderHomePage() {
 }
 
 describe("Scenewright homepage", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
   beforeEach(() => {
     Object.defineProperty(globalThis, "localStorage", {
       configurable: true,
@@ -89,7 +101,7 @@ describe("Scenewright homepage", () => {
   it("makes provisional development pages readable without claiming customer or production proof", () => {
     renderHomePage();
 
-    expect(screen.getByText(/Not customer work; results vary/)).toBeTruthy();
+    expect(screen.getByText(/Dungeon Crawler Carl, page 25 .* Not customer work; results vary/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "Read a development sample" }).getAttribute("href")).toBe("#continuity");
     expect(screen.getAllByRole("link", { name: "Read page 25 at full size" })[0].getAttribute("href")).toBe("/marketing/dungeon-crawler-carl-page-25.webp");
     expect(screen.getByText(/Automated checks do not guarantee visual quality/)).toBeTruthy();
@@ -128,5 +140,86 @@ describe("Scenewright homepage", () => {
       }),
     ).toBeTruthy();
     expect(document.documentElement.lang).toBe("es");
+  });
+
+  it("sells custom styles in the Look step", () => {
+    renderHomePage();
+
+    expect(screen.getByRole("heading", { level: 3, name: "Describe it, show it, or ask for six" })).toBeTruthy();
+    expect(screen.getByText(/let Scenewright pitch six directions made for your story/)).toBeTruthy();
+    expect(screen.queryByText(/Pick a visual direction/)).toBeNull();
+  });
+
+  it("plays a muted, silent hero loop that can be paused", () => {
+    stubReducedMotion(false);
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+    const { container } = renderHomePage();
+
+    const video = container.querySelector(".landing-hero video") as HTMLVideoElement;
+    expect(video.getAttribute("src")).toBe("/marketing/hero-flipbook.webm");
+    expect(video.getAttribute("poster")).toBe("/marketing/hero-flipbook-poster.webp");
+    expect(video.muted).toBe(true);
+    expect(video.loop).toBe(true);
+    expect(video.autoplay).toBe(true);
+    expect(screen.getByRole("figure", { name: /Looping video: one Dungeon Crawler Carl comic page/ })).toBeTruthy();
+
+    const toggle = screen.getByRole("button", { name: "Pause" });
+    fireEvent.click(toggle);
+    expect(pause).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Play" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("shows only the poster when the visitor prefers reduced motion", () => {
+    stubReducedMotion(true);
+    const { container } = renderHomePage();
+
+    expect(container.querySelector("video")).toBeNull();
+    expect(container.querySelector(".landing-hero img")?.getAttribute("src")).toBe("/marketing/hero-flipbook-poster.webp");
+    expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
+  });
+
+  it("compares three real editions of one story with their license", () => {
+    renderHomePage();
+
+    const strip = screen.getByRole("region", { name: "One story, three books." });
+    const links = within(strip).getAllByRole("link", { name: /at full size/ }).map((link) => link.getAttribute("href"));
+    expect(new Set(links)).toEqual(new Set([
+      "/marketing/janitor-riso-page-01.webp",
+      "/marketing/janitor-gouache-page-01.webp",
+      "/marketing/janitor-oil-page-01.webp",
+    ]));
+    expect(within(strip).getByText(/JanitorCakeworth, SCP Wiki, CC BY-SA 3.0/)).toBeTruthy();
+    expect(within(strip).getByText(/Not customer work; results vary/)).toBeTruthy();
+    expect(strip.closest("section#continuity")).toBeTruthy();
+  });
+
+  it("links a sample story to the showcase book it became", () => {
+    renderHomePage();
+
+    const sample = screen.getByRole("region", { name: "Read the story. Then read the book it became." });
+    expect(within(sample).getByRole("link", { name: /Read the original story/ }).getAttribute("href")).toBe("/samples?story=kaitlin-out-of-space");
+    expect(within(sample).getAllByRole("img")).toHaveLength(3);
+    expect(within(sample).getByText(/Krishan Coupland \(CC0\)/)).toBeTruthy();
+  });
+
+  it("keeps credits and costs out of the showcase media", () => {
+    renderHomePage();
+
+    for (const name of ["One story, three books.", "Read the story. Then read the book it became."]) {
+      expect(screen.getByRole("region", { name }).textContent).not.toMatch(/credit|cost|free|US\$/i);
+    }
+    expect(document.querySelector(".landing-hero__visual")?.textContent).not.toMatch(/credit|cost|free/i);
+  });
+
+  it("localizes the new showcase blocks in Spanish and French", () => {
+    renderHomePage();
+
+    fireEvent.click(screen.getByRole("button", { name: "ES" }));
+    expect(screen.getByRole("heading", { level: 3, name: "Descríbelo, muéstralo o pide seis" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Una historia, tres libros." })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "FR" }));
+    expect(screen.getByRole("heading", { level: 3, name: "Décrivez-le, montrez-le ou demandez-en six" })).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Lisez la nouvelle. Puis lisez le livre qu’elle est devenue." })).toBeTruthy();
   });
 });

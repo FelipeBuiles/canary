@@ -308,7 +308,12 @@ Preserve `visual_anchor` and `continuity_guard` verbatim through Cast and Draw.
 
 Cast character sheets are neutral five-view turnarounds (three-quarter and
 profile heads; front, three-quarter and back bodies) and carry identity only.
-Only an authored state affect reaches a sheet. Plan owns performance: every
+Only an authored state affect reaches a sheet. Appearance-state sheets show only
+the changed look (two heads and one neutral full body), never the situation:
+objects touching the body, support and pose stay in the continuity guard and
+the panel, and Draw treats a state asset as evidence for surface changes only.
+Character states that change only `damage` are text-only; Extract clears their
+`visually_significant` on the merged Story Bible. Plan owns performance: every
 panel has a `camera` (shot, angle) and every visible entity whose inventory
 `kind` is `character` has one `acting` entry (screen-direction `facing`, `gaze`,
 `expression`, optional `gesture`). Missing staging, acting for props or
@@ -1004,6 +1009,19 @@ available for inspection and recovery.
 Stage estimates include page references and, for editable lettering, each page's automatic read-back; Cast estimates include state
 references. Provider usage and credit settlement remain distinct from estimates
 and stage-progress totals. Missing usage is not evidence of zero provider cost.
+
+Sunburst Draw editions submit medium quality at 1024×1536; the quality is fixed
+by the edition's profile ID, and retained high-quality editions keep theirs. Page
+prices are never read from the frozen edition or request: the retained
+`price_per_*` and `estimated_cost_usd` fields are inert identity data. Quotes and
+holds come from `litellm_pricing_overrides.yaml` (`estimated_*` consumption
+allowances for the request's quality, size, references, and prompt). FAL returns
+no token usage, so the gateway reads the request's FAL billing event with an
+Admin-scoped `FAL_ADMIN_KEY` and reports it as `fal_billing_event`, along with
+the FAL request ID. If that charge is unavailable, a completed Sunburst image
+(page, style, cast, or cover) settles at a central estimate of that exact request
+(`expected_*` consumption), labelled `request_estimate`. All-zero token usage
+is treated as unknown, never as a free image.
 
 Read-only immediate quotes are distinct from the full-stage rerun estimate:
 

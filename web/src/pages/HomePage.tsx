@@ -1,6 +1,7 @@
 import { PublicationShowcase } from "../components/book/PublicationShowcase";
 import { useShortStories } from "../api/queries";
 import { genreLabel } from "../lib/storyBrowser";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { Link } from "react-router-dom";
 import { BrandIdentity } from "../components/BrandIdentity";
 import { BrandMark } from "../components/BrandMark";
@@ -13,10 +14,35 @@ const MARKETING_IMAGES = {
     "/marketing/dungeon-crawler-carl-page-25.webp",
     "/api/public/books/d1cb0ec790244ce6849974daa586146b/ccf1a606bd1747c4864d8a4770000891/pages/21",
   ],
-  anya: "/marketing/anya-reference.webp",
-  rurik: "/marketing/rurik-reference.webp",
-  tavern: "/marketing/tavern-reference.webp",
+  heroLoop: "/marketing/hero-flipbook.webm",
+  heroPoster: "/marketing/hero-flipbook-poster.webp",
+  editions: [
+    "/marketing/janitor-riso-page-01.webp",
+    "/marketing/janitor-gouache-page-01.webp",
+    "/marketing/janitor-oil-page-01.webp",
+  ],
+  sampleBook: [
+    "/marketing/kaitlin-page-01.webp",
+    "/marketing/kaitlin-page-11.webp",
+    "/marketing/kaitlin-page-41.webp",
+  ],
 } as const;
+
+const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
+
+function subscribeReducedMotion(onChange: () => void) {
+  const query = window.matchMedia?.(REDUCED_MOTION);
+  query?.addEventListener("change", onChange);
+  return () => query?.removeEventListener("change", onChange);
+}
+
+function usePrefersReducedMotion() {
+  return useSyncExternalStore(
+    subscribeReducedMotion,
+    () => window.matchMedia?.(REDUCED_MOTION).matches ?? false,
+    () => true,
+  );
+}
 
 function LanguageSwitcher({
   activeLanguage,
@@ -46,8 +72,23 @@ function LanguageSwitcher({
 }
 
 function HeroFolio({ copy }: { copy: LandingCopy["hero"] }) {
+  const reducedMotion = usePrefersReducedMotion();
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [paused, setPaused] = useState(false);
+
+  const toggle = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (paused) {
+      void video.play()?.catch(() => undefined);
+    } else {
+      video.pause();
+    }
+    setPaused(!paused);
+  };
+
   return (
-    <figure className="landing-folio" aria-label={copy.visualAlt}>
+    <figure className="landing-folio" aria-label={copy.loopAlt}>
       <div className="landing-manuscript" aria-hidden="true">
         <div className="landing-manuscript__label">{copy.manuscriptLabel}</div>
         <div className="landing-manuscript__title">{copy.chapterLabel}</div>
@@ -65,48 +106,92 @@ function HeroFolio({ copy }: { copy: LandingCopy["hero"] }) {
 
       <div className="landing-comic-sheet">
         <div className="landing-comic-sheet__topline">
-          <span>{copy.sampleLabel}</span>
-          <span>{copy.sceneLabel}</span>
+          <span>{copy.loopTag}</span>
+          {!reducedMotion && (
+            <button type="button" className="landing-loop-toggle" aria-pressed={paused} onClick={toggle}>
+              {paused ? copy.playLoop : copy.pauseLoop}
+            </button>
+          )}
         </div>
-        <div className="landing-comic-grid">
-          <div className="landing-comic-panel landing-comic-panel--place">
-            <img
-              src={MARKETING_IMAGES.tavern}
-              alt=""
-              width="1200"
-              height="1200"
-              loading="eager"
-              decoding="async"
+        <div className="landing-loop">
+          {reducedMotion ? (
+            <img src={MARKETING_IMAGES.heroPoster} alt="" width="600" height="704" decoding="async" fetchPriority="high" />
+          ) : (
+            <video
+              ref={videoRef}
+              src={MARKETING_IMAGES.heroLoop}
+              poster={MARKETING_IMAGES.heroPoster}
+              width="600"
+              height="704"
+              autoPlay
+              muted
+              loop
+              playsInline
+              preload="auto"
+              aria-hidden="true"
             />
-            <span>{copy.visualLabels[1]}</span>
-          </div>
-          <div className="landing-comic-panel landing-comic-panel--anya">
-            <img
-              src={MARKETING_IMAGES.anya}
-              alt=""
-              width="1200"
-              height="1200"
-              loading="eager"
-              decoding="async"
-              fetchPriority="high"
-            />
-            <span>{copy.visualLabels[0]}</span>
-          </div>
-          <div className="landing-comic-panel landing-comic-panel--rurik">
-            <img
-              src={MARKETING_IMAGES.rurik}
-              alt=""
-              width="1200"
-              height="1200"
-              loading="eager"
-              decoding="async"
-            />
-            <span>{copy.visualLabels[2]}</span>
-          </div>
+          )}
         </div>
-        <figcaption>{copy.sampleCaption}</figcaption>
+        <figcaption>{copy.loopCaption}</figcaption>
       </div>
     </figure>
+  );
+}
+
+function PageStrip({
+  pages,
+  alts,
+  captions,
+  links,
+}: {
+  pages: readonly string[];
+  alts: readonly string[];
+  captions: readonly string[];
+  links?: readonly string[];
+}) {
+  return (
+    <div className="landing-page-samples landing-page-samples--three">
+      {pages.map((src, index) => (
+        <figure key={src}>
+          <a href={src} target="_blank" rel="noopener noreferrer" aria-label={links?.[index] ?? captions[index]}>
+            <img src={src} alt={alts[index]} width="1024" height="1536" loading="lazy" decoding="async" />
+          </a>
+          <figcaption>
+            <span>{captions[index]}</span>
+            {links && <a href={src} target="_blank" rel="noopener noreferrer">{links[index]}</a>}
+          </figcaption>
+        </figure>
+      ))}
+    </div>
+  );
+}
+
+function EditionsStrip({ copy }: { copy: LandingCopy["editions"] }) {
+  return (
+    <section className="landing-editions" aria-labelledby="landing-editions-title">
+      <p className="landing-continuity__promise">{copy.promise}</p>
+      <h3 id="landing-editions-title">{copy.title}</h3>
+      <p>{copy.body}</p>
+      <PageStrip pages={MARKETING_IMAGES.editions} alts={copy.alts} captions={copy.captions} links={copy.links} />
+      <p className="landing-page-samples__note">{copy.note}</p>
+    </section>
+  );
+}
+
+function SampleBook({ copy }: { copy: LandingCopy["sampleBook"] }) {
+  return (
+    <section className="landing-sample-book" aria-labelledby="landing-sample-book-title">
+      <div className="landing-sample-book__heading">
+        <p className="landing-story-shelf__eyebrow">{copy.kicker}</p>
+        <h3 id="landing-sample-book-title">{copy.title}</h3>
+        <p>{copy.body}</p>
+        <Link to="/samples?story=kaitlin-out-of-space" className="landing-story-shelf__read">
+          {copy.readStory} <span aria-hidden="true">→</span>
+        </Link>
+      </div>
+      <PageStrip pages={MARKETING_IMAGES.sampleBook} alts={copy.alts} captions={copy.captions} />
+      <p className="landing-page-samples__note">{copy.note}</p>
+    </section>
   );
 }
 
@@ -137,7 +222,7 @@ function FaqItem({ item }: { item: LandingFaq }) {
   );
 }
 
-function StoryShelfPreview() {
+function StoryShelfPreview({ copy }: { copy: LandingCopy["sampleBook"] }) {
   const { t } = useI18n();
   const { data: stories } = useShortStories();
   const featured = ["kaitlin-out-of-space", "the-sea-in-me", "an-education"]
@@ -162,6 +247,7 @@ function StoryShelfPreview() {
           <Link to={`/samples?story=${encodeURIComponent(story.code)}`} className="landing-story-shelf__read">{t("Read and choose")} <span aria-hidden="true">→</span></Link>
         </article>)}
       </div>}
+      <SampleBook copy={copy} />
     </section>
   );
 }
@@ -252,6 +338,7 @@ export function HomePage() {
             ))}
           </div>
           <p className="landing-page-samples__note">{copy.continuity.sample}</p>
+          <EditionsStrip copy={copy.editions} />
           <div className="landing-reference-inspection">
             <div>
               <h3>{copy.continuity.inspectTitle}</h3>
@@ -262,7 +349,7 @@ export function HomePage() {
         </section>
 
         <PublicationShowcase />
-        <StoryShelfPreview />
+        <StoryShelfPreview copy={copy.sampleBook} />
 
         <section className="landing-process" id="process" aria-labelledby="landing-process-title">
           <div className="landing-section-heading">
