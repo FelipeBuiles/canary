@@ -32,6 +32,17 @@ model_list:
         enabled: false
       provider:
         require_parameters: true
+- model_name: deepseek-v4.1-flash
+  litellm_params:
+    model: together_ai/deepseek-ai/DeepSeek-V4.1-Flash
+    api_key: os.environ/TOGETHER_API_KEY
+    # Thinking defaults on and can exhaust Extract's 16k completion budget
+    # before any JSON is emitted. LiteLLM 1.101 silently drops
+    # reasoning_effort for this unregistered Together model, so send
+    # Together's hybrid-reasoning toggle directly.
+    extra_body:
+      reasoning:
+        enabled: false
 - model_name: image-sunburst
   litellm_params:
     model: fal-queue/openai/gpt-image-2.5/sunburst

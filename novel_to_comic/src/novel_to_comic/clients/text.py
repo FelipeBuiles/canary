@@ -9,24 +9,15 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from novel_to_comic.config import Config
+from novel_to_comic.text_models import TEXT_MODELS
 from novel_to_comic.usage import ApiResult
 from novel_to_comic.ai import (
     generate_structured_object,
     generate_text as ai_generate_text,
 )
 
-# ── Model → provider registry ────────────────────────────────────────────────
-# Add new models here.  Do NOT add heuristic prefix-matching.
-
-_TEXT_PROVIDERS = ("anthropic", "openai", "openrouter")
-
-MODEL_REGISTRY: dict[str, str] = {
-    "claude-fable-5-1": "anthropic",
-    "claude-opus-5": "anthropic",
-    "gpt-6-sol": "openai",
-    "gpt-6-luna": "openai",
-    "mimo-v2.6-pro": "openrouter",
-}
+# Derived from the selectable catalog; add models in text_models.py.
+MODEL_REGISTRY: dict[str, str] = {model.id: model.provider_key for model in TEXT_MODELS}
 
 
 def provider_for_model(model: str) -> str:
@@ -36,7 +27,7 @@ def provider_for_model(model: str) -> str:
         return provider
     raise ValueError(
         f"Unknown text model {model!r}. "
-        f"Add it to MODEL_REGISTRY in clients/text.py with its provider."
+        f"Add it to TEXT_MODELS in text_models.py with its provider."
     )
 
 

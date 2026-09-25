@@ -1,0 +1,3 @@
+[mcp_servers.MCPMagic]
+command = "node"
+args = ["/Users/jbuiles/Library/Containers/kr.co.metadata.mcp/Data/Library/Application Support/MCP Magic/mcp-server.cjs"]

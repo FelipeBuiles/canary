@@ -1,7 +1,8 @@
 import { useNow } from "../../hooks/useNow";
 import { Link } from "react-router-dom";
 import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
-import { type StageName, type StageStatus } from "../../types/api";
+import { type StageName, type StageSnapshot, type StageStatus } from "../../types/api";
+import { PlanProgressBoard } from "./PlanProgressBoard";
 import { useProjectConfig, useUpdateProjectConfig, useStageEstimate } from "../../api/queries";
 import { STATIONS } from "../../lib/stations";
 import { CreditAmount } from "../ui/CreditAmount";
@@ -310,9 +311,10 @@ interface StageRunningProps {
   itemsDone?: number;
   itemsTotal?: number;
   startedAt?: string | null;
+  snapshot?: StageSnapshot | null;
 }
 
-export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0, startedAt }: StageRunningProps) {
+export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0, startedAt, snapshot }: StageRunningProps) {
   const { t } = useI18n();
   const meta = STAGE_META[stage];
   const textWork = ["extract", "brief", "adapt", "plan"].includes(stage);
@@ -356,7 +358,9 @@ export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0, startedAt }
             <span>{t("Work in progress")}</span>
             {elapsed && <span aria-live="off" className="ml-auto font-meta tabular-nums text-ink-muted">{t("Elapsed {time}").replace("{time}", elapsed)}</span>}
           </div>
-          {textWork ? (
+          {stage === "plan" && snapshot?.kind === "plan" ? (
+            <PlanProgressBoard snapshot={snapshot} />
+          ) : textWork ? (
             <>
               <p className="mt-3 font-body text-sm leading-6 text-ink-muted">{t("This step can take several minutes. Results appear when the step finishes.")}</p>
               <ol aria-label={t("Production steps")} className="mt-5 space-y-3">
@@ -530,6 +534,7 @@ interface StagePlaceholderProps {
   itemsDone?: number;
   itemsTotal?: number;
   startedAt?: string | null;
+  snapshot?: StageSnapshot | null;
   retryAsRerun?: boolean;
   allowPendingStart?: boolean;
   error?: string | null;
@@ -546,6 +551,7 @@ export function StagePlaceholder({
   itemsDone,
   itemsTotal,
   startedAt,
+  snapshot,
   retryAsRerun = false,
   allowPendingStart = false,
   error,
@@ -584,7 +590,7 @@ export function StagePlaceholder({
     return <StageLoadError stage={stage} message={loadError} />;
   }
   if (status === "running" && !stale) {
-    return <StageRunning stage={stage} itemsDone={itemsDone} itemsTotal={itemsTotal} startedAt={startedAt} />;
+    return <StageRunning stage={stage} itemsDone={itemsDone} itemsTotal={itemsTotal} startedAt={startedAt} snapshot={snapshot} />;
   }
   if (status === "pending") {
     return (

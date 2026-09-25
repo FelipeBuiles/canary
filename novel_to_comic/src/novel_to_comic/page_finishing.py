@@ -9,13 +9,13 @@ import io
 import json
 import os
 import zipfile
-from collections import defaultdict
 from pathlib import Path
 
 import img2pdf
 from PIL import Image, ImageCms, ImageDraw, ImageFont
 from pypdf import PdfReader
 
+from novel_to_comic.appearance_chronology import CODE as CHRONOLOGY_CODE, appearance_chronology
 from novel_to_comic.models.adaptation import BookAdaptation
 from novel_to_comic.models.draw import PageIssue, PageRenderRevision, RenderAnalysis
 from novel_to_comic.models.finish import (
@@ -88,80 +88,20 @@ def _appearance_diagnostics(
 ) -> dict[int, list[PreflightDiagnostic]]:
     """Check explicit state chronology before exporting the edition."""
 
-    beats = {beat.id: beat for beat in adaptation.beats}
-    active: dict[str, str] = {}
-    activated: dict[str, set[str]] = defaultdict(set)
-    seen_beats: set[str] = set()
-    diagnostics: dict[int, list[PreflightDiagnostic]] = defaultdict(list)
-    for page in pages:
-        for content in page.content:
-            for beat_id in content.beat_ids:
-                beat = beats.get(beat_id)
-                if beat is None or beat.id in seen_beats:
-                    continue
-                # Adjacent content items may decompose one adapted beat into
-                # several visual moments. Apply its state changes once, not
-                # once per content item.
-                for change in beat.appearance_changes:
-                    current = active.get(change.entity_id)
-                    if (
-                        change.from_state_id is not None
-                        and current != change.from_state_id
-                    ):
-                        diagnostics[page.page_number].append(
-                            _diagnostic(
-                                page_number=page.page_number,
-                                owner_stage="adapt",
-                                code="cross_page_appearance_state",
-                                message="Appearance-state chronology is inconsistent.",
-                                artifact_ids=(
-                                    beat.id,
-                                    change.entity_id,
-                                    change.to_state_id,
-                                ),
-                                evidence=(
-                                    f"Expected prior state {change.from_state_id!r}; "
-                                    f"found {current!r}.",
-                                ),
-                            )
-                        )
-                    active[change.entity_id] = change.to_state_id
-                    activated[change.entity_id].add(change.to_state_id)
-                seen_beats.add(beat.id)
-            for entity_id in content.entity_ids:
-                expected = active.get(entity_id)
-                cited = ([content.appearance_states[entity_id]]
-                         if entity_id in content.appearance_states else [])
-                not_yet_activated = [
-                    state_id
-                    for state_id in cited
-                    if state_id not in activated.get(entity_id, set())
-                ]
-                # A page may explicitly cite an earlier state for a timeline
-                # or composite image. The invariant is that the state has
-                # been activated and that a changed entity is not left
-                # without any page-scoped state citation.
-                if expected is not None and (not cited or not_yet_activated):
-                    evidence = (
-                        f"Active state for {entity_id!r} is {expected!r}; "
-                        f"page content cites {cited!r}."
-                    )
-                    if not_yet_activated:
-                        evidence = (
-                            f"Page content cites states not yet activated for "
-                            f"{entity_id!r}: {not_yet_activated!r}."
-                        )
-                    diagnostics[page.page_number].append(
-                        _diagnostic(
-                            page_number=page.page_number,
-                            owner_stage="plan",
-                            code="cross_page_appearance_state",
-                            message="Page-scoped appearance state is stale across pages.",
-                            artifact_ids=(content.id, entity_id, expected, *cited),
-                            evidence=(evidence,),
-                        )
-                    )
-    return diagnostics
+    return {
+        page_number: [
+            _diagnostic(
+                page_number=page_number,
+                owner_stage=finding.owner_stage,
+                code=CHRONOLOGY_CODE,
+                message=finding.message,
+                artifact_ids=finding.artifact_ids,
+                evidence=finding.evidence,
+            )
+            for finding in findings
+        ]
+        for page_number, findings in appearance_chronology(adaptation, pages).items()
+    }
 
 
 def _load_active_render(

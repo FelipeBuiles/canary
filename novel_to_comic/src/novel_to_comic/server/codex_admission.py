@@ -35,7 +35,15 @@ def visual_review_operations(config: Config) -> Operations:
     return (("text", config.effective_visual_review_model()),)
 
 
-def draw_operations(config: Config, *, ocr: bool = False) -> Operations:
+def draw_reads_pages(config: Config) -> bool:
+    """Editable-lettering draws read each page back automatically: heads place
+    the balloons and drawn-in lettering is flagged. Integrated editions keep
+    their copy check explicit (ADR 0014: its text findings are unreliable)."""
+    return config.lettering_mode == "editable"
+
+
+def draw_operations(config: Config, *, ocr: bool | None = None) -> Operations:
+    ocr = draw_reads_pages(config) if ocr is None else ocr
     return (("complete_page", config.draw_model), *(page_check_operations(config) if ocr else ()))
 
 

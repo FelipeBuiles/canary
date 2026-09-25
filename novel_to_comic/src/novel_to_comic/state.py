@@ -6,7 +6,7 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -71,6 +71,10 @@ class StageState(BaseModel):
     balance_credits: Optional[int] = None
     required_credits: Optional[int] = None
     shortfall_credits: Optional[int] = None
+    # Latest structured view of validated work a running stage has produced
+    # (e.g. Plan's page map and laid-out pages). Display-only: never an input
+    # to generation, and replaced wholesale on every report.
+    snapshot: Optional[dict[str, Any]] = None
 
 
 STAGE_NAMES = [
@@ -179,6 +183,7 @@ def begin_stage(
     s.items_total = total
     s.items_done = 0
     s.items_failed = []
+    s.snapshot = None
     s.estimated_cost_usd = estimated_cost_usd
     s.cost_usd = 0.0
     s.usage_log = []

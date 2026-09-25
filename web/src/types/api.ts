@@ -72,7 +72,49 @@ export interface StageInfo {
   last_progress_at: string | null;
   stale: boolean;
   in_flight: InFlightPage[];
+  /** Latest validated-progress view a running stage published. */
+  snapshot?: StageSnapshot | null;
 }
+
+export type PlanProgressPhase =
+  | "mapping"
+  | "reviewing_map"
+  | "laying_out"
+  | "checking"
+  | "repairing"
+  | "reviewing"
+  | "complete";
+
+export type PlanBatchState = "queued" | "writing" | "done" | "needs_repair" | "repairing";
+
+export interface PlanProgressPage {
+  page: number;
+  emphasis: string;
+  turn: string;
+  spread: string;
+  density: string;
+  beats: number;
+  /** Null until the page's batch is laid out and checked. */
+  panels: number | null;
+  lettering: number;
+}
+
+export interface PlanProgressSnapshot {
+  kind: "plan";
+  phase: PlanProgressPhase;
+  beats: number;
+  lettering_total: number;
+  target_pages: { min: number; max: number };
+  /** The transport runs one request at a time; queued batches wait. */
+  serial_transport: boolean;
+  pages: PlanProgressPage[];
+  batches: { first: number; last: number; state: PlanBatchState }[];
+  pages_laid_out: number;
+  panels: number;
+  lettering_placed: number;
+}
+
+export type StageSnapshot = PlanProgressSnapshot;
 
 export interface ProjectSummary {
   id: string;
@@ -188,6 +230,8 @@ export interface PipelineEvent {
   balance_credits?: number;
   required_credits?: number;
   shortfall_credits?: number;
+  // Validated-progress view (stage_snapshot)
+  snapshot?: StageSnapshot | null;
   // Sub-item streaming activity (stage_activity)
   fraction?: number | null;
   detail?: string | null;

@@ -74,11 +74,14 @@ def cast_portraits(artifacts: TargetArtifacts, page: ComicPage) -> tuple[CastPor
 
 
 def page_read_adapter(config, artifacts: TargetArtifacts, page: ComicPage) -> GatewayPageOCRAdapter:
-    """The text check's OCR adapter; editable editions also label speakers' heads."""
+    """The page read run with every draw; editable editions also label speakers' heads."""
     from .service import is_hybrid
 
-    portraits = cast_portraits(artifacts, page) if is_hybrid(artifacts) else ()
-    return GatewayPageOCRAdapter(config, page_number=page.page_number, portraits=portraits)
+    # Resolved when the page is read, inside the job: enqueueing reads no files.
+    return GatewayPageOCRAdapter(
+        config, page_number=page.page_number,
+        portraits=lambda: cast_portraits(artifacts, page) if is_hybrid(artifacts) else (),
+    )
 
 
 def _bounds(polygon) -> tuple[float, float, float, float]:
@@ -114,3 +117,10 @@ def read_for_render(
         stray_lettering=marks(extraction.lettering),
         in_world_text=marks(extraction.incidental_text),
     )
+
+
+def draw_page_read(config, artifacts: TargetArtifacts, page: ComicPage) -> GatewayPageOCRAdapter | None:
+    """The automatic read-back a draw job runs, or None when this project's draws skip it."""
+    from novel_to_comic.server.codex_admission import draw_reads_pages
+
+    return page_read_adapter(config, artifacts, page) if draw_reads_pages(config) else None

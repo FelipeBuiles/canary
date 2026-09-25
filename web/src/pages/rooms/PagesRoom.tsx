@@ -60,6 +60,7 @@ import {
 } from "../../components/pages/LetteringEvidence";
 import { isOcrIssue } from "../../components/pages/lettering";
 import { RevisionDraft } from "../../components/pages/RevisionDraft";
+import { StaleRenderRedraw } from "../../components/pages/StaleRenderRedraw";
 import { PageCheckRecovery } from "../../components/pages/PageCheckRecovery";
 import { PageSourcePanel } from "../../components/pages/PageSourcePanel";
 import { VisualReviewPanel, type VisualReviewDraftSeed } from "../../components/pages/VisualReviewPanel";
@@ -290,6 +291,8 @@ function PageReview({
   const comicPageRevision = item.page.revision;
   const editSourceRevision = item.active_render?.render.revision ?? null;
   const compareRevision = item.active_render?.render.parent_revision ?? null;
+  // Re-planned after drawing: the art belongs to an earlier plan revision.
+  const renderStale = editSourceRevision != null && item.analysis_recovery?.status === "stale_render";
   const [draftKeys, setDraftKeys] = useState<string[]>([]);
   const [visualSeeds, setVisualSeeds] = useState<VisualReviewDraftSeed[]>([]);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -395,6 +398,10 @@ function PageReview({
         </div>
         <div ref={bodyRef} className={`min-h-0 flex-1 overflow-y-auto ${view === "lettering" ? "lettering-modal-body" : ""}`}>
           <div className="space-y-7 p-4 lg:p-6">
+            {renderStale && !pageIsDrawing && (
+              <StaleRenderRedraw project={project} pageNumber={item.page.page_number}
+                onJobQueued={(jobId) => onJobQueued(jobId, item.page.page_number)} />
+            )}
             {/* Revision draft stays mounted while hidden so unsaved changes survive tab switches. */}
             <div hidden={view !== "page"} role="region" aria-label={t("Page")}>
               {editSourceRevision != null ? (
@@ -426,7 +433,7 @@ function PageReview({
               </div>
             )}
 
-            {view === "lettering" && editSourceRevision != null && <LetteringEditor project={project} pageNumber={item.page.page_number} disabled={pageIsDrawing}/>}
+            {view === "lettering" && editSourceRevision != null && !renderStale && <LetteringEditor project={project} pageNumber={item.page.page_number} disabled={pageIsDrawing}/>}
 
             {view === "visual" && (
               <div role="region" aria-label={t("Visual review")}>
@@ -452,7 +459,7 @@ function PageReview({
             {view === "checks" && (
               <div role="region" aria-label={t("Checks")}>
                 <section className="space-y-4">
-                  <SectionHeader variant="underline" title={t(item.lettering_mode === "hybrid" ? "Base-art lettering check" : "Optional text review")}
+                  <SectionHeader variant="underline" title={t(item.lettering_mode === "hybrid" ? "Base-art lettering check" : "Text check")}
                     description={t(item.lettering_mode === "hybrid" ? "The artwork should not contain generated comic lettering. Inspect any detected regions; legitimate in-world signs remain separate." : "The checker can misread words. Compare suggestions with the artwork; they do not block export.")} />
                   {editSourceRevision != null && <Button variant="outline" onClick={onCheckText} disabled={checkingText || pageIsDrawing || item.analysis_recovery?.status === "checked"}>
                     {checkingText ? t("CHECKING TEXT…") : item.analysis_recovery?.status === "checked" ? t("TEXT CHECK COMPLETE") : t("CHECK PAGE TEXT")}
@@ -665,6 +672,7 @@ export function PagesRoom() {
           itemsDone={interruptedStageInfo?.items_done}
           itemsTotal={interruptedStageInfo?.items_total}
           startedAt={interruptedStageInfo?.started_at}
+          snapshot={interruptedStageInfo?.snapshot}
           retryAsRerun={planNeedsAdapt}
           allowPendingStart={interruptedStage === "adapt"}
           error={interruptedStageInfo?.error}
@@ -712,7 +720,8 @@ export function PagesRoom() {
     || drawStatus === "failed"
     || !!status?.stages.draw?.stale;
   const unresolvedPages = pages.filter(needsReview);
-  const uncheckedPages = pages.filter((item) => item.active_render && item.analysis_recovery?.status !== "checked");
+  // A page being drawn is read in the same job; only settled pages can still be unchecked.
+  const uncheckedPages = pages.filter((item) => item.active_render && item.analysis_recovery?.status !== "checked" && !drawingPages.has(item.page.page_number));
   const visiblePages = pages.filter((item) => filter === "all"
     || (filter === "needs-review" && needsReview(item))
     || (filter === "drawing" && drawingPages.has(item.page.page_number))
@@ -1008,6 +1017,8 @@ export function PagesRoom() {
                   <span className="font-display text-lg font-black uppercase">{t("Page")} {item.page.page_number}</span>
                   {pageIsDrawing && revision ? (
                     <StatusPill tone="ink">{t("New revision drawing")}</StatusPill>
+                  ) : revision && item.analysis_recovery?.status === "stale_render" ? (
+                    <StatusPill tone="red">{t("Re-planned · redraw")}</StatusPill>
                   ) : revisedIssues ? (
                     <StatusPill tone="gold">{t("Needs visual review")}</StatusPill>
                   ) : openIssueCount > 0 ? (
@@ -1175,17 +1186,8 @@ export function PagesRoom() {
         />
       )}
       {approvalError && <p role="alert" className="text-sm text-hero-red">{approvalError}</p>}
-      {uncheckedPages.length > 0 && (
-        <section className="space-y-3">
-          <p role="status" className="text-sm font-bold">
-            {pages.filter((item) => item.active_render).length} {t("pages drawn")} · {pages.filter((item) => item.analysis_recovery?.status === "checked").length} {t("pages checked")}
-          </p>
-          <details>
-            <summary className="cursor-pointer py-3 font-meta text-sm font-bold">{t("Optional text review")}</summary>
-            <p className="mb-3 max-w-prose text-sm text-ink-muted">{t("Look for possible wording differences. You can export without running this check.")}</p>
-            <PageCheckRecovery project={projectId} onRecovered={() => void refetch()} />
-          </details>
-        </section>
+      {uncheckedPages.length > 0 && queuedPageJobs.length === 0 && (
+        <PageCheckRecovery project={projectId} unchecked={uncheckedPages.length} editable={uncheckedPages.some((item) => item.lettering_mode === "hybrid")} onRecovered={() => void refetch()} />
       )}
       {pages.every((item) => item.active_render) && unresolvedPages.length === 0 && (
         <p role="status" className="text-sm font-bold text-archive-sage">{t("No unresolved page findings. Read through the edition before export.")}</p>

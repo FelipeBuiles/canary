@@ -157,6 +157,7 @@ def _stage_payload(
         if s.last_progress_at
         else None,
         "stale": stale,
+        "snapshot": s.snapshot,
         "in_flight": in_flight or [],
     }
 

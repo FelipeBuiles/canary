@@ -76,3 +76,14 @@ never certifies text accuracy or visual quality.
 
 A replacement OCR engine requires a small, manually reviewed comic benchmark;
 changing the model alone does not restore a mandatory verification gate.
+
+### Addendum: automatic page read for editable lettering (2026-09-24)
+
+Editable-lettering draws and corrections again read each page back inside the
+draw job and its credit estimate. The same call locates heads, labelled against
+small cast portraits, so balloons are seeded over their speakers; it also flags
+lettering drawn into the base art. The read is best effort: a failed read never
+fails the paid page, which stays unchecked and can be read later without
+redrawing. A new read re-places only untouched seeds (no author edit, review or
+translation); placement review stays manual. Integrated editions keep the
+explicit text check above, because its transcription findings remain unreliable.

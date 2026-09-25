@@ -260,12 +260,7 @@ export interface PageCorrectionPreview {
   prompt_characters: number;
   request_sha256: string;
   warnings: string[];
-  estimate: {
-    estimate_credits: number;
-    reserved_credits: number;
-    reservation_multiplier: number;
-    confidence: string;
-  };
+  estimate: CostEstimate;
 }
 
 export interface PageCorrectionSubmission {
@@ -399,4 +394,14 @@ export async function getPageVisualReview(
 
 export function getVisualReviewEstimate(project: string, pageNumber: number): Promise<CostEstimate> {
   return apiFetch(`${projectPath(project)}/pages/${pageNumber}/visual-review/estimate`);
+}
+
+/** Price one page's plan repair; rejects when the page's plan has nothing to repair. */
+export function getPageReplanEstimate(project: string, pageNumber: number): Promise<CostEstimate> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/replan/estimate`);
+}
+
+/** Rewrite one page's plan; its artwork then needs a redraw from Pages. */
+export function replanPage(project: string, pageNumber: number): Promise<{ page_number: number; revision: number }> {
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/replan`, { method: "POST" });
 }

@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import io
 import json
+import logging
 import re
 import time
 from datetime import UTC, datetime
@@ -64,6 +65,9 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
     from novel_to_comic.page_review import OCRAdapter, PageCorrectionContext
     from novel_to_comic.server.generation_jobs import GenerationJob
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -970,11 +974,14 @@ def prepare_page_correction(
 
 
 def estimate_draw_api_cost(
-    config: Config, image_cost: float, *, ocr: bool = False,
+    config: Config, image_cost: float, *, ocr: bool | None = None,
     compiled: CompiledPageGeneration | None = None,
 ) -> float:
-    """Include only the API portions of a page render and optional readback."""
+    """Include only the API portions of a page render and its automatic readback."""
     from novel_to_comic.codex_dev import route_for
+    from novel_to_comic.server.codex_admission import draw_reads_pages
+
+    ocr = draw_reads_pages(config) if ocr is None else ocr
 
     if compiled is not None and compiled.request.provider in {"openai", "fal-queue"}:
         from novel_to_comic.usage import estimate_image_cost
@@ -1512,11 +1519,7 @@ async def draw_complete_page(
             if hashlib.sha256(image).hexdigest() != saved.render.image_sha256:
                 raise ValueError("saved paid render bytes do not match provenance")
             if ocr is not None:
-                await analyze_complete_page(
-                    page=page, render=saved.render,
-                    image=image,
-                    ocr=ocr, artifacts=artifacts,
-                )
+                await _read_back(page=page, render=saved.render, image=image, ocr=ocr, artifacts=artifacts)
             if not defer_completion and calculate_cost_breakdown(saved.usage).source != "unknown_provider_usage":
                 artifacts.mark_generation_complete(saved)
             return saved
@@ -1585,13 +1588,7 @@ async def draw_complete_page(
     )
     artifacts.persist_generated_page(provenance, provider_result.image_bytes)
     if ocr is not None:
-        await analyze_complete_page(
-            page=page,
-            render=render,
-            image=provider_result.image_bytes,
-            ocr=ocr,
-            artifacts=artifacts,
-        )
+        await _read_back(page=page, render=render, image=provider_result.image_bytes, ocr=ocr, artifacts=artifacts)
     if not defer_completion and calculate_cost_breakdown(provenance.usage).source != "unknown_provider_usage":
         artifacts.mark_generation_complete(provenance)
     return provenance
@@ -1613,6 +1610,17 @@ def _analysis_usage(
     except ArtifactMissing:
         return ()
     return () if analysis.analysis_usage is None else (analysis.analysis_usage,)
+
+
+async def _read_back(*, page, render, image, ocr, artifacts) -> None:
+    """Every draw's automatic page read. Best effort: the paid art is already
+    saved, so a failed read never fails the page; the page stays unchecked
+    and can be read again without redrawing."""
+    try:
+        await analyze_complete_page(page=page, render=render, image=image, ocr=ocr, artifacts=artifacts)
+    except Exception:
+        logger.warning("Page %s read-back failed; the drawn page is kept unchecked",
+                       page.page_number, exc_info=True)
 
 
 async def analyze_complete_page(
@@ -1738,7 +1746,8 @@ async def correct_complete_page(
     from novel_to_comic.page_review import resolve_page_issue
 
     analysis = (artifacts.read_analysis(page.page_number, provenance.render.revision)
-                if ocr is not None else None)
+                if artifacts.analysis_path(page.page_number, provenance.render.revision).exists()
+                else None)
     corrected_issues = artifacts.read_issues(page.page_number) if correction.issue_ids else ()
     for corrected in corrected_issues:
         if corrected.id not in correction.issue_ids:

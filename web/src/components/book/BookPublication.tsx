@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "../../api/client";
 import { publicationLanguages, type Publication } from "../../api/publications";
-import { Surface } from "../ui/Surface";
+import { EntityCard, SectionHeader } from "../composites";
+import { FieldLabel, TextAreaField, TextField } from "../ui/Field";
 import { Button } from "../ui/Button";
 import { useI18n } from "../../i18n";
 
@@ -31,16 +32,17 @@ export function BookPublication({ project, title, ready, onPreview }: { project:
       if (!(error instanceof DOMException && error.name === "AbortError")) { setEditing(true); setMessage(t("Copy the public link below to share your book.")); }
     }
   }
-  return <Surface className="my-8" padding="lg" shadow="none" role="region" aria-labelledby="share-book-title">
-    <h2 id="share-book-title" className="font-display text-2xl">{t("Share your finished book")}</h2>
-    {!query.data && <p className="mt-3 max-w-prose font-body">{t("Publish all finished pages for anyone with the link to read and download. Your manuscript and working files stay private. Later edits stay private until you update the published version.")}</p>}
-    {query.isPending ? <p role="status">{t("Loading…")}</p> : query.isError ? <div role="alert"><p>{t("Sharing settings could not be loaded.")}</p><Button onClick={() => void query.refetch()}>{t("Try again")}</Button></div> : <>
-      {query.data && <div className="mt-5 grid gap-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+  return <section aria-labelledby="share-book-title">
+    <div id="share-book-title">
+      <SectionHeader variant="underline" title={t("Share your finished book")}
+        description={query.data ? t("Later edits stay private until you update the published version.") : t("Publish all finished pages for anyone with the link to read and download. Your manuscript and working files stay private. Later edits stay private until you update the published version.")} />
+    </div>
+    {query.isPending ? <p role="status" className="font-body text-sm text-ink-muted">{t("Loading…")}</p> : query.isError ? <div role="alert" className="space-y-3"><p className="font-body text-sm">{t("Sharing settings could not be loaded.")}</p><Button variant="outline" size="sm" onClick={() => void query.refetch()}>{t("Try again")}</Button></div> : <EntityCard>
+      {query.data && <div className="grid gap-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
         <div className="min-w-0">
-          <h3 className="break-words font-display text-xl font-bold">{query.data.title}</h3>
-          <p className="mt-2 font-body text-sm text-ink-muted">{query.data.author} · {query.data.pages.length} {t("pages")}</p>
+          <h3 className="break-words font-display text-xl font-black uppercase leading-tight">{query.data.title}</h3>
+          <p className="mt-2 font-meta text-xs text-ink-muted">{query.data.author} · {query.data.pages.length} {t("pages")}</p>
           {readerLanguages.length > 1 && <p className="mt-2 font-body text-sm">{t("Reader languages")}: {readerLanguages.map(item => item.locale === "source" ? t("Original") : item.locale.toUpperCase()).join(" · ")}</p>}
-          <p className="mt-3 max-w-prose font-body text-sm leading-6">{t("Later edits stay private until you update the published version.")}</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <a className="inline-flex min-h-11 items-center px-3 font-meta text-sm font-bold underline underline-offset-4" href={url} target="_blank" rel="noreferrer">{t("Read book")}</a>
@@ -48,22 +50,27 @@ export function BookPublication({ project, title, ready, onPreview }: { project:
           <Button variant="outline" onClick={() => setEditing(!editing)} aria-expanded={editing}>{t(editing ? "Close details" : "Edit publication")}</Button>
         </div>
       </div>}
-      {(!query.data || editing) && <form className="mt-5 grid gap-4" onSubmit={(event) => { event.preventDefault(); mutation.mutate(false); }}>
-        <label className="grid gap-2 font-meta">{t("Public title")}<input required maxLength={160} value={values.title} onChange={e => update({ title: e.target.value })} className="border-2 border-ink-black bg-pulp-paper p-3" /></label>
-        <label className="grid gap-2 font-meta">{t("Author credit")}<input required maxLength={120} value={values.author} onChange={e => update({ author: e.target.value })} className="border-2 border-ink-black bg-pulp-paper p-3" /></label>
-        <label className="grid gap-2 font-meta">{t("Short description")}<textarea maxLength={600} value={values.description} onChange={e => update({ description: e.target.value })} className="border-2 border-ink-black bg-pulp-paper p-3" /></label>
-        <label className="flex min-h-11 items-center gap-3"><input type="checkbox" checked={values.allow_feature} onChange={e => update({ allow_feature: e.target.checked })} />{t("Allow Scenewright to feature this book on the homepage")}</label>
-        <p className="font-body text-sm">{t("The public reader includes a Made with Scenewright credit and a closing invitation to create a book.")}</p>
-        {!ready && <p>{t("Resolve the edition checks before publishing or updating your book.")}</p>}
-        <div className="flex flex-wrap gap-3"><Button variant="outline" disabled={!onPreview} onClick={onPreview}>{t("Preview all pages")}</Button><Button type="submit" disabled={!ready || mutation.isPending || !values.title.trim() || !values.author.trim()}>{mutation.isPending ? t("Saving…") : query.data ? t("Update published version") : t("Publish book")}</Button></div>
+      {(!query.data || editing) && <form className={`grid gap-5 ${query.data ? "mt-6 border-t border-ink-black/15 pt-6" : ""}`} onSubmit={(event) => { event.preventDefault(); mutation.mutate(false); }}>
+        <div className="grid gap-5 md:grid-cols-2">
+          <div><FieldLabel htmlFor={`${project}-public-title`}>{t("Public title")}</FieldLabel><TextField id={`${project}-public-title`} required maxLength={160} value={values.title} onChange={e => update({ title: e.target.value })} /></div>
+          <div><FieldLabel htmlFor={`${project}-author-credit`}>{t("Author credit")}</FieldLabel><TextField id={`${project}-author-credit`} required maxLength={120} value={values.author} onChange={e => update({ author: e.target.value })} /></div>
+        </div>
+        <div><FieldLabel htmlFor={`${project}-description`}>{t("Short description")}</FieldLabel><TextAreaField id={`${project}-description`} maxLength={600} rows={3} value={values.description} onChange={e => update({ description: e.target.value })} /></div>
+        <label className="flex min-h-11 items-center gap-3 font-body text-sm"><input type="checkbox" className="h-4 w-4 accent-ink-black" checked={values.allow_feature} onChange={e => update({ allow_feature: e.target.checked })} />{t("Allow Scenewright to feature this book on the homepage")}</label>
+        <p className="font-body text-xs leading-5 text-ink-muted">{t("The public reader includes a Made with Scenewright credit and a closing invitation to create a book.")}</p>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="submit" disabled={!ready || mutation.isPending || !values.title.trim() || !values.author.trim()}>{mutation.isPending ? t("Saving…") : query.data ? t("Update published version") : t("Publish book")}</Button>
+          <Button variant="outline" disabled={!onPreview} onClick={onPreview}>{t("Preview all pages")}</Button>
+          {!ready && <p className="font-body text-sm text-ink-muted">{t("Resolve the edition checks before publishing or updating your book.")}</p>}
+        </div>
       </form>}
-      {query.data && editing && <div className="mt-6 grid gap-3 border-t-2 border-ink-black pt-5">
-        <a className="break-all underline" href={url} target="_blank" rel="noreferrer">{url}</a>
+      {query.data && editing && <div className="mt-6 grid gap-3 border-t border-ink-black/15 pt-5">
+        <a className="break-all font-body text-sm underline" href={url} target="_blank" rel="noreferrer">{url}</a>
         <div className="flex flex-wrap gap-3"><Button variant="outline" disabled={mutation.isPending} onClick={() => mutation.mutate(true)}>{t("Unpublish")}</Button></div>
       </div>}
-    </>}
-    {message && <p className="mt-4" role="status">{message}</p>}
+    </EntityCard>}
+    {message && <p className="mt-4 font-body text-sm" role="status">{message}</p>}
     {leftOut.length > 0 && <p className="mt-2 max-w-prose font-body text-sm">{t("Not published in {languages}. Readers only see languages where every page has a saved translation that fits.").replace("{languages}", leftOut.join(", "))}</p>}
-    {mutation.error && <p className="mt-4" role="alert">{mutation.error.message}</p>}
-  </Surface>;
+    {mutation.error && <p className="mt-4 font-body text-sm text-hero-red" role="alert">{mutation.error.message}</p>}
+  </section>;
 }

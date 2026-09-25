@@ -2,6 +2,7 @@
 from novel_to_comic.config import Config
 from novel_to_comic.codex_dev import selectable_models, selector_available, model_has_vision, process_setting, validate_local_runtime, CodexRoutingError
 from novel_to_comic.image_models import IMAGE_MODEL_ALIASES, describe_image_model
+from novel_to_comic.text_models import TEXT_MODELS
 
 # Keep controls in pipeline order. Style/Cast share settings; Draw has three
 # distinct model jobs rather than three additional pipeline stages.
@@ -33,13 +34,6 @@ STAGE_DESCRIPTIONS = {
     "ocr": "After a page is drawn, reads its lettering to check for missing or incorrect text.",
     "visual_review": "Reviews drawn pages against approved references for visual issues such as character or costume changes.",
 }
-TEXT_MODELS = (
-    {"id": "gpt-6-sol", "label": "GPT-6 Sol", "provider": "OpenAI"},
-    {"id": "gpt-6-luna", "label": "GPT-6 Luna", "provider": "OpenAI"},
-    {"id": "claude-fable-5-1", "label": "Claude Fable 5.1", "provider": "Anthropic"},
-    {"id": "claude-opus-5", "label": "Claude Opus 5", "provider": "Anthropic"},
-    {"id": "mimo-v2.6-pro", "label": "MiMo V2.6 Pro", "provider": "OpenRouter"},
-)
 DRAW_MODELS = ("image-sunburst",)
 
 
@@ -64,7 +58,10 @@ def codex_models() -> list[dict]:
 def models(*, include_codex: bool = True) -> list[dict]:
     return [
         *(codex_models() if include_codex else []),
-        *[dict(model, kind="text", vision=True, funding="api") for model in TEXT_MODELS],
+        *[{
+            "id": model.id, "label": model.label, "provider": model.provider,
+            "kind": "text", "vision": model.vision, "funding": "api",
+        } for model in TEXT_MODELS],
         *[{
             "id": model, "label": describe_image_model(model).display_name,
             "provider": describe_image_model(model).provider_key,
@@ -79,8 +76,10 @@ def allowed_models(stage: str, *, include_codex: bool = True) -> tuple[str, ...]
         return (*DRAW_MODELS, *codex)
     if stage == "image":
         return (*IMAGE_MODEL_ALIASES, *codex)
+    if stage in {"ocr", "visual_review"}:
+        return (*(model.id for model in TEXT_MODELS if model.vision), *codex)
     if stage in STAGE_FIELDS:
-        return (*tuple(model["id"] for model in TEXT_MODELS), *codex)
+        return (*(model.id for model in TEXT_MODELS), *codex)
     raise ValueError(f"Unknown model setting: {stage}")
 
 

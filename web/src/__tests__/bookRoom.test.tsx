@@ -18,6 +18,8 @@ let pendingFormat: "pdf" | "cbz" | null = null;
 let devDiagnostics = false;
 const recoverChecks = vi.fn();
 const finishChecks = vi.fn();
+const replanEstimate = vi.fn();
+const replanPage = vi.fn();
 let finishStageStatus = "complete";
 let drawStageStatus = "complete";
 let creditHistory: { pages: CreditHistoryPage[] };
@@ -31,6 +33,12 @@ function drawnPage(pageNumber: number, spreadRole: "single" | "left" | "right" =
   };
 }
 let drawnPages = [drawnPage(1)];
+const storyBible = {
+  characters: [{ id: "kaitlin", name: "Kaitlin Morris", appearance_states: [
+    { id: "kaitlin_clothes", label: "Son's old clothes" }, { id: "kaitlin_raincoat", label: "Oversized raincoat" },
+  ] }],
+  locations: [], props: [],
+};
 
 
 vi.mock("../api/queries", () => ({
@@ -65,12 +73,15 @@ vi.mock("../api/queries", () => ({
   useCreditBalance: () => ({ data: undefined }),
   useCompletePages: () => ({ data: { pages: drawnPages } }),
   useRunFinishPreflight: () => ({ mutate: rerunPreflight, isPending: false, error: null }),
+  useStoryBible: () => ({ data: storyBible }),
 }));
 
 vi.mock("../api/pages", async (importOriginal) => ({
   ...await importOriginal<typeof PagesApi>(),
   recoverPageChecks: (...args: unknown[]) => recoverChecks(...args),
   runFinishPreflight: (...args: unknown[]) => finishChecks(...args),
+  getPageReplanEstimate: (...args: unknown[]) => replanEstimate(...args),
+  replanPage: (...args: unknown[]) => replanPage(...args),
 }));
 
 import { BookRoom } from "../pages/rooms/BookRoom";
@@ -100,6 +111,8 @@ beforeEach(() => {
   rerunPreflight.mockReset();
   recoverChecks.mockReset();
   finishChecks.mockReset().mockResolvedValue({ status: "done" });
+  replanEstimate.mockReset().mockResolvedValue({ estimate_credits: 2, reserved_credits: 3, reservation_multiplier: 1.5, confidence: "variable" });
+  replanPage.mockReset().mockResolvedValue({ page_number: 16, revision: 2 });
   window.localStorage.removeItem("canary.showDevContent");
   drawnPages = [drawnPage(1)];
   preflight = {
@@ -128,19 +141,51 @@ describe("BookRoom edition decisions", () => {
     expect(screen.queryByText(/USD|gemini|provider/i)).toBeNull();
   });
 
-  it("shows outstanding lettering acceptance outside developer mode without blocking export", () => {
-    preflight.pages[0].lettering_placement_review_needed = true;
+  it("summarises outstanding lettering acceptance as one optional check without blocking export", () => {
+    preflight.pages = [1, 2, 3].map((page_number) => ({
+      page_number, comic_page_revision: 1, render_revision: 1, lettering_placement_review_needed: page_number > 1,
+      invariant_failures: [], unresolved_editorial_issue_ids: [], accepted_editorial_issue_ids: [],
+    }));
     renderRoom();
-    expect(screen.getByRole("region", { name: "LETTERING VISUAL REVIEW" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Review lettering placement · Page 1" }).getAttribute("href"))
-      .toBe("/project/demo/pages?page=1&review=lettering");
+    const check = screen.getByText("Lettering on 2 pages hasn’t been checked by eye").closest("li")!;
+    expect(within(check).getByText("Optional")).toBeTruthy();
+    expect(within(check).getByRole("link", { name: "Start with page 2" }).getAttribute("href"))
+      .toBe("/project/demo/pages?page=2&review=lettering");
+    expect(within(check).getByRole("link", { name: "Review lettering placement · Page 3" }).getAttribute("href"))
+      .toBe("/project/demo/pages?page=3&review=lettering");
+    expect(screen.getByText("2 pages to check by eye")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", false);
     expect(screen.queryByRole("region", { name: "TECHNICAL DIAGNOSTICS" })).toBeNull();
   });
 
   it("does not warn about placement for accepted or retained baked pages", () => {
     renderRoom();
-    expect(screen.queryByRole("region", { name: "LETTERING VISUAL REVIEW" })).toBeNull();
+    expect(screen.queryByText(/checked by eye/)).toBeNull();
+    expect(screen.getByText("Every page is ready to export.")).toBeTruthy();
+    expect(screen.getByText("Ready to export")).toBeTruthy();
+  });
+
+  it("explains a blocker once per page in the author's terms and names who it involves", () => {
+    const failure = (content: string) => ({
+      id: "finish-page-016-cross_page_appearance_state", owner_stage: "plan" as const, code: "cross_page_appearance_state",
+      message: "Page-scoped appearance state is stale across pages.",
+      artifact_ids: [content, "kaitlin", "kaitlin_clothes", "kaitlin_raincoat"],
+      evidence: ["Page content cites states not yet activated for 'kaitlin': ['kaitlin_raincoat']."],
+    });
+    preflight.pages[0] = { ...preflight.pages[0], page_number: 16, invariant_failures: [failure("content_1"), failure("content_2")] };
+    renderRoom();
+    const check = screen.getByText("A character’s look is out of order").closest("li")!;
+    expect(within(check).getByText("Blocks export")).toBeTruthy();
+    expect(within(check).getByText("Kaitlin Morris · “Oversized raincoat”")).toBeTruthy();
+    expect(within(check).getByText(/redrawing alone won’t clear it/)).toBeTruthy();
+    // Two findings on the same page are one thing to fix, and the page is listed once.
+    expect(within(check).getAllByRole("link")).toHaveLength(1);
+    expect(within(check).getByRole("link", { name: "Open page · Page 16" }).getAttribute("href"))
+      .toBe("/project/demo/pages?page=16&review=page");
+    expect(screen.queryByText("Page-scoped appearance state is stale across pages.")).toBeNull();
+    expect(screen.getByText("1 fix needed before export")).toBeTruthy();
+    expect(screen.getAllByText("1 fix needed first")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
   });
 
   it("offers grouped check recovery when Finish is ready before Draw approval", () => {
@@ -158,8 +203,7 @@ describe("BookRoom edition decisions", () => {
     }));
     renderRoom();
     expect(screen.getAllByText("Saved artwork needs text evidence")).toHaveLength(1);
-    fireEvent.click(screen.getByText("Optional text review"));
-    expect(screen.getByRole("button", { name: "CHECK UNCHECKED PAGES" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Check pages" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
     expect(screen.getByRole("link", { name: "Open page checks · Page 1" })).toBeTruthy();
   });
@@ -178,9 +222,10 @@ describe("BookRoom edition decisions", () => {
     renderRoom();
     expect(screen.getAllByText("Saved artwork needs text evidence")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
-    fireEvent.click(screen.getByText("Optional text review"));
-    fireEvent.click(screen.getByRole("button", { name: "CHECK UNCHECKED PAGES" }));
-    await screen.findByText(/Not checked — export is still available/);
+    expect(screen.getByText(/2 pages haven’t had a text check/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Check pages" }));
+    await screen.findByText("1 page couldn’t be checked. Export still works.");
+    expect(screen.queryByText(/Page 1:/)).toBeNull();  // One summary line, not a row per page.
     await waitFor(() => expect(finishChecks).toHaveBeenCalledWith("demo"));
     expect(recoverChecks).toHaveBeenCalledOnce();
     expect(recoverChecks).toHaveBeenCalledWith("demo", false, {});
@@ -191,9 +236,36 @@ describe("BookRoom edition decisions", () => {
   it("keeps accepted editorial decisions inspectable without blocking packaging", () => {
     preflight.pages[0].accepted_editorial_issue_ids = ["accepted-concern"];
     renderRoom();
-    fireEvent.click(screen.getByText("Accepted decisions"));
+    fireEvent.click(screen.getByText("Accepted decisions (1)"));
     expect(screen.getByRole("link", { name: "Page 1 · 1 accepted" }).getAttribute("href")).toBe("/project/demo/pages?page=1&review=visual");
     expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", false);
+  });
+
+  it("re-plans a page that looks ahead only after the author confirms its estimate", async () => {
+    preflight.pages[0] = { ...preflight.pages[0], page_number: 16, invariant_failures: [{
+      id: "finish-page-016-cross_page_appearance_state", owner_stage: "plan", code: "cross_page_appearance_state",
+      message: "Page-scoped appearance state is stale across pages.",
+      artifact_ids: ["page_016_content_001", "kaitlin", "kaitlin_clothes", "kaitlin_raincoat"],
+      evidence: ["Page content cites states not yet activated for 'kaitlin': ['kaitlin_raincoat']."],
+    }] };
+    renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: "Re-plan page 16" }));
+    const drawer = await screen.findByRole("alertdialog");
+    await waitFor(() => expect(within(drawer).getByText(/~2 credits/)).toBeTruthy());
+    expect(replanEstimate).toHaveBeenCalledWith("demo", 16);
+    expect(replanPage).not.toHaveBeenCalled();
+    fireEvent.click(within(drawer).getByRole("button", { name: "Re-plan page 16" }));
+    await waitFor(() => expect(replanPage).toHaveBeenCalledWith("demo", 16));
+    await waitFor(() => expect(retryPreflight).toHaveBeenCalled());
+  });
+
+  it("does not offer a page re-plan for Adapt-owned chronology", () => {
+    preflight.pages[0].invariant_failures = [{
+      id: "finish-page-001-cross_page_appearance_state", owner_stage: "adapt", code: "cross_page_appearance_state",
+      message: "Appearance-state chronology is inconsistent.", evidence: [],
+    }];
+    renderRoom();
+    expect(screen.queryByRole("button", { name: /Re-plan page/ })).toBeNull();
   });
 
   it("routes technical and editorial blockers to their distinct page reviews", () => {

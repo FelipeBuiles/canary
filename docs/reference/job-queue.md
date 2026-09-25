@@ -21,7 +21,7 @@ requires a shared artifact authority and distributed mutation ownership first.
 Commands cover pipeline stages and their explicit auto-chain, page draws and
 corrections, cast references, covers, style proofs and lettering translation.
 Prepared page inputs retain their model profile, reference bytes, request hash and
-optional OCR. Stage implementations continue to receive `StageRuntime`.
+their page read-back (editable lettering). Stage implementations continue to receive `StageRuntime`.
 Synchronous analysis/review APIs keep their existing request lifecycle.
 
 One account executes ordinary queued operations exclusively. Complete-page Draw

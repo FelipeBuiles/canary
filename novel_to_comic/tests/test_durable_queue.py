@@ -475,7 +475,7 @@ def test_draw_batch_preparation_keeps_heartbeat_alive_and_announces_only_queued_
     def prepare(**kwargs):
         entered.set()
         assert release.wait(2), "Preparation blocked the event loop heartbeat"
-        return target, object(), [(1, object(), object())]
+        return target, object(), [(1, SimpleNamespace(page_number=1), object())]
     monkeypatch.setattr(pages, "prepare_undrawn_pages", prepare)
     monkeypatch.setattr(pages, "ensure_current_page_edition", lambda *args: None)
     app = make_app(tmp_path)
@@ -554,3 +554,12 @@ def test_restore_closes_the_style_stage_a_hard_stop_left_running(tmp_path, sibli
     else:
         assert style.status == StageStatus.FAILED
         assert style.items_done == 1
+
+
+def test_page_replan_is_a_paid_whole_project_mutation():
+    # One planning call, so it needs a receipt; it rewrites the book plan, so it
+    # waits for every running job instead of running beside page draws.
+    from novel_to_comic.server.admission import _PAID, _TARGETED
+
+    assert _PAID.fullmatch("/pages/16/replan")
+    assert not _TARGETED.fullmatch("/pages/16/replan")

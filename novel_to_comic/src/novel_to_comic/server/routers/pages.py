@@ -34,6 +34,7 @@ from novel_to_comic.page_drawing import (
 from novel_to_comic.narrative_review import require_draw_narrative_reviews
 from novel_to_comic.page_previews import ensure_page_render_preview
 from novel_to_comic.page_source import PageSourceStale, page_source_view
+from novel_to_comic.lettering.page_read import draw_page_read, page_read_adapter
 from novel_to_comic.page_ocr import GatewayPageOCRAdapter  # noqa: F401  (tests patch it here)
 from novel_to_comic.page_review import (
     accept_editorial_page_issue,
@@ -375,7 +376,7 @@ async def enqueue_all_undrawn_pages(
             adapter=adapter,
             artifacts=target,
             page=page,
-            ocr=None,
+            ocr=draw_page_read(config, target, page),
             on_success=_draw_success_callback(
                 request,
                 pkey=pkey,
@@ -607,6 +608,18 @@ def estimate_remaining_page_generation(project=Depends(get_project)):
     return dict(estimate)
 
 
+def _latest_render_is_stale(target: TargetArtifacts, page_number: int, revision: int) -> bool:
+    """A re-planned page: its newest art belongs to an earlier ComicPage.
+
+    A correction edits art of the same page revision, so such a page is drawn
+    fresh from its current plan instead; the old art stays in its history.
+    """
+    try:
+        return target.read_provenance(page_number, revision).render.is_stale_for(target.read_page(page_number))
+    except (ArtifactMissing, ArtifactInvalid):
+        return False
+
+
 def _prepare_initial_generation(
     project, page_number: int, depiction: Literal["canonical", "less_graphic"],
 ):
@@ -614,8 +627,9 @@ def _prepare_initial_generation(
     classify_operations(draw_operations(config))
     target = TargetArtifacts(project_dir)
     resumable = target.resumable_generation_request(page_number)
-    if target.provenance_revisions(page_number) and (
-        resumable is None or resumable.correction is not None
+    revisions = target.provenance_revisions(page_number)
+    if revisions and (resumable is None or resumable.correction is not None) and not _latest_render_is_stale(
+        target, page_number, revisions[-1],
     ):
         raise HTTPException(
             409,
@@ -709,7 +723,7 @@ def generate_page(
         adapter=adapter,
         artifacts=target,
         page=page,
-        ocr=None,
+        ocr=draw_page_read(config, target, page),
         on_success=_draw_success_callback(
             request,
             pkey=pkey,
@@ -821,7 +835,6 @@ async def analyze_page(
     try:
         from ..credited_job import run_credited_page_check
         from novel_to_comic.config import PAGE_OCR_ESTIMATED_COST_USD
-        from novel_to_comic.lettering.page_read import page_read_adapter
         def cached_work():
             if hashlib.sha256(image).hexdigest() != active.render.image_sha256:
                 raise HTTPException(409, "Saved artwork bytes do not match render lineage")
@@ -1252,8 +1265,8 @@ def submit_page_correction(
         compiled=compiled,
         adapter=adapter,
         artifacts=target,
-        page=target.read_page(page_number),
-        ocr=None,
+        page=(page := target.read_page(page_number)),
+        ocr=draw_page_read(config, target, page),
         parent_render_revision=correction.parent_render_revision,
         issue=primary_issue,
         on_success=_draw_success_callback(
@@ -1405,6 +1418,75 @@ def read_saved_visual_review(page_number: int, project=Depends(get_project)):
             project_dir, reference_display_for_render(target, page_number, active.render),
         ),
     }
+
+
+def _replan_operations(config):
+    return (("text", config.effective_plan_model()),)
+
+
+def _replan_cost(target: TargetArtifacts, project_dir, config, page_number: int) -> float:
+    from novel_to_comic.page_planning import estimate_page_replan_cost
+
+    return estimate_page_replan_cost(
+        target, approved_visual_inventory(project_dir), page_number, model=config.effective_plan_model(),
+    )
+
+
+@router.get("/pages/{page_number}/replan/estimate")
+def replan_page_estimate(page_number: int, project=Depends(get_project)):
+    """Price one page's plan repair; 409 when its plan has nothing to repair."""
+    from ..credits import credit_estimate_for_provider_cost
+
+    project_dir, config, _state = project
+    try:
+        cost = _replan_cost(TargetArtifacts(project_dir), project_dir, config, page_number)
+    except (ArtifactMissing, ArtifactInvalid, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return credit_estimate_for_provider_cost(
+        cost, "plan", reserve=True, funding=classify_operations(_replan_operations(config)),
+    )
+
+
+@router.post("/pages/{page_number}/replan")
+async def replan_one_page(page_number: int, project_id: str,
+                          project=Depends(get_project), user_id: str = Depends(get_current_user)):
+    """Rewrite one page's plan to clear its validation failures.
+
+    The page keeps its beats and lettering; its current artwork becomes stale
+    and is redrawn separately from Pages.
+    """
+    from ..credited_job import run_credited_page_check
+    from novel_to_comic.clients.text import generate_json
+    from novel_to_comic.generation_checkpoints import checkpointed_generator
+    from novel_to_comic.page_planning import PlanInvariantError, replan_page
+
+    project_dir, config, _state = project
+    target = TargetArtifacts(project_dir)
+    model = config.effective_plan_model()
+
+    async def generate(**kwargs):
+        return await generate_json(config=config, model=model, temperature=0.25, **kwargs)
+
+    try:
+        cost = _replan_cost(target, project_dir, config, page_number)
+        revised = await run_credited_page_check(
+            user_id=user_id, project_id=project_id, project_dir=project_dir, page_number=page_number,
+            estimated_cost_usd=cost, operations=_replan_operations(config),
+            work=lambda: replan_page(
+                target, approved_visual_inventory(project_dir), page_number,
+                generate=checkpointed_generator(generate, artifacts=target, stage="plan", model=model),
+                model=model,
+            ),
+        )
+    except PlanInvariantError as exc:
+        raise HTTPException(409, {
+            "code": "page_replan_rejected",
+            "message": "The revised page plan still has problems; the current plan is unchanged.",
+            "failures": [failure.message for failure in exc.validation.invariant_failures],
+        }) from exc
+    except (ArtifactMissing, ArtifactInvalid, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"page_number": page_number, "revision": revised.revision}
 
 
 # Independent presentation endpoints, not a ninth pipeline stage.

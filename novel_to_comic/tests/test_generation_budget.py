@@ -141,3 +141,34 @@ def test_explicit_restart_grants_new_allowance_without_reusing_or_erasing_old_wo
     assert len(calls) == 2
     assert (archive / budget.relative_to(tmp_path)).read_bytes() == before
     assert len(json.loads(budget.read_text())["calls"]) == 1
+
+
+def test_ledger_separates_queued_from_executing_calls(tmp_path):
+    from novel_to_comic.ai.context import notify_execution_started
+
+    release = asyncio.Event()
+    seen = {}
+
+    async def generate(**request):
+        seen["queued"] = TargetArtifacts(tmp_path).read_generation_budget("adapt", lineage()).calls[0].started_at
+        await release.wait()
+        notify_execution_started()
+        notify_execution_started()  # schema retries re-notify; stamped once
+        seen["started"] = TargetArtifacts(tmp_path).read_generation_budget("adapt", lineage()).calls[0].started_at
+        return ApiResult(value={"ok": True})
+
+    def lineage():
+        from novel_to_comic.generation_budget import generation_lineage
+        return generation_lineage({"approved_source": "same"})
+
+    async def exercise():
+        task = asyncio.create_task(wrap(generate, tmp_path)(feature="adapt.book"))
+        await asyncio.sleep(0)
+        release.set()
+        await task
+
+    asyncio.run(exercise())
+    call = TargetArtifacts(tmp_path).read_generation_budget("adapt", lineage()).calls[0]
+    assert seen["queued"] is None
+    assert seen["started"] is not None and call.started_at == seen["started"]
+    assert call.admitted_at <= call.started_at <= call.finished_at

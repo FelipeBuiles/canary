@@ -1296,11 +1296,12 @@ def test_interrupted_correction_route_resumes_original_parent_without_redraw(tmp
 
     class UnavailableOCR:
         async def extract(self, image):
-            raise RuntimeError("read-back interrupted")
+            # Cancellation (worker shutdown) still interrupts; ordinary read failures do not.
+            raise asyncio.CancelledError("read-back interrupted")
 
     transport = CountingTransport()
     adapter = VertexCompletePageAdapter(transport)
-    with pytest.raises(RuntimeError, match="read-back interrupted"):
+    with pytest.raises(asyncio.CancelledError):
         asyncio.run(correct_complete_page(
             prepared.compiled, issue=None, adapter=adapter,
             artifacts=artifacts, page=page, ocr=UnavailableOCR(),

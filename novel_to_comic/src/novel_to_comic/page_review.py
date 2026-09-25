@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import logging
 from collections import Counter
 from typing import Protocol
 
@@ -28,6 +30,8 @@ from novel_to_comic.models.validation import EditorialIssue, InvariantFailure
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 from novel_to_comic.text_utils import normalize_display_text
 from novel_to_comic.usage import ApiResult, UsageRecord
+
+logger = logging.getLogger(__name__)
 
 MAX_CORRECTION_CHANGES = 24
 MAX_CORRECTION_NOTE_CHARACTERS = 1000
@@ -359,7 +363,18 @@ async def analyze_page_render(
     )
     artifacts.write_raw_ocr(raw)
     analysis = _validate_observations(page=page, render=render, raw=raw, artifacts=artifacts)
+    await asyncio.to_thread(_reseed_lettering, artifacts, page.page_number)
     return PageAnalysisResult(analysis=analysis, usage=read.usage)
+
+
+def _reseed_lettering(artifacts: TargetArtifacts, page_number: int) -> None:
+    """Let untouched editable lettering use the new read (faces). Never fails the read."""
+    from novel_to_comic.lettering.service import reseed_after_read
+
+    try:
+        reseed_after_read(artifacts, page_number)
+    except Exception:
+        logger.warning("Page %s lettering was not re-placed after its read", page_number, exc_info=True)
 
 
 def revalidate_cached_page_render(

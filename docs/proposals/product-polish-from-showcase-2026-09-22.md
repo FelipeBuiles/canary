@@ -71,6 +71,9 @@ Done in the working tree, with provider-free tests. There was no visual pass in 
   mis-aimed or missing tails, covered in-world text and drawn-in lettering, with undoable fixes and
   a draft "Redo layout around faces". Checks are hints; placement review stays manual. Reads saved
   before this change record `figures_read: false` and show heads as unknown, not absent.
+  Update (September 24): editable-lettering draws now run this read automatically, best effort, and
+  a new read re-places untouched seeds (ADR 0014 addendum). Unchecked older pages show one line
+  with a "Check pages" action instead of a per-page list.
 - **Not started:** A12 (needs planning), and B6 (read-only check: failed proofs
   already show "Try sample again" behind an estimate).
 

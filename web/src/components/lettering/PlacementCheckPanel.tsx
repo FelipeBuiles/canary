@@ -63,7 +63,7 @@ export function PlacementCheckPanel({ project, pageNumber, state, evidence, chec
     setRunning(kind); setError(null);
     try { await work(); }
     catch (caught) {
-      if (kind === "check") maybeShowInsufficientCredits(caught, { actionLabel: t("Check faces & text") });
+      if (kind === "check") maybeShowInsufficientCredits(caught, { actionLabel: t("Check this page") });
       setError(caught instanceof Error ? caught.message : t("The check could not finish. Try again."));
     }
     finally { setRunning(null); }
@@ -73,7 +73,7 @@ export function PlacementCheckPanel({ project, pageNumber, state, evidence, chec
     <summary><span>{t("Placement check")}</span><span className={`lettering-check-badge ${toFix ? "is-fix" : toConsider ? "is-consider" : "is-clear"}`}>{summary}</span></summary>
     <div className="lettering-check-body">
       <p className="lettering-check-source">{!read
-        ? t("Panel borders are checked from the artwork. A text check also finds faces and any lettering drawn into the art.")
+        ? t("This page was drawn before pages were checked automatically, so faces aren’t known yet. Panel borders are still checked.")
         : heads === null
           ? t("This artwork’s text check ran before faces were read. Panels and drawn-in text are still checked.")
           : heads.length
@@ -101,9 +101,9 @@ export function PlacementCheckPanel({ project, pageNumber, state, evidence, chec
       </div>}
       {!read && <div className="lettering-check-run">
         <Button size="xs" disabled={disabled || !!running || !estimate.data} onClick={() => void run("check", async () => { await analyzeCompletePage(project, pageNumber); await onChecked(); })}>
-          {running === "check" ? t("Checking faces & text…") : t("Check faces & text")}{estimate.data ? ` · ~${estimate.data.estimate_credits} ${t("credits")}` : ""}
+          {running === "check" ? t("Checking this page…") : t("Check this page")}{estimate.data ? ` · ~${estimate.data.estimate_credits} ${t("credits")}` : ""}
         </Button>
-        <p className="lettering-hint">{t("One look at the artwork finds faces for balloon tails and any words drawn into the art. Saved with the page; re-opening never spends again.")}</p>
+        <p className="lettering-hint">{t("Finds faces for balloons and tails, and any words drawn into the art. New pages get this automatically.")}</p>
         {estimate.error && <p role="alert" className="lettering-error">{(estimate.error as Error).message}</p>}
       </div>}
       {error && <p role="alert" className="lettering-error">{error}</p>}

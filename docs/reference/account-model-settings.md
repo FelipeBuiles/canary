@@ -33,9 +33,14 @@ operator connection used by its other views.
 | Visual review | GPT-6 Luna | Visual consistency checks |
 
 Text and vision choices are `gpt-6-sol`, `gpt-6-luna`,
-`claude-fable-5-1`, `claude-opus-5`, and `mimo-v2.6-pro`. Image and Draw choices
-are `image-sunburst` only. The gateway maps these to OpenAI, Anthropic,
-OpenRouter/Xiaomi, and FAL respectively. The OpenAI model pages publish the
+`claude-fable-5-1`, `claude-opus-5`, `mimo-v2.6-pro`, and `deepseek-v4.1-flash`.
+Image and Draw choices are `image-sunburst` only. The gateway maps these to
+OpenAI, Anthropic, OpenRouter/Xiaomi, Together AI, and FAL respectively.
+`novel_to_comic/src/novel_to_comic/text_models.py` lists the selectable text aliases and the
+request fields each accepts; every alias needs a gateway route and a pricing
+alias. The DeepSeek route turns off Together's default thinking with
+`extra_body.reasoning.enabled: false`. The pinned gateway drops a route-level
+`reasoning_effort` for this model. The OpenAI model pages publish the
 standard text rates per million tokens: [Sol](https://developers.openai.com/api/docs/models/gpt-6-sol)
 $2 input / $0.20 cached input / $10 output, and
 [Luna](https://developers.openai.com/api/docs/models/gpt-6-luna)

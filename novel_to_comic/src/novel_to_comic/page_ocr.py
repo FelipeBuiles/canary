@@ -7,6 +7,8 @@ falsify a render, and Draw's exact-lettering invariant would validate itself.
 
 from __future__ import annotations
 
+import functools
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -301,13 +303,20 @@ class GatewayPageOCRAdapter:
     """Read one complete page render through the configured vision model."""
 
     def __init__(
-        self, config: Config, *, page_number: int, portraits: tuple[CastPortrait, ...] = ()
+        self, config: Config, *, page_number: int,
+        portraits: tuple[CastPortrait, ...] | Callable[[], tuple[CastPortrait, ...]] = (),
     ) -> None:
         self._config = config
         self._page_number = page_number
-        self._portraits = portraits
+        # A callable defers reading portrait files until the page is actually read.
+        self._portrait_source = portraits
         self._artifacts = None
         self._render = None
+
+    @functools.cached_property
+    def _portraits(self) -> tuple[CastPortrait, ...]:
+        source = self._portrait_source
+        return source() if callable(source) else source
 
     def bind_render(self, artifacts, render) -> None:
         """Attach the durable evidence sink without changing extract callers."""

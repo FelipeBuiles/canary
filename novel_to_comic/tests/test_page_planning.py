@@ -510,7 +510,8 @@ def test_default_plan_budget_covers_review_and_repairs_and_scales_with_book(beat
     from novel_to_comic.page_planning import _default_plan_call_limit
 
     assert _default_plan_call_limit(_long_adaptation(beat_count),
-                                   ApprovedPageRange(minimum=1, maximum=upper_target)) == expected
+                                   ApprovedPageRange(minimum=1, maximum=upper_target),
+                                   "test-planner") == expected
 
 
 @pytest.mark.parametrize("unresolved", [False, True])
@@ -597,7 +598,7 @@ def test_invalid_reference_detail_stops_after_bounded_correction_with_page_locat
     assert [f.code for f in failures] == ["reference_authority"]
     assert "page_009_content_001" in failures[0].artifact_ids
     assert "character_johansen:base" in failures[0].artifact_ids
-    assert _concern_batch_indexes(failures, page_count=10) == {1: [failures[0]]}
+    assert _concern_batch_indexes(failures, page_count=10, batch_pages=8) == {1: [failures[0]]}
     assert not TargetArtifacts(tmp_path).plan_path.exists()
 
 
@@ -3901,3 +3902,289 @@ def test_detail_batches_run_up_to_the_configured_concurrency(tmp_path: Path, con
     ))
     assert len(plan.pages) == 40
     assert peak == concurrency
+
+
+def test_plan_progress_snapshots_report_only_validated_work(tmp_path: Path) -> None:
+    # The Plan loading view renders these snapshots, so each must describe
+    # work that passed its local checks: the validated map, then each batch
+    # once its pages compile — queued until the transport starts it.
+    from novel_to_comic.ai.context import notify_execution_started
+
+    adaptation = _long_adaptation()
+    state = PipelineState(
+        project_name="long-plan", novel_path="novel.txt",
+        created_at=datetime.now(timezone.utc),
+    )
+    events: list[dict] = []
+
+    async def generate(**request):
+        if request["feature"] == "plan.map":
+            return ApiResult(value=plan_response({
+                "rhythm_summary": "Twenty-four measured story pages.",
+                "pages": [
+                    {
+                        "beat_ids": [f"beat_{index:04d}"],
+                        "lettering_ids": [f"lettering_{index:04d}"],
+                        "emphasis": "initial",
+                        "density_intent": "standard",
+                        "rhythm_intent": f"Advance event {index}.",
+                    }
+                    for index in range(1, 25)
+                ],
+            }), usage=None)
+        notify_execution_started()
+        snapshot = state.stages["plan"].snapshot
+        assert any(batch["state"] == "writing" for batch in snapshot["batches"])
+        numbers = re.search(r'"target_page_numbers":\[(.*?)\]', request["user_content"])
+        pages = [
+            {
+                "emphasis": "initial",
+                "density_intent": "standard",
+                "rhythm_intent": f"Advance event {number}.",
+                "layout_intent": "Two supported visual moments.",
+                "content": [
+                    {
+                        "beat_ids": [f"beat_{number:04d}"],
+                        "panel_role": "standard" if panel == 1 else "reaction",
+                        "visual_intent": f"Visual moment {number}.{panel}.",
+                        "lettering_ids": [f"lettering_{number:04d}"] if panel == 1 else [],
+                        "entity_ids": [],
+                    }
+                    for panel in (1, 2)
+                ],
+            }
+            for number in (int(value) for value in numbers.group(1).split(","))
+        ]
+        return ApiResult(
+            value=detail_response({"rhythm_summary": "Local detail.", "pages": pages}),
+            usage=None,
+        )
+
+    plan = asyncio.run(produce_book_plan(
+        adaptation,
+        ApprovedVisualReferenceInventory(),
+        ApprovedPageRange(minimum=24, maximum=24),
+        artifacts=TargetArtifacts(tmp_path),
+        ctx=StageRuntime("plan", state, tmp_path, on_event=events.append),
+        model="test-planner",
+        generate=generate,
+    ))
+
+    snapshots = [event["snapshot"] for event in events if event["type"] == "stage_snapshot"]
+    phases = list(dict.fromkeys(snapshot["phase"] for snapshot in snapshots))
+    assert phases == ["mapping", "reviewing_map", "laying_out", "checking", "reviewing", "complete"]
+    mapped = next(s for s in snapshots if s["phase"] == "reviewing_map")
+    assert len(mapped["pages"]) == 24
+    assert all(page["panels"] is None for page in mapped["pages"])
+    planned = next(s for s in snapshots if s["phase"] == "laying_out")
+    assert [(b["first"], b["last"], b["state"]) for b in planned["batches"]] == [
+        (1, 8, "queued"), (9, 16, "queued"), (17, 24, "queued"),
+    ]
+    final = snapshots[-1]
+    assert final["pages_laid_out"] == len(plan.pages) == 24
+    assert final["panels"] == 48
+    assert final["lettering_placed"] == final["lettering_total"] == 24
+    assert {batch["state"] for batch in final["batches"]} == {"done"}
+    assert state.stages["plan"].snapshot == final
+
+
+def test_a_serialized_deadline_bound_transport_gets_smaller_detail_batches() -> None:
+    from novel_to_comic.ai.transport import text_transport_limits
+    from novel_to_comic.page_planning import detail_batch_pages
+
+    codex = text_transport_limits("codex-dev/text/gpt-6-luna")
+    assert (codex.parallel_calls, codex.call_deadline_seconds) == (1, 900)
+    assert detail_batch_pages("codex-dev/text/gpt-6-luna") == 4
+    assert text_transport_limits("test-planner").parallel_calls is None
+    assert detail_batch_pages("test-planner") == 8
+
+
+def _two_look_adaptation() -> BookAdaptation:
+    """Spray soaks Johansen on beat 1; beat 2 changes nothing; he takes the wheel on beat 3."""
+
+    payload = _long_adaptation(3).model_dump()
+    payload["content_sha256"] = ""
+    payload["beats"][0]["appearance_changes"] = [AppearanceChange(
+        entity_id="character_johansen", to_state_id="johansen_soaked",
+        description="Spray soaks Johansen's coat.",
+    ).model_dump(mode="json")]
+    payload["beats"][2]["appearance_changes"] = [AppearanceChange(
+        entity_id="character_johansen", from_state_id="johansen_soaked", to_state_id="johansen_at_wheel",
+        description="Johansen braces at the wheel, coat torn.",
+    ).model_dump(mode="json")]
+    return BookAdaptation.model_validate(payload)
+
+
+def _two_look_inventory() -> ApprovedVisualReferenceInventory:
+    return ApprovedVisualReferenceInventory(references=[
+        *_soaked_inventory().references,
+        ApprovedVisualReference(
+            id="ref_johansen_at_wheel",
+            entity_id="character_johansen",
+            appearance_state_id="johansen_at_wheel",
+            visual_anchor="gaunt Norwegian sailor; torn soaked pea coat",
+        ),
+    ])
+
+
+def _three_page_page(number: int, state: str | None = None, intent: str | None = None) -> dict:
+    return {
+        "page_number": number, "page_turn_role": "none", "spread_role": "single",
+        "emphasis": "initial", "density_intent": "standard",
+        "rhythm_intent": f"Event {number}.", "layout_intent": f"Event {number} fills the page.",
+        "content": [{
+            "id": f"page_{number:03d}_content_001", "order": 1, "beat_ids": [f"beat_{number:04d}"],
+            "visual_intent": intent or f"Johansen in event {number}.",
+            "lettering_ids": [f"lettering_{number:04d}"],
+            "entity_ids": ["character_johansen"],
+            "appearance_states": [] if state is None else [{"entity_id": "character_johansen", "state_id": state}],
+        }],
+        "reading_order": [f"page_{number:03d}_content_001", f"lettering_{number:04d}"],
+    }
+
+
+def _three_page_response(page_two_state: str | None) -> dict:
+    return {"rhythm_summary": "soak → wait → wheel",
+            "pages": [_three_page_page(1), _three_page_page(2, page_two_state), _three_page_page(3)]}
+
+
+def _run_three_page_plan(response: dict, tmp_path: Path):
+    calls: list[dict] = []
+
+    async def generate(**request):
+        calls.append(request)
+        return ApiResult(value=plan_response(response))
+
+    artifacts = TargetArtifacts(tmp_path)
+    artifacts.write_adaptation(_two_look_adaptation())
+    ctx = StageRuntime("plan", PipelineState(project_name="cthulhu", novel_path="novel.txt",
+                                             created_at=datetime.now(timezone.utc)), tmp_path)
+    try:
+        outcome = asyncio.run(produce_book_plan(
+            _two_look_adaptation(), _two_look_inventory(), ApprovedPageRange(minimum=3, maximum=3),
+            artifacts=artifacts, ctx=ctx, model="test-planner", generate=generate,
+        ))
+    except PlanInvariantError as error:
+        outcome = error
+    return artifacts, calls, outcome
+
+
+def test_plan_rejects_a_look_the_story_has_not_reached_before_draw(tmp_path: Path) -> None:
+    # Page 2 dresses Johansen for beat 3 while it carries beat 2 (the page 16
+    # production failure). Finish rejects that chronology; Plan must catch it
+    # and ask for a repair before any art is drawn.
+    artifacts, calls, outcome = _run_three_page_plan(_three_page_response("johansen_at_wheel"), tmp_path)
+
+    assert isinstance(outcome, PlanInvariantError)
+    failures = [f for f in outcome.validation.invariant_failures if f.code == "cross_page_appearance_state"]
+    assert [f.artifact_ids[:2] for f in failures] == [("page_002_content_001", "character_johansen")]
+    assert "'johansen_at_wheel' begins with beat 'beat_0003'" in failures[0].evidence[-1]
+    assert len(calls) > 1  # the planner was asked to repair it
+    assert not artifacts.plan_path.exists()
+
+
+def _accepted_look_ahead_plan(tmp_path: Path) -> TargetArtifacts:
+    """A plan accepted before Plan checked chronology, as existing editions were."""
+
+    artifacts, _calls, plan = _run_three_page_plan(_three_page_response(None), tmp_path)
+    assert isinstance(plan, BookPlan)
+    page = artifacts.read_page(2)
+    content = page.content[0].model_copy(update={"appearance_states": {"character_johansen": "johansen_at_wheel"}})
+    stale = ComicPage.model_validate({**page.model_dump(mode="json"), "content": [content.model_dump(mode="json")], "content_sha256": ""})
+    artifacts.write_page(stale)
+    artifacts.write_plan(BookPlan.model_validate({
+        **plan.model_dump(mode="json"), "content_sha256": "",
+        "pages": [entry.model_dump(mode="json") if entry.page_number != 2 else
+                  PlannedPageRevision(page_number=2, revision=1, content_sha256=stale.content_sha256).model_dump(mode="json")
+                  for entry in plan.pages],
+    }))
+    return artifacts
+
+
+def test_replanning_one_page_clears_its_look_ahead_and_leaves_the_book_alone(tmp_path: Path) -> None:
+    from novel_to_comic.page_planning import replan_page
+
+    artifacts = _accepted_look_ahead_plan(tmp_path)
+    untouched = (artifacts.read_page(1), artifacts.read_page(3))
+    corrected = _three_page_page(2, "johansen_soaked", "Still soaked, Johansen waits by the rail.")
+    prompts: list[str] = []
+
+    async def generate(**request):
+        prompts.append(request["user_content"])
+        return ApiResult(value=detail_response({"rhythm_summary": "x", "pages": [corrected]}))
+
+    revised = asyncio.run(replan_page(artifacts, _two_look_inventory(), 2, generate=generate, model="test-planner"))
+
+    assert len(prompts) == 1 and "'johansen_at_wheel' begins with beat 'beat_0003'" in prompts[0]
+    assert revised.revision == 2
+    assert revised.content[0].appearance_states == {"character_johansen": "johansen_soaked"}
+    assert revised.content[0].visual_intent == "Still soaked, Johansen waits by the rail."
+    assert artifacts.read_page(2) == revised
+    # The superseded revision stays archived for the render that cites it.
+    assert artifacts.read_page_revision(2, 1).content[0].appearance_states == {"character_johansen": "johansen_at_wheel"}
+    assert (artifacts.read_page(1), artifacts.read_page(3)) == untouched
+    plan = artifacts.read_plan()
+    assert plan.revision == 2
+    assert [(entry.page_number, entry.revision) for entry in plan.pages] == [(1, 1), (2, 2), (3, 1)]
+    pages = tuple(artifacts.read_page(entry.page_number) for entry in plan.pages)
+    assert validate_book_plan(_two_look_adaptation(), _two_look_inventory(), ApprovedPageRange(minimum=3, maximum=3),
+                              pages).invariant_failures == ()
+    # Draw is gated on a narrative review of exactly the published pages.
+    from novel_to_comic.narrative_review import planning_context, require_narrative_review
+    require_narrative_review(artifacts, "plan", planning_context(_two_look_adaptation(), pages))
+
+
+def test_replanning_refuses_a_page_with_nothing_to_repair_before_spending(tmp_path: Path) -> None:
+    from novel_to_comic.page_planning import replan_page
+
+    artifacts = _accepted_look_ahead_plan(tmp_path)
+
+    async def generate(**_request):
+        raise AssertionError("no paid call for a page without a plan problem")
+
+    with pytest.raises(ValueError, match="no problem to repair"):
+        asyncio.run(replan_page(artifacts, _two_look_inventory(), 3, generate=generate, model="test-planner"))
+
+
+def test_replanning_keeps_the_old_revision_when_the_repair_still_looks_ahead(tmp_path: Path) -> None:
+    from novel_to_comic.page_planning import replan_page
+
+    artifacts = _accepted_look_ahead_plan(tmp_path)
+
+    async def generate(**_request):
+        return ApiResult(value=detail_response({"rhythm_summary": "x", "pages": [_three_page_page(2, "johansen_at_wheel")]}))
+
+    with pytest.raises(PlanInvariantError):
+        asyncio.run(replan_page(artifacts, _two_look_inventory(), 2, generate=generate, model="test-planner"))
+    assert artifacts.read_page(2).revision == 1
+    assert artifacts.read_plan().revision == 1
+
+
+def test_a_failing_narrative_review_keeps_the_accepted_plan_drawable(tmp_path: Path, monkeypatch) -> None:
+    from novel_to_comic.narrative_review import planning_context, require_narrative_review
+    from novel_to_comic.page_planning import replan_page
+    from .narrative_review_support import accept_narrative
+
+    artifacts = _accepted_look_ahead_plan(tmp_path)
+    before = tuple(artifacts.read_page(number) for number in (1, 2, 3))
+    asyncio.run(accept_narrative(planning_context(_two_look_adaptation(), before), generate=None,
+                                 ctx=StageRuntime("plan", PipelineState(project_name="cthulhu", novel_path="novel.txt",
+                                                  created_at=datetime.now(timezone.utc)), tmp_path),
+                                 artifacts=artifacts, model="test-planner"))
+
+    async def reject(context, *, artifacts, **_kwargs):
+        from novel_to_comic.models.validation import InvariantFailure
+        artifacts.write_narrative_review("plan", artifacts.read_narrative_review("plan").model_copy(
+            update={"input_sha256": "0" * 64}))
+        return (InvariantFailure(id="plan_review_1_1", owner_stage="plan", code="narrative_review_gap",
+                                 message="The escape loses its cause.", evidence=["Beat 3 has no setup."]),)
+    monkeypatch.setattr("novel_to_comic.page_planning.review_narrative", reject)
+    corrected = _three_page_page(2, "johansen_soaked")
+
+    async def generate(**_request):
+        return ApiResult(value=detail_response({"rhythm_summary": "x", "pages": [corrected]}))
+
+    with pytest.raises(PlanInvariantError):
+        asyncio.run(replan_page(artifacts, _two_look_inventory(), 2, generate=generate, model="test-planner"))
+    assert tuple(artifacts.read_page(number) for number in (1, 2, 3)) == before
+    require_narrative_review(artifacts, "plan", planning_context(_two_look_adaptation(), before))

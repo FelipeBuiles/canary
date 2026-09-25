@@ -50,7 +50,7 @@ from novel_to_comic.page_drawing import (
 )
 from novel_to_comic.server.routers.pages import _aggregated_correction_retry, _generation_retry
 from novel_to_comic.server.credited_job import enqueue_reserved_generation_job
-from novel_to_comic.target_artifacts import TargetArtifacts
+from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 from novel_to_comic.usage import ApiResult, UsageRecord
 
 
@@ -767,7 +767,7 @@ def test_failed_complete_page_persists_a_user_facing_failure(
     assert len(submissions) == 1
 
 
-def test_failed_ocr_is_recorded_as_analysis_failure_without_losing_render(
+def test_a_failed_read_back_does_not_fail_the_paid_page(
     tmp_path: Path,
 ) -> None:
     app = _make_app()
@@ -803,14 +803,12 @@ def test_failed_ocr_is_recorded_as_analysis_failure_without_losing_render(
             page=_page(),
             ocr=_BrokenOCR(),
         )
-        with pytest.raises(ValueError, match="OCR"):
-            asyncio.run(job.runner())
+        asyncio.run(job.runner())  # The read is automatic and best effort.
 
     assert artifacts.provenance_revisions(7) == (1,)
-    failure = artifacts.read_page_failure(7)
-    assert failure.phase == "analysis"
-    assert failure.classification == "analysis_error"
-    assert "already drawn" in failure.user_message
+    assert not artifacts.analysis_path(7, 1).exists()  # Unchecked, readable later without redraw.
+    with pytest.raises(ArtifactMissing):
+        artifacts.read_page_failure(7)
 
 
 def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
@@ -1174,18 +1172,17 @@ def test_a_failed_read_back_leaves_the_paid_render_recorded(tmp_path: Path) -> N
         async def extract(self, image: bytes):
             raise RuntimeError("gateway rejected the vision request")
 
-    with pytest.raises(RuntimeError, match="gateway rejected"):
-        asyncio.run(
-            draw_complete_page(
-                _compile(tmp_path),
-                adapter=VertexCompletePageAdapter(
-                    _RecordingTransport(_provider_result())
-                ),
-                artifacts=artifacts,
-                page=_page(),
-                ocr=_OCR(),
-            )
+    asyncio.run(
+        draw_complete_page(
+            _compile(tmp_path),
+            adapter=VertexCompletePageAdapter(
+                _RecordingTransport(_provider_result())
+            ),
+            artifacts=artifacts,
+            page=_page(),
+            ocr=_OCR(),
         )
+    )
 
     assert artifacts.provenance_revisions(7) == (1,)
     assert artifacts.read_render(7, 1) == b"complete-page-png"
@@ -1490,9 +1487,10 @@ def test_interrupted_paid_result_publication_recovers_without_resubmission(
 
     class UnavailableOCR:
         async def extract(self, image):
-            raise RuntimeError("read-back unavailable after publication")
+            # Cancellation (worker shutdown) still interrupts; ordinary read failures do not.
+            raise asyncio.CancelledError("read-back interrupted after publication")
 
-    with pytest.raises(RuntimeError, match="read-back unavailable"):
+    with pytest.raises(asyncio.CancelledError):
         asyncio.run(draw_complete_page(
             compiled, adapter=adapter, artifacts=artifacts, page=_page(),
             ocr=UnavailableOCR(),

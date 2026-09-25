@@ -317,10 +317,31 @@ orchestrated: starting or continuing Plan while the current Adapt contract
 rejects the published script runs Adapt first. Adapt resumes that script as
 its failed candidate and repairs only the cited shards (never regenerating the
 book); its completion auto-chains Plan. Beats that move one entity into different states cannot share
-a content item (`appearance_state_conflict`, Plan-repairable). Plan
+a content item (`appearance_state_conflict`, Plan-repairable). Content never
+cites a look before the beat that activates it (`cross_page_appearance_state`,
+Plan-repairable); Plan and Finish share one chronology check
+(`appearance_chronology.py`), so Finish cannot reject a plan Plan accepted. A
+plan accepted before that check is repaired one page at a time with
+`POST /pages/{n}/replan`: one paid detail call keeps the page's beats, lettering
+and map entry, the whole book is validated again, and a new `ComicPage` and
+`BookPlan` revision are written. The page's art is then stale: corrections
+only edit art of the same `ComicPage` revision, so the page is drawn fresh from
+its current plan (`POST /pages/{n}/generate`) and the old art stays in history. Plan
 drafts author non-lettering `continuity_intent` for scene transitions, staging,
 and held-object ownership. Canonicalization folds it into `ComicPage.layout_intent`
 as ordered panel staging, not a new `PageContent.continuity_intent` field.
+
+### Plan progress and transport limits
+
+Plan publishes a display-only progress snapshot (`StageState.snapshot`, pushed
+as `stage_snapshot` and restored by the status poll): the validated page map,
+then each detail batch once its pages compile and match the map. It is never
+an input to generation. Text work is sized to the transport that carries it
+(`ai/transport.py`): the local Codex runtime executes one request at a time
+under a 15-minute deadline, so Plan and Adapt clamp concurrency to 1 there and
+Plan uses 4-page detail batches. A call counts as started only when the
+transport begins executing it (`GenerationCall.started_at`); admitted calls
+may be queued.
 
 ### Narrative review and flexible length
 
@@ -966,7 +987,7 @@ bytes must match render lineage. None of these actions redraws, verifies visual
 identity, or guarantees provider success; an OCR failure leaves the saved image
 available for inspection and recovery.
 
-Stage estimates include page references but exclude optional OCR; Cast estimates include state
+Stage estimates include page references and, for editable lettering, each page's automatic read-back; Cast estimates include state
 references. Provider usage and credit settlement remain distinct from estimates
 and stage-progress totals. Missing usage is not evidence of zero provider cost.
 
@@ -1021,7 +1042,9 @@ editorial decisions, with links back to Pages.
 
 Text review is optional and advisory. Missing, stale, invalid or mismatched OCR
 evidence does not block Draw approval or export and never proves that saved
-artwork needs replacement. Draw and correction jobs do not run OCR. Preflight
+artwork needs replacement. Editable-lettering draw and correction jobs read each
+page back once, best effort (heads for balloon seeds, drawn-in lettering);
+integrated draws do not run OCR. Preflight
 only reads retained analysis and never repairs or buys OCR; explicit Pages text
 review handles that boundary. Automatic text findings remain reviewable, are not
 preselected for redraw. Existing advisory text findings do not require acceptance

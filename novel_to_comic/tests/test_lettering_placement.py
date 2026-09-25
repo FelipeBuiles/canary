@@ -332,3 +332,61 @@ def test_a_read_that_predates_heads_reports_them_unknown_not_absent(book):  # no
     suggestion = service.suggested_placements(artifacts, 1)
     assert suggestion["uses_faces"] is True
     assert not artifacts.lettering_path(1).exists()  # Suggestions are proposals; nothing is saved.
+
+
+def test_a_new_read_re_places_only_untouched_lettering(book, monkeypatch):  # noqa: F811
+    artifacts, _image = book
+    seeded = service.ensure_lettering(artifacts, 1)
+    real_seed = service.seed_page
+
+    def seed_with_faces(*args, **kwargs):
+        fresh = real_seed(*args, **kwargs)
+        moved = [
+            e.model_copy(update={"placement": p, "suggested_placement": p})
+            for e in fresh.elements
+            for p in [e.placement.model_copy(update={"y": min(e.placement.y + 0.05, 1 - e.placement.height)})]
+        ]
+        return service._replace(fresh, elements=[e.model_dump() for e in moved])
+
+    monkeypatch.setattr(service, "seed_page", seed_with_faces)
+    assert service.reseed_after_read(artifacts, 1)
+    reseeded = artifacts.read_lettering(1)
+    assert reseeded.revision == seeded.revision + 1
+    assert reseeded.reviewed_against_render_revision is None  # Still a seed to confirm.
+    assert [e.placement for e in reseeded.elements] != [e.placement for e in seeded.elements]
+
+    # Once the author moves anything, a later read never touches the page.
+    first = reseeded.elements[0]
+    nudged = first.placement.model_copy(update={"x": first.placement.x / 2})
+    edited = service._replace(reseeded, revision=reseeded.revision + 1, elements=[
+        e.model_dump() for e in (first.model_copy(update={"placement": nudged}), *reseeded.elements[1:])
+    ])
+    artifacts.write_lettering(edited)
+    assert not service.reseed_after_read(artifacts, 1)
+    assert artifacts.read_lettering(1).elements[0].placement == nudged
+
+
+def test_a_failed_re_placement_never_fails_the_page_read(book, monkeypatch):  # noqa: F811
+    import asyncio
+
+    from novel_to_comic.models.draw import OCRExtraction
+    from novel_to_comic.page_review import analyze_page_render
+    from novel_to_comic.usage import ApiResult
+
+    artifacts, image = book
+    artifacts.analysis_path(1, 1).unlink()
+
+    class _Read:
+        async def extract(self, image):
+            return ApiResult(value=OCRExtraction(), usage=None)
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("renderer unavailable")
+
+    monkeypatch.setattr(service, "reseed_after_read", broken)
+    result = asyncio.run(analyze_page_render(
+        page=artifacts.read_page(1), render=service.active_render(artifacts, 1),
+        image=image, ocr=_Read(), artifacts=artifacts,
+    ))
+    assert result.analysis.render_revision == 1
+    assert artifacts.read_raw_ocr(1, 1).figures_read

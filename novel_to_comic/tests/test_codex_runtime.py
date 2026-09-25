@@ -1056,3 +1056,32 @@ def test_parent_deadline_leaves_child_cleanup_time(monkeypatch, supported_host, 
     with pytest.raises(runtime.CodexRuntimeError, match='child_result_missing'):
         asyncio.run(runtime._run({'kind': kind, 'model': 'exact-model'}))
     assert observed == [deadline]
+
+
+def test_queued_codex_calls_report_execution_only_after_the_runtime_lock(supported_host, monkeypatch):
+    # Kaitlin Out of Space: five Plan batches were "admitted" while one ran;
+    # progress must not call a request in flight while it waits for the lock.
+    from novel_to_comic.ai.context import execution_observer
+
+    started: list[str] = []
+
+    class Spawned(Exception):
+        pass
+
+    async def spawn(*args, **kwargs):
+        raise Spawned
+
+    monkeypatch.setattr(runtime.asyncio, "create_subprocess_exec", spawn)
+
+    async def exercise():
+        await runtime._LOCK.acquire()
+        with execution_observer(lambda: started.append("queued call")):
+            waiting = asyncio.create_task(runtime._run({"kind": "text", "model": "gpt-6-luna"}))
+            await asyncio.sleep(0.01)
+            assert started == []
+            runtime._LOCK.release()
+            with pytest.raises(Spawned):
+                await waiting
+        assert started == ["queued call"]
+
+    asyncio.run(exercise())
