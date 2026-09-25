@@ -25,6 +25,7 @@ from novel_to_comic.ai.anthropic_schema import anthropic_output_schema
 from novel_to_comic.ai.context import (
     current_ai_request_context,
     current_stream_observer,
+    notify_execution_started,
 )
 from novel_to_comic.ai.errors import AIEmptyResponseError, AIRefusalError, AITransportError
 from novel_to_comic.ai.finalisation import (
@@ -36,6 +37,7 @@ from novel_to_comic.ai.finalisation import (
 from novel_to_comic.config import Config, mock_mode_active
 from novel_to_comic.codex_dev import CodexRoutingError, route_for
 from novel_to_comic.provider_wire import ProviderWireRequest
+from novel_to_comic.text_models import text_wire
 from novel_to_comic.usage import (
     ApiResult,
     UsageRecord,
@@ -101,33 +103,6 @@ _RATE_LIMIT_MAX_DELAY = 60.0
 # failures are one-off sampling artifacts (unescaped quote, truncated tail)
 # that clear on a fresh draw at the same temperature.
 _JSON_PARSE_MAX_RETRIES = 2
-
-# Reasoning models and current Claude routes do not accept temperature.
-_TEMPERATURE_DEPRECATED_ALIASES = frozenset(
-    {
-        "gpt-6-sol",
-        "openai/gpt-6-sol",
-        "gpt-6-luna",
-        "openai/gpt-6-luna",
-        "claude-fable-5-1",
-        "anthropic/claude-fable-5-1",
-        "claude-opus-5",
-        "anthropic/claude-opus-5",
-    }
-)
-
-_CLAUDE_NATIVE_JSON_ALIASES = frozenset({
-    "claude-fable-5-1", "anthropic/claude-fable-5-1",
-    "claude-opus-5", "anthropic/claude-opus-5",
-})
-
-# MiMo's OpenRouter route uses ``max_tokens`` for the output limit.
-_OPENROUTER_MAX_TOKENS_ALIASES = frozenset(
-    {
-        "mimo-v2.6-pro",
-        "openrouter/xiaomi/mimo-v2.6-pro",
-    }
-)
 
 
 def _retry_after_seconds(response: httpx.Response) -> float | None:
@@ -1843,6 +1818,7 @@ async def _chat_completion(
                 "max_output_tokens": max_output_tokens,
             },
         })
+    wire = text_wire(model)
     response_format: dict[str, Any] | None
     effective_system = system_prompt
     if json_schema:
@@ -1854,7 +1830,7 @@ async def _chat_completion(
                 "strict": True,
                 "schema": (
                     strict_output_schema(json_schema)
-                    if route is None and model not in _CLAUDE_NATIVE_JSON_ALIASES
+                    if route is None and not wire.claude_native_json
                     else json_schema
                 ),
             },
@@ -1887,12 +1863,10 @@ async def _chat_completion(
         ],
         "metadata": metadata,
     }
-    if route is None and model not in _TEMPERATURE_DEPRECATED_ALIASES:
+    if route is None and wire.temperature:
         payload["temperature"] = temperature
-    if route is None and model in _CLAUDE_NATIVE_JSON_ALIASES:
-        # The pinned gateway translates unknown Claude response_format models
-        # into forced tool calls, which Fable 5.1 rejects. Use native JSON
-        # output; schema-less JSON uses the instruction and parser above.
+    if route is None and wire.claude_native_json:
+        # Schema-less JSON uses the instruction and parser above.
         if json_schema:
             payload["output_config"] = {"format": {
                 "type": "json_schema", "schema": anthropic_output_schema(json_schema),
@@ -1901,12 +1875,7 @@ async def _chat_completion(
         payload["response_format"] = response_format
     effective_max_output_tokens = max_output_tokens or 16_384
     if route is None:
-        token_limit_field = (
-            "max_tokens"
-            if model in _OPENROUTER_MAX_TOKENS_ALIASES
-            else "max_completion_tokens"
-        )
-        payload[token_limit_field] = effective_max_output_tokens
+        payload[wire.token_limit_field] = effective_max_output_tokens
     # Stream so the read timeout is per-chunk: long adapt repairs exceed the
     # read budget as a single blocking response. include_usage puts the usage
     # block on a final chunk, which streaming otherwise omits.
@@ -1979,6 +1948,9 @@ async def _chat_completion(
             funding=metadata.get("funding", "api"), config=config,
         )
         endpoint = "/v1/chat/completions"
+        if route is None:
+            # The Codex runtime notifies when its serialized queue releases.
+            notify_execution_started()
         # Keep a local breadcrumb alongside the queued Langfuse observation.
         logger.info(
             "AI request issued feature=%s model=%s streaming=%s event_id=%s",

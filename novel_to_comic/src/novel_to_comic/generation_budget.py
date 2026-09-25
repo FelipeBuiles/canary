@@ -15,6 +15,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from novel_to_comic.ai.context import execution_observer
 from novel_to_comic.usage import calculate_cost_breakdown
 
 
@@ -29,6 +30,9 @@ class GenerationCall(BaseModel):
     feature: str
     model: str
     admitted_at: str
+    # When the provider began executing. Serialized transports queue admitted
+    # calls, so admitted-but-not-started is waiting, not in flight.
+    started_at: str | None = None
     status: Literal["admitted", "completed", "unresolved"] = "admitted"
     finished_at: str | None = None
     input_tokens: int | None = None
@@ -94,8 +98,15 @@ def budgeted_generator(generate, *, artifacts, stage, model, inputs, max_calls, 
             budget.calls.append(call)
 
         update(admit)
+
+        def started():
+            if call.started_at is None:
+                call.started_at = datetime.now(timezone.utc).isoformat()
+                update(lambda budget: _replace_call(budget, call))
+
         try:
-            result = await generate(**request)
+            with execution_observer(started):
+                result = await generate(**request)
         except BaseException:
             # No replacement submission. Without a completed result, usage and
             # provider outcome may be unknown; admission still consumes a slot.

@@ -467,6 +467,53 @@ def ensure_lettering(artifacts: TargetArtifacts, page_number: int) -> PageLetter
         return state
 
 
+_POSITION = {"placement", "suggested_placement", "tail_target", "suggested_tail_target", "resolved"}
+
+
+def _untouched_seed(saved: PageLettering, fresh: PageLettering) -> bool:
+    """Nobody has edited this page: it is still a seed apart from where it sits."""
+    if saved.reviewed_against_render_revision is not None or saved.locale != fresh.locale:
+        return False
+    if [e.id for e in saved.elements] != [e.id for e in fresh.elements]:
+        return False
+    return all(
+        old.placement == old.suggested_placement
+        and old.tail_target == old.suggested_tail_target
+        and old.model_dump(exclude=_POSITION) == new.model_dump(exclude=_POSITION)
+        for old, new in zip(saved.elements, fresh.elements, strict=True)
+    )
+
+
+@locked_mutation
+def reseed_after_read(artifacts: TargetArtifacts, page_number: int) -> bool:
+    """Re-place an untouched seed once a page read of the current art lands.
+
+    Drawing reads each page back automatically; a seed made before that read
+    finished (or for earlier art) moves to its speakers' faces. Any author
+    edit, review or translation keeps the saved lettering as it is. The
+    result is still a seed: placement review stays pending.
+    """
+    if not is_hybrid(artifacts):
+        return False
+    try:
+        saved = artifacts.read_lettering(page_number)
+    except ArtifactMissing:
+        return False  # Seeded lazily later, already with the read.
+    page = artifacts.read_page(page_number)
+    if saved.comic_page_sha256 != page.content_sha256:
+        return False
+    fresh = seed_page(
+        artifacts, page, active_render(artifacts, page_number), ensure_style(artifacts),
+        revision=saved.revision + 1, locale=saved.locale,
+    )
+    if not _untouched_seed(saved, fresh) or [e.placement for e in fresh.elements] == [
+        e.placement for e in saved.elements
+    ]:
+        return False
+    artifacts.write_lettering(fresh)
+    return True
+
+
 def _replace(state: PageLettering, **values) -> PageLettering:
     return PageLettering.model_validate(
         state.model_dump() | values | {"content_sha256": ""}

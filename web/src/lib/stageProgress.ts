@@ -53,7 +53,8 @@ function applyStatusPatch(queryClient: QueryClient, projectId: string, event: Pi
     event.type !== "stage_begin" &&
     event.type !== "stage_progress" &&
     event.type !== "stage_complete" &&
-    event.type !== "stage_fail"
+    event.type !== "stage_fail" &&
+    event.type !== "stage_snapshot"
   ) {
     return;
   }

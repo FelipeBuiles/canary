@@ -75,7 +75,7 @@ paid actions; copying artwork alone is not a recovery backup.
 4. **A Stripe account** (test mode first, live at launch).
 5. **Provider API keys** for whatever models you route through LiteLLM
    (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`,
-   `FAL_KEY`). Only set the ones you actually use. These live as Fly
+   `TOGETHER_API_KEY`, `FAL_KEY`). Only set the ones you actually use. These live as Fly
    secrets on `canary-web` now (they used to be on `litellm-gw`).
 
 ## Step 0 — prepare secret file (outside the repo)
@@ -109,6 +109,7 @@ OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 FAL_KEY=...
 OPENROUTER_API_KEY=sk-or-...      # only if you use OpenRouter
+TOGETHER_API_KEY=...              # only if you use Together AI
 
 # ─── Web app ───────────────────────────────────────────────────────────
 SUPABASE_URL=https://<project>.supabase.co
@@ -542,7 +543,7 @@ One consolidated set, since the proxy and web app share a container:
 
 - **Proxy layer:** `LITELLM_MASTER_KEY`, `LITELLM_SALT_KEY`, plus the provider
   keys you actually use (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-  `FAL_KEY`, optionally `OPENROUTER_API_KEY`). Both processes inherit the container environment, but
+  `FAL_KEY`, optionally `OPENROUTER_API_KEY` and `TOGETHER_API_KEY`). Both processes inherit the container environment, but
   only the loopback proxy uses these keys for provider requests.
 - **Web-app layer:** `LITELLM_API_KEY` (== `LITELLM_MASTER_KEY`), `SUPABASE_URL`,
   `SUPABASE_SECRET_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,

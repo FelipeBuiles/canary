@@ -33,6 +33,9 @@ IMAGE_SOURCE_SELECTOR = "gpt-image-2"
 PROVIDER = "canary_codex_subscription"
 TIMEOUT_SECONDS = 300
 TEXT_TIMEOUT_SECONDS = 900
+# One subscription session executes at a time (``_LOCK`` in-process, an flock
+# across processes). Callers size their work to this, not to their own limits.
+PARALLEL_CALLS = 1
 CHILD_CLEANUP_SECONDS = 15
 MAX_IMAGE_BYTES = 32 * 1024 * 1024
 MAX_RESPONSE_BYTES = 64 * 1024 * 1024
@@ -406,6 +409,10 @@ async def _run(request: dict[str, Any]) -> dict[str, Any]:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", request["model"]):
         raise CodexRuntimeError("invalid_model_selector")
     async with _LOCK:
+        # Parent-only: the child never imports request context.
+        from novel_to_comic.ai.context import notify_execution_started
+
+        notify_execution_started()
         with tempfile.TemporaryDirectory(prefix="canary-codex-") as temp:
             root = Path(temp).resolve()
             env = _parent_environment()

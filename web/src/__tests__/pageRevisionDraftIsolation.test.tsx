@@ -132,7 +132,7 @@ function previewStub(overrides: Partial<PageCorrectionPreview> = {}): PageCorrec
     prompt_characters: 20,
     request_sha256: "c".repeat(64),
     warnings: [],
-    estimate: { estimate_credits: 10, reserved_credits: 10, reservation_multiplier: 1, confidence: "high" },
+    estimate: { estimate_credits: 10, reserved_credits: 10, reservation_multiplier: 1, confidence: "low_variance" },
     ...overrides,
   };
 }

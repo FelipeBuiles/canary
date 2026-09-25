@@ -608,3 +608,31 @@ def test_native_draw_rejects_wrong_page_shape_without_retry_or_publication(
     succeeded.assert_not_awaited()
     assert artifacts.render_revisions(page.page_number) == ()
     assert artifacts.provenance_revisions(page.page_number) == ()
+
+
+def test_a_replanned_page_draws_fresh_while_current_art_still_needs_a_correction(tmp_path, monkeypatch, dev_routes):
+    # A correction edits art of the same ComicPage revision. Art made for an
+    # earlier plan revision cannot be corrected, so the page draws fresh; art
+    # for the current plan keeps the correction-only rule.
+    from fastapi import HTTPException
+
+    page, inventory, files = _authorities(tmp_path, 2)
+    artifacts = TargetArtifacts(tmp_path)
+    artifacts.write_page(page)
+    artifacts.write_book_edition(page_drawing.select_book_edition(
+        edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(_codex_config()),
+    ))
+    monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(TargetArtifacts, "provenance_revisions", lambda self, number: (1,))
+    project = (tmp_path, _codex_config(), None)
+
+    monkeypatch.setattr(pages, "_latest_render_is_stale", lambda target, number, revision: False)
+    with pytest.raises(HTTPException) as refused:
+        pages._prepare_initial_generation(project, page.page_number, "canonical")
+    assert refused.value.status_code == 409 and "request a correction" in refused.value.detail
+
+    monkeypatch.setattr(pages, "_latest_render_is_stale", lambda target, number, revision: True)
+    _, _, compiled = pages._prepare_initial_generation(project, page.page_number, "canonical")
+    assert compiled.request.correction is None
+    assert not compiled.request.is_stale_for(page)

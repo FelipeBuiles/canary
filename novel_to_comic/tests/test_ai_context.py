@@ -25,3 +25,21 @@ def test_nested_ai_request_context_restores_outer_context():
         with ai_request_context(user_id="inner") as inner:
             assert current_ai_request_context() == inner
         assert current_ai_request_context() == outer
+
+
+def test_execution_observers_nest_and_never_fail_the_request():
+    from novel_to_comic.ai.context import execution_observer, notify_execution_started
+
+    seen: list[str] = []
+
+    def broken():
+        raise RuntimeError("observer bug")
+
+    with execution_observer(lambda: seen.append("ledger")):
+        with execution_observer(broken):
+            with execution_observer(lambda: seen.append("progress")):
+                notify_execution_started()
+        notify_execution_started()
+    notify_execution_started()
+
+    assert seen == ["ledger", "progress", "ledger"]

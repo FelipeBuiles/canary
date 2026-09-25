@@ -116,3 +116,46 @@ def stream_observer(observer: StreamObserver | None) -> Iterator[None]:
         yield
     finally:
         _current_stream_observer.reset(token)
+
+
+# Called once when a provider actually starts executing a request, as opposed
+# to when the caller admitted it. Serialized transports (the local Codex
+# runtime) queue admitted calls behind a lock, so the two can be far apart.
+ExecutionObserver = Callable[[], None]
+
+_current_execution_observers: ContextVar[tuple[ExecutionObserver, ...]] = ContextVar(
+    "current_execution_observers",
+    default=(),
+)
+
+
+@contextmanager
+def execution_observer(observer: ExecutionObserver) -> Iterator[None]:
+    """Be told when AI calls in this context begin executing.
+
+    Observers nest: a budget ledger and a stage's progress view can both watch
+    the same call.
+    """
+
+    token = _current_execution_observers.set(
+        (*_current_execution_observers.get(), observer)
+    )
+    try:
+        yield
+    finally:
+        _current_execution_observers.reset(token)
+
+
+def notify_execution_started() -> None:
+    """Transports call this when a request leaves their queue.
+
+    Observation must never fail the request it describes.
+    """
+
+    for observer in _current_execution_observers.get():
+        try:
+            observer()
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception("Execution observer failed")

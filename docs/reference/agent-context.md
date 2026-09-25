@@ -41,8 +41,8 @@ process routing/funding controls from scoped live evidence, including experiment
   approvals. URL parameters preserve page, review, filter, and reading context;
   Book links directly to affected reviews. Drawn and text-checked counts are
   distinct; current artifacts/failure phase outrank historical job failure.
-  OCR is optional evidence on base art, not an export prerequisite or redraw
-  request. Hybrid lettering has a separate free Pages editor, independent
+  OCR is evidence on base art, not an export prerequisite or redraw request;
+  editable-lettering draws run it automatically (best effort) to seed balloons. Hybrid lettering has a separate free Pages editor, independent
   revision/source/style/art checks, and a shared browser/server compositor. See
   [stage contracts](stage-contracts.md) for recovery and estimate contracts.
 - Immediate estimates and temporary holds are distinct and rounded per job.

@@ -55,7 +55,11 @@ export const usePipelineStore = create<PipelineStore>((set) => ({
       try {
         const event: PipelineEvent = JSON.parse(e.data);
         reconnectDelay = 1000;
-        set((state) => ({ events: [...state.events.slice(-(PIPELINE_EVENT_LIMIT - 1)), event] }));
+        // Snapshots are state, not history: they live in the status cache and
+        // must not evict the log lines this bounded feed exists to keep.
+        if (event.type !== "stage_snapshot") {
+          set((state) => ({ events: [...state.events.slice(-(PIPELINE_EVENT_LIMIT - 1)), event] }));
+        }
         applyPipelineEvent(queryClient, projectId, event);
         if (
           event.type === "stage_fail"

@@ -481,12 +481,12 @@ describe("placement check", () => {
     api.analyze.mockResolvedValue({});
     mount();
     await ready();
-    const run = await within(check()).findByRole("button", { name: "Check faces & text · ~1 credits" });
+    const run = await within(check()).findByRole("button", { name: "Check this page · ~1 credits" });
     fireEvent.click(run);
     await within(check()).findByText("Checked against this artwork · 1 face found");
     expect(api.analyze).toHaveBeenCalledWith("book", 1);
     expect(within(check()).getByText("Covers Ana’s face")).toBeTruthy();
-    expect(within(check()).queryByRole("button", { name: /Check faces & text/ })).toBeNull();
+    expect(within(check()).queryByRole("button", { name: /Check this page/ })).toBeNull();
     expect(api.put).not.toHaveBeenCalled();
     expect(screen.getByText("Saved")).toBeTruthy();
   });

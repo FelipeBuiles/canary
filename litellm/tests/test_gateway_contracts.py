@@ -94,9 +94,56 @@ def test_real_gateway_and_only_supported_custom_handler_are_loaded():
     config = yaml.safe_load((ROOT / "litellm/config.yaml").read_text())
     assert {route["model_name"] for route in config["model_list"]} == {
         "gpt-6-sol", "gpt-6-luna", "claude-fable-5-1", "claude-opus-5",
-        "mimo-v2.6-pro", "image-sunburst",
+        "mimo-v2.6-pro", "deepseek-v4.1-flash", "image-sunburst",
     }
     assert config["litellm_settings"]["custom_provider_map"] == [{
         "provider": "fal-queue",
         "custom_handler": "litellm_handlers.fal_provider.fal_queue_llm",
     }]
+
+
+def test_together_deepseek_route_disables_thinking_and_keeps_json_schema(monkeypatch):
+    import json
+    import litellm
+    import yaml
+
+    route = next(
+        item["litellm_params"]
+        for item in yaml.safe_load((ROOT / "litellm/config.yaml").read_text())["model_list"]
+        if item["model_name"] == "deepseek-v4.1-flash"
+    )
+    sent = []
+
+    def send(self, request, **kwargs):
+        sent.append((str(request.url), json.loads(request.content)))
+        return httpx.Response(200, request=request, json={
+            "id": "r", "object": "chat.completion", "created": 0,
+            "model": "deepseek-ai/DeepSeek-V4.1-Flash",
+            "choices": [{"index": 0, "finish_reason": "stop",
+                         "message": {"role": "assistant", "content": '{"ok":true}'}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        })
+
+    monkeypatch.setattr(httpx.Client, "send", send)
+    monkeypatch.setattr(litellm, "drop_params", True)
+    schema = {"name": "x", "strict": True, "schema": {
+        "type": "object", "properties": {"ok": {"type": "boolean"}},
+        "required": ["ok"], "additionalProperties": False,
+    }}
+    litellm.completion(
+        **{**route, "api_key": "test-key"},
+        messages=[{"role": "user", "content": [
+            {"type": "text", "text": "Read."},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        ]}],
+        temperature=0.2, max_tokens=128,
+        response_format={"type": "json_schema", "json_schema": schema},
+    )
+
+    url, body = sent[-1]
+    assert url == "https://api.together.ai/v1/chat/completions"
+    assert body["model"] == "deepseek-ai/DeepSeek-V4.1-Flash"
+    assert body["reasoning"] == {"enabled": False}
+    assert body["max_tokens"] == 128
+    assert body["response_format"] == {"type": "json_schema", "json_schema": schema}
+    assert body["messages"][0]["content"][1]["type"] == "image_url"

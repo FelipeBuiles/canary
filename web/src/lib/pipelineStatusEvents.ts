@@ -15,7 +15,8 @@ export function applyStageEventToProjectStatus(
     event.type !== "stage_begin" &&
     event.type !== "stage_progress" &&
     event.type !== "stage_complete" &&
-    event.type !== "stage_fail"
+    event.type !== "stage_fail" &&
+    event.type !== "stage_snapshot"
   ) {
     return current;
   }
@@ -25,6 +26,15 @@ export function applyStageEventToProjectStatus(
 
   const next: StageInfo = { ...existing };
 
+  if (event.type === "stage_snapshot") {
+    // Display-only: a snapshot never changes the stage's lifecycle.
+    if (!event.snapshot) return current;
+    return {
+      ...current,
+      stages: { ...current.stages, [event.stage]: { ...existing, snapshot: event.snapshot } },
+    };
+  }
+
   if (event.type === "stage_begin") {
     next.status = "running";
     next.items_done = 0;
@@ -32,6 +42,7 @@ export function applyStageEventToProjectStatus(
       next.items_total = event.total;
     }
     next.items_failed = [];
+    next.snapshot = null;
     next.error = null;
     next.finished_at = null;
     next.stale = false;

@@ -3471,6 +3471,12 @@ async def produce_book_adaptation(
 ) -> BookAdaptation:
     """Generate, validate, cost, and persist Adapt's one canonical artifact."""
 
+    from novel_to_comic.ai.transport import text_transport_limits
+
+    parallel = text_transport_limits(model).parallel_calls
+    if parallel is not None:
+        concurrency = min(concurrency, parallel)
+
     # An explicitly applied story change travels inside every Adapt prompt so
     # the owning stage regenerates from the approved revision. The suffix is
     # part of each prompt string before any checkpoint key is derived, so a

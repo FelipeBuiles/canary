@@ -21,6 +21,8 @@ interface BookExportPanelProps {
   pendingForce?: boolean;
   error?: Error | null;
   unavailableReason?: string;
+  /** Short status for formats that can't be created yet, e.g. "2 fixes needed first". */
+  blockedLabel?: string;
   onCreate: (format: ExportFormat, force?: boolean) => void;
 }
 
@@ -34,6 +36,7 @@ export function BookExportPanel({
   pendingForce,
   error,
   unavailableReason,
+  blockedLabel,
   onCreate,
 }: BookExportPanelProps) {
   const { t } = useI18n();
@@ -69,7 +72,7 @@ export function BookExportPanel({
                 <FormatIcon aria-hidden="true" size={28} strokeWidth={1.5} className="text-ink-muted" />
                 <StatusPill tone={working ? "gold" : saved ? "sage" : "pulp"}>
                   {saved && !working && <Check size={14} aria-hidden="true" className="mr-1.5" />}
-                  {working ? workingLabel : saved ? t("Ready to download") : !canExport ? t("Waiting for edition checks") : t("Not created yet")}
+                  {working ? workingLabel : saved ? t("Ready to download") : !canExport ? (blockedLabel ?? t("Waiting for edition checks")) : t("Not created yet")}
                 </StatusPill>
               </div>
               <h3 className="mt-5 font-display text-3xl font-black leading-none tracking-tight">{format.toUpperCase()}</h3>

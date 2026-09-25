@@ -32,7 +32,7 @@ import logging
 import time
 import traceback
 from pathlib import Path
-from typing import TYPE_CHECKING, Generator
+from typing import TYPE_CHECKING, Any, Generator
 
 from novel_to_comic.events import EventCallback, _NOOP
 from novel_to_comic.state import (
@@ -266,6 +266,17 @@ class StageRuntime:
             "detail": detail,
             "at": datetime.now(UTC).isoformat(),
         })
+
+    def snapshot(self, data: dict[str, Any]) -> None:
+        """Publish a structured view of validated progress.
+
+        Persisted (a reloaded page restores it from the status poll) and
+        pushed live. Report only work that has been checked; this is what the
+        user is told is done.
+        """
+        self.stage_state.snapshot = data
+        self.save()
+        self._emit({"type": "stage_snapshot", "stage": self.name, "snapshot": data})
 
     def log(self, message: str, level: str = "info") -> None:
         self._emit({"type": "log", "stage": self.name, "level": level, "message": message})

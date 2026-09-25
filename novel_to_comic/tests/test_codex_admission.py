@@ -164,8 +164,9 @@ def test_dev_draw_allows_either_or_both_codex_selections(select_routes):
     select_routes(text=(config.effective_page_ocr_model(),))
     assert codex_dev.classify_operations(draw_operations(config, ocr=True)) == "codex_subscription"
     select_routes()
-    assert codex_dev.classify_operations(draw_operations(config)) == "codex_subscription"
-    assert codex_dev.classify_operations(draw_operations(config, ocr=True)) == "api"
+    assert codex_dev.classify_operations(draw_operations(config, ocr=False)) == "codex_subscription"
+    # Every draw reads its page back, so an API read makes the draw API-funded.
+    assert codex_dev.classify_operations(draw_operations(config)) == "api"
     api_draw = Config()
     select_routes(text=(api_draw.effective_page_ocr_model(),))
     assert codex_dev.classify_operations(draw_operations(api_draw)) == "api"
@@ -205,7 +206,7 @@ def test_draw_estimates_include_only_api_operations(select_routes, monkeypatch, 
     select_routes(text=(config.effective_page_ocr_model(),) if codex_ocr else ())
     monkeypatch.setattr(page_drawing, "PAGE_OCR_ESTIMATED_COST_USD", 0.02)
     assert page_drawing.estimate_draw_api_cost(config, 0.50, ocr=True) == pytest.approx(expected)
-    assert page_drawing.estimate_draw_api_cost(config, 0.50) == (0.0 if codex_image else 0.50)
+    assert page_drawing.estimate_draw_api_cost(config, 0.50) == pytest.approx(expected)  # Read-back is included.
     assert page_drawing.estimate_draw_api_cost(config, 0.50, ocr=False) == (0 if codex_image else 0.50)
 
 

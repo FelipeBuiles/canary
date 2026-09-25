@@ -89,6 +89,8 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/projects/{project}/pages/{page_number}/visual-review/estimate` | `visual_review_estimate` | `pages.py` |
 | `POST` | `/api/projects/{project}/pages/{page_number}/visual-review` | `visual_review_page` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_number}/visual-review` | `read_saved_visual_review` | `pages.py` |
+| `GET` | `/api/projects/{project}/pages/{page_number}/replan/estimate` | `replan_page_estimate` | `pages.py` |
+| `POST` | `/api/projects/{project}/pages/{page_number}/replan` | `replan_one_page` | `pages.py` |
 | `GET` | `/api/projects/{project}/estimate` | `estimate_stage_cost` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/run` | `run_pipeline` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/regen-extract` | `regen_extract` | `pipeline.py` |

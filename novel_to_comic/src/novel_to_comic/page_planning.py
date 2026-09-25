@@ -10,8 +10,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from novel_to_comic.appearance_chronology import CODE as CHRONOLOGY_CODE, appearance_chronology, first_activation
 from novel_to_comic.generation_checkpoints import discard_checkpointed_response
-from novel_to_comic.ai.context import ai_source_context
+from novel_to_comic.ai.context import ai_source_context, execution_observer
+from novel_to_comic.ai.transport import text_transport_limits
 from novel_to_comic.book_adaptation import compound_appearance_change_failures
 from novel_to_comic.narrative_instructions import PLAN_DEPICTION_GUIDANCE
 from novel_to_comic.editorial import story_instruction_section
@@ -38,13 +40,27 @@ from novel_to_comic.models.validation import (
 from novel_to_comic.narrative_review import planning_context, review_narrative, reviewed_validation
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.paid_shards import run_paid_shards
-from novel_to_comic.target_artifacts import TargetArtifacts
+from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
 from novel_to_comic.usage import ApiResult, estimate_text_cost
 
 
 _MAX_PLAN_ATTEMPTS = 3
 _TWO_PASS_PLAN_MIN_BEATS = 24
 _PLAN_DETAIL_BATCH_PAGES = 8
+# A transport with a hard per-request deadline and no parallelism (the local
+# Codex runtime: one call at a time, 15 minutes each) gains no throughput from
+# large batches, and observed 8-page batches ran 4-8.5 minutes, the largest
+# within 2x of the deadline. Half-size batches keep each call far from it,
+# checkpoint twice as often, and give progress twice the resolution.
+_DEADLINE_BOUND_DETAIL_BATCH_PAGES = 4
+
+
+def detail_batch_pages(model: str) -> int:
+    """Pages per Plan detail request for the transport carrying ``model``."""
+
+    if text_transport_limits(model).call_deadline_seconds is not None:
+        return _DEADLINE_BOUND_DETAIL_BATCH_PAGES
+    return _PLAN_DETAIL_BATCH_PAGES
 _MIN_PLAN_GENERATION_CALLS = 64
 # A page map is ID-heavy structural JSON, rather than panel prose.  Leaving
 # GLM's full context ceiling available lets its mandatory reasoning stream run
@@ -737,8 +753,9 @@ def estimate_book_plan_cost(
         map_prompt,
         output_chars=max(4_000, page_count * 350),
     )
-    for start in range(0, page_count, _PLAN_DETAIL_BATCH_PAGES):
-        stop = min(start + _PLAN_DETAIL_BATCH_PAGES, page_count)
+    batch_pages = detail_batch_pages(model)
+    for start in range(0, page_count, batch_pages):
+        stop = min(start + batch_pages, page_count)
         total += estimate_text_cost(
             model,
             _detail_batch_prompt(
@@ -819,6 +836,7 @@ async def _produce_book_plan_one_shot(
                                       model=model, story_instruction=story_instruction)
     with ctx.execute(total=1, estimated_cost_usd=estimate):
         _raise_on_adaptation_preconditions(adaptation, references, artifacts)
+        _PlanProgress(ctx, adaptation, target_range, model=model).publish("laying_out")
         attempt_prompt = prompt
         pages: tuple[ComicPage, ...] = ()
         validation = PlanValidation()
@@ -908,6 +926,92 @@ def _record_plan_usage(ctx: StageRuntime, result: ApiResult[Any]) -> None:
             ctx.record_api_usage(usage)
 
 
+class _PlanProgress:
+    """Display-only view of Plan work that has passed its local checks.
+
+    Published through ``ctx.snapshot`` at every phase transition. It reports
+    the validated page map and each detail batch once its pages compile and
+    match the map, never raw model output, so every number shown is real.
+    """
+
+    def __init__(
+        self,
+        ctx: StageRuntime,
+        adaptation: BookAdaptation,
+        target_range: ApprovedPageRange,
+        *,
+        model: str,
+    ) -> None:
+        self._ctx = ctx
+        self._phase = "mapping"
+        self._pages: list[dict[str, Any]] = []
+        self._batches: list[dict[str, Any]] = []
+        self._beats = len(adaptation.beats)
+        self._lettering = sum(len(beat.lettering) for beat in adaptation.beats)
+        self._target = {"min": target_range.minimum, "max": target_range.maximum}
+        self._serial = text_transport_limits(model).parallel_calls == 1
+
+    def publish(self, phase: str | None = None) -> None:
+        if phase is not None:
+            self._phase = phase
+        laid_out = [page for page in self._pages if page["panels"] is not None]
+        # Copied: queued events and persisted state must not change when a
+        # later batch updates these rows.
+        self._ctx.snapshot(deepcopy({
+            "kind": "plan",
+            "phase": self._phase,
+            "beats": self._beats,
+            "lettering_total": self._lettering,
+            "target_pages": self._target,
+            "serial_transport": self._serial,
+            "pages": self._pages,
+            "batches": self._batches,
+            "pages_laid_out": len(laid_out),
+            "panels": sum(page["panels"] for page in laid_out),
+            "lettering_placed": sum(page["lettering"] for page in laid_out),
+        }))
+
+    def map_drafted(self, page_map: "_BookPageMap") -> None:
+        self._pages = [
+            {
+                "page": entry.page_number,
+                "emphasis": entry.emphasis,
+                "turn": entry.page_turn_role,
+                "spread": entry.spread_role,
+                "density": entry.density_intent,
+                "beats": len(entry.beat_ids),
+                "panels": None,
+                "lettering": len(entry.lettering_ids),
+            }
+            for entry in page_map.pages
+        ]
+        self.publish("reviewing_map")
+
+    def batches_planned(self, ranges: list[tuple[int, int]]) -> None:
+        self._batches = [
+            {"first": start + 1, "last": stop, "state": "queued"} for start, stop in ranges
+        ]
+        self.publish("laying_out")
+
+    def batch_state(self, index: int, state: str) -> None:
+        if self._batches[index]["state"] != state:
+            self._batches[index]["state"] = state
+            self.publish()
+
+    def batch_done(self, index: int, draft: "_BookPlanDraft") -> None:
+        # Detail pages are positional within their batch, and the map owns
+        # each page's rhythm (as in _merge_detail_drafts); only the laid-out
+        # panels and lettering come from the batch.
+        first = self._batches[index]["first"] - 1
+        for entry, page in zip(self._pages[first:], draft.pages):
+            entry.update(
+                panels=len(page.content),
+                lettering=sum(len(content.lettering_ids) for content in page.content),
+            )
+        self._batches[index]["state"] = "done"
+        self.publish()
+
+
 async def _generate_page_map(
     adaptation: BookAdaptation,
     target_range: ApprovedPageRange,
@@ -919,6 +1023,7 @@ async def _generate_page_map(
     story_instruction: str = "",
     review_instruction: str | None = None,
     concurrency: int = 4,
+    progress: _PlanProgress | None = None,
 ) -> tuple[_BookPageMap, list[ValidationAttempt]]:
     prompt = _build_page_map_prompt(
         adaptation, target_range
@@ -956,6 +1061,8 @@ async def _generate_page_map(
             break
         validation = _validate_page_map(adaptation, target_range, page_map)
         if not validation.invariant_failures:
+            if progress is not None:
+                progress.map_drafted(page_map)
             review_failures = await review_narrative(
                 planning_context(adaptation, page_map.pages, phase="plan_map"),
                 generate=generate, ctx=ctx, artifacts=artifacts, model=model, instruction=story_instruction if review_instruction is None else review_instruction, concurrency=concurrency,
@@ -1298,6 +1405,7 @@ def _concern_batch_indexes(
     concerns: tuple[InvariantFailure | EditorialIssue, ...],
     *,
     page_count: int,
+    batch_pages: int,
 ) -> dict[int, list[InvariantFailure | EditorialIssue]]:
     grouped: dict[int, list[InvariantFailure | EditorialIssue]] = {}
     for concern in concerns:
@@ -1308,7 +1416,7 @@ def _concern_batch_indexes(
         }
         for page_number in page_numbers:
             if 1 <= page_number <= page_count:
-                index = (page_number - 1) // _PLAN_DETAIL_BATCH_PAGES
+                index = (page_number - 1) // batch_pages
                 grouped.setdefault(index, []).append(concern)
     return grouped
 
@@ -1328,6 +1436,7 @@ async def _produce_book_plan_two_pass(
 ) -> BookPlan:
     author_instruction = story_instruction
     pin_by_beat = _validate_author_pins(adaptation, author_pins)
+    batch_pages = detail_batch_pages(model)
     estimate = estimate_book_plan_cost(
         adaptation,
         references,
@@ -1337,6 +1446,8 @@ async def _produce_book_plan_two_pass(
     )
     with ctx.execute(total=0, estimated_cost_usd=estimate):
         _raise_on_adaptation_preconditions(adaptation, references, artifacts)
+        progress = _PlanProgress(ctx, adaptation, target_range, model=model)
+        progress.publish("mapping")
         try:
             page_map, history = await _generate_page_map(
                 adaptation,
@@ -1347,6 +1458,8 @@ async def _produce_book_plan_two_pass(
                 model=model,
                 review_instruction=author_instruction,
                 story_instruction=story_instruction,
+                concurrency=concurrency,
+                progress=progress,
             )
         except PlanInvariantError as error:
             _persist_validation(
@@ -1357,8 +1470,8 @@ async def _produce_book_plan_two_pass(
             )
             raise
         ranges = [
-            (start, min(start + _PLAN_DETAIL_BATCH_PAGES, len(page_map.pages)))
-            for start in range(0, len(page_map.pages), _PLAN_DETAIL_BATCH_PAGES)
+            (start, min(start + batch_pages, len(page_map.pages)))
+            for start in range(0, len(page_map.pages), batch_pages)
         ]
         # One step is reserved for canonicalization, validation, and artifact
         # persistence so the stage cannot report completion while that work is
@@ -1367,22 +1480,28 @@ async def _produce_book_plan_two_pass(
         ctx.set_progress_total(total_steps)
         ctx.record_item_done()
         ctx.progress(ctx.stage_state.items_done, total_steps)
+        progress.batches_planned(ranges)
 
         async def generate_batch(
             start: int, stop: int
         ) -> tuple[int, int, _BookPlanDraft]:
-            draft = await _generate_detail_batch(
-                adaptation,
-                references,
-                page_map,
-                start=start,
-                stop=stop,
-                generate=generate,
-                ctx=ctx,
-                story_instruction=story_instruction,
-                artifacts=artifacts, model=model,
-            )
+            index = start // batch_pages
+            # Queued until the transport starts executing it; a serialized
+            # transport can hold admitted batches for many minutes.
+            with execution_observer(lambda: progress.batch_state(index, "writing")):
+                draft = await _generate_detail_batch(
+                    adaptation,
+                    references,
+                    page_map,
+                    start=start,
+                    stop=stop,
+                    generate=generate,
+                    ctx=ctx,
+                    story_instruction=story_instruction,
+                    artifacts=artifacts, model=model,
+                )
             ctx.record_item_done()
+            progress.batch_done(index, draft)
             return start, stop, draft
 
         try:
@@ -1404,8 +1523,10 @@ async def _produce_book_plan_two_pass(
             page_map,
             batches,
         )
+        progress.publish("checking")
         pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat)
         if not validation.invariant_failures:
+            progress.publish("reviewing")
             artifacts.write_plan_review_draft(PlanReviewDraft(adaptation_sha256=adaptation.content_sha256, rhythm_summary=draft.rhythm_summary, pages=pages))
             review_failures = await review_narrative(
                 planning_context(adaptation, pages), generate=generate, ctx=ctx,
@@ -1426,17 +1547,22 @@ async def _produce_book_plan_two_pass(
         grouped = _concern_batch_indexes(
             tuple(repairable),
             page_count=len(page_map.pages),
+            batch_pages=batch_pages,
         )
         if grouped:
             history.append(_attempt_record(1, validation))
             total_steps += len(grouped)
             ctx.set_progress_total(total_steps)
             by_index = {
-                start // _PLAN_DETAIL_BATCH_PAGES: (start, stop, batch)
+                start // batch_pages: (start, stop, batch)
                 for start, stop, batch in batches
             }
+            for index in grouped:
+                progress.batch_state(index, "needs_repair")
+            progress.publish("repairing")
             for index, concerns in grouped.items():
                 start, stop, previous_draft = by_index[index]
+                progress.batch_state(index, "repairing")
                 repaired = await _generate_detail_batch(
                     adaptation,
                     references,
@@ -1452,6 +1578,7 @@ async def _produce_book_plan_two_pass(
                 )
                 ctx.record_item_done()
                 ctx.progress(ctx.stage_state.items_done, total_steps)
+                progress.batch_done(index, repaired)
                 by_index[index] = (start, stop, repaired)
             batches = list(by_index.values())
             draft = _merge_detail_drafts(
@@ -1463,6 +1590,7 @@ async def _produce_book_plan_two_pass(
             pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat)
 
         if grouped and not validation.invariant_failures:
+            progress.publish("reviewing")
             artifacts.write_plan_review_draft(PlanReviewDraft(adaptation_sha256=adaptation.content_sha256, rhythm_summary=draft.rhythm_summary, pages=pages))
             review_failures = await review_narrative(
                 planning_context(adaptation, pages), generate=generate, ctx=ctx,
@@ -1482,12 +1610,15 @@ async def _produce_book_plan_two_pass(
         plan = _write_valid_plan(artifacts=artifacts, adaptation=adaptation,
             target_range=target_range, pages=pages, rhythm_summary=page_map.rhythm_summary,
             validation=validation)
+        progress.publish("complete")
         ctx.record_item_done()
         ctx.progress(total_steps, total_steps)
     return plan
 
 
-def _default_plan_call_limit(adaptation: BookAdaptation, target_range: ApprovedPageRange) -> int:
+def _default_plan_call_limit(
+    adaptation: BookAdaptation, target_range: ApprovedPageRange, model: str,
+) -> int:
     """Allow a full plan, bounded corrections, and explicit resume headroom.
 
     Page targets are advisory. Budget for one page per beat or the upper target,
@@ -1500,7 +1631,8 @@ def _default_plan_call_limit(adaptation: BookAdaptation, target_range: ApprovedP
     if len(adaptation.beats) < _TWO_PASS_PLAN_MIN_BEATS:
         clean_calls = 1 + windows
     else:
-        batches = (projected_pages + _PLAN_DETAIL_BATCH_PAGES - 1) // _PLAN_DETAIL_BATCH_PAGES
+        batch_pages = detail_batch_pages(model)
+        batches = (projected_pages + batch_pages - 1) // batch_pages
         clean_calls = 1 + batches + 2 * windows
     return max(_MIN_PLAN_GENERATION_CALLS, 4 * clean_calls)
 
@@ -1522,6 +1654,12 @@ async def produce_book_plan(
 ) -> BookPlan:
     """Produce one canonical plan through the cheapest quality-safe workflow."""
 
+    # Asking a serialized transport for parallel calls only makes queued
+    # requests look in flight.
+    parallel = text_transport_limits(model).parallel_calls
+    if parallel is not None:
+        concurrency = min(concurrency, parallel)
+
     from novel_to_comic.generation_budget import budgeted_generator
     generate = budgeted_generator(
         generate, artifacts=artifacts, stage="plan", model=model,
@@ -1531,7 +1669,7 @@ async def produce_book_plan(
                 "pins": [p.model_dump(mode="json") for p in author_pins],
                 "instruction": story_instruction},
         override_limit=max_generation_calls is not None,
-        max_calls=max_generation_calls if max_generation_calls is not None else _default_plan_call_limit(adaptation, target_range),
+        max_calls=max_generation_calls if max_generation_calls is not None else _default_plan_call_limit(adaptation, target_range, model),
     )
     from novel_to_comic.generation_checkpoints import checkpointed_generator
     generate = checkpointed_generator(generate, artifacts=artifacts, stage="plan", model=model)
@@ -2540,6 +2678,33 @@ def validate_book_plan(
                             )
                         )
 
+    # Chronology across pages: the check Finish repeats before export, so a
+    # plan that looks ahead to a later look is repaired here, before Draw.
+    # Adapt validates its own change chain; only content citations are Plan's.
+    started_by = first_activation(adaptation)
+    for findings in appearance_chronology(adaptation, pages).values():
+        for finding in findings:
+            if finding.owner_stage != "plan":
+                continue
+            guidance = [
+                f"Keep {finding.entity_id!r} in {finding.expected_state_id!r} here and describe that "
+                "look in the visual intent: "
+                + (f"{state_id!r} begins with beat {started_by[(finding.entity_id, state_id)]!r}."
+                   if (finding.entity_id, state_id) in started_by
+                   else f"no beat changes it into {state_id!r}.")
+                for state_id in finding.not_yet_activated
+            ] or [f"Cite {finding.expected_state_id!r} for {finding.entity_id!r}, or an earlier look it has had."]
+            failures.append(
+                InvariantFailure(
+                    id=f"plan_failure_appearance_chronology_{finding.content_id}_{finding.entity_id}",
+                    owner_stage="plan",
+                    code=CHRONOLOGY_CODE,
+                    message="Page content must not show a look before the story changes into it.",
+                    artifact_ids=list(finding.artifact_ids),
+                    evidence=[*finding.evidence, *guidance],
+                )
+            )
+
     for page_index, page in enumerate(pages):
         page_beats = [
             beat_by_id[beat_id]
@@ -2657,3 +2822,211 @@ def validate_book_plan(
         invariant_failures=failures,
         editorial_issues=issues,
     )
+
+
+class _UsageSink:
+    """The slice of StageRuntime a standalone re-plan's writer and review use.
+
+    No stage lifecycle is involved: usage is collected, activity is not shown.
+    """
+
+    def __init__(self) -> None:
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+
+        self.usage: list[Any] = []
+        self.stage_state = SimpleNamespace(started_at=datetime.now(timezone.utc))
+
+    def record_api_usage(self, usage: Any) -> None:
+        self.usage.append(usage)
+
+    def activity(self, **_kwargs: Any) -> None:
+        return None
+
+
+def _page_draft(page: ComicPage) -> _PageDraft:
+    """The accepted canonical page in the writer's own draft contract."""
+
+    if page.lettering_reservations is None:
+        raise ValueError(f"Page {page.page_number} predates lettering reservations; re-run Plan instead.")
+    reservations = {item.lettering_item_id: item for item in page.lettering_reservations}
+    return _PageDraft(
+        page_number=page.page_number,
+        page_turn_role=page.page_turn_role,
+        spread_role=page.spread_role,
+        emphasis=page.emphasis,
+        density_intent=page.density_intent,
+        rhythm_intent=page.rhythm_intent or page.layout_intent,
+        layout_intent=page.layout_intent,
+        content=tuple(
+            _PageContentDraft(
+                id=content.id,
+                order=content.order,
+                beat_ids=content.beat_ids,
+                panel_role=content.panel_role,
+                visual_intent=content.visual_intent,
+                entity_ids=content.entity_ids,
+                appearance_states=tuple(
+                    _AppearanceStateBinding(entity_id=entity_id, state_id=state_id)
+                    for entity_id, state_id in content.appearance_states.items()
+                ),
+                lettering_ids=tuple(item.id for item in content.lettering),
+                lettering_reservations=tuple(reservations[item.id] for item in content.lettering),
+            )
+            for content in page.content
+        ),
+        reading_order=page.reading_order,
+    )
+
+
+def _page_map_entry(page: ComicPage) -> _PageMapEntry:
+    return _PageMapEntry(
+        page_number=page.page_number,
+        beat_ids=tuple(dict.fromkeys(beat_id for content in page.content for beat_id in content.beat_ids)),
+        lettering_ids=tuple(item.id for content in page.content for item in content.lettering),
+        page_turn_role=page.page_turn_role,
+        spread_role=page.spread_role,
+        emphasis=page.emphasis,
+        density_intent=page.density_intent,
+        rhythm_intent=page.rhythm_intent or page.layout_intent,
+    )
+
+
+def _cites_page(finding: InvariantFailure, page_number: int) -> bool:
+    prefix = f"page_{page_number:03d}"
+    return any(artifact_id == prefix or artifact_id.startswith(prefix + "_") for artifact_id in finding.artifact_ids)
+
+
+def _replan_inputs(artifacts: TargetArtifacts, references: ApprovedVisualReferenceInventory, page_number: int):
+    adaptation = artifacts.read_adaptation()
+    plan = artifacts.read_plan()
+    if (plan.adaptation_revision, plan.adaptation_sha256) != (adaptation.revision, adaptation.content_sha256):
+        raise ValueError("The page plan is older than the book adaptation; re-run Plan instead.")
+    if not 1 <= page_number <= len(plan.pages):
+        raise ValueError(f"Page {page_number} is not in the page plan.")
+    pages = tuple(artifacts.read_page_revision(entry.page_number, entry.revision) for entry in plan.pages)
+    target_range = ApprovedPageRange(minimum=plan.target_page_min, maximum=plan.target_page_max)
+    validation = validate_book_plan(adaptation, references, target_range, pages)
+    concerns = tuple(
+        failure for failure in validation.invariant_failures
+        if failure.owner_stage == "plan" and _cites_page(failure, page_number)
+    )
+    if not concerns:
+        raise ValueError(f"Page {page_number}'s plan has no problem to repair.")
+    page_map = _BookPageMap(
+        rhythm_summary=plan.rhythm_summary or "Accepted page plan.",
+        pages=tuple(_page_map_entry(page) for page in pages),
+    )
+    return adaptation, plan, pages, target_range, concerns, page_map
+
+
+def estimate_page_replan_cost(
+    artifacts: TargetArtifacts,
+    references: ApprovedVisualReferenceInventory,
+    page_number: int,
+    *,
+    model: str,
+) -> float:
+    """One local detail call plus its bounded repair attempts."""
+
+    adaptation, _plan, _pages, _range, concerns, page_map = _replan_inputs(artifacts, references, page_number)
+    prompt = _detail_batch_prompt(
+        adaptation, references, page_map, start=page_number - 1, stop=page_number, concerns=concerns,
+    )
+    detail = estimate_text_cost(model, prompt * 2, output_chars=4_000) * 2
+    # Draw requires a current narrative review of the whole plan. Unchanged
+    # windows replay checkpointed verdicts; reserve as if none did.
+    review = estimate_text_cost(
+        model, adaptation.model_dump_json() * 2, output_chars=max(10_000, len(adaptation.beats) * 2_000),
+    ) * 2
+    return detail + review
+
+
+async def replan_page(
+    artifacts: TargetArtifacts,
+    references: ApprovedVisualReferenceInventory,
+    page_number: int,
+    *,
+    generate: StructuredGenerator,
+    model: str,
+) -> ComicPage:
+    """Re-detail one page whose accepted plan fails validation.
+
+    The page keeps its beats, lettering and page role (the global map is
+    fixed); only its panel detail is rewritten to clear the cited problems.
+    The whole book is validated and its narrative review refreshed before the
+    new page revision and plan revision are written; the page's artwork then
+    becomes stale for a redraw.
+    """
+
+    adaptation, plan, pages, target_range, concerns, page_map = _replan_inputs(artifacts, references, page_number)
+    index = page_number - 1
+    drafts = tuple(_page_draft(page) for page in pages)
+    pin_by_beat = {
+        beat_id: AuthorGeometryPin(beat_id=beat_id, geometry=content.pinned_geometry)
+        for page in pages for content in page.content if content.pinned_geometry is not None
+        for beat_id in content.beat_ids
+    }
+    sink = _UsageSink()
+    repaired = await _generate_detail_batch(
+        adaptation, references, page_map,
+        start=index, stop=page_number,
+        generate=generate, ctx=sink,  # type: ignore[arg-type]
+        concerns=concerns,
+        previous_draft=_BookPlanDraft(rhythm_summary=page_map.rhythm_summary, pages=(drafts[index],)),
+        artifacts=artifacts, model=model,
+    )
+    batches = [(index, page_number, repaired)]
+    if index:
+        batches.append((0, index, _BookPlanDraft(rhythm_summary=page_map.rhythm_summary, pages=drafts[:index])))
+    # Canonicalize through the target page: active looks accumulate in reading order.
+    draft = _merge_detail_drafts(adaptation, references, _BookPageMap(
+        rhythm_summary=page_map.rhythm_summary, pages=page_map.pages[:page_number],
+    ), batches)
+    reference_failures = _reference_authority_failures(draft.pages[index:], references, page_number_offset=index)
+    if reference_failures:
+        raise PlanInvariantError(PlanValidation(invariant_failures=reference_failures))
+    canonical = _canonical_pages(adaptation, draft, pin_by_beat, references)[index]
+    revised = ComicPage.model_validate({
+        **canonical.model_dump(mode="json"),
+        "revision": pages[index].revision + 1,
+        "content_sha256": "",
+    })
+    candidate = (*pages[:index], revised, *pages[page_number:])
+    remaining = tuple(
+        failure
+        for failure in validate_book_plan(adaptation, references, target_range, candidate).invariant_failures
+        if _cites_page(failure, page_number)
+    )
+    if remaining:
+        raise PlanInvariantError(PlanValidation(invariant_failures=remaining))
+    # Draw is gated on a narrative review of exactly these pages. Review the
+    # candidate before publishing it; a failing review leaves the accepted
+    # plan and its passing review in place.
+    try:
+        previous_review = artifacts.read_narrative_review("plan")
+    except (ArtifactMissing, ArtifactInvalid):
+        previous_review = None
+    review_failures = await review_narrative(
+        planning_context(adaptation, candidate), generate=generate, ctx=sink,
+        artifacts=artifacts, model=model,
+        instruction=previous_review.instruction if previous_review is not None else "",
+    )
+    if review_failures:
+        if previous_review is not None:
+            artifacts.write_narrative_review("plan", previous_review)
+        raise PlanInvariantError(PlanValidation(invariant_failures=tuple(review_failures)))
+    revised_plan = BookPlan.model_validate({
+        **plan.model_dump(mode="json"),
+        "revision": plan.revision + 1,
+        "content_sha256": "",
+        "pages": [
+            PlannedPageRevision(
+                page_number=revised.page_number, revision=revised.revision, content_sha256=revised.content_sha256,
+            ).model_dump(mode="json") if entry.page_number == page_number else entry.model_dump(mode="json")
+            for entry in plan.pages
+        ],
+    })
+    artifacts.write_page(revised)
+    artifacts.write_plan(revised_plan)
+    return revised

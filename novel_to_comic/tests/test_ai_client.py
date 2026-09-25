@@ -260,15 +260,15 @@ def test_mimo_plain_text_does_not_request_json(monkeypatch, _patch_events):
     assert "response_format" not in request
     assert request["messages"][0]["content"] == "Summarize the story."
 
-@pytest.mark.parametrize("model", ["mimo-v2.6-pro", "openrouter/xiaomi/mimo-v2.6-pro"])
-def test_mimo_structured_request_keeps_schema_and_supported_max_tokens(
+@pytest.mark.parametrize("model", ["mimo-v2.6-pro", "deepseek-v4.1-flash"])
+def test_max_tokens_routes_keep_strict_schema_and_temperature(
     monkeypatch, _patch_events, model
 ):
     _patch_http(
         monkeypatch,
         {
-            "id": "mimo-response",
-            "model": "xiaomi/mimo-v2.6-pro",
+            "id": "provider-response",
+            "model": "provider/model",
             "choices": [{"message": {"content": '{"ok": true}'}}],
             "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13},
         },
@@ -280,6 +280,7 @@ def test_mimo_structured_request_keeps_schema_and_supported_max_tokens(
             model=model,
             system_prompt="Return JSON.",
             user_content="Read the image and return JSON.",
+            temperature=0.3,
             max_output_tokens=128,
             feature="extract.story_bible",
             json_schema={
@@ -299,6 +300,7 @@ def test_mimo_structured_request_keeps_schema_and_supported_max_tokens(
         "type": "object", "properties": {"ok": {"type": "boolean"}},
         "required": ["ok"], "additionalProperties": False,
     }
+    assert request["temperature"] == 0.3
     assert request["messages"][0]["content"] == "Return JSON."
 
 

@@ -25,7 +25,7 @@ vi.mock("../api/pageRevisions", async (importOriginal) => {
           context: { adaptation_revision: 1, adaptation_sha256: "a".repeat(64), treatment_spine: [], beat_ids: [], beat_count: 0,
             appearance_chronology: [], continuity: [], source_unit_ids: [], selected_source_unit_ids: [], omitted_source_unit_ids: [], context_digest: "", truncated: false },
           references: [], profile: { id: "test", provider: "test", model: "test" }, lettering_count: 0, prompt_characters: 16,
-          request_sha256: "b".repeat(64), warnings: [], estimate: { estimate_credits: 5, reserved_credits: 6, reservation_multiplier: 1.2, confidence: "test" },
+          request_sha256: "b".repeat(64), warnings: [], estimate: { estimate_credits: 5, reserved_credits: 6, reservation_multiplier: 1.2, confidence: "variable" },
         };
         setData(result); options.onSuccess(result);
       } };
