@@ -96,9 +96,11 @@ COPY showcase/books/ /app/showcase/books/
 # Copy application source and install the project itself
 COPY novel_to_comic/ ./novel_to_comic/
 RUN cd novel_to_comic && uv sync --extra web --frozen --no-dev
-# The local Codex execution adapter is never present in a production image.
-# Routing authority remains so stray saved Codex selections fail closed.
+# The local Codex and Claude Code execution adapters are never present in a
+# production image. Routing authority remains so stray saved subscription
+# selections fail closed.
 RUN rm novel_to_comic/src/novel_to_comic/ai/codex_runtime.py \
+       novel_to_comic/src/novel_to_comic/ai/claude_runtime.py \
        novel_to_comic/src/novel_to_comic/ai/providers/codex_dev.py \
        novel_to_comic/src/novel_to_comic/codex_complete_page.py \
        novel_to_comic/src/novel_to_comic/server/routers/labs.py \

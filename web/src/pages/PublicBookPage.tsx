@@ -134,7 +134,7 @@ export function PublicBookPage() {
             <div className="public-book-description">
             <h1 className="font-display text-4xl">{book.title}</h1>
             <p className="mt-2 font-meta">{book.author} · {book.pages.length} {t("pages")}</p>
-            {book.description && <p className="mt-4 max-w-prose font-body">{book.description}</p>}
+            {book.description && <p className="mt-4 font-body">{book.description}</p>}
             <div className="mt-5 flex flex-wrap gap-3">
               {languageToggle("paper")}
               <Button onClick={() => setReaderOpen(true)}>{t("Read your book")}</Button>

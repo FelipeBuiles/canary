@@ -55,7 +55,7 @@ create table if not exists public.ai_usage_events (
                                       check (status in ('started', 'succeeded', 'failed', 'refused', 'cancelled')),
   billable              boolean     not null default false,
   funding               text        not null default 'api'
-                                      check (funding in ('api', 'codex_subscription')),
+                                      check (funding in ('api', 'codex_subscription', 'claude_subscription')),
   billing_policy        text,
   model_alias           text        not null,
   provider              text,
@@ -327,7 +327,7 @@ $$;
 
 alter table public.ai_usage_events
   add column if not exists funding text not null default 'api'
-    check (funding in ('api', 'codex_subscription')),
+    check (funding in ('api', 'codex_subscription', 'claude_subscription')),
   add column if not exists provider_cost_usd numeric(12, 6),
   add column if not exists estimated_cost_usd numeric(12, 6),
   add column if not exists pricing_snapshot text;
@@ -807,7 +807,7 @@ select
   coalesce(sum(input_tokens), 0)::bigint as input_tokens,
   coalesce(sum(output_tokens), 0)::bigint as output_tokens,
   coalesce(sum(image_count), 0)::bigint as image_count,
-  (case when funding = 'codex_subscription' then sum(cost_usd)
+  (case when funding in ('codex_subscription', 'claude_subscription') then sum(cost_usd)
     else coalesce(sum(cost_usd), 0) end)::numeric(14, 6) as actual_cost_usd,
   coalesce(sum(estimated_cost_usd), 0)::numeric(14, 6) as estimated_cost_usd,
   percentile_cont(0.5) within group (order by latency_ms)

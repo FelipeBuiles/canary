@@ -215,7 +215,7 @@ export function BookRoom() {
         {checking ? (
           <Surface padding="lg" border="soft" shadow="none" role="status" aria-live="polite">
             <p className="font-meta text-sm font-bold">{t("Checking edition…")}</p>
-            <p className="mt-2 max-w-[60ch] font-body text-sm font-semibold leading-6 text-ink-muted">
+            <p className="mt-2 font-body text-sm font-semibold leading-6 text-ink-muted">
               {t("Finish is loading the last check and will run again only if this edition changed.")}
             </p>
           </Surface>
@@ -361,7 +361,7 @@ export function BookRoom() {
           description={t("Credits used by this book across every edition and revision. Open an activity to see its hold, final charge, and released credits.")}
           actions={<Link to={`/credits?project=${encodeURIComponent(id)}`} className="inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4">{t("View all credit history")}</Link>}
         />
-        <p className="mb-4 max-w-prose font-body text-sm leading-6 text-ink-muted">{t("Open holds are still reserved. They are separate from final charges.")}</p>
+        <p className="mb-4 font-body text-sm leading-6 text-ink-muted">{t("Open holds are still reserved. They are separate from final charges.")}</p>
         {creditHistoryError && (
           <Surface tone="pulp" padding="md" shadow="none" role="alert" className="mb-4">
             <p className="font-body text-sm">{t("Credit history could not be loaded.")}</p>
@@ -415,7 +415,7 @@ function CheckItem({ tone, title, pages = [], detail, subjects = [], evidence = 
         )}
       </div>
       {subjects.length > 0 && <p className="mt-1 font-body text-sm leading-6">{subjects.join(" · ")}</p>}
-      {detail && <p className="mt-1 max-w-[75ch] font-body text-sm leading-6 text-ink-muted">{detail}</p>}
+      {detail && <p className="mt-1 font-body text-sm leading-6 text-ink-muted">{detail}</p>}
       {evidence.length > 0 && (
         <details className="mt-1 font-body text-xs leading-5 text-ink-muted">
           <summary className="min-h-11 cursor-pointer py-3">{t("Evidence")}</summary>

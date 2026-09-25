@@ -76,7 +76,7 @@ export function BookExportPanel({
                 </StatusPill>
               </div>
               <h3 className="mt-5 font-display text-3xl font-black leading-none tracking-tight">{format.toUpperCase()}</h3>
-              <p className="mt-3 max-w-[40ch] font-body text-sm leading-6 text-ink-muted">
+              <p className="mt-3 font-body text-sm leading-6 text-ink-muted">
                 {format === "pdf" ? t("For reading and printing.") : t("An image archive for comic-reader apps.")}
               </p>
               <div className="mt-auto pt-6">
@@ -100,7 +100,7 @@ export function BookExportPanel({
       </div>
       <details className="mt-5 border-t border-ink-black/15">
         <summary className="min-h-11 cursor-pointer py-4 font-body text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-hero-red">{t("Rebuild package")}</summary>
-        <p className="max-w-[65ch] font-body text-sm leading-6 text-ink-muted">
+        <p className="font-body text-sm leading-6 text-ink-muted">
           {t("Missing or damaged download? Rebuild it from your saved pages. This replaces package files, not artwork, and uses no credits.")}
         </p>
         <div className="mt-3 flex flex-wrap gap-3">

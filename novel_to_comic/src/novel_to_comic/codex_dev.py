@@ -1,4 +1,8 @@
-"""Immutable, original-process authority for the opt-in local Codex adapter.
+"""Immutable, original-process authority for the opt-in local subscription adapters.
+
+Codex (``codex-dev/``) and Claude Code (``claude-dev/``) routes share one
+development-only veto and one zero-credit funding contract; each keeps its own
+operator gate and model allowlist.
 
 Imported by package initialization before project dotenv loading. Never consult
 project configuration or the subsequently mutated environment for authority.
@@ -14,13 +18,16 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
-Funding = Literal["api", "codex_subscription"]
+Funding = Literal["api", "codex_subscription", "claude_subscription"]
+SUBSCRIPTION_FUNDING: frozenset[str] = frozenset({"codex_subscription", "claude_subscription"})
+SUBSCRIPTION_PREFIXES = ("codex-dev/", "claude-dev/")
 _KEYS = (
     "CANARY_CODEX_DEV_ENABLED", "CANARY_ENV", "ENV", "FLY_APP_NAME",
     "FLY_MACHINE_ID", "RENDER", "RAILWAY_ENVIRONMENT", "K_SERVICE", "VERCEL",
     "CANARY_CODEX_DEV_TEXT_ROUTES", "CANARY_CODEX_DEV_IMAGE_ROUTES",
     "HOME", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR",
     "CANARY_CODEX_DEV_IMAGE_REASONING_MODEL", "CANARY_CODEX_DEV_MODELS",
+    "CANARY_CLAUDE_DEV_ENABLED", "CANARY_CLAUDE_DEV_MODELS", "USER", "PATH",
 )
 _PROCESS = MappingProxyType({key: os.environ.get(key) for key in _KEYS})
 
@@ -33,6 +40,20 @@ class CodexRoutingError(ValueError):
 class CodexRoute:
     reasoning_model: str
     image_model: str | None = None
+    runtime: Literal["codex", "claude"] = "codex"
+
+    @property
+    def funding(self) -> Funding:
+        return "claude_subscription" if self.runtime == "claude" else "codex_subscription"
+
+
+def is_subscription(funding: object) -> bool:
+    """Local subscription execution: never priced, reserved, or settled as credits."""
+    return funding in SUBSCRIPTION_FUNDING
+
+
+def is_subscription_selector(model: str) -> bool:
+    return model.startswith(SUBSCRIPTION_PREFIXES)
 
 
 def process_setting(name: str) -> str | None:
@@ -67,6 +88,54 @@ def selectable_models() -> tuple[str, ...]:
     if not isinstance(values, list):
         raise CodexRoutingError("CANARY_CODEX_DEV_MODELS must be a JSON list")
     return tuple(dict.fromkeys(_model(value) for value in values))
+
+
+# Claude Code selectors. Text only: Claude Code has no image generation tool.
+_DEFAULT_CLAUDE_MODELS = ("claude-opus-5-5",)
+
+
+def _claude_model(value: object) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"claude-[a-z0-9][a-z0-9-]*", value):
+        raise CodexRoutingError("Claude Code targets must be exact claude-* model names")
+    return value
+
+
+def claude_selectable_models() -> tuple[str, ...]:
+    raw = _PROCESS["CANARY_CLAUDE_DEV_MODELS"]
+    try:
+        values = json.loads(raw) if raw else list(_DEFAULT_CLAUDE_MODELS)
+    except ValueError as exc:
+        raise CodexRoutingError("CANARY_CLAUDE_DEV_MODELS must be a JSON list") from exc
+    if not isinstance(values, list):
+        raise CodexRoutingError("CANARY_CLAUDE_DEV_MODELS must be a JSON list")
+    return tuple(dict.fromkeys(_claude_model(value) for value in values))
+
+
+def claude_enabled() -> bool:
+    return _PROCESS["CANARY_CLAUDE_DEV_ENABLED"] == "1"
+
+
+def claude_selector_available() -> bool:
+    try:
+        _validate_development()
+        claude_selectable_models()
+        return claude_enabled()
+    except CodexRoutingError:
+        return False
+
+
+def _claude_route(kind: str, model: str) -> CodexRoute:
+    explicit_kind, separator, target = model.removeprefix("claude-dev/").partition("/")
+    if not separator or explicit_kind != "text":
+        raise CodexRoutingError("Claude Code selectors must be claude-dev/text/<model>")
+    if kind != "text":
+        raise CodexRoutingError("Selected Claude Code model does not support this operation kind")
+    if target not in claude_selectable_models():
+        raise CodexRoutingError("Claude Code model is absent from the original-process model allowlist")
+    if not claude_enabled():
+        raise CodexRoutingError("Selected Claude Code route requires CANARY_CLAUDE_DEV_ENABLED=1")
+    _validate_development()
+    return CodexRoute(target, runtime="claude")
 
 
 def model_has_vision(model: str) -> bool:
@@ -112,6 +181,11 @@ def enabled() -> bool:
     return _PROCESS["CANARY_CODEX_DEV_ENABLED"] == "1"
 
 
+def any_enabled() -> bool:
+    """Either local subscription route is on; loopback serving rules apply."""
+    return enabled() or claude_enabled()
+
+
 def validate_local_runtime() -> None:
     """Veto hosted/explicit nondevelopment use, including standalone probes."""
     if (
@@ -123,17 +197,24 @@ def validate_local_runtime() -> None:
         raise CodexRoutingError("Codex development routing is forbidden on hosted platforms")
 
 
-def validate_startup(host: str | None = None) -> None:
-    if not enabled():
-        return
+def _validate_development() -> None:
     validate_local_runtime()
     if _PROCESS["CANARY_ENV"] != "development":
-        raise CodexRoutingError("Codex requires original-process CANARY_ENV=development")
-    if _SETTINGS_ERROR:
-        raise CodexRoutingError(_SETTINGS_ERROR)
-    selectable_models()
+        raise CodexRoutingError("Subscription routes require original-process CANARY_ENV=development")
+
+
+def validate_startup(host: str | None = None) -> None:
+    if not enabled() and not claude_enabled():
+        return
+    _validate_development()
+    if enabled():
+        if _SETTINGS_ERROR:
+            raise CodexRoutingError(_SETTINGS_ERROR)
+        selectable_models()
+    if claude_enabled():
+        claude_selectable_models()
     if host is not None and not is_loopback(host):
-        raise CodexRoutingError("Codex development serving requires a loopback bind address")
+        raise CodexRoutingError("Subscription development serving requires a loopback bind address")
 
 
 def is_loopback(host: str) -> bool:
@@ -148,6 +229,8 @@ def is_loopback(host: str) -> bool:
 def route_for(kind: str, model: str) -> CodexRoute | None:
     if kind not in {"text", "image", "complete_page"}:
         raise CodexRoutingError(f"Unsupported operation kind: {kind}")
+    if model.startswith("claude-dev/"):
+        return _claude_route(kind, model)
     if _SETTINGS_ERROR:
         raise CodexRoutingError(_SETTINGS_ERROR)
     explicit_kind, separator, target = model.removeprefix("codex-dev/").partition("/")
@@ -185,10 +268,13 @@ def route_for(kind: str, model: str) -> CodexRoute | None:
 def classify_operations(operations: Sequence[tuple[str, str]]) -> Funding:
     """Validate routes and summarize whether the work contains API spend.
 
-    This is an estimate label, not an execution lock. Codex is a local transport;
-    it can be mixed with API calls in any job. Each call owns its usage and only
-    API calls settle credits. Visit every route so a disabled/invalid Codex
-    selection still fails before work starts.
+    This is an estimate label, not an execution lock. Subscription routes are
+    local transports; they can be mixed with API calls in any job. Each call
+    owns its usage and only API calls settle credits. Visit every route so a
+    disabled/invalid selection still fails before work starts. Compare the
+    result with ``is_subscription``: a Codex/Claude mix is labelled Codex.
     """
     routes = [route_for(kind, model) for kind, model in operations]
-    return "codex_subscription" if routes and all(routes) else "api"
+    if not routes or not all(routes):
+        return "api"
+    return "claude_subscription" if all(route.runtime == "claude" for route in routes) else "codex_subscription"

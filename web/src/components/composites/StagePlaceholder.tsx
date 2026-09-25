@@ -134,7 +134,7 @@ function StageDocket({
           <h2 className="mt-2 font-display text-[2rem] font-black uppercase leading-[0.92] tracking-[-0.035em] text-ink-black">
             {failureTitle ?? t(meta.title)}
           </h2>
-          <p className="mt-4 max-w-[58ch] font-body text-[0.9rem] font-semibold leading-7 text-ink-muted">
+          <p className="mt-4 font-body text-[0.9rem] font-semibold leading-7 text-ink-muted">
             {t(meta.description)}
           </p>
           {children}

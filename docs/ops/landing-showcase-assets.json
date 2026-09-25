@@ -1,0 +1,78 @@
+{
+  "selected_at": "2026-09-25",
+  "purpose": "Landing page A12: hero style loop, 'One story, three books' and the sample-to-book strip.",
+  "status": "Real showcase output from the test account, labelled as showcase work on the page. Not customer work; no quality guarantee. English text.",
+  "rules": "No credits, costs, free generations or development model routing appear in these assets.",
+  "assets": [
+    {
+      "file": "web/public/marketing/hero-flipbook.webm",
+      "source": "showcase/video/out/scenewright-any-style-revised.mp4",
+      "derivation": "Promo 4.0–7.9 s (flipbook); crop 920x1080+980+0, 600 px wide, VP9 two-pass 1.35 Mbps, no audio",
+      "source_work": "Dungeon Crawler Carl (dcc1-2 style proofs)",
+      "source_sha256": "446e16cbdc272339017c306bd94fe2cef83b184d8902117296785893a89a3b27",
+      "asset_sha256": "271ecf8a1bced65b9d789a00a2868f3c16763055f390e5924867e7f7a1490691"
+    },
+    {
+      "file": "web/public/marketing/hero-flipbook-poster.webp",
+      "source": "showcase/video/out/scenewright-any-style-revised.mp4",
+      "derivation": "Frame at 4.25 s, same crop, WebP q80",
+      "source_work": "Dungeon Crawler Carl (dcc1-2 style proof 6)",
+      "source_sha256": "446e16cbdc272339017c306bd94fe2cef83b184d8902117296785893a89a3b27",
+      "asset_sha256": "0a4559255339a293bf22f916fb584cdc9225fabae936aa5f31bfd670638ed53d"
+    },
+    {
+      "file": "web/public/marketing/janitor-riso-page-01.webp",
+      "source": "projects/947150d4-7d2f-4726-a018-5539f933ea56/site-30-s-janitor/finish/pages/page_001.jpg",
+      "derivation": "Finished page 1, integrated lettering, WebP q70",
+      "source_work": "Site-30's Janitor · CC BY-SA 3.0",
+      "source_sha256": "6b4c4dd02a9c99bfb9bc6d26e95f5e040e0cdaf52de0a03877905396d958bb40",
+      "asset_sha256": "7706b423ea43b1339ae6428820f4aa2dd02449503e7fa00484a6326b8358e98b"
+    },
+    {
+      "file": "web/public/marketing/janitor-gouache-page-01.webp",
+      "source": "projects/947150d4-7d2f-4726-a018-5539f933ea56/site-30-s-janitor-cc/finish/pages/page_001.jpg",
+      "derivation": "Finished page 1, editable lettering reviewed 2026-09-25, WebP q80",
+      "source_work": "Site-30's Janitor · CC BY-SA 3.0",
+      "source_sha256": "38c7084b9f555dea03aa929c3d8cd4d14663f5f1c56b8196bea8a57f1f5f1441",
+      "asset_sha256": "d0f9b69acf574061187cf9f8dcdd42be741d17f045cc2e0dc5dd5e957af0d6f9"
+    },
+    {
+      "file": "web/public/marketing/janitor-oil-page-01.webp",
+      "source": "projects/947150d4-7d2f-4726-a018-5539f933ea56/site-30-s-janitor-cc-2/finish/pages/page_001.jpg",
+      "derivation": "Finished page 1, integrated lettering, WebP q80",
+      "source_work": "Site-30's Janitor · CC BY-SA 3.0",
+      "source_sha256": "51c28cc601e1a863b65519d7b0bc015fed35f22c98a471f0b67ede9815c7ba18",
+      "asset_sha256": "cae8f2b89515c52ee8dea3ef24d20b91f663a95f2716bc7ba775652ca0838008"
+    },
+    {
+      "file": "web/public/marketing/kaitlin-page-01.webp",
+      "source": "projects/947150d4-7d2f-4726-a018-5539f933ea56/kaitlin-out-of-space/finish/pages/page_001.jpg",
+      "derivation": "Finished page 1, editable lettering, WebP q80",
+      "source_work": "Kaitlin Out of Space · CC0 1.0",
+      "source_sha256": "f8a944723146cabebea276936bd4960bdd31223302fc94687bc864ced34b238f",
+      "asset_sha256": "03edefcc49426745bd6f950f76e383f20cec767f7617870b272780ec6f70f3e9"
+    },
+    {
+      "file": "web/public/marketing/kaitlin-page-11.webp",
+      "source": "projects/947150d4-7d2f-4726-a018-5539f933ea56/kaitlin-out-of-space/finish/pages/page_011.jpg",
+      "derivation": "Finished page 11, editable lettering, WebP q80",
+      "source_work": "Kaitlin Out of Space · CC0 1.0",
+      "source_sha256": "735d2a525a1b70a23a1a9c690c90d21113be5574258f83c9215afbf9e6ee15fa",
+      "asset_sha256": "2e218242c8cfbda5d2d3ed01c73a62f81d311547fe260a8612135ff969759747"
+    },
+    {
+      "file": "web/public/marketing/kaitlin-page-41.webp",
+      "source": "projects/947150d4-7d2f-4726-a018-5539f933ea56/kaitlin-out-of-space/finish/pages/page_041.jpg",
+      "derivation": "Finished page 41, editable lettering, WebP q80",
+      "source_work": "Kaitlin Out of Space · CC0 1.0",
+      "source_sha256": "04fe0622137f02bc2bff66fc1b38d1beaf107c44ce14f66ecb20bc6eb43256d7",
+      "asset_sha256": "03eeb20c2d25c91c601b186da81d223d9cc8b1428a822215c387ea3495074d2b"
+    }
+  ],
+  "known_limits": [
+    "Site-30's Janitor adaptations are CC BY-SA 3.0 derivatives; the landing note credits JanitorCakeworth and the SCP Wiki and states the license.",
+    "The gouache page 1 contains the word 'shit' in dialogue.",
+    "Kaitlin pages 4 and 8 have narration boxes over faces; they are excluded. The project's plan predates the current pipeline, so lettering edits require a Plan rerun that would invalidate Draw.",
+    "The hero loop is Dungeon Crawler Carl art; see landing-development-samples.json for its public-use gate."
+  ]
+}

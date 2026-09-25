@@ -32,7 +32,7 @@ export function ReadingWorkspace({ project, kind, onClose, onKindChange }: Readi
   }, [kind]);
 
   return (
-    <section ref={container} aria-label={title} className="mx-auto w-full max-w-6xl space-y-8 [overflow-wrap:anywhere]">
+    <section ref={container} aria-label={title} className="mx-auto w-full max-w-4xl scroll-mt-40 md:scroll-mt-28 space-y-6 [overflow-wrap:anywhere]">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <Button variant="outline" size="sm" onClick={onClose}>
           <ArrowLeft size={17} aria-hidden="true" />{t("Back to pages")}
@@ -42,12 +42,12 @@ export function ReadingWorkspace({ project, kind, onClose, onKindChange }: Readi
           { key: "page-plan", label: t("PAGE PLAN"), active: kind === "page-plan", onClick: () => onKindChange("page-plan") },
         ]} className="max-w-full [&>button]:px-3 sm:[&>button]:px-5" />
       </div>
-      <header className="py-3 md:py-6">
-        <h2 ref={heading} tabIndex={-1} className="scroll-mt-6 font-display text-3xl font-black uppercase leading-tight tracking-[-0.03em] focus-visible:outline-none md:text-5xl">{title}</h2>
-        <p className="mt-4 max-w-[65ch] font-body text-base leading-7 text-ink-muted">
+      <header className="py-2">
+        <h2 ref={heading} tabIndex={-1} className="scroll-mt-6 font-display text-3xl font-black uppercase leading-tight tracking-[-0.03em] focus-visible:outline-none md:text-4xl">{title}</h2>
+        <p className="mt-3 font-body text-sm leading-6 text-ink-muted">
           {kind === "adaptation"
-            ? t("Follow the story from its narrative treatment to the beats that shape the comic.")
-            : t("Explore how the story is paced across pages, from quiet moments to big reveals.")}
+            ? t("Optional reading. Scan the story beats, then open any moment for its full text and lettering.")
+            : t("Optional reading. See the pacing at a glance, then open a page for its layout and staging.")}
         </p>
       </header>
       {query.isLoading && <p role="status" className="font-meta text-sm">{t("LOADING…")}</p>}

@@ -32,13 +32,13 @@ export interface LandingCopy {
     primaryCta: string;
     secondaryCta: string;
     formats: string;
-    sampleLabel: string;
-    sampleCaption: string;
     manuscriptLabel: string;
-    visualLabels: [string, string, string];
-    visualAlt: string;
     chapterLabel: string;
-    sceneLabel: string;
+    loopTag: string;
+    loopCaption: string;
+    loopAlt: string;
+    pauseLoop: string;
+    playLoop: string;
   };
   premise: {
     title: string;
@@ -60,6 +60,24 @@ export interface LandingCopy {
     inspectTitle: string;
     inspectBody: string;
     inspectLinks: [string, string, string];
+  };
+  editions: {
+    promise: string;
+    title: string;
+    body: string;
+    captions: [string, string, string];
+    alts: [string, string, string];
+    links: [string, string, string];
+    note: string;
+  };
+  sampleBook: {
+    kicker: string;
+    title: string;
+    body: string;
+    readStory: string;
+    captions: [string, string, string];
+    alts: [string, string, string];
+    note: string;
   };
   direction: {
     title: string;
@@ -118,13 +136,13 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       primaryCta: "Create my first scene",
       secondaryCta: "Read a development sample",
       formats: "AI-assisted visual adaptation · EPUB, PDF or TXT in · PDF or CBZ out",
-      sampleLabel: "Development reference art",
-      sampleCaption: "Reference-art composition · not a finished comic page",
       manuscriptLabel: "The manuscript",
-      visualLabels: ["Character reference", "Place reference", "Character reference"],
-      visualAlt: "Development sample showing two illustrated character references and a recurring tavern location.",
       chapterLabel: "YOUR EXCERPT",
-      sceneLabel: "CAST & WORLD",
+      loopTag: "One scene · many looks",
+      loopCaption: "Real style proofs of one Dungeon Crawler Carl scene · showcase project",
+      loopAlt: "Looping video: one Dungeon Crawler Carl comic page redrawn in a series of art styles, from oil painting to claymation, blueprint, stained glass and cross-stitch.",
+      pauseLoop: "Pause",
+      playLoop: "Play",
     },
     premise: {
       title: "Start with a scene worth seeing.",
@@ -143,8 +161,8 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
         {
           number: "02",
           label: "Look",
-          title: "Choose the look",
-          body: "Pick a visual direction, then approve reference art for the cast and recurring locations.",
+          title: "Describe it, show it, or ask for six",
+          body: "Type the look you picture, upload an image you love, or let Scenewright pitch six directions made for your story. Try as many as you want, then approve reference art for the cast and recurring places.",
         },
         {
           number: "03",
@@ -184,6 +202,32 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       inspectTitle: "A story you can actually read.",
       inspectBody: "Panels, narration and dialogue arrive together. These pages show the current development workflow, including its imperfections. You review the story, art and lettering before deciding what to keep or correct.",
       inspectLinks: ["Read page 25 at full size", "Read page 21 at full size", ""],
+    },
+    editions: {
+      promise: "One story, three editions",
+      title: "One story, three books.",
+      body: "Three editions of Site-30’s Janitor were adapted from the same text, and each opens on the same line. Each one found its own look, its own pacing and its own lettering.",
+      captions: ["Risograph zine · Page 1", "Gouache noir · Page 1 · editable lettering", "Oil-painted noir · Page 1"],
+      alts: [
+        "Site-30’s Janitor, risograph edition, page 1: a single full-page panel of a sleepy cartoon janitor slumped among mops and orange buckets under a bare bulb. English captions.",
+        "Site-30’s Janitor, gouache edition, page 1: four panels of a weary janitor in a dark supply closet answering a crackling wall intercom. English captions and balloons.",
+        "Site-30’s Janitor, oil-painted edition, page 1: four panels of a tired janitor in a green-lit closet pressing the intercom button. English captions and balloons.",
+      ],
+      links: ["Read the risograph page at full size", "Read the gouache page at full size", "Read the oil-painted page at full size"],
+      note: "Showcase projects · Site-30’s Janitor by JanitorCakeworth, SCP Wiki, CC BY-SA 3.0; these adaptations are shared under the same license · English text. Not customer work; results vary.",
+    },
+    sampleBook: {
+      kicker: "From the sample shelf",
+      title: "Read the story. Then read the book it became.",
+      body: "Kaitlin Out of Space by Krishan Coupland is one of the sample stories on this shelf. Its showcase edition runs 59 pages in a 1960s space-age look, with lettering that stays editable.",
+      readStory: "Read the original story",
+      captions: ["Page 1", "Page 11", "Page 41"],
+      alts: [
+        "Kaitlin Out of Space, page 1: an older woman finds a small figure in a scorched spacesuit lying in a circle of burned grass in her garden. English narration.",
+        "Kaitlin Out of Space, page 11: in the garden, the woman mimes taking off gloves; the young visitor copies her, and their hands meet on the table. English dialogue and narration.",
+        "Kaitlin Out of Space, page 41: the woman kneels on the lawn and reaches toward the kneeling astronaut, then sees her blue eyes up close. English narration.",
+      ],
+      note: "Showcase project · Kaitlin Out of Space by Krishan Coupland (CC0) · English text. Not customer work; results vary.",
     },
     direction: {
       title: "The tool takes the workload. You keep the creative decisions.",
@@ -265,13 +309,13 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       primaryCta: "Crear mi primera escena",
       secondaryCta: "Lee una muestra de desarrollo",
       formats: "Adaptación visual asistida por IA · EPUB, PDF o TXT de entrada · PDF o CBZ de salida",
-      sampleLabel: "Arte de referencia de desarrollo",
-      sampleCaption: "Composición de referencias · no es una página de cómic terminada",
       manuscriptLabel: "El manuscrito",
-      visualLabels: ["Referencia de personaje", "Lugar de referencia", "Referencia de personaje"],
-      visualAlt: "Muestra de desarrollo con dos personajes ilustrados y una taberna recurrente como referencia.",
       chapterLabel: "TU FRAGMENTO",
-      sceneLabel: "REPARTO Y MUNDO",
+      loopTag: "Una escena · muchos estilos",
+      loopCaption: "Pruebas de estilo reales de una escena de Dungeon Crawler Carl · proyecto de muestra",
+      loopAlt: "Vídeo en bucle: una página de cómic de Dungeon Crawler Carl redibujada en una serie de estilos, de la pintura al óleo a la plastilina, el plano técnico, la vidriera y el punto de cruz.",
+      pauseLoop: "Pausar",
+      playLoop: "Reproducir",
     },
     premise: {
       title: "Empieza con una escena que merezca verse.",
@@ -290,8 +334,8 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
         {
           number: "02",
           label: "Estilo",
-          title: "Elige el aspecto",
-          body: "Escoge una dirección visual y aprueba el arte de referencia del reparto y de los lugares recurrentes.",
+          title: "Descríbelo, muéstralo o pide seis",
+          body: "Escribe el estilo que imaginas, sube una imagen que te encante o deja que Scenewright te proponga seis direcciones pensadas para tu historia. Prueba todas las que quieras y aprueba el arte de referencia del reparto y de los lugares recurrentes.",
         },
         {
           number: "03",
@@ -331,6 +375,32 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       inspectTitle: "Una historia que puedes leer.",
       inspectBody: "Las viñetas, la narración y los diálogos llegan juntos. Estas páginas muestran el flujo de desarrollo actual, incluidas sus imperfecciones. Tú revisas la historia, el arte y los textos antes de decidir qué conservar o corregir.",
       inspectLinks: ["Leer la página 25 a tamaño completo", "Leer la página 21 a tamaño completo", ""],
+    },
+    editions: {
+      promise: "Una historia, tres ediciones",
+      title: "Una historia, tres libros.",
+      body: "Tres ediciones de Site-30’s Janitor se adaptaron del mismo texto y todas abren con la misma frase. Cada una encontró su propio estilo, su propio ritmo y sus propios textos.",
+      captions: ["Fanzine risográfico · Página 1", "Noir en gouache · Página 1 · textos editables", "Noir al óleo · Página 1"],
+      alts: [
+        "Site-30’s Janitor, edición risográfica, página 1: una sola viñeta a página completa con un conserje de caricatura adormilado entre fregonas y cubos naranjas bajo una bombilla desnuda. Textos en inglés.",
+        "Site-30’s Janitor, edición en gouache, página 1: cuatro viñetas de un conserje cansado en un cuarto de limpieza oscuro que responde a un interfono que chisporrotea. Textos y bocadillos en inglés.",
+        "Site-30’s Janitor, edición al óleo, página 1: cuatro viñetas de un conserje agotado en un cuarto con luz verdosa que pulsa el botón del interfono. Textos y bocadillos en inglés.",
+      ],
+      links: ["Leer la página risográfica a tamaño completo", "Leer la página en gouache a tamaño completo", "Leer la página al óleo a tamaño completo"],
+      note: "Proyectos de muestra · Site-30’s Janitor, de JanitorCakeworth, SCP Wiki, CC BY-SA 3.0; estas adaptaciones se comparten con la misma licencia · Texto en inglés. No es trabajo de un cliente; los resultados varían.",
+    },
+    sampleBook: {
+      kicker: "De la estantería de muestras",
+      title: "Lee el cuento. Después, lee el libro en que se convirtió.",
+      body: "Kaitlin Out of Space, de Krishan Coupland, es uno de los cuentos de muestra de esta estantería. Su edición de muestra ocupa 59 páginas con una estética espacial de los años sesenta y textos que siguen siendo editables.",
+      readStory: "Leer el cuento original",
+      captions: ["Página 1", "Página 11", "Página 41"],
+      alts: [
+        "Kaitlin Out of Space, página 1: una mujer mayor encuentra una pequeña figura con un traje espacial chamuscado tendida en un círculo de hierba quemada de su jardín. Narración en inglés.",
+        "Kaitlin Out of Space, página 11: en el jardín, la mujer finge quitarse unos guantes; la joven visitante la imita y sus manos se encuentran sobre la mesa. Diálogo y narración en inglés.",
+        "Kaitlin Out of Space, página 41: la mujer, arrodillada en el césped, tiende la mano hacia la astronauta y ve de cerca sus ojos azules. Narración en inglés.",
+      ],
+      note: "Proyecto de muestra · Kaitlin Out of Space, de Krishan Coupland (CC0) · Texto en inglés. No es trabajo de un cliente; los resultados varían.",
     },
     direction: {
       title: "La herramienta asume la carga. Tú conservas las decisiones creativas.",
@@ -412,13 +482,13 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       primaryCta: "Créer ma première scène",
       secondaryCta: "Lire un exemple de développement",
       formats: "Adaptation visuelle assistée par IA · EPUB, PDF ou TXT en entrée · PDF ou CBZ en sortie",
-      sampleLabel: "Images de référence de développement",
-      sampleCaption: "Composition de références · pas une page de BD terminée",
       manuscriptLabel: "Le manuscrit",
-      visualLabels: ["Référence de personnage", "Lieu de référence", "Référence de personnage"],
-      visualAlt: "Exemple de développement montrant deux personnages illustrés et une taverne récurrente comme référence.",
       chapterLabel: "VOTRE EXTRAIT",
-      sceneLabel: "PERSONNAGES ET UNIVERS",
+      loopTag: "Une scène · de multiples styles",
+      loopCaption: "Vraies épreuves de style d’une scène de Dungeon Crawler Carl · projet de démonstration",
+      loopAlt: "Vidéo en boucle : une page de BD de Dungeon Crawler Carl redessinée dans une série de styles, de la peinture à l’huile à la pâte à modeler, au plan d’architecte, au vitrail et au point de croix.",
+      pauseLoop: "Pause",
+      playLoop: "Lecture",
     },
     premise: {
       title: "Commencez par une scène qui mérite d’être vue.",
@@ -437,8 +507,8 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
         {
           number: "02",
           label: "Style",
-          title: "Choisissez l’allure",
-          body: "Choisissez une direction visuelle, puis approuvez les références des personnages et des lieux récurrents.",
+          title: "Décrivez-le, montrez-le ou demandez-en six",
+          body: "Décrivez le style que vous imaginez, importez une image que vous aimez ou laissez Scenewright vous proposer six directions pensées pour votre récit. Essayez-en autant que vous voulez, puis approuvez les références des personnages et des lieux récurrents.",
         },
         {
           number: "03",
@@ -478,6 +548,32 @@ export const LANDING_COPY: Record<LanguageCode, LandingCopy> = {
       inspectTitle: "Un récit que vous pouvez lire.",
       inspectBody: "Les cases, la narration et les dialogues arrivent ensemble. Ces pages montrent le flux de développement actuel, avec ses imperfections. Vous vérifiez le récit, les images et les textes avant de décider quoi conserver ou corriger.",
       inspectLinks: ["Lire la page 25 en taille réelle", "Lire la page 21 en taille réelle", ""],
+    },
+    editions: {
+      promise: "Un récit, trois éditions",
+      title: "Un récit, trois livres.",
+      body: "Trois éditions de Site-30’s Janitor ont été adaptées du même texte, et chacune s’ouvre sur la même phrase. Chacune a trouvé son propre style, son propre rythme et son propre lettrage.",
+      captions: ["Fanzine en risographie · Page 1", "Noir à la gouache · Page 1 · lettrage modifiable", "Noir à l’huile · Page 1"],
+      alts: [
+        "Site-30’s Janitor, édition risographie, page 1 : une seule case pleine page où un concierge de dessin animé somnole parmi des balais et des seaux orange, sous une ampoule nue. Textes en anglais.",
+        "Site-30’s Janitor, édition gouache, page 1 : quatre cases où un concierge épuisé, dans un placard sombre, répond à un interphone qui grésille. Récitatifs et bulles en anglais.",
+        "Site-30’s Janitor, édition à l’huile, page 1 : quatre cases où un concierge fatigué, dans un placard baigné de lumière verte, appuie sur le bouton de l’interphone. Récitatifs et bulles en anglais.",
+      ],
+      links: ["Lire la page en risographie en taille réelle", "Lire la page à la gouache en taille réelle", "Lire la page à l’huile en taille réelle"],
+      note: "Projets de démonstration · Site-30’s Janitor, de JanitorCakeworth, SCP Wiki, CC BY-SA 3.0 ; ces adaptations sont partagées sous la même licence · Textes en anglais. Pas un projet client ; les résultats varient.",
+    },
+    sampleBook: {
+      kicker: "Depuis l’étagère d’exemples",
+      title: "Lisez la nouvelle. Puis lisez le livre qu’elle est devenue.",
+      body: "Kaitlin Out of Space, de Krishan Coupland, fait partie des nouvelles de cette étagère. Son édition de démonstration compte 59 pages dans un style spatial des années 1960, avec un lettrage qui reste modifiable.",
+      readStory: "Lire la nouvelle originale",
+      captions: ["Page 1", "Page 11", "Page 41"],
+      alts: [
+        "Kaitlin Out of Space, page 1 : une femme âgée découvre une petite silhouette en combinaison spatiale calcinée, étendue dans un cercle d’herbe brûlée de son jardin. Narration en anglais.",
+        "Kaitlin Out of Space, page 11 : dans le jardin, la femme mime le geste d’ôter des gants ; la jeune visiteuse l’imite et leurs mains se rejoignent sur la table. Dialogue et narration en anglais.",
+        "Kaitlin Out of Space, page 41 : agenouillée sur la pelouse, la femme tend la main vers l’astronaute et découvre de près ses yeux bleus. Narration en anglais.",
+      ],
+      note: "Projet de démonstration · Kaitlin Out of Space, de Krishan Coupland (CC0) · Textes en anglais. Pas un projet client ; les résultats varient.",
     },
     direction: {
       title: "L’outil prend en charge le travail. Vous gardez les choix créatifs.",

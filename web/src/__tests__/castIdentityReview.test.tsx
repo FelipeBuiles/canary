@@ -26,7 +26,12 @@ it("shows visual evidence with character links and never starts work on entry", 
   vi.mocked(apiFetch).mockResolvedValue({ status: "current", issues: [{ character_ids: ["a", "b"],
     concern: "lookalike", evidence: "Matching jaw and nose", suggestion: "Give Rice a broader face" }] });
   const { resume, show } = mount();
-  expect(await screen.findByText("Matching jaw and nose")).toBeTruthy();
+  const summary = await screen.findByText("1 note to review");
+  expect(summary.closest("details")?.open).toBe(false);
+  await userEvent.click(summary);
+  expect(summary.closest("details")?.open).toBe(true);
+  expect(screen.getByText("Matching jaw and nose")).toBeTruthy();
+  expect(screen.getByText("Suggested adjustment")).toBeTruthy();
   const link = screen.getByRole("link", { name: "Rice" });
   expect(link.getAttribute("href")).toBe("#cast-character-b");
   await userEvent.click(link);

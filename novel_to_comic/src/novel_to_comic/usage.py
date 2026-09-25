@@ -10,6 +10,7 @@ from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, Field
 
+from novel_to_comic.codex_dev import Funding
 from novel_to_comic.model_costs import CostBreakdown, get_pricing_resolver
 from novel_to_comic.text_models import text_wire
 
@@ -43,7 +44,7 @@ class UsageRecord(BaseModel, frozen=True):
     image_output_tokens: int | None = Field(default=None, ge=0)
     cost_usd: float | None = None
     cost_source: str | None = None
-    funding: Literal["api", "codex_subscription"] = "api"
+    funding: Funding = "api"
 
 
 @dataclass
@@ -78,7 +79,11 @@ def calculate_cost_breakdown(record: UsageRecord) -> CostBreakdown:
         complete = all(value is not None for value in fields)
         if complete:
             text, image, cached_text, cached_image, output = fields
-            complete = cached_text <= text and cached_image <= image and text + image == record.input_tokens and output <= record.output_tokens
+            # A generated image always consumes output tokens. All-zero usage
+            # is a placeholder (e.g. LiteLLM's default ImageResponse), not
+            # evidence of a free request.
+            complete = (cached_text <= text and cached_image <= image and text + image == record.input_tokens
+                        and 0 < output <= record.output_tokens)
         cost = None
         if complete and pricing:
             cost = ((text - cached_text) * pricing["input_cost_per_token"]
@@ -189,6 +194,7 @@ def estimate_image_cost(
     width: int | None = None,
     height: int | None = None,
     ref_image_sizes: list[tuple[int, int]] | None = None,
+    basis: Literal["reservation", "expected"] = "reservation",
 ) -> float:
     """Pre-call cost estimate for count images.
 
@@ -213,6 +219,7 @@ def estimate_image_cost(
         width=width,
         height=height,
         ref_image_sizes=ref_image_sizes,
+        basis=basis,
     )
     if breakdown.source == "unknown_pricing":
         _warn_unknown_model(model)

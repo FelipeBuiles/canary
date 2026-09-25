@@ -178,3 +178,47 @@ def test_turnaround_sheet_crops_to_square_portrait_and_body_views(tmp_path):
         assert portrait.size == (512, 512)
     with Image.open(tmp_path / "full_body.png") as body:
         assert body.size == (1024, 1024)
+
+
+def test_state_sheet_shows_the_changed_look_not_the_situation():
+    lines = generate_system_constraints(
+        _character_prompt(state_id="impaled"), asset_kind="character_ref",
+    )
+    text = "\n".join(lines)
+
+    assert "exactly three depictions of that same character" in lines
+    assert "neutral design stance" in text
+    assert "objects that pierce, pin, bind or are held" in text
+    assert "back view" not in text
+
+
+def test_appearance_lock_fixes_the_look_without_copying_the_reference_image():
+    prompt = GenerationPromptInput(subjects=(PromptSubject(
+        character_id="worth", name="Worth", identity="1man", appearance_state_id="bloodied",
+        appearance_locked=True,
+    ),))
+    text = "\n".join(generate_system_constraints(prompt, asset_kind="character_ref"))
+
+    assert "fixed altered appearance" in text
+    assert "as the reference image" not in text
+
+
+def test_damage_only_character_states_reuse_the_canonical_reference():
+    from novel_to_comic.models.appearance import AppearanceState
+    from novel_to_comic.stages.s1_extract import _text_only_damage_states
+
+    def state(id, facets, replaces=False):
+        return AppearanceState(
+            id=id, label=id, visual_anchor="1man, blood", visually_significant=True,
+            changed_facets=facets, replaces_identity=replaces,
+        )
+
+    character = SimpleNamespace(appearance_states=[
+        state("bloodied", ("damage",)),
+        state("prison_garb", ("clothing", "damage")),
+        state("transformed", ("damage",), replaces=True),
+        state("feverish", ()),
+    ])
+    _text_only_damage_states(SimpleNamespace(characters=[character]))
+
+    assert [s.visually_significant for s in character.appearance_states] == [False, True, True, True]

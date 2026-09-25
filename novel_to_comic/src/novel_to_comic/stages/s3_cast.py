@@ -439,10 +439,11 @@ def _state_asset_prompt(spec: StateAssetGenerationSpec) -> GenerationPromptInput
         )]
         anchors = []
         composition = (
-            "Wide turnaround reference sheet: a three-quarter close-up above a side-profile "
-            "close-up in the left third, and full-body front, three-quarter, and back views "
-            "in the right two thirds, using the active anchor's anatomy and natural posture; "
-            "no text or labels."
+            "Wide appearance-state reference sheet: a three-quarter close-up above a "
+            "side-profile close-up in the left third, and one full-body front view in a "
+            "neutral design stance in the right two thirds, using the active anchor's "
+            "anatomy. Show only the changed look, not the situation or anything touching "
+            "the body; no text or labels."
         )
     else:
         subjects = []
@@ -1512,32 +1513,27 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
                 config, _prop_generation_input(config, prop), reference_plan=style_plan,
             ).cost_usd
 
+    from novel_to_comic.state_assets import state_reference_dimensions
+
     model = config.effective_image_model()
     quality = getattr(config, "image_quality", None)
+
+    def state_cost(kind: str, entity_id: str, state_id: str) -> float:
+        width, height = state_reference_dimensions(config, kind)
+        return estimate_image_cost(
+            model, 1, quality=quality, width=width, height=height,
+            ref_count=estimate_state_reference_count(config, project_dir, kind, entity_id, state_id),
+        )
+
     for entity_id, state_id in missing_state_refs:
-        total += estimate_image_cost(
-            model, 1, quality=quality,
-            ref_count=estimate_state_reference_count(
-                config, project_dir, "character", entity_id, state_id,
-            ),
-        )
+        total += state_cost("character", entity_id, state_id)
     for entity_id, state_id in missing_location_states:
-        total += estimate_image_cost(
-            model, 1, quality=quality,
-            ref_count=estimate_state_reference_count(
-                config, project_dir, "location", entity_id, state_id,
-            ),
-        )
+        total += state_cost("location", entity_id, state_id)
     for prop in story_bible.props:
         for appearance in prop.appearance_states:
             if (appearance.visually_significant and not appearance.canonical_equivalent
                     and not artifacts.prop_state_ref_path(project_dir, prop.id, appearance.id).exists()):
-                total += estimate_image_cost(
-                    model, 1, quality=quality,
-                    ref_count=estimate_state_reference_count(
-                        config, project_dir, "prop", prop.id, appearance.id,
-                    ),
-                )
+                total += state_cost("prop", prop.id, appearance.id)
     return total
 
 

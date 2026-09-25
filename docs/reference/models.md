@@ -141,7 +141,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `max_prompt_characters` | `int` | `Field(gt=0)` |
 | `retry_semantics` | `Literal['bounded_submission']` |  |
 | `max_attempts` | `int` | `Field(default=3, ge=1)` |
-| `price_per_page_usd` | `Decimal` | `Field(ge=0)` |
+| `price_per_page_usd` | `Decimal` | `Field(default=Decimal('0'), ge=0)` |
 | `price_per_reference_usd` | `Decimal` | `Field(default=Decimal('0'), ge=0)` |
 
 ## PageReference _(draw.py)_

@@ -842,7 +842,7 @@ export function PagesRoom() {
       <section className="grid gap-6 bg-ink-black p-6 text-pulp-paper shadow-paper md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] md:p-8">
         <div>
           <h2 className="font-display text-3xl font-black uppercase leading-tight tracking-[-0.03em] md:text-4xl">{t("Your story, page by page")}</h2>
-          <p className="mt-3 max-w-[60ch] font-body text-sm leading-7 text-pulp-paper/85">{t("Read the edition as it comes to life. Open a page for a closer look, review flagged findings, or shape the next revision.")}</p>
+          <p className="mt-3 font-body text-sm leading-7 text-pulp-paper/85">{t("Read the edition as it comes to life. Open a page for a closer look, review flagged findings, or shape the next revision.")}</p>
           <div className="mt-5 flex flex-wrap gap-3">
             {unresolvedPages.length > 0 ? <Button variant="onInk" size="sm" onClick={() => updateContext({ filter: "needs-review", page: String(unresolvedPages[0].page.page_number), review: "checks" })}>{t("REVIEW FLAGGED PAGES")} ({unresolvedPages.length})<ArrowUpRight size={16} aria-hidden="true" /></Button>
               : drawnPages.length > 0 && <Button variant="onInk" size="sm" onClick={() => updateContext({ page: String(drawnPages[0].page.page_number), review: "page" })}><BookOpen size={16} aria-hidden="true" />{t("Start reading")}</Button>}
@@ -892,7 +892,7 @@ export function PagesRoom() {
         {drawStatus === "pending" && (
           <Surface tone="pulp" padding="md" className="mb-5">
             <div className="flex flex-wrap items-end justify-between gap-5">
-              <div className="max-w-[62ch]">
+              <div className="min-w-0 flex-1 basis-80">
                 <h3 className="font-body text-base font-bold text-ink-black">
                   {t("How do you want to draw this edition?")}
                 </h3>
@@ -924,7 +924,7 @@ export function PagesRoom() {
         {drawStatus !== "pending" && !generationJobsLoading && pagesWaitingToDraw.length > 0 && (
           <Surface tone="pulp" padding="md" className="mb-5">
             <div className="flex flex-wrap items-end justify-between gap-5">
-              <div className="max-w-[62ch]">
+              <div className="min-w-0 flex-1 basis-80">
                 <h3 className="font-body text-base font-bold text-ink-black">{t("Finish drawing the edition")}</h3>
                 <p className="mt-1 text-sm leading-6 text-ink-muted">
                   {t(pagesWaitingToDraw.length === 1
@@ -1060,16 +1060,16 @@ export function PagesRoom() {
                           <strong className="mt-4 font-meta text-xs text-hero-red">
                             {failureCopy.title}
                           </strong>
-                          <p className="mt-3 max-w-[28ch] font-body text-xs leading-5 text-ink-black/75">
+                          <p className="mt-3 font-body text-xs leading-5 text-ink-black/75">
                             {failureCopy.message}
                           </p>
                           {failureCopy.guidance && (
-                            <p className="mt-2 max-w-[28ch] font-body text-xs leading-5 text-ink-black/75">
+                            <p className="mt-2 font-body text-xs leading-5 text-ink-black/75">
                               {failureCopy.guidance}
                             </p>
                           )}
                           {pageActionError && !paidIntent && (
-                            <p className="mt-3 max-w-[28ch] text-xs leading-5 text-hero-red">{pageActionError}</p>
+                            <p className="mt-3 text-xs leading-5 text-hero-red">{pageActionError}</p>
                           )}
                         </div>
                         {pageFailure?.classification === "provider_blocked"
@@ -1112,9 +1112,9 @@ export function PagesRoom() {
                         <div className="my-auto flex flex-col items-center gap-4">
                           <Layers size={28} aria-hidden="true" />
                           <span className="font-meta text-xs font-bold">{t("READY TO DRAW")}</span>
-                          <span className="max-w-[22ch] font-body text-xs leading-6">{t("The page plan is ready. Artwork appears here once drawn.")}</span>
+                          <span className="font-body text-xs leading-6">{t("The page plan is ready. Artwork appears here once drawn.")}</span>
                           {pageActionError && !paidIntent && (
-                            <span role="alert" className="max-w-[28ch] text-xs leading-5 text-hero-red">{pageActionError}</span>
+                            <span role="alert" className="text-xs leading-5 text-hero-red">{pageActionError}</span>
                           )}
                         </div>
                         {drawStatus !== "pending" && (

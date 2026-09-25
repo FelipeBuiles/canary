@@ -87,7 +87,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
           <h1 ref={headingRef} tabIndex={-1} className="mt-4 font-display text-[2rem] font-black uppercase leading-none tracking-[-0.03em] text-ink-black sm:text-[2.6rem]">
             {step === "source" ? t("CHOOSE A STARTING POINT") : step === "details" ? t("PREPARE YOUR MANUSCRIPT") : t("CHOOSE YOUR LETTERING")}
           </h1>
-          <p className="mt-3 max-w-[55ch] font-body text-sm leading-relaxed text-ink-muted">
+          <p className="mt-3 font-body text-sm leading-relaxed text-ink-muted">
             {step === "source" ? t("Choose a sample or bring your own manuscript. You decide when generation begins.") : step === "details" ? t("Save your source now. In Story, review the credit estimate before starting analysis.") : t("This shapes how your comic looks—and how you can change it later. Compare both before choosing.")}
           </p>
 

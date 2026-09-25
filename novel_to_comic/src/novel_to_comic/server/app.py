@@ -305,7 +305,7 @@ async def _lifespan(app: FastAPI):
 
 def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     from novel_to_comic.codex_dev import (
-        CodexRoutingError, enabled, is_loopback, validate_startup,
+        CodexRoutingError, any_enabled, claude_enabled, enabled, is_loopback, validate_startup,
     )
 
     validate_startup()
@@ -315,7 +315,7 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     async def codex_routing_error_handler(request, exc: CodexRoutingError):
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
-    if enabled():
+    if any_enabled():
         @app.middleware("http")
         async def codex_loopback_only(request, call_next):
             if (
@@ -467,6 +467,8 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
                 "model_mode": (
                     "codex" if enabled() else "mock" if "mock_models" in checks else "api"
                 ),
+                # Additive to model_mode: Claude Code choices mix with API or Codex.
+                "claude_code": claude_enabled(),
                 "checks": checks,
             },
         )

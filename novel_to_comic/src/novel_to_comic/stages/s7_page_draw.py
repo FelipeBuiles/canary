@@ -72,10 +72,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
             retry=RetryProvenance(attempt=1), style_template=config.style_template,
             style_reference_path=require_style_reference(project_dir, config.style_template),
         )
-        total += estimate_draw_api_cost(
-            config,
-            float(compiled.request.estimated_cost_usd), compiled=compiled,
-        )
+        total += estimate_draw_api_cost(config, compiled)
     return total
 
 

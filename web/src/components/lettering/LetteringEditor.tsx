@@ -45,7 +45,7 @@ export function LetteringEditor({ project, pageNumber, disabled = false }: {
         throw new Error(next.data?.message);
     }} /></div>}</Surface>;
   if (query.data.mode === "baked")
-    return <Surface padding="lg" border="soft" shadow="none"><h3 className="font-display text-xl">{t("Lettering is part of this artwork")}</h3><p className="mt-2 max-w-prose text-sm leading-6">{t(query.data.message)}</p></Surface>;
+    return <Surface padding="lg" border="soft" shadow="none"><h3 className="font-display text-xl">{t("Lettering is part of this artwork")}</h3><p className="mt-2 text-sm leading-6">{t(query.data.message)}</p></Surface>;
   return <LetteringWorkspace key={`${project}:${pageNumber}`} project={project} pageNumber={pageNumber} initial={query.data} disabled={disabled} />;
 }
 function LetteringWorkspace({ project, pageNumber, initial, disabled }: {

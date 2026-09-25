@@ -19,7 +19,7 @@ export function NotFound() {
           <h1 className="mt-5 max-w-[22ch] font-display text-[1.75rem] font-black uppercase leading-[1.05] tracking-[-0.04em] text-ink-black">
             {t("THIS PAGE WAS LEFT ON THE CUTTING ROOM FLOOR")}
           </h1>
-          <p className="mt-4 max-w-[45ch] font-body text-base leading-7 text-ink-muted">{t("The link may be out of date, or the address may have a typo. Your library is a good place to start again.")}</p>
+          <p className="mt-4 font-body text-base leading-7 text-ink-muted">{t("The link may be out of date, or the address may have a typo. Your library is a good place to start again.")}</p>
           <div className="mt-7 flex">
             <Button onClick={() => navigate("/")}><ArrowLeft size={16} aria-hidden="true" />{t("BACK TO THE LIBRARY")}</Button>
           </div>

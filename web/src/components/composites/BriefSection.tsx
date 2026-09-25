@@ -45,10 +45,10 @@ export function BriefSection({ id, title, value, onChange, featured = false, num
             {numbered
               ? <span aria-hidden="true" className="w-6 shrink-0 pt-px font-meta text-xs font-bold leading-6 tabular-nums text-hero-red">{String(index + 1).padStart(2, "0")}</span>
               : <span aria-hidden="true" className="mt-2.5 h-1.5 w-1.5 shrink-0 bg-hero-red" />}
-            <p className={`min-w-0 max-w-[70ch] whitespace-pre-wrap break-words font-body ${featured ? "text-base leading-7" : "text-sm leading-6"}`}>{item}</p>
+            <p className={`min-w-0 whitespace-pre-wrap break-words font-body ${featured ? "text-base leading-7" : "text-sm leading-6"}`}>{item}</p>
           </li>)}
         </List> : <p className="font-body text-sm text-ink-muted">{t("Nothing specified yet. Edit to add your direction.")}</p>
-          : <p className="max-w-[70ch] whitespace-pre-wrap break-words font-body text-sm leading-7">{value || t("Nothing specified yet. Edit to add your direction.")}</p>}
+          : <p className="whitespace-pre-wrap break-words font-body text-sm leading-7">{value || t("Nothing specified yet. Edit to add your direction.")}</p>}
       </div>
     </EntityCard>
   );

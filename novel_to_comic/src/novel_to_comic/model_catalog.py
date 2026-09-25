@@ -1,6 +1,6 @@
 """Explicit account model choices shared by validation and the settings API."""
 from novel_to_comic.config import Config
-from novel_to_comic.codex_dev import selectable_models, selector_available, model_has_vision, process_setting, validate_local_runtime, CodexRoutingError
+from novel_to_comic.codex_dev import claude_selectable_models, claude_selector_available, selectable_models, selector_available, model_has_vision, process_setting, validate_local_runtime, CodexRoutingError
 from novel_to_comic.image_models import IMAGE_MODEL_ALIASES, describe_image_model
 from novel_to_comic.text_models import TEXT_MODELS
 
@@ -55,9 +55,29 @@ def codex_models() -> list[dict]:
         if kind == "text" or model_has_vision(model)]
 
 
+def claude_models() -> list[dict]:
+    if process_setting("CANARY_ENV") != "development":
+        return []
+    try:
+        validate_local_runtime()
+        selectable = claude_selectable_models()
+    except CodexRoutingError:
+        return []
+    return [{
+        "id": f"claude-dev/text/{model}", "label": f"Claude Code · {model}",
+        "provider": "Claude subscription", "kind": "text", "vision": True,
+        "funding": "claude_subscription", "available": claude_selector_available(),
+        "description": "Claude model through your local Claude Code login, with the API route's effort and output limit. Structured output uses Claude Code's schema support.",
+    } for model in selectable]
+
+
+def subscription_models() -> list[dict]:
+    return [*codex_models(), *claude_models()]
+
+
 def models(*, include_codex: bool = True) -> list[dict]:
     return [
-        *(codex_models() if include_codex else []),
+        *(subscription_models() if include_codex else []),
         *[{
             "id": model.id, "label": model.label, "provider": model.provider,
             "kind": "text", "vision": model.vision, "funding": "api",
@@ -71,7 +91,7 @@ def models(*, include_codex: bool = True) -> list[dict]:
 
 
 def allowed_models(stage: str, *, include_codex: bool = True) -> tuple[str, ...]:
-    codex = tuple(model["id"] for model in codex_models() if model["kind"] == ("image" if stage in {"image", "draw"} else "text") and (stage not in {"ocr", "visual_review"} or model["vision"])) if include_codex else ()
+    codex = tuple(model["id"] for model in subscription_models() if model["kind"] == ("image" if stage in {"image", "draw"} else "text") and (stage not in {"ocr", "visual_review"} or model["vision"])) if include_codex else ()
     if stage == "draw":
         return (*DRAW_MODELS, *codex)
     if stage == "image":

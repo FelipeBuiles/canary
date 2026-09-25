@@ -350,19 +350,22 @@ def test_readiness_endpoint_uses_http_200_on_success(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
-    ("codex_enabled", "mock_enabled", "expected_mode", "expected_dependency"),
+    ("codex_enabled", "mock_enabled", "expected_mode", "expected_dependency", "claude_enabled"),
     [
-        ("0", "false", "api", "litellm"),
-        ("0", "true", "mock", "mock_models"),
-        ("1", "false", "codex", "litellm"),
+        ("0", "false", "api", "litellm", "0"),
+        ("0", "true", "mock", "mock_models", "0"),
+        ("1", "false", "codex", "litellm", "0"),
+        # Claude Code choices are additive to the mode, never a mode of their own.
+        ("0", "false", "api", "litellm", "1"),
     ],
 )
 def test_readiness_reports_process_model_mode(
     tmp_path: Path, monkeypatch, codex_enabled, mock_enabled,
-    expected_mode, expected_dependency,
+    expected_mode, expected_dependency, claude_enabled,
 ):
     process = dict.fromkeys(codex_dev._PROCESS)
-    process.update(CANARY_CODEX_DEV_ENABLED=codex_enabled, CANARY_ENV="development")
+    process.update(CANARY_CODEX_DEV_ENABLED=codex_enabled, CANARY_ENV="development",
+                   CANARY_CLAUDE_DEV_ENABLED=claude_enabled)
     monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType(process))
     monkeypatch.setattr(codex_dev, "_SETTINGS_ERROR", None)
     monkeypatch.setenv("CANARY_ENV", "development")
@@ -386,6 +389,7 @@ def test_readiness_reports_process_model_mode(
         "status": "ok",
         "pipeline_contract": "eight-stage-v2",
         "model_mode": expected_mode,
+        "claude_code": claude_enabled == "1",
         "checks": {"supabase": "skipped", expected_dependency: "ok", "generation_queue": "ok"},
     }
 

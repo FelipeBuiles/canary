@@ -205,9 +205,11 @@ def test_draw_estimates_include_only_api_operations(select_routes, monkeypatch, 
     config = Config(draw_model="codex-dev/image/gpt-5.5") if codex_image else Config()
     select_routes(text=(config.effective_page_ocr_model(),) if codex_ocr else ())
     monkeypatch.setattr(page_drawing, "PAGE_OCR_ESTIMATED_COST_USD", 0.02)
-    assert page_drawing.estimate_draw_api_cost(config, 0.50, ocr=True) == pytest.approx(expected)
-    assert page_drawing.estimate_draw_api_cost(config, 0.50) == pytest.approx(expected)  # Read-back is included.
-    assert page_drawing.estimate_draw_api_cost(config, 0.50, ocr=False) == (0 if codex_image else 0.50)
+    monkeypatch.setattr(page_drawing, "estimate_page_request_cost_usd", lambda compiled: 0.50)
+    compiled = object()
+    assert page_drawing.estimate_draw_api_cost(config, compiled, ocr=True) == pytest.approx(expected)
+    assert page_drawing.estimate_draw_api_cost(config, compiled) == pytest.approx(expected)  # Read-back is included.
+    assert page_drawing.estimate_draw_api_cost(config, compiled, ocr=False) == (0 if codex_image else 0.50)
 
 
 @pytest.mark.parametrize("codex_text", [False, True])

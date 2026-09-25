@@ -181,7 +181,7 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
               {switchLocale.isError && <span role="alert" className="text-xs text-hero-red">{switchLocale.error.message}</span>}
             </div>
           )}
-          <p className="max-w-prose text-ink-muted">{t("Translate saved lettering across the whole project. Save drafts on every page first.")}</p>
+          <p className="text-ink-muted">{t("Translate saved lettering across the whole project. Save drafts on every page first.")}</p>
           <div className="flex flex-wrap items-end gap-3">
             <div className="min-w-0 flex-1">
               <FieldLabel htmlFor={selectId}>{t("Translate to")}</FieldLabel>

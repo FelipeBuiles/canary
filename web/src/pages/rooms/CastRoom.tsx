@@ -1213,7 +1213,7 @@ export function CastRoom() {
         <div className="grid gap-6 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] md:items-end">
           <div>
             <h2 className="font-display text-3xl font-black uppercase leading-tight tracking-[-0.03em] md:text-4xl">{t("Meet your cast")}</h2>
-            <p className="mt-3 max-w-[60ch] font-body text-sm leading-7 text-pulp-paper/85">{t("The faces, places and objects that make your story recognizable. Open a reference to inspect it, adjust its direction or explore another version.")}</p>
+            <p className="mt-3 font-body text-sm leading-7 text-pulp-paper/85">{t("The faces, places and objects that make your story recognizable. Open a reference to inspect it, adjust its direction or explore another version.")}</p>
             <p className="mt-4 font-meta text-xs text-narrator-gold">{bible.title}</p>
           </div>
           <nav aria-label={t("Browse cast references")} className="flex flex-wrap gap-x-5 gap-y-2">
@@ -1254,14 +1254,14 @@ export function CastRoom() {
       )}
 
       <section className="space-y-10">
-        {bible.characters.length > 0 && <CastIdentityReview projectId={id} characters={bible.characters} onShowCharacter={() => setSearch("")}
-          onResume={handleContinueStale} busy={stageRegenerating || !status?.style_selected} />}
         <div id="cast-characters" tabIndex={-1} hidden={!!search.trim() && matchingCharacters === 0}>
           <SectionHeader
             variant="underline"
             title="CHARACTER REFS"
             description="Portrait proofs keep faces, clothing, and silhouettes consistent from scene to scene."
           />
+          {bible.characters.length > 0 && <CastIdentityReview projectId={id} characters={bible.characters} onShowCharacter={() => setSearch("")}
+            onResume={handleContinueStale} busy={stageRegenerating || !status?.style_selected} />}
           <div className={`${CAST_GRID} sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4`}>
             {bible.characters.map((char) => (
               <div id={`cast-character-${char.id}`} tabIndex={-1} key={char.id} hidden={!matches(char)} className={CAST_GRID_ITEM}>

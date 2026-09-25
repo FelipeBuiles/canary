@@ -51,7 +51,9 @@ class PageCapabilityProfile(BaseModel):
     # Submission budget within one operation, never a lifetime page retry cap.
     # Draw currently submits once and surfaces failures for explicit recovery.
     max_attempts: int = Field(default=3, ge=1)
-    price_per_page_usd: Decimal = Field(ge=0)
+    # Retained so saved editions keep their identity hashes. Never used for
+    # quotes, reservations, or charges: pricing lives in the pricing overrides.
+    price_per_page_usd: Decimal = Field(default=Decimal("0"), ge=0)
     price_per_reference_usd: Decimal = Field(default=Decimal("0"), ge=0)
 
     @property
@@ -130,6 +132,7 @@ class FrozenPageGenerationRequest(BaseModel):
     output_width: int = Field(gt=0)
     output_height: int = Field(gt=0)
     output_media_type: Literal["image/png"]
+    # Inert identity field copied from the retained profile price fields.
     estimated_cost_usd: Decimal = Field(ge=0)
     artifact_kind: Literal["complete_page"] = "complete_page"
     retry: RetryProvenance

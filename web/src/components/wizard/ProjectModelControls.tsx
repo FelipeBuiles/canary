@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { getAccountModelSettings } from "../../api/modelSettings";
+import { MODEL_FUNDING_GROUPS, fundingLabel } from "../../modelFunding";
 import { ApiError } from "../../api/client";
 import { useI18n } from "../../i18n";
 import { SelectField } from "../ui/Field";
@@ -39,15 +40,15 @@ export default function ProjectModelControls({ selections, onChange, disabled, s
         }}>
           <option value="">{t("Account setting")}: {inherited?.label ?? settings.selections[stage.id]}</option>
           {retired && <option value={retired}>{t("Retired model")}: {retired}</option>}
-          {(["api", "codex_subscription"] as const).map((funding) => {
+          {MODEL_FUNDING_GROUPS.map(({ funding, label }) => {
             const choices = settings.models.filter((model) => stage.model_ids.includes(model.id) && (model.funding ?? "api") === funding);
-            return choices.length > 0 && <optgroup key={funding} label={t(funding === "api" ? "API billing" : "Codex subscription")}>
+            return choices.length > 0 && <optgroup key={funding} label={t(label)}>
               {choices.map((model) => <option key={model.id} value={model.id} disabled={model.available === false}>{model.label}</option>)}
             </optgroup>;
           })}
         </SelectField>
         {retired && <p className="mt-2 text-xs leading-5 text-ink-muted" role="status">{t("This saved model is no longer available. New work uses the account setting until you choose another model.")}</p>}
-        <p className="mt-2 text-xs leading-5 text-ink-muted">{selected?.provider} · {t(selected?.funding === "codex_subscription" ? "Codex subscription" : "API billing")}</p>
+        <p className="mt-2 text-xs leading-5 text-ink-muted">{selected?.provider} · {t(fundingLabel(selected?.funding))}</p>
         {selected?.description && <p className="mt-1 text-xs leading-5 text-ink-muted">{t(selected.description)}</p>}
       </SettingsRow>;
     })}

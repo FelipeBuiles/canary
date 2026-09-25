@@ -79,7 +79,7 @@ export function StyleDirectionComposer({
 
   return (
     <Surface padding="lg" className="relative overflow-hidden">
-      <div className="max-w-[70ch]">
+      <div>
         <div className="font-meta text-[0.68rem] font-bold tracking-[0.12em] text-ink-black/65">
           {t("YOUR ART DIRECTOR")}
         </div>

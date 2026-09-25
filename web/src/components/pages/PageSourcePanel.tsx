@@ -141,7 +141,7 @@ export function PageSourcePanel({ project, item }: { project: string; item: Comp
       <div className="space-y-8">
         {data.passages.map((passage, index) => <article key={passage.units[0]?.id ?? index}>
           {passage.scene_title && <h3 className={`${metaClass} mb-3`}>{passage.scene_title}</h3>}
-          <p className="max-w-[68ch] whitespace-pre-wrap font-body text-[0.95rem] leading-8">
+          <p className="whitespace-pre-wrap font-body text-[0.95rem] leading-8">
             {passage.units.flatMap((unit) => unit.segments.map((segment, segmentIndex) => {
               const key = `${unit.id}:${segmentIndex}`;
               return segment.kind

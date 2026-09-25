@@ -422,57 +422,48 @@
   padding: 0.35rem 0.5rem;
 }
 
-.landing-comic-grid {
-  display: grid;
+/* The hero loop is a real excerpt of the promo's flipbook: pages stamped one over another. */
+.landing-loop {
+  display: flex;
   height: clamp(430px, 38vw, 545px);
-  grid-template-columns: 1.08fr 0.92fr;
-  grid-template-rows: 0.72fr 1fr;
-  gap: 0.55rem;
-}
-
-.landing-comic-panel {
-  position: relative;
-  min-width: 0;
+  justify-content: center;
   overflow: hidden;
   border: 3px solid var(--landing-ink);
-  background: var(--landing-ink);
+  background: var(--landing-paper);
 }
 
-.landing-comic-panel--place {
-  grid-column: 1 / -1;
-}
-
-.landing-comic-panel img {
-  width: 100%;
+.landing-loop video,
+.landing-loop img {
+  display: block;
   height: 100%;
+  width: auto;
+  max-width: 100%;
+  aspect-ratio: 600 / 704;
   object-fit: cover;
 }
 
-.landing-comic-panel--place img {
-  object-position: center 54%;
-}
-
-.landing-comic-panel--anya img {
-  object-position: 52% 20%;
-}
-
-.landing-comic-panel--rurik img {
-  object-position: 53% 19%;
-}
-
-.landing-comic-panel > span {
-  position: absolute;
-  right: 0.55rem;
-  bottom: 0.55rem;
-  background: var(--landing-paper);
-  padding: 0.35rem 0.45rem;
-  font-family: var(--font-meta);
-  font-size: 0.43rem;
-  font-weight: 700;
-  line-height: 1.1;
-  letter-spacing: 0.08em;
+.landing-loop-toggle {
+  min-height: 24px;
+  border: 2px solid var(--landing-ink);
+  background: var(--landing-bristol);
+  padding: 0.2rem 0.55rem;
+  box-shadow: 2px 2px 0 var(--landing-ink);
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
   color: var(--landing-ink);
-  text-transform: uppercase;
+  cursor: pointer;
+  transition: translate 120ms ease-out, box-shadow 120ms ease-out;
+}
+
+.landing-loop-toggle:active {
+  translate: 2px 2px;
+  box-shadow: 0 0 0 var(--landing-ink);
+}
+
+.landing-loop-toggle:focus-visible {
+  outline: 3px solid var(--landing-gold);
+  outline-offset: 2px;
 }
 
 .landing-comic-sheet figcaption {
@@ -1297,9 +1288,8 @@
     padding: 0.65rem;
   }
 
-  .landing-comic-grid {
+  .landing-loop {
     height: 340px;
-    gap: 0.4rem;
   }
 
   .landing-premise,
@@ -1420,7 +1410,7 @@
     margin-left: 3.7rem;
   }
 
-  .landing-comic-grid {
+  .landing-loop {
     height: 306px;
   }
 
@@ -1468,6 +1458,10 @@
 @media (prefers-reduced-motion: reduce) {
   .landing-comic-sheet {
     animation: none;
+  }
+
+  .landing-loop-toggle {
+    transition: none;
   }
 
   .landing-header__nav a::after,
@@ -1735,4 +1729,67 @@
   .landing-story-shelf { padding: 3.5rem 1.25rem; }
   .landing-story-shelf__heading { align-items: start; flex-direction: column; }
   .landing-story-shelf__books { grid-template-columns: 1fr; }
+}
+
+/* Editions and the sample-to-book run reuse the printed-page strip at three across. */
+.landing-page-samples--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.landing-editions {
+  margin-top: clamp(4rem, 8vw, 7rem);
+  border-top: 3px solid var(--landing-ink);
+  padding-top: clamp(2.5rem, 5vw, 4rem);
+}
+
+.landing-editions h3,
+.landing-sample-book h3 {
+  max-width: 16ch;
+  margin: 0.9rem 0 0;
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 4vw, 3.6rem);
+  font-weight: 800;
+  line-height: 0.98;
+  letter-spacing: -0.04em;
+  text-wrap: balance;
+}
+
+.landing-editions > p:not(.landing-continuity__promise):not(.landing-page-samples__note),
+.landing-sample-book__heading > p:not(.landing-story-shelf__eyebrow) {
+  max-width: 60ch;
+  margin: 1.2rem 0 0;
+  color: var(--landing-muted);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.landing-editions .landing-page-samples,
+.landing-sample-book .landing-page-samples {
+  margin-top: clamp(2rem, 4vw, 3rem);
+}
+
+.landing-sample-book {
+  margin-top: clamp(3.5rem, 7vw, 6rem);
+  border-top: 2px solid var(--landing-ink);
+  padding-top: clamp(2.5rem, 5vw, 4rem);
+}
+
+.landing-sample-book__heading .landing-story-shelf__eyebrow {
+  text-transform: uppercase;
+}
+
+.landing-sample-book__heading .landing-story-shelf__read {
+  margin-top: 1rem;
+}
+
+@media (max-width: 900px) {
+  .landing-page-samples--three {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .landing-page-samples--three {
+    grid-template-columns: 1fr;
+  }
 }

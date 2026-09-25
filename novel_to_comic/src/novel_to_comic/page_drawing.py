@@ -155,17 +155,47 @@ def openai_page_capability_profile(model: str) -> PageCapabilityProfile:
     )
 
 
+_FAL_SUNBURST_PAGE_PROFILE_ID = "gpt-image-2.5-sunburst-fal-complete-page-medium-hybrid-v1"
+
+
 def fal_sunburst_page_capability_profile() -> PageCapabilityProfile:
-    """Sunburst complete pages routed through fal.ai's queue adapter."""
+    """Sunburst complete pages at medium quality via fal.ai's queue adapter."""
     return PageCapabilityProfile(
-        id="gpt-image-2.5-sunburst-fal-complete-page-high-hybrid-v1",
+        id=_FAL_SUNBURST_PAGE_PROFILE_ID,
         exact_visible_lettering=False, provider="fal-queue", model="openai/gpt-image-2.5/sunburst",
         max_image_references=16, reference_ordering="ordered",
         editing_modes=("instructed", "region_targeted"),
         output_width=1024, output_height=1536, max_prompt_characters=32_000,
         retry_semantics="bounded_submission", max_attempts=1,
-        price_per_page_usd=Decimal(GPT25_PAGE_ESTIMATED_COST_USD),
-        price_per_reference_usd=Decimal(GPT25_REFERENCE_ESTIMATED_COST_USD),
+    )
+
+
+def page_image_quality(profile_id: str, provider: str) -> str | None:
+    """The image quality an edition's profile submits, fixed by its identity."""
+    if profile_id.removesuffix("-integrated-v1") == _FAL_SUNBURST_PAGE_PROFILE_ID:
+        return "medium"
+    # Retained direct-OpenAI and FAL editions were drawn at high quality.
+    if provider in {"openai", "fal-queue"}:
+        return "high"
+    return None
+
+
+def estimate_page_request_cost_usd(
+    compiled: CompiledPageGeneration, *, basis: Literal["reservation", "expected"] = "reservation",
+) -> float:
+    """Current configured price of one compiled page request.
+
+    Pricing is a quote from the pricing overrides, separate from the frozen
+    edition and request identity. Corrections also send the parent page.
+    """
+    from novel_to_comic.usage import estimate_image_cost
+
+    request = compiled.request
+    return estimate_image_cost(
+        request.model, 1, quality=page_image_quality(request.profile_id, request.provider),
+        ref_count=len(request.references) + int(compiled.edit_source_bytes is not None),
+        prompt_text=request.prompt,
+        width=request.output_width, height=request.output_height, basis=basis,
     )
 
 
@@ -478,7 +508,11 @@ def _compile_prompt(
             "preserve hairstyle, age, facial structure, clothing design and recurring object "
             "features shown by that authority unless the assigned state explicitly changes them. "
             "Character references establish identity and appearance, not a fixed pose, facing "
-            "direction, gaze, expression or camera angle. Re-stage each character for the panel's "
+            "direction, gaze, expression or camera angle. An appearance-state asset shows how "
+            "its subject looks in that state (wounds, blood, clothing, hair), never the "
+            "situation: take posture, support such as lying, hanging or being pinned, and the "
+            "placement and orientation of anything touching the body from the panel's visual "
+            "intent, acting and the state's continuity guard. Re-stage each character for the panel's "
             "action and relationships: direct eyelines toward the relevant person or event, "
             "and choose body orientation, gesture and expression from the scene. Use profiles, "
             "rear views and opposing eyelines when the scene calls for them; do not default "
@@ -992,28 +1026,14 @@ def prepare_page_correction(
 
 
 def estimate_draw_api_cost(
-    config: Config, image_cost: float, *, ocr: bool | None = None,
-    compiled: CompiledPageGeneration | None = None,
+    config: Config, compiled: CompiledPageGeneration, *, ocr: bool | None = None,
 ) -> float:
     """Include only the API portions of a page render and its automatic readback."""
     from novel_to_comic.codex_dev import route_for
     from novel_to_comic.server.codex_admission import draw_reads_pages
 
     ocr = draw_reads_pages(config) if ocr is None else ocr
-
-    if compiled is not None and compiled.request.provider in {"openai", "fal-queue"}:
-        from novel_to_comic.usage import estimate_image_cost
-
-        request = compiled.request
-        # Pricing is a current quote, separate from the frozen edition and
-        # request identity. Corrections also send the parent page as an input.
-        image_cost = estimate_image_cost(
-            request.model, 1, quality="high",
-            ref_count=len(request.references) + int(compiled.edit_source_bytes is not None),
-            prompt_text=request.prompt,
-            width=request.output_width, height=request.output_height,
-        )
-    total = 0.0 if route_for("complete_page", config.draw_model) else image_cost
+    total = 0.0 if route_for("complete_page", config.draw_model) else estimate_page_request_cost_usd(compiled)
     if ocr and route_for("text", config.effective_page_ocr_model()) is None:
         total += float(PAGE_OCR_ESTIMATED_COST_USD)
     return total
@@ -1028,7 +1048,7 @@ def correction_credit_estimate(compiled: CompiledPageGeneration, *, config: Conf
     funding = classify_operations(draw_operations(config))
 
     return credit_estimate_for_provider_cost(
-        estimate_draw_api_cost(config, float(compiled.request.estimated_cost_usd), compiled=compiled),
+        estimate_draw_api_cost(config, compiled),
         "draw",
         reserve=reserve,
         zero_cost_estimate=0,
@@ -1176,6 +1196,7 @@ class GoogleVertexCompletePageTransport:
             begin_image_call,
             finalise_image_cancelled,
             finalise_image_failure,
+            with_request_estimate,
         )
 
         _validate_prepared_page(request, self._profile)
@@ -1240,10 +1261,11 @@ class GoogleVertexCompletePageTransport:
                 "model": self._gateway_model, "prompt": request.prompt,
                 "size": f"{request.width}x{request.height}", "n": 1,
             }
+            quality = page_image_quality(self._profile.id, self._profile.provider)
             if self._profile.provider == "openai":
-                request_data.update({"quality": "high", "output_format": "png"})
+                request_data.update({"quality": quality, "output_format": "png"})
             elif self._profile.provider == "fal-queue":
-                request_data.update({"quality": "high", "output_format": "png"})
+                request_data.update({"quality": quality, "output_format": "png"})
                 # Custom-provider routing can strip standard Images fields.
                 # Preserve dimensions and controls through the same manifest
                 # consumed by the FAL handler for other image requests.
@@ -1251,7 +1273,7 @@ class GoogleVertexCompletePageTransport:
                     "width": request.width,
                     "height": request.height,
                     "controls": [
-                        ["quality", "high"],
+                        ["quality", quality],
                         ["output_format", "png"],
                         ["n", 1],
                     ],
@@ -1278,7 +1300,7 @@ class GoogleVertexCompletePageTransport:
                 "model": self._gateway_model,
                 "provider_model": request.model,
                 "size": f"{request.width}x{request.height}",
-                "quality": "high" if self._profile.provider in {"openai", "fal-queue"} else self._config.image_quality,
+                "quality": page_image_quality(self._profile.id, self._profile.provider) or self._config.image_quality,
                 "artifact_kind": "complete_page",
             },
             ref_reads=ref_reads,
@@ -1355,13 +1377,7 @@ class GoogleVertexCompletePageTransport:
                 "image",
                 response.headers,
             )
-            if usage.cost_usd is None and self._profile.provider != "openai":
-                usage = usage.model_copy(
-                    update={
-                        "cost_usd": float(request.estimated_cost_usd),
-                        "cost_source": "capability_profile",
-                    }
-                )
+            usage = with_request_estimate(usage, ctx)
             response_model = str(payload.get("model") or "")
             actual_provider_model = (
                 f"{'vertex_ai' if self._profile.provider == 'vertex-multimodal' else self._profile.provider}/{request.model}"
@@ -1459,7 +1475,7 @@ class GoogleVertexCompletePageTransport:
             width=width,
             height=height,
             latency_ms=latency_ms,
-            provider_request_id=payload.get("id"),
+            provider_request_id=payload.get("provider_request_id") or payload.get("id"),
             actual_provider_model=actual_provider_model,
             usage=usage,
         )
@@ -1920,7 +1936,7 @@ def enqueue_complete_page_draw(
     funding = classify_operations(operations)
 
     estimate = credit_estimate_for_provider_cost(
-        estimate_draw_api_cost(config, float(compiled.request.estimated_cost_usd), ocr=ocr is not None, compiled=compiled),
+        estimate_draw_api_cost(config, compiled, ocr=ocr is not None),
         "draw",
         reserve=True,
         zero_cost_estimate=0,

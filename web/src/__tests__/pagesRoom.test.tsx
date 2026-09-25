@@ -1296,7 +1296,10 @@ describe("PagesRoom", () => {
     expect(screen.getByRole("region", { name: "BOOK ADAPTATION" })).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByRole("button", { name: "Open page 1, revision 2" })).toBeNull();
-    expect(screen.getByRole("heading", { name: "Narrative treatment" })).toBeTruthy();
+    const treatment = screen.getByText("Narrative treatment").closest("details")!;
+    expect(treatment.open).toBe(false);
+    fireEvent.click(treatment.querySelector("summary")!);
+    expect(treatment.open).toBe(true);
     expect(screen.getByText("A quarrel seeds the voyage")).toBeTruthy();
     expect(screen.getByText("Mara argues at the market")).toBeTruthy();
     expect(screen.queryByText("EDITORIAL FINDINGS")).toBeNull();

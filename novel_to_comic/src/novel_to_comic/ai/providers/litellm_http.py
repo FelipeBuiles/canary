@@ -112,7 +112,7 @@ class LitellmHttpProvider:
             image_bytes=image_bytes,
             mime="image/png",
             latency_ms=int((time.perf_counter() - started) * 1000),
-            provider_request_id=data.get("id"), raw_response=data,
+            provider_request_id=data.get("provider_request_id") or data.get("id"), raw_response=data,
             response_headers=response.headers, request_params=params,
             actual_provider_model=(data.get("model") if isinstance(data.get("model"), str) else None),
         )

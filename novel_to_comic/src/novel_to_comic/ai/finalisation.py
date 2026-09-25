@@ -32,6 +32,43 @@ class ImageCallContext:
     started: float
     started_at: datetime.datetime
     langfuse_input: dict[str, Any]
+    # Central estimate of this exact request, charged only when the provider
+    # completes it without reporting a charge or complete token usage.
+    settlement_estimate_usd: float | None = None
+
+
+def _request_geometry(params: dict[str, Any], config: Config) -> dict[str, Any]:
+    """The submitted size and quality, whichever envelope carried them."""
+    width = params.get("canary_requested_width") or params.get("requested_width")
+    height = params.get("canary_requested_height") or params.get("requested_height")
+    size = params.get("size")
+    if (not width or not height) and isinstance(size, str) and "x" in size:
+        width, _, height = size.lower().partition("x")
+    try:
+        width, height = int(width), int(height)
+    except (TypeError, ValueError):
+        width = height = None
+    return {"quality": params.get("quality") or config.image_quality, "width": width, "height": height}
+
+
+def with_request_estimate(usage: UsageRecord, ctx: ImageCallContext) -> UsageRecord:
+    """Settle a completed request whose provider reported no usable charge.
+
+    The estimate is labelled ``request_estimate`` so it stays distinct from
+    provider-reported costs. Reported costs and complete usage are untouched.
+    """
+    from novel_to_comic.usage import calculate_cost_breakdown
+
+    if (
+        usage.funding != "api"
+        or usage.cost_usd is not None
+        or ctx.settlement_estimate_usd is None
+        or calculate_cost_breakdown(usage).source != "unknown_provider_usage"
+    ):
+        return usage
+    return usage.model_copy(update={
+        "cost_usd": ctx.settlement_estimate_usd, "cost_source": "request_estimate",
+    })
 
 
 def _subscription_usage(ctx: ImageCallContext, model: str, evidence: dict[str, Any], *, image_count: int | None = None) -> UsageRecord:
@@ -176,13 +213,15 @@ async def begin_image_call(
     metadata = ai_client._metadata(feature, operation, model, event_id)
     funding = "codex_subscription" if route_for("image", model) else "api"
     metadata["funding"] = funding
-    estimated_cost_usd = None if funding == "codex_subscription" else estimate_image_cost(
-        model,
-        1,
-        quality=config.image_quality,
-        ref_count=len(ref_data),
-        prompt_text=prompt,
-    ) or None
+    geometry = _request_geometry(params, config)
+    estimated_cost_usd = settlement_estimate_usd = None
+    if funding != "codex_subscription":
+        estimated_cost_usd = estimate_image_cost(
+            model, 1, ref_count=len(ref_data), prompt_text=prompt, **geometry,
+        ) or None
+        settlement_estimate_usd = estimate_image_cost(
+            model, 1, ref_count=len(ref_data), prompt_text=prompt, basis="expected", **geometry,
+        ) or None
     reference_summary = ai_client._image_summary(ref_reads)
     started = time.perf_counter()
     started_at = datetime.datetime.now(datetime.UTC)
@@ -241,6 +280,7 @@ async def begin_image_call(
         started=started,
         started_at=started_at,
         langfuse_input=langfuse_input,
+        settlement_estimate_usd=settlement_estimate_usd,
     )
 
 
@@ -259,13 +299,13 @@ async def finalise_image_success(
     runtime_evidence = raw_response.get("codex_runtime")
     if runtime_evidence:
         ctx.metadata = {**ctx.metadata, "codex_runtime": runtime_evidence}
-    usage = _subscription_usage(ctx, model, raw_response, image_count=1) if ctx.metadata.get("funding") == "codex_subscription" else ai_client._extract_usage(
+    usage = _subscription_usage(ctx, model, raw_response, image_count=1) if ctx.metadata.get("funding") == "codex_subscription" else with_request_estimate(ai_client._extract_usage(
         raw_response,
         ctx.event_id,
         model,
         ctx.operation,
         raw.response_headers,
-    )
+    ), ctx)
     try:
         await asyncio.to_thread(
             _write_image_outputs,

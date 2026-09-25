@@ -20,7 +20,7 @@ export function SampleLibraryPage() {
           <div className="mx-auto max-w-[1260px]">
             <p className="font-meta text-xs font-bold uppercase tracking-[0.2em] text-narrator-gold">{t("THE SAMPLE SHELF")}</p>
             <h1 className="mt-4 max-w-[15ch] font-display text-5xl font-black uppercase leading-[0.92] tracking-[-0.04em] sm:text-7xl">{t("Find a story worth drawing.")}</h1>
-            <p className="mt-6 max-w-[65ch] text-base leading-7 text-bristol/80">{t("Explore selected modern stories alongside the classic archive. Search by author, title, or theme; read a complete story before you choose.")}</p>
+            <p className="mt-6 text-base leading-7 text-bristol/80">{t("Explore selected modern stories alongside the classic archive. Search by author, title, or theme; read a complete story before you choose.")}</p>
           </div>
         </div>
         <div className="mx-auto max-w-[1260px] px-5 py-8 sm:px-8 sm:py-12">

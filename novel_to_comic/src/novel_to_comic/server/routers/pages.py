@@ -596,9 +596,8 @@ def estimate_remaining_page_generation(project=Depends(get_project)):
             project_dir=project_dir, config=_config,
         )
         for _page_number, _page, compiled in prepared:
-            page_cost = float(compiled.request.estimated_cost_usd)
             part = credit_estimate_for_provider_cost(
-                estimate_draw_api_cost(_config, page_cost, compiled=compiled), "draw", reserve=True,
+                estimate_draw_api_cost(_config, compiled), "draw", reserve=True,
                 funding=funding,
             )
             estimate["estimate_credits"] += part["estimate_credits"]

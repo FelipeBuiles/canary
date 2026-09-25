@@ -32,7 +32,7 @@ export function PrimitiveReference() {
           <div>
             <StatusPill tone="red">DEV ONLY</StatusPill>
             <h1 className="mt-4 display-headline">Primitive Reference</h1>
-            <p className="mt-4 lead-pulp max-w-[58ch]">
+            <p className="mt-4 lead-pulp ">
               A working board for the Narrative Frame primitives: surfaces, controls,
               fields, state blocks, and status treatments.
             </p>

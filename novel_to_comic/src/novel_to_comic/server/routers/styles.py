@@ -21,7 +21,7 @@ from novel_to_comic.lettering.service import style_from_template, project_letter
 from novel_to_comic.ai import ai_request_context
 from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.config import Config, mock_mode_active, save_config
-from novel_to_comic.codex_dev import CodexRoutingError, classify_operations
+from novel_to_comic.codex_dev import CodexRoutingError, classify_operations, is_subscription
 from ..codex_admission import image_operations, prompt_image_operations, style_sample_operations
 from novel_to_comic.image_models import image_model_profile_for_config
 from novel_to_comic.image_geometry import style_proof_dimensions
@@ -181,7 +181,7 @@ def _suggest_batch_credit_estimate(
     reference_size: tuple[int, int] | None = None,
 ) -> dict:
     funding = classify_operations(prompt_image_operations(config))
-    if funding == "codex_subscription":
+    if is_subscription(funding):
         return dict(credit_estimate_for_provider_cost(0.0, "style", reserve=True, funding=funding))
     if mock_mode_active(config):
         return dict(credit_estimate_for_provider_cost(0.0, "style", reserve=True))
@@ -203,7 +203,7 @@ def _style_sample_credit_estimate(
 ) -> dict:
     """Keep one-sample preflight and generation credit checks in lockstep."""
     funding = classify_operations(style_sample_operations(config, validation=validation))
-    if funding == "codex_subscription":
+    if is_subscription(funding):
         return dict(credit_estimate_for_provider_cost(0.0, "style", reserve=reserve, funding=funding))
     if mock_mode_active(config):
         return dict(credit_estimate_for_provider_cost(0.0, "style", reserve=reserve))
@@ -245,7 +245,7 @@ def _direction_credit_estimates(
         except CodexRoutingError as exc:
             return {"supported": False, "error": str(exc)}
         return dict(credit_estimate_for_provider_cost(
-            0.0 if funding == "codex_subscription" or mock_mode_active(config) else cost(),
+            0.0 if is_subscription(funding) or mock_mode_active(config) else cost(),
             "style", reserve=True,
             zero_cost_estimate=0 if mock_mode_active(config) else zero_cost_estimate,
             funding=funding,

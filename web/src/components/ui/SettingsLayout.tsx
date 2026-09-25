@@ -18,7 +18,7 @@ export function SettingsRow({ label, hint, children, stacked = false }: { label:
   return <section className={cn("grid gap-4 not-last:border-b not-last:border-ink-black/10", stacked ? "py-4" : "px-5 py-6 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)] lg:gap-8 lg:px-7 lg:py-8")}>
     <div>
       <h3 className="font-body text-base font-bold leading-6 text-ink-black">{label}</h3>
-      {hint && <p className="mt-2 max-w-[42ch] font-body text-sm leading-6 text-ink-muted">{hint}</p>}
+      {hint && <p className="mt-2 font-body text-sm leading-6 text-ink-muted">{hint}</p>}
     </div>
     <div className="min-w-0">{children}</div>
   </section>;
@@ -29,7 +29,7 @@ export function SettingsLayout({ title, subtitle, hero = true, tabs, activeTab, 
   return <div className="mx-auto w-full max-w-6xl space-y-8 pb-12 md:space-y-10">
     {hero && <header className="py-3 md:py-5">
       <h1 className="font-display text-4xl font-black uppercase leading-tight tracking-[-0.03em] md:text-5xl">{t(title)}</h1>
-      {subtitle && <p className="mt-4 max-w-[65ch] font-body text-base leading-7 text-ink-muted">{t(subtitle)}</p>}
+      {subtitle && <p className="mt-4 font-body text-base leading-7 text-ink-muted">{t(subtitle)}</p>}
     </header>}
     <div className="grid items-start gap-6 md:grid-cols-[200px_minmax(0,1fr)] md:gap-9">
       <nav aria-label={t("Settings sections")} className="flex gap-1 overflow-x-auto pb-2 md:flex-col md:overflow-visible md:pb-0">
