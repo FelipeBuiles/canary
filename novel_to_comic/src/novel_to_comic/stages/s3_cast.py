@@ -66,15 +66,16 @@ _CAST_RENDERING_CONSISTENCY = (
 
 
 _SHEET_POSE_BOXES: dict[str, tuple[float, float, float, float]] = {
-    # Two-view sheet produced by the character prompt: a large facial-identity
-    # crop and a large body/proportion crop. Fractions are (x0, y0, x1, y1).
-    "portrait":  (0.0, 0.0, 0.5, 1.0),
-    "full_body": (0.5, 0.0, 1.0, 1.0),
+    # Wide turnaround sheet produced by the character prompt: the top-left
+    # three-quarter head and the three-view full-body turnaround, both square.
+    # Fractions are (x0, y0, x1, y1).
+    "portrait":  (0.0, 0.0, 1 / 3, 0.5),
+    "full_body": (1 / 3, 0.0, 1.0, 1.0),
 }
 
 
 def _crop_sheet_to_poses(sheet_path: Path) -> None:
-    """Crop a two-view character reference sheet into reusable reference PNGs.
+    """Crop a turnaround character reference sheet into reusable reference PNGs.
 
     The combined generation keeps identity coherent across portrait and body
     views, while the derived crops prevent the sheet layout leaking into panel
@@ -285,9 +286,11 @@ def _character_generation_input(
     *, design=None,
 ) -> CanonicalCharacterReferenceInput:
     direction = (
-        "Square two-view reference sheet: a three-quarter identity close-up on the left "
-        "and a neutral three-quarter whole-body view on the right. Use the natural posture "
-        "and complete anatomy specified by the character's visual anchor, on a plain background."
+        "Wide turnaround reference sheet: in the left third, a three-quarter head-and-"
+        "shoulders close-up above a side-profile close-up; in the right two thirds, "
+        "full-body front, three-quarter, and back views. Neutral expression in every view. "
+        "Use the natural posture and complete anatomy specified by the character's visual "
+        "anchor, on a plain background."
     )
     identity_details = "\n".join(filter(None, (
         f"Canonical age: {char.age_range}.",
@@ -305,22 +308,24 @@ def _character_generation_input(
         prompt=GenerationPromptInput(
             subjects=(PromptSubject(
                 character_id=char.id, name=char.name, identity=char.visual_anchor,
-                baseline_affect=char.baseline_affect,
             ),),
             visual_brief=direction,
             editorial_addendum=addendum,
-            composition="Square two-view character reference sheet, portrait left and full body right.",
+            composition=(
+                "Wide turnaround character reference sheet: two close-ups stacked in the "
+                "left third, three full-body views across the right two thirds."
+            ),
             constraints=(
                 "Preserve active anatomy, age, and proportions in the selected style. "
-                "Each view stays within its equal vertical half. No text, labels, "
+                "Each view stays fully inside its own region. No text, labels, "
                 "divider lines, scenery, or other characters.\n" + identity_details
                 + "\n" + _CAST_RENDERING_CONSISTENCY
             ),
-            width=1024,
+            width=1536,
             height=1024,
-            generation_width=1024,
+            generation_width=1536,
             generation_height=1024,
-            generation_shape="square",
+            generation_shape="landscape",
         ),
         selected_style_text=config.style_template,
         selected_style_source_hash=hashlib.sha256(config.style_template.encode()).hexdigest(),
@@ -434,9 +439,10 @@ def _state_asset_prompt(spec: StateAssetGenerationSpec) -> GenerationPromptInput
         )]
         anchors = []
         composition = (
-            "Square two-view reference sheet with a three-quarter identity close-up "
-            "on the left and a complete whole-body three-quarter view on the right, "
-            "using the active anchor's anatomy and natural posture; no text or labels."
+            "Wide turnaround reference sheet: a three-quarter close-up above a side-profile "
+            "close-up in the left third, and full-body front, three-quarter, and back views "
+            "in the right two thirds, using the active anchor's anatomy and natural posture; "
+            "no text or labels."
         )
     else:
         subjects = []
@@ -757,7 +763,7 @@ async def _generate_character_refs(
             else:
                 try:
                     ctx.log(f"Generating ref sheet for {char.name}")
-                    # The shared two-view sheet provides both facial identity
+                    # The shared turnaround sheet provides both facial identity
                     # and body proportions for framing-aware conditioning.
                     # Every character uses the same shared rendering authority;
                     # no character-specific style selection happens here.
@@ -794,7 +800,7 @@ async def _generate_character_state_refs(
 
     Each flagged state (e.g. silver hands) is generated from the state's own
     self-contained anchor, reusing the canonical character-sheet prompt so the
-    identity lock and two-view layout stay consistent. Output lives under
+    identity lock and turnaround layout stay consistent. Output lives under
     refs/<char>/states/<state_id>/ and is selected by prompting.py when that
     state is active for a panel.
     """

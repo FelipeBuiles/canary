@@ -311,12 +311,12 @@ def test_image_backed_direction_estimate_covers_references_and_retry(tmp_path):
 
 
 def test_style_batch_estimates_structured_text_output_and_story_context(tmp_path):
-    from novel_to_comic.stages.s2_style import LLM_REQUEST_COUNT
+    from novel_to_comic.stages.s2_style import LLM_REQUEST_COUNT, _SUGGESTION_OUTPUT_CHARS_PER_STYLE
 
     _project(tmp_path)
     with patch("novel_to_comic.usage.estimate_text_cost", return_value=.2) as text_cost:
         estimate_style_batch_cost_usd(Config(image_model="image-sunburst"), tmp_path)
-    assert text_cost.call_args.kwargs["output_chars"] == LLM_REQUEST_COUNT * 1800
+    assert text_cost.call_args.kwargs["output_chars"] == LLM_REQUEST_COUNT * _SUGGESTION_OUTPUT_CHARS_PER_STYLE
     assert f"Generate {LLM_REQUEST_COUNT} style options" in text_cost.call_args.args[1]
 
 

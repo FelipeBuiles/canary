@@ -93,7 +93,7 @@ def test_real_gateway_and_only_supported_custom_handler_are_loaded():
     assert issubclass(FalQueueLLM, CustomLLM)
     config = yaml.safe_load((ROOT / "litellm/config.yaml").read_text())
     assert {route["model_name"] for route in config["model_list"]} == {
-        "gpt-6-sol", "gpt-6-luna", "claude-fable-5-1", "claude-opus-5",
+        "gpt-6-sol", "gpt-6-luna", "claude-fable-5-1", "claude-opus-5-5",
         "mimo-v2.6-pro", "deepseek-v4.1-flash", "image-sunburst",
     }
     assert config["litellm_settings"]["custom_provider_map"] == [{
@@ -147,3 +147,53 @@ def test_together_deepseek_route_disables_thinking_and_keeps_json_schema(monkeyp
     assert body["max_tokens"] == 128
     assert body["response_format"] == {"type": "json_schema", "json_schema": schema}
     assert body["messages"][0]["content"][1]["type"] == "image_url"
+
+
+def test_opus_5_5_route_keeps_client_effort_format_and_thinking_summaries(monkeypatch):
+    """Thinking stays adaptive with visible summaries; effort rides in output_config.
+
+    LiteLLM drops a route-level reasoning_effort when output_config is present,
+    so the app sends effort beside the JSON format and the gateway must keep both.
+    """
+    import json
+    import litellm
+    import yaml
+
+    route = next(
+        item["litellm_params"]
+        for item in yaml.safe_load((ROOT / "litellm/config.yaml").read_text())["model_list"]
+        if item["model_name"] == "claude-opus-5-5"
+    )
+    sent = []
+
+    def send(self, request, **kwargs):
+        sent.append((str(request.url), json.loads(request.content)))
+        return httpx.Response(200, request=request, json={
+            "id": "m", "type": "message", "role": "assistant", "model": "claude-opus-5-5",
+            "content": [{"type": "text", "text": '{"ok":true}'}],
+            "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 1},
+        })
+
+    monkeypatch.setattr(httpx.Client, "send", send)
+    monkeypatch.setattr(litellm, "drop_params", True)
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}},
+              "required": ["ok"], "additionalProperties": False}
+    litellm.completion(
+        **{**route, "api_key": "test-key"},
+        messages=[{"role": "system", "content": "s"}, {"role": "user", "content": "u"}],
+        max_completion_tokens=4096,
+        output_config={"effort": "high", "format": {"type": "json_schema", "schema": schema}},
+    )
+
+    url, body = sent[-1]
+    assert url.startswith("https://api.anthropic.com/v1/messages")
+    assert body["model"] == "claude-opus-5-5"
+    assert body["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert body["output_config"] == {
+        "effort": "high", "format": {"type": "json_schema", "schema": schema},
+    }
+    assert body["max_tokens"] == 4096
+    # Opus 5.5 rejects sampling controls, prefill and forced tool choice.
+    assert "temperature" not in body
+    assert "tool_choice" not in body
+    assert body["messages"][-1]["role"] == "user"

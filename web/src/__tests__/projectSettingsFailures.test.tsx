@@ -101,12 +101,12 @@ it("shows a retired project choice and preserves it when another stage changes",
     selections: { adapt: "gpt-6-sol", plan: "gpt-6-sol" },
     stages: [
       { id: "adapt", label: "Adaptation", model_ids: ["gpt-6-sol"] },
-      { id: "plan", label: "Planning", model_ids: ["gpt-6-sol", "gpt-6-luna", "claude-opus-5"] },
+      { id: "plan", label: "Planning", model_ids: ["gpt-6-sol", "gpt-6-luna", "claude-opus-5-5"] },
     ],
     models: [
       { id: "gpt-6-sol", label: "Sol", provider: "OpenAI", funding: "api" },
       { id: "gpt-6-luna", label: "Luna", provider: "OpenAI", funding: "api" },
-      { id: "claude-opus-5", label: "Opus", provider: "Anthropic", funding: "api" },
+      { id: "claude-opus-5-5", label: "Opus", provider: "Anthropic", funding: "api" },
     ],
   });
   requests.save.mockImplementation(async (data) => { saved = { ...saved, ...data }; return saved; });
@@ -118,8 +118,8 @@ it("shows a retired project choice and preserves it when another stage changes",
   expect(adaptation).toHaveProperty("value", "glm-5.3-flash");
   expect(screen.getByRole("option", { name: "Retired model: glm-5.3-flash" })).toHaveProperty("value", "glm-5.3-flash");
   expect(screen.getByText("This saved model is no longer available. New work uses the account setting until you choose another model.")).toHaveProperty("tagName", "P");
-  await user.selectOptions(screen.getByRole("combobox", { name: "Planning" }), "claude-opus-5");
+  await user.selectOptions(screen.getByRole("combobox", { name: "Planning" }), "claude-opus-5-5");
   await waitFor(() => expect(requests.save).toHaveBeenLastCalledWith({
-    dev_model_selections: { adapt: "glm-5.3-flash", plan: "claude-opus-5" },
+    dev_model_selections: { adapt: "glm-5.3-flash", plan: "claude-opus-5-5" },
   }));
 });

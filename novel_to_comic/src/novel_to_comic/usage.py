@@ -11,6 +11,7 @@ from typing import Any, Generic, Literal, TypeVar
 from pydantic import BaseModel, Field
 
 from novel_to_comic.model_costs import CostBreakdown, get_pricing_resolver
+from novel_to_comic.text_models import text_wire
 
 T = TypeVar("T")
 logger = logging.getLogger(__name__)
@@ -172,7 +173,7 @@ def estimate_text_cost(model: str, input_text: str | int, output_chars: int = 0)
     if route_for("text", model) is not None:
         return 0.0
     input_tokens = estimate_token_count(input_text)
-    output_tokens = estimate_token_count(output_chars)
+    output_tokens = estimate_token_count(output_chars) + text_wire(model).estimated_thinking_tokens
     breakdown = get_pricing_resolver().estimate_text_cost(model, input_tokens, output_tokens)
     if breakdown.source == "unknown_pricing":
         _warn_unknown_model(model)

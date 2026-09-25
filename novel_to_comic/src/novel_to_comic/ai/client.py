@@ -1866,14 +1866,23 @@ async def _chat_completion(
     if route is None and wire.temperature:
         payload["temperature"] = temperature
     if route is None and wire.claude_native_json:
+        output_config: dict[str, Any] = {}
+        # The gateway drops a route's reasoning_effort once output_config is
+        # present, so effort travels with the format it would otherwise lose to.
+        if wire.effort:
+            output_config["effort"] = wire.effort
         # Schema-less JSON uses the instruction and parser above.
         if json_schema:
-            payload["output_config"] = {"format": {
+            output_config["format"] = {
                 "type": "json_schema", "schema": anthropic_output_schema(json_schema),
-            }}
+            }
+        if output_config:
+            payload["output_config"] = output_config
     elif response_format is not None:
         payload["response_format"] = response_format
-    effective_max_output_tokens = max_output_tokens or 16_384
+    effective_max_output_tokens = (max_output_tokens or 16_384) + wire.thinking_headroom_tokens
+    if wire.max_output_tokens:
+        effective_max_output_tokens = min(effective_max_output_tokens, wire.max_output_tokens)
     if route is None:
         payload[wire.token_limit_field] = effective_max_output_tokens
     # Stream so the read timeout is per-chunk: long adapt repairs exceed the
@@ -1887,7 +1896,8 @@ async def _chat_completion(
     estimated_cost_usd = (
         (estimate_text_cost(
             model, effective_system + "\n" + user_content,
-            output_chars=effective_max_output_tokens * 4,
+            # The answer budget; the estimator adds the model's typical thinking.
+            output_chars=(max_output_tokens or 16_384) * 4,
         ) or None)
         if route is None else None
     )

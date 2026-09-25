@@ -228,6 +228,11 @@
               "beat_approach"
             ],
             "panel_role": "establishing",
+            "camera": {
+              "shot": "medium",
+              "angle": "eye_level"
+            },
+            "acting": [],
             "visual_intent": "The Alert is dwarfed by the black reef.",
             "entity_ids": [
               "location_alert"
@@ -243,6 +248,11 @@
               "beat_approach"
             ],
             "panel_role": "detail",
+            "camera": {
+              "shot": "medium",
+              "angle": "eye_level"
+            },
+            "acting": [],
             "visual_intent": "Spray crawls over the Alert's black rail.",
             "entity_ids": [
               "location_alert"
@@ -272,6 +282,11 @@
               "beat_peak"
             ],
             "panel_role": "splash",
+            "camera": {
+              "shot": "medium",
+              "angle": "eye_level"
+            },
+            "acting": [],
             "visual_intent": "Cthulhu towers above the yacht.",
             "entity_ids": [
               "character_cthulhu",
@@ -303,6 +318,11 @@
               "beat_escape"
             ],
             "panel_role": "action",
+            "camera": {
+              "shot": "medium",
+              "angle": "eye_level"
+            },
+            "acting": [],
             "visual_intent": "Johansen wheels the Alert away.",
             "entity_ids": [
               "character_johansen",
@@ -319,6 +339,11 @@
               "beat_escape"
             ],
             "panel_role": "detail",
+            "camera": {
+              "shot": "medium",
+              "angle": "eye_level"
+            },
+            "acting": [],
             "visual_intent": "The wheel bites hard under Johansen's hands.",
             "entity_ids": [
               "character_johansen",
@@ -333,6 +358,11 @@
               "beat_escape"
             ],
             "panel_role": "action",
+            "camera": {
+              "shot": "medium",
+              "angle": "eye_level"
+            },
+            "acting": [],
             "visual_intent": "The Alert's wake hooks sharply away from the reef.",
             "entity_ids": [
               "location_alert"
@@ -363,6 +393,11 @@
               "beat_release"
             ],
             "panel_role": "standard",
+            "camera": {
+              "shot": "medium",
+              "angle": "eye_level"
+            },
+            "acting": [],
             "visual_intent": "The wake disappears into the churned sea.",
             "entity_ids": [
               "location_alert"
@@ -393,6 +428,11 @@
               "beat_aftermath"
             ],
             "panel_role": "reaction",
+            "camera": {
+              "shot": "medium",
+              "angle": "eye_level"
+            },
+            "acting": [],
             "visual_intent": "Johansen sits alone after returning home.",
             "entity_ids": [
               "character_johansen"

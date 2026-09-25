@@ -23,8 +23,10 @@ from novel_to_comic.models.page import (
     ApprovedVisualReferenceInventory,
     AuthorGeometryPin,
     BookPlan,
+    CharacterActing,
     ComicPage,
     PageContent,
+    PanelCamera,
     PinnedGeometry,
     LetteringReservation,
     LetteringReservationIntent,
@@ -120,6 +122,10 @@ class _PanelCompositionDraft(BaseModel):
     continuity_intent: str = ""
     entity_ids: tuple[str, ...] = ()
     appearance_states: tuple[_AppearanceStateBinding, ...] = ()
+    # Required keys: the writer must decide the shot and every visible
+    # character's performance. validate_book_plan rejects a null camera.
+    camera: PanelCamera | None
+    acting: tuple[CharacterActing, ...]
 
     @model_validator(mode="after")
     def _validate_appearance_state_bindings(self) -> "_PanelCompositionDraft":
@@ -386,6 +392,7 @@ def _reference_view(
             "label": reference.label,
             "visual_anchor": reference.visual_anchor,
             "continuity_guard": reference.continuity_guard,
+            "kind": reference.kind,
         }
         for reference in references.references
         if entity_ids is None or reference.entity_id in entity_ids
@@ -423,6 +430,19 @@ _SEMANTIC_PAGE_CONTRACT = (
     "character. Silent sequences are valid when action, causality, and transitions "
     "remain self-explanatory; otherwise regroup complete beats or report missing "
     "canonical narrative context, never invent copy. "
+    "Every panel sets camera: shot size and angle chosen for the beat's emphasis; "
+    "vary shot size across a page and keep unusual angles for emphasis. For every "
+    "visible entity whose reference kind is character, author exactly one acting entry. "
+    "facing is the reader's screen direction. gaze names whom or what the eyes are on "
+    "(an entity ID or a concrete target). expression is the specific momentary face for "
+    "this beat, not the character's general temperament. gesture is the concrete hand "
+    "or body action, or empty when still. Derive acting from relationships and action: "
+    "listeners face speakers, an exchange keeps consistent screen direction, and "
+    "profiles, rear views and frontal shots appear when the scene calls for them. Cast "
+    "references establish identity only; never default to a reference sheet's "
+    "three-quarter view or resting face. A character must not repeat the same facing "
+    "and expression through four consecutive appearances, and six or more appearances "
+    "must not all be three-quarter views. "
 )
 
 
@@ -2818,10 +2838,111 @@ def validate_book_plan(
                     )
                 )
 
+    failures.extend(_staging_failures(references, pages))
     return PlanValidation(
         invariant_failures=failures,
         editorial_issues=issues,
     )
+
+
+# A character whose panels repeat one facing and face reads as a pasted
+# reference; these runs are the thresholds the Plan contract states.
+_REPEATED_ACTING_RUN = 4
+_THREE_QUARTER_ONLY_APPEARANCES = 6
+
+
+def _expression_key(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def _staging_failures(
+    references: ApprovedVisualReferenceInventory,
+    pages: tuple[ComicPage, ...] | list[ComicPage],
+) -> list[InvariantFailure]:
+    """Every panel has a camera and every visible character has varied acting."""
+
+    kinds = {reference.entity_id: reference.kind for reference in references.references}
+    failures: list[InvariantFailure] = []
+    appearances: dict[str, list[tuple[str, str, str]]] = {}
+    for page in pages:
+        for content in page.content:
+            artifact_id = f"page_{page.page_number:03d}"
+            if content.camera is None:
+                failures.append(InvariantFailure(
+                    id=f"plan_failure_missing_camera_{content.id}",
+                    owner_stage="plan",
+                    code="missing_panel_camera",
+                    message="Every panel needs a camera shot size and angle.",
+                    artifact_ids=[artifact_id, content.id],
+                    evidence=[f"Page {page.page_number} panel {content.order} has camera null."],
+                ))
+            acting = {item.entity_id: item for item in content.acting}
+            for entity_id in content.entity_ids:
+                if kinds.get(entity_id) != "character":
+                    continue
+                item = acting.get(entity_id)
+                if item is None:
+                    failures.append(InvariantFailure(
+                        id=f"plan_failure_missing_acting_{content.id}_{entity_id}",
+                        owner_stage="plan",
+                        code="missing_character_acting",
+                        message="Every visible character needs facing, gaze and expression.",
+                        artifact_ids=[artifact_id, content.id],
+                        evidence=[
+                            f"Page {page.page_number} panel {content.order} shows "
+                            f"{entity_id!r} without an acting entry."
+                        ],
+                    ))
+                    continue
+                appearances.setdefault(entity_id, []).append(
+                    (item.facing, _expression_key(item.expression), content.id)
+                )
+            for entity_id in acting:
+                if kinds.get(entity_id) in {"location", "prop"}:
+                    failures.append(InvariantFailure(
+                        id=f"plan_failure_acting_non_character_{content.id}_{entity_id}",
+                        owner_stage="plan",
+                        code="acting_for_non_character",
+                        message="Acting directions belong to characters only.",
+                        artifact_ids=[artifact_id, content.id],
+                        evidence=[f"{entity_id!r} is a {kinds[entity_id]}, not a character."],
+                    ))
+    for entity_id, sequence in appearances.items():
+        run_start = 0
+        for index in range(1, len(sequence) + 1):
+            if index < len(sequence) and sequence[index][:2] == sequence[run_start][:2]:
+                continue
+            if index - run_start >= _REPEATED_ACTING_RUN:
+                facing, expression, _ = sequence[run_start]
+                content_ids = [content_id for _, _, content_id in sequence[run_start:index]]
+                failures.append(InvariantFailure(
+                    id=f"plan_failure_repeated_acting_{entity_id}_{content_ids[0]}",
+                    owner_stage="plan",
+                    code="repeated_character_acting",
+                    message="A character repeats one facing and expression across consecutive panels.",
+                    artifact_ids=content_ids,
+                    evidence=[
+                        f"{entity_id!r} is {facing} with expression {expression!r} in "
+                        f"{index - run_start} consecutive appearances. Vary facing or "
+                        "expression from each beat's action and relationships."
+                    ],
+                ))
+            run_start = index
+        if len(sequence) >= _THREE_QUARTER_ONLY_APPEARANCES and all(
+            facing.startswith("three_quarter") for facing, _, _ in sequence
+        ):
+            failures.append(InvariantFailure(
+                id=f"plan_failure_three_quarter_only_{entity_id}",
+                owner_stage="plan",
+                code="reference_angle_only",
+                message="A character is only ever staged in the reference sheet's three-quarter view.",
+                artifact_ids=[content_id for _, _, content_id in sequence],
+                evidence=[
+                    f"All {len(sequence)} appearances of {entity_id!r} face three-quarter. "
+                    "Use profiles, frontal or rear views where the action supports them."
+                ],
+            ))
+    return failures
 
 
 class _UsageSink:
@@ -2870,6 +2991,8 @@ def _page_draft(page: ComicPage) -> _PageDraft:
                     _AppearanceStateBinding(entity_id=entity_id, state_id=state_id)
                     for entity_id, state_id in content.appearance_states.items()
                 ),
+                camera=content.camera,
+                acting=content.acting,
                 lettering_ids=tuple(item.id for item in content.lettering),
                 lettering_reservations=tuple(reservations[item.id] for item in content.lettering),
             )

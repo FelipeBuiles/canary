@@ -175,7 +175,7 @@ def restore_asset_instruction_direction(
 
 def asset_instruction_rewrite_system_prompt(kind: AssetKind) -> str:
     target = {
-        "character_ref": "a character's two-view reference sheet (portrait and full body on a clean background)",
+        "character_ref": "a character's wide turnaround reference sheet (two close-ups and front, three-quarter and back full-body views on a clean background)",
         "location_plate": "a wide location reference with no characters present",
         "prop_ref": "an isolated object reference on a neutral background",
     }[kind]

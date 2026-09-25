@@ -96,6 +96,8 @@ def draft_for(adaptation, padding=0):
                 "content": [
                     {
                         "beat_ids": [b.id],
+                        "camera": {"shot": "medium", "angle": "eye_level"},
+                        "acting": [],
                         "visual_intent": b.summary,
                         "lettering_ids": [i.id for i in b.lettering]
                         if n <= len(adaptation.beats)
@@ -809,6 +811,8 @@ def test_plan_staging_review_repairs_only_its_detail_batch(tmp_path, resolved):
                 assert "seal the idol with the papers" in request["user_content"]
             for page in raw["pages"]:
                 page["content"].append({**page["content"][0], "lettering_ids": [],
+                                        "camera": {"shot": "medium", "angle": "eye_level"},
+                                        "acting": [],
                                         "visual_intent": "A distinct silent reaction to the event."})
             raw["pages"][-1]["content"][0]["visual_intent"] = (
                 "seal only the papers; the idol is absent" if repair and resolved else "seal the idol with the papers"

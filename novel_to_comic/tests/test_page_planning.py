@@ -21,6 +21,7 @@ from novel_to_comic.models.adaptation import (
 )
 from novel_to_comic.models.adaptation import ContinuityTransition
 from novel_to_comic.models.page import (
+    PanelCamera,
     ApprovedPageRange,
     ApprovedVisualReference,
     ApprovedVisualReferenceInventory,
@@ -190,6 +191,8 @@ def test_producer_allocates_global_book_once_and_persists_canonical_artifacts(
                         "id": "page_001_content_001",
                         "order": 1,
                         "beat_ids": ["beat_0001", "beat_0002"],
+                        "camera": {"shot": "medium", "angle": "eye_level"},
+                        "acting": [],
                         "visual_intent": (
                             "The yacht approaches the risen city, then wheels away."
                         ),
@@ -330,18 +333,26 @@ def test_detail_validation_rejects_a_rewound_beat_sequence() -> None:
                     "content": [
                         {
                             "beat_ids": ["beat_0035"],
+                            "camera": {"shot": "medium", "angle": "eye_level"},
+                            "acting": [],
                             "visual_intent": "The first beat begins.",
                         },
                         {
                             "beat_ids": ["beat_0036"],
+                            "camera": {"shot": "medium", "angle": "eye_level"},
+                            "acting": [],
                             "visual_intent": "The second beat advances the action.",
                         },
                         {
                             "beat_ids": ["beat_0035"],
+                            "camera": {"shot": "medium", "angle": "eye_level"},
+                            "acting": [],
                             "visual_intent": "The page incorrectly returns backward.",
                         },
                         {
                             "beat_ids": ["beat_0036"],
+                            "camera": {"shot": "medium", "angle": "eye_level"},
+                            "acting": [],
                             "visual_intent": "The page incorrectly advances again.",
                         },
                     ],
@@ -439,6 +450,8 @@ def test_two_pass_detail_retry_repairs_invalid_detail_at_the_batch_boundary(
                     "beat_ids": beats.split("|"),
                     "lettering_ids": [beats.replace("beat_", "lettering_")],
                     "panel_role": "standard",
+                    "camera": {"shot": "medium", "angle": "eye_level"},
+                    "acting": [],
                     "visual_intent": visual_intent,
                     "entity_ids": [],
                 }
@@ -583,6 +596,8 @@ def test_invalid_reference_detail_stops_after_bounded_correction_with_page_locat
             "page_number": 9, "emphasis": "initial", "density_intent": "standard",
             "rhythm_intent": "Advance.", "layout_intent": "One event.",
             "content": [{"beat_ids": ["beat_0009"], "lettering_ids": ["lettering_0009"],
+                         "camera": {"shot": "medium", "angle": "eye_level"},
+                         "acting": [],
                          "visual_intent": "Johansen watches.", "entity_ids": ["character_johansen"],
                          "appearance_states": [{"entity_id": "character_johansen", "state_id": "base"}]}],
         }]}))
@@ -620,6 +635,8 @@ def test_draft_reference_validation_precedes_derived_state_activation():
         "layout_intent": "The escape.", "content": [{
             "beat_ids": [b.id for b in adaptation.beats],
             "lettering_ids": [i.id for b in adaptation.beats for i in b.lettering],
+            "camera": {"shot": "medium", "angle": "eye_level"},
+            "acting": [],
             "visual_intent": "Johansen escapes through spray.", "entity_ids": ["character_johansen"],
             "appearance_states": [{"entity_id": "character_johansen", "state_id": "base"}],
         }],
@@ -692,6 +709,8 @@ def test_long_plan_retains_composition_warnings_without_automatic_polishing(
                         {
                             "beat_ids": [f"beat_{page_number:04d}"],
                             "panel_role": ("standard" if panel == 1 else "reaction"),
+                            "camera": {"shot": "medium", "angle": "eye_level"},
+                            "acting": [],
                             "visual_intent": (f"Visual moment {page_number}.{panel}."),
                             "lettering_ids": [f"lettering_{page_number:04d}"] if panel == 1 else [],
                             "entity_ids": [],
@@ -791,6 +810,8 @@ def test_two_pass_plan_corrects_explicit_lettering_order_at_detail_boundary(
                             "panel_role": (
                                 "standard" if panel == 1 else "detail"
                             ),
+                            "camera": {"shot": "medium", "angle": "eye_level"},
+                            "acting": [],
                             "visual_intent": (
                                 f"Visual moment {page_number}.{panel}."
                             ),
@@ -884,11 +905,15 @@ def test_plan_corrects_lettering_with_visual_intent_across_repeated_beat_panels(
                 "content": [
                     {
                         "beat_ids": ["beat_0001"],
+                        "camera": {"shot": "medium", "angle": "eye_level"},
+                        "acting": [],
                         "visual_intent": "The first approach panel.",
                         "lettering_ids": ["lettering_0001_second"],
                     },
                     {
                         "beat_ids": ["beat_0001"],
+                        "camera": {"shot": "medium", "angle": "eye_level"},
+                        "acting": [],
                         "visual_intent": "The second approach panel.",
                         "lettering_ids": ["lettering_0001"],
                     },
@@ -905,6 +930,8 @@ def test_plan_corrects_lettering_with_visual_intent_across_repeated_beat_panels(
                 "content": [
                     {
                         "beat_ids": ["beat_0002"],
+                        "camera": {"shot": "medium", "angle": "eye_level"},
+                        "acting": [],
                         "visual_intent": "Johansen turns the yacht away.",
                         "lettering_ids": ["lettering_0002"],
                     }
@@ -971,6 +998,8 @@ def test_producer_keeps_repetitive_composition_advisory(
                 "order": index,
                 "beat_ids": [beat_id],
                 "panel_role": role,
+                "camera": {"shot": "medium", "angle": "eye_level"},
+                "acting": [],
                 "visual_intent": f"Visual submoment {page_number}.{index}.",
                 "lettering_ids": [lettering_id] if lettering_id else [],
                 "entity_ids": [],
@@ -1074,6 +1103,7 @@ def test_validation_separates_changed_lettering_from_broken_global_allocation() 
                 id="page_001_content_001",
                 order=1,
                 beat_ids=["beat_0002"],
+                camera=PanelCamera(shot="medium", angle="eye_level"),
                 visual_intent="The Alert turns away.",
                 lettering=[
                     LetteringItem(
@@ -1133,6 +1163,8 @@ def test_plan_can_expand_one_adapted_beat_across_adjacent_planned_panels(
                                 "order": 1,
                                 "beat_ids": ["beat_0001"],
                                 "panel_role": "establishing",
+                                "camera": {"shot": "medium", "angle": "eye_level"},
+                                "acting": [],
                                 "visual_intent": "The Alert nears the risen city.",
                                 "lettering_ids": ["lettering_0001"],
                                 "entity_ids": ["location_alert"],
@@ -1157,6 +1189,8 @@ def test_plan_can_expand_one_adapted_beat_across_adjacent_planned_panels(
                                 "order": 1,
                                 "beat_ids": ["beat_0001"],
                                 "panel_role": "detail",
+                                "camera": {"shot": "medium", "angle": "eye_level"},
+                                "acting": [],
                                 "visual_intent": "Impossible masonry fills the horizon.",
                                 "lettering_ids": [],
                                 "entity_ids": ["location_alert"],
@@ -1178,6 +1212,8 @@ def test_plan_can_expand_one_adapted_beat_across_adjacent_planned_panels(
                                 "order": 1,
                                 "beat_ids": ["beat_0002"],
                                 "panel_role": "action",
+                                "camera": {"shot": "medium", "angle": "eye_level"},
+                                "acting": [],
                                 "visual_intent": "Johansen hauls the wheel over.",
                                 "lettering_ids": ["lettering_0002"],
                                 "entity_ids": [
@@ -1234,6 +1270,7 @@ def test_lettering_allocated_to_the_wrong_beat_is_a_blocking_failure() -> None:
             id="page_001_content_001",
             order=1,
             beat_ids=["beat_0001"],
+            camera=PanelCamera(shot="medium", angle="eye_level"),
             visual_intent="The Alert approaches.",
             lettering=lettering,
             entity_ids=["location_alert"],
@@ -1242,6 +1279,7 @@ def test_lettering_allocated_to_the_wrong_beat_is_a_blocking_failure() -> None:
             id="page_001_content_002",
             order=2,
             beat_ids=["beat_0002"],
+            camera=PanelCamera(shot="medium", angle="eye_level"),
             visual_intent="Johansen hauls the wheel.",
             entity_ids=["character_johansen"],
         ),
@@ -1286,6 +1324,7 @@ def test_plan_cannot_return_to_an_earlier_beat_after_story_order_advances() -> N
             order=1,
             beat_ids=["beat_0001"],
             panel_role="establishing",
+            camera=PanelCamera(shot="medium", angle="eye_level"),
             visual_intent="The Alert approaches.",
             lettering=adaptation.beats[0].lettering,
         ),
@@ -1294,6 +1333,7 @@ def test_plan_cannot_return_to_an_earlier_beat_after_story_order_advances() -> N
             order=2,
             beat_ids=["beat_0002"],
             panel_role="action",
+            camera=PanelCamera(shot="medium", angle="eye_level"),
             visual_intent="Johansen turns away.",
             lettering=adaptation.beats[1].lettering,
         ),
@@ -1302,6 +1342,7 @@ def test_plan_cannot_return_to_an_earlier_beat_after_story_order_advances() -> N
             order=3,
             beat_ids=["beat_0001"],
             panel_role="detail",
+            camera=PanelCamera(shot="medium", angle="eye_level"),
             visual_intent="The story incorrectly returns to the approach.",
         ),
     ]
@@ -1359,6 +1400,8 @@ def test_plan_copies_adapt_lettering_from_the_cited_ids(tmp_path: Path) -> None:
                         "id": "page_001_content_001",
                         "order": 1,
                         "beat_ids": ["beat_0001"],
+                        "camera": {"shot": "medium", "angle": "eye_level"},
+                        "acting": [],
                         "visual_intent": "The Alert approaches.",
                         "lettering_ids": ["lettering_0001"],
                         "entity_ids": ["location_alert"],
@@ -1367,6 +1410,8 @@ def test_plan_copies_adapt_lettering_from_the_cited_ids(tmp_path: Path) -> None:
                         "id": "page_001_content_002",
                         "order": 2,
                         "beat_ids": ["beat_0002"],
+                        "camera": {"shot": "medium", "angle": "eye_level"},
+                        "acting": [],
                         "visual_intent": "The Alert turns away.",
                         "lettering_ids": ["lettering_0002"],
                         "entity_ids": ["character_johansen", "location_alert"],
@@ -1443,6 +1488,8 @@ def test_lettering_cited_by_the_wrong_content_item_cannot_be_planned(
                         "id": "page_001_content_001",
                         "order": 1,
                         "beat_ids": ["beat_0001", "beat_0002"],
+                        "camera": {"shot": "medium", "angle": "eye_level"},
+                        "acting": [],
                         "visual_intent": "The approach and the escape.",
                         "lettering_ids": ["lettering_0001", "lettering_0002"],
                         "entity_ids": ["location_alert"],
@@ -1530,6 +1577,8 @@ def test_plan_persists_reviewed_allocation_above_target(
                         "id": f"page_{page_number:03d}_content_001",
                         "order": 1,
                         "beat_ids": [f"beat_000{page_number}"],
+                        "camera": {"shot": "medium", "angle": "eye_level"},
+                        "acting": [],
                         "visual_intent": "A beat.",
                         "lettering_ids": [f"lettering_000{page_number}"],
                         "entity_ids": ["location_alert"],
@@ -1603,6 +1652,8 @@ def test_coordinates_are_absent_unless_the_author_explicitly_pins_a_beat(
                         "id": "page_001_content_001",
                         "order": 1,
                         "beat_ids": ["beat_0001"],
+                        "camera": {"shot": "medium", "angle": "eye_level"},
+                        "acting": [],
                         "visual_intent": "The yacht approaches.",
                         "lettering_ids": [adaptation.beats[0].lettering[0].id],
                         "entity_ids": ["location_alert"],
@@ -1611,6 +1662,8 @@ def test_coordinates_are_absent_unless_the_author_explicitly_pins_a_beat(
                         "id": "page_001_content_002",
                         "order": 2,
                         "beat_ids": ["beat_0002"],
+                        "camera": {"shot": "medium", "angle": "eye_level"},
+                        "acting": [],
                         "visual_intent": "The yacht escapes.",
                         "lettering_ids": [adaptation.beats[1].lettering[0].id],
                         "entity_ids": ["character_johansen", "location_alert"],
@@ -1692,6 +1745,7 @@ def test_safe_allocation_can_exceed_advisory_range() -> None:
                     id=f"page_{index:03d}_content_001",
                     order=1,
                     beat_ids=[beat.id],
+                    camera=PanelCamera(shot="medium", angle="eye_level"),
                     visual_intent=beat.summary,
                     lettering=beat.lettering,
                     entity_ids=["location_alert"],
@@ -1733,6 +1787,7 @@ def test_fidelity_page_floor_allows_safe_allocation_beyond_maximum() -> None:
                     id=f"page_{index:03d}_content_001",
                     order=1,
                     beat_ids=[beat.id],
+                    camera=PanelCamera(shot="medium", angle="eye_level"),
                     visual_intent=beat.summary,
                     lettering=beat.lettering,
                     entity_ids=["location_alert"],
@@ -1776,6 +1831,7 @@ def test_complete_allocation_can_be_shorter_than_target() -> None:
                     id=f"page_001_content_{index:03d}",
                     order=index,
                     beat_ids=[beat.id],
+                    camera=PanelCamera(shot="medium", angle="eye_level"),
                     visual_intent=beat.summary,
                     lettering=beat.lettering,
                     entity_ids=["location_alert"],
@@ -1821,6 +1877,7 @@ def test_onscreen_lettering_speaker_must_be_visible_in_its_panel() -> None:
                 id="page_001_content_001",
                 order=1,
                 beat_ids=["beat_0001", "beat_0002"],
+                camera=PanelCamera(shot="medium", angle="eye_level"),
                 visual_intent="The Alert turns while Johansen remains unseen.",
                 lettering=[
                     item for beat in adaptation.beats for item in beat.lettering
@@ -1898,6 +1955,7 @@ def test_reveal_without_page_turn_setup_is_an_evidence_backed_editorial_issue() 
                     id=f"page_{index:03d}_content_001",
                     order=1,
                     beat_ids=[beat.id],
+                    camera=PanelCamera(shot="medium", angle="eye_level"),
                     visual_intent=beat.summary,
                     lettering=beat.lettering,
                     entity_ids=["location_alert"],
@@ -1952,6 +2010,7 @@ def test_non_peak_reveal_does_not_require_its_own_page_turn() -> None:
                     id=f"page_{index:03d}_content_001",
                     order=1,
                     beat_ids=[beat.id],
+                    camera=PanelCamera(shot="medium", angle="eye_level"),
                     visual_intent=beat.summary,
                     lettering=beat.lettering,
                     entity_ids=["location_alert"],
@@ -2052,6 +2111,7 @@ def test_reading_order_cannot_reorder_adapt_lettering() -> None:
                 id="page_001_content_001",
                 order=1,
                 beat_ids=["beat_0001", "beat_0002"],
+                camera=PanelCamera(shot="medium", angle="eye_level"),
                 visual_intent="The Alert approaches and turns away.",
                 lettering=[
                     item for beat in adaptation.beats for item in beat.lettering
@@ -2124,6 +2184,7 @@ def test_page_scoped_appearance_state_must_follow_the_adapted_change() -> None:
                 id="page_001_content_001",
                 order=1,
                 beat_ids=["beat_0001", "beat_0002"],
+                camera=PanelCamera(shot="medium", angle="eye_level"),
                 visual_intent="Johansen turns the Alert through heavy spray.",
                 lettering=[
                     item for beat in adaptation.beats for item in beat.lettering
@@ -2172,6 +2233,7 @@ def test_density_is_semantic_intent_without_a_universal_content_cap(
             id=f"page_001_content_{index:03d}",
             order=index,
             beat_ids=[beat.id],
+            camera=PanelCamera(shot="medium", angle="eye_level"),
             visual_intent=beat.summary,
             lettering=beat.lettering,
             entity_ids=[],
@@ -2248,6 +2310,7 @@ def test_repetitive_single_panel_run_is_an_evidence_backed_editorial_issue() -> 
                         order=1,
                         beat_ids=[beat_id],
                         panel_role="standard",
+                        camera=PanelCamera(shot="medium", angle="eye_level"),
                         visual_intent=beat.summary,
                         lettering=lettering,
                     )
@@ -2295,6 +2358,7 @@ def test_peak_and_release_on_one_page_report_proportion_evidence() -> None:
             id=f"page_001_content_{index:03d}",
             order=index,
             beat_ids=[beat.id],
+            camera=PanelCamera(shot="medium", angle="eye_level"),
             visual_intent=beat.summary,
             lettering=beat.lettering,
         )
@@ -2361,6 +2425,7 @@ def test_spread_sides_cannot_repeat_without_an_intervening_single_or_spread() ->
                     id=f"page_{index:03d}_content_001",
                     order=1,
                     beat_ids=[beat.id],
+                    camera=PanelCamera(shot="medium", angle="eye_level"),
                     visual_intent=beat.summary,
                     lettering=beat.lettering,
                 )
@@ -2406,6 +2471,7 @@ def test_pages_must_cite_the_canonical_book_adaptation_revision() -> None:
                 id="page_001_content_001",
                 order=1,
                 beat_ids=["beat_0001", "beat_0002"],
+                camera=PanelCamera(shot="medium", angle="eye_level"),
                 visual_intent="The Alert approaches and turns away.",
                 lettering=[
                     item for beat in adaptation.beats for item in beat.lettering
@@ -2455,6 +2521,8 @@ def test_a_schema_slip_in_the_plan_draft_is_repaired_not_fatal(tmp_path: Path, s
                 "id": "page_001_content_001",
                 "order": 1,
                 "beat_ids": ["beat_0001", "beat_0002"],
+                "camera": {"shot": "medium", "angle": "eye_level"},
+                "acting": [],
                 "visual_intent": "The approach, then the escape.",
                 "lettering_ids": ["lettering_0001", "lettering_0002"],
                 "entity_ids": ["character_johansen", "location_alert"],
@@ -2549,6 +2617,8 @@ def test_plan_authored_issue_ownership_is_canonicalized_without_a_retry(
                         "id": "page_001_content_001",
                         "order": 1,
                         "beat_ids": ["beat_0001", "beat_0002"],
+                        "camera": {"shot": "medium", "angle": "eye_level"},
+                        "acting": [],
                         "visual_intent": "The approach, then the escape.",
                         "lettering_ids": ["lettering_0001", "lettering_0002"],
                         "entity_ids": [
@@ -2696,6 +2766,8 @@ def test_mechanical_allocation_and_reference_ids_are_canonicalized(
                         "id": "page_001_content_001",
                         "order": 1,
                         "beat_ids": ["beat_0001"],
+                        "camera": {"shot": "medium", "angle": "eye_level"},
+                        "acting": [],
                         "visual_intent": "Johansen approaches through heavy spray.",
                         "lettering_ids": ["lettering_0001"],
                         "entity_ids": ["character_johansen", "location_alert"],
@@ -2722,6 +2794,8 @@ def test_mechanical_allocation_and_reference_ids_are_canonicalized(
                         "id": "page_002_content_001",
                         "order": 1,
                         "beat_ids": ["beat_0002"],
+                        "camera": {"shot": "medium", "angle": "eye_level"},
+                        "acting": [],
                         "visual_intent": "The approach resolves into escape.",
                         "lettering_ids": ["lettering_0002"],
                         "entity_ids": ["character_johansen", "location_alert"],
@@ -2785,6 +2859,8 @@ def test_an_adapted_beat_may_expand_across_adjacent_planned_panels(
                 "id": "page_001_content_001",
                 "order": 1,
                 "beat_ids": ["beat_0001", "beat_0002"],
+                "camera": {"shot": "medium", "angle": "eye_level"},
+                "acting": [],
                 "visual_intent": "The approach, then the escape.",
                 "lettering_ids": ["lettering_0001", "lettering_0002"],
                 "entity_ids": ["character_johansen", "location_alert"],
@@ -2808,6 +2884,8 @@ def test_an_adapted_beat_may_expand_across_adjacent_planned_panels(
                 "id": "page_001_content_002",
                 "order": 2,
                 "beat_ids": ["beat_0001"],
+                "camera": {"shot": "medium", "angle": "eye_level"},
+                "acting": [],
                 "visual_intent": "The approach is repeated as a separate unit.",
                 "lettering_ids": [],
                 "entity_ids": ["character_johansen", "location_alert"],
@@ -2816,6 +2894,8 @@ def test_an_adapted_beat_may_expand_across_adjacent_planned_panels(
                 "id": "page_001_content_003",
                 "order": 3,
                 "beat_ids": ["beat_0002"],
+                "camera": {"shot": "medium", "angle": "eye_level"},
+                "acting": [],
                 "visual_intent": "The yacht escapes.",
                 "lettering_ids": ["lettering_0002"],
                 "entity_ids": ["character_johansen", "location_alert"],
@@ -2888,6 +2968,8 @@ def test_missing_lettering_ids_are_derived_into_reading_order(
                         "id": "page_001_content_001",
                         "order": 1,
                         "beat_ids": ["beat_0001", "beat_0002"],
+                        "camera": {"shot": "medium", "angle": "eye_level"},
+                        "acting": [],
                         "visual_intent": "The approach, then the escape.",
                         "lettering_ids": ["lettering_0001", "lettering_0002"],
                         "entity_ids": [
@@ -3009,6 +3091,8 @@ def _two_page_response(content_overrides: dict[str, object]) -> dict:
                         "id": "page_001_content_001",
                         "order": 1,
                         "beat_ids": ["beat_0001"],
+                        "camera": {"shot": "medium", "angle": "eye_level"},
+                        "acting": [],
                         "visual_intent": "Johansen approaches through heavy spray.",
                         "lettering_ids": ["lettering_0001"],
                         **content_overrides,
@@ -3029,6 +3113,8 @@ def _two_page_response(content_overrides: dict[str, object]) -> dict:
                         "id": "page_002_content_001",
                         "order": 1,
                         "beat_ids": ["beat_0002"],
+                        "camera": {"shot": "medium", "angle": "eye_level"},
+                        "acting": [],
                         "visual_intent": "The yacht wheels away.",
                         "lettering_ids": ["lettering_0002"],
                         "entity_ids": ["character_johansen", "location_alert"],
@@ -3370,6 +3456,7 @@ def test_beats_changing_one_entity_differently_cannot_share_content() -> None:
                 id="page_001_content_001",
                 order=1,
                 beat_ids=["beat_0001", "beat_0002"],
+                camera=PanelCamera(shot="medium", angle="eye_level"),
                 visual_intent="Johansen turns the Alert through heavy spray.",
                 lettering=[item for beat in adaptation.beats for item in beat.lettering],
                 entity_ids=["character_johansen", "location_alert"],
@@ -3479,9 +3566,9 @@ def test_normalization_never_moves_fills_or_discards_authored_words():
     from novel_to_comic.page_planning import _normalize_book_plan_draft
 
     raw = {"pages": [{"content": [
-        {"beat_ids": ["beat_0001"], "visual_intent": "First action.", "lettering_ids": []},
-        {"beat_ids": ["beat_0002"], "visual_intent": "Second action.", "lettering_ids": ["lettering_0002", "lettering_0002"]},
-        {"beat_ids": ["beat_0001"], "visual_intent": "Wrong return.", "lettering_ids": ["lettering_0001"]},
+        {"beat_ids": ["beat_0001"], "camera": {"shot": "medium", "angle": "eye_level"}, "acting": [], "visual_intent": "First action.", "lettering_ids": []},
+        {"beat_ids": ["beat_0002"], "camera": {"shot": "medium", "angle": "eye_level"}, "acting": [], "visual_intent": "Second action.", "lettering_ids": ["lettering_0002", "lettering_0002"]},
+        {"beat_ids": ["beat_0001"], "camera": {"shot": "medium", "angle": "eye_level"}, "acting": [], "visual_intent": "Wrong return.", "lettering_ids": ["lettering_0001"]},
     ]}]}
     original = deepcopy(raw)
     normalized = _normalize_book_plan_draft(raw, _adaptation())
@@ -3522,8 +3609,8 @@ def test_repeated_beat_across_parallel_detail_batches_has_one_lettering_owner(tm
                 **{key: mapped[key] for key in ("emphasis", "density_intent", "rhythm_intent")},
                 "layout_intent": "A source-supported action followed by a silent detail.",
                 "content": [
-                    {"beat_ids": mapped["beat_ids"], "visual_intent": "The assigned action.", "lettering_ids": ids},
-                    {"beat_ids": mapped["beat_ids"], "visual_intent": "A distinct silent detail.", "lettering_ids": [], "panel_role": "detail"},
+                    {"beat_ids": mapped["beat_ids"], "camera": {"shot": "medium", "angle": "eye_level"}, "acting": [], "visual_intent": "The assigned action.", "lettering_ids": ids},
+                    {"beat_ids": mapped["beat_ids"], "camera": {"shot": "medium", "angle": "eye_level"}, "acting": [], "visual_intent": "A distinct silent detail.", "lettering_ids": [], "panel_role": "detail"},
                 ],
             })
         return ApiResult(value=detail_response({"rhythm_summary": "Local detail.", "pages": pages}))
@@ -3555,10 +3642,10 @@ def _assigned_detail_fixture():
         "page_number": 30, "emphasis": "initial", "density_intent": "standard",
         "rhythm_intent": "Two events.", "layout_intent": "Three voiced moments and a silent reaction.",
         "content": [
-            {"beat_ids": [first.id], "visual_intent": "Establish the first event."},
-            {"beat_ids": [second.id], "visual_intent": "The second event begins."},
-            {"beat_ids": [second.id], "visual_intent": "The second event continues."},
-            {"beat_ids": [second.id], "visual_intent": "A silent reaction."},
+            {"beat_ids": [first.id], "camera": {"shot": "medium", "angle": "eye_level"}, "acting": [], "visual_intent": "Establish the first event."},
+            {"beat_ids": [second.id], "camera": {"shot": "medium", "angle": "eye_level"}, "acting": [], "visual_intent": "The second event begins."},
+            {"beat_ids": [second.id], "camera": {"shot": "medium", "angle": "eye_level"}, "acting": [], "visual_intent": "The second event continues."},
+            {"beat_ids": [second.id], "camera": {"shot": "medium", "angle": "eye_level"}, "acting": [], "visual_intent": "A silent reaction."},
         ],
         # Object key order is immaterial; destinations and locked order are authoritative.
         "lettering_placements": {ids[3]: reservation(3), ids[1]: reservation(1), ids[0]: reservation(1), ids[2]: reservation(2)},
@@ -3887,7 +3974,7 @@ def test_detail_batches_run_up_to_the_configured_concurrency(tmp_path: Path, con
             {"emphasis": "initial", "density_intent": "standard",
              "rhythm_intent": f"Advance page {number}.", "layout_intent": "One moment.",
              "content": [{"beat_ids": [f"beat_{number:04d}"], "lettering_ids": [f"lettering_{number:04d}"],
-                          "panel_role": "standard", "visual_intent": f"Event {number} happens.",
+                          "panel_role": "standard", "camera": {"shot": "medium", "angle": "eye_level"}, "acting": [], "visual_intent": f"Event {number} happens.",
                           "entity_ids": []}]}
             for number in (int(value) for value in match.group(1).split(","))
         ]
@@ -3946,6 +4033,8 @@ def test_plan_progress_snapshots_report_only_validated_work(tmp_path: Path) -> N
                     {
                         "beat_ids": [f"beat_{number:04d}"],
                         "panel_role": "standard" if panel == 1 else "reaction",
+                        "camera": {"shot": "medium", "angle": "eye_level"},
+                        "acting": [],
                         "visual_intent": f"Visual moment {number}.{panel}.",
                         "lettering_ids": [f"lettering_{number:04d}"] if panel == 1 else [],
                         "entity_ids": [],
@@ -4034,6 +4123,8 @@ def _three_page_page(number: int, state: str | None = None, intent: str | None =
         "rhythm_intent": f"Event {number}.", "layout_intent": f"Event {number} fills the page.",
         "content": [{
             "id": f"page_{number:03d}_content_001", "order": 1, "beat_ids": [f"beat_{number:04d}"],
+            "camera": {"shot": "medium", "angle": "eye_level"},
+            "acting": [],
             "visual_intent": intent or f"Johansen in event {number}.",
             "lettering_ids": [f"lettering_{number:04d}"],
             "entity_ids": ["character_johansen"],

@@ -686,6 +686,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `approved` | `Literal[True]` | `True` |
 | `label` | `str` | `''` |
 | `continuity_guard` | `str` | `''` |
+| `kind` | `Literal['character', 'location', 'prop'] | None` | `None` |
 
 ## ApprovedVisualReferenceInventory _(page.py)_
 
@@ -727,6 +728,23 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `beat_id` | `str` | `Field(min_length=1)` |
 | `geometry` | `PinnedGeometry` |  |
 
+## PanelCamera _(page.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `shot` | `Literal['extreme_close_up', 'close_up', 'medium_close_up', 'medium', 'medium_wide', 'wide', 'extreme_wide', 'insert']` |  |
+| `angle` | `Literal['eye_level', 'low_angle', 'high_angle', 'overhead', 'worms_eye', 'dutch']` |  |
+
+## CharacterActing _(page.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `entity_id` | `str` | `Field(min_length=1)` |
+| `facing` | `Literal['toward_viewer', 'three_quarter_left', 'three_quarter_right', 'profile_left', 'profile_right', 'away_from_viewer']` |  |
+| `gaze` | `str` | `Field(min_length=1)` |
+| `expression` | `str` | `Field(min_length=1)` |
+| `gesture` | `str` | `''` |
+
 ## PageContent _(page.py)_
 
 | Field | Type | Default |
@@ -740,6 +758,8 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `entity_ids` | `tuple[str, ...]` | `()` |
 | `appearance_states` | `dict[str, str]` | `Field(default_factory=dict)` |
 | `pinned_geometry` | `PinnedGeometry | None` | `None` |
+| `camera` | `PanelCamera | None` | `None` |
+| `acting` | `tuple[CharacterActing, ...]` | `()` |
 
 ## PlannedPageRevision _(page.py)_
 

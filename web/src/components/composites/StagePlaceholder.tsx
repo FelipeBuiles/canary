@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import { type StageName, type StageSnapshot, type StageStatus } from "../../types/api";
 import { PlanProgressBoard } from "./PlanProgressBoard";
+import { AdaptProgressBoard } from "./AdaptProgressBoard";
 import { useProjectConfig, useUpdateProjectConfig, useStageEstimate } from "../../api/queries";
 import { STATIONS } from "../../lib/stations";
 import { CreditAmount } from "../ui/CreditAmount";
@@ -360,6 +361,8 @@ export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0, startedAt, 
           </div>
           {stage === "plan" && snapshot?.kind === "plan" ? (
             <PlanProgressBoard snapshot={snapshot} />
+          ) : stage === "adapt" && snapshot?.kind === "adapt" ? (
+            <AdaptProgressBoard snapshot={snapshot} />
           ) : textWork ? (
             <>
               <p className="mt-3 font-body text-sm leading-6 text-ink-muted">{t("This step can take several minutes. Results appear when the step finishes.")}</p>

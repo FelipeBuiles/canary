@@ -54,6 +54,11 @@ logger = logging.getLogger(__name__)
 SAMPLE_COUNT = 6
 NEIGHBOR_COUNT = SAMPLE_COUNT - 1
 LLM_REQUEST_COUNT = SAMPLE_COUNT * 2  # two candidates per role before curation
+# Strict schemas require every RoleStyle token, so each candidate carries four
+# fully designed lettering roles (~half its bytes). A realistic candidate is
+# ~7k JSON chars (~2.3k tokens); the shared 16k default truncates every batch.
+_SUGGESTION_OUTPUT_CHARS_PER_STYLE = 7_000
+_SUGGESTION_MAX_OUTPUT_TOKENS = LLM_REQUEST_COUNT * 4_000
 SAMPLE_CONCURRENCY = 2
 _GENERATION_MAX_ATTEMPTS = 2
 SUGGESTION_SCHEMA_VERSION = 6
@@ -358,8 +363,9 @@ def _dedupe_suggestions(
 ) -> list[dict]:
     """Drop empty or repeated directions without excluding a whole medium."""
     def direction_key(suggestion: dict) -> tuple[str, str, str]:
-        return tuple(str(suggestion.get(field) or "").strip().casefold()
-                     for field in ("template", "proportion_family", "character_design"))
+        def norm(field: str) -> str:
+            return str(suggestion.get(field) or "").strip().casefold()
+        return norm("template"), norm("proportion_family"), norm("character_design")
 
     prior = {direction_key(s) for s in (existing_suggestions or [])}
     kept: list[dict] = []
@@ -533,7 +539,7 @@ async def generate_suggestions(
 
     async def _call_llm(
         avoid_pool: list[dict], *, required_roles: tuple[str, ...] = (),
-    ) -> list[dict] | None:
+    ) -> list[dict] | ValidationError:
         nonlocal first_usage, medium_restriction_quote, proportion_restriction_quote
         nonlocal invalid_response, validation_error
         role_gap = (
@@ -570,6 +576,7 @@ async def generate_suggestions(
             system_prompt=system,
             user_content=user,
             temperature=1.0,
+            max_output_tokens=_SUGGESTION_MAX_OUTPUT_TOKENS,
             feature="style.suggestions",
             json_schema=StyleSuggestionBatch.model_json_schema(),
         )
@@ -584,7 +591,7 @@ async def generate_suggestions(
             # extra fields or silently spread a root preset over every candidate.
             invalid_response, validation_error = api_result.value, exc
             logger.warning("Style suggestion response failed schema validation: %s", exc)
-            return None
+            return exc
         invalid_response, validation_error = None, None
         author_text = str((custom_direction or {}).get("text") or "")
         for axis, quote in (
@@ -604,6 +611,9 @@ async def generate_suggestions(
     suggestions: list[dict] = []
     selected: list[dict] | None = None
     required_count = len(portfolio_roles)
+    # Returned rather than read back from the nonlocal, so the final check
+    # reflects the last attempt (and type narrowing sees the assignment).
+    schema_error: ValidationError | None = None
     # A numerically complete pool can still be all realism or the same anatomy.
     # Validate the actual role-compatible selection on EVERY text attempt.
     for attempt in range(_GENERATION_MAX_ATTEMPTS):
@@ -612,8 +622,10 @@ async def generate_suggestions(
         candidates = await _call_llm(
             retry_pool, required_roles=missing_roles if attempt else (),
         )
-        if candidates is None:
+        if isinstance(candidates, ValidationError):
+            schema_error = candidates
             continue
+        schema_error = None
         suggestions.extend(_dedupe_suggestions(candidates, retry_pool))
         try:
             selected = _select_role_portfolio(
@@ -626,12 +638,12 @@ async def generate_suggestions(
         else:
             break
 
-    if validation_error is not None:
+    if schema_error is not None:
         raise RuntimeError(
             f"Style suggestions did not match the required schema after "
             f"{_GENERATION_MAX_ATTEMPTS} attempts. Retry style suggestions. "
-            f"{validation_error}"
-        ) from validation_error
+            f"{schema_error}"
+        ) from schema_error
     if len(suggestions) < required_count:
         raise RuntimeError(
             f"Style curation produced {len(suggestions)} usable directions; "
@@ -1550,7 +1562,7 @@ def estimate_style_batch_cost_usd(
         config.effective_prompt_model(),
         _SYSTEM_PROMPT + _build_avoid_block(load_suggestions(project_dir))
         + config.generation_language_instruction() + context,
-        output_chars=LLM_REQUEST_COUNT * 1800,
+        output_chars=LLM_REQUEST_COUNT * _SUGGESTION_OUTPUT_CHARS_PER_STYLE,
     )
     if bible is not None:
         estimates = [

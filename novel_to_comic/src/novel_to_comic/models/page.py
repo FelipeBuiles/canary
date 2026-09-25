@@ -38,6 +38,8 @@ class ApprovedVisualReference(BaseModel):
     approved: Literal[True] = True
     label: str = ""
     continuity_guard: str = ""
+    # Characters need per-panel acting; None means the kind is not known.
+    kind: Literal["character", "location", "prop"] | None = None
 
 
 class ApprovedVisualReferenceInventory(BaseModel):
@@ -112,6 +114,38 @@ class AuthorGeometryPin(BaseModel):
     geometry: PinnedGeometry
 
 
+class PanelCamera(BaseModel):
+    """Per-panel camera direction; references never choose the shot."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    shot: Literal[
+        "extreme_close_up", "close_up", "medium_close_up", "medium",
+        "medium_wide", "wide", "extreme_wide", "insert",
+    ]
+    angle: Literal["eye_level", "low_angle", "high_angle", "overhead", "worms_eye", "dutch"]
+
+
+class CharacterActing(BaseModel):
+    """How one visible character performs in one panel.
+
+    Left and right are the reader's screen directions. Identity comes from the
+    Cast reference; facing, gaze and expression come from here, so a reference
+    view never becomes the default pose or face.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    entity_id: str = Field(min_length=1)
+    facing: Literal[
+        "toward_viewer", "three_quarter_left", "three_quarter_right",
+        "profile_left", "profile_right", "away_from_viewer",
+    ]
+    gaze: str = Field(min_length=1)
+    expression: str = Field(min_length=1)
+    gesture: str = ""
+
+
 class PageContent(BaseModel):
     """One planned semantic panel, never an independently generated asset."""
 
@@ -135,6 +169,9 @@ class PageContent(BaseModel):
     entity_ids: tuple[str, ...] = ()
     appearance_states: dict[str, str] = Field(default_factory=dict)
     pinned_geometry: PinnedGeometry | None = None
+    # Plan requires both for new pages; validate_book_plan owns completeness.
+    camera: PanelCamera | None = None
+    acting: tuple[CharacterActing, ...] = ()
 
     @model_validator(mode="after")
     def _validate_references(self) -> "PageContent":
@@ -142,6 +179,11 @@ class PageContent(BaseModel):
             raise ValueError("page-scoped entity IDs must be unique")
         if not set(self.appearance_states) <= set(self.entity_ids):
             raise ValueError("appearance states must belong to visible entities")
+        acting_ids = [item.entity_id for item in self.acting]
+        if len(acting_ids) != len(set(acting_ids)):
+            raise ValueError("each visible character has at most one acting direction")
+        if not set(acting_ids) <= set(self.entity_ids):
+            raise ValueError("acting directions must belong to visible entities")
         return self
 
 

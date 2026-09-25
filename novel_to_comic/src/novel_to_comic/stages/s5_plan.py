@@ -38,26 +38,30 @@ def reference_id(entity_id: str, appearance_state_id: str | None = None) -> str:
 def approved_visual_inventory(project_dir: Path) -> ApprovedVisualReferenceInventory:
     bible = artifacts.read_story_bible(project_dir)
     references = []
-    for entity in (*bible.characters, *bible.locations, *bible.props):
-        references.append(
-            ApprovedVisualReference(
-                id=reference_id(entity.id),
-                entity_id=entity.id,
-                visual_anchor=entity.visual_anchor,
-                label=entity.name,
-            )
-        )
-        for appearance in getattr(entity, "appearance_states", ()):
+    kinds = (("character", bible.characters), ("location", bible.locations), ("prop", bible.props))
+    for kind, entities in kinds:
+        for entity in entities:
             references.append(
                 ApprovedVisualReference(
-                    id=reference_id(entity.id, appearance.id),
+                    id=reference_id(entity.id),
                     entity_id=entity.id,
-                    appearance_state_id=appearance.id,
-                    visual_anchor=appearance.visual_anchor,
+                    visual_anchor=entity.visual_anchor,
                     label=entity.name,
-                    continuity_guard=appearance.continuity_guard or "",
+                    kind=kind,
                 )
             )
+            for appearance in getattr(entity, "appearance_states", ()):
+                references.append(
+                    ApprovedVisualReference(
+                        id=reference_id(entity.id, appearance.id),
+                        entity_id=entity.id,
+                        appearance_state_id=appearance.id,
+                        visual_anchor=appearance.visual_anchor,
+                        label=entity.name,
+                        continuity_guard=appearance.continuity_guard or "",
+                        kind=kind,
+                    )
+                )
     return ApprovedVisualReferenceInventory(references=references)
 
 

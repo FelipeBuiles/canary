@@ -430,10 +430,23 @@ def _compile_prompt(
             if direction_pattern else text
         )
 
+    def acting(content, entity_id):
+        # Plan's per-panel performance overrides the reference sheet's pose and face.
+        item = next((item for item in content.acting if item.entity_id == entity_id), None)
+        if item is None:
+            return {}
+        return {"acting": {
+            "facing": item.facing.replace("_", " ") + " (reader's screen direction)",
+            "gaze": provider_safe_direction(item.gaze),
+            "expression": provider_safe_direction(item.expression),
+            **({"gesture": provider_safe_direction(item.gesture)} if item.gesture.strip() else {}),
+        }}
+
     def subjects(content):
         return [
             {
                 "subject": handles[entity_id],
+                **acting(content, entity_id),
                 "references": [
                     {
                         "image": _off_canvas_handle("asset", (reference_bindings or {}).get(ref.id, {}).get("input_order", ref.order)),
@@ -469,7 +482,9 @@ def _compile_prompt(
             "action and relationships: direct eyelines toward the relevant person or event, "
             "and choose body orientation, gesture and expression from the scene. Use profiles, "
             "rear views and opposing eyelines when the scene calls for them; do not default "
-            "to the reference portrait's three-quarter view or camera-facing lineup. Preserve "
+            "to the reference portrait's three-quarter view or camera-facing lineup. When a "
+            "visible subject carries acting, draw exactly that facing, gaze target, expression "
+            "and gesture, and frame the panel with its camera shot and angle. Preserve "
             "anatomical constraints and sided identifying features when changing viewpoint; "
             "do not mirror asymmetric features. Respect canonical staging, continuity and "
             "author pins rather than varying direction arbitrarily. For corrections, change "
@@ -505,6 +520,9 @@ def _compile_prompt(
                     "order": content.order,
                     "panel_role": content.panel_role,
                     "visual_intent": provider_safe_direction(content.visual_intent),
+                    **({"camera": f"{content.camera.shot.replace('_', ' ')} shot, "
+                                  f"{content.camera.angle.replace('_', ' ')}"}
+                       if content.camera else {}),
                     "visible_subjects": subjects(content),
                     "pinned_geometry": content.pinned_geometry.model_dump() if content.pinned_geometry else None,
                 }
