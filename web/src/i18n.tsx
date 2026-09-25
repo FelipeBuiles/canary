@@ -5,6 +5,7 @@ import { LETTERING_STUDIO_TEXT } from "./letteringStudioTranslations";
 import { SAMPLE_LIBRARY_TEXT } from "./sampleLibraryTranslations";
 import { PAGE_SOURCE_TEXT } from "./pageSourceTranslations";
 import { PLAN_PROGRESS_TEXT } from "./planProgressTranslations";
+import { ADAPT_PROGRESS_TEXT } from "./adaptProgressTranslations";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { StageName, StageStatus } from "./types/api";
@@ -87,6 +88,7 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
     ...SAMPLE_LIBRARY_TEXT.es,
     ...PAGE_SOURCE_TEXT.es,
     ...PLAN_PROGRESS_TEXT.es,
+    ...ADAPT_PROGRESS_TEXT.es,
     "Page artwork": "Ilustración de la página",
     "Preview only · local styles stay unchanged": "Solo vista previa · los estilos locales no cambian",
     "CREDIT HISTORY": "HISTORIAL DE CRÉDITOS",
@@ -2045,6 +2047,7 @@ const TEXT: Record<LanguageCode, Record<string, string>> = {
     ...SAMPLE_LIBRARY_TEXT.fr,
     ...PAGE_SOURCE_TEXT.fr,
     ...PLAN_PROGRESS_TEXT.fr,
+    ...ADAPT_PROGRESS_TEXT.fr,
     "Page artwork": "Illustration de la page",
     "Preview only · local styles stay unchanged": "Aperçu uniquement · les styles locaux restent inchangés",
     "CREDIT HISTORY": "HISTORIQUE DES CRÉDITS",

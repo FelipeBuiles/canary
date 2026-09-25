@@ -105,20 +105,20 @@ def test_retired_account_and_operator_choices_use_defaults_without_erasing_histo
     operator = tmp_path / ".operator-model-settings.json"
     account = tmp_path / "alice" / ".model-settings.json"
     account.parent.mkdir(parents=True)
-    operator.write_text(json.dumps({"version": 1, "selections": {"adapt": "glm-5.3-flash", "plan": "claude-opus-5"}}))
+    operator.write_text(json.dumps({"version": 1, "selections": {"adapt": "glm-5.3-flash", "plan": "claude-opus-5-5"}}))
     account.write_text(json.dumps({"version": 1, "selections": {"adapt": "deepseek-v4-flash", "prompt": "claude-fable-5-1"}}))
     original_operator = operator.read_bytes()
     original_account = account.read_bytes()
 
     assert read_global_selections(tmp_path)["adapt"] == "gpt-6-sol"
     assert read_selections(tmp_path, "alice")["adapt"] == "gpt-6-sol"
-    assert read_selections(tmp_path, "alice")["plan"] == "claude-opus-5"
+    assert read_selections(tmp_path, "alice")["plan"] == "claude-opus-5-5"
     assert client.get("/api/account/model-settings").status_code == 200
     assert operator.read_bytes() == original_operator
     assert account.read_bytes() == original_account
 
     update_global_selections(tmp_path, {"plan": "gpt-6-luna"})
-    update_selections(tmp_path, "alice", {"prompt": "claude-opus-5"})
+    update_selections(tmp_path, "alice", {"prompt": "claude-opus-5-5"})
     assert json.loads(operator.read_text())["selections"]["adapt"] == "glm-5.3-flash"
     assert json.loads(account.read_text())["selections"]["adapt"] == "deepseek-v4-flash"
     monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType({**codex_dev._PROCESS, "CANARY_ENV": "production"}))
@@ -409,7 +409,7 @@ def test_creation_endpoints_persist_dev_choices_or_reject(client, tmp_path, monk
 
 @pytest.mark.parametrize("model,expected_cost", [
     ("claude-fable-5-1", 0.06),
-    ("claude-opus-5", 0.03),
+    ("claude-opus-5-5", 0.024),
 ])
 def test_premium_models_select_independently_with_known_pricing(client, tmp_path, model, expected_cost):
     from novel_to_comic.model_costs import PricingResolver
@@ -455,11 +455,11 @@ def test_existing_project_models_update_and_reset_to_account(client, tmp_path, p
     update_selections(tmp_path, "alice", {"adapt": "mimo-v2.6-pro"})
     snapshot = account_config(load_config(project_settings)[0], tmp_path, "alice")
     response = client.patch("/api/projects/novel/config/", json={
-        "dev_model_selections": {"adapt": "claude-opus-5", "plan": "gpt-6-luna"},
+        "dev_model_selections": {"adapt": "claude-opus-5-5", "plan": "gpt-6-luna"},
     })
     assert response.status_code == 200
-    assert response.json()["adapt_model"] == "claude-opus-5"
-    assert load_config(project_settings)[0].dev_model_selections == {"adapt": "claude-opus-5", "plan": "gpt-6-luna"}
+    assert response.json()["adapt_model"] == "claude-opus-5-5"
+    assert load_config(project_settings)[0].dev_model_selections == {"adapt": "claude-opus-5-5", "plan": "gpt-6-luna"}
     assert snapshot.adapt_model == "mimo-v2.6-pro"
     assert read_selections(tmp_path, "alice")["adapt"] == "mimo-v2.6-pro"
     response = client.patch("/api/projects/novel/config/", json={"dev_model_selections": {}})
@@ -472,16 +472,16 @@ def test_existing_project_models_update_and_reset_to_account(client, tmp_path, p
 def test_project_model_edit_preserves_unrelated_retired_choice(client, project_settings):
     save_config(Config(dev_model_selections={"adapt": "glm-5.3-flash", "plan": "gpt-6-luna"}), project_settings)
     response = client.patch("/api/projects/novel/config/", json={
-        "dev_model_selections": {"adapt": "glm-5.3-flash", "plan": "claude-opus-5"},
+        "dev_model_selections": {"adapt": "glm-5.3-flash", "plan": "claude-opus-5-5"},
     })
     assert response.status_code == 200
     assert response.json()["adapt_model"] == "gpt-6-sol"
-    assert response.json()["plan_model"] == "claude-opus-5"
+    assert response.json()["plan_model"] == "claude-opus-5-5"
     assert load_config(project_settings)[0].dev_model_selections == {
-        "adapt": "glm-5.3-flash", "plan": "claude-opus-5",
+        "adapt": "glm-5.3-flash", "plan": "claude-opus-5-5",
     }
     assert client.patch("/api/projects/novel/config/", json={
-        "dev_model_selections": {"adapt": "some-other-retired-model", "plan": "claude-opus-5"},
+        "dev_model_selections": {"adapt": "some-other-retired-model", "plan": "claude-opus-5-5"},
     }).status_code == 400
 
 
@@ -513,7 +513,7 @@ def test_existing_edition_allows_text_changes_but_not_draw_model_changes(client,
     assert response.status_code == 200
     before = (project_settings / "config.yaml").read_bytes()
     enable_codex(monkeypatch)
-    response = client.patch("/api/projects/novel/config/", json={"dev_model_selections": {"draw": "codex-dev/image/gpt-5.5", "adapt": "claude-opus-5"}})
+    response = client.patch("/api/projects/novel/config/", json={"dev_model_selections": {"draw": "codex-dev/image/gpt-5.5", "adapt": "claude-opus-5-5"}})
     assert response.status_code == 409
     assert "new edition" in response.json()["detail"]
     assert (project_settings / "config.yaml").read_bytes() == before

@@ -33,7 +33,7 @@ operator connection used by its other views.
 | Visual review | GPT-6 Luna | Visual consistency checks |
 
 Text and vision choices are `gpt-6-sol`, `gpt-6-luna`,
-`claude-fable-5-1`, `claude-opus-5`, `mimo-v2.6-pro`, and `deepseek-v4.1-flash`.
+`claude-fable-5-1`, `claude-opus-5-5`, `mimo-v2.6-pro`, and `deepseek-v4.1-flash`.
 Image and Draw choices are `image-sunburst` only. The gateway maps these to
 OpenAI, Anthropic, OpenRouter/Xiaomi, Together AI, and FAL respectively.
 `novel_to_comic/src/novel_to_comic/text_models.py` lists the selectable text aliases and the

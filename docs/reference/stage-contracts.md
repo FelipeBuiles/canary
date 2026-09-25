@@ -306,6 +306,17 @@ silently dropped or mapped to a different approved appearance.
 State conditioning uses explicit `changed_facets` and `replaces_identity`.
 Preserve `visual_anchor` and `continuity_guard` verbatim through Cast and Draw.
 
+Cast character sheets are neutral five-view turnarounds (three-quarter and
+profile heads; front, three-quarter and back bodies) and carry identity only.
+Only an authored state affect reaches a sheet. Plan owns performance: every
+panel has a `camera` (shot, angle) and every visible entity whose inventory
+`kind` is `character` has one `acting` entry (screen-direction `facing`, `gaze`,
+`expression`, optional `gesture`). Missing staging, acting for props or
+locations, four consecutive identical facing/expression pairs, and six or more
+appearances that are all three-quarter views are Plan-repairable failures.
+Draw binds acting to subject handles. Plans written before these fields fail
+their content hash and must be rerun.
+
 Adapt's appearance changes carry forward until changed; explicit Plan state
 citations remain authoritative for intentional earlier-state imagery. A beat
 changes each entity's appearance at most once (`compound_appearance_change`),
@@ -331,12 +342,15 @@ drafts author non-lettering `continuity_intent` for scene transitions, staging,
 and held-object ownership. Canonicalization folds it into `ComicPage.layout_intent`
 as ordered panel staging, not a new `PageContent.continuity_intent` field.
 
-### Plan progress and transport limits
+### Plan and Adapt progress and transport limits
 
 Plan publishes a display-only progress snapshot (`StageState.snapshot`, pushed
 as `stage_snapshot` and restored by the status poll): the validated page map,
-then each detail batch once its pages compile and match the map. It is never
-an input to generation. Text work is sized to the transport that carries it
+then each detail batch once its pages compile and match the map. Adapt
+publishes the same kind of snapshot (`kind: "adapt"`): treatment counts, each
+source shard's beats once its blueprint validates and its lettering once that
+validates, and each validation round's blocking and editorial counts with the
+beats its failures cite. Neither snapshot is ever an input to generation. Text work is sized to the transport that carries it
 (`ai/transport.py`): the local Codex runtime executes one request at a time
 under a 15-minute deadline, so Plan and Adapt clamp concurrency to 1 there and
 Plan uses 4-page detail batches. A call counts as started only when the

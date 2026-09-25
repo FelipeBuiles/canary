@@ -90,7 +90,7 @@ describe("stage_snapshot events", () => {
       type: "stage_snapshot", stage: "plan", snapshot: snapshot(),
     });
     expect(next?.stages.plan).toMatchObject({ status: "running", items_done: 1, items_total: 5 });
-    expect(next?.stages.plan.snapshot?.pages_laid_out).toBe(4);
+    expect(next?.stages.plan.snapshot).toMatchObject({ kind: "plan", pages_laid_out: 4 });
   });
 
   it("clears a previous run's snapshot when the stage begins again", () => {

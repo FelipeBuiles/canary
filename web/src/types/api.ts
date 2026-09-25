@@ -114,7 +114,49 @@ export interface PlanProgressSnapshot {
   lettering_placed: number;
 }
 
-export type StageSnapshot = PlanProgressSnapshot;
+export type AdaptProgressPhase =
+  | "treatment"
+  | "drafting"
+  | "checking"
+  | "reviewing"
+  | "repairing"
+  | "complete";
+
+export type AdaptSectionState =
+  | "queued"
+  | "structuring"
+  | "staged"
+  | "lettering"
+  | "done"
+  | "needs_repair"
+  | "repairing";
+
+export interface AdaptProgressSection {
+  units: number;
+  title: string | null;
+  state: AdaptSectionState;
+  /** Story functions per beat; null until the section's structure validates. */
+  beats: string[][] | null;
+  lettering: number | null;
+  /** Beat positions within this section cited by the latest check. */
+  flagged: number[];
+}
+
+export interface AdaptProgressSnapshot {
+  kind: "adapt";
+  phase: AdaptProgressPhase;
+  serial_transport: boolean;
+  source_units: number;
+  treatment: { spine: number; reveals: number; turns: number; arcs: number } | null;
+  sections: AdaptProgressSection[];
+  sections_done: number;
+  beats: number;
+  lettering: number;
+  rounds: { round: number; blocking: number; notes: number }[];
+  max_rounds: number;
+}
+
+export type StageSnapshot = PlanProgressSnapshot | AdaptProgressSnapshot;
 
 export interface ProjectSummary {
   id: string;
@@ -465,6 +507,36 @@ export interface PageContent {
   lettering: LetteringItem[];
   entity_ids: string[];
   appearance_states: Record<string, string>;
+  camera: PanelCamera | null;
+  acting: CharacterActing[];
+}
+
+export interface PanelCamera {
+  shot:
+    | "extreme_close_up"
+    | "close_up"
+    | "medium_close_up"
+    | "medium"
+    | "medium_wide"
+    | "wide"
+    | "extreme_wide"
+    | "insert";
+  angle: "eye_level" | "low_angle" | "high_angle" | "overhead" | "worms_eye" | "dutch";
+}
+
+/** Per-panel performance; left/right are the reader's screen directions. */
+export interface CharacterActing {
+  entity_id: string;
+  facing:
+    | "toward_viewer"
+    | "three_quarter_left"
+    | "three_quarter_right"
+    | "profile_left"
+    | "profile_right"
+    | "away_from_viewer";
+  gaze: string;
+  expression: string;
+  gesture: string;
 }
 
 export interface ComicPage {

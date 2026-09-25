@@ -12,6 +12,7 @@ from novel_to_comic.ai.context import stream_observer
 from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.ai.providers.base import RefImage
 from novel_to_comic.config import Config
+from novel_to_comic.text_models import text_wire
 
 
 class _FakeResponse:
@@ -1447,7 +1448,7 @@ class TestStreamingOptOut:
         monkeypatch.setenv("CANARY_AI_STREAM_TEXT", "1")
         assert client._stream_text_enabled() is True
 
-    @pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna", "claude-fable-5-1", "claude-opus-5"])
+    @pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna", "claude-fable-5-1", "claude-opus-5-5"])
     def test_opting_out_falls_back_to_a_buffered_request(
         self, monkeypatch, _patch_events, model
     ):
@@ -1853,7 +1854,7 @@ def test_terminal_image_refusal_releases_credit_hold(monkeypatch):
     assert not credits._unsettled_jobs
 
 
-@pytest.mark.parametrize("model", ["claude-fable-5-1", "claude-opus-5"])
+@pytest.mark.parametrize("model", ["claude-fable-5-1", "claude-opus-5-5"])
 def test_new_claude_models_use_native_json_schema(monkeypatch, _patch_events, model):
     monkeypatch.setenv("CANARY_AI_STREAM_TEXT", "0")
     _patch_http(monkeypatch, {
@@ -1876,7 +1877,33 @@ def test_new_claude_models_use_native_json_schema(monkeypatch, _patch_events, mo
     assert "minimum" not in wire_schema["properties"]["count"]
     assert '"minimum": 1' in wire_schema["properties"]["count"]["description"]
     assert schema["properties"]["count"]["minimum"] == 1
-    assert sent["max_completion_tokens"] == 4096
+    wire = text_wire(model)
+    assert sent["max_completion_tokens"] == 4096 + wire.thinking_headroom_tokens
+    assert sent["output_config"].get("effort") == wire.effort
+
+
+def test_opus_5_5_sends_effort_without_schema_and_caps_thinking_headroom(
+    monkeypatch, _patch_events,
+):
+    monkeypatch.setenv("CANARY_AI_STREAM_TEXT", "0")
+    _patch_http(monkeypatch, {
+        "model": "claude-opus-5-5",
+        "choices": [{"message": {"content": "plain answer"}}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2},
+    })
+    asyncio.run(client.generate_text(
+        config=Config(), model="claude-opus-5-5", system_prompt="Answer.",
+        user_content="{}", max_output_tokens=120_000,
+    ))
+    sent = _FakeAsyncClient.last_request["json"]
+    # Thinking cannot be disabled; the app never sends a thinking override,
+    # sampling controls, or forced tool choice for this route.
+    assert sent["output_config"] == {"effort": "high"}
+    assert "thinking" not in sent
+    assert "temperature" not in sent
+    assert "tool_choice" not in sent and "response_format" not in sent
+    # Answer budget plus thinking headroom, clamped to the 128K output ceiling.
+    assert sent["max_completion_tokens"] == 128_000
 
 
 def test_streamed_text_refusal_preserves_reason_provenance_and_usage(monkeypatch, _patch_events):

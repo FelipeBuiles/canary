@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import re
 from datetime import datetime, timezone
@@ -2975,6 +2976,79 @@ def test_new_narrative_review_failure_gets_one_additional_bounded_repair() -> No
     ])
 
 
+def test_adapt_progress_snapshots_report_checked_work_and_repairs(tmp_path: Path) -> None:
+    # The Adapt loading view renders these snapshots: sections fill only from
+    # validated drafts, and flags and rounds come from the gating validation.
+    expected = _book_adaptation()
+    base = expected.beats[0]
+    reveal = base.model_copy(update={
+        "source_unit_ids": ("source_000001",), "story_functions": ("reveal", "reaction"),
+        "entity_ids": ("unknown_entity",), "brief_requirement_ids": ("essential_event_001",),
+        "lettering": (base.lettering[0],),
+    })
+    transition = base.model_copy(update={
+        "id": "beat_0002", "order": 2, "summary": "The witness abandons the investigation.",
+        "narrative_function": "transition", "source_unit_ids": ("source_000002",),
+        "story_functions": ("transition", "character_turn"),
+        "brief_requirement_ids": ("character_turn_001",),
+        "transitions": (ContinuityTransition(
+            dimension="place", scope_id="thread_witness", from_state="inside the house",
+            to_state="outside in the rain", description="The witness flees the house.",
+        ),),
+        "lettering": (base.lettering[1].model_copy(update={"id": "lettering_0002"}),),
+    })
+    fixed = reveal.model_copy(update={"entity_ids": base.entity_ids})
+    responses = [
+        expected.treatment.model_dump(mode="json"),
+        _blueprint_response([reveal, transition]),
+        _lettering_response([reveal, transition]),
+        {"beats": [fixed.model_dump(mode="json"), transition.model_dump(mode="json")],
+         "ledger_exceptions": []},
+    ]
+
+    async def generate(**request):
+        from novel_to_comic.ai.context import notify_execution_started
+
+        notify_execution_started()
+        return ApiResult(value=responses.pop(0), usage=None)
+
+    state = PipelineState(project_name="adapt-progress", novel_path="novel.txt",
+                          created_at=datetime.now(timezone.utc))
+    events: list[dict] = []
+    asyncio.run(produce_book_adaptation(
+        _source_document(), _story_bible(), _approved_brief(),
+        artifacts=TargetArtifacts(tmp_path),
+        ctx=StageRuntime("adapt", state, tmp_path, on_event=events.append),
+        model="gpt-4o-mini", generate=generate,
+    ))
+
+    snapshots = [event["snapshot"] for event in events if event["type"] == "stage_snapshot"]
+    assert all(snapshot["kind"] == "adapt" for snapshot in snapshots)
+    phases = list(dict.fromkeys(snapshot["phase"] for snapshot in snapshots))
+    assert phases == ["treatment", "drafting", "checking", "repairing", "reviewing", "complete"]
+    assert snapshots[0]["treatment"] is None
+    assert snapshots[0]["sections"][0]["beats"] is None
+    # In-flight states appear only when the transport starts the request.
+    states = [key for key, _ in itertools.groupby(s["sections"][0]["state"] for s in snapshots)]
+    assert states == ["queued", "structuring", "staged", "lettering", "done",
+                      "needs_repair", "repairing", "done"]
+    staged = next(s for s in snapshots if s["sections"][0]["state"] == "staged")
+    assert staged["sections"][0]["beats"] == [["reveal", "reaction"], ["transition", "character_turn"]]
+    assert staged["lettering"] == 0
+    flagged = next(s for s in snapshots if s["phase"] == "repairing")
+    assert flagged["rounds"][0]["round"] == 1 and flagged["rounds"][0]["blocking"] >= 1
+    assert flagged["sections"][0]["state"] == "needs_repair"
+    assert flagged["sections"][0]["flagged"] == [0]
+    final = snapshots[-1]
+    assert final["phase"] == "complete"
+    assert final["treatment"]["spine"] == len(expected.treatment.causal_spine)
+    assert final["sections_done"] == len(final["sections"]) == 1
+    assert final["beats"] == 2 and final["lettering"] == 2
+    assert [r["blocking"] for r in final["rounds"]][-1] == 0
+    assert final["sections"][0]["flagged"] == []
+    assert state.stages["adapt"].snapshot == final
+
+
 def test_a_failed_adaptation_preserves_the_last_candidate(
     tmp_path: Path,
 ) -> None:
@@ -4382,6 +4456,22 @@ def test_structural_repair_gets_one_more_pass_only_when_blocking_codes_decrease(
     assert not _may_repair_validation_attempt(2, [first, first])
     regressed = ValidationAttempt(attempt=2, invariant_codes=("source_order",))
     assert not _may_repair_validation_attempt(2, [first, regressed])
+
+
+def test_review_repair_that_breaks_a_structural_check_gets_the_final_repair():
+    from novel_to_comic.book_adaptation import _may_repair_validation_attempt
+    from novel_to_comic.models.validation import ValidationAttempt
+
+    # Repairing a review finding re-tagged an untouched reveal beat and lost
+    # its reaction; structural checks are free to re-run, so repair once more.
+    reviewed = ValidationAttempt(attempt=1, invariant_codes=("narrative_review_unsupported_event",))
+    regressed = ValidationAttempt(attempt=2, invariant_codes=("faithful_rushed_reaction_or_aftermath",))
+    assert _may_repair_validation_attempt(2, [reviewed, regressed])
+    assert not _may_repair_validation_attempt(3, [reviewed, regressed, regressed])
+    mixed = ValidationAttempt(attempt=2, invariant_codes=(
+        "narrative_review_unsupported_event", "faithful_rushed_reaction_or_aftermath",
+    ))
+    assert not _may_repair_validation_attempt(2, [reviewed, mixed])
 
 
 def test_second_repair_follows_changed_review_findings_not_just_codes():

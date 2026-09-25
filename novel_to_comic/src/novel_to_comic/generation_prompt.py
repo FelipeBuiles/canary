@@ -51,19 +51,24 @@ _BODY_PROPORTION_QUALITY = (
     "explicit changed anatomy and age override canonical-parent proportions",
 )
 
+# A single view teaches pages one camera angle and one face. Several neutral
+# views let Draw re-stage the character while identity stays fixed.
 _CHARACTER_REFERENCE_LAYOUT = (
-    "one clean two-view reference sheet",
+    "one clean wide turnaround reference sheet",
     "exactly one character identity",
-    "exactly two depictions of that same character",
-    "arrange the two depictions side by side: a head-and-shoulders three-quarter portrait "
-    "on the left and a neutral full-body three-quarter view on the right",
-    "the two views are simultaneous design views, not two different characters and not "
-    "a narrative sequence",
+    "exactly five depictions of that same character",
+    "left third, stacked: a head-and-shoulders three-quarter portrait on top and a "
+    "head-and-shoulders side profile below it",
+    "right two thirds, side by side at the same scale and ground line: full-body front "
+    "view, full-body three-quarter view, and full-body back view",
+    "the views are simultaneous design views, not different characters and not a "
+    "narrative sequence",
 )
 
 _CHARACTER_REFERENCE_PERFORMANCE = (
-    "Use a resting design pose unless the active anchor or authorized expression "
-    "direction requires otherwise; preserve the described affect without exaggeration",
+    "Every view uses a relaxed neutral expression and a resting design pose; acting is "
+    "chosen per panel, not by the reference. Only an explicitly described state affect "
+    "may change the expression, without exaggeration",
 )
 
 
@@ -186,11 +191,13 @@ def generate_system_constraints(
     character_label = labels["character"] if character_count == 1 else labels["characters"]
     if asset_kind == "character_ref":
         lines = [*_CHARACTER_REFERENCE_LAYOUT, labels["no_lettering"]]
+        # A character's everyday demeanor is acting, owned by Plan per panel; a
+        # canonical sheet that bakes it in makes every panel wear the same face.
         for subject in subjects:
             baseline_affect = (getattr(subject, "baseline_affect", None) or "").strip()
-            if baseline_affect:
+            if baseline_affect and getattr(subject, "appearance_state_id", None):
                 lines.append(
-                    f"baseline affect for {subject.name}: {baseline_affect}; render it "
+                    f"state affect for {subject.name}: {baseline_affect}; render it "
                     "subtly and consistently without escalating its intensity"
                 )
         lines.extend(_FACIAL_QUALITY)

@@ -872,3 +872,34 @@ def test_unchanged_saved_direction_does_not_gain_a_new_identity_or_authority():
     legacy = _sugg("Existing", "ink")
     assert style_template_for_suggestion(normalize_suggestion(legacy)) == page_style_template(legacy["template"])
     assert normalize_suggestion(normalize_suggestion(legacy)) == normalize_suggestion(legacy)
+
+
+def test_suggestion_output_budget_fits_a_full_strict_lettering_batch():
+    # Strict schemas require every RoleStyle token; the shared 16k default
+    # truncated every twelve-candidate batch (finish_reason=length).
+    mock = AsyncMock(return_value=ApiResult(value=_batch(), usage=None))
+    with patch("novel_to_comic.clients.text.generate_json", new=mock):
+        asyncio.run(generate_suggestions(Config(), _bible()))
+    budget = mock.call_args.kwargs["max_output_tokens"]
+    lettering_chars = len(json.dumps([s["lettering_design"] for s in _batch()["styles"]], indent=6))
+    # ~3 JSON chars per token; prose fields add roughly as much again.
+    assert budget * 3 >= 2 * lettering_chars
+
+
+def test_schema_invalid_response_is_repaired_on_the_shared_attempt():
+    invalid = {**_batch(), "lettering_preset": "noir"}
+    mock = AsyncMock(side_effect=[
+        ApiResult(value=invalid, usage=None), ApiResult(value=_batch(), usage=None),
+    ])
+    with patch("novel_to_comic.clients.text.generate_json", new=mock):
+        suggestions, _usage = asyncio.run(generate_suggestions(Config(), _bible()))
+    assert len(suggestions) == SAMPLE_COUNT
+    assert "Correct the previous response" in mock.call_args.kwargs["user_content"]
+
+
+def test_schema_invalid_final_attempt_fails_without_fabricating_directions():
+    invalid = {**_batch(), "lettering_preset": "noir"}
+    mock = AsyncMock(return_value=ApiResult(value=invalid, usage=None))
+    with patch("novel_to_comic.clients.text.generate_json", new=mock):
+        with pytest.raises(RuntimeError, match="did not match the required schema"):
+            asyncio.run(generate_suggestions(Config(), _bible()))

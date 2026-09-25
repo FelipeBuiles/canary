@@ -13,11 +13,11 @@ const settings = {
   selections: { adapt: "gpt-6-sol" },
   models: [
     { id: "gpt-6-sol", label: "GPT-6 Sol", provider: "OpenAI", kind: "text" as const },
-    { id: "claude-opus-5", label: "Claude Opus 5", provider: "Anthropic", kind: "text" as const },
+    { id: "claude-opus-5-5", label: "Claude Opus 5.5", provider: "Anthropic", kind: "text" as const },
   ],
   stages: [{
     id: "adapt", label: "5. Adapt — script & dialogue", description: "Writes dialogue.",
-    model_ids: ["gpt-6-sol", "claude-opus-5"],
+    model_ids: ["gpt-6-sol", "claude-opus-5-5"],
   }],
   note: "Applies to new jobs in every project.",
 };
@@ -35,8 +35,8 @@ it("saves a changed stage for all projects through the operator API", async () =
   render(<OperatorModelPanel connection={connection} />);
   const selector = await screen.findByRole("combobox", { name: /Adapt/ });
   expect((selector as HTMLSelectElement).value).toBe("gpt-6-sol");
-  await user.selectOptions(selector, "claude-opus-5");
+  await user.selectOptions(selector, "claude-opus-5-5");
   await user.click(screen.getByRole("button", { name: "Save stage models" }));
-  expect(updateOperatorModels).toHaveBeenCalledWith({ adapt: "claude-opus-5" }, connection);
+  expect(updateOperatorModels).toHaveBeenCalledWith({ adapt: "claude-opus-5-5" }, connection);
   expect(await screen.findByText("Stage models saved for new jobs across all projects.")).toBeTruthy();
 });

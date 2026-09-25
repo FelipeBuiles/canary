@@ -82,7 +82,7 @@ function ReferenceViews({ projectName, charId, timestamp }: { projectName: strin
               <img
                 src={src}
                 alt={`${t(label)} ${t("reference")}`}
-                className="aspect-[1/2] w-full object-cover"
+                className="aspect-square w-full object-cover"
                 onError={() => setFailed((f) => ({ ...f, [pose]: true }))}
               />
               <span className="block bg-ink-black/5 px-2 py-2 text-center font-meta text-xs tracking-normal text-ink-muted">

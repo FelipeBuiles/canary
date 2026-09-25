@@ -13,7 +13,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from novel_to_comic.narrative_instructions import ADAPT_DEPICTION_GUIDANCE
-from novel_to_comic.ai.context import ai_source_context, stream_observer
+from novel_to_comic.ai.context import ai_source_context, execution_observer, stream_observer
 from novel_to_comic.briefing import require_approved_brief
 from novel_to_comic.model_costs import get_pricing_resolver
 from novel_to_comic.models.adaptation import (
@@ -2668,6 +2668,8 @@ async def _generate_book_drafts(
     source_scopes: list[tuple[str, ...]] | None = None,
     required_requirements: list[tuple[str, ...]] | None = None,
     concurrency: int = _ADAPT_MAX_CONCURRENCY,
+    on_started: Callable[[int], None] | None = None,
+    on_finished: Callable[[int], None] | None = None,
 ) -> list[_BookDraft]:
     completed = 0
     # Shards stream concurrently, so the reported fraction is how much of the
@@ -2687,7 +2689,9 @@ async def _generate_book_drafts(
         with ai_source_context(
             checkpoint_names[index] if checkpoint_names else f"repair/shard_{index + 1:03d}",
             source_scopes[index] if source_scopes else (),
-        ), stream_observer(lambda chars: report(index, chars)):
+        ), stream_observer(lambda chars: report(index, chars)), execution_observer(
+            lambda: on_started(index) if on_started else None
+        ):
             draft = await _generate_book_draft(
                 prompt=prompt,
                 generate=generate,
@@ -2705,6 +2709,8 @@ async def _generate_book_drafts(
             ctx.record_item_done()
             completed += 1
             ctx.progress(progress_offset + completed, progress_total)
+        if on_finished is not None:
+            on_finished(index)
         return draft
 
     ctx.activity(fraction=0.0, detail=detail, force=True)
@@ -3455,6 +3461,150 @@ def _published_adaptation_for_review(artifacts, instruction):
     return artifacts.read_adaptation()
 
 
+class _AdaptProgress:
+    """Display-only view of Adapt work that has passed its local checks.
+
+    Published through ``ctx.snapshot``. Sections are the paid source shards;
+    their beats appear once a blueprint validates and count as lettered once
+    its locked lettering validates. Flags and round results come from the
+    same validation that gates the artifact, never from raw model output.
+    """
+
+    def __init__(
+        self,
+        ctx: StageRuntime,
+        source: SourceDocument,
+        shards: Sequence[tuple[str, ...]],
+        *,
+        model: str,
+    ) -> None:
+        from novel_to_comic.ai.transport import text_transport_limits
+
+        self._ctx = ctx
+        self._phase = "treatment"
+        self._treatment: dict[str, int] | None = None
+        self._rounds: list[dict[str, int]] = []
+        self._serial = text_transport_limits(model).parallel_calls == 1
+        self._source_units = len(source.units)
+        scene_by_unit: dict[str, str] = {}
+        for scene in source.scenes:
+            try:
+                for unit_id in scene.unit_ids(source):
+                    scene_by_unit.setdefault(unit_id, scene.title)
+            except ValueError:
+                continue
+        self._sections: list[dict[str, Any]] = [
+            {
+                "units": len(ids),
+                "title": scene_by_unit.get(ids[0]) if ids else None,
+                "state": "queued",
+                # Story functions per beat; None until a blueprint validates.
+                "beats": None,
+                "lettering": None,
+                "flagged": [],
+            }
+            for ids in shards
+        ]
+
+    def publish(self, phase: str | None = None) -> None:
+        if phase is not None:
+            self._phase = phase
+        sections = self._sections
+        # Copied: queued events and persisted state must not change when a
+        # later section updates these rows.
+        self._ctx.snapshot(deepcopy({
+            "kind": "adapt",
+            "phase": self._phase,
+            "serial_transport": self._serial,
+            "source_units": self._source_units,
+            "treatment": self._treatment,
+            "sections": sections,
+            "sections_done": sum(1 for section in sections if section["state"] == "done"),
+            "beats": sum(len(section["beats"] or ()) for section in sections),
+            "lettering": sum(section["lettering"] or 0 for section in sections),
+            "rounds": self._rounds,
+            "max_rounds": _MAX_ADAPT_VALIDATION_ATTEMPTS,
+        }))
+
+    def treatment_ready(self, treatment: NarrativeTreatment, *, publish: bool = True) -> None:
+        self._treatment = {
+            "spine": len(treatment.causal_spine),
+            "reveals": len(treatment.reveals),
+            "turns": len(treatment.character_turns),
+            "arcs": len(treatment.character_arcs),
+        }
+        if publish:
+            self.publish("drafting")
+
+    def resumed(self) -> None:
+        for section in self._sections:
+            section["state"] = "done"
+
+    def section_state(self, index: int, state: str) -> None:
+        if self._sections[index]["state"] != state:
+            self._sections[index]["state"] = state
+            self.publish()
+
+    def blueprint_ready(self, index: int, blueprint: _BlueprintDraft) -> None:
+        self._sections[index].update(
+            state="staged",
+            beats=[list(beat.story_functions) for beat in blueprint.beats],
+        )
+        self.publish()
+
+    def section_ready(self, index: int, draft: _BookDraft) -> None:
+        self._sections[index].update(
+            state="done",
+            beats=[list(beat.story_functions) for beat in draft.beats],
+            lettering=sum(len(beat.lettering) for beat in draft.beats),
+            flagged=[],
+        )
+        self.publish()
+
+    def repair_ready(self, index: int) -> None:
+        # The repaired beats are shown once the next check validates them.
+        self._sections[index].update(state="done", flagged=[])
+        self.publish()
+
+    def checked(
+        self,
+        attempt: int,
+        candidate: BookAdaptation,
+        validation: AdaptationValidation,
+        beat_to_shard: Mapping[str, int],
+    ) -> None:
+        beat_by_lettering = {
+            item.id: beat.id for beat in candidate.beats for item in beat.lettering
+        }
+        cited = {
+            beat_by_lettering.get(artifact_id, artifact_id)
+            for failure in validation.invariant_failures
+            for artifact_id in failure.artifact_ids
+        }
+        grouped: list[list[AdaptedBeat]] = [[] for _ in self._sections]
+        owner = 0
+        for beat in candidate.beats:
+            owner = beat_to_shard.get(beat.id, owner)
+            grouped[owner].append(beat)
+        for section, beats in zip(self._sections, grouped, strict=True):
+            section.update(
+                beats=[list(beat.story_functions) for beat in beats],
+                lettering=sum(len(beat.lettering) for beat in beats),
+                flagged=[index for index, beat in enumerate(beats) if beat.id in cited],
+            )
+        self._rounds.append({
+            "round": attempt,
+            "blocking": len(validation.invariant_failures),
+            "notes": len(validation.editorial_issues),
+        })
+        self.publish()
+
+    def repairing(self, affected: Iterable[int]) -> None:
+        for index in affected:
+            self._sections[index]["state"] = "needs_repair"
+        self.publish("repairing")
+
+
 async def produce_book_adaptation(
     source: SourceDocument,
     story_bible: StoryBible,
@@ -3589,8 +3739,11 @@ async def produce_book_adaptation(
     resume_candidate = resume_work.candidate if resume_work else None
 
     with ctx.execute(total=total_steps, estimated_cost_usd=initial_estimate):
+        progress = _AdaptProgress(ctx, source, shards, model=model)
         if resume_candidate is not None:
             treatment = resume_candidate.treatment
+            progress.treatment_ready(treatment, publish=False)
+            progress.resumed()
             drafts = _partition_reviewed_candidate(resume_candidate, shards)
             unit_by_id = {unit.id: unit for unit in source.units}
             shard_requirements = partition_requirements_by_shard(source, brief, shards)
@@ -3600,6 +3753,7 @@ async def produce_book_adaptation(
                 ctx.record_item_done()
             ctx.progress(total_steps, total_steps)
         else:
+            progress.publish("treatment")
             treatment_key = _checkpoint_key(
                 model=model,
                 feature="adapt.narrative_treatment",
@@ -3658,6 +3812,7 @@ async def produce_book_adaptation(
             assert treatment is not None
             ctx.record_item_done()
             ctx.progress(1, total_steps)
+            progress.treatment_ready(treatment)
 
             unit_by_id = {unit.id: unit for unit in source.units}
             shard_requirements = partition_requirements_by_shard(source, brief, shards)
@@ -3691,7 +3846,8 @@ async def produce_book_adaptation(
             known_speaker_ids = {character.id for character in story_bible.characters}
 
             async def generate_blueprint(index: int) -> _BlueprintDraft:
-                with ai_source_context("blueprint/shard_" + f"{index + 1:03d}", shards[index]):
+                with ai_source_context("blueprint/shard_" + f"{index + 1:03d}", shards[index]), \
+                        execution_observer(lambda: progress.section_state(index, "structuring")):
                     blueprint = await _generate_blueprint(
                         prompt=blueprint_prompts[index],
                         brief=brief,
@@ -3706,6 +3862,7 @@ async def produce_book_adaptation(
                     )
                 ctx.record_item_done()
                 ctx.progress(ctx.stage_state.items_done, total_steps)
+                progress.blueprint_ready(index, blueprint)
                 return blueprint
 
             async def generate_lettering(index: int, blueprint: _BlueprintDraft) -> _BookDraft:
@@ -3714,7 +3871,8 @@ async def produce_book_adaptation(
                     primary_source_unit_ids=shards[index],
                     shard_index=index + 1, shard_count=len(shards),
                 ) + instruction_suffix
-                with ai_source_context("lettering/shard_" + f"{index + 1:03d}", shards[index]):
+                with ai_source_context("lettering/shard_" + f"{index + 1:03d}", shards[index]), \
+                        execution_observer(lambda: progress.section_state(index, "lettering")):
                     draft = await _generate_locked_lettering(
                         prompt=prompt,
                         blueprint=blueprint,
@@ -3730,6 +3888,7 @@ async def produce_book_adaptation(
                     ctx.stage_state.items_done,
                     total_steps,
                 )
+                progress.section_ready(index, draft)
                 return draft
 
             ctx.activity(detail="locking structure and writing ready shards", force=True)
@@ -3754,6 +3913,7 @@ async def produce_book_adaptation(
         previous_failures: tuple[InvariantFailure, ...] = ()
         pending_repair_batch = resume_work.pending_repair if resume_work else None
         for validation_attempt in range(1, _MAX_ADAPT_VALIDATION_ATTEMPTS + 1):
+            progress.publish("checking")
             draft, beat_to_shard = _merged_draft(drafts)
             candidate = BookAdaptation(
                 revision=1,
@@ -3781,12 +3941,14 @@ async def produce_book_adaptation(
                 _save_adaptation_work(artifacts, _AdaptWorkCheckpoint(
                     candidate=candidate, shards=shards, pending_repair=pending_repair_batch,
                 ), source, story_bible, brief, story_instruction)
+                progress.publish("reviewing")
                 review_failures = await review_narrative(
                     adaptation_context(source, brief, candidate), generate=generate,
                     ctx=ctx, artifacts=artifacts, model=model, instruction=story_instruction, concurrency=concurrency,
                 )
                 validation = reviewed_validation(validation, review_failures, artifacts=artifacts, phase="adapt", context=adaptation_context(source, brief, candidate))
             history.append(_attempt_record(validation_attempt, validation))
+            progress.checked(validation_attempt, candidate, validation, beat_to_shard)
             if pending_repair_batch is not None:
                 _record_repair_batch_outcome(
                     artifacts, pending_repair_batch.names, pending_repair_batch.prompts,
@@ -3818,6 +3980,7 @@ async def produce_book_adaptation(
             )
             if not affected:
                 break
+            progress.repairing(affected)
             repair_scopes = [
                 _closed_repair_scope(
                     drafts[shard_index],
@@ -3864,6 +4027,8 @@ async def produce_book_adaptation(
                 artifacts=artifacts,
                 model=model,
                 known_speaker_ids=known_speaker_ids,
+                on_started=lambda position: progress.section_state(affected[position], "repairing"),
+                on_finished=lambda position: progress.repair_ready(affected[position]),
             )
             repaired = [
                 _canonicalize_draft_requirements(
@@ -3908,6 +4073,7 @@ async def produce_book_adaptation(
         )
         artifacts.write_adaptation(adaptation)
         artifacts.clear_failed_adaptation_candidate()
+        progress.publish("complete")
 
     return adaptation
 
@@ -3979,8 +4145,9 @@ def _repair_prompt(
         "Your previous book adaptation violated these blocking "
         "contract requirements. Return one complete corrected JSON object that "
         "resolves every one of them without dropping content you already had. "
-        "Keep unaffected wording, facts, requirement citations, and source "
-        "accounting unchanged. If a required event is already present, add its "
+        "Keep unaffected wording, facts, story_functions, requirement citations, "
+        "and source accounting unchanged; beats no finding cites keep their exact "
+        "story_functions. If a required event is already present, add its "
         "missing citation to that beat instead of staging it again. When removing "
         "a repeated or unsupported beat, transfer supported provenance and "
         "requirement IDs only to the surviving beat that actually realizes them; "
@@ -4046,6 +4213,12 @@ def _may_repair_validation_attempt(
     Review failures are identified by code and cited artifacts, not code alone:
     a repair that fixes one ``missing_context`` gap while the review exposes a
     different one is progress, not a repeated result.
+
+    Narrative review runs only after the structural checks pass, so a repair
+    that resolves review findings but breaks a structural invariant elsewhere
+    (for example dropping an untouched reveal's reaction tag) has progressed
+    past a gate the next round re-checks for free. It gets the final repair.
+    A structural failure swapped for a different structural failure does not.
     """
     if attempt < _MAX_ADAPT_ATTEMPTS:
         return True
@@ -4055,9 +4228,16 @@ def _may_repair_validation_attempt(
     previous = set(history[-2].invariant_codes)
     if not current or current == {"narrative_review_invalid"}:
         return False
-    narrative_only = all(code.startswith("narrative_review_") for code in current)
+    def narrative(codes: set[str]) -> bool:
+        return all(code.startswith("narrative_review_") for code in codes)
+
+    narrative_only = narrative(current)
     if current != previous:
-        return current < previous or narrative_only
+        review_regression = (
+            bool(previous) and narrative(previous)
+            and not any(code.startswith("narrative_review_") for code in current)
+        )
+        return current < previous or narrative_only or review_regression
 
     def identities(failures: Sequence[InvariantFailure]) -> set[tuple[str, tuple[str, ...]]]:
         return {(f.code, tuple(sorted(f.artifact_ids))) for f in failures}

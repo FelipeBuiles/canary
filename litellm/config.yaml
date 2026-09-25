@@ -16,12 +16,17 @@ model_list:
     api_key: os.environ/ANTHROPIC_API_KEY
     thinking:
       type: adaptive
-- model_name: claude-opus-5
+- model_name: claude-opus-5-5
   litellm_params:
-    model: anthropic/claude-opus-5
+    model: anthropic/claude-opus-5-5
     api_key: os.environ/ANTHROPIC_API_KEY
+    # Thinking cannot be disabled. The default display streams empty thinking
+    # blocks, which the app's first-content watchdog cannot tell from a stall;
+    # summaries arrive as reasoning deltas. Display does not change billing.
+    # Effort is sent by the app inside output_config (see text_models.py).
     thinking:
       type: adaptive
+      display: summarized
 - model_name: mimo-v2.6-pro
   litellm_params:
     model: openrouter/xiaomi/mimo-v2.6-pro

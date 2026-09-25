@@ -169,11 +169,12 @@ def build_character_state_spec(
     if state.continuity_guard:
         prompt_parts.append(state.continuity_guard)
     composition = (
-        "One square two-view reference sheet: a head-and-shoulders three-quarter portrait "
-        "on the left and a neutral full-body three-quarter standing view on the right. "
+        "One wide turnaround reference sheet: in the left third, a head-and-shoulders "
+        "three-quarter portrait above a head-and-shoulders side profile; in the right two "
+        "thirds, full-body front, three-quarter, and back standing views at one scale. "
         "Use only poses compatible with the active-state anatomy, age, and proportions. "
-        "The selected style owns rendering. Same active identity and appearance in both "
-        "views, each fully contained within its equal vertical half. No text or labels."
+        "The selected style owns rendering. Same active identity and appearance in all "
+        "five views, each fully contained within its own region. No text or labels."
     )
     prompt_parts.append(composition)
     direction_parts.append(composition)
@@ -182,13 +183,14 @@ def build_character_state_spec(
         asset_kind="character_state_ref", entity_id=char.id, state_id=state.id,
         active_state_anchor=state.visual_anchor, canonical_parent_identity=char.visual_anchor,
         continuity_guard=state.continuity_guard,
-        baseline_affect=state.baseline_affect or char.baseline_affect,
+        # Only an authored state affect belongs on a sheet; everyday demeanor is acting.
+        baseline_affect=state.baseline_affect,
         canonical_parent_path=_relative(parent, project_dir) or "", canonical_parent_sha256=parent_hash,
         preserved_facets=() if state.replaces_identity else ("identity",),
         overridden_facets=tuple(sorted(overridden)), replaces_identity=state.replaces_identity, style_path=_relative(style_path, project_dir),
         style_sha256=_sha256(style_path), configured_route_model=config.effective_image_model(),
         configured_route=image_model_profile_for_config(config).route.value,
-        requested_shape="square", effective_width=1024, effective_height=1024,
+        requested_shape="landscape", effective_width=1536, effective_height=1024,
         state_addendum=addendum, state_addendum_revision=_revision(instructions),
         lineage_status=LineageStatus.UNVERIFIED,
         rendered_prompt="\n\n".join(part for part in prompt_parts if part),

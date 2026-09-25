@@ -83,6 +83,15 @@ class TargetFixtureReplay:
             }
         if feature == "plan.book":
             plan = _json(self.project_dir / "plan" / "book.json")
+            characters = {
+                character["id"]
+                for character in _json(self.project_dir / "story_bible.json").get("characters", ())
+            }
+            # Fixtures recorded before per-panel staging get a deterministic,
+            # varied performance so replayed plans pass Plan's staging checks.
+            facings = ("three_quarter_left", "profile_right", "toward_viewer",
+                       "three_quarter_right", "profile_left", "away_from_viewer")
+            staged = 0
             pages = []
             for selected in plan["pages"]:
                 page = _json(
@@ -105,6 +114,20 @@ class TargetFixtureReplay:
                         item["id"] for item in content.pop("lettering", ())
                     ]
                     content.pop("pinned_geometry", None)
+                    content.setdefault("camera", {"shot": "medium", "angle": "eye_level"})
+                    if "acting" not in content:
+                        content["acting"] = []
+                        for entity_id in content.get("entity_ids", ()):
+                            if entity_id not in characters:
+                                continue
+                            content["acting"].append({
+                                "entity_id": entity_id,
+                                "facing": facings[staged % len(facings)],
+                                "gaze": "the focus of the panel",
+                                "expression": f"attentive, beat {staged + 1}",
+                                "gesture": "",
+                            })
+                            staged += 1
                 pages.append(page)
             return {
                 "rhythm_summary": plan["rhythm_summary"],
