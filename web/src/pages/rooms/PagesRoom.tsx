@@ -682,15 +682,16 @@ export function PagesRoom() {
         <BlockingFailureList validation={adaptValidation ?? planValidation} />
         {rerunAdaptation && <BottomBarPortal>
           <footer className="flex min-h-shell-footer flex-wrap items-center justify-end gap-3 border-t-[3px] border-ink-black bg-bristol px-4 py-3 shadow-[0_-4px_0_0_var(--color-ghost-shadow)] md:pr-6">
-            {planFailed && !planNeedsAdapt && <StageStartAction
+            {planFailed && !planNeedsAdapt ? <StageStartAction
               project={id ?? ""}
               stage="adapt"
+              layout="footer"
+              secondaryAction={rerunAdaptation}
               retry
               allowRestart={false}
               disabled={!!status?.is_running || !status?.style_selected || generationJobsLoading
                 || (generationJobs?.jobs ?? []).some((job) => job.status === "queued" || job.status === "running")}
-            />}
-            {rerunAdaptation}
+            /> : rerunAdaptation}
           </footer>
         </BottomBarPortal>}
       </RoomShell>
