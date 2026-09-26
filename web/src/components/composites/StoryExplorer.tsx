@@ -172,7 +172,7 @@ export function StoryExplorer({ story }: StoryExplorerProps) {
                   <p className="mt-3 whitespace-pre-line text-sm leading-7 text-ink-black">{readableAnchor(location.visual_anchor)}</p>
                   {appearances.length > 0 && (
                     <p className="mt-4 text-xs leading-5 text-ink-muted">
-                      {t(appearances.length === 1 ? "Scene" : "Scenes")} <span className="font-meta tabular-nums text-ink-black">{appearances.join(", ")}</span>
+                      {t("{count, plural, one {Scene} other {Scenes}}", { count: appearances.length })} <span className="font-meta tabular-nums text-ink-black">{appearances.join(", ")}</span>
                     </p>
                   )}
                 </article>

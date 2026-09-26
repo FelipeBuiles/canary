@@ -5,6 +5,7 @@ import type { LetteringEvidence, PageLettering } from "../../api/lettering";
 import { analyzeCompletePage, getPageAnalysisEstimate } from "../../api/pages";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { Button } from "../ui/Button";
+import type { Translator } from "../../locales/messages";
 import { useI18n } from "../../i18n";
 
 const checkKey = (check: PlacementCheck, index: number) => `${check.element_id ?? "page"}:${check.code}:${index}`;
@@ -15,15 +16,14 @@ function quote(text: string | undefined, limit = 28) {
 }
 
 /** Plain-language findings: what is wrong, why it matters, and what Fix does. */
-function describe(check: PlacementCheck, who: string | null, t: (text: string) => string) {
-  const face = who ? `${who}${t("’s face")}` : t("a face");
+function describe(check: PlacementCheck, who: string | null, t: Translator) {
   switch (check.code) {
     case "crosses_panel": return { title: t("Crosses a panel border"), detail: t("Readers expect words to stay inside the panel they belong to."), action: t("Fit inside panel") };
-    case "covers_face": return { title: `${t("Covers")} ${face}`, detail: t("Faces carry the emotion of the beat. Move the words just clear of it."), action: t("Move off face") };
-    case "tail_misses_speaker": return { title: who ? `${t("Tail points away from")} ${who}` : t("Tail points away from the speaker"), detail: t("The tail tells readers who is talking."), action: t("Aim the tail") };
-    case "tail_missing": return { title: who ? `${t("No tail to")} ${who}` : t("No tail to the speaker"), detail: t("Optional when the speaker is obvious, but a tail removes doubt."), action: t("Add a tail") };
-    case "covers_in_world_text": return { title: `${t("Hides")} “${quote(check.text)}” ${t("in the art")}`, detail: t("Signs and labels can matter to the scene. Keep them visible unless you mean to cover them."), action: t("Move aside") };
-    case "stray_lettering": return { title: `${t("Lettering drawn into the art")}: “${quote(check.text)}”`, detail: t("Cover it with lettering, or revise the artwork to remove it."), action: null };
+    case "covers_face": return { title: who ? t("Covers {name}’s face", { name: who }) : t("Covers a face"), detail: t("Faces carry the emotion of the beat. Move the words just clear of it."), action: t("Move off face") };
+    case "tail_misses_speaker": return { title: who ? t("Tail points away from {name}", { name: who }) : t("Tail points away from the speaker"), detail: t("The tail tells readers who is talking."), action: t("Aim the tail") };
+    case "tail_missing": return { title: who ? t("No tail to {name}", { name: who }) : t("No tail to the speaker"), detail: t("Optional when the speaker is obvious, but a tail removes doubt."), action: t("Add a tail") };
+    case "covers_in_world_text": return { title: t("Hides “{text}” in the art", { text: quote(check.text) }), detail: t("Signs and labels can matter to the scene. Keep them visible unless you mean to cover them."), action: t("Move aside") };
+    case "stray_lettering": return { title: t("Lettering drawn into the art: “{text}”", { text: quote(check.text) }), detail: t("Cover it with lettering, or revise the artwork to remove it."), action: null };
   }
 }
 
@@ -77,7 +77,7 @@ export function PlacementCheckPanel({ project, pageNumber, state, evidence, chec
         : heads === null
           ? t("This artwork’s text check ran before faces were read. Panels and drawn-in text are still checked.")
           : heads.length
-            ? `${t("Checked against this artwork")} · ${heads.length} ${t(heads.length === 1 ? "face found" : "faces found")}`
+            ? `${t("Checked against this artwork")} · ${heads.length} ${t("{count, plural, one {face found} other {faces found}}", { count: heads.length })}`
             : t("Checked against this artwork · no faces found")}</p>
       {checks.length > 0 && <ul className="lettering-check-list">{checks.map((check, index) => {
         const key = checkKey(check, index), copy = describe(check, whoFor(check), t), element = check.element_id ? byId.get(check.element_id) : null;

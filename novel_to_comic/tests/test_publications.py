@@ -15,7 +15,7 @@ from novel_to_comic.server.deployment_status import require_ops_token
 from novel_to_comic.server.routers import publications
 from novel_to_comic.state import PipelineState
 from novel_to_comic.lettering import service as lettering_service
-from novel_to_comic.lettering.translation import switch_stored_locale, prepare_translation
+from novel_to_comic.lettering.translation import switch_stored_locale, stored_languages
 from tests.test_page_finishing import _write_valid_book
 
 from .test_hybrid_lettering import make_book, save as save_lettering, update
@@ -397,8 +397,8 @@ def test_published_languages_stay_frozen_until_republished(hybrid):
     spanish_url = book["translations"][0]["pages"][0]["url"]
     before = client.get(spanish_url).content
     letter(artifacts, {"source": "The door opened.", "es": "Otra puerta.", "fr": "La porte s'ouvrit."})
-    prepared = prepare_translation(artifacts, Config(), "es")
-    switch_stored_locale(artifacts, Config(), "es", prepared.snapshot_sha256)
+    selection = next(item for item in stored_languages(artifacts, Config())["languages"] if item["locale"] == "es")
+    switch_stored_locale(artifacts, Config(), "es", selection["snapshot_sha256"])
     assert client.get(spanish_url).content == before
     assert client.get(f"/api/public/books/{book['id']}").json()["locale"] == "source"
 
@@ -420,3 +420,14 @@ def test_baked_editions_publish_without_languages(setup):
     assert client.get(f"{root}/es/pages/1").status_code == 404
     download = f"/api/public/books/{book['id']}/download/pdf"
     assert client.get(download, params={"locale": "es"}).status_code == 404
+
+
+def test_source_edits_exclude_stale_translations_from_publication(hybrid):
+    client, artifacts = hybrid
+    letter(artifacts, {"source": "The door opened.", "es": "La puerta se abrió."})
+    letter(artifacts, {"source": "The window opened.", "es": "La puerta se abrió."})
+    result = publish(client)
+    assert result["locale"] == "source"
+    assert not result["translations"]
+    assert "es" in result["unpublished_locales"]
+    assert artifacts.read_lettering(1).elements[0].text_by_locale["es"] == "La puerta se abrió."

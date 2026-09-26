@@ -653,6 +653,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `source_lettering_item_id` | `str | None` | `Field(default=None, max_length=100)` |
 | `role` | `RoleName` |  |
 | `text_by_locale` | `dict[Locale, Annotated[str, Field(max_length=10000)]]` |  |
+| `translation_sources` | `dict[Locale, Annotated[str, Field(max_length=10000)]]` | `Field(default_factory=dict)` |
 | `suggested_placement` | `PinnedGeometry` |  |
 | `placement` | `PinnedGeometry` |  |
 | `hidden` | `bool` | `False` |

@@ -83,6 +83,9 @@ class ArtifactInvalid(Exception):
             if owner_stage is not None
             else ""
         )
+        if name == "page_lettering":
+            action = (" Rerun the stages in a new editable project to rebuild lettering; "
+                      "this project’s revisions are retained.")
         super().__init__(
             f"Stored {label} is incompatible with the current pipeline.{action}"
         )

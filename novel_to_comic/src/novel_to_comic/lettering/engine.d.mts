@@ -32,6 +32,7 @@ export interface ResolvedLettering {
 }
 export interface LetteringElement {
   id: string; source_lettering_item_id: string | null; role: RoleName;
+  translation_sources?: Record<string,string>;
   text_by_locale: Record<string,string>; suggested_placement: Rect; placement: Rect;
   hidden: boolean; style_override: RoleStyle | null; tail_target: Point | null;
   suggested_tail_target: Point | null; rotation: number; scale: number; z_index: number;
@@ -60,6 +61,7 @@ export const ROLE_DEFAULTS: Readonly<Pick<RoleStyle, "text_case" | "tail_width" 
 /** The element's effective style, saveable as an override (no layout seed). */
 export function styleFor(element: LetteringElement, style: LetteringStyle): RoleStyle;
 export function roleFor(element: LetteringElement, style: LetteringStyle): RoleStyle;
+export function translationStatus(element: LetteringElement, locale: string): "missing" | "stale" | "current";
 export function textFor(element: LetteringElement, locale: string): string;
 export function elementRect(element: LetteringElement): Rect;
 export function transformedBounds(element: LetteringElement, aspect: number): Rect;

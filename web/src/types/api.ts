@@ -1,3 +1,4 @@
+import type { LanguageCode } from "../locales/languages";
 import type { LetteringElement } from "@lettering-engine";
 export type StageName =
   | "extract"
@@ -20,7 +21,7 @@ export interface ConfigOverrides {
   lettering_mode?: "integrated" | "editable";
   dev_model_selections?: Record<string, string>;
   style_template?: string;
-  target_language?: "en" | "es" | "fr";
+  target_language?: LanguageCode;
   dev_mode?: boolean;
   dev_image_scale?: number;
   dev_image_steps?: number;

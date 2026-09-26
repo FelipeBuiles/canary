@@ -5,6 +5,8 @@ import { useProjectStatus, useProjects } from "../api/queries";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/cn";
 import { Icon } from "../components/ui/Icon";
+import { canReadDocument, getRoomAccess } from "../lib/stationAccess";
+import { LockKeyhole } from "lucide-react";
 import {
   STATIONS,
   getSubstepState,
@@ -30,6 +32,7 @@ const STATE_TAG: Record<StationState, { label: string; className: string }> = {
   done: { label: "✓ DONE", className: "text-archive-sage" },
   review: { label: "● REVIEW", className: "text-hero-red" },
   running: { label: "RUNNING", className: "text-narrator-gold" },
+  queued: { label: "QUEUED", className: "text-narrator-gold" },
   failed: { label: "! FAILED", className: "text-hero-red" },
   wait: { label: "WAIT", className: "text-bristol/28" },
 };
@@ -105,7 +108,9 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
 
   function renderStationRow(station: Station) {
     const state = getStationState(station, status);
-    const tag = STATE_TAG[state];
+    const access = getRoomAccess(stationDestination(station, status), status);
+    const unavailable = access.state !== "available";
+    const tag = unavailable ? { label: t("Locked"), className: "text-bristol/60" } : STATE_TAG[state];
     const isActive = activeStation?.key === station.key;
     const readingItems = station.substeps.filter(
       (substep): substep is typeof substep & { drawer: DrawerKind } =>
@@ -121,10 +126,12 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
         <button
           type="button"
           onClick={() => goTo(stationDestination(station, status))}
+          disabled={unavailable}
+          title={access.state === "locked" ? t(access.message) : undefined}
           aria-label={`Station ${station.number} ${station.label}: ${tag.label}`}
           aria-current={isActive ? "true" : undefined}
           className={cn(
-            "flex min-h-14 items-center gap-3 px-3 py-2 text-left transition-[background-color,box-shadow,color,transform] duration-180 ease-[cubic-bezier(0.22,1,0.36,1)]",
+            "flex min-h-14 items-center gap-3 px-3 py-2 text-left transition-[background-color,box-shadow,color,transform] duration-180 ease-[cubic-bezier(0.22,1,0.36,1)] disabled:cursor-not-allowed disabled:opacity-70",
             isActive
               ? "mx-3 w-[calc(100%-1.5rem)] bg-bristol text-ink-black shadow-[4px_4px_0_0_var(--color-hero-red)]"
               : "w-full px-5 hover:bg-bristol/6 xl:px-6",
@@ -146,9 +153,9 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
             "ml-auto font-meta text-[0.52rem] font-bold leading-none tracking-[0.08em]",
             tag.className,
             isActive && state === "wait" && "text-ink-black/50",
-            isActive && state === "running" && "text-warn-orange",
+            isActive && (state === "running" || state === "queued") && "text-ink-muted",
           )}>
-            {tag.label}
+            {t(tag.label)}
           </span>
         </button>
 
@@ -162,6 +169,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
                   <button
                     type="button"
                     onClick={() => goTo(substep.route)}
+                    disabled={getRoomAccess(substep.route, status).state !== "available"}
                     aria-current={isCurrentRoute ? "page" : undefined}
                     className={cn(
                       "flex min-h-11 w-full items-center gap-2 px-3 text-left font-body text-[0.75rem] font-bold transition-colors",
@@ -187,6 +195,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
         {readingItems.length > 0 && (
           <ul className="space-y-1 px-3 pb-3" aria-label={`${station.label} reading`}>
             {readingItems.map((substep) => {
+              const locked = getRoomAccess("pages", status).state !== "available" || !canReadDocument(substep.drawer, status);
               const isCurrentReading = activeRoute === "pages"
                 && readingParam === substep.drawer;
               return (
@@ -194,15 +203,17 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
                   <button
                     type="button"
                     onClick={() => goToReading(substep.drawer)}
+                    disabled={locked}
+                    title={locked ? t("Available when this document is ready") : undefined}
                     aria-current={isCurrentReading ? "page" : undefined}
                     className={cn(
-                      "flex min-h-11 w-full items-center gap-2 px-3 text-left font-body text-[0.72rem] font-bold transition-colors",
+                      "flex min-h-11 w-full items-center gap-2 px-3 text-left font-body text-[0.72rem] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
                       isCurrentReading
                         ? "bg-bristol text-ink-black"
                         : "bg-bristol/5 text-bristol/70 hover:bg-bristol/10 hover:text-bristol",
                     )}
                   >
-                    <span aria-hidden className="h-1.5 w-1.5 shrink-0 bg-bristol/35" />
+                    {locked ? <LockKeyhole size={12} aria-hidden="true" className="shrink-0" /> : <span aria-hidden className="h-1.5 w-1.5 shrink-0 bg-bristol/35" />}
                     <span>{t(substep.label)}</span>
                   </button>
                 </li>
@@ -248,7 +259,8 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           options={[
             ...STATIONS.map((station) => ({
               value: stationDestination(station, status),
-              label: `${station.number} ${t(station.label)}`,
+              label: `${station.number} ${t(station.label)}${getRoomAccess(stationDestination(station, status), status).state !== "available" ? ` · ${t("Locked")}` : ""}`,
+              disabled: getRoomAccess(stationDestination(station, status), status).state !== "available",
             })),
             { value: "settings", label: `⚙ ${t("Settings")}` },
           ]}
@@ -262,6 +274,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
               key={substep.key}
               type="button"
               onClick={() => goTo(substep.route)}
+              disabled={getRoomAccess(substep.route, status).state !== "available"}
               aria-current={activeRoute === substep.route ? "page" : undefined}
               className={cn(
                 "min-h-11 flex-1 border-r border-ink-black/12 px-3 font-meta text-[0.52rem] uppercase tracking-[0.12em] last:border-r-0",

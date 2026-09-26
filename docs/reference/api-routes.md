@@ -67,6 +67,7 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/lettering/lettering/style` | `get_lettering_style` | `lettering.py` |
 | `PUT` | `/api/lettering/lettering/style` | `put_lettering_style` | `lettering.py` |
 | `GET` | `/api/lettering/pages/{page_number}/composite/{rendition}` | `get_page_composite` | `lettering.py` |
+| `GET` | `/api/lettering/lettering/languages` | `get_stored_languages` | `lettering.py` |
 | `GET` | `/api/lettering/lettering/translation-estimate` | `get_translation_estimate` | `lettering.py` |
 | `POST` | `/api/lettering/lettering/locale` | `post_stored_locale` | `lettering.py` |
 | `POST` | `/api/lettering/lettering/translate` | `post_translation` | `lettering.py` |

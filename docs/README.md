@@ -37,6 +37,7 @@ retained as current reference.
 
 - [PostHog and launch learning](reference/observability.md): implemented telemetry,
   private feedback, deployment configuration, and weekly evidence review.
+- [Localization](reference/localization.md): ICU catalogs, UI preferences, and independent book translation provenance.
 
 - [Sample story library](reference/sample-library.md): curated source texts,
   license provenance, reading, and local import.

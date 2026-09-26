@@ -1,3 +1,4 @@
+import type { LetteringLocale, LanguageCode } from "../locales/languages";
 import { apiFetch } from "./client";
 import type { LetteringStyle, PageLettering, PageReadHead, PageReadMark, Point, Rect } from "@lettering-engine";
 import type { CostEstimate, GenerationJob } from "../types/api";
@@ -77,26 +78,29 @@ export function pageCompositePreviewUrl(project: string, page: number, revision:
   return `/api${root(project)}/pages/${page}/composite/${rendition}?render_revision=${revision}&lettering=${letteringRevision ?? 0}`;
 }
 
-export type LetteringLocale = "en" | "es" | "fr";
+export type { LetteringLocale } from "../locales/languages";
 
 export interface LetteringTranslationEstimate extends CostEstimate {
   funding: ModelFunding;
-  target_locale: LetteringLocale;
+  target_locale: LanguageCode;
   snapshot_sha256: string;
   page_count: number;
   element_count: number;
   translate_count: number;
   preserved_target_count: number;
+  stale_target_count: number;
   /** The project's active lettering language; "source" is the original copy. */
-  current_locale?: LetteringLocale | "source";
+  current_locale?: LetteringLocale;
 }
 
-export interface LetteringTranslationRequest {
+export interface LetteringLocaleSelection {
   target_locale: LetteringLocale;
   expected_snapshot_sha256: string;
 }
 
-export function getLetteringTranslationEstimate(project: string, targetLocale: LetteringLocale) {
+export interface LetteringTranslationRequest extends LetteringLocaleSelection { target_locale: LanguageCode }
+
+export function getLetteringTranslationEstimate(project: string, targetLocale: LanguageCode) {
   return apiFetch<LetteringTranslationEstimate>(`${root(project)}/lettering/translation-estimate?target_locale=${targetLocale}`);
 }
 
@@ -108,9 +112,15 @@ export function translateProjectLettering(project: string, request: LetteringTra
 }
 
 /** Free switch to a language every element already stores; 409 when any are missing. */
-export function switchStoredLetteringLocale(project: string, request: LetteringTranslationRequest) {
+export function switchStoredLetteringLocale(project: string, request: LetteringLocaleSelection) {
   return apiFetch<{ locale: LetteringLocale; changed: boolean }>(`${root(project)}/lettering/locale`, {
     method: "POST",
     body: JSON.stringify(request),
   });
+}
+
+export interface StoredLetteringLanguage { locale: LetteringLocale; snapshot_sha256: string; stale_count: number }
+
+export function getStoredLetteringLanguages(project: string) {
+  return apiFetch<{ current_locale: LetteringLocale; languages: StoredLetteringLanguage[] }>(`${root(project)}/lettering/languages`);
 }

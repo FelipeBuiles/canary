@@ -143,7 +143,7 @@ export function PagePlanDetails({ plan, pages, detailsLoading, detailsError }: {
           <nav aria-label={t("Jump to a planned page")} className="mb-7">
             <p className={`${metaClass} mb-3`}>{t("Jump to page")}</p>
             <div className="flex flex-wrap gap-2">
-              {plannedPages.map((item) => <a key={item.page_number} href={`#${prefix}-planned-page-${item.page_number}`} aria-label={t("Jump to page {number}").replace("{number}", String(item.page_number))} className="flex min-h-11 min-w-11 items-center justify-center border border-ink-black/20 bg-bristol px-3 font-meta text-sm font-bold hover:border-ink-black hover:bg-narrator-gold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red">{item.page_number}</a>)}
+              {plannedPages.map((item) => <a key={item.page_number} href={`#${prefix}-planned-page-${item.page_number}`} aria-label={t("Jump to page {number}", { number: String(item.page_number) })} className="flex min-h-11 min-w-11 items-center justify-center border border-ink-black/20 bg-bristol px-3 font-meta text-sm font-bold hover:border-ink-black hover:bg-narrator-gold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red">{item.page_number}</a>)}
             </div>
           </nav>
         )}

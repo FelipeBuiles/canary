@@ -152,7 +152,7 @@ jobs:
           uvx pip-audit==2.10.1 -r /tmp/gateway-requirements.txt --no-deps --disable-pip
 
   tooling:
-    name: Root and showcase tooling
+    name: Root tooling
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -161,21 +161,11 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            showcase/video/package-lock.json
+          cache-dependency-path: package-lock.json
       - name: Root tooling
         run: |
           npm ci
           npm ls --all
-          npm audit --audit-level=high
-      - name: Showcase video
-        working-directory: showcase/video
-        run: |
-          npm ci
-          npm ls --all
-          npm run lint
-          npm run build
           npm audit --audit-level=high
 
   deploy:

@@ -1,4 +1,5 @@
 import { STAGE_ORDER, type ProjectStatus, type StageName, type StageStatus } from "../types/api";
+import { getStageQueue } from "./stageQueue";
 
 /**
  * The 4 user-facing stations — a UI grouping over the 8 backend stages.
@@ -80,7 +81,7 @@ export const STATIONS: Station[] = [
   },
 ];
 
-export type StationState = "done" | "review" | "running" | "failed" | "wait";
+export type StationState = "done" | "review" | "running" | "queued" | "failed" | "wait";
 
 function stageStatusOf(status: ProjectStatus | undefined, stage: StageName): StageStatus {
   return status?.stages[stage]?.status ?? "pending";
@@ -109,6 +110,7 @@ export function getStationState(station: Station, status: ProjectStatus | undefi
   };
 
   if (allStages.some((s) => stageStatusOf(status, s) === "running")) return "running";
+  if (allStages.some((s) => getStageQueue(s, status?.active_jobs))) return "queued";
   // A live downstream stage is the current truth for the station. An older
   // failed auto-step must not mask that work while the recovery chain runs.
   // The same applies to an earlier gated step: once a later gated step has
@@ -128,6 +130,7 @@ export type SubstepState = "done" | "current" | "pending";
 
 export function getSubstepState(substep: StationSubstep, status: ProjectStatus | undefined): SubstepState {
   const statuses = substep.backendStages.map((s) => stageStatusOf(status, s));
+  if (substep.backendStages.some((stage) => getStageQueue(stage, status?.active_jobs))) return "current";
   if (statuses.every((s) => s === "complete")) return "done";
   if (statuses.some((s) => s === "running" || s === "awaiting_review" || s === "failed")) return "current";
   return "pending";

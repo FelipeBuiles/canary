@@ -135,11 +135,13 @@ describe("Missing project routing", () => {
     focusManager.setFocused(undefined);
   });
 
-  it("does not redirect for a server error", async () => {
+  it("shows a retry state without redirecting for a server error", async () => {
     fetchMock.mockRejectedValue(new ApiError(500, "Server unavailable"));
     const client = setup(<p>Project content</p>, { guarded: true });
     await waitFor(() => expect(client.getQueryState(["project", "demo", "status"])?.status).toBe("error"));
-    expect(screen.getByText("Project content")).toBeTruthy();
+    expect(screen.getByText("Could not check station availability")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeTruthy();
+    expect(screen.queryByText("Project content")).toBeNull();
     expect(screen.queryByText("Project library")).toBeNull();
   });
 });

@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from PIL import Image
 from pydantic import BaseModel, Field, ConfigDict
+from novel_to_comic.localization import LANGUAGES
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.artifact_lock import production_lock
 from novel_to_comic.models.finish import FinishProductionSpec
@@ -25,7 +26,7 @@ from novel_to_comic.page_finishing import (
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
 
 # Reader languages; "source" is published only when it is the project's language.
-PUBLIC_LOCALES = ("en", "es", "fr")
+PUBLIC_LOCALES = LANGUAGES
 
 
 class PublicationInput(BaseModel):

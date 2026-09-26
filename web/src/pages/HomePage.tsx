@@ -6,7 +6,7 @@ import { Link } from "react-router-dom";
 import { BrandIdentity } from "../components/BrandIdentity";
 import { BrandMark } from "../components/BrandMark";
 import { LANGUAGES, useI18n, type LanguageCode } from "../i18n";
-import { LANDING_COPY, type LandingCopy, type LandingFaq, type LandingStep } from "./landingCopy";
+import { landingCopy, type LandingCopy, type LandingFaq, type LandingStep } from "./landingCopy";
 import "./HomePage.css";
 
 const MARKETING_IMAGES = {
@@ -255,8 +255,8 @@ function StoryShelfPreview({ copy }: { copy: LandingCopy["sampleBook"] }) {
 }
 
 export function HomePage() {
-  const { language, setLanguage } = useI18n();
-  const copy = LANDING_COPY[language];
+  const { language, setLanguage, t } = useI18n();
+  const copy = landingCopy(t);
 
   return (
     <div className="landing-page">

@@ -741,7 +741,7 @@ export function RevisionDraft({
                       </button>
                       {change.annotations.length > 0 && (
                         <span className="shrink-0 font-meta text-xs font-bold text-ink-muted">
-                          {change.annotations.length} {t(change.annotations.length === 1 ? "location" : "locations")}
+                          {change.annotations.length} {t("{count, plural, one {location} other {locations}}", { count: change.annotations.length })}
                         </span>
                       )}
                     </li>
@@ -766,7 +766,7 @@ export function RevisionDraft({
                       <div className="min-w-0 flex-1 space-y-2">
                         {change.annotations.length > 0 && (
                           <p className="font-meta text-xs font-bold text-ink-muted">
-                            {change.annotations.length} {t(change.annotations.length === 1 ? "location" : "locations")}
+                            {change.annotations.length} {t("{count, plural, one {location} other {locations}}", { count: change.annotations.length })}
                           </p>
                         )}
                         <FieldLabel htmlFor={`draft-instruction-${change.id}`}>
@@ -856,15 +856,13 @@ export function RevisionDraft({
                 {t("Estimated cost:")} ~{previewResult.estimate.estimate_credits} {t("credits")}
               </p>
               <p className="mt-1 font-body text-xs text-ink-muted">
-                {previewResult.changes.length} {t(previewResult.changes.length === 1 ? "selected fix" : "selected fixes")}
+                {previewResult.changes.length} {t("{count, plural, one {selected fix} other {selected fixes}}", { count: previewResult.changes.length })}
               </p>
               {previewResult.unselected_open_issue_ids.length > 0 && (
                 <div className="mt-2">
                   <p className="font-body text-xs leading-5">
                     <span className="font-bold">{t("Left out:")} </span>
-                    {previewResult.unselected_open_issue_ids.length} {t(previewResult.unselected_open_issue_ids.length === 1
-                      ? "open finding stays open after this revision."
-                      : "open findings stay open after this revision.")}
+                    {previewResult.unselected_open_issue_ids.length} {t("{count, plural, one {open finding stays open after this revision.} other {open findings stay open after this revision.}}", { count: previewResult.unselected_open_issue_ids.length })}
                     <Button
                       className="ml-2"
                       size="xs"
@@ -938,7 +936,7 @@ export function RevisionDraft({
                   </summary>
                   <ul className="mt-1 space-y-1 font-mono text-[0.65rem] leading-4 text-ink-muted">
                     <li>{t("reserved")}: {previewResult.estimate.reserved_credits} · {previewResult.estimate.confidence}</li>
-                    <li>{previewManualCount} {t(previewManualCount === 1 ? "manual request" : "manual requests")}</li>
+                    <li>{previewManualCount} {t("{count, plural, one {manual request} other {manual requests}}", { count: previewManualCount })}</li>
                     <li>Mode: {previewResult.mode}</li>
                     <li>Selected issues: {previewResult.selected_issue_ids.join(", ") || "—"}</li>
                     <li>Manual change ids: {previewResult.pending_manual_change_ids.join(", ") || "—"}</li>

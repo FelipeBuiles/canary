@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { defaultTailTarget, elementRect, canvasMeasure, fontCSS, loadFonts, placementChecks, renderOverlay, resolvePage, styleFor, textFor, type PlacementCheck } from "@lettering-engine";
+import { defaultTailTarget, elementRect, canvasMeasure, fontCSS, loadFonts, placementChecks, renderOverlay, resolvePage, styleFor, textFor, translationStatus, type PlacementCheck } from "@lettering-engine";
 import { getLetteringSuggestions, getPageLettering, putPageLettering, resetPageLettering, getBookLetteringStyle, putBookLetteringStyle, type HybridLetteringResponse, type PageLettering, type LetteringElement, type LetteringStyle, type RoleName, } from "../../api/lettering";
 import { pageRenderUrl } from "../../api/pages";
 import { clearLetteringDraft, editableSignature, historyReducer, initialHistory, letteringDraftKey, readLetteringDraft, writeLetteringDraft } from "../../lib/letteringHistory";
@@ -17,16 +17,18 @@ import { sampleWords } from "./letteringVoices";
 import { ProjectLetteringLanguage } from "./ProjectLetteringLanguage";
 import { PlacementCheckPanel } from "./PlacementCheckPanel";
 import { engineEvidence, useChecks } from "../../lib/placementChecks";
+import { msg } from "../../locales/messages";
 import { useI18n } from "../../i18n";
 import "./lettering.css";
-const roleNames: Record<RoleName, string> = { caption: "Caption", speech: "Speech", thought: "Thought", sfx: "Sound effect" };
+const roleNames: Record<RoleName, string> = { caption: msg("Caption"), speech: msg("Speech"), thought: msg("Thought"), sfx: msg("Sound effect") };
 const errors: Record<string, string> = {
-  missing_translation: "This language still uses the source wording. Add its translation before exporting.",
-  outside_page: "Part of this lettering is outside the page. Move it inward or reduce its rotation or scale.",
-  unsupported_script: "The bundled typefaces do not support this writing system. This page cannot be exported with missing glyphs.",
-  font_script_mismatch: "Choose M PLUS 1p for supported Japanese or Chinese characters.",
-  missing_glyphs: "This font lacks some characters. Choose a supported bundled font or change the copy; system font fallback cannot be exported.",
-  empty_copy: "Write some words or hide this element before exporting.",
+  stale_translation: msg("The source wording changed. Review this translation before exporting."),
+  missing_translation: msg("This language still uses the source wording. Add its translation before exporting."),
+  outside_page: msg("Part of this lettering is outside the page. Move it inward or reduce its rotation or scale."),
+  unsupported_script: msg("The bundled typefaces do not support this writing system. This page cannot be exported with missing glyphs."),
+  font_script_mismatch: msg("Choose M PLUS 1p for supported Japanese or Chinese characters."),
+  missing_glyphs: msg("This font lacks some characters. Choose a supported bundled font or change the copy; system font fallback cannot be exported."),
+  empty_copy: msg("Write some words or hide this element before exporting."),
 };
 function message(error: unknown): string { return error instanceof Error ? error.message : "The change could not be saved. Your local draft is still here."; }
 export function LetteringEditor({ project, pageNumber, disabled = false }: {
@@ -125,7 +127,19 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
   function changeState(state: PageLettering, preview = false) { dispatch({ type: preview ? "preview" : "change", value: state }); setError(null); }
-  function patch(id: string, patch: Partial<LetteringElement>, preview = false) { changeState({ ...history.present, elements: history.present.elements.map(e => e.id === id ? { ...e, ...patch } : e) }, preview); }
+  function patch(id: string, patch: Partial<LetteringElement>, preview = false) {
+    changeState({ ...history.present, elements: history.present.elements.map(element => {
+      if (element.id !== id) return element;
+      const next = { ...element, ...patch };
+      if (patch.text_by_locale) {
+        next.translation_sources = { ...next.translation_sources };
+        for (const [locale, text] of Object.entries(patch.text_by_locale)) {
+          if (locale !== "source" && element.text_by_locale[locale] !== text) next.translation_sources[locale] = next.text_by_locale.source;
+        }
+      }
+      return next;
+    }) }, preview);
+  }
   function withFixes(state: PageLettering, fixes: PlacementCheck[]): PageLettering {
     const patches = new Map<string, Partial<LetteringElement>>();
     for (const check of fixes) if (check.element_id && check.fix) patches.set(check.element_id, { ...patches.get(check.element_id), ...check.fix });
@@ -356,6 +370,11 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
           onFix={fixCheck} onFixAll={fixAll} onRelayout={relayout} onChecked={refreshEvidence} />
         {current ? <fieldset disabled={pageLocked} className="lettering-element-controls">
           <legend className="lettering-section-title">{t(roleNames[current.role])}{current.hidden && <span>{t("Hidden")}</span>}</legend>
+          {translationStatus(current, history.present.locale) === "stale" && <div role="alert">
+            <p>{t("The source wording changed. Review this translation before exporting.")}</p>
+            <p lang="und">{current.text_by_locale.source}</p>
+            <Button variant="outline" size="xs" onClick={() => patch(current.id, { translation_sources: { ...current.translation_sources, [history.present.locale]: current.text_by_locale.source } })}>{t("Confirm translation matches source")}</Button>
+          </div>}
           <div><div className="lettering-copy-head"><FieldLabel htmlFor="lettering-copy">{t("Words on the page")} · {history.present.locale === "source" ? t("source") : history.present.locale}</FieldLabel><EmphasisButton onToggle={emphasize} /></div><TextAreaField ref={textarea} id="lettering-copy" className="lettering-copy-field" value={current.text_by_locale[history.present.locale] ?? ""} placeholder={history.present.locale !== "source" ? current.text_by_locale.source : t("Write some words…")} maxLength={10000} onFocus={() => dispatch({ type: "begin" })} onBlur={() => dispatch({ type: "commit" })} onKeyDown={event => {
             if ((event.metaKey || event.ctrlKey) && ["b", "i"].includes(event.key.toLowerCase())) { event.preventDefault(); emphasize(); }
           }} onChange={e => patch(current.id, { text_by_locale: { ...current.text_by_locale, [history.present.locale]: e.target.value } }, true)} />

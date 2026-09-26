@@ -2,6 +2,7 @@
 .claude
 projects
 samples
+showcase
 web/node_modules
 web/dist
 .venv

@@ -363,10 +363,10 @@ const CAST_GRID = "grid grid-cols-1 gap-x-5";
 const CAST_GRID_ITEM = "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0";
 
 /** "part0001_scene_003" → "Part 1, scene 3"; any other id stays as written. */
-function sceneLabel(sceneId: string, t: (key: string) => string) {
+function sceneLabel(sceneId: string, t: (key: string, values?: Record<string, string | number>) => string) {
   const match = /^part0*(\d+)_scene_0*(\d+)$/.exec(sceneId);
   return match
-    ? t("Part {part}, scene {scene}").replace("{part}", match[1]).replace("{scene}", match[2])
+    ? t("Part {part}, scene {scene}", { part: match[1], scene: match[2] })
     : sceneId;
 }
 
@@ -1182,6 +1182,7 @@ export function CastRoom() {
     return (
       <RoomShell project={id ?? ""}>
         <StagePlaceholder
+          activeJobs={status?.active_jobs}
           project={id ?? ""}
           stage="cast"
           status={stageStatus}
@@ -1229,7 +1230,7 @@ export function CastRoom() {
           <FieldLabel htmlFor="cast-search">{t("Find a reference")}</FieldLabel>
           <div className="relative"><Search size={17} aria-hidden="true" className="pointer-events-none absolute left-3 top-3.5 text-ink-muted" /><TextField id="cast-search" type="search" className="pl-10" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search characters, places or props")} /></div>
         </div>
-        {search.trim() ? <div className="flex items-center gap-3"><p role="status" className="font-body text-sm text-ink-muted">{t("{count} references found").replace("{count}", String(matchCount))}</p><Button variant="outline" size="xs" onClick={() => setSearch("")}>{t("Clear search")}</Button></div> : <p className="max-w-sm font-body text-xs leading-6 text-ink-muted">{t("Review & adjust opens the image and its creative controls.")}</p>}
+        {search.trim() ? <div className="flex items-center gap-3"><p role="status" className="font-body text-sm text-ink-muted">{t("{count} references found", { count: String(matchCount) })}</p><Button variant="outline" size="xs" onClick={() => setSearch("")}>{t("Clear search")}</Button></div> : <p className="max-w-sm font-body text-xs leading-6 text-ink-muted">{t("Review & adjust opens the image and its creative controls.")}</p>}
       </div>
       {search.trim() && matchCount === 0 && <p className="py-8 font-body text-sm text-ink-muted">{t("No matching references. Try another name or clear your search.")}</p>}
 
