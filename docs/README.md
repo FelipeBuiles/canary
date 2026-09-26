@@ -35,6 +35,8 @@ retained as current reference.
 
 ## Current contracts and capability evidence
 
+- [Localization](reference/localization.md): ICU catalogs, UI preferences, and independent book translation provenance.
+
 - [Sample story library](reference/sample-library.md): curated source texts,
   license provenance, reading, and local import.
 - [Public books](reference/public-books.md): owner publishing, public readers,

@@ -2,6 +2,8 @@ import { useEffect, useRef } from "react";
 import { ArrowLeft } from "lucide-react";
 import { useAdaptation, useBookPlan, useCompletePages } from "../../api/queries";
 import { useI18n } from "../../i18n";
+import { canReadDocument } from "../../lib/stationAccess";
+import type { ProjectStatus } from "../../types/api";
 import type { DrawerKind } from "../../lib/stations";
 import { RoomTabs } from "../composites/RoomTabs";
 import { Button } from "../ui/Button";
@@ -11,12 +13,18 @@ import { AdaptationDetails, PagePlanDetails } from "./ReadingDetails";
 interface ReadingWorkspaceProps {
   project: string;
   kind: DrawerKind;
+  status: ProjectStatus | undefined;
   onClose: () => void;
   onKindChange: (kind: DrawerKind) => void;
 }
 
 /** Long documents live in the station, keeping normal page scrolling and navigation. */
-export function ReadingWorkspace({ project, kind, onClose, onKindChange }: ReadingWorkspaceProps) {
+export function ReadingWorkspace(props: ReadingWorkspaceProps) {
+  if (!canReadDocument(props.kind, props.status)) return null;
+  return <ReadyReadingWorkspace {...props} />;
+}
+
+function ReadyReadingWorkspace({ project, kind, status, onClose, onKindChange }: ReadingWorkspaceProps) {
   const { t } = useI18n();
   const container = useRef<HTMLElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -38,8 +46,8 @@ export function ReadingWorkspace({ project, kind, onClose, onKindChange }: Readi
           <ArrowLeft size={17} aria-hidden="true" />{t("Back to pages")}
         </Button>
         <RoomTabs ariaLabel={t("Reading documents")} tabs={[
-          { key: "adaptation", label: t("BOOK ADAPTATION"), active: kind === "adaptation", onClick: () => onKindChange("adaptation") },
-          { key: "page-plan", label: t("PAGE PLAN"), active: kind === "page-plan", onClick: () => onKindChange("page-plan") },
+          { key: "adaptation", label: t("BOOK ADAPTATION"), active: kind === "adaptation", disabled: !canReadDocument("adaptation", status), title: !canReadDocument("adaptation", status) ? t("Available when this document is ready") : undefined, onClick: () => onKindChange("adaptation") },
+          { key: "page-plan", label: t("PAGE PLAN"), active: kind === "page-plan", disabled: !canReadDocument("page-plan", status), title: !canReadDocument("page-plan", status) ? t("Available when this document is ready") : undefined, onClick: () => onKindChange("page-plan") },
         ]} className="max-w-full [&>button]:px-3 sm:[&>button]:px-5" />
       </div>
       <header className="py-2">

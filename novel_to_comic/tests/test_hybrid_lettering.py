@@ -568,6 +568,7 @@ def test_saved_locale_mismatch_opens_without_writes_and_requires_guarded_save(
     element["text_by_locale"] = {
         "source": "Edited source.", "es": "Editado.", "fr": "Modifié."
     }
+    element["translation_sources"] = {"es": "Edited source.", "fr": "Edited source."}
     element["placement"] = {"x": 0.30, "y": 0.40, "width": 0.4, "height": 0.15}
     custom = element | {
         "id": "custom-hidden", "source_lettering_item_id": None,

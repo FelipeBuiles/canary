@@ -87,7 +87,7 @@ function OpenInsufficientCreditsDialog() {
   const headline = balance >= required
     ? t("Credits ready — your action is paused")
     : actionLabel
-      ? t("{action} needs more credits").replace("{action}", actionLabel)
+      ? t("{action} needs more credits", { action: actionLabel })
       : t("Not enough credits");
 
   return (
@@ -269,7 +269,7 @@ function OpenInsufficientCreditsDialog() {
                     retry();
                   }}
                 >
-                  {balance < required ? t("Waiting for credits…") : t("Resume {action}").replace("{action}", actionLabel ?? t("pending action"))}
+                  {balance < required ? t("Waiting for credits…") : t("Resume {action}", { action: actionLabel ?? t("pending action") })}
                 </Button>
               )}
             </div>

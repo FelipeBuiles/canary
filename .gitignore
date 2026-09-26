@@ -170,7 +170,14 @@ $RECYCLE.BIN/
 *.orig
 *.rej
 docs/exports/
-showcase/
+# Showcase media and local tooling stay private; track only linked documentation.
+showcase/*
+!showcase/books/
+showcase/books/*
+!showcase/books/README.md
+!showcase/video/
+showcase/video/*
+!showcase/video/EDIT.md
 work/
 
 # keep graph outputs, skip heavy/local-only files
@@ -185,4 +192,3 @@ graphify-out/manifest.json
 graphify-out/cost.json
 # Playwright CLI output (may contain credentials)
 .playwright-cli/
-

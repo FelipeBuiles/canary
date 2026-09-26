@@ -959,40 +959,103 @@ def _closest_requirement_beat(
     )
 
 
+def _protected_display_wording(text: str) -> str:
+    return re.sub(r"\s+/\s+", " ", normalize_display_text(text)).strip()
+
+
 def _protected_language_key(text: str) -> str:
-    wording = re.sub(
-        r"\s+/\s+",
-        " ",
-        normalize_display_text(text),
-    )
     # Briefs frequently preserve dialogue with source quotation marks, while
     # a comic balloon correctly carries only the spoken words.  Those wrappers
     # are presentation, not protected wording; retain every interior character
     # (including Spanish opening/closing punctuation) for the verbatim check.
-    return wording.strip().strip('"“”«»').strip()
+    return _protected_display_wording(text).strip('"“”«»').strip()
 
 
-def _contains_protected_language(text: str, phrase: str) -> bool:
+def _protected_language_pattern(phrase: str) -> re.Pattern[str] | None:
     """Match wording, allowing only the initial case change of an excerpt.
 
     The Brief may capitalize a clause lifted from mid-sentence. Interior case,
     punctuation and words remain significant; neither authority is rewritten.
     """
-    wording, excerpt = _protected_language_key(text), _protected_language_key(phrase)
+    excerpt = _protected_language_key(phrase)
     if not excerpt:
-        return False
+        return None
     initial = "(?:" + "|".join(re.escape(c) for c in {excerpt[0].lower(), excerpt[0].upper()}) + ")"
-    return re.search(r"(?<!\w)" + initial + re.escape(excerpt[1:]) + r"(?!\w)", wording) is not None
+    return re.compile(r"(?<!\w)" + initial + re.escape(excerpt[1:]) + r"(?!\w)")
+
+
+def _contains_protected_language(text: str, phrase: str) -> bool:
+    pattern = _protected_language_pattern(phrase)
+    return pattern is not None and pattern.search(_protected_language_key(text)) is not None
+
+
+def _protected_speech(phrase: str) -> tuple[str, ...]:
+    """Return the quotations of a dialogue-led protected passage.
+
+    A Brief may protect speech with its attribution, e.g. ``"Goblins aren't
+    very bright," he thought. "I'm bigger."``. A comic letters only the spoken
+    words: the tag becomes balloon ownership and its comma a sentence break.
+    Such a passage obliges each quotation verbatim, less that tag comma.
+    Narration-led phrases and lone quotations are not dialogue passages.
+    """
+    wording = _protected_display_wording(phrase)
+    spans = list(re.finditer(r'"([^"]*)"|«([^«»]*)»', wording))
+    if not spans or spans[0].start() != 0 or (len(spans) == 1 and spans[0].end() == len(wording)):
+        return ()
+    return tuple(
+        speech
+        for span in spans
+        if (speech := (span.group(1) or span.group(2) or "").strip().removesuffix(",").rstrip())
+    )
+
+
+def _protected_language_realized(phrase: str, wordings: Iterable[str]) -> bool:
+    wordings = tuple(wordings)
+    if any(_contains_protected_language(wording, phrase) for wording in wordings):
+        return True
+    speech = _protected_speech(phrase)
+    return bool(speech) and all(
+        any(_contains_protected_language(wording, quotation) for wording in wordings)
+        for quotation in speech
+    )
+
+
+def _protected_source_unit_ids(source: SourceDocument, phrase: str) -> tuple[str, ...]:
+    """Source units carrying a phrase's protected wording, in source order.
+
+    Extraction splits sentences, quotations, and attribution tags into separate
+    units, while a Brief quotes the passage as a reader sees it. Search the
+    joined source so wording that crosses a unit boundary is still located.
+    """
+    joined, bounds = "", []
+    for unit in source.units:
+        if not (wording := _protected_display_wording(_strip_source_emphasis(unit.text))):
+            continue
+        start = len(joined) + 1 if joined else 0
+        joined = f"{joined} {wording}" if joined else wording
+        bounds.append((unit.id, start, len(joined)))
+    matched: set[str] = set()
+    for needle in _protected_speech(phrase) or (phrase,):
+        if (pattern := _protected_language_pattern(needle)) is None:
+            continue
+        for match in pattern.finditer(joined):
+            matched.update(unit_id for unit_id, start, end in bounds
+                           if start < match.end() and match.start() < end)
+    return tuple(unit_id for unit_id, _, _ in bounds if unit_id in matched)
 
 
 def _protected_language_obligations(source, brief, source_ids):
     owned = set(source_ids)
-    return [
-        {"text": phrase, "source_unit_ids": matches}
-        for phrase in brief.protected_language
-        if (matches := [unit.id for unit in source.units if unit.id in owned
-                        and _contains_protected_language(_protected_source_key(unit.text), phrase)])
-    ]
+    obligations = []
+    for phrase in brief.protected_language:
+        matches = [unit_id for unit_id in _protected_source_unit_ids(source, phrase) if unit_id in owned]
+        if not matches:
+            continue
+        obligation: dict[str, Any] = {"text": phrase}
+        if speech := _protected_speech(phrase):
+            obligation["lettered_wording"] = list(speech)
+        obligations.append({**obligation, "source_unit_ids": matches})
+    return obligations
 
 
 def _quoted_source_wording(text: str) -> tuple[str, ...]:
@@ -1005,12 +1068,15 @@ def _quoted_source_wording(text: str) -> tuple[str, ...]:
     )
 
 
-def _protected_source_key(text: str) -> str:
-    """Compare source emphasis as presentation without changing source bytes."""
+def _strip_source_emphasis(text: str) -> str:
     # Only paired word-boundary emphasis, not arbitrary asterisks/underscores
     # (multiplication and identifiers remain literal source wording).
-    text = re.sub(r"(?<![\w\\])(\*\*|__|\*|_)(?=\S)(.+?\S|\S)\1(?!\w)", r"\2", text)
-    return _protected_language_key(text)
+    return re.sub(r"(?<![\w\\])(\*\*|__|\*|_)(?=\S)(.+?\S|\S)\1(?!\w)", r"\2", text)
+
+
+def _protected_source_key(text: str) -> str:
+    """Compare source emphasis as presentation without changing source bytes."""
+    return _protected_language_key(_strip_source_emphasis(text))
 
 
 def _complete_source_quote_excerpt(item: LetteringItem, source_by_id) -> LetteringItem:
@@ -1090,7 +1156,7 @@ def _materialize_protected_lettering(
     }
     for phrase in brief.protected_language:
         phrase_key = _protected_language_key(phrase)
-        if any(_contains_protected_language(existing, phrase) for existing in existing_keys):
+        if _protected_language_realized(phrase, existing_keys):
             continue
         source_unit = next(
             (
@@ -1536,7 +1602,10 @@ _PROTECTED_LANGUAGE_GUIDANCE = (
     "Keep a source-backed beat for each obligation and realize its wording in "
     "the final lettering, with its source citation. Do not omit it or replace "
     "it with a summary. Initial excerpt capitalization may differ from the "
-    "source; preserve all words and interior capitalization. "
+    "source; preserve all words and interior capitalization. When an obligation "
+    "lists lettered_wording, its text is dialogue with attribution: letter each "
+    "listed quotation verbatim in the speaker's balloon and express the "
+    "attribution through the balloon's speaker, not a caption. "
 )
 
 
@@ -4516,15 +4585,10 @@ def validate_book_adaptation(
     missing_protected = [
         phrase
         for phrase in brief.protected_language
-        if not any(
-            _contains_protected_language(wording, phrase) for wording in complete_wording
-        )
+        if not _protected_language_realized(phrase, complete_wording)
     ]
     for phrase_index, phrase in enumerate(missing_protected):
-        missing_source_ids = tuple(
-            unit.id for unit in source.units
-            if _contains_protected_language(_protected_source_key(unit.text), phrase)
-        )
+        missing_source_ids = _protected_source_unit_ids(source, phrase)
         missing_beats = tuple(dict.fromkeys(
             beat_id for entry in adaptation.ledger
             if entry.source_unit_id in missing_source_ids
@@ -4843,7 +4907,6 @@ def _omission_issues(
     """
 
     ordinal_by_unit = {unit.id: unit.ordinal for unit in source.units}
-    text_by_unit = {unit.id: unit.text for unit in source.units}
     omitted = sorted(
         (
             entry
@@ -4854,14 +4917,14 @@ def _omission_issues(
         key=lambda entry: ordinal_by_unit[entry.source_unit_id],
     )
     issues: list[EditorialIssue] = []
-    protected = [
-        normalize_display_text(phrase)
+    protected_units = {
+        normalize_display_text(phrase): set(_protected_source_unit_ids(source, phrase))
         for phrase in brief.protected_language
         if phrase.strip()
-    ]
+    }
     for entry in omitted:
-        unit_text = normalize_display_text(text_by_unit[entry.source_unit_id])
-        dropped = [phrase for phrase in protected if _contains_protected_language(unit_text, phrase)]
+        dropped = [phrase for phrase, unit_ids in protected_units.items()
+                   if entry.source_unit_id in unit_ids]
         if dropped:
             issues.append(
                 EditorialIssue(

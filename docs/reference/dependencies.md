@@ -12,7 +12,6 @@ rollout. The manifests, lockfiles, Dockerfiles and CI remain authoritative.
 | LiteLLM gateway | `litellm/pyproject.toml`, `litellm/uv.lock` | Independent environment; both Dockerfiles install this same lock |
 | Browser application | `web/package.json`, `web/package-lock.json` | `npm ci` in `web` |
 | Browser automation tooling | Root `package.json`, `package-lock.json` | `npm ci` at repository root |
-| Showcase video | `showcase/video/package.json`, `showcase/video/package-lock.json` | `npm ci` in `showcase/video` |
 | Development observability | `docker-compose.yml` | Explicit Langfuse/storage versions and a MinIO digest |
 | Runtime and release tools | `.nvmrc`, Dockerfiles, `.github/workflows/ci.yml` | Node 24.21.0, Python 3.12, uv 0.12.17, Fly CLI 0.4.104 |
 
@@ -41,8 +40,8 @@ or serving a database-free health check alone would miss this failure mode.
 ## September refresh
 
 The app lock updates 53 existing Python package versions, including transitive
-packages. All three npm lockfiles are resolved against the reviewed manifests;
-the showcase lock is now tracked instead of being left to resolve on each install.
+packages. The root and web npm lockfiles are resolved against the reviewed
+manifests. The showcase video project remains local-only and is outside CI.
 
 | Component | Previous resolved version or runtime | Selected version |
 | --- | --- | --- |
@@ -150,8 +149,7 @@ pointer handlers and moving connection-state transitions to user actions.
 
 Normal PR CI installs the checked-in locks, checks peer/dependency consistency,
 runs backend and browser tests, lints and compiles the frontend, builds the
-production Docker image, tests/builds the real gateway, and lints/bundles the
-showcase. Python production environments are exported without the editable
+production Docker image, and tests/builds the real gateway. Python production environments are exported without the editable
 project and audited with `pip-audit`; npm audits cover application and tooling.
 An audit failure is not waived automatically.
 
@@ -163,7 +161,6 @@ uv lock --project novel_to_comic --upgrade
 uv lock --project litellm --upgrade
 npm update --package-lock-only
 (cd web && npm update --package-lock-only)
-(cd showcase/video && npm update --package-lock-only)
 ```
 
 These commands stay within manifest constraints; major upgrades require an

@@ -1131,11 +1131,15 @@ Authenticated provider-free routes (under `/api/projects/{project_id}`):
   or Draw exist through Look's book-lettering panel. Inheriting pages reflow;
   full per-element style overrides remain independent. Retained baked editions
   remain non-editable. Editing lettering does not regenerate artwork.
+- `GET /lettering/languages` and `POST /lettering/locale`: read stored language
+  choices once and select them, including `source`, without model admission,
+  pricing or credits. Selection snapshots guard against concurrent edits.
+  Same-locale no-ops preserve visual-review evidence.
 - `GET /lettering/translation-estimate` and `POST /lettering/translate`:
   explicit, estimated project-wide translation of saved lettering into the
   chosen target language (en/es/fr). The estimate prices the exact prepared
   prompts; the submit enqueues one reserved `lettering_translation` job that
-  fills only missing target-locale variants across all current pages, preserves
+  translates from source display copy and fills only missing target-locale variants across all current pages, preserves
   existing target wording including manual edits, and keeps artwork, geometry,
   reading order, and Adapt canonical copy untouched. Stale snapshots return
   412 before any spend; a job failure never silently republishes partial
@@ -1143,6 +1147,11 @@ Authenticated provider-free routes (under `/api/projects/{project_id}`):
   Baked editions, stale pages, or undrawn pages reject before spending. The
   project locale persists through seeds/resets/saves; a language change still
   requires visual review on every page before export.
+  Per-element `translation_sources` records the exact source copy used for each
+  variant. Source edits retain target text but mark it stale until target editing
+  or explicit translation confirmation. Stale translations block export/publication;
+  translation confirmation never establishes visual placement review. See
+  [localization](localization.md) for schema incompatibility and catalog workflow.
 - `GET /pages/{page_number}/composite/{full|reader|thumbnail}`: cached finished
   PNG/WebP views. The ordinary render endpoint always serves raw artwork for QA.
 

@@ -1,7 +1,8 @@
 export interface PublicationPage { number: number; width: number; height: number; url: string; spread_role?: "single" | "left" | "right" | "spread" }
 
 /** Reader languages; "source" is the book's original copy. */
-export type PublicationLocale = "source" | "en" | "es" | "fr";
+export type { LetteringLocale as PublicationLocale } from "../locales/languages";
+import type { LetteringLocale as PublicationLocale } from "../locales/languages";
 
 export interface Publication {
   id: string;

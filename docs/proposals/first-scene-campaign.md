@@ -1,5 +1,7 @@
 # Test campaign: A scene worth seeing
 
+**Status: Superseded, September 26, 2026,** by [showcase-and-growth-2026-09.md](showcase-and-growth-2026-09.md). Kept for rationale only.
+
 **Status: Draft, prepared September 9, 2026. Nothing sent, published, or purchased.**
 Execution depends on the [self-service launch gates](self-service-launch.md).
 All budgets and thresholds are proposed. Current customer demand and acquisition

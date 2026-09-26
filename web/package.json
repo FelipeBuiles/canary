@@ -8,17 +8,21 @@
     "brand:check": "tsc -p brand-system/tsconfig.json && node --experimental-strip-types brand-system/src/validate.ts",
     "brand:preview": "npm run brand:build && vite --open /brand-system/preview/",
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "npm run i18n:check && tsc -b && vite build",
     "audit:production": "npm audit --omit=dev --audit-level=high",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test-watch": "vitest"
+    "test-watch": "vitest",
+    "i18n:check": "node scripts/catalogs.mjs",
+    "i18n:extract": "node scripts/catalogs.mjs --extract"
   },
   "dependencies": {
+    "@formatjs/icu-messageformat-parser": "^3.5.20",
     "@sentry/react": "^10.75.0",
     "@supabase/supabase-js": "^2.116.0",
     "@tanstack/react-query": "^5.103.1",
+    "intl-messageformat": "^12.1.2",
     "lucide-react": "^1.47.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",

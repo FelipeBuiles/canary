@@ -28,6 +28,8 @@ BRIEF_DEPICTION_GUIDANCE = (
     "do not require explicit depiction in one field while requesting restraint "
     "in another. Select protected_language narrowly: essential quotations, "
     "inscriptions, refrains, or key lines, not whole descriptive passages. "
+    "Protect a spoken or thought line as its words only, without attribution "
+    "tags such as 'he said'; give each quotation its own entry. "
 )
 
 ADAPT_DEPICTION_GUIDANCE = (

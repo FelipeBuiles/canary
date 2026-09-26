@@ -31,7 +31,7 @@ Production stage models are overlaid from operator settings when a job config is
 | `visual_review_model` | `str` | `GATEWAY_PAGE_OCR` |  |
 | `image_model` | `str` | `GATEWAY_IMAGE_SUNBURST` |  |
 | `draw_model` | `str` | `GATEWAY_IMAGE_SUNBURST` |  |
-| `target_language` | `str` | `'en'` |  |
+| `target_language` | `Language` | `'en'` |  |
 | `lettering_mode` | `Literal['editable', 'integrated']` | `'editable'` |  |
 | `dev_mode` | `bool` | `False` |  |
 | `dev_image_concurrency` | `int` | `5` |  |

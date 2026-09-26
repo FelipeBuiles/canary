@@ -55,10 +55,10 @@ function PageTile({ page, state }: { page: PlanProgressPage; state: TileState })
     waiting: "border-dashed border-ink-soft/60 bg-pulp-paper",
   }[state];
   const description = [
-    t("Page {n}").replace("{n}", String(page.page)),
+    t("Page {n}", { n: String(page.page) }),
     page.panels !== null
-      ? t("{n} panels").replace("{n}", String(page.panels))
-      : t("{n} story beats").replace("{n}", String(page.beats)),
+      ? t("{n} panels", { n: String(page.panels) })
+      : t("{n} story beats", { n: String(page.beats) }),
     peak ? t("Peak moment") : null,
     turn ? t("Page-turn reveal") : null,
   ].filter(Boolean).join(" · ");
@@ -139,16 +139,12 @@ export function PlanProgressBoard({ snapshot }: { snapshot: PlanProgressSnapshot
         <Stat
           value={pageCount ? String(pageCount) : "—"}
           label={t("Pages")}
-          detail={t("Target {min}–{max}")
-            .replace("{min}", String(snapshot.target_pages.min))
-            .replace("{max}", String(snapshot.target_pages.max))}
+          detail={t("Target {min}–{max}", { min: String(snapshot.target_pages.min), max: String(snapshot.target_pages.max) })}
         />
         <Stat
           value={String(snapshot.panels)}
           label={t("Panels")}
-          detail={pageCount ? t("{done} of {total} pages laid out")
-            .replace("{done}", String(snapshot.pages_laid_out))
-            .replace("{total}", String(pageCount)) : undefined}
+          detail={pageCount ? t("{done} of {total} pages laid out", { done: String(snapshot.pages_laid_out), total: String(pageCount) }) : undefined}
         />
         <Stat
           value={`${snapshot.lettering_placed}/${snapshot.lettering_total}`}
@@ -177,8 +173,8 @@ export function PlanProgressBoard({ snapshot }: { snapshot: PlanProgressSnapshot
 
       {(writing.length > 0 || queued.length > 0) && (
         <p className="mt-3 font-body text-xs font-semibold leading-5 text-ink-muted">
-          {writing.map((batch) => t("Writing pages {range}.").replace("{range}", range(batch))).join(" ")}
-          {queued.length > 0 && ` ${t(queued.length === 1 ? "1 batch waiting." : "{n} batches waiting.").replace("{n}", String(queued.length))}`}
+          {writing.map((batch) => t("Writing pages {range}.", { range: range(batch) })).join(" ")}
+          {queued.length > 0 && ` ${t("{count, plural, one {# batch waiting.} other {# batches waiting.}}", { count: queued.length })}`}
           {snapshot.serial_transport && queued.length > 0 && ` ${t("This model writes one batch at a time, so waiting batches start as each one finishes.")}`}
         </p>
       )}

@@ -144,7 +144,7 @@ export function CreditHistoryLedger({
             <div>
               <h3 id={`ledger-day-${group.key}`} className="font-body text-[1rem] font-bold text-ink-black">{formatDay(group.latestAt)}</h3>
               <p className="mt-0.5 font-body text-sm font-semibold text-ink-muted">
-                {t(group.runs.length === 1 ? "{count} activity" : "{count} activities").replace("{count}", String(group.runs.length))}
+                {t("{count, plural, one {# activity} other {# activities}}", { count: group.runs.length })}
               </p>
             </div>
             <div className="flex w-full flex-wrap justify-start gap-x-4 gap-y-1 font-meta text-xs font-bold tabular-nums text-ink-muted sm:w-auto sm:justify-end">
@@ -163,9 +163,9 @@ export function CreditHistoryLedger({
                       {activity.projectId ? projectNameMap.get(activity.projectId) ?? t("Project no longer available") : t("Account")}
                     </p>
                     <p className="mt-1 font-body text-sm text-ink-muted">
-                      {t(activity.runs.length === 1 ? "{count} activity" : "{count} activities").replace("{count}", String(activity.runs.length))}
-                      {activity.heldCount > 0 && ` · ${t(activity.heldCount === 1 ? "{count} open hold" : "{count} open holds").replace("{count}", String(activity.heldCount))}`}
-                      {activity.failedCount > 0 && ` · ${t("{count} unsuccessful").replace("{count}", String(activity.failedCount))}`}
+                      {t("{count, plural, one {# activity} other {# activities}}", { count: activity.runs.length })}
+                      {activity.heldCount > 0 && ` · ${t("{count, plural, one {# open hold} other {# open holds}}", { count: activity.heldCount })}`}
+                      {activity.failedCount > 0 && ` · ${t("{count} unsuccessful", { count: String(activity.failedCount) })}`}
                     </p>
                   </div>
                   <div className="flex basis-full flex-wrap gap-x-4 gap-y-1 pl-7 font-body text-sm font-semibold tabular-nums sm:basis-auto sm:justify-end sm:pl-0">

@@ -11,7 +11,7 @@ from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 from novel_to_comic.models.lettering import LetteringStyle, PageLettering
 
-ENGINE_VERSION = "lettering-svg-v11"
+ENGINE_VERSION = "lettering-svg-v12"
 _ROOT = Path(__file__).parent
 _FONT_ROOT = _ROOT.parent / "fonts"
 # Every call runs outside any caller's asyncio loop. Each isolated browser is
