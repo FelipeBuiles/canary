@@ -25,7 +25,7 @@ clean exit; on exception it calls ``fail`` and re-raises.
 
 from __future__ import annotations
 
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from datetime import UTC, datetime
 import json
 import logging
@@ -163,28 +163,15 @@ class StageRuntime:
     def execute(
         self, total: int = 0, estimated_cost_usd: float = 0.0
     ) -> Generator[StageRuntime, None, None]:
-        """Run one stage and optionally emit one local OTel span."""
-        span_context = nullcontext()
-        try:
-            from opentelemetry import trace
-
-            span_context = trace.get_tracer("canary.stage").start_as_current_span(
-                f"stage.{self.name}",
-                attributes={"canary.stage": self.name},
-            )
-        except Exception:
-            pass
-        with span_context as span:
+        """Run one stage with bounded, metadata-only tracing."""
+        from novel_to_comic.server.telemetry import operation_span
+        span_context = operation_span(f"stage.{self.name}", stage=self.name)
+        with span_context:
             self.begin(total, estimated_cost_usd)
             try:
                 yield self
                 self.complete()
             except Exception as exc:
-                if span is not None:
-                    try:
-                        span.record_exception(exc)
-                    except Exception:
-                        pass
                 from novel_to_comic.text_utils import clean_exception_message
                 from novel_to_comic.server.diagnostics import local_diagnostics_enabled
 

@@ -1717,7 +1717,7 @@ def test_finalise_image_cancelled_records_cancelled_status(_patch_events):
         estimated_cost_usd=None,
         started=time.perf_counter(),
         started_at=datetime.datetime.now(datetime.UTC),
-        langfuse_input={},
+
     )
     asyncio.run(
         finalise_image_cancelled(

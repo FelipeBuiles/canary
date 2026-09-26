@@ -35,7 +35,7 @@ to a release evidence record before calling the upgrade deployed.
   │  └────────────────────────────────────────────────────────┘  │
   └──────────────────────────────────────────────────────────────┘
               │                │                │
-         Supabase          Stripe         Sentry / OTel
+         Supabase          Stripe         PostHog Cloud
          (managed)        (live keys)      (SaaS)
 ```
 
@@ -127,9 +127,9 @@ SUPABASE_URL=https://<project>.supabase.co
 SUPABASE_SECRET_KEY=<service_role key — server only, NEVER in the browser>
 STRIPE_SECRET_KEY=sk_test_...           # test mode while gating
 STRIPE_WEBHOOK_SECRET=whsec_...         # from test-mode webhook endpoint
-# SENTRY_DSN=<only if you have a real https://...@... DSN; omit to no-op>
-# LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / OTEL_EXPORTER_OTLP_ENDPOINT
-#   if you wire Langfuse/OTel.
+# POSTHOG_PROJECT_TOKEN=<public project ingestion token>
+# POSTHOG_HOST=https://us.i.posthog.com
+# See docs/reference/observability.md for configuration and privacy boundaries.
 ```
 
 > **⚠️ Critical key distinction.** Supabase exposes two keys that both look like
@@ -227,9 +227,9 @@ fly deploy \
   --build-arg VITE_SUPABASE_URL=https://<project>.supabase.co \
   --build-arg VITE_SUPABASE_PUBLISHABLE_KEY=<anon/publishable key, NOT service_role> \
   --build-arg VITE_CANARY_ENV=production
-  # --build-arg VITE_SENTRY_DSN=<frontend DSN>   # optional
-  # --build-arg VITE_SENTRY_TRACES_SAMPLE_RATE=0.05
-  # --build-arg VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE=0
+  # --build-arg VITE_POSTHOG_PROJECT_TOKEN=<public ingestion token>
+  # --build-arg VITE_POSTHOG_HOST=https://us.i.posthog.com
+  # --build-arg POSTHOG_PROJECT_ID=<numeric project ID>
 
 # 2c. Verify boot
 fly logs -a canary-web
@@ -283,7 +283,7 @@ Machine unroutable.
 `GET /api/version` is the public release-identity contract. After every deploy,
 verify that `git_sha` matches the exact green CI revision and record the
 `build_timestamp`. The backend and frontend receive the same
-`CANARY_VERSION`, which is also used for Sentry release grouping.
+`CANARY_VERSION`, which is also used for PostHog release grouping.
 
 ### Maintenance-window upgrades
 
@@ -361,7 +361,9 @@ branch, and add these environment secrets:
 - `CANARY_OPS_TOKEN` — the same value configured on the Fly app.
 - `VITE_SUPABASE_URL` — the public production project URL.
 - `VITE_SUPABASE_PUBLISHABLE_KEY` — the browser-safe publishable key.
-- `VITE_SENTRY_DSN` — optional frontend Sentry DSN.
+- `POSTHOG_PROJECT_TOKEN` — public ingestion token (runtime and frontend).
+- `POSTHOG_API_KEY` — private build-only source-map upload credential.
+- Repository variables `POSTHOG_HOST` and `POSTHOG_PROJECT_ID` select the region and project.
 
 Do not store the Supabase service-role key as a `VITE_*` value. The deploy job
 closes server admission but does not announce a customer maintenance window.
@@ -575,12 +577,12 @@ When you're ready to drop the gating posture and open to the public:
 
 ## Known gotchas (read once, save an hour each)
 
-### Sentry disabled: invalid DSN
+### PostHog is not receiving observations
 
-`server/sentry.py` skips init cleanly when `SENTRY_DSN` is *empty*, but a
-non-empty invalid value is logged and Sentry remains disabled; it no longer
-prevents the app from booting. Use a real DSN and verify a test event, or unset
-the secret with `fly secrets unset SENTRY_DSN -a canary-web`.
+Both `POSTHOG_PROJECT_TOKEN` and the exact regional ingestion host are required.
+The browser needs its own `VITE_POSTHOG_*` build values. Apply the delivery/feedback
+migration before enabling the exporter. See the [operating guide](reference/observability.md).
+No configured token means telemetry is disabled without preventing startup.
 
 ### Boot-loop: OOM on `canary-web` (litellm proxy resident)
 
@@ -609,11 +611,12 @@ dashboard. The frontend needs the one with `"role":"anon"` in its payload.
 publicly fetchable JS bundle. Fix the build-arg value and redeploy:
 `--build-arg VITE_SUPABASE_PUBLISHABLE_KEY=<anon key>`.
 
-### OpenTelemetry is intentionally disabled
+### General tracing availability
 
-`CANARY_OTEL_ENABLED=false` is the launch default because the production image
-does not install the `otel` extra. Sentry still captures errors. Do not enable
-OTel until the extra is installed and an export has been verified.
+The web dependency set includes HTTP OTLP exporters. Explicit spans and selected
+logs use PostHog directly; no local collector is required. General tracing is an
+alpha capability and must be available in the selected PostHog project. Financial
+records and the operation journal remain first-party authorities.
 
 ### Deploy error: `app not found`
 
@@ -644,9 +647,7 @@ One consolidated set, since the proxy and web app share a container:
 - **Web-app layer:** `LITELLM_API_KEY` (== `LITELLM_MASTER_KEY`), `SUPABASE_URL`,
   `SUPABASE_SECRET_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
   `CANARY_OPS_TOKEN`, `CANARY_QUEUE_DATABASE_URL` (required),
-  `SENTRY_DSN` and `SENTRY_TRACES_SAMPLE_RATE` (optional — omit the DSN to
-  disable), `LANGFUSE_*` /
-  `OTEL_EXPORTER_OTLP_ENDPOINT` (optional).
+  `POSTHOG_PROJECT_TOKEN` and `POSTHOG_HOST` (optional — omit to disable).
 
 Provider keys never leave the container or reach the browser — the proxy is
 bound to `127.0.0.1`, and the public `http_service` only exposes port 8000.
@@ -654,14 +655,16 @@ This is network isolation, not process-level secret isolation: uvicorn inherits
 the same environment.
 
 Non-secret runtime config is in `fly.toml [env]`: `CANARY_ENV`,
-`CANARY_COOKIE_SECURE`, `CANARY_OTEL_ENABLED`, `CANARY_LABS_ENABLED`,
+`CANARY_COOKIE_SECURE`, `POSTHOG_TRACE_SAMPLE_RATE`, `CANARY_LABS_ENABLED`,
 `CANARY_ALLOWED_HOSTS`, `SCENEWRIGHT_APP_URL`, `LITELLM_BASE_URL`, pricing
 policy, worker counts, body limits, and timeouts.
 
 ### `canary-web` — build args (via `fly deploy --build-arg`)
 
 `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` (anon, not service_role),
-`VITE_CANARY_ENV=production`, `VITE_SENTRY_DSN`,
-`VITE_SENTRY_TRACES_SAMPLE_RATE`, and
-`VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE` (all Sentry values optional). These are inlined
+`VITE_CANARY_ENV=production`, `VITE_POSTHOG_PROJECT_TOKEN`, and
+`VITE_POSTHOG_HOST` (PostHog values optional). These are inlined
 into the JS bundle by Vite at build time and are not available at runtime.
+
+`POSTHOG_PROJECT_ID` selects the source-map upload project. Supply the private
+`POSTHOG_API_KEY` through a BuildKit secret, never a frontend variable or build arg.

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import datetime
-import hashlib
 import io
 import os
 import time
@@ -31,7 +30,6 @@ class ImageCallContext:
     estimated_cost_usd: float | None
     started: float
     started_at: datetime.datetime
-    langfuse_input: dict[str, Any]
     # Central estimate of this exact request, charged only when the provider
     # completes it without reporting a charge or complete token usage.
     settlement_estimate_usd: float | None = None
@@ -225,13 +223,6 @@ async def begin_image_call(
     reference_summary = ai_client._image_summary(ref_reads)
     started = time.perf_counter()
     started_at = datetime.datetime.now(datetime.UTC)
-    langfuse_input = {
-        "prompt": ai_client._truncate_for_log(prompt),
-        "size": params.get("size"),
-        "quality": params.get("quality"),
-        "ref_count": len(ref_data),
-        "references": reference_summary,
-    }
     insert_task = asyncio.create_task(
         ai_client._insert_event_async(
             event_id=event_id,
@@ -247,7 +238,7 @@ async def begin_image_call(
             metadata_json=metadata,
             estimated_cost_usd=estimated_cost_usd,
             started_at=started_at,
-            langfuse_input=langfuse_input,
+
         )
     )
     try:
@@ -267,7 +258,7 @@ async def begin_image_call(
             operation=operation,
             metadata=metadata,
             estimated_cost_usd=estimated_cost_usd,
-            langfuse_input=langfuse_input,
+
             started_at=started_at,
         )
         raise
@@ -279,7 +270,7 @@ async def begin_image_call(
         estimated_cost_usd=estimated_cost_usd,
         started=started,
         started_at=started_at,
-        langfuse_input=langfuse_input,
+
         settlement_estimate_usd=settlement_estimate_usd,
     )
 
@@ -336,17 +327,10 @@ async def finalise_image_success(
             operation=ctx.operation,
             metadata=ctx.metadata,
             estimated_cost_usd=ctx.estimated_cost_usd,
-            langfuse_input=ctx.langfuse_input,
+
             started_at=ctx.started_at,
         )
         raise
-    langfuse_output = {
-        "output_path": str(output_path),
-        "image_bytes": len(raw.image_bytes),
-        "image_sha256": hashlib.sha256(raw.image_bytes).hexdigest(),
-        "size": ctx.params.get("size"),
-        "actual_provider_model": raw.actual_provider_model,
-    }
     await ai_client._finalize_event_shielded(
         event_id=ctx.event_id,
         status="succeeded",
@@ -359,8 +343,8 @@ async def finalise_image_success(
         operation=ctx.operation,
         metadata=ctx.metadata,
         estimated_cost_usd=ctx.estimated_cost_usd,
-        langfuse_input=ctx.langfuse_input,
-        langfuse_output=langfuse_output,
+
+
         started_at=ctx.started_at,
     )
     return ApiResult(
@@ -399,7 +383,7 @@ async def finalise_image_cancelled(
         operation=ctx.operation,
         metadata={**ctx.metadata, "codex_runtime": evidence} if evidence else ctx.metadata,
         estimated_cost_usd=ctx.estimated_cost_usd,
-        langfuse_input=ctx.langfuse_input,
+
         started_at=ctx.started_at,
     )
 
@@ -434,7 +418,7 @@ async def finalise_image_refusal(
         operation=ctx.operation,
         metadata=ctx.metadata,
         estimated_cost_usd=ctx.estimated_cost_usd,
-        langfuse_input=ctx.langfuse_input,
+
         started_at=ctx.started_at,
     )
 
@@ -474,6 +458,6 @@ async def finalise_image_failure(
         operation=ctx.operation,
         metadata={**ctx.metadata, "codex_runtime": evidence} if evidence else ctx.metadata,
         estimated_cost_usd=ctx.estimated_cost_usd,
-        langfuse_input=ctx.langfuse_input,
+
         started_at=ctx.started_at,
     )

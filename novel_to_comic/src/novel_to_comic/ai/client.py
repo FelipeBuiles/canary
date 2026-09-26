@@ -1035,32 +1035,10 @@ def _insert_event(
     except Exception as exc:
         logger.warning("ai_usage_events insert failed for %s: %s", event_id, exc)
 
-async def _insert_event_async(
-    *,
-    started_at: datetime.datetime | None = None,
-    langfuse_input: Any = None,
-    **kwargs: Any,
-) -> None:
-    """Queue optional request telemetry before awaiting the durable started row."""
-    if started_at is not None:
-        try:
-            _log_langfuse_generation(
-                metadata=kwargs["metadata_json"],
-                feature=kwargs["feature"],
-                operation=kwargs["operation"],
-                model_alias=kwargs["model_alias"],
-                provider_model=kwargs["model_alias"],
-                status="running",
-                generation_id=kwargs["event_id"],
-                input_payload=langfuse_input,
-                output_payload=None,
-                usage=None,
-                cost_usd=None,
-                start_time=started_at,
-            )
-        except Exception as exc:
-            logger.warning("Langfuse export failed for %s: %s", kwargs["event_id"], exc)
+async def _insert_event_async(*, started_at=None, **kwargs: Any) -> None:
+    """Await authoritative usage persistence off the event loop."""
     await asyncio.to_thread(_insert_event, **kwargs)
+
 
 
 def _finalize_event(
@@ -1078,10 +1056,7 @@ def _finalize_event(
     operation: str = "text",
     metadata: dict[str, Any] | None = None,
     estimated_cost_usd: float | None = None,
-    langfuse_input: Any = None,
-    langfuse_output: Any = None,
     started_at: datetime.datetime | None = None,
-    langfuse_scheduler: Any = None,
 ) -> None:
     funding = usage.funding if usage is not None else (metadata or {}).get("funding", "api")
     if is_subscription(funding) and usage is None:
@@ -1218,42 +1193,22 @@ def _finalize_event(
             except Exception:
                 retain_ambiguous_job(ctx.job_id)
                 logger.exception("Credit call authorization release failed call_id=%s", event_id)
-    if metadata is not None:
-        try:
-            _log_langfuse_generation(
-                metadata=metadata,
-                feature=feature,
-                operation=operation,
-                model_alias=model_alias,
-                provider_model=provider_model,
-                status=status,
-                generation_id=event_id,
-                input_payload=langfuse_input,
-                output_payload=langfuse_output,
-                usage=usage,
-                cost_usd=cost_usd,
-                pricing_estimate_drift_pct=drift_pct,
-                start_time=started_at or datetime.datetime.now(datetime.UTC),
-                end_time=datetime.datetime.now(datetime.UTC),
-                error=error,
-                scheduler=langfuse_scheduler,
-            )
-        except Exception as exc:
-            # Optional telemetry must never affect the model outcome.
-            logger.warning("Langfuse export failed for %s: %s", event_id, exc)
+    try:
+        from novel_to_comic.server.telemetry import observe_generation
+        observe_generation(
+            event_id=event_id, feature=feature, operation=operation,
+            model_alias=model_alias, provider_model=provider_model, status=status,
+            usage=usage, cost_usd=cost_usd, cost_source=cost.source if cost else None,
+            latency_ms=latency_ms, started_at=started_at, error=error,
+        )
+    except Exception:
+        # Export cannot alter authoritative settlement or trigger paid retries.
+        pass
+
 
 async def _finalize_event_async(**kwargs: Any) -> None:
     """Finalize usage off the event loop while awaiting durability and billing."""
-    loop = asyncio.get_running_loop()
-
-    def schedule(coro: Any) -> None:
-        loop.call_soon_threadsafe(asyncio.create_task, coro)
-
-    await asyncio.to_thread(
-        _finalize_event,
-        **kwargs,
-        langfuse_scheduler=schedule,
-    )
+    await asyncio.to_thread(_finalize_event, **kwargs)
 
 
 async def _await_usage_task(task: asyncio.Task[None]) -> None:
@@ -1289,16 +1244,6 @@ def _truncate_for_log(text: str, max_chars: int = 4000) -> str:
     return text[:max_chars] + f"... [+{len(text) - max_chars} chars]"
 
 
-def _langfuse_endpoint() -> tuple[str, str] | None:
-    public = os.environ.get("LANGFUSE_PUBLIC_KEY")
-    secret = os.environ.get("LANGFUSE_SECRET_KEY")
-    host = os.environ.get("CANARY_LANGFUSE_HOST") or os.environ.get("LANGFUSE_HOST")
-    if not (public and secret and host):
-        return None
-    auth = base64.b64encode(f"{public}:{secret}".encode()).decode()
-    return host.rstrip("/"), auth
-
-
 def _pricing_estimate_drift_pct(
     *,
     operation: str,
@@ -1312,179 +1257,6 @@ def _pricing_estimate_drift_pct(
     return (
         (float(usage.cost_usd) - float(estimated_cost_usd)) / float(estimated_cost_usd)
     ) * 100.0
-
-
-async def _post_langfuse_batch(
-    host: str, auth: str, batch: list[dict[str, Any]]
-) -> None:
-    try:
-        response = await _http.post(
-            f"{host}/api/public/ingestion",
-            headers={
-                "Authorization": f"Basic {auth}",
-                "Content-Type": "application/json",
-            },
-            json={"batch": batch},
-        )
-        response.raise_for_status()
-    except Exception as exc:
-        logger.warning("Langfuse ingestion failed: %s", exc)
-
-
-def _langfuse_prompt_export_enabled() -> bool:
-    """Whether optional Langfuse export may carry prompt/response content.
-
-    Reuses the CANARY_LOG_INCLUDE_PROMPTS privacy convention: prompt text
-    stays out of third-party telemetry unless explicitly opted in. Usage
-    counts, cost, model names, and error types are never content and are
-    always exported.
-    """
-    return os.environ.get("CANARY_LOG_INCLUDE_PROMPTS", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-
-
-def _log_langfuse_generation(
-    *,
-    metadata: dict[str, Any] | None,
-    feature: str,
-    operation: str,
-    model_alias: str,
-    provider_model: str,
-    status: str,
-    generation_id: str,
-    input_payload: Any,
-    output_payload: Any,
-    usage: UsageRecord | None,
-    cost_usd: float | None,
-    start_time: datetime.datetime,
-    end_time: datetime.datetime | None = None,
-    pricing_estimate_drift_pct: float | None = None,
-    error: BaseException | None = None,
-    scheduler: Any = None,
-) -> None:
-    """Queue a timestamped upsert of one optional generation observation."""
-    endpoint = _langfuse_endpoint()
-    if endpoint is None or metadata is None:
-        return
-    if not _langfuse_prompt_export_enabled():
-        input_payload = {"redacted": True}
-        output_payload = {"redacted": True}
-    host, auth = endpoint
-    trace_id = metadata.get("trace_id") or generation_id
-    running = status == "running"
-    tags = [tag for tag in (metadata.get("tags") or []) if tag]
-
-    usage_details: dict[str, int] = {}
-    if not running and usage is not None:
-        usage_details = {
-            "input": int(usage.input_tokens or 0),
-            "output": int(usage.output_tokens or 0),
-            "total": int((usage.input_tokens or 0) + (usage.output_tokens or 0)),
-        }
-        if usage.image_count:
-            usage_details["images"] = int(usage.image_count)
-
-    cost_details: dict[str, float] = {}
-    if not running and cost_usd is not None:
-        cost_details["total"] = float(cost_usd)
-
-    obs_metadata = {
-        **(metadata.get("metadata") or {}),
-        "operation": operation,
-        "feature": feature,
-        "status": status,
-    }
-    if error is not None:
-        obs_metadata["error_type"] = type(error).__name__
-        obs_metadata["error_message"] = str(error)[:500]
-    if pricing_estimate_drift_pct is not None:
-        obs_metadata["pricing_estimate_drift_pct"] = pricing_estimate_drift_pct
-
-    # Langfuse merges upserts by event timestamp, not HTTP arrival order.
-    # A delayed start must never overwrite a terminal observation.
-    timestamp = (start_time if running else end_time or start_time).isoformat()
-    batch = [
-        {
-            "id": str(uuid.uuid4()),
-            "type": "trace-create",
-            "timestamp": timestamp,
-            "body": {
-                "id": trace_id,
-                "name": metadata.get("trace_name") or feature,
-                "sessionId": metadata.get("session_id"),
-                "userId": metadata.get("user_id"),
-                "tags": tags,
-                "metadata": metadata.get("metadata") or {},
-                "timestamp": start_time.isoformat(),
-                "input": input_payload,
-                **({"output": output_payload} if not running else {}),
-            },
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "type": "generation-create",
-            "timestamp": timestamp,
-            "body": {
-                "id": generation_id,
-                "traceId": trace_id,
-                "name": metadata.get("generation_name") or model_alias,
-                "model": provider_model or model_alias,
-                "input": input_payload,
-                **({
-                    "output": output_payload,
-                    "usageDetails": usage_details,
-                    "costDetails": cost_details,
-                } if not running else {}),
-                "metadata": obs_metadata,
-                "startTime": start_time.isoformat(),
-                **({"endTime": end_time.isoformat()} if end_time is not None and not running else {}),
-                "level": "DEFAULT" if status in {"running", "succeeded"} else "ERROR",
-                "statusMessage": (str(error)[:500] if error else None)
-                if status != "succeeded"
-                else None,
-            },
-        },
-    ]
-    if not running and pricing_estimate_drift_pct is not None:
-        batch.append(
-            {
-                "id": str(uuid.uuid4()),
-                "type": "score-create",
-                "timestamp": timestamp,
-                "body": {
-                    "traceId": trace_id,
-                    "observationId": generation_id,
-                    "name": "pricing_estimate_drift_pct",
-                    "value": float(pricing_estimate_drift_pct),
-                    "dataType": "NUMERIC",
-                    "comment": f"model_alias={model_alias}",
-                },
-            }
-        )
-
-    coroutine = None
-    try:
-        if scheduler is None:
-            # Resolve the loop before creating the coroutine so a missing
-            # loop cannot strand an un-awaited coroutine object.
-            asyncio.get_running_loop()
-        coroutine = _post_langfuse_batch(host, auth, batch)
-        if scheduler is not None:
-            scheduler(coroutine)
-        else:
-            asyncio.create_task(coroutine)
-        coroutine = None
-    except Exception:
-        # Optional telemetry must never affect the model outcome. A missing
-        # loop (synchronous test context, etc.) simply skips the export.
-        pass
-    finally:
-        if coroutine is not None:
-            coroutine.close()
 
 
 def _settle_event_usage(usage: UsageRecord, *, feature: str, status: str) -> None:
@@ -1945,10 +1717,6 @@ async def _chat_completion(
     # can now land here, and the CancelledError handler reads all of these.
     started = time.perf_counter()
     started_at = datetime.datetime.now(datetime.UTC)
-    langfuse_input = [
-        {"role": "system", "content": _truncate_for_log(effective_system)},
-        {"role": "user", "content": _truncate_for_log(user_content)},
-    ]
     response: httpx.Response | None = None
     data: dict[str, Any] = {}
     paid_call = bool(
@@ -1966,7 +1734,7 @@ async def _chat_completion(
             metadata_json=metadata,
             estimated_cost_usd=estimated_cost_usd,
             started_at=started_at,
-            langfuse_input=langfuse_input,
+
         )
     )
     try:
@@ -1987,7 +1755,7 @@ async def _chat_completion(
             operation=operation,
             metadata=metadata,
             estimated_cost_usd=estimated_cost_usd,
-            langfuse_input=langfuse_input,
+
             started_at=started_at,
         )
         raise
@@ -2179,7 +1947,7 @@ async def _chat_completion(
             operation=operation,
             metadata=metadata,
             estimated_cost_usd=estimated_cost_usd,
-            langfuse_input=langfuse_input,
+
             started_at=started_at,
         )
         raise
@@ -2205,7 +1973,7 @@ async def _chat_completion(
             operation=operation,
             metadata=metadata,
             estimated_cost_usd=estimated_cost_usd,
-            langfuse_input=langfuse_input,
+
             started_at=started_at,
         )
         raise
@@ -2248,7 +2016,7 @@ async def _chat_completion(
             operation=operation,
             metadata=metadata,
             estimated_cost_usd=estimated_cost_usd,
-            langfuse_input=langfuse_input,
+
             started_at=started_at,
         )
         raise
@@ -2267,8 +2035,8 @@ async def _chat_completion(
         operation=operation,
         metadata=metadata,
         estimated_cost_usd=estimated_cost_usd,
-        langfuse_input=langfuse_input,
-        langfuse_output=_truncate_for_log(text),
+
+
         started_at=started_at,
     )
     return {

@@ -18,7 +18,6 @@ MODE="api"
 EXPLICIT_MODE=""
 CLAUDE_CODE=false
 CHECK_ONLY=false
-OBSERVABILITY=false
 START_DOCKER=true
 FIXTURE="${CANARY_MOCK_FIXTURE_PROJECT:-$DEFAULT_FIXTURE}"
 CHILD_PIDS=()
@@ -38,7 +37,6 @@ Options:
   --claude-code          Also offer Claude Code text models through your local
                          claude.ai login (API or Codex mode; claude CLI required)
   --fixture DIR          Completed project used by mock replay
-  --observability        Also start/check the optional Langfuse stack
   --no-docker            Do not automatically start missing Docker services
   --check                Report health only; do not start anything
   -h, --help             Show this help
@@ -48,7 +46,6 @@ Examples:
   ./scripts/dev.sh --api
   ./scripts/dev.sh --mock
   ./scripts/dev.sh --mock --fixture projects/my-completed-project
-  ./scripts/dev.sh --check --observability
 
 Mode flags are mutually exclusive. Stop an incompatible existing backend manually;
 the launcher never restarts it. Flags do not re-route saved artifacts. Experimental
@@ -83,10 +80,6 @@ while [ "$#" -gt 0 ]; do
       fi
       FIXTURE="$2"
       shift 2
-      ;;
-    --observability)
-      OBSERVABILITY=true
-      shift
       ;;
     --no-docker)
       START_DOCKER=false
@@ -325,20 +318,6 @@ fi
 
 if [ "$queue_failed" = true ]; then required_failed=true; fi
 
-if [ "$OBSERVABILITY" = true ]; then
-  observability_failed=false
-  if docker_available; then
-    for service in langfuse-postgres langfuse-clickhouse langfuse-redis langfuse-minio langfuse-worker langfuse-web; do
-      report_compose_service "$service" || observability_failed=true
-    done
-    if [ "$observability_failed" = true ] && [ "$CHECK_ONLY" = false ] && [ "$START_DOCKER" = true ]; then
-      start_compose_services "langfuse-web" "langfuse-worker"
-    fi
-  else
-    failed "Docker is required for the optional Langfuse stack"
-    required_failed=true
-  fi
-fi
 
 stop_if_requested
 if backend_healthy_for_mode; then

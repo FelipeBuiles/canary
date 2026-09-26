@@ -104,6 +104,7 @@ async def trigger_export(
     export_path = target.export_path(fmt)
     if export_path.exists() and not force:
         data = export_path.read_bytes()
+        capture_server_event("export_package_ready", user_id=user_id, project_id=project_id, properties={"format": fmt, "cached": True})
         return {
             "status": "exists",
             "path": export_path.name,
@@ -145,7 +146,7 @@ async def trigger_export(
             export_path.read_bytes(),
         )
     capture_server_event(
-        "export_succeeded",
+        "export_package_ready",
         user_id=user_id,
         project_id=project_id,
         request_id=getattr(request.state, "request_id", None),
@@ -162,6 +163,7 @@ async def trigger_export(
 @router.get("/{fmt}")
 def download_export(
     fmt: str,
+    project_id: str,
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
@@ -171,6 +173,7 @@ def download_export(
     export_path = TargetArtifacts(project_dir).export_path(fmt)
     if not export_path.exists():
         raise HTTPException(404, f"No {fmt} export found. Run Finish first.")
+    capture_server_event("export_download_requested", user_id=user_id, project_id=project_id, properties={"format": fmt})
     if r2_configured():
         return RedirectResponse(upload_export(
             user_id,

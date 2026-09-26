@@ -189,9 +189,8 @@ class CodexCompletePageAdapter:
                                "usage": {"prompt_tokens": usage.input_tokens,
                                          "completion_tokens": usage.output_tokens}},
                 config=self._config, operation=ctx.operation, metadata=ctx.metadata,
-                estimated_cost_usd=ctx.estimated_cost_usd, langfuse_input=ctx.langfuse_input,
-                langfuse_output={"artifact_kind": "complete_page", **geometry,
-                                 "actual_provider_model": None},
+                estimated_cost_usd=ctx.estimated_cost_usd,
+
                 started_at=ctx.started_at,
             )
         except Exception as exc:

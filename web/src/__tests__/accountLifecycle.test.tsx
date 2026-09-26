@@ -14,7 +14,7 @@ vi.mock("../lib/supabase", () => ({ supabase: { auth: {
   signOut: () => new Promise(() => {}),
   onAuthStateChange: (callback: typeof auth.callback) => { auth.callback = callback; return { data: { subscription: { unsubscribe: vi.fn() } } }; },
 } } }));
-vi.mock("../sentry", () => ({ setSentryUser: vi.fn() }));
+vi.mock("../telemetry", () => ({ setTelemetryUser: vi.fn() }));
 
 function PrivateContent() {
   const { data } = useQuery({ queryKey: ["credits", "balance"], queryFn: async () => "fresh account", staleTime: Infinity });

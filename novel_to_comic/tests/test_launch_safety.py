@@ -14,7 +14,6 @@ from novel_to_comic import codex_dev
 from novel_to_comic.config import load_config
 from novel_to_comic.server import app as app_module
 from novel_to_comic.server import deployment_status as deployment_status_module
-from novel_to_comic.server import sentry as sentry_module
 from novel_to_comic.server.routers import billing
 
 
@@ -198,66 +197,6 @@ def test_checkout_origin_requires_https_in_production(monkeypatch):
         billing._checkout_origin(request)
 
     assert exc_info.value.status_code == 500
-
-
-def test_invalid_sentry_dsn_does_not_crash_startup(monkeypatch):
-    monkeypatch.setenv("SENTRY_DSN", "not-a-valid-dsn")
-    monkeypatch.setattr(sentry_module, "_CONFIGURED", False)
-
-    with patch("sentry_sdk.init", side_effect=ValueError("bad dsn")):
-        assert sentry_module.configure_sentry() is False
-
-
-def test_sentry_scrubs_operations_token():
-    event = {
-        "request": {
-            "headers": {
-                "X-Canary-Ops-Token": "operator-secret",
-                "Accept": "application/json",
-            }
-        }
-    }
-
-    scrubbed = sentry_module._scrub_event(event, {})
-
-    assert scrubbed["request"]["headers"]["X-Canary-Ops-Token"] == "[Filtered]"
-    assert scrubbed["request"]["headers"]["Accept"] == "application/json"
-
-
-def test_sentry_scrubs_creative_payloads_provider_data_and_signed_urls():
-    event = {
-        "request": {
-            "data": {"manuscript": "private prose"},
-            "url": "https://assets.example/panel.png?X-Amz-Signature=secret",
-        },
-        "contexts": {
-            "generation": {
-                "prompt": "private prompt",
-                "visual_anchor": "verbatim private anchor",
-                "provider_response": {"raw": "private provider payload"},
-            }
-        },
-    }
-
-    scrubbed = sentry_module._scrub_event(event, {})
-
-    assert scrubbed["request"]["data"] == "[Filtered]"
-    assert scrubbed["request"]["url"] == "https://assets.example/panel.png"
-    assert scrubbed["contexts"]["generation"]["prompt"] == "[Filtered]"
-    assert scrubbed["contexts"]["generation"]["visual_anchor"] == "[Filtered]"
-    assert scrubbed["contexts"]["generation"]["provider_response"] == "[Filtered]"
-
-
-def test_sentry_trace_sampler_filters_operational_noise(monkeypatch):
-    monkeypatch.setenv("SENTRY_TRACES_SAMPLE_RATE", "0.05")
-
-    assert sentry_module._traces_sampler({"asgi_scope": {"path": "/metrics"}}) == 0
-    assert sentry_module._traces_sampler(
-        {"asgi_scope": {"path": "/api/projects/abc/status"}}
-    ) == 0
-    assert sentry_module._traces_sampler(
-        {"asgi_scope": {"path": "/api/projects/abc/run"}}
-    ) == 0.05
 
 
 def test_readiness_fails_closed_when_production_config_is_missing(monkeypatch):
