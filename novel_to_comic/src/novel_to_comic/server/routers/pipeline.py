@@ -184,13 +184,13 @@ async def _run_stage_with_credits(
                 active.payload["stage"] = stage
                 persist_generation_job(request.app, active)
     started = time.perf_counter()
-    capture_server_event(
-        "stage_started",
-        user_id=user_id,
-        project_id=project_id,
-        properties={"stage": stage, "rerun": rerun},
-    )
     async def execute():
+        capture_server_event(
+            "stage_started",
+            user_id=user_id,
+            project_id=project_id,
+            properties={"stage": stage, "rerun": rerun},
+        )
         # The credited wrapper invokes this only after acquiring the hold.
         if rerun:
             _clear_outputs_for_rerun(project_dir, stage)
@@ -228,6 +228,7 @@ async def _run_stage_with_credits(
                 fresh_adaptation=rerun and stage == "adapt",
             )
     except CreditReservationDenied as denied:
+        capture_server_event("credit_blocked", user_id=user_id, project_id=project_id, properties={"stage": stage})
         if not rerun:
             fail_stage(state, stage, denied.message, detail=denied.detail)
             save_state(state, project_dir)
@@ -252,7 +253,7 @@ async def _run_stage_with_credits(
         )
     )
     capture_server_event(
-        f"stage_{'failed' if outcome == 'failed' else 'succeeded'}",
+        ("stage_dispatched" if stage == "draw" and outcome != "failed" else f"stage_{'failed' if outcome == 'failed' else 'succeeded'}"),
         user_id=user_id,
         project_id=project_id,
         job_id=job_id,

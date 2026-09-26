@@ -288,6 +288,12 @@ def _draw_success_callback(
     project_dir,
 ):
     def callback(provenance) -> None:
+        from ..product_events import capture_server_event
+        from ..telemetry import context_fields
+        context = context_fields()
+        capture_server_event("page_ready", user_id=context.get("posthogDistinctId"),
+            project_id=context.get("project_id"), job_id=context.get("operation_id"),
+            properties={"page_number": provenance.render.page_number})
         _sync_draw_progress(project_dir)
         queue = request.app.state.event_queues.get(pkey)
         if queue is not None:

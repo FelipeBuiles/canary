@@ -3,7 +3,7 @@
 #
 # VITE_* vars are inlined into the JS bundle at build time (the browser talks
 # to Supabase directly for auth), so they must be present HERE, not at runtime.
-# They flow in as build args (publishable/anon values and public Sentry DSN only
+# They flow in as build args (publishable/anon values and public PostHog project token only
 # — safe to expose in the image; RLS gates access). Pass via
 # `docker build --build-arg VITE_...=...`
 # or Fly's `fly deploy --build-arg`.
@@ -19,9 +19,9 @@ ARG CANARY_VERSION=unknown
 ARG CANARY_BUILD_TIMESTAMP=unknown
 ARG VITE_SUPABASE_URL
 ARG VITE_SUPABASE_PUBLISHABLE_KEY
-ARG VITE_SENTRY_DSN
-ARG VITE_SENTRY_TRACES_SAMPLE_RATE=0
-ARG VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE=0
+ARG VITE_POSTHOG_PROJECT_TOKEN
+ARG VITE_POSTHOG_HOST
+ARG POSTHOG_PROJECT_ID
 ARG VITE_CANARY_ENV=production
 RUN if [ -z "$VITE_SUPABASE_URL" ]; then \
       echo "VITE_SUPABASE_URL build argument is required" >&2; exit 1; \
@@ -36,12 +36,14 @@ COPY web/ ./
 COPY novel_to_comic/src/novel_to_comic/lettering/ /build/novel_to_comic/src/novel_to_comic/lettering/
 # Export the build args into the shell environment so Vite inlines them into
 # the bundle. Supabase URL/key are required and validated before compilation;
-# optional values such as VITE_SENTRY_DSN may remain empty.
-RUN export VITE_SUPABASE_URL="$VITE_SUPABASE_URL" \
+# optional values such as VITE_POSTHOG_PROJECT_TOKEN may remain empty.
+RUN --mount=type=secret,id=POSTHOG_API_KEY \
+    export POSTHOG_API_KEY="$(cat /run/secrets/POSTHOG_API_KEY 2>/dev/null || true)" \
+    POSTHOG_HOST="$VITE_POSTHOG_HOST" POSTHOG_PROJECT_ID="$POSTHOG_PROJECT_ID" \
+    VITE_SUPABASE_URL="$VITE_SUPABASE_URL" \
     VITE_SUPABASE_PUBLISHABLE_KEY="$VITE_SUPABASE_PUBLISHABLE_KEY" \
-    VITE_SENTRY_DSN="$VITE_SENTRY_DSN" \
-    VITE_SENTRY_TRACES_SAMPLE_RATE="$VITE_SENTRY_TRACES_SAMPLE_RATE" \
-    VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE="$VITE_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE" \
+    VITE_POSTHOG_PROJECT_TOKEN="$VITE_POSTHOG_PROJECT_TOKEN" \
+    VITE_POSTHOG_HOST="$VITE_POSTHOG_HOST" \
     VITE_CANARY_ENV="$VITE_CANARY_ENV" \
     VITE_CANARY_VERSION="$CANARY_VERSION" \
     VITE_CANARY_BUILD_TIMESTAMP="$CANARY_BUILD_TIMESTAMP" \

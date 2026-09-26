@@ -30,16 +30,15 @@ web = [
   "fastapi>=0.141.1,<0.142",
   "uvicorn[standard]>=0.53.0,<0.54",
   "slowapi>=0.1.10,<0.2",
-  "sentry-sdk[fastapi]>=2.69.2,<3",
+  "posthog>=7.58.0,<8",
+  "opentelemetry-api>=1.44.0,<2",
+  "opentelemetry-sdk>=1.44.0,<2",
+  "opentelemetry-exporter-otlp-proto-http>=1.44.0,<2",
   "procrastinate>=3.8,<4",
   "psycopg[binary]>=3.3,<4",
 ]
 dev = ["pytest>=9.1.1,<10", "ruff>=0.16.8,<0.17"]
-otel = [
-  "opentelemetry-api>=1.44.0,<2",
-  "opentelemetry-sdk>=1.44.0,<2",
-  "opentelemetry-exporter-otlp-proto-http>=1.44.0,<2",
-]
+
 
 [project.scripts]
 pipeline = "novel_to_comic.cli:cli"
@@ -74,7 +73,7 @@ where = ["src"]
 
 [tool.pyright]
 # Point Pyright at the project venv so third-party deps (fastapi, httpx,
-# slowapi, sentry-sdk, supabase, …) resolve instead of reporting
+# slowapi, posthog, supabase, …) resolve instead of reporting
 # "reportMissingImports". The packages are installed; the type checker just
 # needs to know which environment to read them from.
 venvPath = "."

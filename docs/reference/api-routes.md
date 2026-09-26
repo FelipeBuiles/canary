@@ -14,6 +14,8 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/ops/backoffice/models` | `operator_model_settings` | `backoffice.py` |
 | `PATCH` | `/api/ops/backoffice/models` | `patch_operator_model_settings` | `backoffice.py` |
 | `POST` | `/api/ops/backoffice/users/{user_id}/credits` | `grant_credits` | `backoffice.py` |
+| `GET` | `/api/ops/backoffice/feedback` | `list_feedback` | `backoffice.py` |
+| `PATCH` | `/api/ops/backoffice/feedback/{user_id}/{feedback_id}` | `update_feedback` | `backoffice.py` |
 | `GET` | `/api/billing/packages` | `list_packages` | `billing.py` |
 | `POST` | `/api/billing/checkout` | `create_checkout` | `billing.py` |
 | `POST` | `/api/billing/webhook` | `stripe_webhook` | `billing.py` |
@@ -48,6 +50,7 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `POST` | `/api/projects/{project}/export/preflight` | `run_preflight` | `export.py` |
 | `POST` | `/api/projects/{project}/export` | `trigger_export` | `export.py` |
 | `GET` | `/api/projects/{project}/export/{fmt}` | `download_export` | `export.py` |
+| `POST` | `/api/feedback` | `submit_feedback` | `feedback.py` |
 | `GET` | `/api/files/files/{file_path:path}` | `serve_project_file` | `files.py` |
 | `GET` | `/api/labs/models` | `list_models` | `labs.py` |
 | `GET` | `/api/labs/fixtures/default` | `get_default_fixture` | `labs.py` |

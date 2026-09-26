@@ -3,19 +3,26 @@ import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import posthog from '@posthog/rollup-plugin'
 
 export default defineConfig({
   resolve: { alias: {
     '@lettering-engine': fileURLToPath(new URL('../novel_to_comic/src/novel_to_comic/lettering/engine.mjs', import.meta.url)),
     '@lettering-voices': fileURLToPath(new URL('../novel_to_comic/src/novel_to_comic/lettering/voices.json', import.meta.url)),
   } },
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), ...(process.env.POSTHOG_API_KEY && process.env.POSTHOG_PROJECT_ID ? [posthog({
+    personalApiKey: process.env.POSTHOG_API_KEY,
+    projectId: process.env.POSTHOG_PROJECT_ID,
+    host: process.env.POSTHOG_HOST,
+    sourcemaps: { enabled: true, releaseName: 'canary-web', releaseVersion: process.env.VITE_CANARY_VERSION ?? 'dev', deleteAfterUpload: true },
+  })] : [])],
   build: {
+    sourcemap: Boolean(process.env.POSTHOG_API_KEY && process.env.POSTHOG_PROJECT_ID),
     rolldownOptions: {
       output: {
         codeSplitting: {
           // Cache the shared framework and SDKs independently of app/translations.
-          // Claim React first: Sentry's React integration must reuse this runtime.
+          // Claim React first: The telemetry integration must reuse this runtime.
           // Keep recursive dependency inclusion to avoid vendor → entry cycles.
           groups: [
             {
@@ -27,8 +34,8 @@ export default defineConfig({
               test: /[\\/]node_modules[\\/]@supabase[\\/]/,
             },
             {
-              name: 'sentry',
-              test: /[\\/]node_modules[\\/](?:@sentry|@sentry-internal)[\\/]/,
+              name: 'posthog',
+              test: /[\\/]node_modules[\\/](?:posthog-js|@posthog)[\\/]/,
             },
           ],
         },

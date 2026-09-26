@@ -8,6 +8,8 @@ are constrained to a small event/property allowlist.
 from __future__ import annotations
 
 import json
+import os
+import uuid
 import logging
 from typing import Any, Literal
 
@@ -18,6 +20,12 @@ logger = logging.getLogger("canary.product_events")
 MAX_PROPERTIES_BYTES = 8 * 1024
 
 SERVER_EVENT_PROPERTIES: dict[str, frozenset[str]] = {
+    "page_ready": frozenset({"page_number"}),
+    "feedback_submitted": frozenset({"category", "rating", "feedback_id"}),
+    "credit_blocked": frozenset({"stage"}),
+    "stage_dispatched": frozenset({"stage", "outcome"}),
+    "export_package_ready": frozenset({"format", "cached"}),
+    "export_download_requested": frozenset({"format"}),
     "project_created": frozenset({"source", "file_type"}),
     "stage_started": frozenset({"stage", "rerun", "retry_failed"}),
     "stage_succeeded": frozenset({"stage", "outcome"}),
@@ -49,6 +57,11 @@ def _clean_properties(event_name: str, properties: dict[str, Any], *, source: st
     if unknown:
         raise ValueError(f"Unsupported properties for {event_name}: {sorted(unknown)}")
 
+    enums = {"station": {"story", "look", "pages", "book"},
+             "drawer": {"inspect", "details", "generation", "history"}}
+    for key, choices in enums.items():
+        if key in properties and properties[key] not in choices:
+            raise ValueError(f"Invalid {key}")
     clean: dict[str, Any] = {}
     for key, value in properties.items():
         if value is None or isinstance(value, (bool, int, float)):
@@ -74,7 +87,9 @@ def record_product_event(
 ) -> None:
     """Validate and persist one product event; raises on invalid input/write."""
     clean = _clean_properties(event_name, properties or {}, source=source)
+    clean.update(schema_version=1, environment=os.environ.get("CANARY_ENV", "dev"), release=os.environ.get("CANARY_VERSION", "unknown"))
     payload = {
+        "id": str(uuid.uuid4()),
         "event_name": event_name,
         "user_id": user_id,
         "project_id": project_id,

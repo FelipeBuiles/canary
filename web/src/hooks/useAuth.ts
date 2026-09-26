@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
-import { setSentryUser } from "../sentry";
+import { setTelemetryUser } from "../telemetry";
 import { clearAccountRequests } from "../lib/accountEpoch";
 import { replaceAccountQueryClient } from "../api/queryClient";
 import { usePipelineStore } from "../store/pipeline";
@@ -22,7 +22,7 @@ function receiveSession(session: Session | null) {
     replaceAccountQueryClient(session?.user.id ?? null);
   }
   snapshot = { session, user: session?.user ?? null, loading: false };
-  setSentryUser(snapshot.user?.id ?? null);
+  setTelemetryUser(snapshot.user?.id ?? null);
   listeners.forEach((listener) => listener());
 }
 
