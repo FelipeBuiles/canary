@@ -44,7 +44,7 @@ export function CastIdentityReview({ projectId, characters, onShowCharacter, onR
           <summary className="relative flex min-h-14 cursor-pointer list-none flex-wrap items-center gap-x-4 gap-y-2 p-4 pr-11 [&::-webkit-details-marker]:hidden">
             <span className="font-meta text-xs font-bold uppercase tracking-wider">{t("Character check")}</span>
             <span className="font-body text-sm font-semibold">
-              {t(issues.length === 1 ? "1 note to review" : "{count} notes to review").replace("{count}", String(issues.length))}
+              {t("{count, plural, one {# note to review} other {# notes to review}}", { count: issues.length })}
             </span>
             <span className="min-w-0 flex-1 basis-full break-words font-body text-sm text-ink-muted sm:basis-auto">{affectedNames}</span>
             <ChevronDown size={18} aria-hidden="true" className="absolute right-4 top-5 group-open:rotate-180" />

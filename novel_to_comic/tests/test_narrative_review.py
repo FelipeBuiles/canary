@@ -847,6 +847,60 @@ def test_plan_staging_review_repairs_only_its_detail_batch(tmp_path, resolved):
     assert any("narrative_review_unsupported_event" in a.invariant_codes for a in target.read_validation("plan").attempt_history)
 
 
+def test_narrative_finding_after_structural_repair_still_gets_its_own_repair(tmp_path):
+    # Review runs only on a structurally valid draft. When the first draft needs
+    # a structural repair, the first narrative finding arrives after it and must
+    # not block without the one narrative repair Plan is owed.
+    adaptation = _long_adaptation(24)
+    repairs = []
+
+    async def generate(**request):
+        raw = draft_for(adaptation)
+        if request["feature"] == "plan.map":
+            return ApiResult(value={"rhythm_summary": raw["rhythm_summary"], "pages": [
+                {"page_number": p["page_number"], "beat_ids": p["content"][0]["beat_ids"],
+                 "lettering_ids": p["content"][0]["lettering_ids"], "emphasis": p["emphasis"],
+                 "density_intent": p["density_intent"], "rhythm_intent": p["rhythm_intent"]}
+                for p in raw["pages"]
+            ]})
+        supplied = json.JSONDecoder().raw_decode(request["user_content"].split("\n", 1)[1])[0]
+        if request["feature"] == "plan.detail":
+            numbers = supplied["target_page_numbers"]
+            if "PREVIOUS DETAIL:" in request["user_content"]:
+                repairs.append(request["user_content"])
+            for page in raw["pages"]:
+                page["content"].append({**page["content"][0], "lettering_ids": [],
+                                        "visual_intent": "A distinct silent reaction to the event."})
+            last = raw["pages"][-1]["content"][0]
+            last["visual_intent"] = ("seal only the papers; the idol is absent" if len(repairs) == 2
+                                     else "seal the idol with the papers")
+            if 17 in numbers and not repairs:
+                last["camera"] = None
+            return ApiResult(value=detail_response({**raw, "pages": [p for p in raw["pages"] if p["page_number"] in numbers]}))
+        finding = None
+        if supplied["phase"] == "plan" and any(
+            c["visual_intent"] == "seal the idol with the papers"
+            for p in supplied["pages"] for c in p["content"]
+        ):
+            finding = {"code": "unsupported_event", "repair_stage": "plan", "artifact_ids": ["page_024"],
+                       "evidence": "The narrator never acquired the idol.", "repair": "Remove the idol from the sealed contents. Keep the words."}
+        return ApiResult(value=verdict(request, finding=finding))
+
+    target = TargetArtifacts(tmp_path)
+    plan = asyncio.run(produce_book_plan(adaptation, _inventory(), ApprovedPageRange(minimum=24, maximum=24),
+        artifacts=target, ctx=runtime(tmp_path, "plan"), model="test", generate=generate))
+
+    assert len(repairs) == 2
+    assert "missing_panel_camera" in repairs[0]
+    assert "seal the idol with the papers" in repairs[1]
+    assert target.read_page(24).content[0].visual_intent == "seal only the papers; the idol is absent"
+    history = target.read_validation("plan").attempt_history
+    assert [a.invariant_codes for a in history[-3:]] == [
+        ("missing_panel_camera",), ("narrative_review_unsupported_event",), (),
+    ]
+    assert len(plan.pages) == 24
+
+
 def test_review_corrects_window_relative_page_citations_before_story_repair(tmp_path):
     adaptation = _long_adaptation(44)
     context = planning_context(adaptation, canonical(adaptation, draft_for(adaptation)), phase="plan_map")

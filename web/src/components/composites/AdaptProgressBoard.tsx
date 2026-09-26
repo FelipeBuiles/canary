@@ -50,7 +50,7 @@ function BeatTile({ number, functions, state, className = "" }: {
   const turn = functions.includes("character_turn");
   const reaction = functions.includes("reaction") || functions.includes("aftermath");
   const description = [
-    t("Beat {n}").replace("{n}", String(number)),
+    t("Beat {n}", { n: String(number) }),
     reveal ? t("Reveal") : null,
     turn ? t("Character turn") : null,
     reaction ? t("Reaction") : null,
@@ -70,10 +70,10 @@ function BeatTile({ number, functions, state, className = "" }: {
   );
 }
 
-function sectionTiles(section: AdaptProgressSection, part: number, firstBeat: number, t: (key: string) => string) {
+function sectionTiles(section: AdaptProgressSection, part: number, firstBeat: number, t: (key: string, values?: Record<string, string | number>) => string) {
   // Tiles stay one flat list; a wider gap marks where each part begins.
   const edge = part > 1 ? "ml-2" : "";
-  const label = [t("Part {n}").replace("{n}", String(part)), section.title].filter(Boolean).join(": ");
+  const label = [t("Part {n}", { n: String(part) }), section.title].filter(Boolean).join(": ");
   if (section.beats === null) {
     const structuring = section.state === "structuring";
     const status = t(structuring ? "Staging beats now" : "Waiting");
@@ -144,10 +144,7 @@ export function AdaptProgressBoard({ snapshot }: { snapshot: AdaptProgressSnapsh
       </p>
       {snapshot.treatment && (
         <p className="mt-1 font-body text-xs font-semibold leading-5 text-ink-muted">
-          {t("Story shape: {spine} story links · {reveals} reveals · {turns} character turns.")
-            .replace("{spine}", String(snapshot.treatment.spine))
-            .replace("{reveals}", String(snapshot.treatment.reveals))
-            .replace("{turns}", String(snapshot.treatment.turns))}
+          {t("Story shape: {spine} story links · {reveals} reveals · {turns} character turns.", { spine: String(snapshot.treatment.spine), reveals: String(snapshot.treatment.reveals), turns: String(snapshot.treatment.turns) })}
         </p>
       )}
 
@@ -157,15 +154,13 @@ export function AdaptProgressBoard({ snapshot }: { snapshot: AdaptProgressSnapsh
         <Stat
           value={`${snapshot.sections_done}/${total}`}
           label={t("Parts written")}
-          detail={t("{n} source passages").replace("{n}", String(snapshot.source_units))}
+          detail={t("{n} source passages", { n: String(snapshot.source_units) })}
         />
         <Stat
           value={latest ? String(latest.blocking) : "—"}
           label={t("Issues to fix")}
           detail={latest
-            ? t(latest.blocking ? "Check {n} of {max}" : "Check {n} passed")
-              .replace("{n}", String(latest.round))
-              .replace("{max}", String(snapshot.max_rounds))
+            ? t(latest.blocking ? "Check {n} of {max}" : "Check {n} passed", { n: String(latest.round), max: String(snapshot.max_rounds) })
             : undefined}
         />
       </div>
@@ -187,10 +182,10 @@ export function AdaptProgressBoard({ snapshot }: { snapshot: AdaptProgressSnapsh
       {(writing.length > 0 || fixing.length > 0 || (waiting.length > 0 && !done)) && (
         <p className="mt-3 font-body text-xs font-semibold leading-5 text-ink-muted">
           {[
-            writing.length > 0 ? t("Writing part {parts}.").replace("{parts}", parts(writing)) : null,
-            fixing.length > 0 ? t("Fixing part {parts}.").replace("{parts}", parts(fixing)) : null,
+            writing.length > 0 ? t("Writing part {parts}.", { parts: parts(writing) }) : null,
+            fixing.length > 0 ? t("Fixing part {parts}.", { parts: parts(fixing) }) : null,
             waiting.length > 0 && snapshot.phase !== "checking" && snapshot.phase !== "reviewing"
-              ? t(waiting.length === 1 ? "1 part waiting." : "{n} parts waiting.").replace("{n}", String(waiting.length))
+              ? t("{count, plural, one {# part waiting.} other {# parts waiting.}}", { count: waiting.length })
               : null,
             snapshot.serial_transport && waiting.length > 0 && (writing.length > 0 || fixing.length > 0)
               ? t("This model writes one part at a time, so waiting parts start as each one finishes.")
@@ -207,11 +202,10 @@ export function AdaptProgressBoard({ snapshot }: { snapshot: AdaptProgressSnapsh
                 className={round.blocking ? "text-hero-red" : "text-ink-black"} />
               <span>
                 {(round.blocking
-                  ? t(round.blocking === 1 ? "Check {n}: 1 issue to fix." : "Check {n}: {count} issues to fix.")
-                  : t("Check {n}: passed.")
-                ).replace("{n}", String(round.round)).replace("{count}", String(round.blocking))}
-                {round.notes > 0 && ` ${t(round.notes === 1 ? "1 note for your review." : "{count} notes for your review.")
-                  .replace("{count}", String(round.notes))}`}
+                  ? t("{count, plural, one {Check {n}: # issue to fix.} other {Check {n}: # issues to fix.}}", { count: round.blocking, n: round.round })
+                  : t("Check {n}: passed.", { n: round.round })
+                )}
+                {round.notes > 0 && ` ${t("{count, plural, one {# note for your review.} other {# notes for your review.}}", { count: round.notes })}`}
               </span>
             </li>
           ))}

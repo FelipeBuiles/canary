@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PublicBookPage } from "../pages/PublicBookPage";
 import { BookPublication } from "../components/book/BookPublication";
 import { apiFetch } from "../api/client";
-vi.mock("../i18n", () => ({
-  useI18n: () => ({ t: (value: string) => value }),
+vi.mock("../i18n", async () => ({
+  useI18n: () => ({ t: (value: string, values?: Record<string, string | number>) => value.replace(/\{(\w+)\}/g, (match, key) => String(values?.[key] ?? match)) }),
   LANGUAGES: [{ code: "en", label: "English" }, { code: "es", label: "Español" }, { code: "fr", label: "Français" }],
 }));
 vi.mock("../api/client", () => ({ apiFetch: vi.fn() }));

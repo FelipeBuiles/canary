@@ -6,6 +6,7 @@ import json
 from contextlib import suppress
 from unittest.mock import MagicMock
 
+from fastapi.testclient import TestClient
 import httpx
 import pytest
 
@@ -110,7 +111,7 @@ async def test_estimate_submit_job_translates_every_page_and_preserves_authored_
     assert page1.elements[0].text_by_locale == saved.elements[0].text_by_locale
     assert page1.elements[1].text_by_locale == saved.elements[1].text_by_locale | {"es": "Traducido: Hidden custom copy."}
     for before, after in zip(saved.elements, page1.elements):
-        assert before.model_dump(exclude={"text_by_locale", "resolved"}) == after.model_dump(exclude={"text_by_locale", "resolved"})
+        assert before.model_dump(exclude={"text_by_locale", "translation_sources", "resolved"}) == after.model_dump(exclude={"text_by_locale", "translation_sources", "resolved"})
     assert page1.reviewed_against_image_sha256 is None
     assert page2.elements[0].text_by_locale["es"] == "Traducido: The door opened."
     assert artifacts.read_render(1, 1) == art_before
@@ -240,7 +241,7 @@ async def test_existing_empty_target_is_preserved_without_provider_and_active_co
     item["text_by_locale"] = {"source": "Original.", "fr": "Texte enregistré.", "es": ""}
     save(artifacts, update(initial, elements=[item]))
     prepared = translation.prepare_translation(artifacts, Config(), "en")
-    assert json.loads(prepared.batches[0])["items"][0]["text"] == "Texte enregistré."
+    assert json.loads(prepared.batches[0])["items"][0]["text"] == "Original."
     prepared = translation.prepare_translation(artifacts, Config(), "es")
     assert prepared.estimate["translate_count"] == 0
     async def no_provider(**kwargs):
@@ -321,8 +322,7 @@ def test_stored_language_switch_is_free_synchronous_and_guarded(translated_app, 
     assert refused.status_code == 409
     assert artifacts.read_lettering_settings().locale == "source"
 
-    spanish = client.get(root + "/translation-estimate", params={"target_locale": "es"}).json()
-    assert spanish["translate_count"] == 0
+    spanish = next(item for item in client.get(root + "/languages").json()["languages"] if item["locale"] == "es")
     stale = client.post(root + "/locale", json={"target_locale": "es", "expected_snapshot_sha256": "0" * 64})
     assert stale.status_code == 412
     switched = client.post(root + "/locale", json={"target_locale": "es", "expected_snapshot_sha256": spanish["snapshot_sha256"]})
@@ -335,5 +335,90 @@ def test_stored_language_switch_is_free_synchronous_and_guarded(translated_app, 
     assert state.elements[0].text_by_locale["es"] == "La puerta se abrió."
     assert not calls and not reservations and app.state.generation_queue.empty()
 
-    again = client.get(root + "/translation-estimate", params={"target_locale": "es"}).json()
+    again = next(item for item in client.get(root + "/languages").json()["languages"] if item["locale"] == "es")
     assert client.post(root + "/locale", json={"target_locale": "es", "expected_snapshot_sha256": again["snapshot_sha256"]}).json()["changed"] is False
+
+
+def test_source_edit_retains_but_invalidates_translations_and_explicit_review_restores_them(book):
+    artifacts, _ = book
+    initial = service.ensure_lettering(artifacts, 1)
+    item = initial.elements[0].model_dump()
+    item["text_by_locale"] = {"source": "Original.", "es": "Original traducido."}
+    saved = save(artifacts, update(initial, elements=[item]))
+    assert service.stores_locale(saved, "es")
+    item = saved.elements[0].model_dump()
+    item["text_by_locale"]["source"] = "Revised source."
+    changed = save(artifacts, update(saved, elements=[item]))
+    assert changed.elements[0].text_by_locale["es"] == "Original traducido."
+    assert not service.stores_locale(changed, "es")
+    quote = translation.prepare_translation(artifacts, Config(), "es")
+    assert quote.estimate["stale_target_count"] == 1
+    assert quote.estimate["translate_count"] == 0
+    translation.switch_stored_locale(artifacts, Config(), "es", next(item["snapshot_sha256"] for item in translation.stored_languages(artifacts, Config())["languages"] if item["locale"] == "es"))
+    current = artifacts.read_lettering(1)
+    assert "stale_translation" in current.elements[0].resolved.warnings
+    item = current.elements[0].model_dump()
+    item["translation_sources"]["es"] = item["text_by_locale"]["source"]
+    reviewed = save(artifacts, update(current, elements=[item]))
+    assert service.stores_locale(reviewed, "es")
+    assert "stale_translation" not in reviewed.elements[0].resolved.warnings
+    assert reviewed.reviewed_against_image_sha256 is None
+
+
+def test_language_inventory_returns_source_and_restores_it_without_spend(translated_app):
+    app, artifacts, _, reservations, _, calls = translated_app
+    initial = service.ensure_lettering(artifacts, 1)
+    item = initial.elements[0].model_dump()
+    item["text_by_locale"]["es"] = "La puerta se abrió."
+    save(artifacts, update(initial, elements=[item]))
+    client = TestClient(app)
+    root = "/api/projects/book/lettering"
+    inventory = client.get(root + "/languages").json()
+    assert inventory["current_locale"] == "source"
+    assert [entry["locale"] for entry in inventory["languages"]] == ["source", "es"]
+    for locale in ("es", "source"):
+        quote = next(entry for entry in client.get(root + "/languages").json()["languages"] if entry["locale"] == locale)
+        response = client.post(root + "/locale", json={"target_locale": locale, "expected_snapshot_sha256": quote["snapshot_sha256"]})
+        assert response.status_code == 200, response.text
+        assert artifacts.read_lettering(1).locale == locale
+    assert not calls and not reservations
+
+
+def test_same_locale_noop_preserves_visual_review(book):
+    artifacts, _ = book
+    saved = save(artifacts, service.ensure_lettering(artifacts, 1), reviewed=True)
+    quote = translation.stored_languages(artifacts, Config())["languages"][0]
+    result = translation.switch_stored_locale(artifacts, Config(), "source", quote["snapshot_sha256"])
+    assert not result["changed"]
+    assert artifacts.read_lettering(1) == saved
+
+
+def test_free_selection_does_not_depend_on_model_admission_or_pricing(book, monkeypatch):
+    artifacts, _ = book
+    service.ensure_lettering(artifacts, 1)
+    monkeypatch.setattr(translation, "classify_operations", MagicMock(side_effect=AssertionError("free selection consulted model admission")))
+    inventory = translation.stored_languages(artifacts, Config())
+    selected = inventory["languages"][0]
+    assert selected["locale"] == "source"
+    assert not translation.switch_stored_locale(artifacts, Config(), "source", selected["snapshot_sha256"])["changed"]
+
+
+def test_old_lettering_hash_is_rejected_with_rebuild_guidance(book):
+    from novel_to_comic.target_artifacts import ArtifactInvalid
+    from novel_to_comic.models.adaptation import RevisionedArtifact
+    artifacts, _ = book
+    saved = service.ensure_lettering(artifacts, 1)
+    payload = saved.model_dump(mode="json", exclude={"content_sha256"})
+    for element in payload["elements"]:
+        del element["translation_sources"]
+    payload["content_sha256"] = RevisionedArtifact._content_digest(payload)
+    artifacts.lettering_path(1).write_text(json.dumps(payload))
+    with pytest.raises(ArtifactInvalid, match="Rerun.*new editable project"):
+        artifacts.read_lettering(1)
+
+
+def test_browser_and_server_renderer_versions_agree():
+    from pathlib import Path
+    from novel_to_comic.lettering import renderer
+    source = Path(renderer.__file__).with_name("engine.mjs").read_text()
+    assert f'export const ENGINE_VERSION = "{renderer.ENGINE_VERSION}";' in source

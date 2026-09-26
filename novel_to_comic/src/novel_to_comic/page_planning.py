@@ -1555,22 +1555,34 @@ async def _produce_book_plan_two_pass(
             validation = reviewed_validation(validation, review_failures, artifacts=artifacts, phase="plan", context=planning_context(adaptation, pages))
 
 
+        # Structural and narrative concerns each get one repair round. Review
+        # runs only on a structurally valid draft, so a first draft with
+        # structural failures meets its narrative review after that repair and
+        # must still get the narrative repair it has not yet received.
         narrative_repaired = any(
-            any(code.startswith("narrative_review_") for code in attempt.invariant_codes)
-            for attempt in history
+            any(code.startswith("narrative_review_") for code in record.invariant_codes)
+            for record in history
         )
-        repairable = tuple(
-            f for f in validation.invariant_failures if f.owner_stage == "plan"
-            and f.code != "narrative_review_invalid"
-            and (not f.code.startswith("narrative_review_") or not narrative_repaired)
-        )
-        grouped = _concern_batch_indexes(
-            tuple(repairable),
-            page_count=len(page_map.pages),
-            batch_pages=batch_pages,
-        )
-        if grouped:
-            history.append(_attempt_record(1, validation))
+        structure_repaired = False
+        attempt = 1
+        while True:
+            repairable = tuple(
+                f for f in validation.invariant_failures if f.owner_stage == "plan"
+                and f.code != "narrative_review_invalid"
+                and (not narrative_repaired if f.code.startswith("narrative_review_")
+                     else not structure_repaired)
+            )
+            grouped = _concern_batch_indexes(
+                tuple(repairable),
+                page_count=len(page_map.pages),
+                batch_pages=batch_pages,
+            )
+            if not grouped:
+                break
+            narrative_repaired |= any(f.code.startswith("narrative_review_") for f in repairable)
+            structure_repaired |= any(not f.code.startswith("narrative_review_") for f in repairable)
+            history.append(_attempt_record(attempt, validation))
+            attempt += 1
             total_steps += len(grouped)
             ctx.set_progress_total(total_steps)
             by_index = {
@@ -1608,21 +1620,20 @@ async def _produce_book_plan_two_pass(
                 batches,
             )
             pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat)
-
-        if grouped and not validation.invariant_failures:
-            progress.publish("reviewing")
-            artifacts.write_plan_review_draft(PlanReviewDraft(adaptation_sha256=adaptation.content_sha256, rhythm_summary=draft.rhythm_summary, pages=pages))
-            review_failures = await review_narrative(
-                planning_context(adaptation, pages), generate=generate, ctx=ctx,
-                artifacts=artifacts, model=model, instruction=author_instruction, concurrency=concurrency,
-            )
-            validation = reviewed_validation(validation, review_failures, artifacts=artifacts, phase="plan", context=planning_context(adaptation, pages))
+            if not validation.invariant_failures:
+                progress.publish("reviewing")
+                artifacts.write_plan_review_draft(PlanReviewDraft(adaptation_sha256=adaptation.content_sha256, rhythm_summary=draft.rhythm_summary, pages=pages))
+                review_failures = await review_narrative(
+                    planning_context(adaptation, pages), generate=generate, ctx=ctx,
+                    artifacts=artifacts, model=model, instruction=author_instruction, concurrency=concurrency,
+                )
+                validation = reviewed_validation(validation, review_failures, artifacts=artifacts, phase="plan", context=planning_context(adaptation, pages))
         validation = reviewed_validation(validation, validation.invariant_failures, artifacts=artifacts, phase="plan_map", context=planning_context(adaptation, page_map.pages, phase="plan_map"))
-        history.append(_attempt_record(1 + bool(grouped), validation))
+        history.append(_attempt_record(attempt, validation))
         _persist_validation(
             artifacts,
             validation,
-            attempts=1 + bool(grouped),
+            attempts=attempt,
             history=tuple(history),
         )
         if validation.invariant_failures:

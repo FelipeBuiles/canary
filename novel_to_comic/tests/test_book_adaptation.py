@@ -2285,6 +2285,75 @@ def test_protected_language_survives_spanish_quote_wrappers_in_a_dialogue_balloo
     ]
 
 
+def _source_from_units(*texts: str) -> SourceDocument:
+    source, offset, units = _source_document(), 0, []
+    for ordinal, text in enumerate(texts, start=1):
+        units.append({"id": f"source_{ordinal:06d}", "ordinal": ordinal,
+                      "start_offset": offset, "end_offset": offset + len(text), "text": text})
+        offset += len(text)
+    scene = {**source.scenes[0].model_dump(), "first_unit_id": units[0]["id"],
+             "last_unit_id": units[-1]["id"]}
+    return SourceDocument.model_validate({
+        **source.model_dump(), "source_sha256": "", "text": "".join(texts),
+        "units": units, "scenes": [scene],
+    })
+
+
+# Extraction splits quotations and attribution tags into separate units, and
+# the Brief may protect the whole passage as a reader sees it.
+_ATTRIBUTED_SPEECH_SOURCE = (
+    "Frantically, he gestured at the watch.\n\n",
+    '"This thing?" ',
+    "asked Elm. ",
+    '"It\'s just a watch. ',
+    'Lots of humans have these."\n\n',
+    '"Goblins aren\'t very bright," he thought. ',
+)
+_ATTRIBUTED_SPEECH = '"This thing?" asked Elm. "It\'s just a watch. Lots of humans have these."'
+
+
+@pytest.mark.parametrize(("lettering", "missing"), [
+    ("This thing? It's just a watch. Lots of humans have these.", False),
+    ("This thing? It's only a watch. Lots of humans have these.", True),
+    ("It's just a watch. Lots of humans have these.", True),
+    (_ATTRIBUTED_SPEECH, False),
+])
+def test_attributed_protected_speech_is_realized_by_its_quotations(lettering, missing):
+    from novel_to_comic.book_adaptation import _protected_language_obligations
+
+    source = _source_from_units(*_ATTRIBUTED_SPEECH_SOURCE)
+    brief = _approved_brief().model_copy(update={"protected_language": (_ATTRIBUTED_SPEECH,)})
+    result = validate_book_adaptation(source, brief, _with_lettering_text(lettering))
+    failures = [f for f in result.invariant_failures if f.code == "protected_language_missing"]
+
+    assert bool(failures) == missing
+    if missing:
+        assert failures[0].source_unit_ids == ("source_000002", "source_000004", "source_000005")
+    assert _protected_language_obligations(source, brief, [u.id for u in source.units]) == [{
+        "text": _ATTRIBUTED_SPEECH,
+        "lettered_wording": ["This thing?", "It's just a watch. Lots of humans have these."],
+        "source_unit_ids": ["source_000002", "source_000004", "source_000005"],
+    }]
+
+
+def test_attributed_speech_tag_comma_is_not_protected_wording():
+    source = _source_from_units(*_ATTRIBUTED_SPEECH_SOURCE)
+    phrase = '"Goblins aren\'t very bright," he thought.'
+    brief = _approved_brief().model_copy(update={"protected_language": (phrase,)})
+    result = validate_book_adaptation(source, brief, _with_lettering_text("Goblins aren't very bright."))
+    assert "protected_language_missing" not in [f.code for f in result.invariant_failures]
+
+
+@pytest.mark.parametrize("phrase", [
+    'The "old" house stood empty.',
+    '"I saw the door open."',
+    "I saw the door open.",
+])
+def test_narration_and_lone_quotations_are_not_attributed_speech(phrase):
+    from novel_to_comic.book_adaptation import _protected_speech
+    assert _protected_speech(phrase) == ()
+
+
 def test_paraphrased_protected_language_still_blocks() -> None:
     payload = _book_adaptation().model_dump()
     payload["content_sha256"] = ""

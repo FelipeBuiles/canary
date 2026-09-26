@@ -13,6 +13,7 @@ from PIL import Image
 from novel_to_comic.artifact_lock import locked_mutation, production_lock
 from novel_to_comic.config import Config, load_config
 from novel_to_comic.models.draw import PageRenderRevision
+from novel_to_comic.localization import translation_status
 from novel_to_comic.models.lettering import (
     LetteringElement,
     LetteringRoles,
@@ -734,8 +735,19 @@ def save_lettering(
                 raise ValueError(
                     "Offscreen copy and captions cannot point to a visible speaker."
                 )
+    # New/edited target copy is an explicit author translation. Unchanged targets
+    # retain their source provenance, including when source copy changes.
+    elements = []
+    for element in incoming.elements:
+        old = previous.get(element.id)
+        sources = dict(element.translation_sources)
+        for locale, text in element.text_by_locale.items():
+            if locale != "source" and (old is None or old.text_by_locale.get(locale) != text):
+                sources[locale] = element.text_by_locale["source"]
+        elements.append(element.model_dump() | {"translation_sources": sources})
     state = _replace(
         incoming,
+        elements=elements,
         revision=saved.revision + 1,
         canvas_aspect_ratio=render.width / render.height,
         reviewed_against_render_revision=None,
@@ -850,8 +862,8 @@ def composite_identity(render, state: PageLettering, style: LetteringStyle) -> s
 
 
 def stores_locale(state: PageLettering, locale: str) -> bool:
-    """Translation's ``translate_count == 0`` rule: every element, hidden ones too."""
-    return all(locale in element.text_by_locale for element in state.elements)
+    """Publication requires current copy for every element, including hidden ones."""
+    return all(translation_status(element.text_by_locale, element.translation_sources, locale) == "current" for element in state.elements)
 
 
 @locked_mutation
@@ -880,7 +892,7 @@ def render_stored_locale(
         )
     if not stores_locale(state, locale):
         raise LetteringConflict(
-            f"Page {page_number} has lettering without a saved {locale} translation."
+            f"Page {page_number} has missing or stale {locale} translations. Review their wording in Lettering."
         )
     localized = resolve_lettering(_replace(state, locale=locale), style)
     validate_lettering_render(localized, style, render.width, render.height)

@@ -5,7 +5,7 @@
  */
 import { FONT_COVERAGE } from "./font-coverage.mjs";
 
-export const ENGINE_VERSION = "lettering-svg-v11";
+export const ENGINE_VERSION = "lettering-svg-v12";
 export const FONT_FILES = Object.freeze({
   "Comic Neue": "ComicNeue-Bold.ttf",
   "EB Garamond": "EBGaramond-SemiBold.ttf",
@@ -166,6 +166,11 @@ export function roleFor(element, style) {
   // Stable per bubble/style, independent of movement, edits and render order.
   return ["cloud", "burst", "electric"].includes(role.shape) || role.jitter > 0
     ? {...role, seed: element.id + ":" + style.content_sha256} : role;
+}
+export function translationStatus(element, locale) {
+  if (!Object.hasOwn(element.text_by_locale, locale)) return "missing";
+  if (locale === "source" || element.translation_sources?.[locale] === element.text_by_locale.source) return "current";
+  return "stale";
 }
 export function textFor(element, locale) {
   return element.text_by_locale[locale] ?? element.text_by_locale.source;
@@ -793,7 +798,8 @@ export function resolvePage(state, style, measure) {
     const warnings = [];
     if (!text.trim()) warnings.push("empty_copy");
     if (hasMissingGlyphs(role.font, display)) warnings.push("missing_glyphs");
-    if (element.text_by_locale[state.locale] === undefined && state.locale !== "source") warnings.push("missing_translation");
+    const translation = translationStatus(element, state.locale);
+    if (translation !== "current") warnings.push(`${translation}_translation`);
     const key=JSON.stringify([role,element.role,display,state.locale,element.placement.width,
       element.placement.height,element.tight_box,pageHeight]);
     let cached=cache.get(key);

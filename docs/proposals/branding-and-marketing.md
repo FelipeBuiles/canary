@@ -1,5 +1,7 @@
 # Scenewright — Proof-Led, Self-Service Launch Positioning
 
+**Status: Superseded, September 26, 2026,** by [showcase-and-growth-2026-09.md](showcase-and-growth-2026-09.md). Kept for rationale only.
+
 > **Status: Proposed launch positioning; implemented capabilities and external
 > claims are identified separately below.** Refreshed 2026-09-09. Replaces the
 > July naming/marketing research as the active proposal. This does not certify

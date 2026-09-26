@@ -34,6 +34,8 @@ describe("shared deterministic lettering engine", () => {
     original.locale = "es";
     expect(resolvePage(original, style, measure).elements[0].resolved?.warnings).toContain("missing_translation");
     original.elements[0].text_by_locale.es = "La puerta se abrió.";
+    expect(resolvePage(original, style, measure).elements[0].resolved?.warnings).toContain("stale_translation");
+    original.elements[0].translation_sources = { es: original.elements[0].text_by_locale.source };
     expect(resolvePage(original, style, measure).elements[0].resolved?.warnings).toEqual([]);
     original.elements[0].text_by_locale.es = "新しい物語";
     expect(resolvePage(original, style, measure).elements[0].resolved?.warnings).toContain("font_script_mismatch");

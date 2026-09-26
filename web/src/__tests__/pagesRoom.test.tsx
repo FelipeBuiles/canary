@@ -1335,6 +1335,18 @@ describe("PagesRoom", () => {
     expect(screen.getByRole("heading", { name: "PAGE PLAN" })).toBe(document.activeElement);
   });
 
+  it.each(["adaptation", "page-plan"])("returns unfinished %s deep links to Pages without a reading header", (kind) => {
+    stageStatuses.adapt.status = "running";
+    stageStatuses.plan.status = "pending";
+    renderRoom(`/project/demo/pages?reading=${kind}&filter=needs-review`);
+    expect(screen.queryByRole("region", { name: "BOOK ADAPTATION" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "PAGE PLAN" })).toBeNull();
+    expect(screen.getByLabelText("Current route").textContent).not.toContain("reading=");
+    expect(screen.getByLabelText("Current route").textContent).toContain("filter=needs-review");
+    expect(screen.getByRole("button", { name: "BOOK ADAPTATION" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "PAGE PLAN" })).toHaveProperty("disabled", true);
+  });
+
   it("opens a Book finding on the requested page and review view", () => {
     includeUndrawnPage = true;
     renderRoom("/project/demo/pages?page=1&review=checks&filter=needs-review");

@@ -1,0 +1,55 @@
+# Homepage showcase
+
+Each immediate subfolder contains one complete public edition. Folder names set
+homepage order: use names such as `01-call-of-cthulhu`, `02-another-book`.
+The app reads these folders directly. No backoffice action or production account
+mapping is required. Generated editions are local data: Git and Docker build
+contexts exclude them. The image starts with an empty catalogue.
+
+## Add or update a book
+
+From the repository root, run the provider-free packaging command:
+
+```sh
+novel_to_comic/.venv/bin/python scripts/prepare_showcase.py \
+  projects/ACCOUNT/PROJECT \
+  --folder 03-my-book \
+  --title "My book" \
+  --author "Author credit" \
+  --description "A short introduction to the story."
+```
+
+The project must pass the same Finish checks as a published book. This runs no
+paid generation. It copies finished pages (including saved lettering) and public
+metadata only. It does not copy manuscripts, prompts, accounts, or working files.
+The generated `book.json` and version folder belong together; do not copy a whole
+working project into this folder.
+
+Run the same command with the same destination folder to update a book and retain
+its reader URL. The previous edition stays readable if preparation fails.
+Older version directories can be deleted after a successful update; only the
+version named in `book.json` is served. Edit title, author, or description in
+`book.json` directly if desired; do not change IDs or page metadata.
+
+## Order, remove, deploy
+
+- Rename folders to change their alphabetical order without changing reader URLs.
+- Move a book folder outside `showcase/books/` to remove it from the homepage **and**
+  disable its bundled public reader on the next deployment.
+- Check all entries:
+  `novel_to_comic/.venv/bin/python scripts/prepare_showcase.py --check`.
+- Supply selected folders, including each `book.json` and its versioned images,
+  through a persistent volume mounted at `/app/showcase/books`, or set
+  `CANARY_SHOWCASE_DIR` to a separately mounted catalogue. Do not commit generated
+  editions or add them to the Docker build context.
+- Validate the supplied catalogue with `scripts/prepare_showcase.py --check`
+  using the same `CANARY_SHOWCASE_DIR`. Content is read on the next API request;
+  no database import is needed. Without a supplied catalogue the homepage shows
+  no showcase books. A local folder alone does not reach production.
+
+Keep only work deliberately selected for public display here. This is a curated
+demo catalogue independent of account-owned publications and consent controls.
+A separately published copy of the same work retains its own public URL.
+
+`CANARY_SHOWCASE_DIR` can override this directory for tests or a separately mounted
+catalogue; the default is this repository's `showcase/books/` directory.

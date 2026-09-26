@@ -50,10 +50,10 @@ export function PageCheckRecovery({ project, unchecked, editable = true, onRecov
   const failed = results.filter((page) => page.status !== "checked" && page.status !== "undrawn").length;
   const message = busy ? t("Checking pages…")
     : results.length && !failed ? t("All pages checked.")
-    : failed ? `${failed} ${t(failed === 1 ? "page couldn’t be checked. Export still works." : "pages couldn’t be checked. Export still works.")}`
+    : failed ? `${failed} ${t("{count, plural, one {page couldn’t be checked. Export still works.} other {pages couldn’t be checked. Export still works.}}", { count: failed })}`
     : editable
-      ? `${unchecked} ${t(unchecked === 1 ? "page isn’t checked yet. Checking places balloons around faces and spots stray lettering." : "pages aren’t checked yet. Checking places balloons around faces and spots stray lettering.")}`
-      : `${unchecked} ${t(unchecked === 1 ? "page hasn’t had a text check. It can suggest wording differences; export still works." : "pages haven’t had a text check. It can suggest wording differences; export still works.")}`;
+      ? `${unchecked} ${t("{count, plural, one {page isn’t checked yet. Checking places balloons around faces and spots stray lettering.} other {pages aren’t checked yet. Checking places balloons around faces and spots stray lettering.}}", { count: unchecked })}`
+      : `${unchecked} ${t("{count, plural, one {page hasn’t had a text check. It can suggest wording differences; export still works.} other {pages haven’t had a text check. It can suggest wording differences; export still works.}}", { count: unchecked })}`;
   return <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-l-[3px] border-narrator-gold bg-bristol px-3 py-2">
     <p role="status" className="min-w-0 flex-1 font-body text-sm leading-6">{message}</p>
     {!(results.length && !failed) && <Button size="xs" variant="outline" disabled={busy} onClick={() => void recover()}>

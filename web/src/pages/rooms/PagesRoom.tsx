@@ -28,6 +28,7 @@ import {
 } from "../../api/queries";
 import { pageRenderPreviewUrl } from "../../api/pages";
 import { ReadingWorkspace } from "../../components/pages/ReadingWorkspace";
+import { canReadDocument } from "../../lib/stationAccess";
 import {
   ApprovalBar,
   RerunStageAction,
@@ -510,6 +511,15 @@ export function PagesRoom() {
   const filter: PageFilter = filterParam === "needs-review" || filterParam === "drawing" || filterParam === "failed" ? filterParam : "all";
   const readingParam = searchParams.get("reading");
   const reading: DrawerKind | null = readingParam === "adaptation" || readingParam === "page-plan" ? readingParam : null;
+  const readingAvailable = reading !== null && canReadDocument(reading, status);
+  useEffect(() => {
+    if (!status || !reading || readingAvailable) return;
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete("reading");
+      return next;
+    }, { replace: true });
+  }, [status, reading, readingAvailable, setSearchParams]);
   const restoredProject = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!id || restoredProject.current === id) return;
@@ -615,8 +625,8 @@ export function PagesRoom() {
     }
   }, [data, filter]);
 
-  if (id && reading) {
-    return <ReadingWorkspace project={id} kind={reading}
+  if (id && reading && readingAvailable) {
+    return <ReadingWorkspace project={id} kind={reading} status={status}
       onKindChange={(kind) => updateContext({ reading: kind })}
       onClose={() => {
         updateContext({ reading: null });
@@ -665,6 +675,7 @@ export function PagesRoom() {
     return (
       <RoomShell project={id ?? ""}>
         <StagePlaceholder
+          activeJobs={status?.active_jobs}
           project={id ?? ""}
           stage={interruptedStage}
           status={interruptedStatus}
@@ -850,7 +861,7 @@ export function PagesRoom() {
           </div>
         </div>
         <div className="flex flex-col justify-center bg-pulp-paper/10 p-5">
-          <p className="font-meta text-sm font-bold">{t("{drawn} of {total} pages drawn").replace("{drawn}", String(drawnPages.length)).replace("{total}", String(pages.length))}</p>
+          <p className="font-meta text-sm font-bold">{t("{drawn} of {total} pages drawn", { drawn: String(drawnPages.length), total: String(pages.length) })}</p>
           <progress aria-label={t("Drawing progress")} value={drawnPages.length} max={Math.max(1, pages.length)} className="mt-3 h-2 w-full overflow-hidden [&::-webkit-progress-bar]:bg-pulp-paper/20 [&::-webkit-progress-value]:bg-narrator-gold [&::-moz-progress-bar]:bg-narrator-gold" />
           <p className="mt-3 font-body text-xs leading-6 text-pulp-paper/85">{t("Open completed pages to check the artwork and lettering.")}</p>
           {status?.style_selected && selectedStyle && <div className="mt-4 flex items-center gap-3">
@@ -872,6 +883,7 @@ export function PagesRoom() {
                 variant="outline"
                 size="xs"
                 data-reading-kind="adaptation"
+                disabled={!canReadDocument("adaptation", status)}
                 onClick={() => updateContext({ reading: "adaptation" })}
               >
                 {t("BOOK ADAPTATION")}
@@ -880,6 +892,7 @@ export function PagesRoom() {
                 variant="outline"
                 size="xs"
                 data-reading-kind="page-plan"
+                disabled={!canReadDocument("page-plan", status)}
                 onClick={() => updateContext({ reading: "page-plan" })}
               >
                 {t("PAGE PLAN")}
@@ -928,10 +941,7 @@ export function PagesRoom() {
               <div className="min-w-0 flex-1 basis-80">
                 <h3 className="font-body text-base font-bold text-ink-black">{t("Finish drawing the edition")}</h3>
                 <p className="mt-1 text-sm leading-6 text-ink-muted">
-                  {t(pagesWaitingToDraw.length === 1
-                    ? "One page still needs artwork. Completed pages are saved. Queue it after reviewing the current estimate."
-                    : "{count} pages still need artwork. Completed pages are saved. Queue the unfinished pages together after reviewing the current estimate.")
-                    .replace("{count}", String(pagesWaitingToDraw.length))}
+                  {t("{count, plural, one {One page still needs artwork. Completed pages are saved. Queue it after reviewing the current estimate.} other {# pages still need artwork. Completed pages are saved. Queue the unfinished pages together after reviewing the current estimate.}}", { count: pagesWaitingToDraw.length })}
                 </p>
                 {drawingPages.size > 0 && <p className="mt-2 text-sm leading-6 text-ink-muted">{t("Wait for the current page to finish before queuing the rest.")}</p>}
               </div>

@@ -91,8 +91,9 @@ RUN set -eu; \
     done; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
 
-# Selected public editions ship with the release; private projects stay on the volume.
-COPY showcase/books/ /app/showcase/books/
+# Generated public editions are supplied separately through CANARY_SHOWCASE_DIR
+# (or a mount at this default path), never through the image build context.
+RUN mkdir -p /app/showcase/books
 
 # Copy application source and install the project itself
 COPY novel_to_comic/ ./novel_to_comic/

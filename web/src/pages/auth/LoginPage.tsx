@@ -70,7 +70,7 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
           },
         });
         if (error) throw error;
-        setMessage(t("Check {email} for the confirmation link.").replace("{email}", email.trim()));
+        setMessage(t("Check {email} for the confirmation link.", { email: email.trim() }));
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
         if (error) throw error;
@@ -97,7 +97,7 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
         redirectTo: `${window.location.origin}/reset-password`,
       });
       if (error) throw error;
-      setMessage(t("Check {email} for a password-reset link.").replace("{email}", email.trim()));
+      setMessage(t("Check {email} for a password-reset link.", { email: email.trim() }));
     } catch (error) {
       setError(error instanceof Error ? error.message : t("We couldn't send the reset link. Please try again."));
     } finally {

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useId, useRef, startTransition, useState } from "react";
-import { useMutation, useMutationState, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, isInsufficientCreditsError } from "../../api/client";
-import { getLetteringTranslationEstimate, switchStoredLetteringLocale, translateProjectLettering, type LetteringLocale, type LetteringTranslationEstimate, type LetteringTranslationRequest } from "../../api/lettering";
+import { getStoredLetteringLanguages, getLetteringTranslationEstimate, switchStoredLetteringLocale, translateProjectLettering, type StoredLetteringLanguage, type LetteringTranslationEstimate, type LetteringTranslationRequest } from "../../api/lettering";
 import { useCreditBalance, useGenerationJobs } from "../../api/queries";
 import type { GenerationJob } from "../../types/api";
-import { LANGUAGES, useI18n } from "../../i18n";
+import { LANGUAGES, useI18n, type LanguageCode } from "../../i18n";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { ConfirmDrawer } from "../composites/ConfirmDrawer";
 import { Button } from "../ui/Button";
@@ -28,11 +28,11 @@ export function ProjectLetteringLanguage(props: ProjectLetteringLanguageProps) {
 }
 
 function LanguageControl({ project, disabled, onApplied, onBusyChange }: ProjectLetteringLanguageProps) {
-  const { t, language } = useI18n();
+  const { t } = useI18n();
   const qc = useQueryClient();
   const selectId = useId();
   const [open, setOpen] = useState(false);
-  const [target, setTarget] = useState<LetteringLocale | "">("");
+  const [target, setTarget] = useState<LanguageCode | "">("");
   const [confirmation, setConfirmation] = useState<LetteringTranslationEstimate | null>(null);
   const [refresh, setRefresh] = useState<{ id: string; status: "pending" | "complete" | "failed" } | null>(null);
   const observedTerminal = useRef<string | null>(null);
@@ -78,27 +78,9 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
   const submissionError = submissionIsLatest && submission?.status === "error" ? submission.error : null;
   const unknown = isUnknownSubmission(submissionError);
   const refreshing = !!latest && latest.status === "complete" && (refresh?.id !== latest.id || refresh.status === "pending");
-  const busy = !!active || submitting || unknown || refreshing;
-  useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
-
-  // Languages every element already stores switch instantly, without a job or credits.
-  const stored = useQueries({
-    queries: LANGUAGES.map((item) => ({
-      queryKey: ["project", project, "lettering-translation-estimate", item.code],
-      queryFn: () => getLetteringTranslationEstimate(project, item.code),
-      // Each quote reads the whole book; only ask once the author opens this panel.
-      enabled: open && !disabled && !busy,
-      staleTime: 30_000,
-    })),
-  });
-  const storedLanguages = LANGUAGES.flatMap((item, index) => {
-    const quote = stored[index].data;
-    return quote && quote.translate_count === 0 ? [{ ...item, quote }] : [];
-  });
-  const currentLocale = stored.find((query) => query.data?.current_locale)?.data?.current_locale;
   const switchLocale = useMutation({
-    mutationFn: (quote: LetteringTranslationEstimate) => switchStoredLetteringLocale(project, {
-      target_locale: quote.target_locale, expected_snapshot_sha256: quote.snapshot_sha256,
+    mutationFn: (quote: StoredLetteringLanguage) => switchStoredLetteringLocale(project, {
+      target_locale: quote.locale, expected_snapshot_sha256: quote.snapshot_sha256,
     }),
     retry: false,
     onSuccess: async () => {
@@ -106,13 +88,27 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
       await onApplied();
     },
     onError: () => {
-      void qc.invalidateQueries({ queryKey: ["project", project, "lettering-translation-estimate"] });
+      void qc.invalidateQueries({ queryKey: ["project", project, "lettering-languages"] });
     },
   });
+  const busy = !!active || submitting || unknown || refreshing || switchLocale.isPending;
+  useEffect(() => { onBusyChange?.(busy); }, [busy, onBusyChange]);
+
+  // Languages every element already stores switch instantly, without a job or credits.
+  const stored = useQuery({
+    queryKey: ["project", project, "lettering-languages"],
+    queryFn: () => getStoredLetteringLanguages(project),
+    enabled: open && !disabled && !busy,
+  });
+  const storedLanguages = (stored.data?.languages ?? []).map(quote => ({
+    code: quote.locale, quote,
+    label: quote.locale === "source" ? t("Original language") : LANGUAGES.find(item => item.code === quote.locale)!.label,
+  }));
+  const currentLocale = stored.data?.current_locale;
 
   const estimate = useQuery({
     queryKey: ["project", project, "lettering-translation-estimate", target],
-    queryFn: () => getLetteringTranslationEstimate(project, target as LetteringLocale),
+    queryFn: () => getLetteringTranslationEstimate(project, target as LanguageCode),
     enabled: open && !!target && !disabled && !busy && !confirmation,
     staleTime: 0,
   });
@@ -121,7 +117,7 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
   const insufficient = required > 0 && balance.data !== undefined && balance.data.balance_credits < required;
   const balanceUnavailable = required > 0 && (balance.isError || !balance.data);
   const unavailable = disabled || busy || !estimate.data || estimate.isError || estimate.isFetching
-    || insufficient || balanceUnavailable || jobs.isPending || jobs.isError;
+    || insufficient || balanceUnavailable || jobs.isPending || jobs.isError || estimate.data?.translate_count === 0;
 
   const refreshProject = useCallback(async (job: GenerationJob) => {
     try {
@@ -145,10 +141,7 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
     setConfirmation(null);
   }
 
-  const counts = cost ? t("{pages} pages, {elements} text elements; {count} to translate.")
-    .replace("{pages}", cost.page_count.toLocaleString(language))
-    .replace("{elements}", cost.element_count.toLocaleString(language))
-    .replace("{count}", cost.translate_count.toLocaleString(language)) : null;
+  const counts = cost ? t("{pages, plural, one {# page} other {# pages}}, {elements, plural, one {# text element} other {# text elements}}; {count, number} to translate.", { pages: cost.page_count, elements: cost.element_count, count: cost.translate_count }) : null;
   const jobLocale = latest?.payload.target_locale;
   const jobLanguage = LANGUAGES.find((item) => item.code === jobLocale)?.label;
   const refreshFailed = !!latest && refresh?.id === latest.id && refresh.status === "failed";
@@ -161,7 +154,7 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
           {storedLanguages.some(({ code }) => code !== currentLocale) && (
             <div role="group" aria-label={t("Stored languages")} className="flex flex-wrap items-center gap-2 py-2">
               <span className="font-meta text-xs font-bold text-ink-muted">{t("Stored languages")}</span>
-              {storedLanguages.map(({ code, quote }) => {
+              {storedLanguages.map(({ code, quote, label }) => {
                 const current = code === currentLocale;
                 return (
                   <Button
@@ -169,11 +162,11 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
                     size="xs"
                     variant={current ? "secondary" : "outline"}
                     aria-pressed={current}
-                    title={LANGUAGES.find((item) => item.code === code)?.label}
+                    title={quote.stale_count ? t("{language}: {count} translations need review", { language: label, count: quote.stale_count }) : label}
                     disabled={current || disabled || busy || switchLocale.isPending}
                     onClick={() => switchLocale.mutate(quote)}
                   >
-                    {code.toUpperCase()}
+                    {code === "source" ? t("Original") : code.toUpperCase()}
                   </Button>
                 );
               })}
@@ -181,12 +174,13 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
               {switchLocale.isError && <span role="alert" className="text-xs text-hero-red">{switchLocale.error.message}</span>}
             </div>
           )}
+          {stored.isError && <p role="alert">{stored.error.message}</p>}
           <p className="text-ink-muted">{t("Translate saved lettering across the whole project. Save drafts on every page first.")}</p>
           <div className="flex flex-wrap items-end gap-3">
             <div className="min-w-0 flex-1">
               <FieldLabel htmlFor={selectId}>{t("Translate to")}</FieldLabel>
               <SelectField id={selectId} value={target} disabled={disabled || busy} onChange={(event) => {
-                setTarget(event.target.value as LetteringLocale | "");
+                setTarget(event.target.value as LanguageCode | "");
                 setConfirmation(null);
               }}>
                 <option value="">{t("Choose a language")}</option>
@@ -201,6 +195,7 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
           {disabled && !busy && <p>{t("Save your draft and wait for other project work to finish before translating.")}</p>}
           {target && !busy && estimate.isFetching && <p role="status">{t("Estimating translation…")}</p>}
           {!busy && counts && <p>{counts}</p>}
+          {estimate.data?.translate_count === 0 && <p>{t("This language is already stored. Select it above to review the wording.")}</p>}
           {target && !busy && estimate.isError && <div role="alert">
             <p>{estimate.error.message}</p>
             <Button size="sm" variant="outline" disabled={disabled || estimate.isFetching} onClick={() => void estimate.refetch()}>{t("Retry estimate")}</Button>
@@ -246,11 +241,11 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
       <ConfirmDrawer
         open={confirmation !== null}
         title={t("Translate project")}
-        body={t("Translate saved wording into {language}. Existing target-language edits are kept; only missing translations are generated.")
-          .replace("{language}", LANGUAGES.find((item) => item.code === confirmation?.target_locale)?.label ?? "")}
+        body={t("Translate saved wording into {language}. Existing target-language edits are kept; only missing translations are generated.", { language: LANGUAGES.find((item) => item.code === confirmation?.target_locale)?.label ?? "" })}
         extraBody={<div className="space-y-2 text-sm leading-6">
           <p>{counts}</p>
-          <p>{t("{count} existing translations will be preserved.").replace("{count}", (confirmation?.preserved_target_count ?? 0).toLocaleString(language))}</p>
+          {!!confirmation?.stale_target_count && <p>{t("{count} translations need review after source edits. Existing wording will be kept.", { count: confirmation.stale_target_count })}</p>}
+          <p>{t("{count, plural, one {# existing translation will be preserved.} other {# existing translations will be preserved.}}", { count: confirmation?.preserved_target_count ?? 0 })}</p>
           <p>{t("Artwork and placement stay unchanged. Review the new language on every page before export.")}</p>
         </div>}
         cost={confirmation ?? undefined}

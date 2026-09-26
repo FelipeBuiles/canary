@@ -35,7 +35,7 @@ export function CreditsGate({ project, stage, stageLabel, balance, required, rea
   const [startError, setStartError] = useState<string | null>(null);
   const funded = shortfall === 0 && balanceQuery.data != null && !balanceQuery.isError;
   const unavailable = !funded || !estimate.data || estimate.isError || estimate.isFetching || isPending;
-  const actionLabel = t("Resume {action}").replace("{action}", stageLabel);
+  const actionLabel = t("Resume {action}", { action: stageLabel });
 
   function confirmResume() {
     if (unavailable) return;
@@ -55,7 +55,7 @@ export function CreditsGate({ project, stage, stageLabel, balance, required, rea
     <div className="flex min-h-[50vh] items-center justify-center px-4 py-8 sm:px-6">
       <div className="w-full max-w-[640px] border-[2px] border-ink-black bg-pulp-paper p-6 text-ink-black sm:p-8">
         <h2 className="break-words font-display text-[1.6rem] leading-tight tracking-[-0.02em] uppercase sm:text-[1.85rem]">
-          {t("{action} is paused").replace("{action}", stageLabel)}
+          {t("{action} is paused", { action: stageLabel })}
         </h2>
         <p className="mt-4 font-body text-base leading-6 text-ink-muted">
           {t("Adding credits does not start work. Review the estimate and confirm when you are ready.")}
