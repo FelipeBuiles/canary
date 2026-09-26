@@ -25,9 +25,6 @@ _REDACT_KEYS = {
 _MAX_ITEMS = 20
 _MAX_STRING = 300
 _MAX_IMAGE_PROMPT_STRING = 1200
-_MAX_SPAN_ATTR = 4000
-_SPAN_CHUNK_SIZE = 3500
-_ACTIVE_SPANS: dict[str, Any] = {}
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
@@ -105,86 +102,14 @@ def _current_trace_id() -> str | None:
     return None
 
 
-def _start_span(
-    call_id: str,
-    provider: str,
-    operation: str,
-    params: Mapping[str, Any] | None,
-    payload: Mapping[str, Any] | None,
-) -> str | None:
-    # LLM prompt/response tracing now belongs to LiteLLM/Langfuse. Keep
-    # redacted app logs here, but do not create provider-specific OTel spans.
-    if provider in {"gemini", "anthropic", "openai", "openrouter", "together", "litellm"}:
-        return None
-    try:
-        from opentelemetry import trace
-
-        tracer = trace.get_tracer("canary.api")
-        span = tracer.start_span(f"{provider}.{operation}")
-        span.set_attribute("canary.call_id", call_id)
-        span.set_attribute("canary.provider", provider)
-        span.set_attribute("canary.operation", operation)
-        if params:
-            safe = _sanitize(params)
-            params_json = json.dumps(safe, ensure_ascii=True, sort_keys=True)
-            span.set_attribute("canary.params_json", _truncate(params_json, _MAX_SPAN_ATTR))
-        if payload:
-            safe_payload = _sanitize(payload)
-            payload_json = json.dumps(safe_payload, ensure_ascii=True, sort_keys=True)
-            if _full_prompts_enabled() and len(payload_json) > _MAX_SPAN_ATTR:
-                span.set_attribute("canary.payload_json_truncated", False)
-                parts = [
-                    payload_json[i : i + _SPAN_CHUNK_SIZE]
-                    for i in range(0, len(payload_json), _SPAN_CHUNK_SIZE)
-                ]
-                span.set_attribute("canary.payload_json_parts", len(parts))
-                for idx, part in enumerate(parts):
-                    span.set_attribute(f"canary.payload_json_part_{idx:03d}", part)
-            else:
-                span.set_attribute("canary.payload_json", _truncate(payload_json, _MAX_SPAN_ATTR))
-        _ACTIVE_SPANS[call_id] = span
-        ctx = span.get_span_context()
-        if ctx and getattr(ctx, "is_valid", False):
-            return format(ctx.trace_id, "032x")
-    except Exception:
-        return None
-    return None
+def _start_span(call_id, provider, operation, params, payload):
+    # Provider spans are emitted by the central AI lifecycle. Local diagnostic
+    # payload summaries must never become third-party trace attributes.
+    return _current_trace_id()
 
 
-def _finish_span(
-    call_id: str,
-    *,
-    ok: bool,
-    status_code: int | None = None,
-    result: Mapping[str, Any] | None = None,
-    error: BaseException | None = None,
-) -> None:
-    span = _ACTIVE_SPANS.pop(call_id, None)
-    if span is None:
-        return
-    try:
-        if status_code is not None:
-            span.set_attribute("http.status_code", status_code)
-        if result:
-            result_json = json.dumps(_sanitize(result), ensure_ascii=True, sort_keys=True)
-            span.set_attribute("canary.result_json", _truncate(result_json, _MAX_SPAN_ATTR))
-        if error is not None:
-            span.record_exception(error)
-            try:
-                from opentelemetry.trace import Status, StatusCode
-
-                span.set_status(Status(StatusCode.ERROR, str(error)))
-            except Exception:
-                pass
-        elif ok:
-            try:
-                from opentelemetry.trace import Status, StatusCode
-
-                span.set_status(Status(StatusCode.OK))
-            except Exception:
-                pass
-    finally:
-        span.end()
+def _finish_span(call_id, *, ok, status_code=None, result=None, error=None):
+    pass
 
 
 def payload_summary(*, system_prompt: str | None = None, user_content: str | None = None) -> dict[str, Any]:

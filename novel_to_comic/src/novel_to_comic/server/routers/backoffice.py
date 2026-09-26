@@ -932,3 +932,20 @@ def grant_credits(user_id: str, body: GrantCreditsRequest):
         "environment": environment,
         "stripe_charge": False,
     }
+
+
+class FeedbackStatusPatch(BaseModel):
+    status: str = Field(pattern=r"^(new|reviewed|planned|resolved)$")
+
+
+@router.get("/feedback")
+def list_feedback():
+    return {"items": _rows(get_db().table("customer_feedback").select("*").order("created_at", desc=True).limit(200).execute())}
+
+
+@router.patch("/feedback/{user_id}/{feedback_id}")
+def update_feedback(user_id: str, feedback_id: str, body: FeedbackStatusPatch):
+    rows = _rows(get_db().table("customer_feedback").update({"status": body.status}).eq("user_id", user_id).eq("id", feedback_id).execute())
+    if not rows:
+        raise HTTPException(404, "Feedback not found")
+    return rows[0]

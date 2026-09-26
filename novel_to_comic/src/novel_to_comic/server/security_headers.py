@@ -19,7 +19,7 @@ CONTENT_SECURITY_POLICY = "; ".join(
         "img-src 'self' data: blob: https:",
         (
             "connect-src 'self' https://*.supabase.co wss://*.supabase.co "
-            "https://*.stripe.com https://*.sentry.io"
+            "https://*.stripe.com https://us.i.posthog.com https://eu.i.posthog.com"
         ),
         "frame-src https://js.stripe.com https://hooks.stripe.com",
         "worker-src 'self' blob:",

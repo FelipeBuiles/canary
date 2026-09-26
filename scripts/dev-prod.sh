@@ -71,7 +71,7 @@ fi
 # ─── Validate required vars ────────────────────────────────────────────────
 #
 # These two are the only Vite vars the bundle genuinely needs at build time.
-# VITE_SENTRY_DSN is optional (frontend no-ops when unset); VITE_CANARY_ENV
+# VITE_POSTHOG_PROJECT_TOKEN is optional (frontend no-ops when unset); VITE_CANARY_ENV
 # defaults to "production" in the Dockerfile.
 
 _missing=""
@@ -110,16 +110,16 @@ _mask() {
 echo "[dev-prod] resolved build args:"
 echo "[dev-prod]   VITE_SUPABASE_URL          = $VITE_SUPABASE_URL"
 echo "[dev-prod]   VITE_SUPABASE_PUBLISHABLE  = $(_mask "$VITE_SUPABASE_PUBLISHABLE_KEY")"
-if [ -n "${VITE_SENTRY_DSN:-}" ]; then
-  echo "[dev-prod]   VITE_SENTRY_DSN            = (set)"
+if [ -n "${VITE_POSTHOG_PROJECT_TOKEN:-}" ]; then
+  echo "[dev-prod]   VITE_POSTHOG_PROJECT_TOKEN            = (set)"
 else
-  echo "[dev-prod]   VITE_SENTRY_DSN            = (unset — frontend Sentry no-ops)"
+  echo "[dev-prod]   VITE_POSTHOG_PROJECT_TOKEN            = (unset — frontend PostHog no-ops)"
 fi
 echo "[dev-prod]   VITE_CANARY_ENV            = ${VITE_CANARY_ENV:-production}"
 
 # Export so docker compose's build-args interpolation picks them up.
 export VITE_SUPABASE_URL VITE_SUPABASE_PUBLISHABLE_KEY VITE_CANARY_ENV
-export VITE_SENTRY_DSN  # may be empty — Dockerfile handles that
+export VITE_POSTHOG_PROJECT_TOKEN VITE_POSTHOG_HOST  # may be empty — Dockerfile handles that
 
 # ─── Default subcommand: up --build canary-prod ────────────────────────────
 if [ "$#" -eq 0 ]; then

@@ -165,7 +165,6 @@ def persisted_events(monkeypatch):
 
     monkeypatch.setattr(db, "get_db", lambda: Database())
     monkeypatch.setattr(client, "_settle_event_usage", lambda *args, **kwargs: None)
-    monkeypatch.setattr(client, "_log_langfuse_generation", lambda **kwargs: None)
     return rows
 
 
@@ -190,7 +189,7 @@ def test_output_finalization_persists_completed_runtime_evidence(routed, tmp_pat
     ctx = finalisation.ImageCallContext(
         event_id="event", operation="image", metadata={"funding": "codex_subscription"},
         params={}, estimated_cost_usd=None, started=time.perf_counter(),
-        started_at=datetime.datetime.now(datetime.UTC), langfuse_input={},
+        started_at=datetime.datetime.now(datetime.UTC),
     )
     output_path = tmp_path.resolve() / "output.png"
 
@@ -239,7 +238,7 @@ def test_output_finalization_normalizes_non_png_artifacts(routed, tmp_path, pers
     ctx = finalisation.ImageCallContext(
         event_id="event", operation="image", metadata={"funding": "codex_subscription"},
         params={}, estimated_cost_usd=None, started=time.perf_counter(),
-        started_at=datetime.datetime.now(datetime.UTC), langfuse_input={},
+        started_at=datetime.datetime.now(datetime.UTC),
     )
     output_path = tmp_path / "output.png"
 
@@ -274,7 +273,7 @@ def test_indeterminate_image_failure_persists_runtime_evidence(routed, persisted
     ctx = finalisation.ImageCallContext(
         event_id="event", operation="image", metadata={"funding": "codex_subscription", "stage": "cast"},
         params={}, estimated_cost_usd=None, started=time.perf_counter(),
-        started_at=datetime.datetime.now(datetime.UTC), langfuse_input={},
+        started_at=datetime.datetime.now(datetime.UTC),
     )
     finalize = finalisation.finalise_image_failure if outcome == "failed" else finalisation.finalise_image_cancelled
     asyncio.run(finalize(ctx=ctx, config=routed, model="image-gpt-2", feature="test", error=error))
@@ -310,7 +309,7 @@ def test_cancelled_image_checkpoint_counts_only_validated_completed_artifact(rou
     ctx = finalisation.ImageCallContext(
         event_id="event", operation="image", metadata={"funding": "codex_subscription"},
         params={}, estimated_cost_usd=None, started=time.perf_counter(),
-        started_at=datetime.datetime.now(datetime.UTC), langfuse_input={},
+        started_at=datetime.datetime.now(datetime.UTC),
     )
     asyncio.run(finalisation.finalise_image_cancelled(
         ctx=ctx, config=routed, model="image-gpt-2", feature="test", error=error,

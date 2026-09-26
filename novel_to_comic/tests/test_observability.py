@@ -31,7 +31,9 @@ def test_server_product_event_rejects_unknown_event_and_properties():
         )
 
 
-def test_server_product_event_persists_only_bounded_scalar_properties():
+def test_server_product_event_persists_only_bounded_scalar_properties(monkeypatch):
+    monkeypatch.setenv("CANARY_ENV", "test")
+    monkeypatch.setenv("CANARY_VERSION", "test-release")
     table = MagicMock()
     db = MagicMock()
     db.table.return_value = table
@@ -52,6 +54,9 @@ def test_server_product_event_persists_only_bounded_scalar_properties():
     assert payload["properties_json"] == {
         "source": "upload",
         "file_type": "x" * 200,
+        "environment": "test",
+        "release": "test-release",
+        "schema_version": 1,
     }
     table.insert.return_value.execute.assert_called_once_with()
 
@@ -115,7 +120,7 @@ def test_stage_success_is_accepted_with_nullable_uuid_job_id(
         )
 
     assert [event["event_name"] for event in accepted] == [
-        "stage_started", "stage_succeeded"
+        "stage_started", "stage_dispatched" if stage == "draw" else "stage_succeeded"
     ]
     assert accepted[-1]["job_id"] == expected_job_id
 
@@ -203,13 +208,17 @@ def test_stage_that_handles_its_exception_is_recorded_as_failed(tmp_path):
     state = create_initial_state("demo", "novel.txt")
     captured: list[tuple[str, dict]] = []
 
-    async def fake_run_credited_stage(**_kwargs):
+    async def fake_run_credited_stage(**kwargs):
+        await kwargs["run"]()
+
+    async def fail_stage(*_args):
         state.stages["extract"].status = StageStatus.FAILED
         state.stages["extract"].error_code = "provider_timeout"
 
     metrics.reset_metrics_for_tests()
     with (
         patch.object(pipeline, "run_credited_stage", new=fake_run_credited_stage),
+        patch.object(pipeline, "_run_stage", new=fail_stage),
         patch.object(
             pipeline,
             "capture_server_event",

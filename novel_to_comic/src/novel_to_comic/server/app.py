@@ -22,7 +22,7 @@ from .durable_queue import initialize_queue
 from .deployment_status import deployment_activity, require_ops_token
 from .logging import request_log_middleware
 from .ratelimit import configure_rate_limiting
-from .sentry import configure_sentry
+from .telemetry import configure_telemetry, shutdown_telemetry
 from .routers import (
     billing,
     publications,
@@ -235,9 +235,8 @@ def _readiness_result() -> tuple[bool, dict[str, str]]:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    # Initialise Sentry first so it can capture startup errors (e.g. pricing
-    # audit failures). No-op without SENTRY_DSN.
-    configure_sentry()
+    from .analytics_delivery import deliver_product_events
+    app.state.analytics_task = asyncio.create_task(deliver_product_events()) if configure_telemetry() else None
     _audit_pricing_at_startup()
     app.state.pricing_refresh_task = asyncio.create_task(
         asyncio.to_thread(_refresh_pricing_if_stale)
@@ -274,6 +273,9 @@ async def _lifespan(app: FastAPI):
 
     app.state.generation_worker_tasks = [asyncio.create_task(initialize_queue(app))]
     yield
+    if app.state.analytics_task is not None:
+        app.state.analytics_task.cancel()
+        await asyncio.gather(app.state.analytics_task, return_exceptions=True)
     app.state.lease_shutdown = True
     app.state.admission.draining = True
     # Deployment control drains before shutdown. Forced shutdown cancels work
@@ -301,6 +303,7 @@ async def _lifespan(app: FastAPI):
     from novel_to_comic.ai.client import _http
 
     await _http.aclose()
+    await asyncio.to_thread(shutdown_telemetry)
 
 
 def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
@@ -530,6 +533,8 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         prefix="/api/ops/backoffice",
         tags=["operations"],
     )
+    from .routers import feedback
+    app.include_router(feedback.router, prefix="/api/feedback", tags=["feedback"])
     app.include_router(events.router, prefix="/api/events", tags=["analytics"])
     app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
     app.include_router(

@@ -108,6 +108,7 @@ create table if not exists public.product_events (
   request_id            text,
   source                text        not null default 'server'
                                       check (source in ('server', 'web')),
+  posthog_exported_at    timestamptz,
   properties_json       jsonb       not null default '{}'::jsonb
                                       check (jsonb_typeof(properties_json) = 'object')
 );
@@ -1019,3 +1020,25 @@ revoke all on function public.complete_credit_refund(uuid, text, timestamptz)
   from public, anon, authenticated;
 grant execute on function public.complete_credit_refund(uuid, text, timestamptz)
   to service_role;
+
+-- Private feedback and pending analytics delivery.
+create index if not exists product_events_pending_posthog_idx
+  on public.product_events(occurred_at) where posthog_exported_at is null;
+
+create table if not exists public.customer_feedback (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  id uuid not null,
+  created_at timestamptz not null default now(),
+  project_id uuid references public.projects(id) on delete set null,
+  category text not null check (category in ('frustration','feature','praise','other')),
+  message text not null check (length(message) between 1 and 3000),
+  station text,
+  rating text check (rating in ('yes','after_changes','no','unsure')),
+  request_id text,
+  status text not null default 'new' check (status in ('new','reviewed','planned','resolved')),
+  primary key (user_id,id)
+);
+create index if not exists customer_feedback_created_idx on public.customer_feedback(created_at desc);
+alter table public.customer_feedback enable row level security;
+revoke all on public.customer_feedback from public, anon, authenticated;
+grant all on public.customer_feedback to service_role;

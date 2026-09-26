@@ -1,0 +1,75 @@
+# Production observability: consolidation options
+
+Implementation follow-up: the user authorized consolidation without a separate
+synthetic-journey gate. See the [current operating guide](../reference/observability.md)
+for implemented behavior and remaining activation steps. This research records the
+decision basis, not evidence that cloud delivery is live.
+
+**Status: Proposed.** Primary-source research checked on 2026-09-26. This is a vendor assessment, not implemented behavior or proof of Canary integration. Published prices are USD before tax and should be checked when enabling billing. The [telemetry simplification plan](2026-09-26-observability-simplification.md) owns the proposed architecture and migration, alongside the [launch learning plan](2026-09-26-launch-learning-system.md).
+
+## Earlier recommendation; current decision in follow-up
+
+The [single-vendor assessment](2026-09-26-posthog-single-vendor.md) supersedes the provider choice below: **PostHog-first, subject to an integration proof**, with Sentry plus PostHog as fallback. New primary evidence establishes shipped general OTLP tracing, while also establishing its alpha limitations. The Sentry-native design below applies only to that fallback.
+
+Use **Sentry Cloud for operational errors, traces, and selected structured logs; PostHog Cloud for user journeys and product learning; Canary's database and artifact storage for authoritative jobs, usage, credits, feedback, and paid-result recovery**. Remove the local Langfuse stack and its bespoke generation exporter after the replacement is verified. Prefer native Sentry instrumentation for this launch, with one shared application context and explicit spans around Canary's custom AI gateway calls.
+
+This is a judgment about implementation and maintenance effort for a sole developer. It gives operations one place to investigate a failed request or generation, reuses an existing vendor, and avoids operating tracing infrastructure. It does leave two analysis interfaces. Common opaque account, request, job, run, page, and trace identifiers should make moving between them predictable. Do not duplicate every operational log into product analytics.
+
+**PostHog alone is a credible alternative**, especially if one vendor is the overriding preference. Its current scope includes logs and AI observability, not just product analytics. However, replacing the existing error path and proving general distributed tracing, alerting, source maps, and background-job correlation introduces more launch work. Do not adopt all three vendors by default.
+
+## Comparison
+
+| Option | What it simplifies | Main qualification | Recommendation |
+| --- | --- | --- | --- |
+| PostHog for product analytics, errors, logs, AI events | One analysis account and user model; direct navigation from product behavior to operational evidence | Multiple ingestion paths remain: SDK events, OTLP logs, and tracing. Canary's custom jobs/image calls need explicit instrumentation and an end-to-end proof. | Current preferred choice after follow-up; timebox a provider-free integration proof before replacing Sentry. |
+| PostHog product analytics + Sentry operations | Keeps established error integration; one operational destination for HTTP/job/AI spans and logs; no local observability services | Two dashboards; native Sentry instrumentation is vendor-specific. Custom image costs may need ordinary span fields and a custom dashboard. | Fallback if the PostHog acceptance gate fails. |
+| Above + managed Langfuse | Rich prompt experiments, datasets, human annotation, and multimodal trace review without operating Langfuse | Third destination, additional export/retention/deletion policy, duplication of tracing, and more sensitive content handling | Defer until these workflows are actually used each week. |
+
+## Sentry: the lowest-change operational destination
+
+Sentry supports FastAPI instrumentation and Python structured logs. Its Logs product became generally available on September 3, 2025; logs can be investigated with errors and traces and can drive alerts. Agent Tracing reached GA on September 11, 2026, although its Python Conversations feature is separately marked beta. [FastAPI source](https://raw.githubusercontent.com/getsentry/sentry-docs/master/docs/platforms/python/integrations/fastapi/index.mdx), [Python logs source](https://raw.githubusercontent.com/getsentry/sentry-docs/master/docs/platforms/python/logs/index.mdx), [Logs GA](https://sentry.io/changelog/logs-are-generally-available/), [Agent Tracing announcement listing](https://sentry.io/changelog/), [Python agent tracing source](https://raw.githubusercontent.com/getsentry/sentry-docs/master/docs/platforms/python/agent-tracing/index.mdx)
+
+Sentry also accepts OTLP traces and logs, directly or through a collector. That ingestion documentation still includes an **open-beta** notice and says OTLP metrics are unsupported. A Sentry SDK and OTel in the same process require their documented integration to share context. Merely sending to the same vendor does not join independent tracer trees. [OTLP documentation source](https://raw.githubusercontent.com/getsentry/sentry-docs/master/docs/concepts/otlp/index.mdx)
+
+For Canary, prefer one native Sentry bootstrap plus a small application-facing context/span helper. Retire the separate OTel bootstrap if it has no independent consumer after migration; preserve useful stage instrumentation by redirecting it to the chosen implementation. Keep standard Python logging and structured stdout as the local/platform fallback. Avoid adding a collector solely to translate a small application's own signals.
+
+Automatic agent instrumentation covers supported SDKs, including OpenAI, Google Gen AI, and LiteLLM. This does **not** establish that a custom HTTP multimodal gateway emits correct model, image, cost, or retry metadata. Canary should record explicit spans at its provider boundary and verify actual outbound envelopes. A regular custom span is already useful for latency, failure class, model/profile, image count, and request identity; an AI-specific dashboard is optional. Sentry's agent documentation points to manual instrumentation, but dashboard recognition and image-cost accounting remain acceptance checks for Canary's exact calls. [Supported integrations and manual instrumentation entry](https://raw.githubusercontent.com/getsentry/sentry-docs/master/docs/platforms/python/agent-tracing/index.mdx)
+
+**Privacy:** Python AI prompt/response collection is off by default unless enabled through PII or integration settings. That is not a blanket privacy guarantee: SDK local-variable capture defaults to enabled, and error strings, request metadata, breadcrumbs, and explicit logs can contain creative content. Configure local variables off, request bodies off, no prompt/response/media capture, and separate scrubbers for errors, traces, and logs. Test with seeded manuscript text, signed URLs, credentials, project titles, and provider error bodies. [AI privacy controls](https://raw.githubusercontent.com/getsentry/sentry-docs/master/docs/platforms/python/agent-tracing/index.mdx), [Python SDK defaults](https://getsentry.github.io/sentry-python/_modules/sentry_sdk/consts.html)
+
+## PostHog: assess consolidation on its actual current capabilities
+
+PostHog's Logs store is OTLP-native and supports service/attribute filtering, saved views, alerts, and links to people, errors, and sessions. An existing Python OTLP exporter can therefore target it; this is a separate path from the PostHog analytics SDK. The current logs overview does not label Logs beta, while PostHog's own Sentry comparison still does. Treat that as inconsistent documentation, not proof of GA or unavailability. [Logs source](https://github.com/PostHog/posthog.com/blob/master/contents/docs/logs/index.mdx), [vendor comparison](https://posthog.com/blog/best-sentry-alternatives)
+
+Follow-up research verifies general distributed tracing, standard OTLP ingestion, and a published Python implementation. It is **alpha**, and the native Python span API is experimental. Prefer the existing OTel approach for Canary's FastAPI/async workload. Account access, durable-queue correlation, and usability still require synthetic proof. See the [primary-source tracing evidence](2026-09-26-posthog-tracing-evidence.md), which replaces the earlier uncertainty about whether this capability had shipped.
+
+AI Observability supports manually captured `$ai_generation` events with explicit trace, span, and parent IDs. Its schema includes model/provider, latency, usage, errors, and custom properties. The current source even documents `$ai_cost_passthrough` with `$ai_total_cost_usd` for gateway-reported real costs. This means Canary can export selected generation metadata without wrapping or replacing its image provider. It still needs an explicit adapter; it is not automatic support for the custom image route. [Manual capture source](https://raw.githubusercontent.com/PostHog/posthog.com/master/contents/docs/ai-observability/installation/manual-capture.mdx), [generation schema source](https://raw.githubusercontent.com/PostHog/posthog/master/docs/onboarding/ai-observability/_snippets/generation-event.tsx)
+
+PostHog otherwise calculates model costs from pricing catalogs, usage, and model matching; pre-calculated cost components override automatic estimates. Preserve Canary's distinctions between reported costs, calculated estimates, unknown usage, and charged credits. Do not fabricate a known cost for an ambiguous paid image submission or use a vendor's inferred price as the billing ledger. [Cost calculation source](https://github.com/PostHog/posthog.com/blob/master/contents/docs/ai-observability/calculating-costs.mdx)
+
+AI privacy mode excludes prompt inputs and response choices. It must be enabled deliberately, and it does not establish that arbitrary error objects or custom properties are safe. For manual capture, construct a metadata-only allowlist rather than rely on a provider wrapper's privacy setting. PostHog deletes large AI properties after 30 days while retaining the remaining event metadata under the ordinary event policy. [Privacy source](https://github.com/PostHog/posthog.com/blob/master/contents/docs/ai-observability/privacy-mode.mdx), [AI retention source](https://github.com/PostHog/posthog.com/blob/master/contents/docs/ai-observability/data-retention.mdx)
+
+The single-vendor proof should show: a React error with usable source locations; a FastAPI exception; an API-to-durable-job-to-stage-to-mocked-image-call trace; an associated structured log; an actionable alert; and a product funnel linked by opaque identity. Verify that all remain useful with replay and creative payload collection disabled. A dashboard screenshot showing chat tokens is insufficient.
+
+## Managed Langfuse: valuable when evaluation becomes a workflow
+
+Langfuse Cloud supports custom/API ingestion, OTel, prompt management, datasets, annotation, and evaluations. It can receive reported usage/cost instead of inferring them; its billed units count traces, observations, and scores separately. Moving the current exporter to Cloud removes local hosting but does not fix disconnected IDs or simplify overlapping application instrumentation. [Pricing and capabilities](https://langfuse.com/pricing), [cost tracking](https://langfuse.com/docs/observability/features/token-and-cost-tracking), [billable units](https://langfuse.com/docs/administration/billable-units)
+
+Its multimodal support is substantive: SDKs extract base64 media and upload it into Langfuse storage by default when such payloads are supplied. Direct API usage needs its own media handling. This is useful for deliberate quality review, but creates another creative-content store. Retain it later only if there is a concrete need for annotated prompt/model experiments that Canary's own review artifacts do not satisfy. Client-side masking is available. [Multimodal behavior](https://langfuse.com/docs/observability/features/multi-modality), [masking](https://langfuse.com/docs/observability/features/masking)
+
+## Entry costs and retention
+
+| Service | Published launch allowance / price | Retention qualification |
+| --- | --- | --- |
+| PostHog | Monthly free: 1M analytics events, 100K AI events, 100K exceptions, 10 GB logs | Free event metadata: 1 year; paid: 7 years. Logs: 14 days. Large AI fields: 30 days. At free/billing caps additional events are dropped. [Pricing](https://posthog.com/pricing) |
+| Sentry Developer | $0, one user; 5K errors, 5M spans, 5 GB logs | Pricing lists 30-day lookback. Confirm per-product retention and quotas in the account. [Pricing](https://sentry.io/pricing/) |
+| Sentry Team | Displayed $26/month billed annually; 50K errors, 5M spans, 5 GB logs; additional logs $0.50/GB | Pricing lists up to 90-day lookback; do not assume that applies equally to every signal. [Pricing](https://sentry.io/pricing/) |
+| Langfuse Hobby / Core | Hobby: $0, 50K units/month, 2 users. Core: $29/month, 100K units, then $8/100K at initial overage tier | Hobby: 30-day data access; Core: 90 days. Multi-modal attachment pricing may change. [Pricing](https://langfuse.com/pricing) |
+
+The expected initial vendor spend can be **$0 within verified account allowances** for either proposal, subject to separate confirmation of alpha trace terms. This excludes existing hosting/database costs. Budget on emitted records, not users: page fan-out, polling requests, detailed spans, and verbose logs multiply volume. Keep development traffic out of production metrics and set explicit limits before enabling paid overages.
+
+## Requirements that no vendor selection removes
+
+Trace propagation is application work at Canary's durable queue boundary. Native Sentry distributed tracing uses `sentry-trace` and `baggage`; OTel propagation likewise requires injecting/extracting a carrier. Persist only validated, bounded propagation metadata in a job; reestablish a fresh isolated context at execution, and retain stable job/run/request IDs independently. A request ID is not a parent-span relationship. Do not hold one HTTP span open throughout a long job or a human approval wait; use bounded operation traces with explicit correlation between later operations. [Sentry propagation source](https://raw.githubusercontent.com/getsentry/sentry-docs/master/docs/platforms/python/tracing/distributed-tracing/index.mdx), [OTel propagation](https://opentelemetry.io/docs/languages/python/propagation/)
+
+Keep durable job state, AI usage records, credit accounting, and paid-result recovery first-party and unsampled. Exporters are best-effort diagnostic consumers; sampling, quotas, outages, and process shutdown can remove observations. Retain stdout for troubleshooting the exporter itself, keep telemetry failures outside the generation success path, and bound flushing at shutdown. Vendor deletion/retention must be coordinated with account deletion. None of these platforms can determine visual quality or establish why a user abandoned a workflow without appropriate evidence and review.
