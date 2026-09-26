@@ -14,7 +14,7 @@ import { letteringDraftKey, writeLetteringDraft } from "../lib/letteringHistory"
 import type { HybridLetteringResponse, LetteringTranslationEstimate } from "../api/lettering";
 import type { GenerationJob } from "../types/api";
 const api = vi.hoisted(() => ({ analyze: vi.fn(), analyzeEstimate: vi.fn(), suggestions: vi.fn(), get: vi.fn(), put: vi.fn(), reset: vi.fn(), style: vi.fn(), putStyle: vi.fn(), language: vi.fn(), estimate: vi.fn(), translate: vi.fn(), jobs: [] as GenerationJob[] }));
-vi.mock("../api/lettering", () => ({ getPageLettering: api.get, putPageLettering: api.put, resetPageLettering: api.reset, getBookLetteringStyle: api.style, putBookLetteringStyle: api.putStyle, getLetteringTranslationEstimate: api.estimate, translateProjectLettering: api.translate, getLetteringSuggestions: api.suggestions }));
+vi.mock("../api/lettering", () => ({ getPageLettering: api.get, putPageLettering: api.put, resetPageLettering: api.reset, getBookLetteringStyle: api.style, putBookLetteringStyle: api.putStyle, getStoredLetteringLanguages: async () => ({ current_locale: "source", languages: [] }), getLetteringTranslationEstimate: api.estimate, translateProjectLettering: api.translate, getLetteringSuggestions: api.suggestions }));
 vi.mock("../api/pages", () => ({ pageRenderUrl: () => "/fixture-art.png", analyzeCompletePage: api.analyze, getPageAnalysisEstimate: api.analyzeEstimate }));
 vi.mock("../api/queries", () => ({
   useGenerationJobs: (project: string) => useQuery({ queryKey: ["project", project, "generation-jobs", []], queryFn: async () => ({ jobs: api.jobs }) }),
@@ -42,7 +42,7 @@ const checked = (patch: Partial<NonNullable<HybridLetteringResponse["evidence"][
 });
 const translationEstimate: LetteringTranslationEstimate = {
   estimate_credits: 12, reserved_credits: 18, reservation_multiplier: 1.5, confidence: "variable", funding: "api",
-  target_locale: "es", snapshot_sha256: "saved-snapshot", page_count: 1, element_count: 1, translate_count: 0, preserved_target_count: 1,
+  target_locale: "es", snapshot_sha256: "saved-snapshot", page_count: 1, element_count: 1, translate_count: 1, preserved_target_count: 0, stale_target_count: 0,
 };
 const translationJob: GenerationJob = {
   id: "translation", project_name: "book", kind: "lettering_translation", label: "Translation", payload: { target_locale: "es" },
@@ -197,6 +197,7 @@ describe("Pages-room lettering", () => {
     const data = initial();
     data.state.locale = "es";
     data.state.elements[0].text_by_locale.es = "La puerta se abrió.";
+    data.state.elements[0].translation_sources = { es: data.state.elements[0].text_by_locale.source };
     api.get.mockResolvedValue(data);
     const rejection = new ApiError(409, "Page locale differs from project lettering language. Translate project before editing/export.");
     api.put.mockRejectedValue(rejection);
@@ -367,6 +368,7 @@ describe("Pages-room lettering", () => {
     const data = initial();
     data.state.locale = "es";
     data.state.elements[0].text_by_locale.es = "La puerta se abrió.";
+    data.state.elements[0].translation_sources = { es: data.state.elements[0].text_by_locale.source };
     api.get.mockResolvedValue(data);
     mount();
     await ready();

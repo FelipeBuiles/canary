@@ -5,6 +5,8 @@ from pathlib import Path
 
 import yaml
 
+import pytest
+
 from novel_to_comic.image_models import GATEWAY_IMAGE_BALANCED
 from novel_to_comic.config import (
     Config,
@@ -150,9 +152,9 @@ class TestLanguageHelpers:
         assert cfg.language_code() == "es"
         assert cfg.language_name() == "Spanish"
 
-    def test_unknown_language_falls_back_to_en(self):
-        cfg = Config(target_language="de")
-        assert cfg.language_code() == "en"
+    def test_unknown_language_is_rejected(self):
+        with pytest.raises(ValueError, match="target_language"):
+            Config(target_language="de")
 
     def test_generation_language_instruction_en(self):
         cfg = Config(target_language="en")

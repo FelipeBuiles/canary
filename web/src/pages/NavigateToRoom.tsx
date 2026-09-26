@@ -3,6 +3,7 @@ import { Navigate, useParams } from "react-router-dom";
 import { useProjectStatus } from "../api/queries";
 import { BACKEND_STAGE_TO_STATION_ROUTE } from "../lib/stations";
 import { STAGE_ORDER } from "../types/api";
+import { accessibleRoom } from "../lib/stationAccess";
 
 export function NavigateToRoom() {
   const { id } = useParams<{ id: string }>();
@@ -16,7 +17,7 @@ export function NavigateToRoom() {
       STAGE_ORDER.find((s) => status.stages[s]?.status === "failed") ??
       STAGE_ORDER.find((s) => status.stages[s]?.status === "pending") ??
       STAGE_ORDER[STAGE_ORDER.length - 1];
-    return BACKEND_STAGE_TO_STATION_ROUTE[stage];
+    return accessibleRoom(BACKEND_STAGE_TO_STATION_ROUTE[stage], status);
   }, [status]);
 
   if (!id) return null;

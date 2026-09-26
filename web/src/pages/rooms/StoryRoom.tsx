@@ -31,6 +31,7 @@ export function StoryRoom() {
   const { id } = useParams<{ id: string }>();
   const { t } = useI18n();
   const { data: status, isLoading: statusLoading, error: statusError } = useProjectStatus(id);
+  const activeJobs = status?.active_jobs;
   const extract = status?.stages.extract;
   const briefStage = status?.stages.brief;
   const stageStatus = briefStage?.status ?? "pending";
@@ -51,7 +52,7 @@ export function StoryRoom() {
     if (stageStatus === "pending" || stageStatus === "running" || stageStatus === "failed") {
       return (
         <RoomShell project={id ?? ""}>
-          <StagePlaceholder project={id ?? ""} stage="brief" status={stageStatus} />
+          <StagePlaceholder project={id ?? ""} stage="brief" status={stageStatus} activeJobs={status?.active_jobs} />
         </RoomShell>
       );
     }
@@ -84,6 +85,7 @@ export function StoryRoom() {
     return (
       <RoomShell project={id ?? ""}>
         <StagePlaceholder
+          activeJobs={activeJobs}
           project={id ?? ""}
           stage={stage}
           status={status}
@@ -274,7 +276,7 @@ function StoryEditor({ id, data, brief, stageStatus }: {
         <section className="space-y-4" aria-label={t("Earlier unsaved drafts")}>
           <p className="font-body text-sm text-ink-muted">{t("An earlier draft was preserved. Review or copy it below; it has not been applied to the current brief.")}</p>
           {earlierDrafts.map((entry) => {
-            const label = t("Unsaved draft from revision {revision}").replace("{revision}", String(entry.revision));
+            const label = t("Unsaved draft from revision {revision}", { revision: String(entry.revision) });
             const text = Object.entries(entry.changes).map(([key, value]) =>
               `${t(BRIEF_FIELD_LABELS[key as keyof AdaptationBrief] ?? key)}\n${Array.isArray(value) ? value.join("\n") : String(value)}`,
             ).join("\n\n");

@@ -182,9 +182,9 @@ export function BookRoom() {
           <p role="status" className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 font-meta text-xs font-bold uppercase tracking-[0.1em]">
             {checking ? <span className="text-bristol/85">{t("Checking edition…")}</span>
               : preflightError || !preflight ? <span className="text-narrator-gold">{t("The book could not be checked.")}</span>
-              : fixCount > 0 ? <span className="bg-hero-red px-2 py-1 text-bristol">{fixCount} {t(fixCount === 1 ? "fix needed before export" : "fixes needed before export")}</span>
+              : fixCount > 0 ? <span className="bg-hero-red px-2 py-1 text-bristol">{fixCount} {t("{count, plural, one {fix needed before export} other {fixes needed before export}}", { count: fixCount })}</span>
               : <span className="bg-narrator-gold px-2 py-1 text-ink-black">{t("Ready to export")}</span>}
-            {!checking && placementReviews.length > 0 && <span className="text-bristol/75">{placementReviews.length} {t(placementReviews.length === 1 ? "page to check by eye" : "pages to check by eye")}</span>}
+            {!checking && placementReviews.length > 0 && <span className="text-bristol/75">{placementReviews.length} {t("{count, plural, one {page to check by eye} other {pages to check by eye}}", { count: placementReviews.length })}</span>}
           </p>
           <div className="mt-6 flex flex-wrap items-center gap-3">
             {bookPages.length > 0 && <Button variant="onInk" onClick={() => setReaderOpen(true)}><BookOpen size={18} aria-hidden="true" />{t("Read your book")}</Button>}
@@ -277,7 +277,7 @@ export function BookRoom() {
             {uncheckedPages > 0 && <li><PageCheckRecovery project={id} unchecked={uncheckedPages} editable={!!completePages?.pages.some((page) => page.lettering_mode === "hybrid")} onRecovered={() => void refetch()} /></li>}
             {placementReviews.length > 0 && (
               <CheckItem tone="optional" pages={placementReviews.map((page) => page.page_number)}
-                title={placementReviews.length === 1 ? t("Lettering on 1 page hasn’t been checked by eye") : t("Lettering on {count} pages hasn’t been checked by eye").replace("{count}", String(placementReviews.length))}
+                title={t("{count, plural, one {Lettering on # page hasn’t been checked by eye} other {Lettering on # pages hasn’t been checked by eye}}", { count: placementReviews.length })}
                 detail={t("Balloons were placed automatically. Open each page’s Lettering to check faces, reading order and quiet spaces, then mark it reviewed. Export isn’t blocked.")}>
                 <Link className="inline-flex min-h-11 items-center gap-2 border-2 border-ink-black bg-ink-black px-3 font-meta text-xs font-bold text-bristol hover:bg-hero-red"
                   to={reviewUrl(placementReviews[0].page_number, "lettering")}>
@@ -314,7 +314,7 @@ export function BookRoom() {
         exportUrls={exportUrls} canExport={canExport} pending={exportBook.isPending}
         pendingFormat={exportBook.variables?.format} pendingForce={exportBook.variables?.force}
         error={exportBook.error} onCreate={createExport}
-        blockedLabel={fixCount > 0 ? `${fixCount} ${t(fixCount === 1 ? "fix needed first" : "fixes needed first")}` : undefined}
+        blockedLabel={fixCount > 0 ? `${fixCount} ${t("{count, plural, one {fix needed first} other {fixes needed first}}", { count: fixCount })}` : undefined}
         unavailableReason={checking ? t("Checking edition…") : preflightError ? t("The book could not be checked.") : fixCount > 0 ? t("Fix what blocks export above, then create your package.") : undefined} />
       {newPackage && !isFetching && !preflightError && <p key={newPackage} role="status" onAnimationEnd={() => setNewPackage(null)} className="animate-register-stamp inline-block bg-narrator-gold px-3 py-2 font-meta text-sm font-bold">{t("Edition ready")} · {newPackage.split(":")[1].toUpperCase()}</p>}
 
@@ -480,7 +480,7 @@ function ReplanPageAction({ project, pageNumber, disabled, onReplanned }: {
       <Button size="sm" disabled={disabled || replan.isPending} onClick={() => { replan.reset(); setOpen(true); }}>
         {replan.isPending ? t("Re-planning…") : label}
       </Button>
-      {replan.isSuccess && <p role="status" className="basis-full font-body text-sm">{t("Page {page} was re-planned. Redraw it from Pages so the art matches.").replace("{page}", String(pageNumber))}</p>}
+      {replan.isSuccess && <p role="status" className="basis-full font-body text-sm">{t("Page {page} was re-planned. Redraw it from Pages so the art matches.", { page: String(pageNumber) })}</p>}
       {replan.error && <p role="alert" className="basis-full font-body text-sm text-hero-red">{replan.error.message}</p>}
       <ConfirmDrawer
         open={open}

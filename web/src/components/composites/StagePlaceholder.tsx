@@ -1,7 +1,9 @@
 import { useNow } from "../../hooks/useNow";
 import { Link } from "react-router-dom";
 import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
-import { type StageName, type StageSnapshot, type StageStatus } from "../../types/api";
+import { type GenerationJob, type StageName, type StageSnapshot, type StageStatus } from "../../types/api";
+import { getStageQueue, type StageQueue } from "../../lib/stageQueue";
+import { Clock3, LoaderCircle } from "lucide-react";
 import { PlanProgressBoard } from "./PlanProgressBoard";
 import { AdaptProgressBoard } from "./AdaptProgressBoard";
 import { useProjectConfig, useUpdateProjectConfig, useStageEstimate } from "../../api/queries";
@@ -307,6 +309,31 @@ export function StagePending({ project, stage, allowStart }: StagePendingProps) 
 
 // ── Running state ─────────────────────────────────────────────────────────────
 
+export function StageQueued({ stage, queue }: { stage: StageName; queue: StageQueue }) {
+  const { t } = useI18n();
+  const starting = queue.state === "starting";
+  return <StageDocket stage={stage} state={starting ? "STARTING…" : "QUEUED"} tone="running">
+    <div role="status" className="mt-6 bg-surface-container p-4 sm:p-5">
+      <div className="flex items-start gap-3">
+        {starting ? <LoaderCircle size={20} className="mt-0.5 shrink-0 motion-safe:animate-spin" aria-hidden="true" />
+          : <Clock3 size={20} className="mt-0.5 shrink-0" aria-hidden="true" />}
+        <div>
+          <p className="font-body text-base font-bold leading-6">
+            {starting ? t("Preparing to start") : queue.waitingFor === "cover" ? t("Your cover is being drawn")
+              : queue.waitingFor === "other-project" ? t("Waiting for your other project") : t("Your work is queued")}
+          </p>
+          <p className="mt-2 font-body text-sm leading-6 text-ink-muted">
+            {starting ? t("Your request has been picked up. Progress will appear here when generation begins.")
+              : queue.waitingFor === "cover" ? t("This step is already queued and will start after the cover finishes. No action is needed.")
+                : queue.waitingFor === "other-project" ? t("This step will start when your account's current work finishes. No action is needed.")
+                  : t("This step will start automatically when a generation slot is available. No action is needed.")}
+          </p>
+        </div>
+      </div>
+    </div>
+  </StageDocket>;
+}
+
 interface StageRunningProps {
   stage: StageName;
   itemsDone?: number;
@@ -357,7 +384,7 @@ export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0, startedAt, 
           <div role="status" className="flex items-center gap-3 font-body text-sm font-semibold">
             <Icon name="loader" size={20} className="shrink-0 motion-safe:animate-spin" />
             <span>{t("Work in progress")}</span>
-            {elapsed && <span aria-live="off" className="ml-auto font-meta tabular-nums text-ink-muted">{t("Elapsed {time}").replace("{time}", elapsed)}</span>}
+            {elapsed && <span aria-live="off" className="ml-auto font-meta tabular-nums text-ink-muted">{t("Elapsed {time}", { time: elapsed })}</span>}
           </div>
           {stage === "plan" && snapshot?.kind === "plan" ? (
             <PlanProgressBoard snapshot={snapshot} />
@@ -530,6 +557,7 @@ function StageLoadError({ stage, message }: { stage: StageName; message: string 
 // ── Combined switcher ─────────────────────────────────────────────────────────
 
 interface StagePlaceholderProps {
+  activeJobs?: GenerationJob[];
   project: string;
   stage: StageName;
   status: StageStatus;
@@ -546,7 +574,15 @@ interface StagePlaceholderProps {
   loadError?: string | null;
 }
 
-export function StagePlaceholder({
+export function StagePlaceholder(props: StagePlaceholderProps) {
+  const queue = getStageQueue(props.stage, props.activeJobs);
+  // Do not mount credit estimates or start/retry controls for work already
+  // admitted to the queue, including a retry of a previously failed stage.
+  if (queue && (props.status !== "running" || props.stale)) return <StageQueued stage={props.stage} queue={queue} />;
+  return <StagePlaceholderContent {...props} />;
+}
+
+function StagePlaceholderContent({
   project,
   stage,
   status,

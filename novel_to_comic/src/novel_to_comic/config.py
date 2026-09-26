@@ -8,6 +8,8 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
+from novel_to_comic.localization import Language, LANGUAGE_NAMES as LANGUAGE_NAMES
+
 from novel_to_comic.image_models import (
     GATEWAY_IMAGE_FAST as GATEWAY_IMAGE_FAST,
     GATEWAY_IMAGE_QUALITY as GATEWAY_IMAGE_QUALITY,
@@ -17,12 +19,6 @@ from novel_to_comic.image_models import (
     describe_image_model,
 )
 
-
-LANGUAGE_NAMES: dict[str, str] = {
-    "en": "English",
-    "es": "Spanish",
-    "fr": "French",
-}
 
 FailedRequestBillingPolicy = Literal["provider_usage_only", "never", "estimate_all"]
 
@@ -170,7 +166,7 @@ class Config(BaseModel):
     draw_model: str = GATEWAY_IMAGE_SUNBURST
 
     # Output language for generated book text and visual assets.
-    target_language: str = "en"
+    target_language: Language = "en"
     # Creation choice. Existing editions retain their frozen capability profile.
     lettering_mode: Literal["editable", "integrated"] = "editable"
 
@@ -234,8 +230,8 @@ class Config(BaseModel):
     def effective_visual_review_model(self) -> str:
         return self.visual_review_model
 
-    def language_code(self) -> str:
-        return self.target_language if self.target_language in LANGUAGE_NAMES else "en"
+    def language_code(self) -> Language:
+        return self.target_language
 
     def language_name(self) -> str:
         return LANGUAGE_NAMES[self.language_code()]

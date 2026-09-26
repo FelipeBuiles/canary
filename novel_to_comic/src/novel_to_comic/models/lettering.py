@@ -11,6 +11,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from novel_to_comic.localization import LetteringLocale
+
 from .adaptation import RevisionedArtifact
 from .page import NormalizedPoint, PinnedGeometry
 
@@ -147,7 +149,7 @@ class LetteringStyle(RevisionedArtifact):
 class LetteringSettings(RevisionedArtifact):
     """Project-owned display locale; page locales are projections of this setting."""
 
-    locale: Literal["source", "en", "es", "fr"] = "source"
+    locale: LetteringLocale = "source"
 
 
 class ResolvedLineMetrics(BaseModel):
@@ -185,6 +187,8 @@ class LetteringElement(BaseModel):
     source_lettering_item_id: str | None = Field(default=None, max_length=100)
     role: RoleName
     text_by_locale: dict[Locale, Annotated[str, Field(max_length=10000)]]
+    # Exact display source used for generation or explicit translation review.
+    translation_sources: dict[Locale, Annotated[str, Field(max_length=10000)]] = Field(default_factory=dict)
     suggested_placement: PinnedGeometry
     placement: PinnedGeometry
     hidden: bool = False
@@ -206,6 +210,8 @@ class LetteringElement(BaseModel):
     def _copy(self):
         if "source" not in self.text_by_locale:
             raise ValueError("every element must retain its source-locale display copy")
+        if "source" in self.translation_sources or self.translation_sources.keys() - self.text_by_locale.keys():
+            raise ValueError("translation sources must belong to stored target variants")
         if len(self.text_by_locale) > 40:
             raise ValueError("at most forty locale variants per element")
         return self

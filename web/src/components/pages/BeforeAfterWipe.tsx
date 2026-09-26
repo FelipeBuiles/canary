@@ -117,7 +117,7 @@ export function BeforeAfterWipe({
           max={100}
           value={split}
           aria-label={t("Before and after split")}
-          aria-valuetext={t("{before}% before, {after}% after").replace("{before}", String(split)).replace("{after}", String(100 - split))}
+          aria-valuetext={t("{before}% before, {after}% after", { before: String(split), after: String(100 - split) })}
           onChange={(event) => setSplit(Number(event.target.value))}
           className="h-11 flex-1 accent-hero-red"
         />

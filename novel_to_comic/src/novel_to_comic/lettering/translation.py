@@ -4,7 +4,6 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -12,8 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from novel_to_comic.artifact_lock import production_lock
 from novel_to_comic.clients.text import generate_json
 from novel_to_comic.config import Config, load_config
+from novel_to_comic.localization import Language, LetteringLocale, LANGUAGES, LETTERING_LOCALES, translation_status
 from novel_to_comic.model_catalog import STAGE_FIELDS
 from novel_to_comic.model_costs import get_pricing_resolver
+from novel_to_comic.models.page import BookPlan
 from novel_to_comic.models.lettering import LetteringSettings, LetteringStyle, PageLettering
 from novel_to_comic.server.codex_admission import classify_operations
 from novel_to_comic.server.credits import credit_estimate_for_provider_cost
@@ -23,7 +24,7 @@ from novel_to_comic.usage import estimate_text_cost
 from .renderer import resolve_lettering
 from .service import LetteringConflict, _replace, active_render, is_hybrid, preset_style, seed_page
 
-TargetLocale = Literal["en", "es", "fr"]
+TargetLocale = Language
 MAX_BATCH_CHARS = 12000
 MAX_BATCH_ELEMENTS = 40
 SYSTEM_PROMPT = (
@@ -70,10 +71,17 @@ def _json(value) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def prepare_translation(artifacts: TargetArtifacts, config: Config, target_locale: TargetLocale) -> PreparedTranslation:
-    """Read-only preparation shared by quote, admission and publication guards."""
-    if target_locale not in ("en", "es", "fr"):
-        raise ValueError("Supported translation languages are en, es and fr.")
+@dataclass(frozen=True)
+class LetteringBook:
+    settings: LetteringSettings
+    style: LetteringStyle
+    saved_style: str | None
+    states: tuple[PageLettering, ...]
+    identities: tuple[dict, ...]
+    plan: BookPlan
+
+
+def _read_book(artifacts: TargetArtifacts, config: Config) -> LetteringBook:
     with production_lock(artifacts.project_dir):
         if not is_hybrid(artifacts):
             raise LetteringConflict("Baked lettering cannot be translated without replacing artwork. Start a hybrid edition first.")
@@ -89,8 +97,7 @@ def prepare_translation(artifacts: TargetArtifacts, config: Config, target_local
             name = template.split(POST_LETTERING_MARKER)[-1].strip() if POST_LETTERING_MARKER in template else "literary"
             style = preset_style(name, direction=post_production_lettering_direction(template))
             saved_style = None
-        states, identities, items = [], [], []
-        preserved = 0
+        states, identities = [], []
         for selected in plan.pages:
             page = artifacts.read_page(selected.page_number)
             if page.content_sha256 != selected.content_sha256:
@@ -108,41 +115,77 @@ def prepare_translation(artifacts: TargetArtifacts, config: Config, target_local
                 raise LetteringConflict(f"Page {page.page_number} lettering belongs to an earlier plan. Rebuild it explicitly first.")
             states.append(state)
             identities.append({"page": page.content_sha256, "saved": saved, "state": state.content_sha256, "render": render.model_dump(mode="json")})
-            for element in state.elements:
-                if target_locale in element.text_by_locale:
-                    preserved += 1
-                    continue
-                if len(element.text_by_locale) >= 40:
-                    raise ValueError(f"Page {page.page_number}, {element.id}: locale variant limit reached.")
-                items.append({"page_number": page.page_number, "element_id": element.id, "role": element.role,
-                              "source_locale": state.locale, "text": element.text_by_locale.get(state.locale, element.text_by_locale["source"])})
-        batches, pending = [], []
-        for item in items:
-            if len(_json(item)) > MAX_BATCH_CHARS:
-                raise ValueError(f"Page {item['page_number']}, {item['element_id']}: text exceeds translation batch limit.")
-            if pending and (len(pending) >= MAX_BATCH_ELEMENTS or len(_json(pending + [item])) > MAX_BATCH_CHARS):
-                batches.append(_json({"target_locale": target_locale, "items": pending}))
-                pending = []
-            pending.append(item)
-        if pending:
-            batches.append(_json({"target_locale": target_locale, "items": pending}))
-        model = config.effective_adapt_model()
-        funding = classify_operations((("text", model),))
-        if batches and funding == "api" and get_pricing_resolver().estimate_text_cost(model, 1, 1).source == "unknown_pricing":
-            raise ValueError(f"Translation pricing is unavailable for {model}; select a priced Adapt model.")
-        schema = TranslationOutput.model_json_schema()
-        cost = sum(estimate_text_cost(model, SYSTEM_PROMPT + "\n" + batch + "\n" + _json(schema), output_chars=_output_chars(batch)) for batch in batches)
-        snapshot = hashlib.sha256(_json({"contract": 1, "target": target_locale, "model": model, "funding": funding,
-            "system": SYSTEM_PROMPT, "schema": schema, "batches": batches, "settings": settings.model_dump(mode="json"),
-            "settings_saved": artifacts.lettering_settings_path.exists(), "style": style.content_sha256, "style_saved": saved_style,
-            "plan": plan.content_sha256, "edition": artifacts.read_book_edition().model_dump(mode="json"), "pages": identities}).encode()).hexdigest()
-        estimate = credit_estimate_for_provider_cost(cost, "lettering", reserve=True, funding=funding) | {
-            "target_locale": target_locale, "snapshot_sha256": snapshot, "page_count": len(states),
-            "element_count": sum(len(state.elements) for state in states), "translate_count": len(items), "preserved_target_count": preserved,
-            "current_locale": settings.locale,
-        }
-        return PreparedTranslation(target_locale, snapshot, model, tuple(states), style, settings, tuple(batches), estimate)
+        return LetteringBook(settings, style, saved_style, tuple(states), tuple(identities), plan)
 
+
+def prepare_translation(artifacts: TargetArtifacts, config: Config, target_locale: TargetLocale) -> PreparedTranslation:
+    """Read-only quote bound to the entire saved book and exact provider request."""
+    with production_lock(artifacts.project_dir):
+        return _prepare(artifacts, config, target_locale, _read_book(artifacts, config))
+
+
+def _selection_snapshot(artifacts: TargetArtifacts, book: LetteringBook, locale: LetteringLocale) -> str:
+    payload = {"contract": 2, "locale": locale, "settings": book.settings.model_dump(mode="json"),
+        "settings_saved": artifacts.lettering_settings_path.exists(), "style": book.style.content_sha256,
+        "style_saved": book.saved_style, "plan": book.plan.content_sha256,
+        "edition": artifacts.read_book_edition().model_dump(mode="json"), "pages": book.identities}
+    return hashlib.sha256(_json(payload).encode()).hexdigest()
+
+
+def stored_languages(artifacts: TargetArtifacts, config: Config) -> dict:
+    """One book read; locale selection is independent of models, pricing and credit."""
+    with production_lock(artifacts.project_dir):
+        book = _read_book(artifacts, config)
+        return {"current_locale": book.settings.locale, "languages": [
+            {"locale": locale, "snapshot_sha256": _selection_snapshot(artifacts, book, locale),
+             "stale_count": sum(translation_status(element.text_by_locale, element.translation_sources, locale) == "stale"
+                                for state in book.states for element in state.elements)}
+            for locale in LETTERING_LOCALES
+            if all(locale in element.text_by_locale for state in book.states for element in state.elements)
+        ]}
+
+
+def _prepare(artifacts: TargetArtifacts, config: Config, target_locale: TargetLocale, book: LetteringBook) -> PreparedTranslation:
+    if target_locale not in LANGUAGES:
+        raise ValueError("Supported translation languages are en, es and fr.")
+    settings, style, states = book.settings, book.style, book.states
+    items = []
+    preserved = stale = 0
+    for state in states:
+        for element in state.elements:
+            if target_locale in element.text_by_locale:
+                preserved += 1
+                stale += translation_status(element.text_by_locale, element.translation_sources, target_locale) == "stale"
+                continue
+            if len(element.text_by_locale) >= 40:
+                raise ValueError(f"Page {state.page_number}, {element.id}: locale variant limit reached.")
+            items.append({"page_number": state.page_number, "element_id": element.id, "role": element.role,
+                          "source_locale": "source", "text": element.text_by_locale["source"]})
+    batches, pending = [], []
+    for item in items:
+        if len(_json(item)) > MAX_BATCH_CHARS:
+            raise ValueError(f"Page {item['page_number']}, {item['element_id']}: text exceeds translation batch limit.")
+        if pending and (len(pending) >= MAX_BATCH_ELEMENTS or len(_json(pending + [item])) > MAX_BATCH_CHARS):
+            batches.append(_json({"target_locale": target_locale, "items": pending}))
+            pending = []
+        pending.append(item)
+    if pending:
+        batches.append(_json({"target_locale": target_locale, "items": pending}))
+    model = config.effective_adapt_model()
+    funding = classify_operations((("text", model),))
+    if batches and funding == "api" and get_pricing_resolver().estimate_text_cost(model, 1, 1).source == "unknown_pricing":
+        raise ValueError(f"Translation pricing is unavailable for {model}; select a priced Adapt model.")
+    schema = TranslationOutput.model_json_schema()
+    cost = sum(estimate_text_cost(model, SYSTEM_PROMPT + "\n" + batch + "\n" + _json(schema), output_chars=_output_chars(batch)) for batch in batches)
+    snapshot = hashlib.sha256(_json({"selection": _selection_snapshot(artifacts, book, target_locale),
+        "model": model, "funding": funding, "system": SYSTEM_PROMPT, "schema": schema, "batches": batches}).encode()).hexdigest()
+
+    estimate = credit_estimate_for_provider_cost(cost, "lettering", reserve=True, funding=funding) | {
+        "target_locale": target_locale, "snapshot_sha256": snapshot, "page_count": len(states),
+        "element_count": sum(len(state.elements) for state in states), "translate_count": len(items), "preserved_target_count": preserved,
+        "current_locale": settings.locale, "stale_target_count": stale,
+    }
+    return PreparedTranslation(target_locale, snapshot, model, tuple(states), style, settings, tuple(batches), estimate)
 
 def _output_chars(batch: str) -> int:
     # Expansion plus exact identity/schema overhead, priced identically at quote and submit.
@@ -154,34 +197,39 @@ def assert_snapshot(prepared: PreparedTranslation, expected: str) -> None:
         raise TranslationSnapshotConflict("Lettering translation inputs changed. Request a new estimate.")
 
 
-def _localized(artifacts: TargetArtifacts, prepared: PreparedTranslation, translated: dict) -> tuple[list[PageLettering], LetteringSettings]:
+def _localized(artifacts: TargetArtifacts, states: tuple[PageLettering, ...], style: LetteringStyle, settings: LetteringSettings, target_locale: LetteringLocale, translated: dict) -> tuple[list[PageLettering], LetteringSettings]:
     """Every page re-laid out in the target language; placement needs a fresh review."""
     updates = []
-    for state in prepared.states:
+    for state in states:
         elements = []
         for element in state.elements:
             texts = dict(element.text_by_locale)
-            if prepared.target_locale not in texts:
-                texts[prepared.target_locale] = translated[(state.page_number, element.id)]
-            elements.append(element.model_dump() | {"text_by_locale": texts})
+            sources = dict(element.translation_sources)
+            if target_locale not in texts:
+                texts[target_locale] = translated[(state.page_number, element.id)]
+                sources[target_locale] = texts["source"]
+            elements.append(element.model_dump() | {"text_by_locale": texts, "translation_sources": sources})
         render = active_render(artifacts, state.page_number)
-        updates.append(resolve_lettering(_replace(state, revision=state.revision + 1, locale=prepared.target_locale,
+        updates.append(resolve_lettering(_replace(state, revision=state.revision + 1, locale=target_locale,
             canvas_aspect_ratio=render.width / render.height, elements=elements,
-            reviewed_against_render_revision=None, reviewed_against_image_sha256=None), prepared.style))
-    return updates, LetteringSettings(revision=prepared.settings.revision + 1, locale=prepared.target_locale)
+            reviewed_against_render_revision=None, reviewed_against_image_sha256=None), style))
+    return updates, LetteringSettings(revision=settings.revision + 1, locale=target_locale)
 
 
-def switch_stored_locale(artifacts: TargetArtifacts, config: Config, target_locale: TargetLocale, expected_snapshot: str) -> dict:
+def switch_stored_locale(artifacts: TargetArtifacts, config: Config, target_locale: LetteringLocale, expected_snapshot: str) -> dict:
     """Switch to a language every element already stores: no provider, no job, no credits."""
     with production_lock(artifacts.project_dir):
-        prepared = prepare_translation(artifacts, config, target_locale)
-        assert_snapshot(prepared, expected_snapshot)
-        if prepared.estimate["translate_count"]:
+        if target_locale not in LETTERING_LOCALES:
+            raise ValueError("Unsupported lettering locale.")
+        book = _read_book(artifacts, config)
+        if any(target_locale not in element.text_by_locale for state in book.states for element in state.elements):
             raise LetteringConflict("Some lettering has no saved translation in this language. Translate the project instead.")
-        if prepared.settings.locale == target_locale:
+        if _selection_snapshot(artifacts, book, target_locale) != expected_snapshot:
+            raise TranslationSnapshotConflict("Saved lettering changed. Refresh the language list.")
+        if book.settings.locale == target_locale and all(state.locale == target_locale for state in book.states):
             return {"locale": target_locale, "changed": False}
-        updates, settings = _localized(artifacts, prepared, {})
-        artifacts.publish_lettering_translation(updates, prepared.style, settings)
+        updates, settings = _localized(artifacts, book.states, book.style, book.settings, target_locale, {})
+        artifacts.publish_lettering_translation(updates, book.style, settings)
         return {"locale": target_locale, "changed": True, "page_count": len(updates)}
 
 
@@ -195,6 +243,8 @@ async def translate_project(artifacts: TargetArtifacts, config: Config, prepared
             update={field: getattr(config, field) for field in STAGE_FIELDS.values()})
         return prepare_translation(artifacts, latest, prepared.target_locale)
     assert_snapshot(current(), prepared.snapshot_sha256)
+    if not prepared.batches and prepared.settings.locale == prepared.target_locale and all(state.locale == prepared.target_locale for state in prepared.states):
+        return
     artifacts.write_lettering_translation_evidence(attempt, "request", {"snapshot_sha256": prepared.snapshot_sha256, "target_locale": prepared.target_locale, "model": prepared.model, "batches": list(prepared.batches)})
     translated = {}
     try:
@@ -217,7 +267,7 @@ async def translate_project(artifacts: TargetArtifacts, config: Config, prepared
             translated.update(actual)
         with production_lock(artifacts.project_dir):
             assert_snapshot(current(), prepared.snapshot_sha256)
-            updates, settings = _localized(artifacts, prepared, translated)
+            updates, settings = _localized(artifacts, prepared.states, prepared.style, prepared.settings, prepared.target_locale, translated)
             artifacts.write_lettering_translation_evidence(attempt, "prepared", {"settings": settings.model_dump(mode="json"), "pages": [state.model_dump(mode="json") for state in updates]})
             # All provider, validation and measurement work precedes the first publication.
             artifacts.publish_lettering_translation(updates, prepared.style, settings)

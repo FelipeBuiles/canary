@@ -85,7 +85,7 @@ export function PageSourcePanel({ project, item }: { project: string; item: Comp
   function renderMark(key: string, segment: PageSourceSegment, kind: "lettering" | "depicted") {
     const linked = segment.lettering_item_ids.filter((id) => locatedIds.has(id));
     const copy = segment.lettering_item_ids.map((id) => lettering.get(id)?.text).filter(Boolean).join(" / ");
-    const title = kind === "lettering" && copy ? t("Became lettering: {text}").replace("{text}", copy) : t("Drawn on this page");
+    const title = kind === "lettering" && copy ? t("Became lettering: {text}", { text: copy }) : t("Drawn on this page");
     const isActive = linked.length > 0 && linked.some((id) => active.includes(id));
     return <mark
       key={key}

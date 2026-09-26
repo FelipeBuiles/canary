@@ -5,8 +5,9 @@ import { I18nProvider } from "../i18n";
 import type { GenerationJob } from "../types/api";
 import type { LetteringTranslationEstimate } from "../api/lettering";
 
-const server = vi.hoisted(() => ({ estimate: vi.fn(), translate: vi.fn(), switchLocale: vi.fn(), jobs: [] as GenerationJob[], balance: 100 }));
+const server = vi.hoisted(() => ({ inventory: vi.fn(), estimate: vi.fn(), translate: vi.fn(), switchLocale: vi.fn(), jobs: [] as GenerationJob[], balance: 100 }));
 vi.mock("../api/lettering", () => ({
+  getStoredLetteringLanguages: server.inventory,
   getLetteringTranslationEstimate: server.estimate,
   translateProjectLettering: server.translate,
   switchStoredLetteringLocale: server.switchLocale,
@@ -21,7 +22,7 @@ import { ProjectLetteringLanguage } from "../components/lettering/ProjectLetteri
 
 const estimate: LetteringTranslationEstimate = {
   estimate_credits: 12, reserved_credits: 18, reservation_multiplier: 1.5, confidence: "variable", funding: "api",
-  target_locale: "es", snapshot_sha256: "saved-snapshot", page_count: 2, element_count: 5, translate_count: 3, preserved_target_count: 2,
+  target_locale: "es", snapshot_sha256: "saved-snapshot", page_count: 2, element_count: 5, translate_count: 3, preserved_target_count: 2, stale_target_count: 0,
 };
 const job: GenerationJob = {
   id: "translation", project_name: "demo", kind: "lettering_translation", label: "Translation", payload: { target_locale: "es" },
@@ -31,6 +32,8 @@ const clients: QueryClient[] = [];
 beforeEach(() => {
   server.jobs = [];
   server.balance = 100;
+  server.inventory.mockReset().mockResolvedValue({ current_locale: "source", languages: [] });
+  server.switchLocale.mockReset();
   server.estimate.mockReset().mockResolvedValue(estimate);
   server.translate.mockReset().mockResolvedValue({ job });
 });
@@ -124,10 +127,10 @@ it("keeps an unknown submission separate from another translation and explicitly
 });
 
 it("switches instantly between languages that are already stored, without a job or credits", async () => {
-  server.estimate.mockImplementation(async (_project: string, locale: "en" | "es" | "fr") => ({
-    ...estimate, target_locale: locale, snapshot_sha256: `snap-${locale}`, estimate_credits: 0, reserved_credits: 0,
-    translate_count: locale === "fr" ? 4 : 0, current_locale: "en",
-  }));
+  server.inventory.mockResolvedValue({ current_locale: "en", languages: ["source", "en", "es"].map(locale => ({
+    ...estimate, locale, snapshot_sha256: `snap-${locale}`, estimate_credits: 0, reserved_credits: 0,
+    translate_count: 0, current_locale: "en",
+  })) });
   server.switchLocale.mockResolvedValue({ locale: "es", changed: true });
   const { onApplied } = setup();
   expect(server.estimate).not.toHaveBeenCalled();
@@ -140,5 +143,19 @@ it("switches instantly between languages that are already stored, without a job 
   fireEvent.click(within(chips).getByRole("button", { name: "ES" }));
   await waitFor(() => expect(onApplied).toHaveBeenCalledOnce());
   expect(server.switchLocale).toHaveBeenCalledWith("demo", { target_locale: "es", expected_snapshot_sha256: "snap-es" });
+  expect(server.translate).not.toHaveBeenCalled();
+});
+
+it("returns to original copy through the free language API", async () => {
+  server.inventory.mockResolvedValue({ current_locale: "es", languages: [{ ...estimate, locale: "source", snapshot_sha256: "source-snapshot", translate_count: 0 }] });
+  server.switchLocale.mockResolvedValue({ locale: "source", changed: true });
+  const { onApplied } = setup();
+  const disclosure = screen.getByText("Project language", { selector: "summary" }).parentElement!;
+  disclosure.setAttribute("open", "");
+  fireEvent(disclosure, new Event("toggle"));
+  fireEvent.click(await screen.findByRole("button", { name: "Original" }));
+  await waitFor(() => expect(onApplied).toHaveBeenCalledOnce());
+  expect(server.switchLocale).toHaveBeenCalledWith("demo", { target_locale: "source", expected_snapshot_sha256: "source-snapshot" });
+  expect(server.estimate).not.toHaveBeenCalled();
   expect(server.translate).not.toHaveBeenCalled();
 });

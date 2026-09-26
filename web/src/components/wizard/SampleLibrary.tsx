@@ -130,7 +130,7 @@ export function SampleLibrary({ initialReadCode, selectedCode, onSelect, onReadA
           <p className="font-meta text-[0.68rem] font-bold uppercase tracking-[0.16em] text-hero-red">{t("THE STORY LIBRARY")}</p>
           <h2 className="mt-1 font-display text-xl font-black uppercase leading-none text-ink-black sm:text-2xl">{t("Choose the world you want to draw")}</h2>
         </div>
-        <span className="font-meta text-xs text-ink-muted">{t("{curated} selected · {archive} classics").replace("{curated}", String(curatedCount)).replace("{archive}", String(archiveCount))}</span>
+        <span className="font-meta text-xs text-ink-muted">{t("{curated} selected · {archive} classics", { curated: String(curatedCount), archive: String(archiveCount) })}</span>
       </div>
       <p className="text-sm leading-6 text-ink-muted">{t("Browse selected modern stories and the full classic archive. Read the original before starting a project.")}</p>
       <div className="grid gap-3 bg-surface-container p-4 sm:grid-cols-[minmax(0,1fr)_190px] sm:items-end">
@@ -153,7 +153,7 @@ export function SampleLibrary({ initialReadCode, selectedCode, onSelect, onReadA
         {availableGenres.map((genre) => <button key={genre} type="button" aria-pressed={genres.includes(genre)} onClick={() => toggleGenre(genre)} className={`min-h-11 border-2 px-3 font-meta text-xs font-bold ${genres.includes(genre) ? "border-ink-black bg-ink-black text-bristol" : "border-ink-black/15 bg-bristol text-ink-muted hover:border-ink-black"}`}>{t(genreLabel(genre))}</button>)}
       </div>
       <div className="flex items-center justify-between gap-2 border-t-2 border-ink-black/10 pt-3 text-xs text-ink-muted">
-        <span role="status">{t("{count} stories shown").replace("{count}", String(filtered.length))}</span>
+        <span role="status">{t("{count} stories shown", { count: String(filtered.length) })}</span>
         {(search || genres.length > 0 || source !== "all") && <button type="button" onClick={() => { setSearch(""); setGenres([]); setSource("all"); setPage(0); }} className="min-h-11 font-meta font-bold underline underline-offset-4 hover:text-hero-red">{t("Clear filters")}</button>}
       </div>
       {visible.length ? <div className="grid gap-4 sm:grid-cols-2" aria-label={t("Story choices")}>{visible.map((story) => {
@@ -184,7 +184,7 @@ export function SampleLibrary({ initialReadCode, selectedCode, onSelect, onReadA
       })}</div> : <div role="status" className="bg-pulp-paper p-7 text-center"><p className="font-display text-xl font-bold">{t("NO STORIES FOUND")}</p><p className="mt-2 text-sm text-ink-muted">{t("Try another title, theme, or tag.")}</p></div>}
       {pageCount > 1 && <nav aria-label={t("Sample story pages")} className="flex items-center justify-between gap-2 pt-2">
         <Button variant="outline" size="sm" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>{t("PREVIOUS")}</Button>
-        <span className="font-meta text-xs tabular-nums">{t("Page {page} of {total}").replace("{page}", String(currentPage + 1)).replace("{total}", String(pageCount))}</span>
+        <span className="font-meta text-xs tabular-nums">{t("Page {page} of {total}", { page: String(currentPage + 1), total: String(pageCount) })}</span>
         <Button variant="outline" size="sm" disabled={currentPage + 1 >= pageCount} onClick={() => setPage(currentPage + 1)}>{t("NEXT")}</Button>
       </nav>}
     </section>
