@@ -41,6 +41,13 @@ def deployment_activity(app) -> dict[str, Any]:
     ]
     queued_jobs = sum(1 for job in active_jobs if job.status == "queued")
     running_jobs = sum(1 for job in active_jobs if job.status == "running")
+    # Durable operations are persisted and cannot start while drained, so they
+    # survive process replacement. Fixture closures (no command) cannot.
+    durable_queued = sum(
+        1 for job in active_jobs
+        if job.status == "queued" and getattr(job, "command", None) is not None
+    )
+    draining = getattr(getattr(app.state, "admission", None), "draining", False)
     queued_items = app.state.generation_queue.qsize()
     draw_panels = sum(
         len(panels) for panels in app.state.draw_in_flight.values()
@@ -55,10 +62,15 @@ def deployment_activity(app) -> dict[str, Any]:
         "queue_items": queued_items,
         "draw_panels_in_flight": draw_panels,
     }
-    safe_to_deploy = not any(counts.values())
+    blocking = dict(counts)
+    if draining:
+        blocking["queued_generation_jobs"] -= durable_queued
+    safe_to_deploy = not any(blocking.values())
     return {
         "status": "idle" if safe_to_deploy else "busy",
         "safe_to_deploy": safe_to_deploy,
-        "draining": getattr(getattr(app.state, "admission", None), "draining", False),
+        "draining": draining,
         "counts": counts,
+        # Queued durable work a deploy preserves and resumes after restart.
+        "preserved_queued_operations": durable_queued if draining else 0,
     }

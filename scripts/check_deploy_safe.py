@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Exit successfully only when Canary reports no active generation work."""
+"""Drain admission; exit successfully once no generation work is executing.
+
+Queued durable operations stay unstarted while drained and resume after the
+new release reopens admission, so they do not block the deploy.
+"""
 
 from __future__ import annotations
 
@@ -31,12 +35,13 @@ def main() -> int:
 
     try:
         fetch("/api/ops/drain", "POST")
-        deadline = time.monotonic() + 1800
+        deadline = time.monotonic() + int(os.environ.get("CANARY_DRAIN_TIMEOUT_SECONDS", "1800"))
         while True:
             payload = fetch("/api/ops/deployment-status")
             print(json.dumps(payload, sort_keys=True), flush=True)
             if payload.get("draining") is True and payload.get("safe_to_deploy") is True:
-                print("Safe to deploy: admission is closed and generation is idle.")
+                preserved = payload.get("preserved_queued_operations", 0)
+                print(f"Safe to deploy: admission is closed, nothing is executing; {preserved} queued operation(s) preserved.")
                 return 0
             if time.monotonic() >= deadline:
                 print("Drain timed out; admission remains closed. Explicit ops resume required.", file=sys.stderr)

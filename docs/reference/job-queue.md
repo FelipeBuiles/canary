@@ -69,8 +69,16 @@ always requires the durable queue; missing PostgreSQL never selects a memory que
 - Ordinary jobs retain the 900-second deadline. Pipeline and style batches use
   `CANARY_BATCH_JOB_TIMEOUT_SECONDS` (default 7200). A timeout does not establish
   that a paid provider call failed to execute.
-- Operator drain closes new admission while accepted work drains. Process shutdown
-  preserves queued work and interrupts running work conservatively.
+- Operator drain closes new admission and holds accepted operations that have
+  not started: they remain `queued` (never marked running) until resume. Running
+  operations continue. The pause check and the running transition are one
+  synchronous step, so a deployment-status snapshot taken after drain cannot miss
+  an operation about to start. Deployment therefore waits only for running work;
+  queued work survives process replacement. Process shutdown preserves queued
+  work and interrupts running work conservatively.
+- Missing credit leases hold unstarted operations the same way. (The dispatch
+  task has `retry=False`; raising Procrastinate's `JobRetry` would fail the
+  dispatch rather than defer it.)
 - Old closure-only journal entries cannot be reconstructed and are reported as
   interrupted history. They are never silently replayed by the new worker.
 
@@ -127,8 +135,11 @@ docker compose --profile prod run --rm --no-deps --entrypoint python canary-prod
 docker compose --profile prod up canary-prod
 ```
 
-For Fly, provision PostgreSQL, set `CANARY_QUEUE_DATABASE_URL` as a Fly secret and
-bootstrap that database with the locked dependency version before deployment.
+For Fly, follow [deploy runbook Step 1b](../deploy.md#step-1b--generation-queue-database):
+provision a dedicated PostgreSQL database (never Supabase's `public` schema; a
+direct or session-mode connection, not a transaction pooler), set
+`CANARY_QUEUE_DATABASE_URL` as a Fly secret and bootstrap it with the locked
+dependency version before deployment.
 The existing persistent projects volume remains required. `/api/health/ready`
 includes `generation_queue`; an unavailable worker returns HTTP 503.
 

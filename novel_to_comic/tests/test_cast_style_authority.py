@@ -10,7 +10,6 @@ from PIL import Image
 
 from novel_to_comic.asset_generation import compile_non_panel_request, style_reference_plan
 from novel_to_comic.config import Config
-from novel_to_comic.image_ref_strategy import RefStrategy
 from novel_to_comic.models.appearance import AppearanceState
 from novel_to_comic.models.story_bible import Character, StoryBible
 from novel_to_comic.stages import s3_cast

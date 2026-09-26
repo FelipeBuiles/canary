@@ -54,7 +54,7 @@ from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, Ta
 from ..auth import get_current_user
 from novel_to_comic.codex_dev import classify_operations
 from ..codex_admission import draw_operations, page_check_operations
-from ..deps import get_project, get_project_dir, project_key
+from ..deps import get_project, project_key
 from ..generation_jobs import generation_job_payload
 
 

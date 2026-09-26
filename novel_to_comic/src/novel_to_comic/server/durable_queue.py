@@ -118,11 +118,8 @@ class DurableQueue:
         if job is None or job.status != "queued":
             # Includes redelivery after outcome persistence or a lost worker.
             return
-        if not self.app.state.credit_leases_ready:
-            # No execution began. Defer the same dispatch, never a provider call.
-            from procrastinate.exceptions import JobRetry
-            from procrastinate import RetryDecision
-            raise JobRetry(RetryDecision(retry_in={"seconds": 5}))
+        # Drain and missing credit leases hold this dispatch unstarted inside
+        # run_generation_job. (The task has retry=False, so JobRetry would fail it.)
         try:
             await run_generation_job(self.app, job)
         except asyncio.CancelledError:
@@ -208,7 +205,8 @@ class DurableQueue:
     async def dispatch(self):
         from procrastinate.exceptions import AlreadyEnqueued
 
-        # Drain closes admission, not execution of already accepted work.
+        # Drain closes admission and holds unstarted work; accepted work keeps
+        # its dispatch so it resumes after resume or process replacement.
         if not self.app.state.credit_leases_ready:
             return
         with self.app.state.admission.journal() as db:

@@ -21,7 +21,13 @@ from novel_to_comic.stages.s2_style import (
     save_suggestions,
 )
 from novel_to_comic.style_contract import style_template_for_suggestion
-from tests.test_style_routes import _project, _request, style_ledger  # noqa: F401
+from tests.test_style_routes import _project, _request, install_style_ledger
+
+
+@pytest.fixture
+def style_ledger(monkeypatch):
+    return install_style_ledger(monkeypatch)
+
 
 DESCRIPTION = {
     "label": "Claymation snowfall",

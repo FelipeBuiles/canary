@@ -14,7 +14,7 @@ const MARKETING_IMAGES = {
     "/marketing/dungeon-crawler-carl-page-25.webp",
     "/api/public/books/d1cb0ec790244ce6849974daa586146b/ccf1a606bd1747c4864d8a4770000891/pages/21",
   ],
-  heroLoop: "/marketing/hero-flipbook.webm",
+  heroLoop: "/marketing/hero-flipbook.mp4",
   heroPoster: "/marketing/hero-flipbook-poster.webp",
   editions: [
     "/marketing/janitor-riso-page-01.webp",
@@ -74,17 +74,16 @@ function LanguageSwitcher({
 function HeroFolio({ copy }: { copy: LandingCopy["hero"] }) {
   const reducedMotion = usePrefersReducedMotion();
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [paused, setPaused] = useState(false);
+  const [paused, setPaused] = useState(true);
 
   const toggle = () => {
     const video = videoRef.current;
     if (!video) return;
-    if (paused) {
-      void video.play()?.catch(() => undefined);
+    if (video.paused) {
+      void video.play()?.catch(() => setPaused(true));
     } else {
       video.pause();
     }
-    setPaused(!paused);
   };
 
   return (
@@ -128,6 +127,9 @@ function HeroFolio({ copy }: { copy: LandingCopy["hero"] }) {
               loop
               playsInline
               preload="auto"
+              onPlaying={() => setPaused(false)}
+              onPause={() => setPaused(true)}
+              onError={() => setPaused(true)}
               aria-hidden="true"
             />
           )}

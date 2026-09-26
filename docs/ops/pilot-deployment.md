@@ -19,12 +19,13 @@ These steps are a procedure, not evidence that production has passed them.
    Check maintenance/schema conditions again when a queued release becomes active.
 4. Backend, frontend, and Docker jobs must pass before `Deploy production`.
    That job authenticates `POST /api/ops/drain`, then waits for both
-   `draining: true` and `safe_to_deploy: true`. Timeout or error does not
-   authorize deployment; timeout leaves admission drained.
-5. CI records the rollback release, rebuilds/deploys the tested source SHA with
-   production arguments, and verifies public release contracts. It has no
-   production database credential. The deployed build is not the identical
-   digest used by the CI image smoke test.
+   `draining: true` and `safe_to_deploy: true`. Queued durable operations stay
+   unstarted and resume after explicit resume; only running work must finish.
+   Timeout or error does not authorize deployment; timeout leaves admission drained.
+5. CI builds, pushes and smoke-tests `registry.fly.io/canary-web:<sha>` before
+   draining, records the previous release images as rollback targets, deploys
+   that exact image with `flyctl deploy --image`, and verifies public release
+   contracts. It has no production database credential.
 6. Attach the CI summary and verifier output to a copy of
    [the release evidence template](release-evidence-template.md). Record
    deployed SHA, build timestamp, readiness, rollback image, and schema evidence.

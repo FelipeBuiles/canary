@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from novel_to_comic.image_models import (
-    GATEWAY_IMAGE_BALANCED,
     GATEWAY_IMAGE_FAST as GATEWAY_IMAGE_FAST,
     GATEWAY_IMAGE_QUALITY as GATEWAY_IMAGE_QUALITY,
     GATEWAY_IMAGE_SUNBURST,

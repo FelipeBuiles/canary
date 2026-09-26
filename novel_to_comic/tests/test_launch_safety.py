@@ -516,7 +516,38 @@ def test_deployment_activity_counts_all_generation_work(tmp_path: Path):
             "queue_items": 1,
             "draw_panels_in_flight": 1,
         },
+        "preserved_queued_operations": 0,
     }
+
+
+def test_drained_deploy_preserves_durable_queue_but_waits_for_running_work(tmp_path: Path):
+    app = app_module.create_app(tmp_path, dev=True)
+    app.state.generation_jobs = {}
+    app.state.generation_queue = asyncio.Queue()
+    durable = MagicMock(status="queued", command=object())
+    app.state.generation_jobs["queued"] = durable
+    app.state.admission.set_draining(True)
+
+    result = deployment_status_module.deployment_activity(app)
+    assert result["safe_to_deploy"] is True
+    assert result["preserved_queued_operations"] == 1
+    assert result["counts"]["queued_generation_jobs"] == 1
+
+    app.state.generation_jobs["running"] = MagicMock(status="running", command=object())
+    assert deployment_status_module.deployment_activity(app)["safe_to_deploy"] is False
+
+
+def test_undrained_or_non_durable_queue_blocks_deploy(tmp_path: Path):
+    app = app_module.create_app(tmp_path, dev=True)
+    app.state.generation_jobs = {"queued": MagicMock(status="queued", command=object())}
+    app.state.generation_queue = asyncio.Queue()
+    assert deployment_status_module.deployment_activity(app)["safe_to_deploy"] is False
+
+    app.state.admission.set_draining(True)
+    app.state.generation_jobs = {"fixture": MagicMock(status="queued", command=None)}
+    result = deployment_status_module.deployment_activity(app)
+    assert result["safe_to_deploy"] is False
+    assert result["preserved_queued_operations"] == 0
 
 
 def test_ops_token_is_required_and_constant_time_compared(monkeypatch):

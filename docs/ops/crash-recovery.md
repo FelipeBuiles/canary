@@ -50,8 +50,10 @@ clears an operator's durable drain.
 
 1. Establish the exact release and maintenance reason. Authenticate
    `POST /api/ops/drain` with `X-Canary-Ops-Token` and wait for
-   `draining: true` and `safe_to_deploy: true`. Timeout leaves the service
-   drained; it never grants permission to terminate paid work.
+   `draining: true` and `safe_to_deploy: true`. Drain holds unstarted durable
+   operations queued (`preserved_queued_operations`); only running work must
+   finish. Timeout leaves the service drained; it never grants permission to
+   terminate paid work.
 2. Preserve the journal, artwork and recovery state. Use a deliberate Fly stop
    only after drain is safe. Do not kill the process to simulate maintenance:
    an unexplained kill is a crash and consumes the restart budget.

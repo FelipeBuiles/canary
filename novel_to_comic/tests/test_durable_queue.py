@@ -563,3 +563,73 @@ def test_page_replan_is_a_paid_whole_project_mutation():
 
     assert _PAID.fullmatch("/pages/16/replan")
     assert not _TARGETED.fullmatch("/pages/16/replan")
+
+
+def admit_live(app, label):
+    """Admit one durable operation through an inert live queue fixture."""
+    import time
+
+    queue = DurableQueue(app, "postgresql://unused")
+    app.state.durable_queue = queue
+    queue.worker = asyncio.create_task(asyncio.sleep(100))
+    queue.ready, queue.last_healthy = True, time.monotonic()
+    return queue, enqueue(app, label)
+
+
+@pytest.mark.parametrize("pause", ["drain", "credit_leases"])
+def test_paused_operation_stays_unstarted_until_admission_reopens(tmp_path, monkeypatch, pause):
+    from novel_to_comic.server import generation_jobs, job_execution
+
+    app = make_app(tmp_path)
+    executed = []
+
+    async def execute_command(_app, job):
+        executed.append(job.id)
+
+    monkeypatch.setattr(job_execution, "execute_command", execute_command)
+
+    async def exercise():
+        queue, job = admit_live(app, "1")
+        if pause == "drain":
+            app.state.admission.set_draining(True)
+        else:
+            app.state.credit_leases_ready = False
+        running = asyncio.create_task(generation_jobs.run_generation_job(app, job))
+        await asyncio.sleep(1.2)
+        # Unstarted work is safe to preserve across a deployment restart.
+        assert job.status == "queued" and job.started_at is None and not executed
+        if pause == "drain":
+            app.state.admission.set_draining(False)
+        else:
+            app.state.credit_leases_ready = True
+        await asyncio.wait_for(running, 5)
+        queue.worker.cancel()
+        await asyncio.gather(queue.worker, return_exceptions=True)
+        return job
+
+    job = asyncio.run(exercise())
+    assert executed == [job.id]
+    assert job.status == "complete"
+
+
+def test_shutdown_while_drained_leaves_operation_queued_for_restart(tmp_path, monkeypatch):
+    from novel_to_comic.server import generation_jobs, job_execution
+
+    app = make_app(tmp_path)
+    monkeypatch.setattr(job_execution, "execute_command", lambda *_: pytest.fail("must not execute"))
+
+    async def exercise():
+        queue, job = admit_live(app, "1")
+        app.state.admission.set_draining(True)
+        running = asyncio.create_task(generation_jobs.run_generation_job(app, job))
+        await asyncio.sleep(0.1)
+        running.cancel()
+        queue.worker.cancel()
+        await asyncio.gather(running, queue.worker, return_exceptions=True)
+        return job
+
+    job = asyncio.run(exercise())
+    assert job.status == "queued" and job.started_at is None
+    restarted = make_app(tmp_path)
+    DurableQueue(restarted, "postgresql://unused").restore()
+    assert restarted.state.generation_jobs[job.id].status == "queued"

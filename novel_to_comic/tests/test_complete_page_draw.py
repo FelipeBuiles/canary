@@ -16,7 +16,6 @@ import httpx
 import pytest
 from PIL import Image
 
-from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.config import Config
 from novel_to_comic.models.adaptation import LetteringItem
 from novel_to_comic.models.draw import (
@@ -1375,7 +1374,7 @@ def test_draw_estimate_is_read_only_and_excludes_optional_lettering_check(tmp_pa
     files = _reference_files(tmp_path)
     artifacts.write_page(page)
     artifacts.write_book_edition(edition)
-    compiled = compile_page_generation_request(
+    compile_page_generation_request(
         page, edition, _inventory(), files, retry=RetryProvenance(attempt=1),
     )
     before = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}

@@ -353,6 +353,11 @@ def test_batch_estimator_prices_each_neighbor_reference_size(tmp_path):
 
 @pytest.fixture
 def style_ledger(monkeypatch):
+    return install_style_ledger(monkeypatch)
+
+
+def install_style_ledger(monkeypatch):
+    """Fake credit ledger for style routes; shared by other suites."""
     from novel_to_comic.server import credited_job
     from novel_to_comic.server.routers import styles
 

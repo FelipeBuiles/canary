@@ -52,6 +52,11 @@ def update(state, **values):
 
 @pytest.fixture
 def book(tmp_path):
+    return make_book(tmp_path)
+
+
+def make_book(tmp_path):
+    """A hybrid-lettering edition with one analysed page; shared by other suites."""
     profile = _edition().capability_profile.model_copy(
         update={
             "exact_visible_lettering": False,

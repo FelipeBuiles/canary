@@ -1,6 +1,7 @@
 # Canary — Deployment platform decision
 
-**Status: Current repository architecture assessment, September 9, 2026.**
+**Status: Current repository architecture assessment, September 9, 2026;
+restart, queue, and edge facts refreshed September 25, 2026.**
 Supersedes the July 2 comparison as operational guidance. External platform
 prices and account state were not rechecked here. The original July cost table
 was based on a retired two-app architecture; its ~$18/month total must not be
@@ -22,7 +23,9 @@ is the cheapest or only suitable provider.
 | Fly app | `canary-web`, primary region `iad`; one Machine, shared 2 CPU / 4 GB in `fly.toml` |
 | Public app | One uvicorn application worker, bundled React SPA and FastAPI API/SSE on port 8000 |
 | Model gateway | LiteLLM subprocess on loopback port 4000, installed in a separate dependency environment; bounded child-process restart in `litellm/entrypoint.sh` |
-| Persistent data | `/projects` mounted from `canary_projects`: source, stage artifacts, page revisions, Draw paid-result recovery records, durable request/job journal |
+| Persistent data | `/projects` mounted from `canary_projects`: source, stage artifacts, page revisions, Draw paid-result recovery records, durable request/job journal and operation outbox; daily snapshots, 14-day retention, auto-extend declared in `fly.toml` |
+| Generation queue | Dedicated PostgreSQL (`CANARY_QUEUE_DATABASE_URL`) for Procrastinate dispatch; required for generation admission. Production provisioning is not yet recorded |
+| Edge | Cloudflare proxies `scenewright.ink`; `canary-web.fly.dev` remains directly reachable |
 | External services | Supabase auth/database, Stripe billing, optional Sentry and finalized-export R2 delivery |
 | Pipeline | `extract → brief → style → cast → adapt → plan → draw → finish`; complete lettered pages, not panel composition |
 | Release | Manual `CI` dispatch on `main`, exact-source-SHA test/build gates, authenticated drain, deployment and public verification; database changes remain separately reviewed operations |
@@ -31,9 +34,10 @@ Provider credentials are network-private: the gateway is not publicly exposed.
 Both processes inherit the container environment; separate dependency
 environments do **not** provide process-level secret isolation.
 
-Jobs execute in process-local queues, semaphores, and tasks. Action receipts
-and job observations are durable on the volume; a restart surfaces interrupted
-work rather than automatically requeueing it. New Machines or application
+Operations are dispatched through the PostgreSQL queue but executed by the
+single API process that owns the volume lock. Queued operations survive restart
+and resume; operations that had started become `outcome_unknown` rather than
+being replayed. New Machines or application
 workers would bypass process-local project locks and drain coordination.
 Horizontal scaling therefore needs distributed admission/coordination and a
 shared artifact design before changing instance counts.
@@ -44,15 +48,17 @@ publish author sources or in-progress imagery in a public export bucket.
 
 ## The material hands-off gap
 
-`fly.toml` sets autostop off, autostart false, and restart policy `never`.
-Deliberate stops remain stopped, but a web/container crash also needs explicit
-operator recovery. LiteLLM can restart within its bounded child budget; that
-supervision is not automatic Machine recovery. The routing check uses local
+`fly.toml` sets autostop off, autostart false, and restart policy `on-failure`
+with three retries, backed by the entrypoint's persisted crash budget
+(`/projects/.ops/recovery.json`). Deliberate stops remain stopped; a crash gets
+bounded automatic recovery, after which an operator must diagnose. LiteLLM
+restarts within its own bounded child budget. The routing check uses local
 `/api/health`; separately monitor `/api/health/ready` for dependencies.
 
-Before claiming unattended availability, implement and exercise a bounded crash
-recovery design that distinguishes maintenance from failure, retains journals,
-and does not replay ambiguous paid submissions. Couple it with alert delivery
+Before claiming unattended availability, exercise that bounded crash recovery
+in production (it is configured, not yet evidenced), confirm it distinguishes
+maintenance from failure, retains journals, and does not replay ambiguous paid
+submissions. Couple it with alert delivery
 and backup restoration. See the concrete acceptance gates in
 [launch readiness](launch-readiness.md).
 
@@ -61,8 +67,10 @@ human dispatch/maintenance decision and manually applied database changes.
 Manual release workflows now have unique concurrency groups with cancellation
 disabled; actual deployment jobs remain serialized, with pending requests queued
 instead of replaced (up to GitHub's 100-pending-job limit). This configuration
-still needs a production exercise. It rebuilds the tested source SHA with production frontend arguments;
-it does not deploy the identical image digest used by the CI build smoke test.
+still needs a production exercise. The release image is built once before
+draining, pushed as `registry.fly.io/canary-web:<sha>`, smoke-tested, and
+deployed with `flyctl deploy --image`; the rollback target is the previous
+release's image reference (`flyctl releases --image`).
 
 ## Cost and capacity inputs to collect
 

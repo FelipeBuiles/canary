@@ -31,6 +31,15 @@ kill_timeout = '30s'
 [[mounts]]
   source = 'canary_projects'
   destination = '/projects'
+  # Daily Fly snapshots are the first recovery layer, not the only backup:
+  # docs/ops/backup-restore.md also requires an off-Fly copy and restore drills.
+  scheduled_snapshots = true
+  snapshot_retention = 14
+  # A full volume breaks journals and paid-result recovery records. Grow in
+  # 5 GB steps at 80% usage, capped so runaway growth still needs an operator.
+  auto_extend_size_threshold = 80
+  auto_extend_size_increment = '5GB'
+  auto_extend_size_limit = '50GB'
 
 [http_service]
   internal_port = 8000
@@ -51,7 +60,7 @@ kill_timeout = '30s'
   [http_service.concurrency]
     type = 'requests'
     # One shared-CPU Machine also runs LiteLLM, generation workers, and
-    # Chromium composition. Keep enough room for SSE connections and assets
+    # Chromium for Finish/export. Keep enough room for SSE connections and assets
     # without allowing request bursts to exhaust the box.
     hard_limit = 50
     soft_limit = 30
