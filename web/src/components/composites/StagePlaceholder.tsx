@@ -162,6 +162,8 @@ export function StageStartAction({
   rerun = false,
   disabled = false,
   allowRestart = true,
+  layout = "card",
+  secondaryAction,
 }: {
   project: string;
   stage: StageName;
@@ -169,6 +171,8 @@ export function StageStartAction({
   rerun?: boolean;
   disabled?: boolean;
   allowRestart?: boolean;
+  layout?: "card" | "footer";
+  secondaryAction?: ReactNode;
 }) {
   const { t } = useI18n();
   const { handleRun, isPending } = useRunAction();
@@ -206,25 +210,30 @@ export function StageStartAction({
   }
 
   return (
-    <div className="mt-5 space-y-3">
-      {estimate.isError ? (
-        <div role="alert" className="font-body text-sm">
-          <p>{t("The estimate could not be loaded. No work has started.")}</p>
-          <Button className="mt-2" variant="outline" disabled={estimate.isFetching} onClick={() => void estimate.refetch()}>
-            {estimate.isFetching ? t("Loading estimate…") : t("Retry estimate")}
-          </Button>
-        </div>
-      ) : estimate.data ? (
-        <p className="font-body text-sm">
-          <CreditAmount value={estimate.data.estimate_credits} approximate label={t("credits")} />
-          {estimate.data.reserved_credits != null && (
-            <> · {t("Temporary hold")}: <CreditAmount value={estimate.data.reserved_credits} label={t("credits")} /></>
-          )}
-        </p>
-      ) : <p role="status" className="font-body text-sm">{t("Loading estimate…")}</p>}
-      <Button disabled={unavailable} onClick={() => setConfirmOpen(true)}>
-        {isPending ? t("Starting…") : restartOpen ? t("Resume adaptation") : actionLabel}
-      </Button>
+    <div className={layout === "footer" ? "flex min-w-0 w-full flex-wrap items-center gap-3" : "mt-5 space-y-3"}>
+      <div className={layout === "footer" ? "min-w-0 flex-1 basis-full sm:basis-64 [overflow-wrap:anywhere]" : undefined}>
+        {estimate.isError ? (
+          <div role="alert" className="font-body text-sm">
+            <p>{t("The estimate could not be loaded. No work has started.")}</p>
+            <Button className="mt-2" variant="outline" disabled={estimate.isFetching} onClick={() => void estimate.refetch()}>
+              {estimate.isFetching ? t("Loading estimate…") : t("Retry estimate")}
+            </Button>
+          </div>
+        ) : estimate.data ? (
+          <p className="font-body text-sm">
+            <CreditAmount value={estimate.data.estimate_credits} approximate label={t("credits")} />
+            {estimate.data.reserved_credits != null && (
+              <> · {t("Temporary hold")}: <CreditAmount value={estimate.data.reserved_credits} label={t("credits")} /></>
+            )}
+          </p>
+        ) : <p role="status" className="font-body text-sm">{t("Loading estimate…")}</p>}
+      </div>
+      <div className="flex min-w-0 flex-wrap items-center gap-3">
+        <Button size={layout === "footer" ? "sm" : "md"} disabled={unavailable} onClick={() => setConfirmOpen(true)}>
+          {isPending ? t("Starting…") : restartOpen ? t("Resume adaptation") : actionLabel}
+        </Button>
+        {secondaryAction}
+      </div>
       {retry && stage === "adapt" && !rerun && allowRestart && (
         <div className="border-t border-ink-black/20 pt-4">
           <p className="mb-3 font-body text-sm text-ink-muted">{t("Prefer a fresh script? Start over from your approved inputs.")}</p>
@@ -233,7 +242,7 @@ export function StageStartAction({
           </Button>
         </div>
       )}
-      {startError && <p role="alert" className="font-body text-sm text-hero-red">{startError}</p>}
+      {startError && <p role="alert" className="w-full font-body text-sm text-hero-red">{startError}</p>}
       {freshStart ? (
         <AdaptRestartDrawer
           open={confirmOpen}
