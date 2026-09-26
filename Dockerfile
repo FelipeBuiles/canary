@@ -55,9 +55,8 @@ RUN export VITE_SUPABASE_URL="$VITE_SUPABASE_URL" \
 #   2. uvicorn web app on 0.0.0.0:8000 (talks to the proxy over loopback).
 #
 # Collapsing the previous two-Fly-app split into one machine keeps provider
-# keys off the public path (the proxy is bound to loopback, never exposed)
-# while letting the whole box scale to zero on idle and trimming ~$10-15/mo
-# of idle compute. See docs/deploy.md for the architecture rationale.
+# keys off the public path (the proxy is bound to loopback, never exposed).
+# The Machine stays running; see docs/deploy.md for the architecture rationale.
 FROM python:3.12-slim-bookworm
 WORKDIR /app
 ARG CANARY_VERSION=unknown

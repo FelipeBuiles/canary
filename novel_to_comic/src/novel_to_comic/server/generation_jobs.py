@@ -307,6 +307,45 @@ def find_active_generation_job(
     return None
 
 
+def execution_paused(app: FastAPI, job: GenerationJob) -> bool:
+    """Durable operations wait, unstarted, while drained or without credit leases.
+
+    A waiting operation stays queued: deployment can stop the process and the
+    restarted worker resumes it. Fixture closures cannot survive a restart.
+    """
+    if job.command is None:
+        return False
+    admission = getattr(app.state, "admission", None)
+    return bool(getattr(admission, "draining", False)) or not getattr(app.state, "credit_leases_ready", True)
+
+
+async def _start_when_open(app: FastAPI, job: GenerationJob) -> bool:
+    """Mark the job running unless cancelled; False means it must not execute.
+
+    The pause check and the running transition share one synchronous step, so
+    a deployment-status snapshot taken after drain never misses a job that is
+    about to start.
+    """
+    lock = job_transition_lock(app, job.user_id) if job.user_id else None
+    while True:
+        while execution_paused(app, job) and job.status != "cancelled":
+            await asyncio.sleep(1)
+        async with lock if lock is not None else _no_lock():
+            if job.status == "cancelled":
+                return False
+            if execution_paused(app, job):
+                continue
+            job.status = "running"
+            job.started_at = _now()
+            persist_generation_job(app, job)
+            return True
+
+
+@asynccontextmanager
+async def _no_lock():
+    yield
+
+
 async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
     if job.status == "cancelled":
         return
@@ -325,19 +364,10 @@ async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
                 await stack.enter_async_context(lane.enter(is_fal_page_draw(job)))
             for semaphore in semaphores:
                 await stack.enter_async_context(semaphore)
-            if job.user_id:
-                async with job_transition_lock(app, job.user_id):
-                    if job.status == "cancelled":
-                        return
-                    job.status = "running"
-                    job.started_at = _now()
-                    persist_generation_job(app, job)
-            else:
-                if job.status == "cancelled":
-                    return
-                job.status = "running"
-                job.started_at = _now()
-                persist_generation_job(app, job)
+            if not await _start_when_open(app, job):
+                return
+            # The execution deadline excludes time spent paused or queued.
+            started = time.perf_counter()
             logger.info(
                 "[bold cyan]Job start[/] project=[white]%s[/] kind=[cyan]%s[/] label=%s id=[dim]%s[/]",
                 job.project_name,

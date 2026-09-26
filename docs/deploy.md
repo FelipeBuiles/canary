@@ -1,8 +1,9 @@
 # Canary — Fly.io Deploy Runbook
 
-**Status: Current repository runbook, September 9, 2026.** Verify current
+**Status: Current repository runbook, September 25, 2026.** Verify current
 provider/dashboard details before executing. This refresh did not inspect or
-change production state. Use [launch readiness](proposals/launch-readiness.md)
+change production state. The production Machine was intentionally stopped
+on September 25 pending launch readiness. Use [launch readiness](proposals/launch-readiness.md)
 for launch acceptance and [the platform decision](proposals/deployment-platform-review.md)
 for architecture rationale.
 
@@ -59,6 +60,16 @@ upgrades: it holds project artifacts, Draw `.pending`/`.unfinished` recovery
 evidence, and `.request-journal.sqlite3` (durable action responses and job
 observations). Losing journals can lose the evidence needed to avoid duplicate
 paid actions; copying artwork alone is not a recovery backup.
+
+Two further production dependencies sit outside the container:
+
+- **Generation queue PostgreSQL** (`CANARY_QUEUE_DATABASE_URL`). Required: without
+  it generation admission stays closed and `/api/health/ready` returns 503. It is
+  dispatch state only; the volume's journal/outbox remains authoritative for
+  operation outcomes. See [Step 1b](#step-1b--generation-queue-database).
+- **Cloudflare proxy** in front of `scenewright.ink`/`www.scenewright.ink`. The
+  Fly hostname `canary-web.fly.dev` is also reachable directly. See
+  [Cloudflare in front of Fly](#cloudflare-in-front-of-fly).
 
 ## Prerequisites (before you touch Fly)
 
@@ -174,6 +185,32 @@ In the **Supabase dashboard → Authentication → URL Configuration**:
   rate-limited. Configure custom SMTP in the dashboard before a public launch
   or expect deliverability problems.
 
+## Step 1b — generation queue database
+
+The durable queue ([job queue reference](reference/job-queue.md)) needs a
+dedicated PostgreSQL database reachable over a direct connection. Recommended:
+a small Fly Managed Postgres cluster in `iad`, beside the Machine.
+
+- Do **not** put Procrastinate tables in the Supabase project's `public` schema:
+  Supabase's REST API exposes that schema to browser keys. Use a separate
+  database (or a separate Supabase project) if you choose Supabase.
+- Use a direct or session-mode connection string, not a transaction pooler.
+- Store the URL only as a Fly secret: `fly secrets set -a canary-web
+  CANARY_QUEUE_DATABASE_URL=postgresql://...`.
+- Bootstrap the schema once, before the first release that requires it, using
+  the locked dependency version inside the release image:
+
+```bash
+fly ssh console -a canary-web -C \
+  "/app/novel_to_comic/.venv/bin/python -m novel_to_comic.server.queue_schema"
+```
+
+The command creates a missing schema and leaves an existing one untouched. The
+server never migrates it automatically; a Procrastinate upgrade needs a backup,
+a drain, and that version's documented migration applied separately. Include the
+database in backups (Step 4) and record its connection target (not the secret)
+in the release evidence.
+
 ## Step 2 — Canary app (`canary-web`) — the only Fly app
 
 ```bash
@@ -232,6 +269,10 @@ health; it returns `error` if **either** dependency is unreachable:
   Step 1 and a valid `SUPABASE_SECRET_KEY`.
 - **LiteLLM** — `GET <LITELLM_BASE_URL>/health/liveliness` with the bearer
   `LITELLM_API_KEY`. Hits the loopback proxy inside the same container.
+- **Generation queue** — the Procrastinate worker is connected, owns the volume
+  lock, and has heartbeated within 15 seconds (`checks.generation_queue`).
+- **Credit leases** — reservation lease renewal is healthy (`checks.credit_leases`
+  appears only when it is not).
 
 In local development, a dependency is skipped when both of its settings are
 absent. In `CANARY_ENV=production`, missing or partial dependency configuration
@@ -281,10 +322,17 @@ is active. The `Deploy production` job starts only after the backend, frontend,
 and production-image jobs pass for the exact SHA; it then:
 
 1. Authenticates `POST /api/ops/drain`, then waits for deployment status to show
-   both `draining: true` and `safe_to_deploy: true`.
-2. Rebuilds the exact tested source SHA with production frontend arguments and
-   release metadata. This is not deployment of the CI smoke-test image digest.
-3. Verifies `/api/version`, liveness, the production readiness contract, and
+   both `draining: true` and `safe_to_deploy: true`. Queued durable operations
+   do not block this; they stay unstarted and resume after explicit resume.
+2. Before draining, builds the tested source SHA once with production frontend
+   arguments, pushes it as `registry.fly.io/canary-web:<sha>`, and smoke-tests
+   that image. After drain it records the previous releases' images
+   (`flyctl releases --image`) and deploys the pushed image with
+   `flyctl deploy --image`; Fly does not rebuild. Roll back by deploying the
+   previous image reference. The pushed image differs from the `docker` job's
+   smoke image only by its production `VITE_*` build arguments.
+3. Verifies `/api/version`, liveness, the production readiness contract
+   (Supabase, LiteLLM and generation queue all `ok`), and
    required security-header presence. Signed-in behavior and policy values
    still need their release exercises.
 
@@ -325,12 +373,19 @@ environment reviewers, enabling one adds a useful second approval.
 
 All three endpoints require `X-Canary-Ops-Token: $CANARY_OPS_TOKEN`:
 `POST /api/ops/drain`, `GET /api/ops/deployment-status`, and
-`POST /api/ops/resume`. Drain closes new project mutation/paid-action admission;
-recorded idempotent responses can still replay. Status counts in-progress HTTP
+`POST /api/ops/resume`. Drain closes new project mutation/paid-action admission
+and holds every durable operation that has not started: it stays `queued`, is
+never marked running, and resumes after `POST /api/ops/resume` or on the new
+release once resumed. Operations already running continue to completion.
+Recorded idempotent responses can still replay. Status counts in-progress HTTP
 admissions, pipeline/style tasks, queued/running generation jobs, queue items,
 and in-flight Draw work without revealing account/project details.
-`safe_to_deploy` means all counts are zero; it is safe as a release gate only
-when `draining` is also true on this single application process.
+
+While drained, `safe_to_deploy` means nothing is executing: queued durable
+operations are reported as `preserved_queued_operations` and do not block.
+When not drained, every count must be zero. Non-durable (fixture) queued jobs
+always block. The gate is meaningful only with `draining: true` on this single
+application process.
 
 ```bash
 # Requires CANARY_OPS_TOKEN in the operator environment.
@@ -347,7 +402,9 @@ curl -fsS -X POST https://canary-web.fly.dev/api/ops/resume \
   -H "X-Canary-Ops-Token: $CANARY_OPS_TOKEN"
 ```
 
-The guard polls every five seconds for up to 30 minutes. Timeout exits nonzero
+The guard polls every five seconds for up to 30 minutes
+(`CANARY_DRAIN_TIMEOUT_SECONDS`). Only running work is waited for; a batch may
+run for up to `CANARY_BATCH_JOB_TIMEOUT_SECONDS` (two hours). Timeout exits nonzero
 and **leaves admission drained**; errors never justify deploying anyway or
 automatically resuming. Inspect status and resolve the cause before choosing
 deploy or explicit resume. Drain intent persists in the mounted request journal across
@@ -399,15 +456,30 @@ The handler verifies signatures and is idempotent on
 ## Step 4 — volume backups (do not skip)
 
 Fly volumes are single-region. Scheduled snapshots protect against a damaged
-volume, but are not an off-provider backup. Earlier sessions recorded automatic
-snapshots and five-day retention; inspect the actual volume and record today's
-schedule, retention, and most recent successful snapshot before changing them:
+volume, but are not an off-provider backup. `fly.toml` now declares daily
+snapshots, 14-day retention, and auto-extension (5 GB steps at 80% usage, capped
+at 50 GB). Mount settings apply on the next deploy; confirm the actual volume
+afterwards and record schedule, retention, size, and most recent snapshot:
 
 ```bash
+fly volumes list -a canary-web
 fly volumes show <volume-id>
-fly volumes update <volume-id> --scheduled-snapshots=true --snapshot-retention 14
+fly volumes snapshots list <volume-id>
 # Optional: configure R2 delivery for finalized exports (instructions below).
 ```
+
+Three stores must be backed up and restored as a matched pair set:
+
+1. the `/projects` volume (artifacts, `.request-journal.sqlite3` with the
+   operation outbox, `.jobs` inputs, Draw recovery records);
+2. the generation queue PostgreSQL database (managed-provider backups);
+3. Supabase (auth, projects, credit ledger).
+
+Add an independent off-Fly copy of `/projects` (for example a nightly encrypted
+archive to a private R2 bucket separate from the public export bucket). A
+restore that pairs a volume and queue database from different times needs the
+reconciliation described in the [job queue reference](reference/job-queue.md);
+it never replays work automatically.
 
 Perform one restore drill before launch; a snapshot that has never been restored
 is not yet a proven recovery path.
@@ -458,7 +530,8 @@ When you're ready to drop the gating posture and open to the public:
 - [ ] Swap Stripe to **live** keys: `fly secrets set -a canary-web
       STRIPE_SECRET_KEY=sk_live_... STRIPE_WEBHOOK_SECRET=whsec_live_...`
 - [ ] Update the Stripe webhook endpoint URL to the production domain.
-- [ ] `fly certs add app.<yourdomain>` + point DNS. TLS auto-provisions.
+- [ ] Custom domain: see [Cloudflare in front of Fly](#cloudflare-in-front-of-fly).
+      Without a proxy, `fly certs add <domain>` + DNS auto-provisions TLS.
 - [ ] Set `SCENEWRIGHT_APP_URL=https://app.<yourdomain>` and add the custom
       hostname to `CANARY_ALLOWED_HOSTS`, then redeploy. Stripe return URLs never
       reflect the request's `Origin` header.
@@ -474,6 +547,29 @@ When you're ready to drop the gating posture and open to the public:
       original-action recovery, and provider/ledger evidence. Do not promise that
       `/reset-stale` makes an interrupted paid action uncharged, and do not use
       production paid work as an unapproved crash test.
+
+## Cloudflare in front of Fly
+
+`scenewright.ink` resolves to Cloudflare, which proxies to the Fly app.
+
+- **TLS:** set Cloudflare SSL/TLS mode to **Full (strict)**. The origin still
+  needs a valid certificate for the hostname: issue it with `fly certs add
+  scenewright.ink` using the DNS (`_acme-challenge` CNAME) validation Fly shows,
+  because Cloudflare's proxy intercepts HTTP validation.
+- **Caching:** bypass cache for `/api/*` and `index.html`; hashed static assets
+  may be cached. SSE (`/api/projects/{id}/events`) sends a keepalive every 30
+  seconds, below Cloudflare's 100-second idle timeout.
+- **Client IP:** rate limits key on `Fly-Client-IP`, or on `CF-Connecting-IP`
+  only when `Fly-Client-IP` is a Cloudflare address (`server/ratelimit.py`;
+  override ranges with `CANARY_TRUSTED_EDGE_CIDRS`). The client-supplied
+  leftmost `X-Forwarded-For` value is never used. Refresh the embedded ranges
+  from <https://www.cloudflare.com/ips/> when Cloudflare changes them.
+- **Origin bypass:** `canary-web.fly.dev` stays in `CANARY_ALLOWED_HOSTS` for
+  health checks and ops calls, so visitors can skip Cloudflare's WAF there.
+  Before paid acquisition, decide whether to restrict public traffic to the
+  Cloudflare hostname (for example Cloudflare authenticated origin pulls).
+- **Upload size:** Cloudflare's plan request-body limit must exceed
+  `CANARY_MAX_UPLOAD_MB` (10 MB by default).
 
 ---
 
@@ -547,7 +643,7 @@ One consolidated set, since the proxy and web app share a container:
   only the loopback proxy uses these keys for provider requests.
 - **Web-app layer:** `LITELLM_API_KEY` (== `LITELLM_MASTER_KEY`), `SUPABASE_URL`,
   `SUPABASE_SECRET_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
-  `CANARY_OPS_TOKEN`,
+  `CANARY_OPS_TOKEN`, `CANARY_QUEUE_DATABASE_URL` (required),
   `SENTRY_DSN` and `SENTRY_TRACES_SAMPLE_RATE` (optional — omit the DSN to
   disable), `LANGFUSE_*` /
   `OTEL_EXPORTER_OTLP_ENDPOINT` (optional).

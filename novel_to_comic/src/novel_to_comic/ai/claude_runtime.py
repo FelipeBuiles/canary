@@ -215,7 +215,9 @@ def _check_init(event: dict[str, Any], request: dict[str, Any], evidence: dict[s
         raise ClaudeRuntimeError("effective_model_conflict", evidence)
     if servers:
         raise ClaudeRuntimeError("mcp_isolation_failed", evidence)
-    allowed = (lambda name: request["schema"] is not None and bool(_STRUCTURED_OUTPUT_TOOL.match(str(name))))
+    def allowed(name):
+        return request["schema"] is not None and bool(_STRUCTURED_OUTPUT_TOOL.match(str(name)))
+
     if any(not allowed(tool) for tool in tools):
         raise ClaudeRuntimeError("effective_tool_isolation_failed", evidence)
 

@@ -91,7 +91,7 @@ describe("Library first-run (Issue #0)", () => {
     importStoryMutation.mutate.mockImplementation((_input, options) => options.onSuccess({ id: "prepared-source" }));
     renderLibrary();
     await user.click(screen.getByRole("button", { name: "NEW PRODUCTION" }));
-    await user.click(screen.getByText("USE A LEGACY STORY CODE"));
+    await user.click(screen.getByText("HAVE A STORY CODE OR LINK?"));
     await user.type(screen.getByLabelText("Library of Short Stories code or URL"), "the-open-window");
     await user.click(screen.getByRole("button", { name: "CONTINUE" }));
     await user.click(screen.getByRole("button", { name: "CONTINUE" }));

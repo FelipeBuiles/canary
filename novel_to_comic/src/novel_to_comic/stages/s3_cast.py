@@ -6,7 +6,6 @@ Part B: Generate location background plates
 
 import asyncio
 import hashlib
-import json
 from dataclasses import replace
 from pathlib import Path
 

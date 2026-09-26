@@ -70,7 +70,7 @@ def main() -> int:
         if not isinstance(checks, dict):
             failures.append("production readiness dependency checks are missing or malformed")
         else:
-            for dependency in ("supabase", "litellm"):
+            for dependency in ("supabase", "litellm", "generation_queue"):
                 if checks.get(dependency) != "ok":
                     failures.append(
                         f"production readiness must report {dependency} as ok"

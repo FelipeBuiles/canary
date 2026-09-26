@@ -16,8 +16,8 @@ async function setup(source: "file" | "import") {
     await user.click(screen.getByRole("button", { name: "UPLOAD MANUSCRIPT" }));
     await user.upload(view.container.querySelector<HTMLInputElement>('input[type="file"]')!, new File(["story"], "story.txt", { type: "text/plain" }));
   } else {
-    await user.click(screen.getByText("USE ANOTHER SOURCE"));
-    await user.type(screen.getByPlaceholderText("e.g. story URL or library code"), "story");
+    await user.click(screen.getByText("HAVE A STORY CODE OR LINK?"));
+    await user.type(screen.getByLabelText("Library of Short Stories code or URL"), "story");
   }
   await user.click(screen.getByRole("button", { name: "CONTINUE" }));
   await user.click(screen.getByText("Models for this project (dev)"));

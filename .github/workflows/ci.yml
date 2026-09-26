@@ -217,39 +217,66 @@ jobs:
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
         with:
           version: 0.4.104
-      - name: Drain production and wait for idle
+      - name: Prepare release metadata
+        id: release
+        run: |
+          echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "image=registry.fly.io/canary-web:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Authenticate to the Fly registry
+        run: flyctl auth docker
+      # Build before draining so customers are not blocked during the build.
+      # The pushed image is the exact artifact deployed and rolled back to.
+      - name: Build and push release image
+        id: image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.release.outputs.image }}
+          build-args: |
+            CANARY_VERSION=${{ github.sha }}
+            CANARY_BUILD_TIMESTAMP=${{ steps.release.outputs.timestamp }}
+            VITE_SUPABASE_URL=${{ secrets.VITE_SUPABASE_URL }}
+            VITE_SUPABASE_PUBLISHABLE_KEY=${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+            VITE_SENTRY_DSN=${{ secrets.VITE_SENTRY_DSN }}
+            VITE_CANARY_ENV=production
+          cache-from: type=gha
+      - name: Smoke test release image
+        env:
+          IMAGE: ${{ steps.release.outputs.image }}
+        run: |
+          docker pull "$IMAGE"
+          docker run --rm --entrypoint /app/novel_to_comic/.venv/bin/python "$IMAGE" \
+            -c "import novel_to_comic.server.app, novel_to_comic.server.durable_queue"
+          docker run --rm --entrypoint /app/.venv-litellm/bin/python "$IMAGE" -c "import litellm"
+      - name: Drain production and wait for running work
         env:
           CANARY_OPS_TOKEN: ${{ secrets.CANARY_OPS_TOKEN }}
           # Direct Fly route, still protected by CANARY_OPS_TOKEN.
           SCENEWRIGHT_APP_URL: https://canary-web.fly.dev
         run: python scripts/check_deploy_safe.py
       - name: Record rollback target
+        env:
+          IMAGE: ${{ steps.release.outputs.image }}
+          DIGEST: ${{ steps.image.outputs.digest }}
         run: |
           {
             echo "## Production deployment"
             echo
             echo "- Source SHA: \`${GITHUB_SHA}\`"
-            echo "- Previous Fly release:"
+            echo "- Release image: \`${IMAGE}\` (\`${DIGEST}\`)"
+            echo "- Roll back with \`flyctl deploy -a canary-web --image <previous image>\`. Previous releases:"
             echo '```'
-            flyctl releases -a canary-web | head -n 3
+            flyctl releases -a canary-web --image | head -n 3
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      - name: Prepare release metadata
-        id: release
-        run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-      - name: Deploy exact tested revision
+      - name: Deploy exact release image
         env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
-          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
-        run: |
-          flyctl deploy --remote-only -a canary-web \
-            --build-arg "CANARY_VERSION=${GITHUB_SHA}" \
-            --build-arg "CANARY_BUILD_TIMESTAMP=${{ steps.release.outputs.timestamp }}" \
-            --build-arg "VITE_SUPABASE_URL=${VITE_SUPABASE_URL}" \
-            --build-arg "VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}" \
-            --build-arg "VITE_CANARY_ENV=production" \
-            --build-arg "VITE_SENTRY_DSN=${VITE_SENTRY_DSN}"
+          IMAGE: ${{ steps.release.outputs.image }}
+        run: flyctl deploy -a canary-web --image "$IMAGE"
       - name: Verify deployed release
         env:
           EXPECTED_CANARY_VERSION: ${{ github.sha }}

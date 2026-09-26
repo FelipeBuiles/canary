@@ -5,12 +5,12 @@
   "rules": "No credits, costs, free generations or development model routing appear in these assets.",
   "assets": [
     {
-      "file": "web/public/marketing/hero-flipbook.webm",
+      "file": "web/public/marketing/hero-flipbook.mp4",
       "source": "showcase/video/out/scenewright-any-style-revised.mp4",
-      "derivation": "Promo 4.0–7.9 s (flipbook); crop 920x1080+980+0, 600 px wide, VP9 two-pass 1.35 Mbps, no audio",
+      "derivation": "Promo 4.0–7.9 s (flipbook); crop 920x1080+980+0, 600 px wide. Transcoded from the original VP9 asset to H.264 (libx264, CRF 20, yuv420p, faststart), no audio, to resolve Chromium decode failure at 0.5 s.",
       "source_work": "Dungeon Crawler Carl (dcc1-2 style proofs)",
       "source_sha256": "446e16cbdc272339017c306bd94fe2cef83b184d8902117296785893a89a3b27",
-      "asset_sha256": "271ecf8a1bced65b9d789a00a2868f3c16763055f390e5924867e7f7a1490691"
+      "asset_sha256": "36a112d0c6b6ddc57ef642720d9f0350968394088db12cd09dbdc177b3736973"
     },
     {
       "file": "web/public/marketing/hero-flipbook-poster.webp",

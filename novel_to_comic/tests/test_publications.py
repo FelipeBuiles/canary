@@ -14,7 +14,11 @@ from novel_to_comic.server.deps import get_project, get_project_dir, get_project
 from novel_to_comic.server.deployment_status import require_ops_token
 from novel_to_comic.server.routers import publications
 from novel_to_comic.state import PipelineState
+from novel_to_comic.lettering import service as lettering_service
+from novel_to_comic.lettering.translation import switch_stored_locale, prepare_translation
 from tests.test_page_finishing import _write_valid_book
+
+from .test_hybrid_lettering import make_book, save as save_lettering, update
 
 
 @pytest.fixture
@@ -317,11 +321,12 @@ def test_showcase_rejects_unsafe_manifest_and_missing_pages(tmp_path, monkeypatc
         showcase.books()
 
 
-from novel_to_comic.lettering import service as lettering_service
-from novel_to_comic.lettering.translation import switch_stored_locale, prepare_translation
-from .test_hybrid_lettering import book as hybrid_book, save as save_lettering, update
-
 LONG = "An extremely long caption. " * 100
+
+
+@pytest.fixture
+def hybrid_book(tmp_path):
+    return make_book(tmp_path)
 
 
 @pytest.fixture

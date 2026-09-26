@@ -156,17 +156,42 @@ describe("Scenewright homepage", () => {
     const { container } = renderHomePage();
 
     const video = container.querySelector(".landing-hero video") as HTMLVideoElement;
-    expect(video.getAttribute("src")).toBe("/marketing/hero-flipbook.webm");
+    expect(video.getAttribute("src")).toBe("/marketing/hero-flipbook.mp4");
     expect(video.getAttribute("poster")).toBe("/marketing/hero-flipbook-poster.webp");
     expect(video.muted).toBe(true);
     expect(video.loop).toBe(true);
     expect(video.autoplay).toBe(true);
     expect(screen.getByRole("figure", { name: /Looping video: one Dungeon Crawler Carl comic page/ })).toBeTruthy();
 
+    Object.defineProperty(video, "paused", { configurable: true, value: false });
+    fireEvent.playing(video);
     const toggle = screen.getByRole("button", { name: "Pause" });
     fireEvent.click(toggle);
     expect(pause).toHaveBeenCalledOnce();
+    fireEvent.pause(video);
     expect(screen.getByRole("button", { name: "Play" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("offers Play when autoplay is blocked and reflects actual playback events", async () => {
+    stubReducedMotion(false);
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play")
+      .mockRejectedValueOnce(new DOMException("Autoplay blocked", "NotAllowedError"))
+      .mockResolvedValue(undefined);
+    const { container } = renderHomePage();
+    const video = container.querySelector("video")!;
+
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    await play.mock.results[0].value.catch(() => undefined);
+    expect(screen.getByRole("button", { name: "Play" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    expect(play).toHaveBeenCalledTimes(2);
+    fireEvent.playing(video);
+    expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
+    fireEvent.pause(video);
+    expect(screen.getByRole("button", { name: "Play" })).toBeTruthy();
+    fireEvent.playing(video);
+    fireEvent.error(video);
+    expect(screen.getByRole("button", { name: "Play" })).toBeTruthy();
   });
 
   it("shows only the poster when the visitor prefers reduced motion", () => {

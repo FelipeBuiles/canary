@@ -5,9 +5,9 @@ from pathlib import Path
 
 import yaml
 
+from novel_to_comic.image_models import GATEWAY_IMAGE_BALANCED
 from novel_to_comic.config import (
     Config,
-    GATEWAY_IMAGE_BALANCED,
     GATEWAY_IMAGE_FAST,
     GATEWAY_IMAGE_QUALITY,
     GATEWAY_IMAGE_SUNBURST,

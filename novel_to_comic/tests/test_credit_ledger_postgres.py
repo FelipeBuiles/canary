@@ -268,7 +268,7 @@ def test_concurrent_call_guarantees_top_up_only_from_free_balance(ledger):
 def test_provider_overrun_never_spends_unreserved_credits(ledger):
     db, user = ledger
     job, owner, call = (str(uuid.uuid4()) for _ in range(3))
-    hold = db.rpc("reserve_stage_credits", {
+    db.rpc("reserve_stage_credits", {
         "p_user_id": user, "p_project_id": None, "p_stage": "cast",
         "p_amount_credits": 3, "p_job_id": job,
         "p_owner": owner, "p_lease_seconds": 3600,

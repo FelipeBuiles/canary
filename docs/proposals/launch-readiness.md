@@ -47,6 +47,31 @@ They still require production exercises. Code support for refunds, support
 runbooks, legal pages, and Sentry also exists; an exercise and an alert reaching
 a real operator remain different evidence.
 
+## September 25 deployment review
+
+Repository changes: drain now holds unstarted durable operations queued so a
+release waits only for running work; credit-lease outages hold work instead of
+failing its dispatch; rate limits no longer key on client-supplied
+`X-Forwarded-For`; the verifier requires `generation_queue: ok`; `fly.toml`
+declares 14-day snapshots and volume auto-extension; CI builds, pushes and
+smoke-tests the release image once and deploys that exact image.
+
+Open before public beta (operator actions, not code):
+
+- [ ] The production Machine is intentionally stopped; start it for launch
+      and record Machine/release state.
+- [ ] Provision, bootstrap, and back up the generation queue PostgreSQL
+      ([Step 1b](../deploy.md#step-1b--generation-queue-database)).
+- [ ] Record which `docs/sql/*.sql` migrations production has; confirm the
+      production Supabase project is separate from local development.
+- [ ] Hosted uptime checks on `/api/health` and `/api/health/ready`, Sentry DSNs
+      with a received test event, until the external monitor host exists.
+- [ ] Cloudflare TLS/caching settings per the
+      [runbook](../deploy.md#cloudflare-in-front-of-fly); decide on origin bypass.
+- [ ] Provider-side spend limits (OpenAI, Anthropic, FAL) as a billing backstop.
+- [ ] Measure peak memory with five workers on the 4 GB Machine; cap beta signups.
+- [ ] Exercise the build-once image release and an image rollback in production.
+
 ## Gate 1 — money, accounts, and recovery
 
 For one exact release SHA, record these results in a copy of the

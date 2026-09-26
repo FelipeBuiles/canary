@@ -16,7 +16,7 @@ def _production_readiness() -> dict:
         "status": "ok",
         "pipeline_contract": "eight-stage-v2",
         "model_mode": "api",
-        "checks": {"supabase": "ok", "litellm": "ok"},
+        "checks": {"supabase": "ok", "litellm": "ok", "generation_queue": "ok"},
     }
 
 
@@ -108,6 +108,8 @@ def test_verifier_rejects_wrong_release_and_missing_headers(
         ({"checks": {"supabase": "skipped", "litellm": "ok"}}, "supabase as ok"),
         ({"checks": {"supabase": "ok", "litellm": "skipped"}}, "litellm as ok"),
         ({"checks": {"supabase": "ok", "litellm": "error: timeout"}}, "litellm as ok"),
+        ({"checks": {"supabase": "ok", "litellm": "ok"}}, "generation_queue as ok"),
+        ({"checks": {"supabase": "ok", "litellm": "ok", "generation_queue": "unavailable"}}, "generation_queue as ok"),
     ],
 )
 def test_verifier_rejects_nonproduction_readiness_despite_top_level_ok(
