@@ -379,7 +379,7 @@ def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(
     monkeypatch.setattr(codex_runtime, "run_image", runtime)
     monkeypatch.setattr(finalisation, "begin_image_call", AsyncMock(return_value=SimpleNamespace(
         event_id="native-call", started=time.perf_counter(), started_at=None,
-        metadata={}, estimated_cost_usd=0, langfuse_input={}, operation="image",
+        metadata={}, estimated_cost_usd=0,  operation="image",
     )))
     finalized = AsyncMock()
     monkeypatch.setattr(client, "_finalize_event_shielded", finalized)

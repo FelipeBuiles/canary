@@ -110,14 +110,6 @@ async def get_current_user(
         raise HTTPException(401, "Invalid or expired token") from exc
 
     request.state.user_id = user_id
-    try:
-        import sentry_sdk
-
-        sentry_sdk.set_user({"id": user_id})
-        sentry_sdk.set_tag("request_id", getattr(request.state, "request_id", "unknown"))
-    except Exception:
-        # Error reporting is optional and must never affect authentication.
-        pass
     response.set_cookie(
         SESSION_COOKIE_NAME,
         token,

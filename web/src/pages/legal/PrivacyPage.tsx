@@ -10,7 +10,7 @@ import { LegalLayout } from "../../layout/LegalLayout";
  */
 export function PrivacyPage() {
   return (
-    <LegalLayout title="Privacy Policy" updated="July 2, 2026">
+    <LegalLayout title="Privacy Policy" updated="September 26, 2026">
       <p>
         This Privacy Policy explains what Scenewright collects, how we use it,
         and the choices you have. We aim to collect only what we need to run the
@@ -40,7 +40,7 @@ export function PrivacyPage() {
 
       <h2>How We Use Your Information</h2>
       <ul>
-        <li>To operate the pipeline and generate your comic panels.</li>
+        <li>To operate the pipeline and generate your comic pages.</li>
         <li>To maintain your credit balance and process payments.</li>
         <li>To detect, prevent, and address abuse and fraud.</li>
         <li>To provide support and respond to reports.</li>
@@ -68,10 +68,15 @@ export function PrivacyPage() {
           <strong>Stripe</strong> for payment processing.
         </li>
         <li>
-          <strong>Monitoring services</strong> (such as Sentry) that help us
-          find and fix errors — configured to avoid logging your Content.
+          <strong>PostHog</strong> for selected usage milestones, error reports,
+          and operational diagnostics linked to an account identifier. We do not
+          send manuscripts, prompts, generated artwork, or feedback messages to
+          PostHog. Session replay and automatic page-content capture are disabled.
         </li>
       </ul>
+
+      <h2>Feedback</h2>
+      <p>Feedback you submit is stored privately in our database with your account and, when relevant, project reference. We review it to understand problems and decide what to improve.</p>
 
       <h2>Data Retention</h2>
       <p>

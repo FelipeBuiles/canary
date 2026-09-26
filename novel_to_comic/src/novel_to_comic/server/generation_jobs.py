@@ -346,7 +346,7 @@ async def _no_lock():
     yield
 
 
-async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
+async def _run_generation_job(app: FastAPI, job: GenerationJob) -> None:
     if job.status == "cancelled":
         return
     timeout_seconds = max(1, int(getattr(app.state, "generation_job_timeout_seconds", 900)))
@@ -424,6 +424,8 @@ async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
             timeout_seconds,
         )
     except Exception as exc:
+        from .telemetry import capture_exception
+        capture_exception(exc, user_id=job.user_id)
         elapsed = time.perf_counter() - started
         job.status = "failed"
         if _looks_like_timeout_cancellation(exc, elapsed, timeout_seconds):
@@ -468,6 +470,32 @@ async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
             job.finished_at = _now()
         persist_generation_job(app, job)
 
+
+
+async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
+    from .telemetry import operation_span, log_event, capture
+    spec = job.command
+    carrier = {"traceparent": spec.traceparent} if spec and spec.traceparent else {}
+    with operation_span("job.execute", carrier=carrier, operation_id=job.id,
+                        request_id=spec.request_id if spec else None,
+                        project_id=spec.project_id if spec else None,
+                        posthogDistinctId=job.user_id, operation=spec.operation if spec else job.kind,
+                        stage=spec.stage if spec else None) as span:
+        try:
+            await _run_generation_job(app, job)
+        finally:
+            if job.status in {"complete", "failed", "cancelled"}:
+                if span is not None:
+                    span.set_attribute("status", job.status)
+                    if job.status == "failed":
+                        from opentelemetry.trace import Status, StatusCode
+                        span.set_status(Status(StatusCode.ERROR))
+                fields = {"status": job.status, "phase": job.phase,
+                          "queue_ms": max(0, (job.started_at - job.queued_at).total_seconds() * 1000)
+                          if job.started_at and job.queued_at else None}
+                log_event("job.completed", level=logging.ERROR if job.status == "failed" else logging.INFO, **fields)
+                capture("operation_completed", user_id=job.user_id, properties=fields,
+                        event_id=f"{job.id}:terminal")
 
 
 async def generation_worker(app: FastAPI) -> None:

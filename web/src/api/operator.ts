@@ -258,3 +258,20 @@ export function grantOperatorCredits(
 export function fetchPublications(connection: OperatorConnection) {
   return operatorFetch<import("./publications").Publication[]>("/api/ops/publications", connection);
 }
+
+export interface CustomerFeedback {
+  id: string;
+  user_id: string;
+  project_id: string | null;
+  category: string;
+  message: string;
+  status: "new" | "reviewed" | "planned" | "resolved";
+  created_at: string;
+}
+export function fetchFeedback(connection: OperatorConnection) {
+  return operatorFetch<{ items: CustomerFeedback[] }>("/api/ops/backoffice/feedback", connection);
+}
+export function updateFeedback(connection: OperatorConnection, item: CustomerFeedback, status: CustomerFeedback["status"]) {
+  return operatorFetch<CustomerFeedback>(`/api/ops/backoffice/feedback/${encodeURIComponent(item.user_id)}/${encodeURIComponent(item.id)}`, connection,
+    { method: "PATCH", body: JSON.stringify({ status }) });
+}

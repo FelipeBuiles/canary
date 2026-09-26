@@ -1448,14 +1448,8 @@ class GoogleVertexCompletePageTransport:
                 operation=ctx.operation,
                 metadata=ctx.metadata,
                 estimated_cost_usd=ctx.estimated_cost_usd,
-                langfuse_input=ctx.langfuse_input,
-                langfuse_output={
-                    "artifact_kind": "complete_page",
-                    "image_bytes": len(image_bytes),
-                    "image_sha256": hashlib.sha256(image_bytes).hexdigest(),
-                    "size": f"{width}x{height}",
-                    "actual_provider_model": actual_provider_model,
-                },
+
+
                 started_at=ctx.started_at,
             )
         except Exception as exc:

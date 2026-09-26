@@ -1,3 +1,4 @@
+import { FeedbackButton } from "../components/FeedbackButton";
 import { Link, useParams } from "react-router-dom";
 import { useProjectStatus } from "../api/queries";
 import { STAGE_ORDER } from "../types/api";
@@ -63,6 +64,7 @@ export function Footer() {
         >
           REPORT ABUSE
         </a>
+        <FeedbackButton projectId={id} />
         <SupportLink
           diagnostics={{
             releaseSha: import.meta.env.VITE_CANARY_VERSION,

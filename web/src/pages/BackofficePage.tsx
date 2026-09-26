@@ -1,3 +1,4 @@
+import { FeedbackInbox } from "../components/FeedbackInbox";
 import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -6,7 +7,6 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   BarChart3,
-  Check,
   CircleCheck,
   CreditCard,
   Download,
@@ -17,11 +17,9 @@ import {
   LifeBuoy,
   LockKeyhole,
   Menu,
-  MoreHorizontal,
   Plus,
   RefreshCw,
   Search,
-  Send,
   Settings2,
   ShieldAlert,
   UserCheck,
@@ -59,8 +57,6 @@ import {
   type BackofficeView,
   type SeriesPoint,
   type SupportTicket,
-  type TicketPriority,
-  type TicketStatus,
   type UserFilter,
   type UserStatus,
 } from "./backofficeData";
@@ -130,17 +126,7 @@ const USER_STATUS: Record<UserStatus, { label: string; tone: NoticeTone }> = {
   unconfirmed: { label: "Unconfirmed", tone: "gold" },
 };
 
-const TICKET_STATUS: Record<TicketStatus, { label: string; tone: NoticeTone }> = {
-  open: { label: "Open", tone: "red" },
-  waiting: { label: "Waiting", tone: "gold" },
-  resolved: { label: "Resolved", tone: "sage" },
-};
 
-const PRIORITY_META: Record<TicketPriority, { label: string; tone: NoticeTone }> = {
-  urgent: { label: "Urgent", tone: "red" },
-  normal: { label: "Normal", tone: "blue" },
-  low: { label: "Low", tone: "ink" },
-};
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
@@ -795,76 +781,6 @@ function UserDrawer({
   );
 }
 
-function SupportView({
-  tickets,
-  users,
-  selectedTicketId,
-  onSelectTicket,
-  onResolve,
-  onSendReply,
-}: {
-  tickets: SupportTicket[];
-  users: BackofficeUser[];
-  selectedTicketId: string;
-  onSelectTicket: (ticketId: string) => void;
-  onResolve: (ticketId: string) => void;
-  onSendReply: (ticketId: string, body: string) => void;
-}) {
-  const [reply, setReply] = useState("");
-  const activeTicket = tickets.find((ticket) => ticket.id === selectedTicketId) ?? tickets[0];
-  const activeTickets = tickets.filter((ticket) => ticket.status !== "resolved");
-  const userById = (userId: string) => users.find((user) => user.id === userId);
-
-  if (tickets.length === 0) {
-    return (
-      <>
-        <PageHeading view="support" actions={<Button variant="outline" size="sm" disabled><Settings2 size={14} /> Queue settings</Button>} />
-        <Surface border="soft" shadow="none" className="border-dashed px-6 py-16 text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center border-[2px] border-ink-black bg-narrator-gold"><LifeBuoy size={19} /></div>
-          <h2 className="mt-4 font-display text-[1.35rem] font-black">Support inbox is not connected yet</h2>
-          <p className="mx-auto mt-2 font-body text-[0.78rem] leading-5 text-ink-muted">Customer support records still need a durable store. The live operator surface does show generation and provider errors under Users and Overview.</p>
-        </Surface>
-      </>
-    );
-  }
-
-  function submitReply(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!activeTicket || !reply.trim()) return;
-    onSendReply(activeTicket.id, reply.trim());
-    setReply("");
-  }
-
-  return (
-    <>
-      <PageHeading view="support" actions={<Button variant="outline" size="sm"><Settings2 size={14} /> Queue settings</Button>} />
-      <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4"><Surface border="soft" shadow="none" tone="container" padding="sm"><div className="font-meta text-[0.52rem] uppercase tracking-[0.12em] text-ink-muted">Open</div><div className="mt-2 font-display text-[1.6rem] font-black">{activeTickets.length}</div></Surface><Surface border="soft" shadow="none" tone="container" padding="sm"><div className="font-meta text-[0.52rem] uppercase tracking-[0.12em] text-ink-muted">Urgent</div><div className="mt-2 font-display text-[1.6rem] font-black text-hero-red">{activeTickets.filter((ticket) => ticket.priority === "urgent").length}</div></Surface><Surface border="soft" shadow="none" tone="container" padding="sm"><div className="font-meta text-[0.52rem] uppercase tracking-[0.12em] text-ink-muted">Avg. first reply</div><div className="mt-2 font-display text-[1.6rem] font-black">—</div><p className="mt-1 font-body text-[0.62rem] text-ink-soft">Not connected</p></Surface><Surface border="soft" shadow="none" tone="container" padding="sm"><div className="font-meta text-[0.52rem] uppercase tracking-[0.12em] text-ink-muted">Resolved today</div><div className="mt-2 font-display text-[1.6rem] font-black text-archive-sage">—</div><p className="mt-1 font-body text-[0.62rem] text-ink-soft">Not connected</p></Surface></div>
-
-      <div className="grid min-h-[610px] gap-5 xl:grid-cols-[minmax(300px,0.72fr)_minmax(0,1.45fr)]">
-        <Surface border="soft" shadow="none" className="min-w-0 overflow-hidden">
-          <div className="flex items-center justify-between gap-3 border-b-[2px] border-ink-black/10 px-5 py-4"><div><div className="font-meta text-[0.54rem] font-bold uppercase tracking-[0.14em] text-ink-muted">Inbox</div><h2 className="mt-1 font-display text-[1.2rem] font-black leading-none">All conversations</h2></div><button type="button" aria-label="Filter support queue" className="flex h-9 w-9 items-center justify-center border-[2px] border-ink-black/18 bg-pulp-paper hover:border-ink-black"><Filter size={14} /></button></div>
-          <div className="flex border-b-[2px] border-ink-black/10 bg-surface-container px-3 py-2"><span className="bg-ink-black px-2 py-1 font-meta text-[0.5rem] font-bold uppercase tracking-[0.1em] text-bristol">All {tickets.length}</span><span className="px-2 py-1 font-meta text-[0.5rem] font-bold uppercase tracking-[0.1em] text-ink-soft">Unassigned {activeTickets.length}</span></div>
-          <div className="max-h-[calc(100vh-300px)] overflow-y-auto">
-            {tickets.map((ticket) => { const user = userById(ticket.userId); const selected = ticket.id === activeTicket?.id; return <button key={ticket.id} type="button" onClick={() => onSelectTicket(ticket.id)} className={cn("flex w-full gap-3 border-b-[2px] border-ink-black/8 px-4 py-4 text-left transition-colors", selected ? "bg-chip-red" : "hover:bg-surface-container")}><span className={cn("mt-1 h-2.5 w-2.5 shrink-0 border-[2px] border-ink-black", ticket.priority === "urgent" ? "bg-hero-red" : ticket.status === "resolved" ? "bg-archive-sage" : "bg-narrator-gold")} /><span className="min-w-0 flex-1"><span className="flex items-baseline justify-between gap-2"><span className="truncate font-body text-[0.74rem] font-bold text-ink-black">{ticket.subject}</span><span className="shrink-0 font-meta text-[0.48rem] uppercase tracking-[0.08em] text-ink-soft">{ticket.updated}</span></span><span className="mt-1 block truncate font-body text-[0.66rem] text-ink-muted">{user?.name} · {ticket.id}</span><span className="mt-2 flex items-center gap-2"><StateTag label={TICKET_STATUS[ticket.status].label} tone={TICKET_STATUS[ticket.status].tone} /><span className="font-meta text-[0.48rem] uppercase tracking-[0.08em] text-ink-soft">{ticket.category}</span></span></span></button>; })}
-          </div>
-        </Surface>
-
-        {activeTicket && (
-          <Surface border="soft" shadow="none" className="flex min-w-0 flex-col overflow-hidden">
-            <div className="flex flex-wrap items-start justify-between gap-4 border-b-[2px] border-ink-black/10 bg-bristol px-5 py-4"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><StateTag label={PRIORITY_META[activeTicket.priority].label} tone={PRIORITY_META[activeTicket.priority].tone} /><span className="font-meta text-[0.52rem] font-bold uppercase tracking-[0.1em] text-ink-soft">{activeTicket.id}</span></div><h2 className="mt-2 font-display text-[1.55rem] font-black leading-[1.02] tracking-[-0.035em]">{activeTicket.subject}</h2><div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-body text-[0.68rem] text-ink-soft"><span>{userById(activeTicket.userId)?.name}</span><span>·</span><span>{userById(activeTicket.userId)?.email}</span></div></div><div className="flex items-center gap-2"><button type="button" aria-label="More ticket actions" className="flex h-9 w-9 items-center justify-center border-[2px] border-ink-black/18 bg-pulp-paper hover:border-ink-black"><MoreHorizontal size={15} /></button>{activeTicket.status !== "resolved" && <Button size="xs" onClick={() => onResolve(activeTicket.id)}><Check size={13} /> Resolve</Button>}</div></div>
-            <div className="flex-1 space-y-4 overflow-y-auto bg-surface-container/60 px-5 py-5">
-              <div className="flex items-center gap-3 font-meta text-[0.5rem] font-bold uppercase tracking-[0.12em] text-ink-soft"><span className="h-[2px] flex-1 bg-ink-black/10" /> Conversation <span className="h-[2px] flex-1 bg-ink-black/10" /></div>
-              {activeTicket.messages.map((message) => { const user = userById(activeTicket.userId); const operator = message.author === "operator"; return <div key={message.id} className={cn("flex gap-3", operator ? "justify-end" : "justify-start")}><div className={cn("max-w-[min(78%,560px)]", operator ? "items-end" : "items-start")}><div className={cn("flex items-center gap-2", operator && "justify-end")}><span className="font-meta text-[0.5rem] font-bold uppercase tracking-[0.11em] text-ink-muted">{operator ? "Operator desk" : user?.name}</span><time className="font-meta text-[0.48rem] uppercase tracking-[0.08em] text-ink-soft">{message.timestamp}</time></div><div className={cn("mt-1.5 border-[2px] border-ink-black px-3.5 py-3 font-body text-[0.77rem] leading-5", operator ? "bg-ink-black text-bristol" : "bg-bristol text-ink-black shadow-paper-sm")}>{message.body}</div></div></div>; })}
-              {activeTicket.status === "resolved" && <div className="flex items-center justify-center gap-2 border-[2px] border-archive-sage bg-chip-sage px-3 py-2 font-meta text-[0.54rem] font-bold uppercase tracking-[0.1em] text-ink-black"><CircleCheck size={13} /> Resolved and archived</div>}
-            </div>
-            <form onSubmit={submitReply} className="border-t-[2px] border-ink-black bg-bristol p-4"><div className="flex items-end gap-2"><textarea aria-label="Reply to customer" value={reply} onChange={(event) => setReply(event.target.value)} rows={3} placeholder="Write a clear, specific reply…" disabled={activeTicket.status === "resolved"} className="min-h-[80px] flex-1 resize-none border-[2px] border-ink-black/18 bg-pulp-paper px-3 py-2.5 font-body text-[0.76rem] leading-5 outline-none placeholder:text-ink-soft hover:border-ink-black/40 focus:border-hero-red disabled:cursor-not-allowed disabled:opacity-55" /><Button type="submit" size="sm" disabled={!reply.trim() || activeTicket.status === "resolved"}><Send size={14} /> Send</Button></div><div className="mt-2 flex items-center justify-between gap-3 font-meta text-[0.5rem] uppercase tracking-[0.1em] text-ink-soft"><span>Replies are staged in this local workspace.</span><span>{reply.length}/1000</span></div></form>
-          </Surface>
-        )}
-      </div>
-    </>
-  );
-}
-
 function AnalyticsView({ onExport, snapshot }: { onExport: () => void; snapshot: OperatorSnapshot }) {
   const overview = snapshot.overview;
   const liveModelSpend = snapshot.model_spend ?? [];
@@ -954,9 +870,8 @@ export function BackofficePage() {
   const [range, setRange] = useState<RangeKey>("30d");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
-  const [selectedTicketId, setSelectedTicketId] = useState("");
   const [users, setUsers] = useState<BackofficeUser[]>([]);
-  const [tickets, setTickets] = useState<SupportTicket[]>([]);
+  const [tickets] = useState<SupportTicket[]>([]);
   const [notice, setNotice] = useState<{ message: string; tone: NoticeTone } | null>(null);
 
   const selectedUser = users.find((user) => user.id === selectedUserId) ?? null;
@@ -1021,15 +936,6 @@ export function BackofficePage() {
     }
   }
 
-  function resolveTicket(ticketId: string) {
-    setTickets((current) => current.map((ticket) => ticket.id === ticketId ? { ...ticket, status: "resolved", updated: "just now" } : ticket));
-    showNotice(`${ticketId} marked resolved.`, "sage");
-  }
-
-  function sendReply(ticketId: string, body: string) {
-    setTickets((current) => current.map((ticket) => ticket.id === ticketId ? { ...ticket, status: "waiting", updated: "just now", messages: [...ticket.messages, { id: `msg_${Date.now()}`, author: "operator", body, timestamp: "Just now" }] } : ticket));
-    showNotice("Reply staged in the local workspace.", "blue");
-  }
 
   function exportReport() {
     const liveOverview = snapshot?.overview;
@@ -1090,7 +996,7 @@ export function BackofficePage() {
           <div className="mx-auto w-full max-w-[1480px] backoffice-enter">
             {activeView === "overview" && <OverviewView range={range} onRangeChange={setRange} onViewChange={navigate} onRefresh={refresh} users={users} tickets={tickets} snapshot={snapshot} />}
             {activeView === "users" && <UsersView users={users} onOpenUser={setSelectedUserId} onInvite={() => showNotice("Invite flow is read-only; no email was sent.", "blue")} />}
-            {activeView === "support" && <SupportView tickets={tickets} users={users} selectedTicketId={selectedTicketId} onSelectTicket={setSelectedTicketId} onResolve={resolveTicket} onSendReply={sendReply} />}
+            {activeView === "support" && <FeedbackInbox connection={connection} />}
             {activeView === "analytics" && <AnalyticsView onExport={exportReport} snapshot={snapshot} />}
             {activeView === "models" && <Suspense fallback={<p role="status">Loading stage models…</p>}><OperatorModelPanel connection={connection} /></Suspense>}
           </div>
