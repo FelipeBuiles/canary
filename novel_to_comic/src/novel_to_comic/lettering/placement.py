@@ -350,15 +350,12 @@ def clear_of(
 
 
 def toward_head(body: PinnedGeometry, head: Rect) -> NormalizedPoint:
-    """Tail tip on the edge of the speaker's head nearest the balloon.
+    """Provisional mouth target in the lower centre of a detected head.
 
     Keep in parity with engine.mjs tailTowardHead.
     """
     hx, hy, hw, hh = head
-    cx, cy = body.x + body.width / 2, body.y + body.height / 2
-    px, py = min(max(cx, hx), hx + hw), min(max(cy, hy), hy + hh)
-    if _contains(body, px, py):  # Balloon over the head: aim at its middle.
-        px, py = hx + hw / 2, hy + hh / 2
+    px, py = hx + hw / 2, hy + hh * .72
     return NormalizedPoint(x=max(0.0, min(1.0, px)), y=max(0.0, min(1.0, py)))
 
 

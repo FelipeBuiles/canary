@@ -368,7 +368,7 @@ async def _run_generation_job(app: FastAPI, job: GenerationJob) -> None:
                 return
             # The execution deadline excludes time spent paused or queued.
             started = time.perf_counter()
-            logger.info(
+            logger.debug(
                 "[bold cyan]Job start[/] project=[white]%s[/] kind=[cyan]%s[/] label=%s id=[dim]%s[/]",
                 job.project_name,
                 job.kind,

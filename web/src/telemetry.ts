@@ -14,8 +14,10 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
     const properties: Record<string, unknown> = {
       $geoip_disable: true,
       $process_person_profile: true,
-      environment: import.meta.env.VITE_CANARY_ENV ?? "dev",
+      environment: import.meta.env.VITE_CANARY_ENV ?? "development",
       release: import.meta.env.VITE_CANARY_VERSION ?? "unknown",
+      $release_id: import.meta.env.VITE_CANARY_VERSION ?? "unknown",
+      schema_version: 1,
     };
     for (const key of ["distinct_id", "$device_id", "$anon_distinct_id", "$session_id", "$window_id", "$exception_fingerprint"]) {
       if (typeof source[key] === "string" && tokenPattern.test(source[key])) properties[key] = source[key];

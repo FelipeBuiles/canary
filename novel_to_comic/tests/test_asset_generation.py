@@ -392,7 +392,7 @@ def test_non_panel_gateway_failure_persists_retryable_service_classification(
     assert failure["recoverable"] is True
     assert failure["user_message"] == (
         "We could not reach the image service. "
-        "Check your connection and try this panel again."
+        "Check your connection and try this page again."
     )
 
 

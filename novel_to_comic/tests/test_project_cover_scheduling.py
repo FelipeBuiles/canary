@@ -1,4 +1,4 @@
-"""Cover creation follows successful Cast and never replays old paid attempts."""
+"""Cover creation follows Draw startup and never replays old paid attempts."""
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -15,7 +15,7 @@ from tests.test_server_admission import app_at
 
 
 @pytest.mark.parametrize("status", [StageStatus.AWAITING_REVIEW, StageStatus.COMPLETE, StageStatus.FAILED])
-def test_cover_is_queued_only_after_successful_cast(tmp_path, monkeypatch, status):
+def test_cast_never_queues_cover_before_adaptation(tmp_path, monkeypatch, status):
     state = PipelineState(project_name="book", novel_path="book.txt", created_at="2026-09-12")
     order = []
     async def credited(**kwargs):
@@ -32,7 +32,7 @@ def test_cover_is_queued_only_after_successful_cast(tmp_path, monkeypatch, statu
     asyncio.run(pipeline._run_stage_with_credits(
         "cast", Config(), tmp_path, state, asyncio.Queue(), "account", "book", request=request,
     ))
-    assert order == (["cast"] if status == StageStatus.FAILED else ["cast", "cover"])
+    assert order == ["cast"]
 
 
 def test_cover_attempt_is_not_replayed_after_restart(tmp_path):
@@ -71,17 +71,17 @@ def test_missing_character_reference_is_rejected_before_credit_reservation(tmp_p
     enqueue.assert_not_called()
 
 
-def test_cast_estimate_includes_only_the_initial_cover(tmp_path, monkeypatch):
+def test_cast_estimate_excludes_deferred_cover(tmp_path, monkeypatch):
     estimate = {"estimate_credits": 20, "reserved_credits": 25, "reservation_multiplier": 1.25,
                 "confidence": "usually_within_estimate", "funding": "api"}
     monkeypatch.setattr(pipeline.UnifiedCostResolver, "estimate_stage_cost", lambda *a: estimate)
     monkeypatch.setattr(projects, "_project_cover_credit_estimate", lambda *a: {**estimate, "estimate_credits": 5, "reserved_credits": None})
     request = SimpleNamespace(app=app_at(tmp_path))
-    for needs_cover, expected in ((True, 25), (False, 20)):
+    for needs_cover, expected in ((True, 20), (False, 20)):
         monkeypatch.setattr(projects, "needs_initial_project_cover", lambda *a: needs_cover)
         result = asyncio.run(pipeline.estimate_stage_cost(request, "book", "cast", (tmp_path, Config(), None), "account"))
         assert result["estimate_credits"] == expected
-        assert result["reserved_credits"] == (30 if needs_cover else 25)
+        assert result["reserved_credits"] == 25
 
 
 def test_cover_enqueue_failure_keeps_cast_successful(tmp_path, monkeypatch):
@@ -97,3 +97,16 @@ def test_cover_enqueue_failure_keeps_cast_successful(tmp_path, monkeypatch):
         request=SimpleNamespace(app=app_at(tmp_path)),
     ))
     assert state.stages["cast"].status == StageStatus.AWAITING_REVIEW
+
+
+def test_cover_queues_after_draw_initializes(tmp_path, monkeypatch):
+    state = PipelineState(project_name="book", novel_path="book.txt", created_at="2026-09-12")
+    order = []
+    async def run(*args):
+        order.append("draw")
+        state.stages["draw"] = StageState(status=StageStatus.RUNNING)
+    monkeypatch.setattr(pipeline, "_run_stage", run)
+    monkeypatch.setattr(pipeline, "capture_server_event", lambda *a, **k: None)
+    monkeypatch.setattr(projects, "enqueue_project_cover", lambda *a: order.append("cover"))
+    asyncio.run(pipeline._run_stage_with_credits("draw", Config(), tmp_path, state, asyncio.Queue(), "account", "book", request=SimpleNamespace(app=app_at(tmp_path))))
+    assert order == ["draw", "cover"]

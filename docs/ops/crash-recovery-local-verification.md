@@ -6,7 +6,8 @@ The final combined backend selection passed **243 tests**, with **12 skips**.
 The separately authorized loopback monitor suite passed **7 tests**. Documentation
 reliability, entrypoint shell syntax and `git diff --check` passed.
 
-The combined selection was:
+The combined selection was (historical command: `test_image_langfuse.py` was
+retired in the PostHog migration; current telemetry coverage is in `test_posthog.py`):
 
 ```sh
 novel_to_comic/.venv/bin/python -m pytest novel_to_comic/tests/test_ai_client.py novel_to_comic/tests/test_litellm_http.py novel_to_comic/tests/test_complete_page_draw.py novel_to_comic/tests/test_image_failure.py novel_to_comic/tests/test_image_langfuse.py novel_to_comic/tests/test_crash_fault_injection.py novel_to_comic/tests/test_entrypoint.py novel_to_comic/tests/test_launch_safety.py novel_to_comic/tests/test_page_recovery_routes.py novel_to_comic/tests/test_server_admission.py novel_to_comic/tests/test_export_router.py novel_to_comic/tests/test_credited_job.py novel_to_comic/tests/test_operations.py novel_to_comic/tests/test_page_finishing.py novel_to_comic/tests/test_generation_jobs.py novel_to_comic/tests/test_credit_ledger_postgres.py novel_to_comic/tests/test_spa_static.py -q

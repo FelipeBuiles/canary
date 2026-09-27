@@ -50,8 +50,9 @@ discard. They are never silently applied to a newer Brief.
 
 Entering Cast does not spend. Starting or resuming missing references is an
 explicit estimated action; Style's explicit Continue action may start Cast
-before navigating there. Cast's estimate includes an initial cover, queued by
-the server only after Cast succeeds and its identity references exist. Existing
+before navigating there. The initial cover is deferred until Draw starts, after
+page jobs are queued, so it cannot delay Adapt. The Draw batch estimate includes
+the cover when no previous attempt exists; Cast's estimate excludes it. Existing
 cover attempts (including interrupted jobs recovered after restart) require an
 explicit retry; entering a room never retries them. Approving Cast accepts the
 estimated Adapt → Plan chain. Pages retains one Continue to Book decision,
@@ -680,6 +681,25 @@ See [Codex development capabilities](codex-dev-capabilities.md) for setup and li
 Adapt beats cite Brief requirement IDs without repeated requirement prose.
 Missing citations remain validation failures rather than being inferred from
 keyword overlap. Explicit beat entity scopes allow bounded Plan context.
+Character scope pruning keeps approved location and prop descriptions available
+when Adapt lists only actors. Each new Plan panel must author a setting decision
+(location, environment visibility, and direction) and a physical-relationship
+list (participants, contact, orientation, and support; empty when none are visible).
+Visible settings must cite an approved location in the panel's entity IDs;
+relationship participants must also be cited. These checks use the existing
+bounded Plan repair path before Draw. Close-ups may keep the setting offscreen.
+Plan compiles this direction into canonical `layout_intent`, preserving the
+existing saved-page contract and reference selection. A mention of another room
+in dialogue does not move the scene; available references are not automatically
+added to panels. Narrative review can cite canonical layout/staging as evidence
+for a setting or attachment contradiction. These are planning checks, not proof
+of generated-image fidelity.
+
+Draw takes settings from panel staging, not backgrounds in style or identity
+references. Current author corrections override disputed parent staging and
+carry corrected contact, orientation, support, and setting through the affected
+panels. Existing pages can receive an explicit full-page correction without
+replanning other pages; new planning requirements do not rewrite saved artwork.
 
 OCR is blind to expected copy and runs only on raw saved art. Integrated profiles, including retained baked editions,
 compare canonical lettering and observed order. Hybrid profiles instead
@@ -915,7 +935,13 @@ archives Adapt and downstream outputs, exports, and Adapt/Plan checkpoints and
 work journals under `.checkpoints/restarts/<attempt-id>/`, with the prior state.
 It preserves source, approved Brief, selected Style, Cast, and retained editorial
 directives. Credits must be reserved before archiving; archive failures restore
-moved files. The new attempt receives the configured/default work allowance;
+moved files. Plan restarts use the same archive boundary for Plan and downstream
+work, leaving Adapt active. The Plan rerun estimate includes `archived_page_count`;
+submission must supply the matching `confirmed_archive_pages` count. Archived
+artwork and exports remain accessible in Pages through authenticated
+`GET /restart-archives` and `GET /restart-archives/{archive_id}/file` routes, even
+if the old plan is incompatible. Archives never become active pipeline inputs.
+The new attempt receives the configured/default work allowance;
 past usage and charges remain recorded. `GET /estimate?stage=adapt&rerun=true`
 quotes fresh Adapt work without cached-output discounts. This quote covers Adapt
 only: Plan is estimated and reserved after the new script passes validation,
@@ -980,6 +1006,26 @@ still fail and does not authorize replacing it with another paid call.
 Missing downstream artifacts alone do not justify new OCR. Proven panel-order
 contradictions block; uncertain order remains nonblocking editorial evidence
 for visual review, not proof of a defect or of correctness.
+
+### Saved artwork selection
+
+`POST /pages/{page_number}/renders/{revision}/select` chooses retained artwork,
+with `expected_revision` guarding concurrent selection changes. The Pages
+Versions tab previews all retained renders before an explicit selection.
+`TargetArtifacts.active_render_revision()` owns the choice, persisted as typed
+`draw/pages/page_NNN/selection.json`; without a choice the newest render is active.
+Reading, correction parents, source text locations, editable lettering and Finish
+use that same selection. Allocation and recovery still use chronological history.
+Newly published artwork becomes active without deleting any earlier version.
+Selection rejects stale plans, corrupt/missing artwork and in-flight or unfinished
+generation. It invalidates Finish and reopens findings whose resolution is outside
+the selected lineage; choosing artwork never establishes visual verification.
+Selection makes no provider call and costs no credits.
+
+Current visual correction instructions take priority over disputed parent-image
+staging. Motion corrections name leading/trailing ends, screen direction and
+contact/release relationships while retaining exact copy, approved identities,
+visual anchors, continuity guards and unaffected panels.
 
 ### Saved-pixel check recovery
 
@@ -1164,8 +1210,11 @@ accessible beside a page-loading error so recovery cannot depend on opening
 the failed editor first.
 
 The composite key hashes base-image SHA, lettering state, locale, style, and
-`lettering-svg-v4`. Relevant mutations/composition serialize under a reentrant
-project filesystem lock, outside directories that invalidation removes. First
+the lettering engine version. Relevant mutations and composition snapshots serialize
+under a reentrant project filesystem lock, outside directories that invalidation
+removes. Preview routes release it during rendering and capture response bytes
+under the lock; concurrent derivative invalidation permits one rebuild before
+returning a refresh conflict. First
 book export seeds all missing lettering before building any normalized pages,
 so initializing page two cannot remove page one's newly prepared output.
 
@@ -1211,3 +1260,10 @@ Gallery/reader/Book use composites for hybrid profiles and original previews for
 baked profiles. Book packaging uses the same composite, normalization and archive
 path rather than a second renderer. Suggested positions are coarse starting
 points, not inferred image geometry or proof of artistic quality; review them.
+
+
+Correction recovery retains the submitted draft and its change IDs until a job
+completes. A failed or cancelled job offers an explicit preview-and-resubmit
+flow that reuses those identities; it never retries an ambiguous paid submission
+automatically. Authors can withdraw open manual correction requests as dismissed,
+with no resolution revision or claim of visual verification.

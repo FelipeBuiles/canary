@@ -224,7 +224,7 @@ describe("BookRoom edition decisions", () => {
     expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
     expect(screen.getByText(/2 pages haven’t had a text check/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Check pages" }));
-    await screen.findByText("1 page couldn’t be checked. Export still works.");
+    await screen.findByText("1 page still needs a check.");
     expect(screen.queryByText(/Page 1:/)).toBeNull();  // One summary line, not a row per page.
     await waitFor(() => expect(finishChecks).toHaveBeenCalledWith("demo"));
     expect(recoverChecks).toHaveBeenCalledOnce();

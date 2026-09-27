@@ -151,7 +151,8 @@ def persisted_events(monkeypatch):
             assert name == "ai_usage_events"
             return self
 
-        def update(self, values):
+        def update(self, values, returning="representation"):
+            assert returning == "minimal"
             self.values = values
             return self
 
@@ -217,7 +218,11 @@ def test_output_finalization_persists_completed_runtime_evidence(routed, tmp_pat
         "failed" if write_fails else "succeeded", "codex_subscription", 10,
     )
     assert event["image_count"] == 1
-    assert event["metadata_json"]["codex_runtime"] == evidence
+    # SQL keeps only the scalar allowlist; the full evidence stays on the result.
+    assert event["metadata_json"]["codex_runtime"] == {
+        "thread_id": "thread", "turn_id": "turn", "tool_id": "tool",
+        "image_status": "completed", "submitted": True, "indeterminate": False,
+    }
     assert event["cost_usd"] is None
 
 
@@ -279,8 +284,9 @@ def test_indeterminate_image_failure_persists_runtime_evidence(routed, persisted
     asyncio.run(finalize(ctx=ctx, config=routed, model="image-gpt-2", feature="test", error=error))
     event = persisted_events["event"]
     assert event["status"] == outcome
-    assert event["metadata_json"]["codex_runtime"] == evidence
-    assert event["metadata_json"]["stage"] == "cast"
+    assert event["metadata_json"]["codex_runtime"] == {
+        "submitted": True, "indeterminate": True, "thread_id": "thread", "turn_id": "turn", "tool_id": "tool",
+    }
     assert event["usage_json"] == {"prompt_tokens": 31, "completion_tokens": 7, "image_count": 0}
     assert event["image_count"] == 0
     assert event["provider_model"] is None
@@ -315,7 +321,7 @@ def test_cancelled_image_checkpoint_counts_only_validated_completed_artifact(rou
         ctx=ctx, config=routed, model="image-gpt-2", feature="test", error=error,
     ))
     event = persisted_events["event"]
-    assert event["metadata_json"]["codex_runtime"]["completed_result_metadata"] == completed
+    assert event["metadata_json"]["codex_runtime"]["completed_result_available"] is True
     assert event["image_count"] == int(validated)
     assert event["usage_json"] == {"prompt_tokens": 41, "completion_tokens": 9, "image_count": int(validated)}
     assert event["cost_usd"] is None

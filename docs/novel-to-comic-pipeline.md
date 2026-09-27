@@ -159,24 +159,18 @@ echo "LITELLM_API_KEY=sk-local-canary" >> .env
 `.env.example` in the project root shows all available key variables. The pipeline
 walks up from any project directory to find the nearest `.env`.
 
-### 3. Optional: OpenTelemetry tracing
+### 3. Optional: PostHog observability
 
-Canary emits OpenTelemetry spans for outbound API calls (Gemini, Together, OpenAI,
-Anthropic) with redacted structured parameters.
+Install the web dependency set (`uv sync --project novel_to_comic --extra web`).
+Configure `POSTHOG_PROJECT_TOKEN` and `POSTHOG_HOST` in the root `.env` to enable
+content-free analytics, errors, AI usage, and explicit HTTP OTLP logs/spans.
+There is no local collector, `otel` extra, or `--observability` launcher flag.
+The development launchers derive public browser settings when they are absent;
+explicit `VITE_POSTHOG_*` settings, including empty opt-outs, take precedence.
 
-```bash
-pip install -e '.[web,otel]'
-
-export CANARY_OTEL_ENABLED=1
-export OTEL_SERVICE_NAME=canary
-export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-export OTEL_EXPORTER_OTLP_ENDPOINT='https://<your-otlp-endpoint>'
-export OTEL_EXPORTER_OTLP_HEADERS='Authorization=Basic%20<base64(instance_id:token)>'
-```
-
-Notes:
-- For Python, use `Basic%20` (not `Basic `) in `OTEL_EXPORTER_OTLP_HEADERS`.
-- Keep `CANARY_LOG_INCLUDE_PROMPTS` unset in production to avoid logging prompt text.
+Detailed local diagnostic files are disabled by default. Set
+`CANARY_LOCAL_DIAGNOSTICS=true` only when needed; keep prompt logging disabled
+in production. See [PostHog and launch learning](reference/observability.md).
 
 ---
 

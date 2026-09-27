@@ -504,6 +504,8 @@ def _compile_prompt(
             "Each asset label binds the immediately preceding supplied image. The separately "
             "labeled parent-edit-base, when present, is not an approved asset and does not "
             "advance asset ordering. The selected_style_proof is rendering evidence only. "
+            "Do not borrow rooms, background props, staging or story events from style proofs "
+            "or character/prop reference backgrounds. The panel setting controls the environment. "
             "Use each subject asset only for its assigned subject and state; "
             "preserve hairstyle, age, facial structure, clothing design and recurring object "
             "features shown by that authority unless the assigned state explicitly changes them. "
@@ -588,6 +590,20 @@ def _compile_prompt(
         # structured author changes once; legacy single-issue instructions once.
         payload["complete_page_correction"] = {
             "mode": correction.mode,
+            "edit_priority": (
+                "Apply current author changes to the requested visual details even when the "
+                "parent image or original panel staging shows them incorrectly. The parent is "
+                "an editable starting point, not evidence that the disputed detail is correct. "
+                "For action or orientation corrections, reconstruct the affected object and pose: "
+                "honor the specified leading/trailing ends, screen direction, release/contact "
+                "and endpoint relationships. Do not merely add motion lines to the unchanged object. "
+                "For attached or penetrating objects, reconstruct the contact point, both ends, "
+                "exposed length and support relationship together; preserve that corrected "
+                "relationship across every affected panel, including the aftermath. A requested "
+                "setting correction replaces the wrong environment throughout the requested scope. "
+                "Preserve panels and details outside the requested scope, exact canonical copy, "
+                "approved identities, visual anchors and continuity guards."
+            ),
             # The initial frozen request is preserved verbatim in correction
             # provenance, but replaying that complete prompt duplicates the
             # current Plan, style, copy and reference authorities above. It
@@ -636,6 +652,8 @@ def _compile_prompt(
                     "Evidence only, never additional panels or lettering. Render only the ordered "
                     "panels above. Their current subject/state assignments govern now; chronology "
                     "describes other moments and must not activate later states. Source prose "
+                    "may mention past rooms or places in dialogue; those mentions do not relocate "
+                    "the current scene. Current author changes govern disputed staging and setting. "
                     "never overrides exact lettering. Explicitly selected passages are retained in full."
                 ),
                 "treatment_spine": list(correction_context.treatment_spine),

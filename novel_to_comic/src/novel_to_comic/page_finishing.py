@@ -124,7 +124,7 @@ def _load_active_render(
         revision: artifacts.read_provenance(page_number, revision)
         for revision in revisions
     }
-    provenance = provenance_by_revision[revisions[-1]]
+    provenance = provenance_by_revision[artifacts.active_render_revision(page_number)]
     render = provenance.render
     failures: list[InvariantFailure] = []
     for revision, item in provenance_by_revision.items():
@@ -549,7 +549,7 @@ def finish_book(
         revisions = artifacts.provenance_revisions(page.page_number)
         if not revisions:
             continue
-        render = artifacts.read_provenance(page.page_number, revisions[-1]).render
+        render = artifacts.read_provenance(page.page_number, artifacts.active_render_revision(page.page_number)).render
         try:
             analysis = artifacts.read_analysis(page.page_number, render.revision)
             if (analysis.render_image_sha256 == render.image_sha256

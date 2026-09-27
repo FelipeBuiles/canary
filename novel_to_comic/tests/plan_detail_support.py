@@ -3,6 +3,12 @@
 from copy import deepcopy
 
 
+def staging(panel):
+    panel.setdefault("setting", {"location_entity_id": None, "environment_visible": False,
+                                 "direction": "Background outside the frame."})
+    panel.setdefault("physical_relationships", [])
+
+
 def reservation(panel_number=None):
     value = {
         "preferred_zone": "top-left",
@@ -24,6 +30,7 @@ def plan_response(draft):
         if not isinstance(page, dict):
             continue
         for panel in page.get("content", []):
+            staging(panel)
             if "lettering_ids" in panel:
                 panel.setdefault(
                     "lettering_reservations",
@@ -40,6 +47,7 @@ def detail_response(draft):
     for page in value["pages"]:
         page["lettering_placements"] = {}
         for number, panel in enumerate(page["content"], 1):
+            staging(panel)
             panel.pop("lettering_reservations", None)
             for item_id in panel.pop("lettering_ids", []):
                 assert item_id not in page["lettering_placements"], item_id

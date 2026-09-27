@@ -214,7 +214,7 @@ def test_later_provider_failure_preserves_success_and_retry_only_pays_failed_pag
     recovery.failures.clear()
     retry_quote = _estimate(recovery)
     assert retry_quote["paid_pages"] == 1
-    results = _recover(recovery, {"allow_paid": True, "renders": renders})
+    results = _recover(recovery, {"allow_paid": True, "renders": renders, "recovery_attempt_id": "confirmed-retry"})
     assert [page["status"] for page in results] == ["checked", "checked"]
     assert recovery.artifacts.read_analysis(1, 1) == first
     assert recovery.provider_calls == [b"page-1-render-1", b"page-2-render-1", b"page-2-render-1"]
@@ -254,3 +254,82 @@ def test_cache_written_while_waiting_for_page_lock_prevents_credit_reservation(r
     assert recovery.artifacts.read_analysis(1, 1) == analysis
     recovery.reserve.assert_not_called()
     assert recovery.provider_calls == []
+
+
+def test_choose_saved_version_updates_reading_lettering_and_finish_without_spend(recovery):
+    from novel_to_comic.lettering.service import active_render
+    from novel_to_comic.page_finishing import _load_active_render
+
+    target = recovery.artifacts
+    _render(target, recovery.canonical[0], 2)
+    original = target.read_provenance(1, 1)
+    target.preflight_path.parent.mkdir(parents=True, exist_ok=True)
+    target.preflight_path.write_text("cached finish")
+    response = recovery.client.post("/projects/demo/pages/1/renders/1/select", json={"expected_revision": 2})
+    assert response.status_code == 200, response.text
+    assert target.active_render_revision(1) == 1
+    assert target.provenance_revisions(1) == (1, 2)
+    assert target.read_provenance(1, 1) == original
+    assert not target.preflight_path.exists()
+    assert pages._latest_provenance(target, 1).render.revision == 1
+    assert active_render(target, 1).revision == 1
+    render, image, failures = _load_active_render(target, 1)
+    assert render.revision == 1
+    assert image == target.read_render(1, 1)
+    assert not failures
+    assert recovery.client.get("/projects/demo/pages/1").json()["active_render_revision"] == 1
+    recovery.reserve.assert_not_called()
+    assert not recovery.provider_calls
+    # Selection is durable; a genuinely new render becomes active and keeps all history.
+    assert TargetArtifacts(target.project_dir).active_render_revision(1) == 1
+    _render(target, recovery.canonical[0], 3)
+    assert target.active_render_revision(1) == 3
+    assert target.provenance_revisions(1) == (1, 2, 3)
+
+
+def test_select_render_rejects_stale_expected_revision_and_missing_artwork(recovery):
+    target = recovery.artifacts
+    _render(target, recovery.canonical[0], 2)
+    url = "/projects/demo/pages/1/renders/1/select"
+    assert recovery.client.post(url, json={"expected_revision": 1}).status_code == 409
+    target.render_path(1, 1).unlink()
+    assert recovery.client.post(url, json={"expected_revision": 2}).status_code == 404
+    assert target.active_render_revision(1) == 2
+
+
+def test_select_render_rejects_old_plan_and_corrupt_image(recovery):
+    target = recovery.artifacts
+    _render(target, recovery.canonical[0], 2)
+    target.render_path(1, 1).write_bytes(b"corrupt")
+    url = "/projects/demo/pages/1/renders/1/select"
+    assert recovery.client.post(url, json={"expected_revision": 2}).status_code == 409
+    page = ComicPage.model_validate({**recovery.canonical[0].model_dump(exclude={"content_sha256"}), "revision": 2})
+    target.write_page(page)
+    response = recovery.client.post(url, json={"expected_revision": 2})
+    assert response.status_code == 409
+    assert "earlier page plan" in response.text
+
+
+def test_select_render_rejects_inflight_generation(recovery):
+    recovery.client.app.state.generation_jobs = {"job": SimpleNamespace(
+        project_name="user-1:demo", kind="complete_page_draw", status="running",
+        payload={"page_number": 1},
+    )}
+    response = recovery.client.post("/projects/demo/pages/1/renders/1/select", json={"expected_revision": 1})
+    assert response.status_code == 409
+    recovery.reserve.assert_not_called()
+
+
+def test_selecting_older_art_does_not_inherit_verification_from_newer_art(recovery):
+    from novel_to_comic.models.draw import PageIssue
+    target = recovery.artifacts
+    _render(target, recovery.canonical[0], 2)
+    target.write_issues(1, (PageIssue(
+        id="wrong-end", issue_type="render_fidelity", classification="editorial_issue",
+        page_number=1, render_revision=1, evidence=("Mop head leads.",),
+        requested_correction="Reverse the mop.", status="revised", resolution_revision=2,
+    ),))
+    target.select_render(1, 1, expected_revision=2)
+    issue = target.read_issues(1)[0]
+    assert issue.status == "open"
+    assert issue.resolution_revision is None

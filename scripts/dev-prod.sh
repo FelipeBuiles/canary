@@ -8,8 +8,9 @@
 #
 # Vars are resolved from (first match wins):
 #   1. Your shell environment (export VAR=... before invoking this script)
-#   2. web/.env   — VITE_* values (the file Vite itself reads for native dev)
-#   3. .env       — backend vars + SUPABASE_URL
+#   2. web/.env.local
+#   3. web/.env   — frontend settings
+#   4. .env       — backend and shared PostHog settings
 #
 # VITE_SUPABASE_URL is derived from SUPABASE_URL if not set explicitly, since
 # they're the same value (both point to your Supabase project). That kills the
@@ -33,31 +34,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-# ─── Load env files (shell env wins, so only set what isn't already set) ────
-#
-# `set -a` exports every variable defined while it's on; `set +a` turns it off.
-# We guard with `[ -f file ]` so missing files are non-fatal — the user may
-# legitimately have everything in their shell env.
-
-if [ -f "$REPO_ROOT/.env" ]; then
-  set -a
-  # shellcheck disable=SC1091  # .env is a user file, intentionally not checked in
-  source "$REPO_ROOT/.env"
-  set +a
-else
-  echo "[dev-prod] no .env found — backend vars will use compose defaults" >&2
-  echo "[dev-prod] (copy .env.example → .env and fill in real values for a full test)" >&2
-fi
-
-if [ -f "$REPO_ROOT/web/.env" ]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "$REPO_ROOT/web/.env"
-  set +a
-else
-  echo "[dev-prod] no web/.env found — VITE_* must come from your shell env" >&2
-  echo "[dev-prod] (copy web/.env.example → web/.env and fill in VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY)" >&2
-fi
+source "$SCRIPT_DIR/dev_environment.sh"
+report_posthog_configuration
+# An empty optional BuildKit secret keeps source-map upload disabled.
+export POSTHOG_API_KEY="${POSTHOG_API_KEY-}"
 
 # ─── Derive VITE_SUPABASE_URL from SUPABASE_URL when possible ───────────────
 #
@@ -72,7 +52,7 @@ fi
 #
 # These two are the only Vite vars the bundle genuinely needs at build time.
 # VITE_POSTHOG_PROJECT_TOKEN is optional (frontend no-ops when unset); VITE_CANARY_ENV
-# defaults to "production" in the Dockerfile.
+# defaults to the local CANARY_ENV label (development).
 
 _missing=""
 if [ -z "${VITE_SUPABASE_URL:-}" ]; then

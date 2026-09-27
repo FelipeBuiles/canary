@@ -18,14 +18,19 @@ _VALUE_CONSTRAINTS = frozenset({
 def anthropic_output_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """Copy the schema and move unsupported bounds into descriptions.
 
+    Require explicit values for declared object fields to avoid the exponential
+    grammar cost of nested optional fields. Defaults and nullable types remain
+    unchanged; this only tightens the wire schema, not local artifact validation.
     Visit schema positions only: property names and annotation data are not
-    schema keywords. Required fields, enums, types, and references stay intact.
+    schema keywords. Enums, types, and references stay intact.
     """
     result = deepcopy(schema)
 
     def visit(node: Any) -> None:
         if not isinstance(node, dict):
             return
+        if "properties" in node:
+            node["required"] = list(node["properties"])
         removed = {}
         for key in sorted(_VALUE_CONSTRAINTS):
             if key in node:

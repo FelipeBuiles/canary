@@ -209,6 +209,14 @@ class FrozenPageGenerationRequest(BaseModel):
         )
 
 
+class PageRenderSelection(BaseModel):
+    """Chosen artwork; generation history and revision numbering stay immutable."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    revision: int = Field(ge=1)
+    image_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class PageRenderRevision(BaseModel):
     """One immutable complete-page image and its request lineage."""
 

@@ -94,11 +94,11 @@ export function getPageCheckEstimate(project: string): Promise<PageCheckEstimate
   return apiFetch(`${projectPath(project)}/pages/checks/estimate`);
 }
 
-export function recoverPageChecks(project: string, allowPaid = false, renders: Record<number, string> = {}): Promise<{
+export function recoverPageChecks(project: string, allowPaid = false, renders: Record<number, string> = {}, recoveryAttemptId?: string): Promise<{
   pages: Array<{ page_number: number; status: string; error?: string }>;
 }> {
   return apiFetch(`${projectPath(project)}/pages/checks/recover`, {
-    method: "POST", body: JSON.stringify({ allow_paid: allowPaid, renders }),
+    method: "POST", body: JSON.stringify({ allow_paid: allowPaid, renders, recovery_attempt_id: recoveryAttemptId }),
   });
 }
 
@@ -404,4 +404,11 @@ export function getPageReplanEstimate(project: string, pageNumber: number): Prom
 /** Rewrite one page's plan; its artwork then needs a redraw from Pages. */
 export function replanPage(project: string, pageNumber: number): Promise<{ page_number: number; revision: number }> {
   return apiFetch(`${projectPath(project)}/pages/${pageNumber}/replan`, { method: "POST" });
+}
+
+/** Choose retained artwork without generating or charging. */
+export function selectPageRender(project: string, pageNumber: number, revision: number, expectedRevision: number) {
+  return apiFetch<{ active_render_revision: number }>(`${projectPath(project)}/pages/${pageNumber}/renders/${revision}/select`, {
+    method: "POST", body: JSON.stringify({ expected_revision: expectedRevision }),
+  });
 }

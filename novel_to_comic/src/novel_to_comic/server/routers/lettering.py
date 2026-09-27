@@ -155,17 +155,30 @@ def get_page_composite(
     render_revision: int | None = None,
     project=Depends(get_project),
 ):
-    # Capture bytes under the artifact lock. A simultaneous save may unlink a
-    # derived file immediately after this response; it must not break its stream.
-    with production_lock(project[0]):
-        path, identity = composite_page(
-            TargetArtifacts(project[0]),
-            page_number,
-            rendition=rendition,
-            expected_render_revision=render_revision,
-            draft_preview=True,
-        )
-        data = path.read_bytes()
+    # composite_page owns its short snapshot/write locks. Holding an outer lock
+    # across Chromium rendering would make every gallery thumbnail block the
+    # editor (and all other requests that need this project's artifacts).
+    for attempt in range(2):
+        try:
+            path, identity = composite_page(
+                TargetArtifacts(project[0]),
+                page_number,
+                rendition=rendition,
+                expected_render_revision=render_revision,
+                draft_preview=True,
+            )
+            # Capture bytes before responding: a concurrent save can invalidate
+            # derivatives, so a FileResponse would race its later file read.
+            with production_lock(project[0]):
+                data = path.read_bytes()
+            break
+        except FileNotFoundError:
+            # A save can also remove a derivative during composition or before
+            # capture. Rebuild once from current state; never spin on edits.
+            if attempt:
+                raise LetteringConflict(
+                    "Page preview changed while loading. Refresh the page preview."
+                ) from None
     return Response(
         data,
         media_type="image/png" if rendition == "full" else "image/webp",

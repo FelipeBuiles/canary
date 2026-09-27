@@ -1,3 +1,5 @@
+import { PageVersions } from "../../components/pages/PageVersions";
+import { ArchivedArtwork } from "../../components/pages/ArchivedArtwork";
 import { createPortal } from "react-dom";
 import { ArrowUpRight, BookOpen, Layers, ChevronLeft as ReviewChevronLeft, ChevronRight as ReviewChevronRight, X as ReviewClose } from "lucide-react";
 import { TextCheckArtwork } from "../../components/pages/TextCheckArtwork";
@@ -70,7 +72,7 @@ import { BottomBarPortal } from "../../layout/TopBarSlot";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 
-type ReviewView = "page" | "source" | "visual" | "checks" | "lettering";
+type ReviewView = "page" | "source" | "visual" | "checks" | "lettering" | "versions";
 type PageFilter = "all" | "needs-review" | "drawing" | "failed";
 type PaidPageIntent =
   | { kind: "batch"; retry?: boolean }
@@ -224,14 +226,14 @@ function IssueHistory({
                       {t(issue.status === "revised" ? "CONFIRM FIX" : "ACCEPT AS-IS")}
                     </Button>
                   )}
-                  {issue.id.startsWith("page-issue-draw-page-") && (
+                  {(issue.id.startsWith("page-issue-draw-page-") || (issue.issue_type === "manual_change" && issue.status === "open")) && (
                     <Button
                       size="xs"
                       variant="outline"
                       onClick={() => decide(issue, true)}
                       disabled={dismiss.isPending}
                     >
-                      {t(isOcrIssue(issue) ? "TEXT LOOKS CORRECT" : "DISMISS FALSE POSITIVE")}
+                      {t(issue.issue_type === "manual_change" ? "WITHDRAW REQUEST" : isOcrIssue(issue) ? "TEXT LOOKS CORRECT" : "DISMISS FALSE POSITIVE")}
                     </Button>
                   )}
                 </div>
@@ -366,6 +368,12 @@ function PageReview({
                 onClick: () => selectView("page"),
               },
               {
+                key: "versions",
+                label: t("Versions"),
+                active: view === "versions",
+                onClick: () => selectView("versions"),
+              },
+              {
                 key: "source",
                 label: t("Source"),
                 active: view === "source",
@@ -427,6 +435,13 @@ function PageReview({
                 </Surface>
               )}
             </div>
+
+            {view === "versions" && <PageVersions
+              key={`${project}:${item.page.page_number}`}
+              project={project} pageNumber={item.page.page_number}
+              activeRevision={editSourceRevision} disabled={pageIsDrawing}
+              onSelected={() => selectView("page")}
+            />}
 
             {view === "source" && (
               <div role="region" aria-label={t("Source")}>
@@ -506,7 +521,7 @@ export function PagesRoom() {
   const pageParam = searchParams.get("page") ?? "";
   const selected = /^[1-9]\d*$/.test(pageParam) && Number.isSafeInteger(Number(pageParam)) ? Number(pageParam) : null;
   const reviewParam = searchParams.get("review");
-  const review: ReviewView = reviewParam === "source" || reviewParam === "visual" || reviewParam === "checks" || reviewParam === "lettering" ? reviewParam : "page";
+  const review: ReviewView = reviewParam === "source" || reviewParam === "visual" || reviewParam === "checks" || reviewParam === "lettering" || reviewParam === "versions" ? reviewParam : "page";
   const filterParam = searchParams.get("filter");
   const filter: PageFilter = filterParam === "needs-review" || filterParam === "drawing" || filterParam === "failed" ? filterParam : "all";
   const readingParam = searchParams.get("reading");
@@ -690,6 +705,7 @@ export function PagesRoom() {
           errorDetail={interruptedStageInfo?.error_detail}
           errorCode={interruptedStageInfo?.error_code}
         />
+        {id && <ArchivedArtwork project={id} />}
         <BlockingFailureList validation={adaptValidation ?? planValidation} />
         {rerunAdaptation && <BottomBarPortal>
           <footer className="flex min-h-shell-footer flex-wrap items-center justify-end gap-3 border-t-[3px] border-ink-black bg-bristol px-4 py-3 shadow-[0_-4px_0_0_var(--color-ghost-shadow)] md:pr-6">
@@ -846,6 +862,7 @@ export function PagesRoom() {
 
   return (
     <RoomShell project={id}>
+      <ArchivedArtwork project={id} />
       <RoomHeader
         kicker={t("PAGES")}
         title={t("REVIEW COMPLETE PAGES")}

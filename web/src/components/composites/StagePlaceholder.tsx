@@ -180,7 +180,7 @@ export function StageStartAction({
   const { handleRun, isPending } = useRunAction();
   const [restartOpen, setRestartOpen] = useState(false);
   const freshStart = stage === "adapt" && (rerun || restartOpen);
-  const estimate = useStageEstimate(project, stage, true, freshStart);
+  const estimate = useStageEstimate(project, stage, true, freshStart || rerun);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const actionLabel = freshStart ? t("Start adaptation over") : rerun
@@ -201,6 +201,7 @@ export function StageStartAction({
     setStartError(null);
     handleRun(project, stage, {
       rerun: rerun || freshStart,
+      confirmedArchivePages: estimate.data?.archived_page_count,
       actionLabel,
       onSuccess: () => { setConfirmOpen(false); setRestartOpen(false); },
       onError: (error) => {

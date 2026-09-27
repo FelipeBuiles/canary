@@ -1,0 +1,72 @@
+{
+  "title": "Site-30's Janitor",
+  "author": "JanitorCakeworth",
+  "description": "A sleepy janitor at an SCP containment site gets called in to clean up after an experiment, and the body won't stay down. A darkly comic tale in a risograph zine style.",
+  "allow_feature": true,
+  "id": "c1f2c824e85e4313a804743865296e85",
+  "version": "8dd88f73884a48dbacbfa6a332361a0d",
+  "published_at": "2026-09-27T17:20:18.331876+00:00",
+  "pages": [
+    {
+      "number": 1,
+      "width": 1027,
+      "height": 1531,
+      "spread_role": "single"
+    },
+    {
+      "number": 2,
+      "width": 1027,
+      "height": 1531,
+      "spread_role": "single"
+    },
+    {
+      "number": 3,
+      "width": 1027,
+      "height": 1531,
+      "spread_role": "single"
+    },
+    {
+      "number": 4,
+      "width": 1028,
+      "height": 1530,
+      "spread_role": "single"
+    },
+    {
+      "number": 5,
+      "width": 1027,
+      "height": 1532,
+      "spread_role": "single"
+    },
+    {
+      "number": 6,
+      "width": 1028,
+      "height": 1530,
+      "spread_role": "single"
+    },
+    {
+      "number": 7,
+      "width": 1027,
+      "height": 1532,
+      "spread_role": "single"
+    },
+    {
+      "number": 8,
+      "width": 1028,
+      "height": 1530,
+      "spread_role": "single"
+    },
+    {
+      "number": 9,
+      "width": 1028,
+      "height": 1530,
+      "spread_role": "single"
+    }
+  ],
+  "source_credit": {
+    "title": "Site-30's Janitor",
+    "author": "JanitorCakeworth",
+    "source_url": "https://scp-wiki.wikidot.com/site-30-s-janitor",
+    "license": "CC BY-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/"
+  }
+}

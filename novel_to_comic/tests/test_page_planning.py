@@ -3650,7 +3650,7 @@ def _assigned_detail_fixture():
         # Object key order is immaterial; destinations and locked order are authoritative.
         "lettering_placements": {ids[3]: reservation(3), ids[1]: reservation(1), ids[0]: reservation(1), ids[2]: reservation(2)},
     }]}
-    return adaptation, mapped, raw
+    return adaptation, mapped, plan_response(raw)
 
 
 def _two_page_detail_fixture():
@@ -4279,3 +4279,126 @@ def test_a_failing_narrative_review_keeps_the_accepted_plan_drawable(tmp_path: P
         asyncio.run(replan_page(artifacts, _two_look_inventory(), 2, generate=generate, model="test-planner"))
     assert tuple(artifacts.read_page(number) for number in (1, 2, 3)) == before
     require_narrative_review(artifacts, "plan", planning_context(_two_look_adaptation(), before))
+
+
+def test_character_only_beats_keep_location_and_prop_designs_available_to_plan():
+    adaptation = _adaptation()
+    adaptation = adaptation.model_copy(update={"beats": tuple(
+        beat.model_copy(update={"entity_ids": ("character_johansen",)})
+        for beat in adaptation.beats
+    )})
+    inventory = ApprovedVisualReferenceInventory(references=(
+        *_inventory().references,
+        ApprovedVisualReference(id="test-room", entity_id="room", kind="location",
+            label="Testing Chamber", visual_anchor="Concrete, observation window, fluorescent lighting."),
+        ApprovedVisualReference(id="mop", entity_id="mop", kind="prop",
+            visual_anchor="Wooden shaft with a cloth head at one end."),
+        ApprovedVisualReference(id="remote-actor", entity_id="remote-actor", kind="character",
+            visual_anchor="An unrelated actor elsewhere."),
+    ))
+    mapping = _BookPageMap(rhythm_summary="Continuous aftermath.", pages=(
+        _PageMapEntry(page_number=1, beat_ids=tuple(beat.id for beat in adaptation.beats),
+            lettering_ids=tuple(item.id for beat in adaptation.beats for item in beat.lettering),
+            emphasis="release", density_intent="standard", rhythm_intent="Stay in the chamber."),
+    ))
+    prompt = _detail_batch_prompt(adaptation, inventory, mapping, start=0, stop=1)
+    payload = json.loads(prompt.split("\n", 1)[1])
+    refs = {item["entity_id"]: item for item in payload["approved_visual_reference_inventory"]}
+    assert refs["room"]["visual_anchor"] == "Concrete, observation window, fluorescent lighting."
+    assert refs["mop"]["visual_anchor"] == "Wooden shaft with a cloth head at one end."
+    assert "remote-actor" not in refs
+    assert "dialogue mentioning another room does not relocate the scene" in prompt
+    assert "Reference availability alone does not make a location or prop part of the scene" in prompt
+    assert "what connects to what, the contact point" in prompt
+
+
+@pytest.mark.parametrize("defect", ["missing_setting", "wrong_kind", "uncited_room", "uncited_object"])
+def test_plan_rejects_unbound_staging_before_canonicalization(defect):
+    from novel_to_comic.page_planning import _reference_authority_failures
+
+    inventory = ApprovedVisualReferenceInventory(references=(
+        *_inventory().references,
+        ApprovedVisualReference(id="room-ref", entity_id="room", kind="location", visual_anchor="Concrete room."),
+        ApprovedVisualReference(id="mop-ref", entity_id="mop", kind="prop", visual_anchor="Wood and cloth."),
+    ))
+    panel = {
+        "entity_ids": ["character_johansen", "room", "mop"],
+        "setting": {"location_entity_id": "room", "environment_visible": True, "direction": "Remain in the test room."},
+        "physical_relationships": [{"entity_ids": ["character_johansen", "mop"],
+            "contact": "Wooden shaft through center chest into wall immediately behind his back.",
+            "orientation": "Exposed shaft projects forward; cloth at the far free end.",
+            "support": "Shaft fixes body against wall; cloth does not support it."}],
+    }
+    if defect == "missing_setting":
+        panel["setting"] = None
+    elif defect == "wrong_kind":
+        panel["setting"]["location_entity_id"] = "mop"
+    elif defect == "uncited_room":
+        panel["entity_ids"].remove("room")
+    else:
+        panel["entity_ids"].remove("mop")
+    draft = _BookPlanDraft.model_validate(plan_response(_two_page_response(panel)))
+    failures = _reference_authority_failures(draft.pages, inventory)
+    assert len(failures) == 1
+    assert failures[0].code == "staging_authority"
+    assert failures[0].artifact_ids == ("page_001_content_001",)
+
+
+def test_staging_reaches_draw_with_approved_room_and_exact_relationship(tmp_path):
+    from novel_to_comic.page_planning import _canonical_pages, _reference_authority_failures
+    from novel_to_comic.page_drawing import ApprovedReferenceFile, compile_page_generation_request
+    from novel_to_comic.models.draw import BookEdition, RetryProvenance
+    from .test_complete_page_draw import _profile, _provider_brief
+
+    inventory = ApprovedVisualReferenceInventory(references=(
+        *_inventory().references,
+        ApprovedVisualReference(id="room-ref", entity_id="loc_test_room", kind="location", visual_anchor="Concrete, observation window, fluorescent light."),
+        ApprovedVisualReference(id="mop-ref", entity_id="mop", kind="prop", visual_anchor="Wooden shaft; cloth at one end."),
+        ApprovedVisualReference(id="closet-ref", entity_id="closet", kind="location", visual_anchor="Cramped storage and brooms."),
+    ))
+    relationship = {"entity_ids": ["character_johansen", "mop"],
+        "contact": "Wooden shaft through center chest into wall immediately behind his back.",
+        "orientation": "Exposed shaft projects forward; cloth at the far free end.",
+        "support": "Shaft fixes body against wall; cloth does not support it."}
+    response = plan_response(_two_page_response({
+        "entity_ids": ["character_johansen", "loc_test_room", "mop"],
+        "setting": {"location_entity_id": "loc_test_room", "environment_visible": True, "direction": "Remain in the test room."},
+        "physical_relationships": [relationship],
+    }))
+    # The close-up keeps the same setting without uploading a hidden room.
+    second = response["pages"][1]["content"][0]
+    second.update(entity_ids=["character_johansen"], setting={"location_entity_id": "loc_test_room",
+        "environment_visible": False, "direction": "Same test room, background outside the close-up."})
+    draft = _BookPlanDraft.model_validate(response)
+    assert _reference_authority_failures(draft.pages, inventory) == ()
+    pages = _canonical_pages(_adaptation(), draft, {}, inventory)
+    files = {}
+    for reference in inventory.references:
+        path = tmp_path / f"{reference.id}.png"
+        path.write_bytes(b"mock-reference")
+        files[reference.id] = ApprovedReferenceFile(reference_id=reference.id, path=path, media_type="image/png")
+    for page in pages:
+        compiled = compile_page_generation_request(page, BookEdition(revision=1, id="test-edition", capability_profile=_profile()),
+            inventory, files, retry=RetryProvenance(attempt=1))
+        brief = _provider_brief(compiled.request.prompt)
+        assert "test room" in brief["canonical_staging_and_layout"]
+        assert "closet-ref" not in {r.id for r in compiled.request.references}
+        if page.page_number == 1:
+            assert "room-ref" in {r.id for r in compiled.request.references}
+            for field in ("contact", "orientation", "support"):
+                assert relationship[field] in brief["canonical_staging_and_layout"]
+            assert "Concrete, observation window, fluorescent light." in compiled.request.prompt
+        else:
+            assert "room-ref" not in {r.id for r in compiled.request.references}
+
+
+def test_generated_plan_requires_explicit_staging_decisions():
+    from novel_to_comic.page_planning import _plan_response_schema
+    response = plan_response(_two_page_response({}))
+    del response["pages"][0]["content"][0]["physical_relationships"]
+    with pytest.raises(ValidationError, match="physical_relationships"):
+        _BookPlanDraft.model_validate(response)
+    schema = _plan_response_schema(_inventory())
+    panel = schema["$defs"]["_PageContentDraft"]
+    assert {"setting", "physical_relationships"} <= set(panel["required"])
+    assert panel["properties"]["setting"] == {"$ref": "#/$defs/_PanelSetting"}

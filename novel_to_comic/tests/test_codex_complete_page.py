@@ -197,6 +197,10 @@ def test_draw_estimate_maps_incompatible_reference_to_conflict(tmp_path, monkeyp
     app = FastAPI()
     app.include_router(pages.router)
     app.dependency_overrides[get_project] = lambda: (tmp_path, _codex_config(), None)
+    from novel_to_comic.server.auth import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: "owner"
+    from novel_to_comic.server.routers import projects as project_routes
+    monkeypatch.setattr(project_routes, "needs_initial_project_cover", lambda *args: False)
     response = TestClient(app).get("/pages/generate/estimate")
 
     assert response.status_code == 409
@@ -333,6 +337,10 @@ def test_batch_subscription_quote_is_zero_and_subscription_even_when_empty(tmp_p
     app = FastAPI()
     app.include_router(pages.router)
     app.dependency_overrides[get_project] = lambda: (tmp_path, _codex_config(), None)
+    from novel_to_comic.server.auth import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: "owner"
+    from novel_to_comic.server.routers import projects as project_routes
+    monkeypatch.setattr(project_routes, "needs_initial_project_cover", lambda *args: False)
     response = TestClient(app).get("/pages/generate/estimate")
     assert response.status_code == 200
     quote = response.json()
@@ -456,6 +464,10 @@ def test_explicit_retry_estimate_after_failed_codex_draw(tmp_path, monkeypatch, 
     app = FastAPI()
     app.include_router(pages.router)
     app.dependency_overrides[get_project] = lambda: (tmp_path, _codex_config(), None)
+    from novel_to_comic.server.auth import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: "owner"
+    from novel_to_comic.server.routers import projects as project_routes
+    monkeypatch.setattr(project_routes, "needs_initial_project_cover", lambda *args: False)
 
     client = TestClient(app)
     edition_bytes = artifacts.book_edition_path.read_bytes()

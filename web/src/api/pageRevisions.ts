@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import { accountIdentity } from "../lib/accountEpoch";
+import { getGenerationJobs } from "./pipeline";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getPageRenderCorrection,
@@ -25,6 +27,22 @@ export type {
   PageCorrectionSubmission,
   FrozenRenderCorrection,
 };
+
+export function useSubmittedCorrectionJob(project: string, jobId: string | null) {
+  const qc = useQueryClient();
+  const result = useQuery({
+    queryKey: ["project", project, "generation-jobs", jobId ? [jobId] : []],
+    queryFn: () => getGenerationJobs(project, [jobId!]),
+    enabled: !!jobId,
+    refetchInterval: (query) => query.state.data?.jobs.some((job) => job.status === "failed" || job.status === "complete" || job.status === "cancelled") ? false : 1000,
+  });
+  const job = result.data?.jobs.find((item) => item.id === jobId);
+  const terminal = job?.status === "complete" || job?.status === "failed" || job?.status === "cancelled";
+  useEffect(() => {
+    if (terminal) invalidatePageReview(qc, project);
+  }, [qc, project, jobId, terminal]);
+  return result;
+}
 
 function invalidatePageReview(qc: ReturnType<typeof useQueryClient>, project: string, pageNumber?: number) {
   qc.invalidateQueries({ queryKey: ["project", project, "complete-pages"] });
@@ -129,6 +147,7 @@ export interface PersistedDraftChange {
 }
 
 export interface PersistedRevisionDraft {
+  submittedJobId?: string;
   project: string;
   pageNumber: number;
   comicPageRevision: number;

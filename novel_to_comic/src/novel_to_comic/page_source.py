@@ -155,7 +155,7 @@ def _text_regions(target: TargetArtifacts, page: ComicPage) -> tuple[dict[str, d
     if not revisions:
         return {}, None
     try:
-        render = target.read_provenance(page.page_number, revisions[-1]).render
+        render = target.read_provenance(page.page_number, target.active_render_revision(page.page_number)).render
         analysis = target.read_analysis(page.page_number, render.revision)
     except (ArtifactMissing, ArtifactInvalid):
         # The text check is optional evidence; without it nothing is located.

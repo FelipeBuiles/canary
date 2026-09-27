@@ -796,3 +796,15 @@ def test_missing_downstream_artifact_does_not_repeat_paid_ocr(tmp_path, monkeypa
     monkeypatch.setattr(page_review, "record_analysis_issues", missing_issue_artifact)
     with pytest.raises(ArtifactMissing, match="page_issues"):
         _analyze(page=_page(), render=_render(), image=b"page-34", ocr=ocr, artifacts=artifacts)
+
+
+def test_open_manual_request_can_be_withdrawn_without_claiming_a_fix(tmp_path):
+    artifacts = TargetArtifacts(tmp_path)
+    issue = PageIssue(id="page-issue-manual-34-1-test", issue_type="manual_change",
+        classification="editorial_issue", correction_owner="draw", page_number=34,
+        render_revision=1, evidence=["Make gown green"], requested_correction="Make gown green", status="open")
+    record_page_issue(artifacts, issue)
+    dismissed = dismiss_page_issue(artifacts, issue_id=issue.id, page_number=34, reason="Author withdrew request")
+    assert dismissed.status == "dismissed"
+    assert dismissed.resolution_revision is None
+    assert artifacts.read_issues(34)[0].dismissal_reason == "Author withdrew request"

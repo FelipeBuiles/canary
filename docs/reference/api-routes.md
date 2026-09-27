@@ -74,6 +74,7 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `POST` | `/api/operator_billing/refunds` | `refund_unused_credit_grant` | `operator_billing.py` |
 | `GET` | `/api/projects/{project}/pages` | `list_pages` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_number}` | `get_page` | `pages.py` |
+| `POST` | `/api/projects/{project}/pages/{page_number}/renders/{revision}/select` | `select_page_render` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_number}/source` | `read_page_source` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_number}/renders/{revision}` | `get_page_render` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_number}/renders/{revision}/correction` | `read_render_correction` | `pages.py` |
@@ -87,7 +88,7 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `POST` | `/api/projects/{project}/pages/{page_number}/analyze` | `analyze_page` | `pages.py` |
 | `POST` | `/api/projects/{project}/pages/{page_number}/issues` | `create_page_issue` | `pages.py` |
 | `POST` | `/api/projects/{project}/pages/{page_number}/issues/{issue_id}/accept` | `accept_page_issue` | `pages.py` |
-| `POST` | `/api/projects/{project}/pages/{page_number}/issues/{issue_id}/dismiss` | `dismiss_automated_page_issue` | `pages.py` |
+| `POST` | `/api/projects/{project}/pages/{page_number}/issues/{issue_id}/dismiss` | `dismiss_recorded_page_issue` | `pages.py` |
 | `POST` | `/api/projects/{project}/pages/{page_number}/corrections/preview` | `preview_page_correction` | `pages.py` |
 | `POST` | `/api/projects/{project}/pages/{page_number}/corrections` | `submit_page_correction` | `pages.py` |
 | `GET` | `/api/projects/{project}/pages/{page_number}/visual-review/estimate` | `visual_review_estimate` | `pages.py` |
@@ -97,6 +98,8 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `POST` | `/api/projects/{project}/pages/{page_number}/replan` | `replan_one_page` | `pages.py` |
 | `GET` | `/api/projects/{project}/estimate` | `estimate_stage_cost` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/run` | `run_pipeline` | `pipeline.py` |
+| `GET` | `/api/projects/{project}/restart-archives` | `list_restart_archives` | `pipeline.py` |
+| `GET` | `/api/projects/{project}/restart-archives/{archive_id}/file` | `read_restart_archive_file` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/regen-extract` | `regen_extract` | `pipeline.py` |
 | `GET` | `/api/projects/{project}/events` | `event_stream` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/jobs/cancel-queued-pages` | `cancel_queued_page_jobs` | `pipeline.py` |

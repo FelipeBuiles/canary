@@ -838,7 +838,7 @@ async def generate_cover(
 
 
 def enqueue_project_cover(request: Request, project_id: str, project, user_id: str, *, force: bool = False):
-    """Shared HTTP and post-Cast orchestration; generation stays in its own job."""
+    """Shared HTTP and post-Draw-start orchestration; generation stays in its own job."""
     from novel_to_comic.artifacts import character_ref_sheet_path
 
     project_dir, config, state = project

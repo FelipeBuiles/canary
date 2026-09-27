@@ -11,11 +11,11 @@ import "./HomePage.css";
 
 const MARKETING_IMAGES = {
   pages: [
-    "/marketing/dungeon-crawler-carl-page-25.webp",
-    "/api/public/books/d1cb0ec790244ce6849974daa586146b/ccf1a606bd1747c4864d8a4770000891/pages/21",
+    "/marketing/cthulhu-page-40.webp",
+    "/marketing/elm-and-keep-page-12.webp",
   ],
-  heroLoop: "/marketing/hero-flipbook.mp4",
-  heroPoster: "/marketing/hero-flipbook-poster.webp",
+  heroLoop: "/marketing/masque-flipbook.mp4",
+  heroPoster: "/marketing/masque-flipbook-poster.webp",
   editions: [
     "/marketing/janitor-riso-page-01.webp",
     "/marketing/janitor-gouache-page-01.webp",
@@ -23,8 +23,8 @@ const MARKETING_IMAGES = {
   ],
   sampleBook: [
     "/marketing/kaitlin-page-01.webp",
-    "/marketing/kaitlin-page-11.webp",
-    "/marketing/kaitlin-page-41.webp",
+    "/marketing/kaitlin-page-12.webp",
+    "/marketing/kaitlin-page-34.webp",
   ],
 } as const;
 
@@ -114,14 +114,14 @@ function HeroFolio({ copy }: { copy: LandingCopy["hero"] }) {
         </div>
         <div className="landing-loop">
           {reducedMotion ? (
-            <img src={MARKETING_IMAGES.heroPoster} alt="" width="600" height="704" decoding="async" fetchPriority="high" />
+            <img src={MARKETING_IMAGES.heroPoster} alt="" width="600" height="750" decoding="async" fetchPriority="high" />
           ) : (
             <video
               ref={videoRef}
               src={MARKETING_IMAGES.heroLoop}
               poster={MARKETING_IMAGES.heroPoster}
               width="600"
-              height="704"
+              height="750"
               autoPlay
               muted
               loop

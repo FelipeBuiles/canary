@@ -11,7 +11,7 @@ import traceback
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from novel_to_comic.briefing import approve_brief, require_approved_brief
 from novel_to_comic.stage_runtime import StageRuntime
@@ -267,8 +267,8 @@ async def _run_stage_with_credits(
         outcome=outcome,
     )
     if (
-        stage == "cast"
-        and current.status in {StageStatus.COMPLETE, StageStatus.AWAITING_REVIEW}
+        stage == "draw"
+        and current.status in {StageStatus.RUNNING, StageStatus.COMPLETE, StageStatus.AWAITING_REVIEW}
         and request is not None
         and project_id is not None
     ):
@@ -278,8 +278,8 @@ async def _run_stage_with_credits(
             try:
                 enqueue_project_cover(request, project_id, (project_dir, config, state), user_id)
             except Exception:
-                # A cover is auxiliary: an enqueue failure must not undo Cast.
-                logger.exception("Could not queue project cover after Cast project=%s", project_id)
+                # A cover is auxiliary and queues only after Draw starts.
+                logger.exception("Could not queue project cover after Draw project=%s", project_id)
     if current.status != StageStatus.COMPLETE:
         return
     for next_stage in STAGE_AUTO_CHAIN.get(stage, ()):
@@ -338,8 +338,8 @@ def _clear_outputs_for_rerun(project_dir, stage: str) -> None:
     from novel_to_comic.artifact_lock import production_lock
 
     with production_lock(project_dir):
-        if stage == "adapt":
-            TargetArtifacts(project_dir).archive_adaptation_work()
+        if stage in {"adapt", "plan"}:
+            TargetArtifacts(project_dir).archive_stage_work(stage)
             return
         stage_obj = REGISTRY.get(stage)
         if stage_obj is None:
@@ -388,7 +388,7 @@ async def estimate_stage_cost(
     if stage == "draw":
         from .pages import estimate_remaining_page_generation
 
-        return {"stage": stage, **estimate_remaining_page_generation(project)}
+        return {"stage": stage, **estimate_remaining_page_generation(project, request, project_id, user_id)}
     chain = [stage, *STAGE_AUTO_CHAIN.get(stage, ())]
     parts = [
         UnifiedCostResolver.estimate_stage_cost(
@@ -399,14 +399,10 @@ async def estimate_stage_cost(
         )
         for name in chain
     ]
-    if stage == "cast":
-        from .projects import _project_cover_credit_estimate, needs_initial_project_cover
-
-        if needs_initial_project_cover(request, project_key(user_id, project_id), project_dir):
-            cover = _project_cover_credit_estimate(config)
-            parts.append({**cover, "reserved_credits": cover["estimate_credits"]})
     return {
         "stage": stage,
+        **({"archived_page_count": TargetArtifacts(project_dir).drawn_page_count()}
+           if stage == "plan" and rerun else {}),
         **CreditEstimate(
             estimate_credits=sum(item["estimate_credits"] for item in parts),
             reserved_credits=sum(
@@ -427,6 +423,7 @@ async def _start_stage(
     project,
     user_id: str,
     queue_pages: bool = False,
+    confirmed_archive_pages: int | None = None,
 ):
     project_dir, config, state = project
     if stage is None:
@@ -449,6 +446,11 @@ async def _start_stage(
     if project_busy(request.app, pkey):
         raise HTTPException(409, "Wait for all project jobs to finish before running a stage.")
 
+    if stage == "plan" and rerun:
+        count = TargetArtifacts(project_dir).drawn_page_count()
+        if confirmed_archive_pages != count:
+            raise HTTPException(409, f"Confirm restarting Plan: {count} drawn pages and downstream work will be archived. Refresh the estimate and confirm again.")
+
     if stage == "adapt":
         _require_adaptation_brief(project_dir)
 
@@ -466,11 +468,6 @@ async def _start_stage(
             required = estimate_adaptation_restart(config, project_dir, state)["reserved_credits"] or 0
         else:
             required = estimate_stage_credit_reservation(config, project_dir, state, stage)
-        if stage == "cast":
-            from .projects import _project_cover_credit_estimate, needs_initial_project_cover
-
-            if needs_initial_project_cover(request, pkey, project_dir):
-                required += _project_cover_credit_estimate(config)["estimate_credits"]
         assert_sufficient_credits(get_db(), user_id, required, stage=stage)
     queue = EventChannel()
     request.app.state.event_queues[pkey] = queue
@@ -503,6 +500,7 @@ async def run_pipeline(
     stage: Optional[str] = Query(None),
     rerun: bool = Query(False),
     queue_pages: bool = Query(False),
+    confirmed_archive_pages: int | None = Query(None, ge=0),
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
@@ -514,7 +512,22 @@ async def run_pipeline(
         project,
         user_id,
         queue_pages,
+        confirmed_archive_pages,
     )
+
+
+@router.get("/restart-archives")
+def list_restart_archives(project=Depends(get_project)):
+    return {"archives": TargetArtifacts(project[0]).restart_archives()}
+
+
+@router.get("/restart-archives/{archive_id}/file")
+def read_restart_archive_file(archive_id: str, path: str, project=Depends(get_project)):
+    try:
+        saved = TargetArtifacts(project[0]).restart_archive_file(archive_id, path)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return FileResponse(saved, headers={"Cache-Control": "private, max-age=60"})
 
 
 @router.post("/regen-extract")

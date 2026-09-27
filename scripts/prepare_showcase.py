@@ -30,8 +30,11 @@ def prepare(project: Path, destination: Path, metadata: publications.Publication
             StageRuntime("finish", load_state(project), project),
         )
         record.pop("featured")
-        for page in record["pages"]:
-            page.pop("url")
+        # Why a language stayed private is for the author, not the public manifest.
+        record.pop("unpublished_locales", None)
+        for pages in [record["pages"], *(t["pages"] for t in record.get("translations", ()))]:
+            for page in pages:
+                page.pop("url")
         book = showcase.ShowcaseBook.model_validate(record)
         destination.mkdir(parents=True, exist_ok=True)
         shutil.copytree(

@@ -152,3 +152,23 @@ it("lets an interrupted provider-free Finish check be explicitly retried without
   for (const call of fetcher.mock.calls) expect(call[1].headers["Idempotency-Key"]).toBeUndefined();
   expect(localStorage.length).toBe(0);
 });
+
+it("rechecks cached page evidence without receipts while retaining interrupted paid checks", async () => {
+  const fetcher = vi.fn().mockRejectedValueOnce(new TypeError("Connection lost"))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ pages: [] })))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: { code: "idempotency_indeterminate", message: "Interrupted" } }), { status: 409 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ detail: { code: "idempotency_indeterminate", message: "Interrupted" } }), { status: 409 }));
+  vi.stubGlobal("fetch", fetcher);
+  const check = (allow_paid: boolean) => apiFetch("/projects/demo/pages/checks/recover", {
+    method: "POST", body: JSON.stringify({ allow_paid, renders: {} }),
+  });
+  await expect(check(false)).rejects.toThrow("Connection lost");
+  await expect(check(false)).resolves.toEqual({ pages: [] });
+  expect(fetcher.mock.calls[0][1].headers["Idempotency-Key"]).toBeUndefined();
+  expect(fetcher.mock.calls[1][1].headers["Idempotency-Key"]).toBeUndefined();
+  await expect(check(true)).rejects.toMatchObject({ code: "idempotency_indeterminate" });
+  await expect(check(true)).rejects.toMatchObject({ code: "idempotency_indeterminate" });
+  expect(fetcher.mock.calls[2][1].headers["Idempotency-Key"]).toBeTruthy();
+  expect(fetcher.mock.calls[3][1].headers["Idempotency-Key"])
+    .toBe(fetcher.mock.calls[2][1].headers["Idempotency-Key"]);
+});

@@ -1551,3 +1551,23 @@ def test_parallel_invalid_reviews_retain_all_completed_siblings_for_resume(tmp_p
         assert all('Recheck the malformed prior review' in c['user_content'] for c in calls)
 
     asyncio.run(scenario())
+
+
+def test_canonical_staging_can_substantiate_a_continuity_contradiction():
+    from novel_to_comic.narrative_review import _blocks
+    window = {
+        "beats": [{"id": "beat_15", "summary": "He remains pinned against the testing room wall.", "lettering": []}],
+        "pages": [{"page_number": 7, "layout_intent": "The body rests on a mop head in the closet.", "content": []}],
+    }
+    finding = NarrativeFinding(
+        code="unsupported_event", repair_stage="plan", artifact_ids=("beat_15", "page_007"),
+        evidence="Staging moves the body into the closet and changes its support.",
+        repair="Keep the established room and shaft attachment.", consequence="contradiction",
+        reader_impact="The aftermath no longer follows the preceding action.",
+        passages=(NarrativePassage(artifact_id="beat_15", quote=window["beats"][0]["summary"]),
+                  NarrativePassage(artifact_id="page_007", quote=window["pages"][0]["layout_intent"])),
+    )
+    assert _blocks(finding, window, "plan")
+    invented = finding.model_copy(update={"passages": (finding.passages[0],
+        NarrativePassage(artifact_id="page_007", quote="This text was not supplied."))})
+    assert not _blocks(invented, window, "plan")

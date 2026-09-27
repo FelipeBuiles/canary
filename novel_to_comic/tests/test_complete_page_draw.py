@@ -827,7 +827,6 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
 ) -> None:
     # Generating a page and reading it back are two provider calls. Both are
     # billable, settled under one ledger job so credits round once.
-    from novel_to_comic.config import PAGE_OCR_ESTIMATED_COST_USD
     from novel_to_comic.server.credits import credit_estimate_for_provider_cost
     app = _make_app()
     compiled = _compile(tmp_path)
@@ -895,12 +894,11 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
 
     assert unanalysed is not job
     image_quote = credit_estimate_for_provider_cost(
-        estimate_draw_api_cost(Config(), compiled),
+        estimate_draw_api_cost(Config(), compiled, ocr=False),
         "draw", reserve=True,
     )
     checked_quote = credit_estimate_for_provider_cost(
-        estimate_draw_api_cost(Config(), compiled)
-        + float(PAGE_OCR_ESTIMATED_COST_USD),
+        estimate_draw_api_cost(Config(), compiled, ocr=True),
         "draw", reserve=True,
     )
     assert without_analysis == image_quote["reserved_credits"]
@@ -1436,6 +1434,7 @@ def test_batch_quote_skips_paid_pages_and_sums_individual_holds(tmp_path: Path) 
     from fastapi.testclient import TestClient
     from types import SimpleNamespace
     from novel_to_comic.server.deps import get_project
+    from novel_to_comic.server.auth import get_current_user
     from novel_to_comic.server.routers.pages import router
 
     artifacts = TargetArtifacts(tmp_path)
@@ -1459,7 +1458,10 @@ def test_batch_quote_skips_paid_pages_and_sums_individual_holds(tmp_path: Path) 
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_project] = lambda: (tmp_path, Config(), None)
-    with patch.object(TargetArtifacts, "read_plan", return_value=SimpleNamespace(pages=[first, *remaining])), \
+    app.dependency_overrides[get_current_user] = lambda: "test-user"
+    # This fixture isolates page holds from the separately quoted first cover.
+    with patch("novel_to_comic.server.routers.projects.needs_initial_project_cover", return_value=False), \
+         patch.object(TargetArtifacts, "read_plan", return_value=SimpleNamespace(pages=[first, *remaining])), \
          patch("novel_to_comic.server.routers.pages.approved_visual_inventory", return_value=_inventory()), \
          patch("novel_to_comic.server.routers.pages.approved_reference_files", return_value=files):
         client = TestClient(app)

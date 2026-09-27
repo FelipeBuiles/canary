@@ -32,11 +32,12 @@ _FIELDS = frozenset({
     "package_id", "gross_amount_cents", "currency", "credits", "amount_credits", "app_environment",
     "stripe_mode", "format", "cached", "station", "drawer", "mode", "schema_version",
     "feedback_id", "category", "rating", "trace_id", "span_id", "release", "environment",
-    "posthogDistinctId", "source_event_id",
+    "posthogDistinctId", "source_event_id", "event_origin",
 })
 _AI_FIELDS = frozenset({"$ai_trace_id", "$ai_span_id", "$ai_parent_id", "$ai_model", "$ai_provider",
     "$ai_latency", "$ai_input_tokens", "$ai_output_tokens", "$ai_is_error", "$ai_error",
-    "$ai_cost_passthrough", "$ai_total_cost_usd"})
+    "$ai_cost_passthrough", "$ai_total_cost_usd", "$ai_cache_read_input_tokens",
+    "$ai_cache_creation_input_tokens", "$ai_cache_reporting_exclusive"})
 
 
 def safe_fields(fields: dict[str, Any]) -> dict[str, Any]:
@@ -149,7 +150,12 @@ def _before_send(event):
                 clean[key] = properties[key]
         if properties.get("$insert_id"):
             clean["$insert_id"] = str(properties["$insert_id"])
-        clean["$release_id"] = os.environ.get("CANARY_VERSION", "unknown")[:100]
+        # Persisted product events retain the release that produced them, even
+        # when a later process delivers the outbox.
+        clean.setdefault("environment", os.environ.get("CANARY_ENV", "development"))
+        clean.setdefault("release", os.environ.get("CANARY_VERSION", "unknown"))
+        clean.setdefault("schema_version", 1)
+        clean["$release_id"] = clean["release"]
         event["properties"] = {k: v for k, v in clean.items() if v is not None}
         return {key: event[key] for key in ("event", "properties", "distinct_id", "timestamp", "uuid") if key in event}
     except Exception:
@@ -162,7 +168,7 @@ def capture(event: str, *, user_id: str | None = None, properties=None, event_id
     try:
         identity = user_id if user_id and _ID.fullmatch(user_id) else "canary-server"
         props = safe_fields({**context_fields(), **(properties or {})})
-        props.update(environment=os.environ.get("CANARY_ENV", "dev"),
+        props.update(environment=os.environ.get("CANARY_ENV", "development"),
                      release=os.environ.get("CANARY_VERSION", "unknown"), schema_version=1)
         if event_id:
             props["$insert_id"] = str(event_id)
@@ -234,7 +240,7 @@ def configure_telemetry() -> bool:
         from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
         from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
         resource = Resource({"service.name": "canary", "service.version": os.getenv("CANARY_VERSION", "unknown"),
-                             "deployment.environment": os.getenv("CANARY_ENV", "dev")})
+                             "deployment.environment": os.getenv("CANARY_ENV", "development")})
         try:
             rate = min(1., max(0., float(os.getenv("POSTHOG_TRACE_SAMPLE_RATE", "1"))))
         except ValueError:
@@ -279,7 +285,8 @@ def shutdown_telemetry():
 
 
 def observe_generation(*, event_id, feature, operation, model_alias, provider_model,
-                       status, usage, cost_usd, cost_source, latency_ms, started_at=None, error=None):
+                       status, usage, cost_usd, cost_source, latency_ms, started_at=None, error=None,
+                       funding=None, provider=None):
     from novel_to_comic.ai.context import current_ai_request_context
     ctx = current_ai_request_context()
     fields = safe_fields({**context_fields(), "project_id": ctx.project_id, "job_id": ctx.job_id,
@@ -289,16 +296,30 @@ def observe_generation(*, event_id, feature, operation, model_alias, provider_mo
         "cost_usd": cost_usd, "page_number": ctx.page_number, "is_correction": ctx.is_correction,
         "error_type": type(error).__name__ if error else None,
         "image_count": usage.image_count if usage else None,
-        "funding": usage.funding if usage else None})
+        "funding": usage.funding if usage else funding,
+        "provider": usage.provider if usage else provider})
     trace_id = context_fields().get("operation_id") or ctx.job_id or event_id
     fields.update({"$ai_trace_id": trace_id, "$ai_span_id": event_id,
                    "$ai_model": provider_model or model_alias, "$ai_latency": latency_ms / 1000,
-                   "$ai_is_error": status != "succeeded", "$ai_cost_passthrough": True})
+                   "$ai_is_error": status != "succeeded"})
     if cost_usd is not None:
         fields["$ai_total_cost_usd"] = cost_usd
+        fields["$ai_cost_passthrough"] = True
+    # Without a total, PostHog may calculate a catalog estimate even with
+    # passthrough enabled. cost_status and cost_usd remain Canary's authority;
+    # our cost-confidence view never sums the vendor's inferred total.
     if usage:
         fields.update({"$ai_provider": usage.provider, "$ai_input_tokens": usage.input_tokens,
-                       "$ai_output_tokens": usage.output_tokens})
+                       "$ai_output_tokens": usage.output_tokens,
+                       # Canary normalizes input totals to INCLUDE cache reads
+                       # and writes, including Claude's originally exclusive usage.
+                       "$ai_cache_reporting_exclusive": False})
+        if usage.cached_text_tokens is not None:
+            fields["$ai_cache_read_input_tokens"] = usage.cached_text_tokens + (usage.cached_image_tokens or 0)
+        if usage.cache_creation_input_tokens is not None:
+            fields["$ai_cache_creation_input_tokens"] = usage.cache_creation_input_tokens
+    elif provider:
+        fields["$ai_provider"] = provider
     if error:
         fields["$ai_error"] = type(error).__name__
     capture("$ai_generation", user_id=ctx.user_id, properties=fields, event_id=event_id, timestamp=started_at)

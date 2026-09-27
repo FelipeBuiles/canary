@@ -34,7 +34,7 @@ export function RerunStageAction({
   const { handleRun, isPending } = useRunAction();
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const estimate = useStageEstimate(project, stage, open, stage === "adapt");
+  const estimate = useStageEstimate(project, stage, open, true);
   const actionLabel = stage === "adapt" ? t("Start adaptation over") : t(`Rerun ${label}`);
   const unavailable = disabled || isPending || !estimate.data || !!estimate.error || estimate.isFetching;
 
@@ -43,6 +43,7 @@ export function RerunStageAction({
     setError(null);
     handleRun(project, stage, {
       rerun: true,
+      confirmedArchivePages: estimate.data?.archived_page_count,
       actionLabel,
       onSuccess: () => {
         setOpen(false);

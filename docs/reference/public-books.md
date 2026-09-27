@@ -55,10 +55,9 @@ Downloads take `?locale=` for a published language.
 
 The homepage now reads the repository's `showcase/books/` folder, in alphabetical
 subfolder order. Each prepared folder holds public metadata and complete,
-normalized pages. Generated editions stay outside Git and the Docker build
-context. Production supplies the catalogue through a volume at
-`/app/showcase/books` or `CANARY_SHOWCASE_DIR`; the image defaults to an empty
-catalogue. Account-owned publications on the persistent volume remain independent. Backoffice featuring is disabled.
+normalized pages. The catalogue is committed to Git and copied into the image
+at `/app/showcase/books`; `CANARY_SHOWCASE_DIR` can point at a separately mounted
+catalogue instead. Account-owned publications on the persistent volume remain independent. Backoffice featuring is disabled.
 Author consent alone does not add a book to this manually curated catalogue.
 
 Use `scripts/prepare_showcase.py` to package a finished project without paid

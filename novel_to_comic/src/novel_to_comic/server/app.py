@@ -334,11 +334,15 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
 
     @app.exception_handler(ArtifactMissing)
     async def artifact_missing_exception_handler(request, exc: ArtifactMissing):
+        request.state.artifact_unavailable = request.method in {"GET", "HEAD"}
         return JSONResponse(status_code=404, content={"detail": str(exc)})
 
     @app.exception_handler(ArtifactInvalid)
     async def artifact_invalid_exception_handler(request, exc: ArtifactInvalid):
-        log.warning(
+        request.state.artifact_unavailable = request.method in {"GET", "HEAD"}
+        level = logging.DEBUG if request.state.artifact_unavailable and os.environ.get("CANARY_ENV") != "production" else logging.WARNING
+        log.log(
+            level,
             "Stored artifact rejected name=%s action=rerun_%s reason=%s",
             exc.name,
             (exc.owner_stage or "owner").lower(),

@@ -1,72 +1,88 @@
 {
-  "selected_at": "2026-09-25",
-  "purpose": "Landing page A12: hero style loop, 'One story, three books' and the sample-to-book strip.",
+  "selected_at": "2026-09-27",
+  "purpose": "Landing page: hero style loop, 'Different stories', 'One story, three books' and the sample-to-book strip.",
   "status": "Real showcase output from the test account, labelled as showcase work on the page. Not customer work; no quality guarantee. English text.",
   "rules": "No credits, costs, free generations or development model routing appear in these assets.",
   "assets": [
     {
-      "file": "web/public/marketing/hero-flipbook.mp4",
-      "source": "showcase/video/out/scenewright-any-style-revised.mp4",
-      "derivation": "Promo 4.0–7.9 s (flipbook); crop 920x1080+980+0, 600 px wide. Transcoded from the original VP9 asset to H.264 (libx264, CRF 20, yuv420p, faststart), no audio, to resolve Chromium decode failure at 0.5 s.",
-      "source_work": "Dungeon Crawler Carl (dcc1-2 style proofs)",
-      "source_sha256": "446e16cbdc272339017c306bd94fe2cef83b184d8902117296785893a89a3b27",
-      "asset_sha256": "36a112d0c6b6ddc57ef642720d9f0350968394088db12cd09dbdc177b3736973"
+      "file": "web/public/marketing/masque-flipbook.mp4",
+      "source": "showcase/video/out/v3/landing-loop-web.mp4",
+      "derivation": "V3LandingLoop render (Remotion, 800x1000, 10 s), 600 px wide H.264, no audio, faststart",
+      "source_work": "The Masque of the Red Death (Poe, public domain) style proofs",
+      "source_sha256": "80f0b65905ab1b0479e8833d1564f7fb5b72c994afa02ef7a731162317b568e6",
+      "asset_sha256": "80f0b65905ab1b0479e8833d1564f7fb5b72c994afa02ef7a731162317b568e6"
     },
     {
-      "file": "web/public/marketing/hero-flipbook-poster.webp",
-      "source": "showcase/video/out/scenewright-any-style-revised.mp4",
-      "derivation": "Frame at 4.25 s, same crop, WebP q80",
-      "source_work": "Dungeon Crawler Carl (dcc1-2 style proof 6)",
-      "source_sha256": "446e16cbdc272339017c306bd94fe2cef83b184d8902117296785893a89a3b27",
-      "asset_sha256": "0a4559255339a293bf22f916fb584cdc9225fabae936aa5f31bfd670638ed53d"
+      "file": "web/public/marketing/masque-flipbook-poster.webp",
+      "source": "showcase/video/out/v3/landing-loop-poster.webp",
+      "derivation": "First loop frame, WebP",
+      "source_work": "The Masque of the Red Death (Poe, public domain)",
+      "source_sha256": "64c6bdbd7500321a409a32b6cd89a5e85bfce05bf449f501d74e7e8d0c75d8ac",
+      "asset_sha256": "64c6bdbd7500321a409a32b6cd89a5e85bfce05bf449f501d74e7e8d0c75d8ac"
+    },
+    {
+      "file": "web/public/marketing/cthulhu-page-40.webp",
+      "source": "showcase/books/00-the-call-of-cthulhu/ccf1a606bd1747c4864d8a4770000891/40.jpg",
+      "derivation": "Showcase edition page 40, integrated lettering, WebP q80",
+      "source_work": "The Call of Cthulhu (Lovecraft, public domain)",
+      "source_sha256": "de82b7d4fb6f2e7c6f1609cc87c6970c1c427f9e8e1d92e6e55170514c8a53a4",
+      "asset_sha256": "23ab8d49c2f0eaca2999ab23b5c0d3073ed9e8742751683df3516db5be8ae7da"
+    },
+    {
+      "file": "web/public/marketing/elm-and-keep-page-12.webp",
+      "source": "projects/947150d4-7d2f-4726-a018-5539f933ea56/elm-and-keep/finish/pages/page_012.jpg",
+      "derivation": "Finished page 12, editable lettering reviewed 2026-09-27, WebP q80",
+      "source_work": "Elm and Keep by @strnglft · CC0 1.0",
+      "source_sha256": "1fff11febcbd41f7a83f0abe7a5acb09c21cf0b69c114537d8beea56ac4540e0",
+      "asset_sha256": "f9403b0f47c99bf873ba72c9081325b4ce4fd7f94981b6c13aadc449726c4684"
     },
     {
       "file": "web/public/marketing/janitor-riso-page-01.webp",
       "source": "projects/947150d4-7d2f-4726-a018-5539f933ea56/site-30-s-janitor/finish/pages/page_001.jpg",
-      "derivation": "Finished page 1, integrated lettering, WebP q70",
+      "derivation": "Finished page 1 of the regenerated risograph edition (2026-09-27), integrated lettering, WebP q80",
       "source_work": "Site-30's Janitor · CC BY-SA 3.0",
-      "source_sha256": "6b4c4dd02a9c99bfb9bc6d26e95f5e040e0cdaf52de0a03877905396d958bb40",
-      "asset_sha256": "7706b423ea43b1339ae6428820f4aa2dd02449503e7fa00484a6326b8358e98b"
+      "source_sha256": "ca2e83de3ed7008084d8062cddcb305e98913975cd724a31845229880cd41f27",
+      "asset_sha256": "3446c9a47e420a7062dffb95de44bca3301f5263fdfee4e1565f9bbb5b925dcf"
     },
     {
       "file": "web/public/marketing/janitor-gouache-page-01.webp",
       "source": "projects/947150d4-7d2f-4726-a018-5539f933ea56/site-30-s-janitor-cc/finish/pages/page_001.jpg",
-      "derivation": "Finished page 1, editable lettering reviewed 2026-09-25, WebP q80",
+      "derivation": "Finished page 1, editable lettering reviewed 2026-09-26, WebP q80",
       "source_work": "Site-30's Janitor · CC BY-SA 3.0",
-      "source_sha256": "38c7084b9f555dea03aa929c3d8cd4d14663f5f1c56b8196bea8a57f1f5f1441",
-      "asset_sha256": "d0f9b69acf574061187cf9f8dcdd42be741d17f045cc2e0dc5dd5e957af0d6f9"
+      "source_sha256": "f35232433d351f38e0091b84b47fe59173b894f82f8643e847da92b7542c41b7",
+      "asset_sha256": "bdce11d9d980661deb433053efb764b9d022109f64ebd53b002e93b852752ffd"
     },
     {
       "file": "web/public/marketing/janitor-oil-page-01.webp",
       "source": "projects/947150d4-7d2f-4726-a018-5539f933ea56/site-30-s-janitor-cc-2/finish/pages/page_001.jpg",
       "derivation": "Finished page 1, integrated lettering, WebP q80",
       "source_work": "Site-30's Janitor · CC BY-SA 3.0",
-      "source_sha256": "51c28cc601e1a863b65519d7b0bc015fed35f22c98a471f0b67ede9815c7ba18",
-      "asset_sha256": "cae8f2b89515c52ee8dea3ef24d20b91f663a95f2716bc7ba775652ca0838008"
+      "source_sha256": "de2df4950bfc8fb308c9d1ee1b327c31cca384240db790265dff28275ea56d6e",
+      "asset_sha256": "d45dcb042646fb0fe79aaf443ca4d33a28df77aaae6b9f03395169d58ead5a0a"
     },
     {
       "file": "web/public/marketing/kaitlin-page-01.webp",
       "source": "projects/947150d4-7d2f-4726-a018-5539f933ea56/kaitlin-out-of-space/finish/pages/page_001.jpg",
-      "derivation": "Finished page 1, editable lettering, WebP q80",
-      "source_work": "Kaitlin Out of Space · CC0 1.0",
-      "source_sha256": "f8a944723146cabebea276936bd4960bdd31223302fc94687bc864ced34b238f",
-      "asset_sha256": "03edefcc49426745bd6f950f76e383f20cec767f7617870b272780ec6f70f3e9"
+      "derivation": "Finished page 1 of the regenerated edition (2026-09-27), editable lettering, WebP q80",
+      "source_work": "Kaitlin Out of Space by Krishan Coupland · CC0",
+      "source_sha256": "95fe88cec683b96121328fbed4d2e92d83341408c91cf12e467de78a3f1c8198",
+      "asset_sha256": "c6513704eb4d8b8b53a923623a72d705e51b5c8e4bb126078ebbf3709644a970"
     },
     {
-      "file": "web/public/marketing/kaitlin-page-11.webp",
-      "source": "projects/947150d4-7d2f-4726-a018-5539f933ea56/kaitlin-out-of-space/finish/pages/page_011.jpg",
-      "derivation": "Finished page 11, editable lettering, WebP q80",
-      "source_work": "Kaitlin Out of Space · CC0 1.0",
-      "source_sha256": "735d2a525a1b70a23a1a9c690c90d21113be5574258f83c9215afbf9e6ee15fa",
-      "asset_sha256": "2e218242c8cfbda5d2d3ed01c73a62f81d311547fe260a8612135ff969759747"
+      "file": "web/public/marketing/kaitlin-page-12.webp",
+      "source": "projects/947150d4-7d2f-4726-a018-5539f933ea56/kaitlin-out-of-space/finish/pages/page_012.jpg",
+      "derivation": "Finished page 12 of the regenerated edition (2026-09-27), editable lettering, WebP q80",
+      "source_work": "Kaitlin Out of Space by Krishan Coupland · CC0",
+      "source_sha256": "a1c72bc54c905ccd2a83e083a6215207e6fcba292f440f526ca71cddda95f1b1",
+      "asset_sha256": "5373cd06fcf8d8a454bae0d3bf2296914f78185eb02192a5e4d3f5763667c97c"
     },
     {
-      "file": "web/public/marketing/kaitlin-page-41.webp",
-      "source": "projects/947150d4-7d2f-4726-a018-5539f933ea56/kaitlin-out-of-space/finish/pages/page_041.jpg",
-      "derivation": "Finished page 41, editable lettering, WebP q80",
-      "source_work": "Kaitlin Out of Space · CC0 1.0",
-      "source_sha256": "04fe0622137f02bc2bff66fc1b38d1beaf107c44ce14f66ecb20bc6eb43256d7",
-      "asset_sha256": "03eeb20c2d25c91c601b186da81d223d9cc8b1428a822215c387ea3495074d2b"
+      "file": "web/public/marketing/kaitlin-page-34.webp",
+      "source": "projects/947150d4-7d2f-4726-a018-5539f933ea56/kaitlin-out-of-space/finish/pages/page_034.jpg",
+      "derivation": "Finished page 34 of the regenerated edition (2026-09-27), editable lettering, WebP q80",
+      "source_work": "Kaitlin Out of Space by Krishan Coupland · CC0",
+      "source_sha256": "5083bd36bd1dbdb2909ce93d24d38a733bf48abecbbc1a528920a69169ccc832",
+      "asset_sha256": "fc81c472609a52707e50a3f7c697263b6199268b7c7a2219e29539f759660e7d"
     }
   ],
   "known_limits": [

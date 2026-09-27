@@ -338,7 +338,12 @@ def _prompt(context):
         "absolute page numbers into zero-padded page IDs, never window-relative "
         "numbers. Review other pages in their own windows. In plan review, assess "
         "the actual "
-        "panel actions and words, not only the claimed rhythm. Findings must cite supplied "
+        "panel actions and words, not only the claimed rhythm. Check for unexplained setting "
+        "changes or lost physical relationships in aftermath panels. Compare canonical staging "
+        "in layout_intent with earlier events: a room mentioned in dialogue is not a scene "
+        "change, and an attached or penetrating object must retain its contact, orientation "
+        "and support until an event changes them. Do not invent missing geometry or demand "
+        "that a close-up show the environment. Findings must cite supplied "
         "beat/page/source IDs and explain the specific contradiction or missing information "
         "and a repair. Set repair_stage to adapt when the canonical story/words need "
         "changing, or plan when only allocation/staging needs changing. Adapt findings "
@@ -460,6 +465,7 @@ def _passage_texts(window: dict) -> dict[str, list[str]]:
     for page in window.get("pages", []):
         texts[f"page_{page['page_number']:03d}"] = [
             page.get("rhythm_intent", ""),
+            page.get("layout_intent", ""),
             *(text for panel in page.get("content", []) for text in [
                 panel.get("visual_intent", ""), panel.get("continuity_intent", ""),
                 *(i["text"] for i in panel.get("lettering", [])),

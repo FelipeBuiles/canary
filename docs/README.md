@@ -62,14 +62,13 @@ retained as current reference.
 ## Active future work
 
 - [Launch analytics and learning](research/2026-09-26-launch-learning-system.md):
-  proposed event contracts, managed analytics, private feedback, and weekly
-  learning workflow, with current repository evidence and vendor research.
+  research behind the implemented event contracts, feedback, and learning workflow.
+  See the current PostHog operating guide above for activation status.
 - [PostHog single-vendor assessment](research/2026-09-26-posthog-single-vendor.md):
-  current preferred consolidation proposal, alpha tracing limitations, costs,
-  and the integration proof required before replacing Sentry and Langfuse.
+  decision history, tracing limitations, and costs behind the completed consolidation.
 - [Telemetry and tracing simplification](research/2026-09-26-observability-simplification.md):
-  companion proposal to consolidate production debugging, connect durable job
-  traces, and retire duplicated local telemetry while preserving recovery data.
+  design rationale for unified production debugging and durable-job traces,
+  while preserving first-party recovery data.
 - [Self-service launch strategy](proposals/self-service-launch.md): September 9
   commercial direction, independent-use gates and automation priorities.
 - [First-scene campaign kit](proposals/first-scene-campaign.md): prepared copy,

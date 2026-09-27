@@ -411,6 +411,28 @@ def test_published_languages_stay_frozen_until_republished(hybrid):
     assert client.get(updated["pages"][0]["url"]).content != before
 
 
+def test_showcase_packages_hybrid_languages(hybrid):
+    import runpy
+    from pathlib import Path
+    from novel_to_comic.server import showcase, publications as store
+    from novel_to_comic.state import save_state
+
+    client, artifacts = hybrid
+    save_state(client.app.dependency_overrides[get_project]()[2], artifacts.project_dir)
+    letter(artifacts, {"source": "The door opened.", "es": "La puerta se abrió.", "fr": LONG})
+    prepare = runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts" / "prepare_showcase.py"))["prepare"]
+    book = prepare(artifacts.project_dir, showcase.root() / "01-hybrid", store.PublicationInput(title="Hybrid", author="Author"))
+    assert book.locale == "source"
+    assert [item.locale for item in book.translations] == ["es"]
+    manifest = (showcase.root() / "01-hybrid" / "book.json").read_text()
+    assert "unpublished_locales" not in manifest and "/api/" not in manifest
+    public = client.get(f"/api/public/books/{book.id}").json()
+    spanish = public["translations"][0]["pages"][0]["url"]
+    assert spanish == f"/api/public/books/{book.id}/{book.version}/locales/es/pages/1"
+    assert client.get(spanish).status_code == 200
+    assert client.get(spanish).content != client.get(public["pages"][0]["url"]).content
+
+
 def test_baked_editions_publish_without_languages(setup):
     client, _target = setup
     book = publish(client)

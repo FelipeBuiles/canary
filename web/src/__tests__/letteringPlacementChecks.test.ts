@@ -89,8 +89,8 @@ describe("placement checks from a page read", () => {
 
   it("keeps parity with the seeding rules in placement.py", () => {
     // The same literals are asserted in test_lettering_placement.py.
-    expect(tailTowardHead({ x: .05, y: .03, width: .2, height: .08 }, { x: .2, y: .2, width: .1, height: .12 })).toEqual({ x: .2, y: .2 });
-    expect(tailTowardHead({ x: .15, y: .15, width: .3, height: .3 }, { x: .2, y: .2, width: .1, height: .12 })).toEqual({ x: .25, y: .26 });
+    expect(tailTowardHead({ x: .05, y: .03, width: .2, height: .08 }, { x: .2, y: .2, width: .1, height: .12 })).toEqual({ x: .25, y: .2864 });
+    expect(tailTowardHead({ x: .15, y: .15, width: .3, height: .3 }, { x: .2, y: .2, width: .1, height: .12 })).toEqual({ x: .25, y: .2864 });
     const cleared = clearOfHeads({ x: .18, y: .2, width: .2, height: .1 }, [{ x: .2, y: .2, width: .1, height: .12 }], { x: .03, y: .024, width: .94, height: .452 })!;
     expect(cleared.x).toBeCloseTo(.18);
     expect(cleared.y).toBeCloseTo(.088);  // Above the face beats the longer step to its right.

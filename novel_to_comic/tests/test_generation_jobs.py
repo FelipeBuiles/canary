@@ -103,7 +103,9 @@ def test_generation_job_payload_classifies_provider_block():
     assert payload["classification"] == "provider_blocked"
     assert payload["user_message"] == (
         "The image provider declined this scene but did not say which detail "
-        "caused it. Your work is unchanged."
+        "caused it. Your work is unchanged. Review the whole page and try a simpler, "
+        "more specific change. The provider may be reacting to existing page content, "
+        "not just your note."
     )
     assert payload["recoverable"] is True
 
