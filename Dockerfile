@@ -10,9 +10,11 @@
 FROM node:24.21.0-bookworm-slim AS frontend
 # jsdom's real canvas peer needs these when no prebuilt exists (Linux ARM64).
 # They stay in the frontend builder; the final Python image copies only dist.
+# PostHog's source-map CLI needs the system CA bundle for HTTPS uploads.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 make g++ pkg-config libcairo2-dev libpango1.0-dev \
+    ca-certificates python3 make g++ pkg-config libcairo2-dev libpango1.0-dev \
     libjpeg-dev libgif-dev librsvg2-dev \
+    && test -s /etc/ssl/certs/ca-certificates.crt \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/web
 ARG CANARY_VERSION=unknown
