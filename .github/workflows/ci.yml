@@ -36,12 +36,12 @@ jobs:
           enable-cache: true
           cache-dependency-glob: novel_to_comic/uv.lock
       - name: Sync dependencies
-        # Include actual optional production telemetry and web integrations.
-        run: uv sync --locked --extra web --extra dev --extra otel
+        # The web extra includes production telemetry integrations.
+        run: uv sync --locked --extra web --extra dev
       - name: Check locked production dependencies
         run: |
           uv pip check
-          uv export --locked --extra web --extra otel --no-dev --no-emit-project > /tmp/app-requirements.txt
+          uv export --locked --extra web --no-dev --no-emit-project > /tmp/app-requirements.txt
           uvx pip-audit==2.10.1 -r /tmp/app-requirements.txt --no-deps --disable-pip
       - name: Install Playwright Chromium
         run: uv run playwright install --with-deps chromium
