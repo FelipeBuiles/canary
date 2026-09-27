@@ -8,7 +8,7 @@ import { AnnotationEditor } from "../components/pages/AnnotationEditor";
 import { loadRevisionDraft, saveRevisionDraft } from "../api/pageRevisions";
 import type { PageCorrectionAnnotation, PageCorrectionBody, PageCorrectionPreview } from "../api/pages";
 
-const mocks = vi.hoisted(() => ({ preview: vi.fn(), submit: vi.fn() }));
+const mocks = vi.hoisted(() => ({ preview: vi.fn(), submit: vi.fn(), jobStatus: "queued", refresh: vi.fn(), jobError: false, jobMissing: false }));
 vi.mock("../api/pageRevisions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/pageRevisions")>();
   const { useState } = await import("react");
@@ -34,6 +34,7 @@ vi.mock("../api/pageRevisions", async (importOriginal) => {
       mutate: (args: unknown, options: { onSuccess: (result: { job: { id: string } }) => void }) => {
         mocks.submit(args); options.onSuccess({ job: { id: "queued-job" } });
       } }),
+    useSubmittedCorrectionJob: () => ({ data: { jobs: mocks.jobMissing ? [] : [{ id: "queued-job", status: mocks.jobStatus }] }, error: mocks.jobError ? new Error("offline") : null, refetch: mocks.refresh, isFetching: false }),
     useRenderCorrection: () => ({ data: null, isLoading: false, error: null }),
   };
 });
@@ -44,15 +45,16 @@ function saved(annotations: PageCorrectionAnnotation[], instruction = "Make his 
     changes: [{ id: "request-1", instruction, selected: true, annotations }],
     note: "", contextSourceUnitIds: [], updatedAt: new Date().toISOString() });
 }
-function renderDraft() {
+function renderDraft(openEditing = true) {
   render(<QueryClientProvider client={new QueryClient()}><I18nProvider>
     <RevisionDraft project="demo" pageNumber={1} {...target} comicPageSha256={"a".repeat(64)} compareRevision={null}
       issues={[]} seeds={[]} onSeedsConsumed={vi.fn()} onDraftKeysChange={vi.fn()} onJobQueued={vi.fn()} />
   </I18nProvider></QueryClientProvider>);
-  fireEvent.click(screen.getByRole("button", { name: /make changes/i }));
+  const edit = screen.queryByRole("button", { name: /make changes/i });
+  if (edit && openEditing) fireEvent.click(edit);
 }
 
-beforeEach(() => { window.localStorage.clear(); vi.clearAllMocks(); });
+beforeEach(() => { window.localStorage.clear(); vi.clearAllMocks(); mocks.jobStatus = "queued"; mocks.jobError = false; mocks.jobMissing = false; });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("text-first page correction", () => {
@@ -67,7 +69,61 @@ describe("text-first page correction", () => {
     expect(mocks.submit).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Generate revision" }));
     expect(mocks.submit).toHaveBeenCalledWith(args);
+    expect(loadRevisionDraft("demo", 1, target)?.submittedJobId).toBe("queued-job");
+  });
+  it("retries a failed queued correction with the same change identity after reopening", () => {
+    mocks.jobStatus = "failed";
+    saved([]);
+    const draft = loadRevisionDraft("demo", 1, target)!;
+    saveRevisionDraft({ ...draft, submittedJobId: "queued-job" });
+    renderDraft(false);
+    fireEvent.click(screen.getByRole("button", { name: "MAKE CHANGES" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    expect(mocks.preview.mock.calls[0][0].body.changes[0].id).toBe("request-1");
+    expect(mocks.submit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Generate revision" }));
+    expect(mocks.submit.mock.calls[0][0].body.changes[0].id).toBe("request-1");
+    mocks.jobStatus = "queued";
+  });
+  it("restores Make changes on a completed request when returning to its original version", () => {
+    mocks.jobStatus = "complete";
+    saved([]);
+    saveRevisionDraft({ ...loadRevisionDraft("demo", 1, target)!, submittedJobId: "queued-job" });
+    renderDraft(false);
+    expect(screen.queryByText(/correction.*queued/i)).toBeNull();
     expect(loadRevisionDraft("demo", 1, target)).toBeNull();
+    const edit = screen.getByRole("button", { name: "MAKE CHANGES" });
+    expect(edit).toHaveProperty("disabled", false);
+    fireEvent.click(edit);
+    expect(screen.getByLabelText("What would you like to change?")).toHaveProperty("value", "");
+    fireEvent.change(screen.getByLabelText("What would you like to change?"), { target: { value: "Bare tip on the right" } });
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    expect(mocks.preview.mock.calls[0][0].body.changes).toEqual([expect.objectContaining({ instruction: "Bare tip on the right" })]);
+    expect(mocks.preview.mock.calls[0][0].body.changes[0].id).not.toBe("request-1");
+    expect(loadRevisionDraft("demo", 1, target)?.submittedJobId).toBeUndefined();
+    expect(mocks.submit).not.toHaveBeenCalled();
+  });
+  it.each(["queued", "running"])("keeps Make changes visible while %s and explains that no action is needed", (status) => {
+    mocks.jobStatus = status;
+    saved([]);
+    saveRevisionDraft({ ...loadRevisionDraft("demo", 1, target)!, submittedJobId: "queued-job" });
+    renderDraft(false);
+    expect(screen.getByRole("button", { name: "MAKE CHANGES" })).toHaveProperty("disabled", true);
+    expect(screen.getByText(status === "queued" ? "Your correction is waiting to start." : "Drawing your new version…")).toBeTruthy();
+    expect(screen.getByText(/You can close this page/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Check progress" }));
+    expect(mocks.refresh).toHaveBeenCalledOnce();
+    expect(mocks.submit).not.toHaveBeenCalled();
+  });
+  it.each(["missing", "error"])("does not pretend an unknown correction is queued: %s", (state) => {
+    mocks.jobMissing = state === "missing";
+    mocks.jobError = state === "error";
+    saved([]);
+    saveRevisionDraft({ ...loadRevisionDraft("demo", 1, target)!, submittedJobId: "queued-job" });
+    renderDraft(false);
+    expect(screen.getByText("We couldn’t confirm the correction’s progress.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "MAKE CHANGES" })).toHaveProperty("disabled", true);
+    expect(loadRevisionDraft("demo", 1, target)?.changes[0].id).toBe("request-1");
   });
   it("accepts the screenshot's saved marks without separate notes, preserving the full parent request", () => {
     saved([

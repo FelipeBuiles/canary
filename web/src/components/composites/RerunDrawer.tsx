@@ -1,6 +1,7 @@
 import { useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
+import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
 import { CreditAmount } from "../ui/CreditAmount";
 import { Button } from "../ui/Button";
@@ -36,6 +37,8 @@ export function RerunDrawer({
   disabled = false,
   extraBody,
 }: RerunDrawerProps) {
+  const { t } = useI18n();
+  const archiveCount = cost?.archived_page_count;
   const drawerRef = useRef<HTMLDivElement | null>(null);
 
   useDialogFocus(drawerRef, { enabled: open, onClose });
@@ -97,8 +100,9 @@ export function RerunDrawer({
             id="rerun-drawer-body"
             className="mt-4 text-[0.9rem] leading-6 text-ink-fade"
           >
-            This will clear all downstream work and kick off a fresh run.
-            Outputs below will be lost and need to be regenerated.
+            {archiveCount !== undefined
+              ? t("Restarting Plan will archive {count} drawn pages, their lettering, and finished books. The previous artwork stays available under Archived artwork in Pages. New pages must be drawn from the new plan.", { count: archiveCount })
+              : t("This will clear all downstream work and kick off a fresh run. Outputs below will be lost and need to be regenerated.")}
           </p>
 
           <div className="mt-4 border-[2px] border-warn-orange/35 bg-bristol p-4">

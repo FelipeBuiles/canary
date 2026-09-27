@@ -24,7 +24,7 @@ def _ack(ids):
 def wire_event(row):
     properties = safe_fields({**row.get("properties_json", {}),
         "project_id": row.get("project_id"), "job_id": row.get("job_id"),
-        "request_id": row.get("request_id"), "source": row.get("source")})
+        "request_id": row.get("request_id"), "event_origin": row.get("source")})
     properties["$insert_id"] = row["id"]
     event = _before_send({"event": row["event_name"], "properties": properties})
     if event is None:

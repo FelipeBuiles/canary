@@ -100,6 +100,23 @@ class _AppearanceStateBinding(BaseModel):
     state_id: str = Field(min_length=1)
 
 
+class _PanelSetting(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    location_entity_id: str | None
+    environment_visible: bool
+    direction: str = Field(min_length=1)
+
+
+class _PhysicalRelationship(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    entity_ids: tuple[str, ...] = Field(min_length=1)
+    contact: str = Field(min_length=1)
+    orientation: str = Field(min_length=1)
+    support: str = Field(min_length=1)
+
+
 class _PanelCompositionDraft(BaseModel):
     """Authored visual decisions, independent of locked-copy allocation."""
 
@@ -120,6 +137,10 @@ class _PanelCompositionDraft(BaseModel):
     ] = "standard"
     visual_intent: str = Field(min_length=1)
     continuity_intent: str = ""
+    # None is used only when presenting an accepted canonical page as input
+    # for replan; its staging is already carried verbatim in layout_intent.
+    setting: _PanelSetting | None
+    physical_relationships: tuple[_PhysicalRelationship, ...]
     entity_ids: tuple[str, ...] = ()
     appearance_states: tuple[_AppearanceStateBinding, ...] = ()
     # Required keys: the writer must decide the shot and every visible
@@ -212,11 +233,16 @@ def _plan_response_schema(
     schema = (_BookDetailDraft if target_pages is not None else _BookPlanDraft).model_json_schema()
     panel_type = "_PanelCompositionDraft" if target_pages is not None else "_PageContentDraft"
     content = schema["$defs"][panel_type]["properties"]
+    content["setting"] = {"$ref": "#/$defs/_PanelSetting"}
     entities = sorted({r.entity_id for r in references.references})
     if entities:
         content["entity_ids"]["items"] = {"type": "string", "enum": entities}
     else:
         content["entity_ids"]["maxItems"] = 0
+    locations = sorted({r.entity_id for r in references.references if r.kind == "location"})
+    schema["$defs"]["_PanelSetting"]["properties"]["location_entity_id"] = {
+        "anyOf": [{"type": "string", "enum": locations}, {"type": "null"}]
+    } if locations else {"type": "null"}
     states: dict[str, list[str]] = {}
     for entity_id, state_id in sorted(_approved_state_pairs(references)):
         states.setdefault(entity_id, []).append(state_id)
@@ -403,7 +429,26 @@ _SEMANTIC_PAGE_CONTRACT = (
     "start and resulting end scene, actor staging, and important held-object ownership, "
     "using only the ordered Adapt summaries and transitions. Carry completed arrivals, "
     "departures, and transfers forward across panels and pages until changed; do not "
-    "re-enact a completed entrance. Do not invent positions, possessions, or transitions "
+    "re-enact a completed entrance. Carry the established physical setting forward until "
+    "an actual scene change; dialogue mentioning another room does not relocate the scene. "
+    "Name that setting in continuity_intent and cite its approved location entity in "
+    "entity_ids wherever the environment is visible, including reaction and aftermath panels. "
+    "Reference availability alone does not make a location or prop part of the scene. "
+    "For ongoing physical attachments, describe what connects to what, the contact point, "
+    "object orientation and what supports the body or object; carry that relationship "
+    "into subsequent panels instead of merely naming the attached objects. "
+    "Explicitly author setting for EVERY panel: location_entity_id is the approved location "
+    "where the action happens (null only when no approved location applies), environment_visible "
+    "says whether any of that environment is drawn, and direction explains the setting or why "
+    "it is not shown. A close-up can hide the room without relocating the scene. "
+    "Author physical_relationships for held, attached, supported or penetrating objects, "
+    "including unchanged aftermath: entity_ids names all visible participants, contact names "
+    "the exact surfaces/parts that meet, orientation distinguishes both ends and their direction, "
+    "and support states what bears the weight or fixes the object/body in place. Use [] only "
+    "when no such relationship is visible. For penetration distinguish the penetrating shaft "
+    "from a head, handle or decoration and specify the exposed end; do not substitute resting "
+    "on an object for being fixed by it. Preserve source restraint and avoid extra wound detail. "
+    "Do not invent positions, possessions, or transitions "
     "where the source is silent; leave unestablished composition to Draw. Never use "
     "previous generated pixels as continuity authority. "
     "appearance_states is an ordered list of bindings, each with entity_id and "
@@ -650,10 +695,17 @@ def _detail_batch_prompt(
     ]
     # Only prune when every target beat has an authored entity scope. Empty
     # scopes need the complete inventory so a visual-only scene is not starved.
+    # Beat entities often name only actors. Keep location/prop descriptions
+    # available for the planner to bind the established environment and objects;
+    # this does not automatically add them to panels or Draw image requests.
     scoped = planning["beats"]
     entity_scope = ({entity_id for beat in scoped for entity_id in beat["entity_ids"]}
                     if scoped and all(beat["entity_ids"] for beat in scoped) else None)
     if entity_scope is not None:
+        entity_scope.update(
+            reference.entity_id for reference in references.references
+            if reference.kind in {"location", "prop"}
+        )
         for beat in scoped:
             entity_scope.update(change["entity_id"] for change in beat["appearance_changes"])
             entity_scope.update(item["speaker_entity_id"] for item in beat["lettering"] if item.get("speaker_entity_id"))
@@ -1963,10 +2015,31 @@ def _reference_authority_failures(
     """Check raw batches and canonical pages with actionable panel locations."""
     known_entities = {r.entity_id for r in references.references}
     known_states = _approved_state_pairs(references)
+    locations = {r.entity_id for r in references.references if r.kind == "location"}
     failures = []
     for index, page in enumerate(pages, 1):
         number = page.page_number if page_number_offset is None else page_number_offset + index
         for order, content in enumerate(page.content, 1):
+            if isinstance(content, _PanelCompositionDraft):
+                location = content.setting.location_entity_id if content.setting else None
+                participants = {entity for relationship in content.physical_relationships
+                                for entity in relationship.entity_ids}
+                errors = []
+                if content.setting is None:
+                    errors.append("Author an explicit setting decision for this panel.")
+                if location is not None and location not in locations:
+                    errors.append(f"Setting {location!r} must cite an approved location.")
+                if content.setting and content.setting.environment_visible and location is not None and location not in content.entity_ids:
+                    errors.append(f"Visible setting {location!r} must be included in entity_ids.")
+                if participants - set(content.entity_ids):
+                    errors.append(f"Physical relationship participants must be visible entity_ids: {sorted(participants - set(content.entity_ids))}.")
+                if errors:
+                    content_id = f"page_{number:03d}_content_{order:03d}"
+                    failures.append(InvariantFailure(
+                        id=f"plan_failure_staging_{content_id}", owner_stage="plan", code="staging_authority",
+                        message="Panel staging must bind its visible setting and physical participants.",
+                        artifact_ids=[content_id], evidence=errors,
+                    ))
             states = (content.appearance_states if isinstance(content, PageContent) else
                       {b.entity_id: b.state_id for b in content.appearance_states})
             unknown_entities = sorted(set(content.entity_ids) - known_entities)
@@ -2190,7 +2263,7 @@ def _canonical_pages(
                     states.setdefault(entity_id, active_state_by_entity[entity_id])
             unapproved_changes.extend(unapproved)
             payload = content.model_dump(
-                exclude={"lettering_ids", "lettering_reservations", "entity_ids", "appearance_states", "continuity_intent"}
+                exclude={"lettering_ids", "lettering_reservations", "entity_ids", "appearance_states", "continuity_intent", "setting", "physical_relationships"}
             )
             content_items.append(
                 PageContent(
@@ -2205,9 +2278,18 @@ def _canonical_pages(
                 )
             )
         continuity = [
-            f"Panel {content.order}: {content.continuity_intent}"
+            f"Panel {content.order}: {content.continuity_intent}\n"
+            f"Setting: {content.setting.direction} "
+            f"(location: {content.setting.location_entity_id or 'no approved location'}; "
+            f"environment visible: {content.setting.environment_visible})."
+            + "".join(
+                f"\nPhysical relationship ({', '.join(relationship.entity_ids)}): "
+                f"contact: {relationship.contact}; orientation: {relationship.orientation}; "
+                f"support: {relationship.support}."
+                for relationship in content.physical_relationships
+            )
             for content in sorted(page.content, key=lambda content: content.order)
-            if content.continuity_intent.strip()
+            if content.setting is not None
         ]
         layout_intent = page.layout_intent
         if continuity:
@@ -2997,6 +3079,8 @@ def _page_draft(page: ComicPage) -> _PageDraft:
                 beat_ids=content.beat_ids,
                 panel_role=content.panel_role,
                 visual_intent=content.visual_intent,
+                setting=None,
+                physical_relationships=(),
                 entity_ids=content.entity_ids,
                 appearance_states=tuple(
                     _AppearanceStateBinding(entity_id=entity_id, state_id=state_id)

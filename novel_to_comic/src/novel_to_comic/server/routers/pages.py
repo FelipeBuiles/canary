@@ -108,10 +108,8 @@ def _lettering_placement_review_needed(target, number, hybrid: bool) -> bool:
 
 
 def _latest_provenance(target: TargetArtifacts, page_number: int):
-    revisions = target.provenance_revisions(page_number)
-    if not revisions:
-        return None
-    return target.read_provenance(page_number, revisions[-1])
+    revision = target.active_render_revision(page_number)
+    return target.read_provenance(page_number, revision) if revision is not None else None
 
 
 def _issues(target: TargetArtifacts, page_number: int):
@@ -402,10 +400,9 @@ async def enqueue_all_undrawn_pages(
 def list_pages(project=Depends(get_project)):
     project_dir, _config, _state = project
     target = TargetArtifacts(project_dir)
-    try:
-        plan = target.read_plan()
-    except ArtifactMissing as exc:
-        raise HTTPException(404, str(exc)) from exc
+    # Keep the typed error so the shared handler recognizes an expected
+    # not-yet-generated artifact during stage loading/recovery.
+    plan = target.read_plan()
     _sync_draw_progress(project_dir)
     hybrid = _hybrid_lettering(target)
     return {
@@ -439,6 +436,7 @@ def get_page(page_number: int, project=Depends(get_project)):
     revisions = target.provenance_revisions(page_number)
     return {
         "page": page,
+        "active_render_revision": target.active_render_revision(page_number),
         "renders": [
             target.read_provenance(page_number, revision) for revision in revisions
         ],
@@ -451,6 +449,43 @@ def get_page(page_number: int, project=Depends(get_project)):
         "failure": _page_failure(target, page_number),
         "analysis_recovery": _analysis_recovery(target, page_number),
     }
+
+
+class PageRenderSelect(BaseModel):
+    expected_revision: int = Field(ge=1)
+
+
+@router.post("/pages/{page_number}/renders/{revision}/select")
+def select_page_render(
+    page_number: int, revision: int, body: PageRenderSelect, request: Request,
+    project_id: str, project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    """Choose saved artwork for reading, corrections and export; never generates."""
+    from novel_to_comic.artifact_lock import production_lock
+
+    project_dir, _config, _state = project
+    pkey = project_key(user_id, project_id)
+    with production_lock(project_dir):
+        running = getattr(request.app.state, "running_tasks", {}).get(pkey)
+        if running is not None and not running.done():
+            raise HTTPException(409, "Wait for the running stage before selecting a version.")
+        jobs = getattr(request.app.state, "generation_jobs", {}).values()
+        decision, _ = _select_active_correction_job(
+            jobs, pkey=pkey, page_number=page_number, request_sha256="",
+        )
+        if decision != "free":
+            raise HTTPException(409, "Wait for this page's draw job before selecting a version.")
+        target = TargetArtifacts(project_dir)
+        try:
+            if target.resumable_generation_request(page_number) is not None:
+                raise HTTPException(409, "Recover the unfinished page generation before selecting a version.")
+            target.select_render(page_number, revision, expected_revision=body.expected_revision)
+        except ArtifactMissing as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except (ArtifactInvalid, ValueError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+    return {"page_number": page_number, "active_render_revision": revision}
 
 
 @router.get("/pages/{page_number}/source")
@@ -589,7 +624,8 @@ def get_page_render_preview(
 
 
 @router.get("/pages/generate/estimate")
-def estimate_remaining_page_generation(project=Depends(get_project)):
+def estimate_remaining_page_generation(project=Depends(get_project), request: Request = None,
+                                      project_id: str = "", user_id: str = Depends(get_current_user)):
     """Quote only undrawn pages, rounding each independent credit hold."""
     from novel_to_comic.page_drawing import estimate_draw_api_cost
     from ..credits import credit_estimate_for_provider_cost
@@ -610,6 +646,12 @@ def estimate_remaining_page_generation(project=Depends(get_project)):
             estimate["reserved_credits"] += part["reserved_credits"]
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
+    if request is not None:
+        from .projects import needs_initial_project_cover, _project_cover_credit_estimate
+        if needs_initial_project_cover(request, project_key(user_id, project_id), project_dir):
+            cover = _project_cover_credit_estimate(_config)
+            estimate["estimate_credits"] += cover["estimate_credits"]
+            estimate["reserved_credits"] += cover["estimate_credits"]
     return dict(estimate)
 
 
@@ -741,6 +783,9 @@ def generate_page(
 class PageCheckRecovery(BaseModel):
     allow_paid: bool = False
     renders: dict[int, str] = Field(default_factory=dict)
+    # A separately confirmed retry is a new action, not a replay of the
+    # interrupted batch. Admission still deduplicates each individual attempt.
+    recovery_attempt_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 @router.get("/pages/checks/estimate")
@@ -931,7 +976,7 @@ def accept_page_issue(
 
 
 @router.post("/pages/{page_number}/issues/{issue_id}/dismiss")
-def dismiss_automated_page_issue(
+def dismiss_recorded_page_issue(
     page_number: int,
     issue_id: str,
     project=Depends(get_project),
@@ -942,7 +987,9 @@ def dismiss_automated_page_issue(
             TargetArtifacts(project_dir),
             issue_id=issue_id,
             page_number=page_number,
-            reason="Dismissed after visual review as a validator false positive.",
+            reason=("Author withdrew this manual correction request; no visual fix is claimed."
+                    if _find_issue(TargetArtifacts(project_dir), page_number, issue_id).issue_type == "manual_change"
+                    else "Dismissed after visual review as a validator false positive."),
         )
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc

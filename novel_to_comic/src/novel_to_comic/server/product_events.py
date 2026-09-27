@@ -87,7 +87,7 @@ def record_product_event(
 ) -> None:
     """Validate and persist one product event; raises on invalid input/write."""
     clean = _clean_properties(event_name, properties or {}, source=source)
-    clean.update(schema_version=1, environment=os.environ.get("CANARY_ENV", "dev"), release=os.environ.get("CANARY_VERSION", "unknown"))
+    clean.update(schema_version=1, environment=os.environ.get("CANARY_ENV", "development"), release=os.environ.get("CANARY_VERSION", "unknown"))
     payload = {
         "id": str(uuid.uuid4()),
         "event_name": event_name,

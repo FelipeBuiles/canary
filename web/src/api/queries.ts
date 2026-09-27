@@ -197,8 +197,8 @@ export function useUpdateProjectConfig() {
 export function useRunPipeline() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ project, stage, rerun, retryFailed, queuePages }: { project: string; stage?: string; rerun?: boolean; retryFailed?: boolean; queuePages?: boolean }) =>
-      runPipeline(project, stage, rerun, retryFailed, queuePages),
+    mutationFn: ({ project, stage, rerun, retryFailed, queuePages, confirmedArchivePages }: { project: string; stage?: string; rerun?: boolean; retryFailed?: boolean; queuePages?: boolean; confirmedArchivePages?: number }) =>
+      runPipeline(project, stage, rerun, retryFailed, queuePages, confirmedArchivePages),
     // Admission can fail before any work starts. Keep the initiating component
     // mounted so its pending state and rejection remain visible; only server
     // status/SSE may switch the room to running.

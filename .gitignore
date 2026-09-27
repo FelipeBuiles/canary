@@ -170,14 +170,18 @@ $RECYCLE.BIN/
 *.orig
 *.rej
 docs/exports/
-# Showcase media and local tooling stay private; track only linked documentation.
+# Showcase media and local tooling stay private; track linked documentation and
+# the curated homepage catalogue, which ships in the image.
 showcase/*
 !showcase/books/
-showcase/books/*
-!showcase/books/README.md
+!showcase/FINDINGS-2026-09-26.md
+!showcase/marketing/
+showcase/marketing/*
+!showcase/marketing/copy-kit.md
 !showcase/video/
 showcase/video/*
 !showcase/video/EDIT.md
+!showcase/video/EDIT-v3.md
 work/
 
 # keep graph outputs, skip heavy/local-only files

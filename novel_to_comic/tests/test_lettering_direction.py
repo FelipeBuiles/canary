@@ -22,6 +22,8 @@ def _item(text, *, kind="dialogue", delivery="onscreen", speaker: str | None = "
     ('"Unit seven, respond," the voice crackled over the radio.', "radio"),
     ('"I can\'t... hold on," he gasped.', "weak"),
     ('"We should go," she said.', None),
+    ('"Stay there," a voice came from the intercom.', "radio"),
+    ('"Stay there," she said on her phone.', "radio"),
 ])
 def test_voice_comes_from_the_source_speech_tag(prose, voice):
     line = prose.split('"')[1]
@@ -112,3 +114,7 @@ def test_style_proofs_render_without_holding_the_project_lock(tmp_path, monkeypa
     data, identity = proof.render_style_proof(TargetArtifacts(tmp_path), service.preset_style(), buffer.getvalue())
     assert data == b"png" and held == [False]
     assert TargetArtifacts(tmp_path).lettering_proof_path(identity).read_bytes() == b"png"
+
+
+def test_offscreen_alone_does_not_imply_radio_or_whisper():
+    assert direction_for(_item("Stay there.", delivery="offscreen"), {}).voice is None

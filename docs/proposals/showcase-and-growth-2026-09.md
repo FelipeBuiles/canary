@@ -1,6 +1,6 @@
 # Scenewright showcase and growth strategy
 
-**Status: Proposed, September 26, 2026.** Supersedes the September 9 marketing proposals ([branding-and-marketing.md](branding-and-marketing.md), [first-scene-campaign.md](first-scene-campaign.md)) and the July pre-launch acquisition page. Operational launch gates in [launch-readiness.md](launch-readiness.md) still decide when paid traffic can start. Budgets, targets and dates below are proposals, not commitments.
+**Status: Proposed September 26, 2026; showcase publishing approved and done September 27.** Supersedes the September 9 marketing proposals ([branding-and-marketing.md](branding-and-marketing.md), [first-scene-campaign.md](first-scene-campaign.md)) and the July pre-launch acquisition page. Operational launch gates in [launch-readiness.md](launch-readiness.md) still decide when paid traffic can start. Budgets, targets and dates below are proposals, not commitments.
 
 ## The idea in one paragraph
 
@@ -44,14 +44,18 @@ Only public-domain works, openly licensed works (CC0, CC BY-SA with attribution)
 
 Each title becomes a free public edition in the reader, with a "made with Scenewright" end card that links to sign-up.
 
-| Title | Rights | Role in marketing |
-|---|---|---|
-| The Masque of the Red Death (Poe) | Public domain | October hero: the 26-look flipbook, the woodblock edition, a plain-words revision |
-| The Call of Cthulhu (Lovecraft) | Public domain | Finished-book payoff and public-reader demo; check captions for period language before featuring a page |
-| Kaitlin Out of Space (Coupland) | CC0 | Warm, bright literary sci-fi; the cast-continuity proof |
-| Site-30's Janitor (JanitorCakeworth) | CC BY-SA 3.0 | "Three books from one story" and editable-lettering voices. Pages 1–3 only in ads (later pages are gory); attribution on every use |
-| A fantasy title (proposed: *Elm and Keep*, CC0) | CC0 | Speaks directly to the largest author segment; nothing in the library is fantasy yet |
-| Seasonal classics: A Christmas Carol (December), a romance classic such as a Pride and Prejudice excerpt (February) | Public domain | Timely drops that search and social both reward |
+The homepage shelf is the operator-curated catalogue in `showcase/books/` (see its README); folder names set the order.
+
+| Title | Rights | Status (Sept 27) | Role in marketing | Pages cleared for paid ads |
+|---|---|---|---|---|
+| The Masque of the Red Death (Poe) | Public domain | On the shelf, 24 pages, woodblock print | October hero: the 26-look flipbook, the serialized edition, a plain-words revision | 3–12 (1–2 and 13–24 show blood or bodies) |
+| Kaitlin Out of Space (Coupland) | CC0 | On the shelf, 52 pages (regenerated Sept 27), editable lettering | Warm, bright literary sci-fi; the cast-continuity proof | All except 10 and 15 (undressing) |
+| Elm and Keep (@strnglft) | CC0 | On the shelf, 21 pages, editable lettering | The fantasy title for the largest author segment | All, after review |
+| Site-30's Janitor (JanitorCakeworth) | CC BY-SA 3.0 | On the shelf: the risograph edition (regenerated Sept 27, 8 pages plus credit page). The gouache and oil editions are retired to `showcase/retired-books/` | "Three books from one story" homepage strip (static pages from all three editions) and lettering voices; attribution on every use | Page 1 (page 2 has profanity; pages 3+ show blood) |
+| The Call of Cthulhu (Lovecraft) | Public domain | First on the shelf, 44 pages; page 40 (Cthulhu rising) features on the homepage | The flagship finished book: the strongest single demonstration of a whole illustrated novel | All; its period language is accepted as part of the text |
+| The Terror (Maupassant) | Public domain | On the shelf, 16 pages | Horror-month repost | Review before use |
+| The Legend of Sleepy Hollow (Irving) | Public domain | Not started | Horror-month drop for October 24 | Decide at review |
+| A Christmas Carol (Dickens); a romance classic excerpt for February | Public domain | Not started | Seasonal drops that search and social both reward | Decide at review |
 
 ### Formats that sell the product
 
@@ -67,12 +71,15 @@ Each title becomes a free public edition in the reader, with a "made with Scenew
 
 | Asset | Format | Where it runs |
 |---|---|---|
-| `V3Hero` · ~62 s | 1920 × 1080 | Landing page, YouTube, Product Hunt, pitches |
+| `V3Hero` · 66 s | 1920 × 1080 | Landing page, YouTube, Product Hunt, pitches |
 | `V3Ad30` · 30 s | 1920 × 1080 | YouTube in-stream, X, LinkedIn |
 | `V3Teaser916` · 15 s | 1080 × 1920 | Reels, TikTok, Shorts (layout avoids the bottom 17% and right-edge controls) |
 | `V3Teaser45` · 15 s | 1080 × 1350 | Instagram and Facebook feed |
 | `V3Bumper169` / `V3Bumper916` / `V3Bumper11` · 6 s | 16:9, 9:16, 1:1 | YouTube bumpers, retargeting, story ads |
 | Proof contact sheets and carousel stills | PNG/JPG | Social carousels, press kit, landing gallery |
+| `V3LandingLoop` · 10 s, silent | 600 × 750 | Live as the homepage hero loop (`web/public/marketing/masque-flipbook.mp4`) |
+
+Captions, carousel scripts, the podcast pitch and Spotlight outreach drafts are in [showcase/marketing/copy-kit.md](../../showcase/marketing/copy-kit.md). Sources and licences for every clip are in the edit record; homepage image sources are in [docs/ops/landing-showcase-assets.json](../ops/landing-showcase-assets.json).
 
 ## The creator loop
 
@@ -102,9 +109,56 @@ Most growth should come from what authors make, not from what we say. These prod
 |---|---|---|---|
 | Sep 26 – Oct 5 | Readiness | Ship v3 videos; replace landing hero loop; publish Masque edition | Attribution (UTM → sign-up → first proof → export); fix showcase-blocking findings |
 | Oct 6 – Oct 31 | Horror month | Masque serialized daily; comment-a-style replies; Cthulhu and Terror reposts; *The Legend of Sleepy Hollow* edition for Oct 24 | Spotlight recruiting; first podcasts; community presence |
-| Nov | Writers' month ("write it in November, see it in December") | Fantasy title (*Elm and Keep*) live; editable lettering and translation demos | Creator loop shipped (share cards, Reel export); affiliate launch; Product Hunt |
+| Nov | Writers' month ("write it in November, see it in December") | Fantasy push around *Elm and Keep* (on the shelf since Sept 27); editable lettering and translation demos | Creator loop shipped (share cards, Reel export); affiliate launch; Product Hunt |
 | Dec | Gift season | *A Christmas Carol* edition | First paid tests on proven creatives, if gates pass |
 | Q1 2027 | Romance and pitching | Valentine's classic excerpt; small-press pitch-deck examples | B2B pilots; scale paid where payback holds |
+
+## Before the first post
+
+| Item | Owner | Status |
+|---|---|---|
+| Replace the Dungeon Crawler Carl hero loop and pages on the homepage | Product | Done Sept 27 (Masque loop and pages, new Kaitlin and Janitor pages) |
+| Six books on the shelf: Cthulhu, Masque, Kaitlin, Elm and Keep, Janitor (risograph), The Terror | Product | Done Sept 27 |
+| Restart the API server so it loads the new showcase manifest format | Operator | Open |
+| Elm and Keep on the shelf, homepage page 12 refreshed | Author/operator | Done Sept 27 |
+| Deploy to production (the catalogue now ships in the image) | Operator | Push to `main` |
+| Campaign parameters captured at sign-up; first proof, purchase, export and share recorded server-side | Product | Open (blocks paid, not organic) |
+| Brand handles on TikTok, Instagram, YouTube, X and LinkedIn; bio link to the homepage with UTM parameters | Marketing | Open |
+| Written permission template for Author Spotlight | Founder | Open |
+| Rename artist-named style suggestions ([finding #1](../../showcase/FINDINGS-2026-09-26.md)) | Product | Open; must ship before any screen capture of the Look room |
+
+## October run sheet
+
+The default week, from October 6: the Masque page of the day on every channel, plus three anchor posts.
+
+| Day | Anchor post | Asset |
+|---|---|---|
+| Monday | Style flipbook | 15 s teaser, or a new 6 s flip of a different scene |
+| Wednesday | Lettering or revision close-up | Hero sections "Real lettering" or "Plain words" cut to 8–12 s |
+| Friday | Comment-a-style replies | Proofs made from the week's comments (rules in the copy kit) |
+| Saturday | Founder build-in-public thread | One pipeline or engine detail, with a real screen capture |
+
+**Masque serialization:** page *n* goes up on October 7 + *n*, so page 1 runs October 8 and page 24 on October 31. Each post carries one line of Poe and links to the free reader. Pages 13–24 carry a content note ("plague, blood") on platforms that support one.
+
+| Date | Milestone |
+|---|---|
+| Sept 28 – Oct 5 | Checklist above; first 10 Spotlight invitations; Sleepy Hollow extract, brief and look |
+| Oct 6 | Launch the 66 s hero on YouTube and the homepage; carousel "One Poe scene, ten styles" |
+| Oct 8 | Masque page 1 |
+| Oct 13 | Fantasy flipbook post from Elm and Keep for LitRPG and romantasy audiences |
+| Oct 20 | Sleepy Hollow edition finished and reviewed |
+| Oct 24 | Sleepy Hollow on the shelf; flipbook of the headless-horseman scene |
+| Oct 31 | Masque page 24; "the whole book, free" post; October review of the numbers below |
+
+## Production schedule for new editions
+
+Each seasonal title needs about two weeks: a day for extract, brief, look and cast; two to four days for adapt, plan and draw; then a lettering review, Finish and packaging with `scripts/prepare_showcase.py`. Rights check and content review (gore, profanity, slurs) happen at the brief, before any art is paid for.
+
+| Title | Start | On the shelf | Drop |
+|---|---|---|---|
+| The Legend of Sleepy Hollow | Oct 1 | Oct 20 | Oct 24 |
+| A Christmas Carol (first stave) | Nov 10 | Nov 28 | Dec 1 |
+| Romance classic excerpt | Jan 12 | Jan 30 | Feb 7 |
 
 ## Measurement
 
@@ -116,6 +170,18 @@ Most growth should come from what authors make, not from what we say. These prod
 - **Content:** watch-through past the 3-second hook, saves and shares; comments that request styles.
 
 Minimum instrumentation before any spend: campaign parameters captured at sign-up; first proof, first purchase, first export and first share recorded server-side; reader-link `ref` attribution.
+
+**Starting targets for October.** These are guesses to beat, not forecasts; replace them with real baselines after two weeks of posting.
+
+| Signal | Target |
+|---|---|
+| Short videos watched past 3 s | 35% or more |
+| Saves plus shares per 1,000 views | 10 or more |
+| Style requests per comment-a-style post | 20 or more |
+| Spotlight authors who accept | 3 of the first 10 invited |
+| Sign-ups who see a first style proof in the first session | 60% or more |
+
+**Kill or scale rule:** after four posts in a format, drop it if it sits below half the target on both watch-through and shares; make two more variants of anything above target.
 
 ## Budget options
 
@@ -130,14 +196,14 @@ Spend on paid media only after the launch gates pass and a channel shows a cost 
 
 - **AI-art backlash.** Label work "AI-assisted, author-directed"; never use artist names (see [finding #1](../../showcase/FINDINGS-2026-09-26.md)); don't promote in anti-AI spaces.
 - **Rights.** Cleared sources only; CC BY-SA attribution on Janitor everywhere; written permission for Spotlight authors.
-- **Content review for ads.** No gore (Janitor pages 4+), profanity crops (Janitor gouache page 1, last panel), or period slurs (check Cthulhu captions).
+- **Content review for ads.** No gore (Janitor pages 3+, Masque pages 13–24) and no profanity (Janitor page 2).
 - **Truthful proofs.** Every clip is real output. Omit failed proofs rather than relabel them; document edits in the edit record.
 - **Name confusion.** The adjacent product "SceneWrite" exists; settle the name before large brand spend.
 - **Readiness.** Growth that outruns reliability burns trust. Paid traffic waits for the launch gates.
 
 ## Decisions needed
 
-1. Approve publishing the Masque, Kaitlin and Janitor editions as free public books.
+1. ~~Approve publishing the Masque, Kaitlin and Janitor editions as free public books.~~ Done September 27.
 2. Choose Lean or Growth for October–December.
 3. Approve Author Spotlight outreach and the affiliate program terms.
 4. Prioritize the creator-loop product work (share cards, Reel export, embeddable reader, attribution).

@@ -72,7 +72,7 @@ describe("Pages-room lettering", () => {
     api.put.mockImplementation(async (_project, _page, state) => ({ ...initial(), state: { ...state, revision: 2 }, saved_revision: 2 }));
     mount();
     await ready();
-    expect(screen.getByRole("status").textContent).toBe("Placement not reviewed");
+    expect(screen.getAllByRole("status").find((node) => node.classList.contains("lettering-save-state"))?.textContent).toBe("Placement not reviewed");
     expect(screen.queryByRole("button", { name: "Save lettering" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Confirm placement" }));
     await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));

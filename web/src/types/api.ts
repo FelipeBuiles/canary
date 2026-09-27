@@ -207,6 +207,7 @@ export interface CostEstimate {
 }
 
 export interface StageCostEstimate extends CostEstimate {
+  archived_page_count?: number;
   stage: string;
   reserved_credits: number;
 }
@@ -555,6 +556,7 @@ export interface ComicPage {
 }
 
 export interface PageRenderRevision {
+  comic_page_sha256: string;
   page_number: number;
   revision: number;
   parent_revision: number | null;
@@ -624,6 +626,7 @@ export interface CompletePagesResponse {
 }
 
 export interface CompletePageDetail {
+  active_render_revision: number | null;
   page: ComicPage;
   renders: PageGenerationProvenance[];
   analyses: RenderAnalysis[];

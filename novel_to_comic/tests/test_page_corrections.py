@@ -432,6 +432,12 @@ def test_annotations_and_novel_context_reach_prompt_and_provenance(tmp_path: Pat
 
     prompt = prepared.compiled.request.prompt
     assert "Keep this edge readable." in prompt
+    assert "leading/trailing ends" in prompt
+    assert "Do not merely add motion lines to the unchanged object" in prompt
+    assert "including the aftermath" in prompt
+    assert "setting correction replaces the wrong environment" in prompt
+    assert "those mentions do not relocate" in prompt
+    assert "Do not borrow rooms, background props" in prompt
     producing = artifacts.read_request(page.page_number, 1)
     assert producing.prompt in prepared.correction.retained_instructions
     assert producing.prompt not in prompt  # Current Plan/references already carry its authority.
@@ -1099,11 +1105,18 @@ def _write_empty_story_bible(project_dir: Path) -> None:
     )
 
 
-def test_preview_route_accepts_real_frontend_wire_body(tmp_path: Path) -> None:
+@pytest.mark.parametrize("other_page_status", [None, "queued", "running"])
+def test_preview_route_accepts_real_frontend_wire_body(tmp_path: Path, other_page_status) -> None:
     artifacts, page, render = _setup(tmp_path, issues=(_issue("issue-dark"),))
     project_dir = tmp_path / "project"
     _write_empty_story_bible(project_dir)
     client = _api_client(tmp_path, project_dir)
+
+    if other_page_status:
+        client.app.state.generation_jobs["other-page"] = SimpleNamespace(
+            project_name="test-user:test_project", kind="complete_page_draw",
+            status=other_page_status, payload={"page_number": 2},
+        )
 
     res = client.post(
         "/api/projects/test_project/pages/1/corrections/preview",
@@ -1348,3 +1361,23 @@ def test_reviewing_existing_art_never_requires_todays_draw_profile(tmp_path: Pat
     saved = client.get("/api/projects/test_project/pages/1/visual-review")
     assert saved.status_code == 200, saved.text
     assert saved.json()["report"] is None
+
+
+def test_correction_preview_uses_selected_older_parent(tmp_path):
+    artifacts, page, parent = _setup(tmp_path)
+    original = artifacts.read_provenance(1, 1)
+    artifacts.write_render(page_number=1, render_revision=2, image=artifacts.read_render(1, 1))
+    artifacts.write_provenance(original.model_copy(update={
+        "render": parent.model_copy(update={"revision": 2, "parent_revision": 1}),
+    }))
+    artifacts.select_render(1, 1, expected_revision=2)
+    project_dir = tmp_path / "project"
+    _write_empty_story_bible(project_dir)
+    client = _api_client(tmp_path, project_dir)
+    body = {"comic_page_revision": page.revision, "parent_render_revision": 1,
+            "changes": [{"id": "direction", "instruction": "Bare tip right; cloth head left. Only panel 3."}]}
+    response = client.post("/api/projects/test_project/pages/1/corrections/preview", json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["parent_render_revision"] == 1
+    body["parent_render_revision"] = 2
+    assert client.post("/api/projects/test_project/pages/1/corrections/preview", json=body).status_code == 409

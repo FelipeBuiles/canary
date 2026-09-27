@@ -4,6 +4,7 @@ from functools import wraps
 from types import SimpleNamespace
 
 import httpx
+import pytest
 from fastapi import FastAPI
 
 from novel_to_comic.server.admission import Admission, admission_middleware
@@ -27,6 +28,36 @@ def app_at(root):
     app.dependency_overrides[get_current_user] = lambda: "account"
     app.middleware("http")(admission_middleware)
     return app
+
+
+@pytest.mark.parametrize("suffix", ["corrections/preview", "corrections"])
+@pytest.mark.parametrize("status", ["queued", "running"])
+@pytest.mark.parametrize("kind, expected", [
+    ("complete_page_draw", 200),
+    ("pipeline_stage", 409),
+    ("lettering_translation", 409),
+])
+@run_async
+async def test_page_correction_flow_during_other_page_work(tmp_path, suffix, status, kind, expected):
+    app = app_at(tmp_path)
+    app.state.generation_jobs["other-page"] = SimpleNamespace(
+        project_name="account:book", kind=kind, status=status,
+        payload={"page_number": 3},
+    )
+    calls = []
+    path = f"/api/projects/book/pages/2/{suffix}"
+
+    @app.post(path)
+    async def correction():
+        calls.append(True)
+        return {"ok": True}
+
+    # Preview is free; only submission requires an action key.
+    headers = {"Idempotency-Key": "correction"} if suffix == "corrections" else {}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(path, json={}, headers=headers)
+    assert response.status_code == expected, response.text
+    assert bool(calls) == (expected == 200)
 
 
 @run_async
@@ -336,3 +367,33 @@ async def test_finish_preflight_does_not_replay_obsolete_success(tmp_path):
         response = await client.post("/api/projects/book/export/preflight", headers={"Idempotency-Key": "old-check"})
     assert response.status_code == 200
     assert response.json()["ready"] is False
+
+
+@run_async
+async def test_page_check_cache_recovery_bypasses_receipts_but_paid_recovery_does_not(tmp_path):
+    import hashlib
+    import json
+    app = app_at(tmp_path)
+    route = '/api/projects/book/pages/checks/recover'
+    calls = []
+    paid_body = {'allow_paid': True, 'renders': {'1': 'hash'}}
+    fingerprint = hashlib.sha256(b'\0' + json.dumps(paid_body, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    with app.state.admission.journal() as db:
+        db.execute('INSERT INTO requests(account,route,key,fingerprint) VALUES(?,?,?,?)',
+                   ('account', f'POST {route}', 'interrupted', fingerprint))
+
+    @app.post(route)
+    async def recover():
+        calls.append('cache')
+        return {'version': len(calls)}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url='http://test') as client:
+        for version in (1, 2):
+            response = await client.post(route, json={'allow_paid': False}, headers={'Idempotency-Key': 'interrupted'})
+            assert response.json() == {'version': version}
+        paid = await client.post(route, json=paid_body, headers={'Idempotency-Key': 'interrupted'})
+        assert paid.status_code == 409
+        assert paid.json()['detail']['code'] == 'idempotency_indeterminate'
+        missing = await client.post(route, json=paid_body)
+        assert missing.status_code == 400
+    assert calls == ['cache', 'cache']

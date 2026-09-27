@@ -246,7 +246,7 @@ def test_page_quote_uses_current_pricing_and_counts_correction_source(tmp_path):
     complete_page_adapter(config).prepare(compiled)
 
 
-def test_sunburst_stage_and_batch_quotes_use_the_same_measured_page_cost(tmp_path):
+def test_sunburst_stage_and_batch_quotes_use_the_same_measured_page_cost(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -273,6 +273,10 @@ def test_sunburst_stage_and_batch_quotes_use_the_same_measured_page_cost(tmp_pat
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_project] = lambda: (tmp_path, config, None)
+    from novel_to_comic.server.auth import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: "owner"
+    from novel_to_comic.server.routers import projects as project_routes
+    monkeypatch.setattr(project_routes, "needs_initial_project_cover", lambda *args: False)
     with (
         patch.object(TargetArtifacts, 'read_plan', return_value=SimpleNamespace(pages=[page])),
         patch('novel_to_comic.server.routers.pages.approved_visual_inventory', return_value=_inventory()),

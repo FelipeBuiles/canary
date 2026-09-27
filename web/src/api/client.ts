@@ -33,10 +33,12 @@ export function isInsufficientCreditsError(err: unknown): err is InsufficientCre
  */
 export class ApiError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  readonly code?: string;
+  constructor(status: number, message: string, code?: string) {
     super(`API ${status}: ${message}`);
     this.name = "ApiError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -71,7 +73,12 @@ export async function apiFetch<T>(
   // Provider-free Finish checks are safe to recompute after an interruption.
   // Do not retain a paid-action receipt that would block an explicit retry.
   const isFinishCheck = method === "POST" && /^\/projects\/[^/]+\/export\/preflight(?:\?|$)/.test(path);
-  const action = session && !isFinishCheck && !["GET", "HEAD", "OPTIONS"].includes(method) && path.startsWith("/projects/")
+  let isCachedPageCheck = false;
+  if (method === "POST" && /^\/projects\/[^/]+\/pages\/checks\/recover(?:\?|$)/.test(path)
+    && typeof options?.body === "string") {
+    try { isCachedPageCheck = JSON.parse(options.body)?.allow_paid === false; } catch { /* Server validates malformed bodies. */ }
+  }
+  const action = session && !isFinishCheck && !isCachedPageCheck && !["GET", "HEAD", "OPTIONS"].includes(method) && path.startsWith("/projects/")
     ? await pendingAction(session.user.id, method, path, options?.body)
     : null;
   assertAccountEpoch(epoch);
@@ -143,7 +150,10 @@ export async function apiFetch<T>(
       && (definiteDrawRejection || legacyDrawOverflow)) {
       action?.complete();
     }
-    throw new ApiError(res.status, message);
+    const code = typeof detail === "object" && detail !== null
+      && typeof (detail as { code?: unknown }).code === "string"
+      ? (detail as { code: string }).code : undefined;
+    throw new ApiError(res.status, message, code);
   }
   const result = await res.json();
   assertAccountEpoch(epoch);

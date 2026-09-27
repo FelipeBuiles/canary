@@ -21,7 +21,9 @@ from .deps import project_key
 
 _PROJECT = re.compile(r"^/api/projects/([^/]+)(/.*)?$")
 _PAID = re.compile(r"^/(?:run|regen-[^/]+|cover|lettering/translate|approve/(?:brief|cast)|styles/(?:direction|suggest|generate-samples|validation)|pages/\d+/(?:generate|analyze|visual-review|corrections|replan)|(?:characters|locations)/[^/]+/states/[^/]+/(?:regenerate|regenerate-instructed)|story-changes/[^/]+/apply)$")
-_TARGETED = re.compile(r"^/(?:regen-(?!extract)[^/]+|cover|pages/\d+/(?:generate|analyze|visual-review|corrections)|(?:characters|locations)/[^/]+/states/[^/]+/(?:regenerate|regenerate-instructed))$")
+# Correction previews read the same page inputs as submission and must remain
+# available while independent page jobs run. Submission owns same-page conflicts.
+_TARGETED = re.compile(r"^/(?:regen-(?!extract)[^/]+|cover|pages/\d+/(?:generate|analyze|visual-review|corrections(?:/preview)?)|(?:characters|locations)/[^/]+/states/[^/]+/(?:regenerate|regenerate-instructed))$")
 
 
 _STYLE_PRESENTATION = re.compile(r"^/styles/style_[0-9a-f]{16}$")
@@ -170,6 +172,17 @@ async def admission_middleware(request, call_next):
             key = None
         route = f"{request.method} {request.url.path}"
         body = await request.body()
+        # Cache-only recovery cannot submit OCR. Recompute current evidence,
+        # including after a lost response, rather than replaying stale results.
+        if request.method == "POST" and suffix == "/pages/checks/recover":
+            try:
+                recovery_body = json.loads(body)
+            except ValueError:
+                recovery_body = None
+            if isinstance(recovery_body, dict) and recovery_body.get("allow_paid") is False:
+                key = None
+            elif not key:
+                raise HTTPException(400, {"code": "idempotency_key_required", "message": "An Idempotency-Key is required for this action."})
         try:
             canonical = json.dumps(json.loads(body), sort_keys=True, separators=(",", ":")).encode() if body else b""
         except ValueError:

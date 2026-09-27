@@ -191,6 +191,13 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `retry` | `RetryProvenance` |  |
 | `correction` | `PageRenderCorrection | None` | `None` |
 
+## PageRenderSelection _(draw.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `revision` | `int` | `Field(ge=1)` |
+| `image_sha256` | `str` | `Field(pattern='^[0-9a-f]{64}$')` |
+
 ## PageRenderRevision _(draw.py)_
 
 | Field | Type | Default |

@@ -711,10 +711,10 @@ describe("PagesRoom", () => {
       expect.objectContaining({ project: "demo", pageNumber: 1 }),
       expect.any(Object),
     );
-    expect(screen.getByText("Correction queued. The draft is locked.")).toBeTruthy();
+    expect(screen.getByText("Checking your correction…")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Generate revision" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Review changes" })).toBeNull();
-    expect(screen.getByLabelText(/What would you like to change/)).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "MAKE CHANGES" })).toHaveProperty("disabled", true);
   });
 
   it("requires a new review after the requested wording changes", () => {

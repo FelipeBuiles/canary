@@ -52,6 +52,9 @@ the launcher never restarts it. Flags do not re-route saved artifacts. Experimen
 Codex Draw supports new editions only, five total image inputs and native output
 dimensions. Select Codex models in Account → Models (dev); no route maps are
 required and no API model selection is automatically redirected.
+PostHog uses environment configuration; no --observability flag or local collector.
+Detailed local files are opt-in with CANARY_LOCAL_DIAGNOSTICS=true. Restart
+existing services manually after changing telemetry configuration.
 API model settings reject aliases overridden by Codex; restart with --api to use
 those selections. See docs/reference/codex-dev-capabilities.md for setup and limits.
 EOF
@@ -101,6 +104,9 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+source "$SCRIPT_DIR/dev_environment.sh"
+report_posthog_configuration
 
 if [ "$CLAUDE_CODE" = true ] && [ "$MODE" = "mock" ]; then
   echo "[dev] --claude-code cannot be combined with --mock" >&2
@@ -331,7 +337,6 @@ elif [ "$CHECK_ONLY" = false ] && [ "$required_failed" = false ]; then
   starting "backend at $BACKEND_URL"
   (
     cd "$REPO_ROOT/novel_to_comic"
-    export CANARY_LOCAL_DIAGNOSTICS=true
     export CANARY_ENV="${CANARY_ENV-development}"
     export CANARY_CODEX_DEV_ENABLED=0
     export CANARY_CLAUDE_DEV_ENABLED=0

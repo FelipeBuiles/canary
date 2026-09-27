@@ -435,7 +435,7 @@ export function StyleRoom() {
         kicker="LOOK"
         title="CHOOSE THE LOOK"
         lead="Choose one visual direction. Scenewright carries it through characters, places, and panels."
-        actions={suggestions.length > 0 ? (
+        actions={suggestions.length > 0 || batchInFlight ? (
           <div className="flex items-center gap-3">
             {anyGenerating && (
               <span role="status" aria-live="polite" className="font-meta text-[0.68rem] font-bold tracking-[0.08em] text-ink-black/65">
@@ -452,7 +452,7 @@ export function StyleRoom() {
                 size="sm"
                 variant="primary"
                 onClick={() => setShowDirectionComposer((visible) => !visible)}
-                disabled={directionActionsDisabled}
+                disabled={letteringOpen}
               >
                 {showDirectionComposer ? t("CLOSE ART DIRECTION") : t("ADD A DIRECTION")}
               </Button>
@@ -583,6 +583,7 @@ export function StyleRoom() {
               <p className="mt-2 font-body text-xs leading-6 text-pulp-paper/85">{t(activeSuggestion ? "Selected for your comic. You can still explore the other proofs." : "Use Select this style beneath your favorite proof.")}</p>
             </div>
           </section>
+          {batchInFlight && <p role="status" className="my-3 text-sm leading-6">{t("You can write your direction now. Create your proof when the current suggestion batch finishes; your text stays here.")}</p>}
           {showDirectionComposer && (
             <div className="mt-6">
               <StyleDirectionComposer

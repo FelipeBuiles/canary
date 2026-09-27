@@ -79,8 +79,11 @@ def test_manual_image_event_preserves_cost_semantics(monkeypatch, cost, source, 
     assert p["$ai_latency"] == 1.25
     if cost is None:
         assert "$ai_total_cost_usd" not in p
+        assert "$ai_cost_passthrough" not in p
+        assert "cost_usd" not in p
     else:
         assert p["$ai_total_cost_usd"] == cost
+        assert p["$ai_cost_passthrough"] is True
     assert "private" not in json.dumps(p)
 
 
@@ -117,7 +120,36 @@ def test_delivery_retries_same_insert_id_after_ack_failure(monkeypatch):
     asyncio.run(check())
     assert batches[0] == batches[1]
     assert batches[0]["batch"][0]["properties"]["$insert_id"] == USER
+    assert batches[0]["batch"][0]["properties"]["source"] == "upload"
+    assert batches[0]["batch"][0]["properties"]["event_origin"] == "server"
     assert "private" not in json.dumps(batches)
+
+
+def test_exception_wire_labels_match_other_events(monkeypatch):
+    monkeypatch.setenv("CANARY_ENV", "development")
+    monkeypatch.setenv("CANARY_VERSION", "abc123-dirty")
+    sdk = MagicMock()
+    monkeypatch.setattr(t, "_client", sdk)
+    with t.observation_context(operation_id=USER):
+        t.capture_exception(ValueError("private"), user_id=USER)
+    props = sdk.capture_exception.call_args.kwargs["properties"]
+    wire = t._before_send({"event": "$exception", "properties": props})["properties"]
+    assert wire["environment"] == "development"
+    assert wire["release"] == wire["$release_id"] == "abc123-dirty"
+    assert wire["schema_version"] == 1
+    assert wire["operation_id"] == USER
+
+
+def test_delayed_delivery_preserves_capture_release(monkeypatch):
+    monkeypatch.setenv("CANARY_VERSION", "new-release")
+    row = {"id": USER, "event_name": "station_viewed", "user_id": USER,
+           "occurred_at": "2026-09-26T00:00:00Z", "source": "web",
+           "properties_json": {"station": "pages", "environment": "production", "release": "old-release"}}
+    props = delivery.wire_event(row)["properties"]
+    assert props["release"] == props["$release_id"] == "old-release"
+    assert props["environment"] == "production"
+    assert props["event_origin"] == "web"
+    assert "source" not in props
 
 
 def test_otlp_logs_receive_only_selected_safe_fields(monkeypatch):
@@ -138,3 +170,40 @@ def test_queue_context_serializes_without_changing_arguments():
         traceparent="00-0123456789abcdef0123456789abcdef-0123456789abcdef-01", request_id=USER)
     assert JobCommand.model_validate_json(spec.model_dump_json()) == spec
     assert spec.arguments == {}
+
+
+def test_claude_cache_breakdown_survives_wire_scrubber(monkeypatch):
+    from types import SimpleNamespace
+    route = SimpleNamespace(runtime="claude", reasoning_model="claude-opus-5-5", funding="claude_subscription")
+    usage = client._codex_text_usage(USER, "claude-dev/text/claude-opus-5-5", route, {
+        "usage": {"input_tokens": 100, "cache_read_input_tokens": 800,
+                  "cache_creation_input_tokens": 50, "output_tokens": 20}})
+    assert usage.input_tokens == 950
+    sdk = MagicMock()
+    monkeypatch.setattr(t, "_client", sdk)
+    t.observe_generation(event_id=USER, feature="plan.detail", operation="text",
+        model_alias=usage.model, provider_model=usage.provider_model, status="succeeded",
+        usage=usage, cost_usd=None, cost_source="claude_subscription", latency_ms=100)
+    properties = t._before_send({"event": "$ai_generation", "properties": sdk.capture.call_args.kwargs["properties"]})["properties"]
+    assert properties["$ai_input_tokens"] == 950
+    assert properties["$ai_cache_read_input_tokens"] == 800
+    assert properties["$ai_cache_creation_input_tokens"] == 50
+    assert properties["$ai_cache_reporting_exclusive"] is False
+    assert properties["cost_status"] == "unknown"
+    assert "$ai_total_cost_usd" not in properties
+
+
+def test_failed_call_keeps_funding_and_provider_without_usage(monkeypatch):
+    db = MagicMock()
+    monkeypatch.setattr("novel_to_comic.server.db.get_db", lambda: db)
+    monkeypatch.setattr("novel_to_comic.server.credits.is_ambiguous_job", lambda _: True)
+    sdk = MagicMock()
+    monkeypatch.setattr(t, "_client", sdk)
+    client._finalize_event(event_id=USER, status="failed", feature="plan.book",
+        model_alias="claude-opus-5-5", latency_ms=100, usage=None, metadata={}, operation="text")
+    properties = sdk.capture.call_args.kwargs["properties"]
+    assert properties["funding"] == "api"
+    assert properties["provider"] == properties["$ai_provider"] == "anthropic"
+    assert properties["cost_status"] == "unknown"
+    assert "$ai_input_tokens" not in properties
+    assert "$ai_total_cost_usd" not in properties

@@ -11,6 +11,7 @@ import {
   useCorrectionPreview,
   useRenderCorrection,
   useSubmitCorrections,
+  useSubmittedCorrectionJob,
   type DraftTarget,
   type PersistedRevisionDraft,
 } from "../../api/pageRevisions";
@@ -212,7 +213,7 @@ export function RevisionDraft({
   const { t } = useI18n();
   const preview = useCorrectionPreview();
   const submit = useSubmitCorrections();
-  const target: DraftTarget = { comicPageRevision, parentRenderRevision };
+  const target = useMemo<DraftTarget>(() => ({ comicPageRevision, parentRenderRevision }), [comicPageRevision, parentRenderRevision]);
 
   const suggestions = useMemo(() => suggestibleIssues(issues), [issues]);
   const suggestionIds = useMemo(() => new Set(suggestions.map((issue) => issue.id)), [suggestions]);
@@ -239,12 +240,16 @@ export function RevisionDraft({
   const [focusId, setFocusId] = useState<string | null>(null);
   const [previewHash, setPreviewHash] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [submittedJobId, setSubmittedJobId] = useState<string | null>(null);
+  const [submittedJobId, setSubmittedJobId] = useState<string | null>(() => loadRevisionDraft(project, pageNumber, target)?.submittedJobId ?? null);
+  const submittedJob = useSubmittedCorrectionJob(project, submittedJobId);
+  const job = submittedJob.data?.jobs.find((item) => item.id === submittedJobId);
+  const canRetry = job?.status === "failed" || job?.status === "cancelled";
   const [staleDraft, setStaleDraft] = useState<PersistedRevisionDraft | null>(() =>
     loadRevisionDraft(project, pageNumber, target) ? null : findStaleRevisionDraft(project, pageNumber, target),
   );
 
-  const locked = disabled || submit.isPending || submittedJobId != null;
+  const completed = job?.status === "complete";
+  const locked = disabled || submit.isPending || (submittedJobId != null && !canRetry && !completed);
   const focused = changes.find((change) => change.id === focusId)
     ?? changes.find((change) => change.selected)
     ?? changes[0]
@@ -296,10 +301,14 @@ export function RevisionDraft({
     if (seeds.length > 0) onSeedsConsumed();
   }, [seeds, onSeedsConsumed]);
 
-  // Persist every edit under the exact target key, but never resurrect a queued draft.
+  // Retain the exact change IDs through failure and reload, including queued work.
   useEffect(() => {
-    if (submittedJobId) return;
+    if (job?.status === "complete") {
+      clearRevisionDraft(project, pageNumber, target);
+      return;
+    }
     saveRevisionDraft({
+      ...(submittedJobId ? { submittedJobId } : {}),
       project,
       pageNumber,
       comicPageRevision,
@@ -320,7 +329,7 @@ export function RevisionDraft({
       contextSourceUnitIds: [],
       updatedAt: new Date().toISOString(),
     });
-  }, [project, pageNumber, comicPageRevision, parentRenderRevision, comicPageSha256, changes, note, manualInput, submittedJobId]);
+  }, [project, pageNumber, comicPageRevision, parentRenderRevision, comicPageSha256, changes, note, manualInput, submittedJobId, job?.status, target]);
 
   useEffect(() => {
     onDraftKeysChange([
@@ -427,9 +436,10 @@ export function RevisionDraft({
       { project, pageNumber, body },
       {
         onSuccess: ({ job }) => {
-          clearRevisionDraft(project, pageNumber, target);
           setPreviewHash(null);
           setSubmittedJobId(job.id);
+          setEditing(false);
+          setMarking(false);
           onJobQueued(job.id);
         },
         onError: (error) => {
@@ -502,6 +512,18 @@ export function RevisionDraft({
   const canvasAlt = `${t("Complete page")} ${pageNumber}, ${t("render revision")} ${parentRenderRevision}`;
   function startEditing() {
     if (locked) return;
+    if (completed) {
+      // New requests against a deliberately reselected older render need new IDs.
+      setChanges([]);
+      setNote("");
+      setManualInput("");
+      setFocusId(null);
+      setSubmitError(null);
+    }
+    if (completed || canRetry) {
+      setSubmittedJobId(null);
+      setPreviewHash(null);
+    }
     scrollIntentRef.current = "edit";
     setEditing(true);
     setMarking(false);
@@ -535,18 +557,28 @@ export function RevisionDraft({
         </Surface>
       )}
 
-      {submittedJobId && (
+      {submittedJobId && !completed && (
         <Surface tone="container" border="soft" shadow="none" padding="md" role="status">
-          <p className="font-body text-sm font-bold">{t("Correction queued. The draft is locked.")}</p>
-          <p className="mt-1 font-body text-xs leading-5 text-ink-muted">
-            {t("Job")} {submittedJobId}. {t("The new revision will appear in the gallery; reopening then starts a fresh draft.")}
+          <p className="font-body text-sm font-bold">{t(
+            canRetry ? "The correction did not finish. Your original requests are saved."
+              : submittedJob.error || (submittedJob.data && !job) ? "We couldn’t confirm the correction’s progress."
+                : job?.status === "running" ? "Drawing your new version…"
+                  : job?.status === "queued" ? "Your correction is waiting to start."
+                    : "Checking your correction…",
+          )}</p>
+          <p className="mt-1 font-body text-sm leading-6 text-ink-muted">
+            {canRetry ? t("Choose Make changes to review your saved requests and the cost before trying again.")
+              : submittedJob.error || (submittedJob.data && !job) ? t("Check progress before sending another correction. Your requests are saved.")
+                : t("You can close this page. It will update automatically when the new version is ready, and Make changes will be available again.")}
           </p>
+          {!canRetry && <Button className="mt-3" size="sm" variant="outline" disabled={submittedJob.isFetching}
+            onClick={() => void submittedJob.refetch()}>{t("Check progress")}</Button>}
         </Surface>
       )}
 
       <div className={editing ? "grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]" : "space-y-4"}>
         <div className="min-w-0 space-y-4">
-          {!editing && !submittedJobId && (
+          {!editing && (
             <div ref={makeChangesWrapRef} className="flex justify-end">
               <Button size="sm" variant="outline" onClick={startEditing} disabled={locked}>
                 {t("MAKE CHANGES")}
@@ -661,6 +693,9 @@ export function RevisionDraft({
           </div>
           <p className="font-body text-sm leading-6 text-ink-muted">
             {t("Text is enough. Optionally add a pin, area or highlight to show where. You’ll review the cost before generating.")}
+          </p>
+          <p className="font-body text-sm leading-6 text-ink-muted">
+            {t("For motion or orientation, name the panel, what points left or right, which end leads, and what should stay unchanged. Choose your best starting image in Versions first.")}
           </p>
           {(!marking || !focused) && <div>
             <FieldLabel htmlFor="draft-manual">{t("What would you like to change?")}</FieldLabel>

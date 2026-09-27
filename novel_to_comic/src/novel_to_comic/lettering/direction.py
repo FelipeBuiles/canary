@@ -52,7 +52,7 @@ class Direction:
 
 _TAGS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("radio", re.compile(
-        r"\b(over|through|on|into) the (radio|phone|telephone|intercom|speaker|loudspeaker|receiver|line|comm|comms|walkie[- ]talkie|headset)\b"
+        r"\b(over|through|on|into|from) (the |a |an |his |her |their )?(radio|phone|telephone|intercom|speaker|loudspeaker|receiver|line|comm|comms|walkie[- ]talkie|headset)\b"
         r"|\bcrackl(ed|ing|es)\b|\bthrough the static\b|\btransmission\b", re.I)),
     ("whisper", re.compile(
         r"\b(whisper(ed|s|ing)?|murmur(ed|s|ing)?|mutter(ed|s|ing)?|breath(ed|es)|hiss(ed|es)?)\b"

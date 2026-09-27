@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import copy
 import json
 import os
 import time
@@ -12,6 +13,7 @@ from collections.abc import Callable
 from fastapi import Request, Response
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.markup import escape
 
 from novel_to_comic.server.env import bool_env
 from novel_to_comic.server.telemetry import configure_telemetry
@@ -19,6 +21,47 @@ from novel_to_comic.server.metrics import increment, observe
 
 
 api_logger = logging.getLogger("canary.api")
+
+
+class TerminalFilter(logging.Filter):
+    """Reduce console noise without dropping records from telemetry exporters."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        verbose = logging.getLogger().isEnabledFor(logging.DEBUG)
+        if record.name == "canary.observations":
+            if str(record.msg).startswith(("http.", "job.")):
+                return False  # Already represented by readable local records.
+            return verbose or record.levelno >= logging.WARNING
+        if record.name.startswith("procrastinate"):
+            return verbose or record.levelno >= logging.WARNING
+        return True
+
+
+class TerminalHandler(RichHandler):
+    """Render summaries; opt into full Rich tracebacks for debugging."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        from .telemetry import safe_fields
+        record = copy.copy(record)  # Exporters must receive the original record.
+        message = record.getMessage()
+        fields = safe_fields(getattr(record, "telemetry", {}))
+        if record.name == "canary.observations" and message == "ai.completed":
+            message = "AI failed" if fields.get("status") == "failed" else "AI completed"
+        if fields:
+            keys = ("feature", "operation", "stage", "page_number", "status",
+                    "error_type", "model_alias", "latency_ms", "operation_id", "request_id")
+            message += " " + " ".join(f"{key}={fields[key]}" for key in keys if key in fields)
+        if not bool_env("CANARY_LOG_TRACEBACKS", default=False):
+            if record.exc_info and record.exc_info[1]:
+                error = record.exc_info[1]
+                detail = str(error).splitlines()
+                message += " — " + escape(f"{type(error).__name__}: {detail[0][:240] if detail else ''}")
+            record.exc_info = None
+            record.exc_text = None
+            record.stack_info = None
+        record.msg = message
+        record.args = ()
+        super().emit(record)
 
 
 class JsonFormatter(logging.Formatter):
@@ -66,8 +109,8 @@ def configure_logging() -> None:
         level=level,
         format="%(message)s",
         handlers=[
-            RichHandler(
-                console=Console(stderr=True),
+            TerminalHandler(
+                console=Console(stderr=True, width=min(Console().width, 140)),
                 markup=True,
                 rich_tracebacks=True,
                 tracebacks_extra_lines=1,
@@ -83,6 +126,8 @@ def configure_logging() -> None:
         handler = logging.StreamHandler()
         handler.setFormatter(JsonFormatter())
         logging.getLogger().handlers = [handler]
+    else:
+        logging.getLogger().handlers[0].addFilter(TerminalFilter())
     logging.getLogger("uvicorn.access").disabled = True
     logging.getLogger("httpx").setLevel(logging.WARNING)
     from .diagnostics import local_diagnostics_enabled
@@ -107,7 +152,7 @@ _STATIC_FILE_PATH_FRAGMENTS = (
 def _should_log_request(request: Request, status_code: int, elapsed_ms: float) -> bool:
     path = request.url.path
     # Suppress noisy polling for asset files (auth failures, not-yet-generated, etc.)
-    if any(fragment in path for fragment in _STATIC_FILE_PATH_FRAGMENTS):
+    if status_code < 500 and any(fragment in path for fragment in _STATIC_FILE_PATH_FRAGMENTS):
         return False
     # EventSource reconnects while no pipeline run is active. The endpoint's
     # 404 means "no active event queue", not that the route or project is
@@ -183,7 +228,22 @@ async def _request_log_middleware(
         from .telemetry import log_event
         log_event("http.completed", route=route, method=request.method, http_status=response.status_code, latency_ms=elapsed_ms)
     if _should_log_request(request, response.status_code, elapsed_ms):
-        api_logger.info(
+        expected_artifact_read = (
+            request.method in {"GET", "HEAD"}
+            and response.status_code in {404, 409}
+            and getattr(request.state, "artifact_unavailable", False)
+            and os.environ.get("CANARY_ENV") != "production"
+        )
+        if expected_artifact_read:
+            log_level = logging.DEBUG
+        elif response.status_code >= 500:
+            log_level = logging.ERROR
+        elif response.status_code >= 400:
+            log_level = logging.WARNING
+        else:
+            log_level = logging.INFO if os.environ.get("CANARY_ENV") == "production" else logging.DEBUG
+        api_logger.log(
+            log_level,
             "[bold magenta]API[/] %s [white]%s[/] -> [bold]%s[/] elapsed=%.0fms request_id=%s",
             request.method,
             route,

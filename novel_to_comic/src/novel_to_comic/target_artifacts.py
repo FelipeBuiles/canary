@@ -24,6 +24,7 @@ from novel_to_comic.models.draw import (
     FrozenPageGenerationRequest,
     PageGenerationFailure,
     PageGenerationProvenance,
+    PageRenderSelection,
     PageIssue,
     RenderAnalysis,
     RawOCRObservation,
@@ -124,6 +125,44 @@ class TargetArtifacts:
         self._write_model(self.cast_review_path, review)
 
     def archive_adaptation_work(self) -> Path:
+        return self.archive_stage_work("adapt")
+
+    def drawn_page_count(self) -> int:
+        """Count retained art without requiring the old plan to deserialize."""
+        return sum(1 for page in (self.project_dir / "draw" / "pages").glob("page_*")
+                   if any(page.glob("render_*.png")))
+
+    def restart_archives(self) -> list[dict]:
+        """Read-only inventory; archived artifacts never become active inputs."""
+        result = []
+        for root in sorted((self.project_dir / ".checkpoints" / "restarts").glob("*"),
+                           key=lambda path: path.stat().st_mtime, reverse=True):
+            if root.is_symlink() or not root.is_dir() or not re.fullmatch(r"[a-f0-9]{32}", root.name):
+                continue
+            files = sorted(str(path.relative_to(root)) for folder in ("draw", "finish", "exports")
+                           for path in (root / folder).rglob("*")
+                           if path.is_file() and not path.is_symlink()
+                           and path.resolve().is_relative_to(root.resolve())
+                           and path.suffix.lower() in {".png", ".webp", ".pdf", ".cbz"})
+            result.append({"id": root.name, "created_at": root.stat().st_mtime,
+                           "page_count": TargetArtifacts(root).drawn_page_count(), "files": files})
+        return result
+
+    def restart_archive_file(self, archive_id: str, relative: str) -> Path:
+        if not re.fullmatch(r"[a-f0-9]{32}", archive_id):
+            raise ValueError("invalid archive identity")
+        root = self.project_dir / ".checkpoints" / "restarts" / archive_id
+        path = root / relative
+        if (not Path(relative).parts or root.is_symlink()
+                or Path(relative).parts[0] not in {"draw", "finish", "exports"}
+                or any(part.startswith(".") for part in Path(relative).parts)
+                or not path.resolve().is_relative_to(root.resolve())
+                or path.suffix.lower() not in {".png", ".webp", ".pdf", ".cbz"}
+                or not path.is_file()):
+            raise ValueError("archived artwork not found")
+        return path
+
+    def archive_stage_work(self, stage: str) -> Path:
         """Start a new attempt while retaining outputs, checkpoints and budgets.
 
         The caller must admit the action and reserve credits first. Restore
@@ -131,6 +170,9 @@ class TargetArtifacts:
         stay active. Archives are outside every generation checkpoint lookup.
         """
         from novel_to_comic.stages import clean_cascade
+
+        if stage not in {"adapt", "plan"}:
+            raise ValueError("only Adapt and Plan support archived restarts")
 
         archive = self.project_dir / ".checkpoints" / "restarts" / uuid4().hex
         archive.mkdir(parents=True)
@@ -140,8 +182,9 @@ class TargetArtifacts:
             if state_path.exists():
                 shutil.copy2(state_path, archive / "state.json")
             paths = [
-                *clean_cascade(self.project_dir, "adapt"),
-                *(self.project_dir / ".checkpoints" / stage for stage in ("adapt", "plan", "draw", "finish")),
+                *clean_cascade(self.project_dir, stage),
+                *(self.project_dir / ".checkpoints" / name
+                  for name in (("adapt", "plan", "draw", "finish") if stage == "adapt" else ("plan", "draw", "finish"))),
             ]
             for source in paths:
                 if not source.exists():
@@ -344,6 +387,55 @@ class TargetArtifacts:
             if suffix.isdigit():
                 revisions.append(int(suffix))
         return tuple(sorted(revisions))
+
+    def render_selection_path(self, page_number: int) -> Path:
+        return self.provenance_path(page_number, 1).parent / "selection.json"
+
+    def active_render_revision(self, page_number: int) -> int | None:
+        path = self.render_selection_path(page_number)
+        if path.exists():
+            selected = self._read_model("page_render_selection", path, PageRenderSelection)
+            render = self.read_provenance(page_number, selected.revision).render
+            if render.image_sha256 != selected.image_sha256:
+                raise ValueError("Selected artwork no longer matches its saved image. Select a version again.")
+            return selected.revision
+        revisions = self.provenance_revisions(page_number)
+        return revisions[-1] if revisions else None
+
+    @locked_mutation
+    def select_render(self, page_number: int, revision: int, *, expected_revision: int) -> None:
+        if self.active_render_revision(page_number) != expected_revision:
+            raise ValueError("The selected version changed. Refresh and choose again.")
+        render = self.read_provenance(page_number, revision).render
+        if render.is_stale_for(self.read_page(page_number)):
+            raise ValueError("This artwork belongs to an earlier page plan. Redraw the current page.")
+        image = self.read_render(page_number, revision)
+        if hashlib.sha256(image).hexdigest() != render.image_sha256:
+            raise ValueError("Saved artwork does not match its provenance.")
+        lineage: set[int] = set()
+        ancestor = render
+        while ancestor.revision not in lineage:
+            lineage.add(ancestor.revision)
+            if ancestor.parent_revision is None:
+                break
+            ancestor = self.read_provenance(page_number, ancestor.parent_revision).render
+        try:
+            issues = self.read_issues(page_number)
+        except ArtifactMissing:
+            issues = ()
+        reopened = tuple(
+            issue.model_copy(update={"status": "open", "resolution_revision": None})
+            if issue.status in {"resolved", "revised"} and issue.resolution_revision not in lineage
+            else issue
+            for issue in issues
+        )
+        if reopened != issues:
+            # A correction on another branch cannot verify the chosen artwork.
+            self.write_issues(page_number, reopened)
+        self._write_model(self.render_selection_path(page_number), PageRenderSelection(
+            revision=revision, image_sha256=render.image_sha256,
+        ))
+        self.invalidate_finish()
 
     def request_revisions(self, page_number: int) -> tuple[int, ...]:
         page_dir = self.project_dir / "draw" / "pages" / f"page_{page_number:03d}"
@@ -713,6 +805,9 @@ class TargetArtifacts:
         created = not path.exists()
         self._write_immutable_model(path, provenance, PageGenerationProvenance)
         if created:
+            # New artwork becomes active; historical writes never reorder history.
+            if provenance.render.revision == self.provenance_revisions(provenance.render.page_number)[-1]:
+                self.render_selection_path(provenance.render.page_number).unlink(missing_ok=True)
             self.invalidate_finish()
 
     def read_provenance(

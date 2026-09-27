@@ -209,12 +209,10 @@ function innerBounds(panel) {
   const b={x:panel.x+PANEL_MARGIN_X,y:panel.y+PANEL_MARGIN_Y,width:panel.width-2*PANEL_MARGIN_X,height:panel.height-2*PANEL_MARGIN_Y};
   return b.width<.02 || b.height<.02 ? panel : b;
 }
-/** Tail tip on the edge of the speaker's head nearest the balloon.
+/** Provisional mouth target in the lower centre of a detected head.
  * Keep in parity with placement.py toward_head. */
 export function tailTowardHead(body, head) {
-  const c=centreOf(body);
-  let x=Math.min(Math.max(c.x,head.x),head.x+head.width), y=Math.min(Math.max(c.y,head.y),head.y+head.height);
-  if (inside(body,{x,y})) ({x,y}=centreOf(head));
+  const x=head.x+head.width/2, y=head.y+head.height*.72;
   return {x:Math.min(1,Math.max(0,x)),y:Math.min(1,Math.max(0,y))};
 }
 /** Nearest top-left for ``rect`` that covers none of ``obstacles`` inside

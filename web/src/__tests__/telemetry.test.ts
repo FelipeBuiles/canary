@@ -1,7 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { scrubEvent } from "../telemetry";
 
 describe("PostHog privacy boundary", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  it("labels browser exceptions with the configured release and environment", () => {
+    vi.stubEnv("VITE_CANARY_VERSION", "abc123-dirty");
+    vi.stubEnv("VITE_CANARY_ENV", "development");
+    const result = scrubEvent({ uuid: "test", event: "$exception", properties: {} });
+    expect(result?.properties).toMatchObject({
+      environment: "development", release: "abc123-dirty", $release_id: "abc123-dirty", schema_version: 1,
+    });
+  });
   it("drops automatic product collection", () => {
     expect(scrubEvent({ uuid: "test", event: "$pageview", properties: { $current_url: "private" } })).toBeNull();
   });

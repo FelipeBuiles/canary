@@ -28,10 +28,21 @@ reducing the Fly machine size.
 - Request → durable worker → stage → AI spans carry bounded identifiers and
   W3C trace context. Only selected `canary.observations` logs are exported.
   Generic tracing is a PostHog alpha capability; the selected project exposes its configuration with the expected
-  `posthogDistinctId` correlation key. Live trace ingestion remains unverified. This is not automatic browser tracing or host infrastructure APM.
+  `posthogDistinctId` correlation key. Live request, worker, stage, and AI span ingestion was verified on 2026-09-26; worker and AI spans retain parent links. This is not automatic browser tracing or host infrastructure APM.
 - Replay, autocapture, page views, surveys, console collection and IP enrichment
   are disabled. Browser identity uses the authenticated account ID and resets on
   account changes; no email or display name is sent.
+
+New `ai_usage_events` writes keep compact database projections: allowlisted
+scalar request controls, SHA-256/byte-count summaries of response schemas and
+provider envelopes, and selected runtime IDs/statuses. They omit nested request
+content, revised prompts, runtime event lists, feature dumps, and duplicated
+identity metadata. Source-unit lists become counts and fingerprints. Scalar
+diagnostic strings are capped at 256 characters. Page/correction labels, funding,
+costs, token usage, provider IDs, and reconciliation fields remain available.
+Database writes request minimal responses; provider payloads and in-memory
+diagnostics are not mutated. This changes future writes only, without deleting
+or compacting historical records.
 
 Financial usage, reservations, paid-request recovery, and the operation journal
 remain authoritative first-party data. Local opt-in diagnostic files remain
@@ -82,14 +93,59 @@ of deployment.
 
 With a scoped management credential loaded into the shell, provision launch
 views using `python3 scripts/configure_posthog.py`. It creates a dashboard and
-three named insights, reusing matching names in the first 100 returned results.
-The views filter production events. The ordered account funnel has a seven-day
+five named insights, reusing matching names in the first 100 returned results.
+The three launch views filter production events. The two diagnostics tables show the last seven days, grouped by environment: cost confidence and AI outcomes by feature/model. Unknown costs remain blank and are counted separately; the cost view uses Canary’s `cost_usd` with `cost_status`, never PostHog’s inferred `$ai_total_cost_usd`. The ordered account funnel has a seven-day
 window and can include multiple projects per account; do not call it first-project
 activation without a cohort analysis. The [launch dashboard](https://us.posthog.com/project/630262/dashboard/2139283)
-and all three insights were provisioned and verified in the UI. PostHog currently
-shows vendor sample charts because the project has no events; they are not user
-evidence. Live ingestion remains unverified. The official wizard was not run: explicit instrumentation applies
+and its three launch insights were provisioned and verified in the UI. The two diagnostic insights were added and their queries verified against live development events on 2026-09-26. Events, logs, and traces are arriving; production traffic and browser exception symbolication remain unverified. The official wizard was not run: explicit instrumentation applies
 the documented integration recipes while keeping content out of telemetry.
+
+## Local launchers
+
+`dev.sh` and `dev-prod.sh` load root `.env`, then `web/.env`, then
+`web/.env.local`; exported shell values always win, including empty values.
+Absent browser PostHog settings inherit the public backend token and host.
+The default environment label is `development` for both browser and backend,
+including the local production-image test. Production dashboards exclude it.
+Local releases default to the Git revision with a dirty suffix for tracked edits (`local` outside Git), plus a UTC timestamp and launcher PID. Each restart has a distinct release, including when untracked code changed; this identifies a launcher session rather than a reproducible source snapshot. Explicit versions still win. `VITE_CANARY_VERSION` inherits `CANARY_VERSION` unless explicitly set; Docker builds and runtime receive the same backend version. Backend and browser errors include environment, release, and schema version; delayed product delivery preserves the original release. Product `source` describes creation source, while `event_origin` records `server` or `web`.
+
+AI observations preserve known cache-read and cache-creation token counts and
+explicitly mark Canary's input totals as cache-inclusive. Claude's runtime cache
+writes are retained in `UsageRecord` alongside reads. Calls that fail without
+usage still carry the selected funding and inferred provider, without invented
+token counts or costs. Historical events are not rewritten. PostHog's built-in
+cost display can still show catalog estimates or zero for unknown subscription
+costs; use the cost-confidence view, where unknown costs remain blank.
+
+Both launchers report configured/disabled status without printing credentials;
+this is not a delivery probe. Restart existing services manually after changes.
+
+`CANARY_LOCAL_DIAGNOSTICS=true` opts into detailed local files; the default is
+false. Financial accounting and recovery records remain active independently.
+There is no `--observability` flag or local Langfuse service. Docker forwards
+backend telemetry settings and uses `POSTHOG_API_KEY` only as a build secret for
+optional source-map upload, together with `POSTHOG_PROJECT_ID`. No key means no
+upload. Old analytics volumes are not deleted by these launchers.
+
+## Local terminal output
+
+Local logs keep one job completion summary, actionable warnings, and failures.
+Successful HTTP requests, AI request starts, and job starts are debug-level;
+queue-worker success/defer chatter and duplicate telemetry records are filtered
+only at the terminal handler. PostHog logs/events and metrics are unaffected by
+that handler filter. AI error summaries include feature, model, page, and operation
+context when available. Missing generated assets stay quiet, but asset HTTP 5xx
+responses are visible.
+Missing or incompatible artifact reads during stage loading use debug-level
+local logs, including their 404/409 request summaries. The API still returns the
+same recovery instructions; unrelated conflicts and failed writes remain visible.
+
+Exceptions show a short type/message summary by default. Set
+`CANARY_LOG_TRACEBACKS=true` for full Rich tracebacks, and `CANARY_LOG_LEVEL=DEBUG`
+for verbose progress. Tracebacks omit locals and terminal width is capped at 140
+columns. Usage database failures show their event ID, exception type, and database
+code rather than dumping a failed row. This does not repair database schema drift
+or provider session limits. Restart the local process manually to apply changes.
 
 ## Feedback and learning loop
 
@@ -143,9 +199,7 @@ successfully. `git diff --check` passes. Documentation checking reports only two
 pre-existing missing showcase links, in `public-books.md` and the September 22
 product-polish proposal; no new broken links remain.
 
-The user waived a separate synthetic-journey gate. No paid generation, fake
-customer journey, live event delivery, or real trace rendering has been used as
-evidence. The separate source-map upload check is recorded above. Check those surfaces with the first authorized real
+The user waived a separate synthetic-journey gate. No paid generation or fake customer journey was initiated for verification. A later read-only audit verified existing development event/log/span delivery and parent relationships, without establishing production delivery or visual trace rendering. The separate source-map upload check is recorded above. Check those surfaces with the first authorized real
 usage after deployment, without treating missing observations as user behavior.
 
 Primary documentation and exact recipe decisions are recorded in the

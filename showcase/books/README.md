@@ -3,8 +3,8 @@
 Each immediate subfolder contains one complete public edition. Folder names set
 homepage order: use names such as `01-call-of-cthulhu`, `02-another-book`.
 The app reads these folders directly. No backoffice action or production account
-mapping is required. Generated editions are local data: Git and Docker build
-contexts exclude them. The image starts with an empty catalogue.
+mapping is required. The catalogue is committed to Git and copied into the
+Docker image, so pushing to `main` deploys it.
 
 ## Add or update a book
 
@@ -38,14 +38,12 @@ version named in `book.json` is served. Edit title, author, or description in
   disable its bundled public reader on the next deployment.
 - Check all entries:
   `novel_to_comic/.venv/bin/python scripts/prepare_showcase.py --check`.
-- Supply selected folders, including each `book.json` and its versioned images,
-  through a persistent volume mounted at `/app/showcase/books`, or set
-  `CANARY_SHOWCASE_DIR` to a separately mounted catalogue. Do not commit generated
-  editions or add them to the Docker build context.
-- Validate the supplied catalogue with `scripts/prepare_showcase.py --check`
-  using the same `CANARY_SHOWCASE_DIR`. Content is read on the next API request;
-  no database import is needed. Without a supplied catalogue the homepage shows
-  no showcase books. A local folder alone does not reach production.
+- Commit each `book.json` with its versioned image folder, and delete older version
+  folders after an update so the image stays small. The image build validates the
+  catalogue; no database import is needed.
+- A separately mounted catalogue can still replace the bundled one through
+  `CANARY_SHOWCASE_DIR`; validate it with `scripts/prepare_showcase.py --check`
+  using the same variable.
 
 Keep only work deliberately selected for public display here. This is a curated
 demo catalogue independent of account-owned publications and consent controls.

@@ -1,7 +1,8 @@
 """Explicit queue schema bootstrap: python -m novel_to_comic.server.queue_schema.
 
-Use a dedicated database. Existing schemas are left untouched; Procrastinate
-version upgrades require its documented migration procedure.
+Use a dedicated database or a private schema selected by the login role's
+search_path. Existing schemas are left untouched; Procrastinate version upgrades
+require its documented migration procedure.
 """
 import asyncio
 import os

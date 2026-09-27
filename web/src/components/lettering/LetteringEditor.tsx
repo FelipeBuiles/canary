@@ -341,6 +341,7 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
       </div>
     </Toolbar>
     {error && <div role="alert" className="lettering-error"><p>{error}</p><div className="flex flex-wrap gap-2 mt-2"><Button variant="outline" size="xs" onClick={() => void reload()} disabled={busy}>{t("Reload saved version")}</Button>{!fontsReady && <Button size="xs" onClick={() => { setError(null); setFontAttempt(n => n + 1); }}>{t("Retry fonts")}</Button>}</div></div>}
+    {!heads?.length && <p role="status" className="lettering-hint">{t("Face evidence is unavailable. Placement suggestions are approximate. Use Check page text in Checks to request a page read, then review balloon positions and tails yourself.")}</p>}
     {layout.error && <p role="alert" className="lettering-error">{layout.error}</p>}
     {!draftStored && dirty && <p role="alert" className="lettering-error">{t("This browser could not store your recovery draft. Save before closing or changing pages.")}</p>}
     {recovery && <div className="lettering-notice"><h4 className="font-bold">{t("Unsaved lettering found on this device")}</h4><p>{canRestore ? t("Restore it before continuing, or keep the saved version.") : t("This draft belongs to an older page or style revision. It will not be applied to newer work. Download it to recover wording, then keep the saved version.")}</p>
@@ -384,6 +385,7 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
             <Button variant="outline" size="xs" onClick={remove}>{current.source_lettering_item_id ? t(current.hidden ? "Show" : "Hide") : t("Remove")}</Button></div>
           {current.resolved?.warnings.map(warning => <p key={warning} role="status" className="lettering-warning">{t(errors[warning] ?? warning)}</p>)}
           {current.resolved?.overflow && !current.resolved.warnings.length && <p className="lettering-warning">{t("This copy cannot fit at the readable minimum. Widen or heighten the box, or shorten the wording. Export waits for this to be fixed.")}</p>}
+          {canonical?.delivery === "offscreen" && current.role === "speech" && <p className="lettering-hint">{t("Offscreen speech has no visible-speaker tail. Choose Radio for an intercom or phone, or Whisper only when the line is spoken quietly.")}</p>}
           {(!canonical || canonical.delivery === "onscreen") && ["speech", "thought"].includes(current.role) && <div className="lettering-pointer-controls">
             <label className="lettering-checkbox"><input type="checkbox" checked={!!current.tail_target} onChange={e => patch(current.id, { tail_target: e.target.checked ? (current.suggested_tail_target ?? defaultTailTarget(elementRect(current))) : null })} />{t("Balloon tail · drag its round handle")}</label>
             <Button variant="outline" size="xs" onClick={() => patch(current.id, { tail_target: defaultTailTarget(elementRect(current)) })}>{t("Reset pointer")}</Button>

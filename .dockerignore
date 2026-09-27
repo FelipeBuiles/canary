@@ -2,7 +2,8 @@
 .claude
 projects
 samples
-showcase
+showcase/*
+!showcase/books
 web/node_modules
 web/dist
 .venv

@@ -101,9 +101,9 @@ describe("Scenewright homepage", () => {
   it("makes provisional development pages readable without claiming customer or production proof", () => {
     renderHomePage();
 
-    expect(screen.getByText(/Dungeon Crawler Carl, page 25 .* Not customer work; results vary/)).toBeTruthy();
+    expect(screen.getByText(/H. P. Lovecraft, page 40 .* Not customer work; results vary/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "Read a development sample" }).getAttribute("href")).toBe("#continuity");
-    expect(screen.getAllByRole("link", { name: "Read page 25 at full size" })[0].getAttribute("href")).toBe("/marketing/dungeon-crawler-carl-page-25.webp");
+    expect(screen.getAllByRole("link", { name: "Read page 40 at full size" })[0].getAttribute("href")).toBe("/marketing/cthulhu-page-40.webp");
     expect(screen.getByText(/Automated checks do not guarantee visual quality/)).toBeTruthy();
     expect(screen.getByText(/not a fixed number of pages/)).toBeTruthy();
   });
@@ -114,7 +114,7 @@ describe("Scenewright homepage", () => {
 
     expect(screen.getByRole("heading", { level: 1, name: "Votre récit. Sa première scène de BD." })).toBeTruthy();
     expect(screen.getAllByRole("link", { name: /Créer ma première scène/ })[0].getAttribute("href")).toBe("/signup");
-    expect(screen.getAllByRole("link", { name: "Lire la page 21 en taille réelle" })[0].getAttribute("href")).toBe("/api/public/books/d1cb0ec790244ce6849974daa586146b/ccf1a606bd1747c4864d8a4770000891/pages/21");
+    expect(screen.getAllByRole("link", { name: "Lire la page 12 en taille réelle" })[0].getAttribute("href")).toBe("/marketing/elm-and-keep-page-12.webp");
     expect(screen.getByRole("link", { name: "Aller au contenu" })).toBeTruthy();
   });
 
@@ -156,12 +156,12 @@ describe("Scenewright homepage", () => {
     const { container } = renderHomePage();
 
     const video = container.querySelector(".landing-hero video") as HTMLVideoElement;
-    expect(video.getAttribute("src")).toBe("/marketing/hero-flipbook.mp4");
-    expect(video.getAttribute("poster")).toBe("/marketing/hero-flipbook-poster.webp");
+    expect(video.getAttribute("src")).toBe("/marketing/masque-flipbook.mp4");
+    expect(video.getAttribute("poster")).toBe("/marketing/masque-flipbook-poster.webp");
     expect(video.muted).toBe(true);
     expect(video.loop).toBe(true);
     expect(video.autoplay).toBe(true);
-    expect(screen.getByRole("figure", { name: /Looping video: one Dungeon Crawler Carl comic page/ })).toBeTruthy();
+    expect(screen.getByRole("figure", { name: /Looping video: one scene from The Masque of the Red Death/ })).toBeTruthy();
 
     Object.defineProperty(video, "paused", { configurable: true, value: false });
     fireEvent.playing(video);
@@ -199,7 +199,7 @@ describe("Scenewright homepage", () => {
     const { container } = renderHomePage();
 
     expect(container.querySelector("video")).toBeNull();
-    expect(container.querySelector(".landing-hero img")?.getAttribute("src")).toBe("/marketing/hero-flipbook-poster.webp");
+    expect(container.querySelector(".landing-hero img")?.getAttribute("src")).toBe("/marketing/masque-flipbook-poster.webp");
     expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
   });
 

@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { ConfirmDrawer } from "../components/composites/ConfirmDrawer";
 import { RerunDrawer } from "../components/composites/RerunDrawer";
+import { I18nProvider } from "../i18n";
 
 describe("bottom drawer placement", () => {
   it("portals confirmation drawers to the viewport layer", () => {
@@ -26,13 +27,15 @@ describe("bottom drawer placement", () => {
 
   it("portals rerun drawers to the same viewport layer", () => {
     const { container } = render(
-      <RerunDrawer
-        open
-        stageName="Pages"
-        impactStages={[]}
-        onConfirm={() => undefined}
-        onClose={() => undefined}
-      />,
+      <I18nProvider>
+        <RerunDrawer
+          open
+          stageName="Pages"
+          impactStages={[]}
+          onConfirm={() => undefined}
+          onClose={() => undefined}
+        />
+      </I18nProvider>,
     );
 
     const dialog = screen.getByRole("alertdialog", { name: "Rerun Pages?" });

@@ -1141,7 +1141,7 @@ def dismiss_page_issue(
     page_number: int,
     reason: str,
 ) -> PageIssue:
-    """Dismiss an automated Draw finding that visual review disproved.
+    """Dismiss a false positive or withdraw an unresolved manual request.
 
     This is not acceptance of a known invariant failure. It records that the
     detector's evidence was a false positive, preserving the audit trail while
@@ -1158,8 +1158,9 @@ def dismiss_page_issue(
         if issue.id == issue_id:
             if issue.status not in {"open", "revised"}:
                 raise ValueError("only an open page issue can be dismissed")
-            if not issue.id.startswith("page-issue-draw-page-"):
-                raise ValueError("only an automated Draw finding can be dismissed")
+            manual = issue.issue_type == "manual_change" and issue.status == "open"
+            if not manual and not issue.id.startswith("page-issue-draw-page-"):
+                raise ValueError("only an automated finding or open manual request can be dismissed")
             dismissed = PageIssue.model_validate(
                 issue.model_copy(
                     update={

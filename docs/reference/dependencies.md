@@ -8,11 +8,11 @@ rollout. The manifests, lockfiles, Dockerfiles and CI remain authoritative.
 
 | Environment | Authority | Installation |
 | --- | --- | --- |
-| Python application | `novel_to_comic/pyproject.toml`, `novel_to_comic/uv.lock` | `uv sync --project novel_to_comic --locked --extra web --extra dev --extra otel` for development/CI |
+| Python application | `novel_to_comic/pyproject.toml`, `novel_to_comic/uv.lock` | `uv sync --project novel_to_comic --locked --extra web --extra dev` for development/CI |
 | LiteLLM gateway | `litellm/pyproject.toml`, `litellm/uv.lock` | Independent environment; both Dockerfiles install this same lock |
 | Browser application | `web/package.json`, `web/package-lock.json` | `npm ci` in `web` |
 | Browser automation tooling | Root `package.json`, `package-lock.json` | `npm ci` at repository root |
-| Development observability | `docker-compose.yml` | Explicit Langfuse/storage versions and a MinIO digest |
+| Observability | Python `web` extra and browser lockfile | PostHog SDKs and HTTP OTLP exporters; no local analytics services |
 | Runtime and release tools | `.nvmrc`, Dockerfiles, `.github/workflows/ci.yml` | Node 24.21.0, Python 3.12, uv 0.12.17, Fly CLI 0.4.104 |
 
 Do not install the gateway into the application's virtual environment. Its
@@ -49,14 +49,11 @@ manifests. The showcase video project remains local-only and is outside CI.
 | Google Gen AI SDK | 1.75.0 | 2.24.0 |
 | Vertex AI SDK | Separately installed, unpinned | 2.1.3, shared gateway lock |
 | Google Auth | Separately installed, unpinned | 2.58.0, shared gateway lock |
-| Langfuse web and worker | 3.172.0 | 3.225.8, both services together |
 | FastAPI | 0.135.3 | 0.141.1 |
 | Pydantic | 2.13.1 | 2.13.5 |
 | Stripe Python | 15.1.0 | 15.6.1 |
 | Pillow | 12.2.0 | 12.3.0 |
 | Python Playwright | 1.58.0 | 1.63.0, matching Chromium installed by Playwright |
-| Python Sentry | 2.64.0 | 2.69.2 |
-| Browser Sentry | 8.x | 10.75.0 |
 | React / React DOM | 19.2.x | 19.3.0 |
 | React Router | 7.18.2 | 7.18.4 |
 | Vite / Vitest | 8.0.x / 4.1.x | 8.3.0 / 5.0.1 |
@@ -83,29 +80,18 @@ adapter. The video manifest explicitly overrides that nested dependency with
 its direct, reviewed 8.70.0 adapter. All Remotion packages themselves remain in
 exact lockstep. Revisit the override when Remotion updates its dependency.
 
-### Keep Langfuse on v3 until the ingestion and data migration are ready
+### PostHog replaces the local analytics stack
 
-Canary sends its own batched events to `/api/public/ingestion`. Langfuse v4 is
-not a safe image-tag substitution: its default legacy-ingestion behavior and
-data migration require coordinated application and operational changes. A
-207 response alone is not proof of success; inspect every ingestion result.
-
-The upstream [v3-to-v4 migration guide](https://langfuse.com/self-hosting/upgrade/upgrade-guides/upgrade-v3-to-v4)
-describes the prerequisites, compatibility settings, storage requirements and
-migration phases. Its current policy gives v3 security support through January
-2027. This refresh takes the v3 security release, not the v4 migration.
-
-Before a future v4 change, verify Canary's generation/trace event mapping,
-acceptance and queryability in a separate environment, back up PostgreSQL and
-ClickHouse, allow migration/backfill capacity, and rehearse rollback from those
-backups. Do not treat a successful fresh-volume boot as an existing-data
-migration test.
+The Python web extra includes PostHog and HTTP OpenTelemetry exporters. Browser
+errors use PostHog with build-time source-map upload. Langfuse, its storage
+services, and Sentry are retired; there is no Langfuse version migration to run.
+Keep any historical volumes until their data is no longer needed. See the
+[operating guide](observability.md) for activation and data boundaries.
 
 ### Keep stateful service majors and the Codex runtime deliberate
 
-PostgreSQL stays on 17, Redis on 7.4 and ClickHouse on the 26.3 LTS line. Newer
-majors require data-format, restore and resource tests. MinIO's selected
-multi-platform digest stops an implicit `latest` image changing between runs.
+PostgreSQL stays on 17 for the queue and LiteLLM databases. Major upgrades
+require data-format, restore, and resource tests.
 
 The optional `openai-codex` SDK and bundled runtime are pinned to 0.156.1.
 That adapter has an explicitly restricted execution, authentication, tool and

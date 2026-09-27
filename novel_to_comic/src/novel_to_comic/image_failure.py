@@ -130,7 +130,9 @@ def user_message_for_image_failure(classification: ImageFailureClassification) -
     return {
         "provider_blocked": (
             "The image provider declined this scene but did not say which detail "
-            "caused it. Your work is unchanged."
+            "caused it. Your work is unchanged. Review the whole page and try a simpler, "
+            "more specific change. The provider may be reacting to existing page content, "
+            "not just your note."
         ),
         "rate_limited": (
             "The image service has temporarily reached its quota. "
@@ -138,15 +140,15 @@ def user_message_for_image_failure(classification: ImageFailureClassification) -
         ),
         "shape_mismatch": (
             "The image service returned the wrong frame shape, so we could not use this image. "
-            "Try this panel again."
+            "Try this page again."
         ),
         "timed_out": (
             "The image service took too long to respond. "
-            "Try this panel again."
+            "Try this page again."
         ),
         "service_unavailable": (
             "We could not reach the image service. "
-            "Check your connection and try this panel again."
+            "Check your connection and try this page again."
         ),
         "configuration_error": (
             "The image service is not configured correctly for this project. "
@@ -154,11 +156,11 @@ def user_message_for_image_failure(classification: ImageFailureClassification) -
         ),
         "empty_response": (
             "The image service finished without returning an image. "
-            "Try this panel again; if it repeats, try a different image model."
+            "Try this page again; if it repeats, contact support."
         ),
         "generation_error": (
             "The image service returned an unexpected error. "
-            "Try this panel again; if it keeps happening, try a different image model."
+            "Try this page again; if it keeps happening, try a different image model."
         ),
     }[classification]
 

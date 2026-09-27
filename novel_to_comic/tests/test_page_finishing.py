@@ -1191,3 +1191,14 @@ def test_existing_open_ocr_alarm_is_advisory_without_marking_it_resolved(tmp_pat
                          production=FinishProductionSpec(canvas_width=120, canvas_height=180))
     assert result.preflight.ready_to_export
     assert artifacts.read_issues(1) == (issue,)
+
+
+def test_export_uses_chosen_older_artwork(tmp_path):
+    artifacts, original_image = _write_valid_book(tmp_path)
+    _write_corrected_revision(artifacts, revision=2, parent_revision=1, color=(20, 40, 60))
+    artifacts.select_render(1, 1, expected_revision=2)
+    result = finish_book(artifacts, production=FinishProductionSpec(canvas_width=120, canvas_height=180, bleed_px=10))
+    assert result.preflight.ready_to_export
+    assert result.preflight.pages[0].render_revision == 1
+    assert result.preflight.pages[0].render_image_sha256 == hashlib.sha256(original_image).hexdigest()
+    assert {package.format for package in result.packages} == {"pdf", "cbz"}

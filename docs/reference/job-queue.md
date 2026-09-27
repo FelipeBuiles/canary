@@ -101,8 +101,11 @@ conflict guards. The remaining-page action says **Draw remaining pages**.
 ## Setup and operation
 
 Install the locked web dependencies from `novel_to_comic` with `uv sync --extra web`.
-Use a dedicated PostgreSQL database and set `CANARY_QUEUE_DATABASE_URL`. It must be
-a direct PostgreSQL connection, not an HTTP API URL.
+Use a dedicated PostgreSQL database or a private schema with a dedicated login
+role and set `CANARY_QUEUE_DATABASE_URL`. It must be a direct or session-mode
+PostgreSQL connection, not an HTTP API URL or transaction pooler. For a private
+schema, set the role's database `search_path` to that schema only; bootstrap and
+runtime both use the same role and inherit that setting.
 
 Local `scripts/dev.sh` starts Compose's `queue-db` on loopback port 55432 when no
 external queue URL is supplied, and bootstraps the schema before starting a new
@@ -136,8 +139,8 @@ docker compose --profile prod up canary-prod
 ```
 
 For Fly, follow [deploy runbook Step 1b](../deploy.md#step-1b--generation-queue-database):
-provision a dedicated PostgreSQL database (never Supabase's `public` schema; a
-direct or session-mode connection, not a transaction pooler), set
+provision a dedicated PostgreSQL database or Supabase's private `canary_queue`
+schema and login role (never Supabase's `public` schema), set
 `CANARY_QUEUE_DATABASE_URL` as a Fly secret and bootstrap it with the locked
 dependency version before deployment.
 The existing persistent projects volume remains required. `/api/health/ready`

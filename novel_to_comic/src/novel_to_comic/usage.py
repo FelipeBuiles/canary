@@ -40,6 +40,7 @@ class UsageRecord(BaseModel, frozen=True):
     input_text_tokens: int | None = Field(default=None, ge=0)
     input_image_tokens: int | None = Field(default=None, ge=0)
     cached_text_tokens: int | None = Field(default=None, ge=0)
+    cache_creation_input_tokens: int | None = Field(default=None, ge=0)
     cached_image_tokens: int | None = Field(default=None, ge=0)
     image_output_tokens: int | None = Field(default=None, ge=0)
     cost_usd: float | None = None

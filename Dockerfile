@@ -91,9 +91,9 @@ RUN set -eu; \
     done; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
 
-# Generated public editions are supplied separately through CANARY_SHOWCASE_DIR
-# (or a mount at this default path), never through the image build context.
-RUN mkdir -p /app/showcase/books
+# The curated homepage catalogue ships in the image; CANARY_SHOWCASE_DIR can still
+# point at a separately mounted catalogue.
+COPY showcase/books/ ./showcase/books/
 
 # Copy application source and install the project itself
 COPY novel_to_comic/ ./novel_to_comic/

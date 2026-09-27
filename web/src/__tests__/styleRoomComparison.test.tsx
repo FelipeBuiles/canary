@@ -203,7 +203,7 @@ it("flips through thirty proofs by keyboard, opens the wall, and selects from th
   state.suggestions = undefined;
 });
 
-it("keeps author directions open while single proofs draw, but not during a suggestion batch", () => {
+it("keeps author directions open while single proofs draw and during a suggestion batch", () => {
   state.estimateError = null;
   state.labels = ["Ink", "Watercolor"];
   state.stylesMeta = { is_generating: true, is_suggesting: false };
@@ -214,7 +214,9 @@ it("keeps author directions open while single proofs draw, but not during a sugg
   expect(screen.getByRole("button", { name: "ADD A DIRECTION" })).toHaveProperty("disabled", false);
   state.stylesMeta = { is_generating: true, is_suggesting: true };
   view.rerender(room());
-  expect(screen.getByRole("button", { name: "ADD A DIRECTION" })).toHaveProperty("disabled", true);
+  // Authors can draft during a batch; the proof is created once the batch finishes.
+  expect(screen.getByRole("button", { name: "ADD A DIRECTION" })).toHaveProperty("disabled", false);
+  expect(screen.getByText(/You can write your direction now/)).toBeTruthy();
   state.stylesMeta = {};
 });
 

@@ -1874,6 +1874,8 @@ def test_new_claude_models_use_native_json_schema(monkeypatch, _patch_events, mo
     assert "response_format" not in sent
     assert "temperature" not in sent
     wire_schema = sent["output_config"]["format"]["schema"]
+    assert wire_schema["required"] == ["ok", "count"]
+    assert schema["required"] == ["ok"]
     assert "minimum" not in wire_schema["properties"]["count"]
     assert '"minimum": 1' in wire_schema["properties"]["count"]["description"]
     assert schema["properties"]["count"]["minimum"] == 1

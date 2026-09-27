@@ -227,9 +227,9 @@ def test_tail_and_clearing_rules_keep_parity_with_the_engine():
     # The same literals are asserted in web letteringPlacementChecks.test.ts.
     head = (0.2, 0.2, 0.1, 0.12)
     tail = placement.toward_head(PinnedGeometry(x=0.05, y=0.03, width=0.2, height=0.08), head)
-    assert (tail.x, tail.y) == pytest.approx((0.2, 0.2))
+    assert (tail.x, tail.y) == pytest.approx((0.25, 0.2864))
     tail = placement.toward_head(PinnedGeometry(x=0.15, y=0.15, width=0.3, height=0.3), head)
-    assert (tail.x, tail.y) == pytest.approx((0.25, 0.26))
+    assert (tail.x, tail.y) == pytest.approx((0.25, 0.2864))
     assert placement.clear_of(0.18, 0.2, 0.2, 0.1, [head], (0.03, 0.024, 0.97, 0.476)) == pytest.approx((0.18, 0.088))
 
 

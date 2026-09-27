@@ -63,10 +63,10 @@ def is_hybrid(artifacts: TargetArtifacts) -> bool:
 
 
 def active_render(artifacts: TargetArtifacts, page_number: int):
-    revisions = artifacts.provenance_revisions(page_number)
-    if not revisions:
+    revision = artifacts.active_render_revision(page_number)
+    if revision is None:
         raise LetteringConflict("Draw this page before editing lettering.")
-    render = artifacts.read_provenance(page_number, revisions[-1]).render
+    render = artifacts.read_provenance(page_number, revision).render
     if render.is_stale_for(artifacts.read_page(page_number)):
         raise LetteringConflict(
             "The artwork belongs to an earlier plan. Draw the current page first."

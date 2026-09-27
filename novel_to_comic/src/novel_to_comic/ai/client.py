@@ -623,10 +623,9 @@ def _payload_size(value: str | bytes) -> int:
 
 
 def _redacted_params(params: dict[str, Any]) -> dict[str, Any]:
-    redacted = dict(params)
-    for key in ("prompt", "messages", "input", "image", "images"):
-        redacted.pop(key, None)
-    return redacted
+    from .usage_payloads import compact_params
+
+    return compact_params(params)
 
 
 def _content_summary(
@@ -1008,6 +1007,8 @@ def _insert_event(
     metadata_json: dict[str, Any],
     estimated_cost_usd: float | None = None,
 ) -> None:
+    from .usage_payloads import compact_metadata
+
     ctx = current_ai_request_context()
     try:
         from novel_to_comic.server.db import get_db
@@ -1028,12 +1029,19 @@ def _insert_event(
                 "request_id": ctx.request_id,
                 "params_json": params_json,
                 "request_summary_json": request_summary_json,
-                "metadata_json": metadata_json,
+                "metadata_json": compact_metadata(metadata_json),
                 "estimated_cost_usd": estimated_cost_usd,
-            }
+            }, returning="minimal",
         ).execute()
     except Exception as exc:
-        logger.warning("ai_usage_events insert failed for %s: %s", event_id, exc)
+        # Error details can include an entire failed row with creative content.
+        # Only recognize known constraint names; never print the database row.
+        message = getattr(exc, "message", "")
+        funding_constraint = isinstance(message, str) and '"ai_usage_events_funding_check"' in message
+        remedy = ("apply docs/sql/2026-09-25-claude-subscription-funding.sql"
+                  if funding_constraint else "check database schema/migrations")
+        logger.warning("Usage record insert failed event_id=%s error_type=%s code=%s; %s",
+                       event_id, type(exc).__name__, getattr(exc, "code", "unknown"), remedy)
 
 async def _insert_event_async(*, started_at=None, **kwargs: Any) -> None:
     """Await authoritative usage persistence off the event loop."""
@@ -1171,9 +1179,14 @@ def _finalize_event(
     try:
         from novel_to_comic.server.db import get_db
 
-        get_db().table("ai_usage_events").update(update).eq("id", event_id).execute()
+        from .usage_payloads import compact_metadata
+
+        if "metadata_json" in update:
+            update["metadata_json"] = compact_metadata(update["metadata_json"])
+        get_db().table("ai_usage_events").update(update, returning="minimal").eq("id", event_id).execute()
     except Exception as exc:
-        logger.warning("ai_usage_events update failed for %s: %s", event_id, exc)
+        logger.warning("Usage record update failed event_id=%s error_type=%s code=%s; check database schema/migrations",
+                       event_id, type(exc).__name__, getattr(exc, "code", "unknown"))
     if usage is not None and billable and not is_subscription(funding):
         _settle_event_usage(usage, feature=feature, status=status)
     elif funding == "api" and not (config is not None and mock_mode_active(config)):
@@ -1200,6 +1213,7 @@ def _finalize_event(
             model_alias=model_alias, provider_model=provider_model, status=status,
             usage=usage, cost_usd=cost_usd, cost_source=cost.source if cost else None,
             latency_ms=latency_ms, started_at=started_at, error=error,
+            funding=funding, provider=update["provider"],
         )
     except Exception:
         # Export cannot alter authoritative settlement or trigger paid retries.
@@ -1560,6 +1574,7 @@ def _claude_token_usage(usage: dict[str, Any]) -> dict[str, Any]:
             "input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")),
         "completion_tokens": usage.get("output_tokens"),
         "cached_tokens": usage.get("cache_read_input_tokens"),
+        "cache_creation_input_tokens": usage.get("cache_creation_input_tokens"),
     }
 
 
@@ -1577,6 +1592,7 @@ def _codex_text_usage(
         input_tokens=int(tokens.get("prompt_tokens") or tokens.get("input_tokens") or 0),
         output_tokens=int(tokens.get("completion_tokens") or tokens.get("output_tokens") or 0),
         cached_text_tokens=cached if type(cached) is int else None,
+        cache_creation_input_tokens=tokens.get("cache_creation_input_tokens"),
         cost_usd=None, cost_source=route.funding, funding=route.funding,
     )
 
@@ -1769,7 +1785,7 @@ async def _chat_completion(
             # The Codex runtime notifies when its serialized queue releases.
             notify_execution_started()
         # Keep a local breadcrumb alongside the queued Langfuse observation.
-        logger.info(
+        logger.debug(
             "AI request issued feature=%s model=%s streaming=%s event_id=%s",
             feature,
             model,

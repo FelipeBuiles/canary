@@ -43,6 +43,44 @@ def definitions():
     ]
 
 
+def diagnostic_definitions():
+    """Keep development visible without mixing it into production funnels."""
+    queries = [
+        ("Canary diagnostics: cost confidence",
+         "Last 7 days, separated by environment and funding. Canary-reported and estimated costs only; unknown totals stay blank. PostHog's built-in AI total may infer catalog prices and is not billed spend.",
+         """SELECT
+    properties.environment AS environment,
+    properties.funding AS funding,
+    properties.cost_status AS cost_status,
+    count() AS calls,
+    sum(CASE WHEN properties.cost_status = 'reported' THEN toFloat(properties.cost_usd) ELSE NULL END) AS reported_usd,
+    sum(CASE WHEN properties.cost_status = 'estimated' THEN toFloat(properties.cost_usd) ELSE NULL END) AS estimated_usd,
+    countIf(properties.cost_status = 'unknown' OR properties.cost_status IS NULL) AS unknown_cost_calls
+FROM events
+WHERE event = '$ai_generation' AND timestamp >= now() - INTERVAL 7 DAY
+GROUP BY environment, funding, cost_status
+ORDER BY environment, funding, cost_status"""),
+        ("Canary diagnostics: AI outcomes by feature",
+         "Last 7 days. Call outcomes, not page outcomes: draw.page_ocr failures are separate from complete_page_draw image failures. Split by environment, feature, model, and error type.",
+         """SELECT
+    properties.environment AS environment,
+    properties.feature AS feature,
+    properties.model_alias AS model,
+    properties.status AS status,
+    properties.error_type AS error_type,
+    count() AS calls,
+    avg(properties.latency_ms) AS average_latency_ms
+FROM events
+WHERE event = '$ai_generation' AND timestamp >= now() - INTERVAL 7 DAY
+GROUP BY environment, feature, model, status, error_type
+ORDER BY environment, feature, calls DESC"""),
+    ]
+    return [{"name": name, "description": description,
+             "query": {"kind": "DataVisualizationNode", "display": "ActionsTable",
+                       "source": {"kind": "HogQLQuery", "query": query}}}
+            for name, description, query in queries]
+
+
 def main():
     name = "Canary launch learning"
     dashboards = request("dashboards/?limit=100")["results"]
@@ -50,7 +88,7 @@ def main():
     if dashboard is None:
         dashboard = request("dashboards/", {"name": name, "description": "Launch learning. Review weekly with first-party outcomes and private feedback.", "tags": ["canary-launch"]})
     existing = request("insights/?limit=100&dashboard=" + str(dashboard["id"]))["results"]
-    for insight in definitions():
+    for insight in definitions() + diagnostic_definitions():
         if not any(item.get("name") == insight["name"] for item in existing):
             request("insights/", {**insight, "dashboards": [dashboard["id"]], "tags": ["canary-launch"]})
     print(f"Launch dashboard ready: {dashboard['id']}")

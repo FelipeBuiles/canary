@@ -187,16 +187,31 @@ In the **Supabase dashboard → Authentication → URL Configuration**:
 
 ## Step 1b — generation queue database
 
-The durable queue ([job queue reference](reference/job-queue.md)) needs a
-dedicated PostgreSQL database reachable over a direct connection. Recommended:
-a small Fly Managed Postgres cluster in `iad`, beside the Machine.
+The durable queue ([job queue reference](reference/job-queue.md)) needs PostgreSQL
+over a direct or session-mode connection. For the initial deployment, reuse the
+existing Supabase project with a private `canary_queue` schema and a dedicated
+`canary_queue` login role. This shares the project's capacity and free-plan limits
+without adding a Fly Managed Postgres subscription. A dedicated database remains
+an option when isolation or capacity requires it.
 
 - Do **not** put Procrastinate tables in the Supabase project's `public` schema:
-  Supabase's REST API exposes that schema to browser keys. Use a separate
-  database (or a separate Supabase project) if you choose Supabase.
+  it is exposed by Supabase's Data API. Do not add `canary_queue` to the exposed
+  schemas or grant its usage to `anon`, `authenticated`, or `service_role`.
+- As the Supabase administrator, apply
+  [the private queue provisioning SQL](sql/2026-09-27-private-queue.sql), then
+  assign a generated password and enable LOGIN for `canary_queue` through a
+  secure administrator connection. The SQL deliberately refuses an existing
+  role/schema. Its role-level `search_path` selects only `canary_queue`, so no
+  application schema option is needed. Never use the administrator as the worker.
 - Use a direct or session-mode connection string, not a transaction pooler.
-- Store the URL only as a Fly secret: `fly secrets set -a canary-web
-  CANARY_QUEUE_DATABASE_URL=postgresql://...`.
+- Require TLS (`sslmode=require` or certificate-verified TLS). Direct Supabase
+  connections use `db.<project-ref>.supabase.co:5432/postgres` and the role name;
+  session pooler usernames use `canary_queue.<project-ref>`. Confirm the pooler
+  endpoint in the project's Connect dialog and verify `current_schema()` returns
+  `canary_queue` with the actual worker credentials before bootstrap.
+- Stage `CANARY_QUEUE_DATABASE_URL` using `fly secrets import --stage -a
+  canary-web` with the secret on stdin. Keep it out of command arguments, logs,
+  GitHub build variables, and the frontend. Do not stage the administrator URL.
 - Bootstrap the schema once, before the first release that requires it, using
   the locked dependency version inside the release image:
 
@@ -210,6 +225,27 @@ server never migrates it automatically; a Procrastinate upgrade needs a backup,
 a drain, and that version's documented migration applied separately. Include the
 database in backups (Step 4) and record its connection target (not the secret)
 in the release evidence.
+
+If the Fly machine is stopped, bootstrap with the locked local virtualenv and
+the queue role's URL in `CANARY_QUEUE_DATABASE_URL`; do not start the web server
+just to create tables. Verify queue objects belong to `canary_queue`, browser
+roles lack schema access, and enqueue/notify work inside a rolled-back transaction
+without starting a worker or calling providers. Staged secrets take effect on the
+next deployment; staging alone does not establish Fly-to-database connectivity.
+Monitor database size and plan inactivity limits. Queue history consumes the same
+capacity as application data; use Procrastinate's documented finished-job cleanup
+when retention is configured, never delete pending or active jobs to free space.
+
+Setup verified on 2026-09-27: the existing `canary` Supabase project
+(`dfzwfinycjaaxbqayceh`) has the private `canary_queue` schema and login. The
+session endpoint is `aws-1-us-east-1.pooler.supabase.com:5432/postgres`.
+Queue-role bootstrap, rolled-back enqueue/fetch/finish, and two-connection
+LISTEN/NOTIFY passed. Queue tables belong to the queue role; it has no public
+application-table SELECT/INSERT access, and browser/API roles cannot use the
+queue schema. `CANARY_QUEUE_DATABASE_URL` is staged in `canary-web`, alongside
+the PostHog host/token. No deployment was performed; verify Fly connectivity and
+readiness during the next release. The temporary runtime-credential file was
+removed after staging; the administrator credential was not sent to Fly.
 
 ## Step 2 — Canary app (`canary-web`) — the only Fly app
 
