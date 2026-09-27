@@ -21,7 +21,8 @@ CONTENT_SECURITY_POLICY = "; ".join(
             "connect-src 'self' https://*.supabase.co wss://*.supabase.co "
             "https://*.stripe.com https://us.i.posthog.com https://eu.i.posthog.com"
         ),
-        "frame-src https://js.stripe.com https://hooks.stripe.com",
+        # The homepage film loads the privacy-enhanced YouTube player on click.
+        "frame-src https://js.stripe.com https://hooks.stripe.com https://www.youtube-nocookie.com",
         "worker-src 'self' blob:",
         "form-action 'self' https://checkout.stripe.com",
     )

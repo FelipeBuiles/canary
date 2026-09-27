@@ -150,6 +150,20 @@ describe("Scenewright homepage", () => {
     expect(screen.queryByText(/Pick a visual direction/)).toBeNull();
   });
 
+  it("shows the film as a poster and loads the privacy-enhanced player only on play", () => {
+    const { container } = renderHomePage();
+    expect(screen.getByRole("heading", { name: "See a story become a comic." })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Watch" }).getAttribute("href")).toBe("#film");
+    expect(container.querySelector(".landing-film iframe")).toBeNull();
+    expect(screen.getByRole("link", { name: /Watch on YouTube/ }).getAttribute("href")).toBe("https://www.youtube.com/watch?v=W-1bPTQXQaQ");
+
+    fireEvent.click(screen.getByRole("button", { name: /Play the Scenewright film/ }));
+
+    const player = screen.getByTitle(/Scenewright: your novel in any style/);
+    expect(player.getAttribute("src")).toMatch(/^https:\/\/www\.youtube-nocookie\.com\/embed\/W-1bPTQXQaQ\?autoplay=1&rel=0/);
+    expect(screen.queryByRole("button", { name: /Play the Scenewright film/ })).toBeNull();
+  });
+
   it("plays a muted, silent hero loop that can be paused", () => {
     stubReducedMotion(false);
     const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);

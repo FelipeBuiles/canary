@@ -21,6 +21,10 @@ const MARKETING_IMAGES = {
     "/marketing/janitor-gouache-page-01.webp",
     "/marketing/janitor-oil-page-01.webp",
   ],
+  film: {
+    youtubeId: "W-1bPTQXQaQ",
+    poster: "/marketing/scenewright-film-poster.webp",
+  },
   sampleBook: [
     "/marketing/kaitlin-page-01.webp",
     "/marketing/kaitlin-page-12.webp",
@@ -197,6 +201,53 @@ function SampleBook({ copy }: { copy: LandingCopy["sampleBook"] }) {
   );
 }
 
+function FilmSection({ copy, language }: { copy: LandingCopy["film"]; language: LanguageCode }) {
+  const [playing, setPlaying] = useState(false);
+  const { youtubeId, poster } = MARKETING_IMAGES.film;
+  // Privacy-enhanced embed, loaded only after an explicit play.
+  const player = `https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=1&rel=0&playsinline=1&hl=${language}`;
+  return (
+    <section className="landing-film" id="film" aria-labelledby="landing-film-title">
+      <div className="landing-film__copy">
+        <p className="landing-film__kicker">{copy.kicker}</p>
+        <h2 id="landing-film-title">{copy.title}</h2>
+        <p className="landing-film__body">{copy.body}</p>
+        <ol className="landing-film__chapters">
+          {copy.chapters.map(chapter => <li key={chapter}>{chapter}</li>)}
+        </ol>
+      </div>
+      <figure className="landing-film__stage">
+        <div className="landing-film__frame">
+          {playing ? (
+            <iframe
+              src={player}
+              title={copy.playerTitle}
+              allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+              allowFullScreen
+              referrerPolicy="strict-origin-when-cross-origin"
+            />
+          ) : (
+            <button type="button" className="landing-film__poster" onClick={() => setPlaying(true)} aria-label={copy.play}>
+              <img src={poster} alt={copy.posterAlt} width="1280" height="720" loading="lazy" decoding="async" />
+              <span className="landing-film__play" aria-hidden="true">
+                <svg viewBox="0 0 24 24" focusable="false"><path d="M8 5.5v13l10.5-6.5z" /></svg>
+                {copy.playLabel}
+              </span>
+              <span className="landing-film__duration" aria-hidden="true">{copy.duration}</span>
+            </button>
+          )}
+        </div>
+        <figcaption>
+          <span>{copy.caption}</span>
+          <a href={`https://www.youtube.com/watch?v=${youtubeId}`} target="_blank" rel="noopener noreferrer">
+            {copy.youtube} <span aria-hidden="true">↗</span>
+          </a>
+        </figcaption>
+      </figure>
+    </section>
+  );
+}
+
 function ProcessStep({ step }: { step: LandingStep }) {
   return (
     <li className="landing-process-step">
@@ -270,6 +321,7 @@ export function HomePage() {
         </Link>
 
         <nav className="landing-header__nav" aria-label={copy.nav.navigation}>
+          <a href="#film">{copy.nav.film}</a>
           <a href="#process">{copy.nav.process}</a>
           <a href="#continuity">{copy.nav.continuity}</a>
           <a href="#rights">{copy.nav.rights}</a>
@@ -318,6 +370,8 @@ export function HomePage() {
           <h2>{copy.premise.title}</h2>
           <p>{copy.premise.body}</p>
         </section>
+
+        <FilmSection copy={copy.film} language={language} />
 
         <section className="landing-continuity" id="continuity" aria-labelledby="landing-continuity-title">
           <div className="landing-continuity__intro">

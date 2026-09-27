@@ -71,7 +71,7 @@ The homepage shelf is the operator-curated catalogue in `showcase/books/` (see i
 
 | Asset | Format | Where it runs |
 |---|---|---|
-| `V3Hero` · 66 s | 1920 × 1080 | Landing page, YouTube, Product Hunt, pitches |
+| `V3Hero` · 66 s | 1920 × 1080 | Live on YouTube ([W-1bPTQXQaQ](https://www.youtube.com/watch?v=W-1bPTQXQaQ)) and in the homepage film section (click-to-play, privacy-enhanced embed); Product Hunt, pitches |
 | `V3Ad30` · 30 s | 1920 × 1080 | YouTube in-stream, X, LinkedIn |
 | `V3Teaser916` · 15 s | 1080 × 1920 | Reels, TikTok, Shorts (layout avoids the bottom 17% and right-edge controls) |
 | `V3Teaser45` · 15 s | 1080 × 1350 | Instagram and Facebook feed |
@@ -121,6 +121,7 @@ Most growth should come from what authors make, not from what we say. These prod
 | Six books on the shelf: Cthulhu, Masque, Kaitlin, Elm and Keep, Janitor (risograph), The Terror | Product | Done Sept 27 |
 | Restart the API server so it loads the new showcase manifest format | Operator | Open |
 | Elm and Keep on the shelf, homepage page 12 refreshed | Author/operator | Done Sept 27 |
+| Hero film on YouTube and embedded on the homepage | Founder/product | Done Sept 27 |
 | Deploy to production (the catalogue now ships in the image) | Operator | Push to `main` |
 | Campaign parameters captured at sign-up; first proof, purchase, export and share recorded server-side | Product | Open (blocks paid, not organic) |
 | Brand handles on TikTok, Instagram, YouTube, X and LinkedIn; bio link to the homepage with UTM parameters | Marketing | Open |
@@ -143,7 +144,7 @@ The default week, from October 6: the Masque page of the day on every channel, p
 | Date | Milestone |
 |---|---|
 | Sept 28 – Oct 5 | Checklist above; first 10 Spotlight invitations; Sleepy Hollow extract, brief and look |
-| Oct 6 | Launch the 66 s hero on YouTube and the homepage; carousel "One Poe scene, ten styles" |
+| Oct 6 | Push the 66 s hero (already on YouTube and the homepage) across channels; carousel "One Poe scene, ten styles" |
 | Oct 8 | Masque page 1 |
 | Oct 13 | Fantasy flipbook post from Elm and Keep for LitRPG and romantasy audiences |
 | Oct 20 | Sleepy Hollow edition finished and reviewed |
