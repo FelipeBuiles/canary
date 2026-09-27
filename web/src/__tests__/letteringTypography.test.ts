@@ -14,6 +14,19 @@ function speech(text = "Yes? What is your business, sir?") {
   return draft;
 }
 describe("contour-aware comic typography", () => {
+  it("fits emphasized copy when italic glyphs are taller than upright glyphs", () => {
+    const draft = speech("We keep *moving*.");
+    const measured: Measure = (...args) => measure(...args);
+    measured.metrics = (text, font, size, spacing, weight, italic) => ({
+      width: measured(text, font, size, spacing, weight, italic),
+      ascent: italic ? 15 : 12,
+      descent: 1,
+    });
+    const resolved = resolvePage(draft, style, measured).elements[0].resolved!;
+    expect(resolved.overflow).toBe(false);
+    expect(resolved.font_size).toBe(style.roles.speech.max_font_size);
+    expect(resolved.line_metrics![0].ascent).toBe(15);
+  });
   it("fits both dimensions without destroying the editable reservation", () => {
     const draft = speech(), result = resolvePage(draft, style, measure);
     const element = result.elements[0], rect = elementRect(element);

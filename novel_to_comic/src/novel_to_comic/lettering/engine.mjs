@@ -5,7 +5,7 @@
  */
 import { FONT_COVERAGE } from "./font-coverage.mjs";
 
-export const ENGINE_VERSION = "lettering-svg-v12";
+export const ENGINE_VERSION = "lettering-svg-v13";
 export const FONT_FILES = Object.freeze({
   "Comic Neue": "ComicNeue-Bold.ttf",
   "EB Garamond": "EBGaramond-SemiBold.ttf",
@@ -692,7 +692,10 @@ function composeLayout(lines, role, size, width, height, measure) {
 }
 function fitBalloon(text, role, size, maxWidth, maxHeight, measure, locale, tight) {
   const padding=role.padding+role.stroke_width/2+role.text_stroke_width/2, reach=textReach(role,size);
-  const all=inkMetrics(text.replace(/\n/g," "),role,size,measure), leading=size*role.line_height;
+  // Measure the same emphasized runs used by candidate lines and rendering.
+  // Upright source markup can have shorter ink bounds than synthesized italic.
+  const parsed=parseEmphasis(text.replace(/\n/g," "));
+  const all=inkMetrics(marked(parsed.clean,parsed.mask,0),role,size,measure), leading=size*role.line_height;
   const optimizeOval=["ellipse","cloud","burst"].includes(role.shape);
   const clearance=curved(role.shape) && !optimizeOval ? size*.55 : 0;
   const naturalHeight=count=>(all.ascent+all.descent+(count-1)*leading+2*(padding+reach)+clearance)/(INNER[role.shape] ?? 1);
