@@ -54,7 +54,10 @@ def browser_page():
         browser = playwright.chromium.launch()
         page = browser.new_page(viewport={"width": 1000, "height": 1350})
         page.route("**/*", lambda route: route.abort())
-        page.set_content('<style>' + _fonts() + '</style><div id="out"></div>')
+        # Match the export renderer's 1:1 canvas/SVG scale. Default body margins
+        # shrink the SVG to 984px; Linux font hinting then changes text advances.
+        page.set_content('<style>' + _fonts() + '</style>'
+                         '<style>html,body{margin:0;padding:0}</style><div id="out"></div>')
         page.add_script_tag(type="module", content=_source() + "\nwindow.engine={resolvePage,renderOverlay,canvasMeasure,loadFonts};")
         page.wait_for_function("window.engine")
         page.evaluate("window.engine.loadFonts()")
@@ -223,11 +226,13 @@ def test_thought_sample_balances_lines_and_renders_the_measured_font(typography,
       const texts=[...document.querySelectorAll('text')];
       return {lines:r.lines, ratio:r.width*1000/Math.max(...r.line_metrics.map(m=>m.width)),
         families:texts.map(t=>getComputedStyle(t).fontFamily.replaceAll('"','')),
+        scale:document.querySelector('svg').getScreenCTM().a,
         widths:texts.map(t=>t.getComputedTextLength()), metrics:r.line_metrics.map(m=>m.width)};
     }""", {"state": state.model_dump(mode="json"), "style": style.model_dump(mode="json"), "font": font})
     assert value["lines"] == ["Did you", "hear that?"]
     assert value["ratio"] < 1.45
     assert value["families"] == [font, font]
+    assert value["scale"] == pytest.approx(1)
     assert value["widths"] == pytest.approx(value["metrics"], abs=1)
 
 
