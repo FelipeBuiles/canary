@@ -396,6 +396,9 @@ def test_production_security_headers_cover_success_and_errors(
     assert response.status_code == expected_status
     assert response.headers["strict-transport-security"].startswith("max-age=")
     assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+    frame_src = next(part for part in response.headers["content-security-policy"].split("; ") if part.startswith("frame-src"))
+    assert "https://www.youtube-nocookie.com" in frame_src
+    assert "https://www.youtube.com" not in frame_src
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
     assert "camera=()" in response.headers["permissions-policy"]

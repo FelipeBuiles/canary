@@ -1,6 +1,6 @@
 {
   "selected_at": "2026-09-27",
-  "purpose": "Landing page: hero style loop, 'Different stories', 'One story, three books' and the sample-to-book strip.",
+  "purpose": "Landing page: hero style loop, one-minute film, 'Different stories', 'One story, three books' and the sample-to-book strip.",
   "status": "Real showcase output from the test account, labelled as showcase work on the page. Not customer work; no quality guarantee. English text.",
   "rules": "No credits, costs, free generations or development model routing appear in these assets.",
   "assets": [
@@ -83,6 +83,14 @@
       "source_work": "Kaitlin Out of Space by Krishan Coupland · CC0",
       "source_sha256": "5083bd36bd1dbdb2909ce93d24d38a733bf48abecbbc1a528920a69169ccc832",
       "asset_sha256": "fc81c472609a52707e50a3f7c697263b6199268b7c7a2219e29539f759660e7d"
+    },
+    {
+      "file": "web/public/marketing/scenewright-film-poster.webp",
+      "source": "showcase/video/out/v3/scenewright-hero-66s-16x9.mp4",
+      "derivation": "V3Hero frame at 13.5 s ('Try every look you can imagine' proof wall), 1280x720, WebP q78. Poster for the homepage film; the film itself is YouTube W-1bPTQXQaQ, loaded from youtube-nocookie.com on click.",
+      "source_work": "Proofs and pages from public-domain and openly licensed showcase stories (see showcase/video/EDIT-v3.md)",
+      "source_sha256": "dba0ed4b7e3ac453ab36d2b87f8b3b497354d7e290cc2c05589f8ce3bd92246c",
+      "asset_sha256": "e7f6137cffe275e19700e92a4a79d707066fb5ede2b5942ed8553884d6ead7a4"
     }
   ],
   "known_limits": [

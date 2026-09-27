@@ -15,6 +15,7 @@ export interface LandingCopy {
         home: string;
         navigation: string;
         process: string;
+        film: string;
         continuity: string;
         rights: string;
         faq: string;
@@ -40,6 +41,19 @@ export interface LandingCopy {
     premise: {
         title: string;
         body: string;
+    };
+    film: {
+        kicker: string;
+        title: string;
+        body: string;
+        chapters: string[];
+        play: string;
+        playLabel: string;
+        duration: string;
+        playerTitle: string;
+        caption: string;
+        youtube: string;
+        posterAlt: string;
     };
     process: {
         title: string;
@@ -149,6 +163,7 @@ export interface LandingCopy {
 /** Page structure only; all translated text lives in ICU catalogs. */
 export function landingCopy(t: Translator): LandingCopy {
     return { nav: { process: t("landing.nav.process"),
+            film: t("landing.nav.film"),
             continuity: t("landing.nav.continuity"),
             rights: t("landing.nav.rights"),
             faq: t("landing.nav.faq"),
@@ -173,6 +188,20 @@ export function landingCopy(t: Translator): LandingCopy {
             playLoop: t("landing.hero.playLoop") },
         premise: { title: t("landing.premise.title"),
             body: t("landing.premise.body") },
+        film: { kicker: t("landing.film.kicker"),
+            title: t("landing.film.title"),
+            body: t("landing.film.body"),
+            chapters: [t("landing.film.chapters.0"),
+                t("landing.film.chapters.1"),
+                t("landing.film.chapters.2"),
+                t("landing.film.chapters.3")],
+            play: t("landing.film.play"),
+            playLabel: t("landing.film.playLabel"),
+            duration: t("landing.film.duration"),
+            playerTitle: t("landing.film.playerTitle"),
+            caption: t("landing.film.caption"),
+            youtube: t("landing.film.youtube"),
+            posterAlt: t("landing.film.posterAlt") },
         process: { title: t("landing.process.title"),
             body: t("landing.process.body"),
             steps: [{ number: t("landing.process.steps.0.number"),
