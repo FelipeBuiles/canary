@@ -7,6 +7,12 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch: # manual trigger for prod release validation
+    inputs:
+      skip_drain:
+        description: "Offline recovery only: skip drain because production machines are stopped"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -249,11 +255,15 @@ jobs:
             -c "import novel_to_comic.server.app, novel_to_comic.server.durable_queue"
           docker run --rm --entrypoint /app/.venv-litellm/bin/python "$IMAGE" -c "import litellm"
       - name: Drain production and wait for running work
+        if: ${{ !inputs.skip_drain }}
         env:
           CANARY_OPS_TOKEN: ${{ secrets.CANARY_OPS_TOKEN }}
           # Direct Fly route, still protected by CANARY_OPS_TOKEN.
           SCENEWRIGHT_APP_URL: https://canary-web.fly.dev
         run: python scripts/check_deploy_safe.py
+      - name: Record offline recovery
+        if: ${{ inputs.skip_drain }}
+        run: echo 'Offline recovery requested by operator; deployment drain skipped because production machines are stopped.' >> "$GITHUB_STEP_SUMMARY"
       - name: Record rollback target
         env:
           IMAGE: ${{ steps.release.outputs.image }}

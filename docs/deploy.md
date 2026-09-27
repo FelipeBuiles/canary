@@ -353,6 +353,13 @@ Copy `docs/ops/release-evidence-template.md` for each customer-facing release.
 ### CI-managed production deployment
 
 Run the `CI` workflow manually against `main` to request a production release.
+For offline recovery when production machines are already stopped, select
+`skip_drain` in the manual dispatch form (CLI: `gh workflow run ci.yml --ref main
+-F skip_drain=true`). This explicit override skips only the HTTP drain step and
+records the choice in the run summary; builds, smoke tests, and deployment
+verification still run. It defaults to false. An unreachable endpoint alone
+does not establish that machines are stopped; normal releases still require drain.
+
 The manual dispatch is the operator's confirmation that the maintenance window
 is active. The `Deploy production` job starts only after the backend, frontend,
 and production-image jobs pass for the exact SHA; it then:
@@ -404,7 +411,8 @@ branch, and add these environment secrets:
 Do not store the Supabase service-role key as a `VITE_*` value. The deploy job
 closes server admission but does not announce a customer maintenance window.
 It cannot bootstrap drain on an old binary: complete the controlled first
-cutover before using this workflow. If the repository plan supports required
+cutover and stop the old process before using the offline recovery option.
+If the repository plan supports required
 environment reviewers, enabling one adds a useful second approval.
 
 ### Drain, wait for idle, and explicitly resume
