@@ -154,14 +154,15 @@ asyncio.run(crash(Path(sys.argv[1])))
     assert jobs["2"].recoverable is False
 
 
-def test_fal_page_dispatch_has_three_locks_without_changing_other_account_work(tmp_path):
+@pytest.mark.parametrize("provider", ["fal-queue", "openai"])
+def test_page_dispatch_has_three_locks_without_changing_other_account_work(tmp_path, provider):
     from novel_to_comic.server.generation_jobs import GenerationJob
 
     pages = [GenerationJob(
         id=str(number), project_name="account:book", kind="complete_page_draw",
         label=str(number), payload={"page_number": number}, sequence=number, runner=None,
         user_id="account",
-        command=SimpleNamespace(operation="page_draw", arguments={"request": {"provider": "fal-queue"}}),
+        command=SimpleNamespace(operation="page_draw", arguments={"request": {"provider": provider}}),
     ) for number in range(1, 5)]
     locks = [dispatch_lock("queue", page) for page in pages]
     assert len(set(locks[:3])) == 3
@@ -421,7 +422,7 @@ def test_page_handler_reconstructs_frozen_bytes_and_ocr(tmp_path, monkeypatch):
         captured.update(kwargs)
         return work, None
     monkeypatch.setattr(page_drawing, "page_draw_execution", execution)
-    monkeypatch.setattr(page_drawing, "complete_page_adapter", lambda config: "adapter")
+    monkeypatch.setattr(page_drawing, "complete_page_adapter", lambda config, **kwargs: "adapter")
     monkeypatch.setattr(job_execution.TargetArtifacts, "read_plan", lambda self: SimpleNamespace(pages=[_page()]))
     spec = command("page_draw", tmp_path, Config(),
         request=compiled.request.model_dump(mode="json"), page=_page().model_dump(mode="json"),

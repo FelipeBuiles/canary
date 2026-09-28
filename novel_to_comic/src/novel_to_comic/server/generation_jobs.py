@@ -66,13 +66,20 @@ def _looks_like_timeout_cancellation(exc: BaseException, elapsed: float, timeout
     return elapsed >= max(0, timeout_seconds - 2) and "cancel" in lowered
 
 
-def is_fal_page_draw(job: GenerationJob) -> bool:
+# Complete-page providers whose pages may render in parallel for one account.
+# Each call is one independent paid submission; provider rate limits answer
+# with 429s, which are retried before anything is generated.
+PARALLEL_PAGE_PROVIDERS = frozenset({"fal-queue", "openai", "openai-fal"})
+PARALLEL_PAGES_PER_ACCOUNT = 3
+
+
+def is_parallel_page_draw(job: GenerationJob) -> bool:
     """Use the frozen request, not mutable project settings, as routing authority."""
     return bool(
         job.kind == "complete_page_draw"
         and job.command is not None
         and job.command.operation == "page_draw"
-        and job.command.arguments.get("request", {}).get("provider") == "fal-queue"
+        and job.command.arguments.get("request", {}).get("provider") in PARALLEL_PAGE_PROVIDERS
     )
 
 
@@ -86,13 +93,13 @@ def is_light_job(job: GenerationJob) -> bool:
 
 
 def account_lane_key(job: GenerationJob) -> str:
-    if is_fal_page_draw(job):
-        return f"fal-page:{job.sequence % 3}"
+    if is_parallel_page_draw(job):
+        return f"page:{job.sequence % PARALLEL_PAGES_PER_ACCOUNT}"
     return "light" if is_light_job(job) else "exclusive"
 
 
 class _AccountLane:
-    """Three FAL pages may run together; all other account work is exclusive."""
+    """Parallel-provider pages may run together; all other account work is exclusive."""
 
     def __init__(self) -> None:
         self.condition = asyncio.Condition()
@@ -112,7 +119,8 @@ class _AccountLane:
                     position = next(index for index, (waiting, _) in enumerate(ahead) if waiting is token)
                     earlier_exclusive = any(not sibling_parallel for _, sibling_parallel in ahead[:position])
                     if parallel:
-                        admitted = not self.exclusive and not earlier_exclusive and self.parallel < 3
+                        admitted = (not self.exclusive and not earlier_exclusive
+                                    and self.parallel < PARALLEL_PAGES_PER_ACCOUNT)
                     else:
                         admitted = position == 0 and not self.exclusive and self.parallel == 0
                     if admitted:
@@ -361,7 +369,7 @@ async def _run_generation_job(app: FastAPI, job: GenerationJob) -> None:
         async with AsyncExitStack() as stack:
             if job.user_id:
                 lane = _account_lane(app, job.user_id, light=is_light_job(job))
-                await stack.enter_async_context(lane.enter(is_fal_page_draw(job)))
+                await stack.enter_async_context(lane.enter(is_parallel_page_draw(job)))
             for semaphore in semaphores:
                 await stack.enter_async_context(semaphore)
             if not await _start_when_open(app, job):

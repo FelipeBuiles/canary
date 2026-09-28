@@ -12,7 +12,7 @@ from novel_to_comic.config import Config
 from novel_to_comic.models.draw import RetryProvenance
 from novel_to_comic.page_drawing import (
     complete_page_adapter, compile_page_generation_request,
-    current_page_capability_profile, select_book_edition,
+    current_page_capability_profile, fal_sunburst_page_capability_profile, select_book_edition,
 )
 from novel_to_comic.usage import UsageRecord
 from tests.test_complete_page_draw import _page, _inventory, _reference_files
@@ -20,12 +20,12 @@ from tests.test_complete_page_draw import _page, _inventory, _reference_files
 
 def test_public_image_page_preserves_references_and_sends_fixed_controls(tmp_path):
     config = Config(draw_model='image-sunburst')
-    profile = current_page_capability_profile(config)
+    profile = fal_sunburst_page_capability_profile()
     edition = select_book_edition(edition_id='test', profile=profile)
     compiled = compile_page_generation_request(
         _page(), edition, _inventory(), _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
     )
-    adapter = complete_page_adapter(config)
+    adapter = complete_page_adapter(config, profile)
     prepared = adapter.prepare(compiled)
     image = io.BytesIO()
     Image.new('RGB', (1024, 1536)).save(image, format='PNG')
@@ -69,12 +69,14 @@ def test_public_image_page_preserves_references_and_sends_fixed_controls(tmp_pat
     assert result.usage.cost_usd == 0.19
 
 
-def test_sunburst_page_profile_uses_fal_queue():
+def test_sunburst_page_profile_is_openai_first_with_fal_backup():
     from novel_to_comic.page_drawing import page_image_quality
 
     profile = current_page_capability_profile(Config(draw_model='image-sunburst'))
-    assert profile.provider == 'fal-queue'
-    assert profile.model == 'openai/gpt-image-2.5/sunburst'
+    assert profile.provider == 'openai-fal'
+    assert profile.model == 'gpt-image-2.5-sunburst'
+    retained = fal_sunburst_page_capability_profile()
+    assert page_image_quality(retained.id, retained.provider) == 'medium'
     assert page_image_quality(profile.id, profile.provider) == 'medium'
     integrated = current_page_capability_profile(Config(draw_model='image-sunburst', lettering_mode='integrated'))
     assert page_image_quality(integrated.id, integrated.provider) == 'medium'
@@ -84,12 +86,12 @@ def test_sunburst_page_profile_uses_fal_queue():
 
 def _generate_sunburst_page(tmp_path, response_json, usage=None):
     config = Config(draw_model='image-sunburst')
-    profile = current_page_capability_profile(config)
+    profile = fal_sunburst_page_capability_profile()
     compiled = compile_page_generation_request(
         _page(), select_book_edition(edition_id='test', profile=profile),
         _inventory(), _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
     )
-    adapter = complete_page_adapter(config)
+    adapter = complete_page_adapter(config, profile)
     image = io.BytesIO()
     Image.new('RGB', (1024, 1536)).save(image, format='PNG')
     response = httpx.Response(200, json=response_json, request=httpx.Request('POST', 'http://gateway'))
@@ -153,12 +155,12 @@ def test_retired_image_variant_cannot_be_selected():
 @pytest.mark.parametrize('failure', ['timeout', 'wrong_size', 'wrong_model'])
 def test_public_image_failure_never_resubmits(tmp_path, failure):
     config = Config(draw_model='image-sunburst')
-    profile = current_page_capability_profile(config)
+    profile = fal_sunburst_page_capability_profile()
     compiled = compile_page_generation_request(
         _page(), select_book_edition(edition_id='test', profile=profile),
         _inventory(), _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
     )
-    adapter = complete_page_adapter(config)
+    adapter = complete_page_adapter(config, profile)
     image = io.BytesIO()
     Image.new('RGB', (512, 512) if failure == 'wrong_size' else (1024, 1536)).save(image, format='PNG')
     response = httpx.Response(200, json={'model': 'gpt-image-2.5-flare' if failure == 'wrong_model' else profile.model,
@@ -185,12 +187,12 @@ def test_unknown_billing_recovery_and_correction_keep_generation_pending(tmp_pat
     from novel_to_comic.target_artifacts import TargetArtifacts
 
     config = Config(draw_model='image-sunburst')
-    profile = current_page_capability_profile(config)
+    profile = fal_sunburst_page_capability_profile()
     compiled = compile_page_generation_request(
         _page(), select_book_edition(edition_id='test', profile=profile),
         _inventory(), _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
     )
-    adapter = complete_page_adapter(config)
+    adapter = complete_page_adapter(config, profile)
     output = io.BytesIO()
     Image.new('RGB', (1024, 1536)).save(output, format='PNG')
     result = CompletePageProviderResult(artifact_kind='complete_page', image_bytes=output.getvalue(),

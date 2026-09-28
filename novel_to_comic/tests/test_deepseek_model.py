@@ -18,8 +18,7 @@ def _routes():
 
 
 def test_every_selectable_text_model_has_a_gateway_route():
-    text_routes = {alias for alias, route in _routes().items()
-                   if not route["model"].startswith("fal-queue/")}
+    text_routes = {alias for alias in _routes() if not alias.startswith("image-")}
     assert text_routes == {model.id for model in TEXT_MODELS}
 
 

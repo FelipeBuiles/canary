@@ -1,15 +1,60 @@
 # Production gateway allowlist. Development Codex requests bypass this proxy.
+#
+# The gateway runs on LiteLLM's bundled model map (LITELLM_LOCAL_MODEL_COST_MAP,
+# set in both Dockerfiles), never the copy fetched at boot, so every route's
+# capabilities and prices are pinned here. An unmapped model otherwise prices
+# at 0.0, which the app would settle as free.
+# litellm/tests/test_gateway_contracts.py checks that prices match the app's
+# pricing overrides and that no route depends on the fetched map.
 model_list:
 - model_name: gpt-6-sol
   litellm_params:
     model: openai/gpt-6-sol
     api_key: os.environ/OPENAI_API_KEY
     reasoning_effort: low
+  model_info:
+    mode: chat
+    supports_reasoning: true
+    supports_none_reasoning_effort: true
+    supports_xhigh_reasoning_effort: true
+    supports_max_reasoning_effort: true
+    supports_response_schema: true
+    supports_system_messages: true
+    supports_vision: true
+    supports_native_streaming: true
+    supports_prompt_caching: true
+    max_input_tokens: 922000
+    max_output_tokens: 128000
+    input_cost_per_token: 2.0e-06
+    cache_read_input_token_cost: 2.0e-07
+    output_cost_per_token: 1.0e-05
+    input_cost_per_token_above_272k_tokens: 4.0e-06
+    cache_read_input_token_cost_above_272k_tokens: 4.0e-07
+    output_cost_per_token_above_272k_tokens: 1.5e-05
 - model_name: gpt-6-luna
   litellm_params:
     model: openai/gpt-6-luna
     api_key: os.environ/OPENAI_API_KEY
     reasoning_effort: low
+  model_info:
+    mode: chat
+    supports_reasoning: true
+    supports_none_reasoning_effort: true
+    supports_xhigh_reasoning_effort: true
+    supports_max_reasoning_effort: true
+    supports_response_schema: true
+    supports_system_messages: true
+    supports_vision: true
+    supports_native_streaming: true
+    supports_prompt_caching: true
+    max_input_tokens: 922000
+    max_output_tokens: 128000
+    input_cost_per_token: 1.0e-07
+    cache_read_input_token_cost: 1.0e-08
+    output_cost_per_token: 5.0e-07
+    input_cost_per_token_above_272k_tokens: 2.0e-07
+    cache_read_input_token_cost_above_272k_tokens: 2.0e-08
+    output_cost_per_token_above_272k_tokens: 7.5e-07
 - model_name: claude-fable-5-1
   litellm_params:
     model: anthropic/claude-fable-5-1
@@ -27,6 +72,46 @@ model_list:
     thinking:
       type: adaptive
       display: summarized
+  # The bundled map lacks the 5.5 models.
+  model_info:
+    mode: chat
+    supports_output_config: true
+    supports_native_structured_output: true
+    supports_adaptive_thinking: true
+    supports_reasoning: true
+    supports_vision: true
+    supports_sampling_params: false
+    supports_assistant_prefill: false
+    max_input_tokens: 1000000
+    max_output_tokens: 128000
+    input_cost_per_token: 4.0e-06
+    output_cost_per_token: 2.0e-05
+    cache_read_input_token_cost: 2.0e-07
+    cache_creation_input_token_cost: 5.0e-06
+- model_name: claude-sonnet-5-5
+  litellm_params:
+    model: anthropic/claude-sonnet-5-5
+    api_key: os.environ/ANTHROPIC_API_KEY
+    # Same shape as Opus 5.5: visible summaries keep the first-content
+    # watchdog fed, and effort travels in the app's output_config.
+    thinking:
+      type: adaptive
+      display: summarized
+  model_info:
+    mode: chat
+    supports_output_config: true
+    supports_native_structured_output: true
+    supports_adaptive_thinking: true
+    supports_reasoning: true
+    supports_vision: true
+    supports_sampling_params: false
+    supports_assistant_prefill: false
+    max_input_tokens: 1000000
+    max_output_tokens: 128000
+    input_cost_per_token: 2.0e-06
+    output_cost_per_token: 1.0e-05
+    cache_read_input_token_cost: 2.0e-07
+    cache_creation_input_token_cost: 2.5e-06
 - model_name: mimo-v2.6-pro
   litellm_params:
     model: openrouter/xiaomi/mimo-v2.6-pro
@@ -37,6 +122,17 @@ model_list:
         enabled: false
       provider:
         require_parameters: true
+  model_info:
+    mode: chat
+    supports_reasoning: true
+    supports_response_schema: true
+    supports_vision: true
+    supports_prompt_caching: true
+    max_input_tokens: 1048576
+    max_output_tokens: 131072
+    input_cost_per_token: 4.35e-07
+    cache_read_input_token_cost: 3.6e-09
+    output_cost_per_token: 8.7e-07
 - model_name: deepseek-v4.1-flash
   litellm_params:
     model: together_ai/deepseek-ai/DeepSeek-V4.1-Flash
@@ -48,16 +144,37 @@ model_list:
     extra_body:
       reasoning:
         enabled: false
+  # LiteLLM prices Together models by parameter count unless the shared
+  # together_ai/<model> entry carries a price; deployment pricing is stripped
+  # from that entry, so the id must be that key.
+  model_info:
+    id: together_ai/deepseek-ai/DeepSeek-V4.1-Flash
+    mode: chat
+    supports_response_schema: true
+    supports_prompt_caching: true
+    max_input_tokens: 1048576
+    input_cost_per_token: 3.0e-07
+    cache_read_input_token_cost: 6.0e-09
+    output_cost_per_token: 1.2e-06
 - model_name: image-sunburst
   litellm_params:
     model: fal-queue/openai/gpt-image-2.5/sunburst
     api_key: os.environ/FAL_KEY
+# Sunburst direct on OpenAI, streamed so failures carry their phase. New Draw
+# editions try this route first and fall back to image-sunburst (FAL).
+- model_name: image-sunburst-openai
+  litellm_params:
+    model: openai-stream/gpt-image-2.5-sunburst
+    api_key: os.environ/OPENAI_API_KEY
 litellm_settings:
   set_verbose: false
   num_retries: 0
-  drop_params: true
+  # Unsupported parameters fail the request instead of vanishing from it.
+  drop_params: false
   custom_provider_map:
   - provider: fal-queue
     custom_handler: litellm_handlers.fal_provider.fal_queue_llm
+  - provider: openai-stream
+    custom_handler: litellm_handlers.openai_image_stream.openai_image_stream_llm
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

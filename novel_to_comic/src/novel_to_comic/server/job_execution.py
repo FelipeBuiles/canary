@@ -82,7 +82,7 @@ async def _operate(app, job, directory, config):
         from novel_to_comic.lettering.page_read import page_read_adapter
         ocr = page_read_adapter(config, target, page) if args.get("ocr") else None
         work, settled = page_draw_execution(
-            project_dir=directory, compiled=compiled, adapter=complete_page_adapter(config),
+            project_dir=directory, compiled=compiled, adapter=complete_page_adapter(config, request=frozen),
             artifacts=target, page=page, ocr=ocr,
             request_revision=args.get("request_revision"), render_revision=args.get("render_revision"),
             parent_render_revision=args.get("parent_render_revision"),

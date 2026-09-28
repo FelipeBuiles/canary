@@ -7,6 +7,10 @@ import math
 import os
 import time
 import uuid as uuid_lib
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from threading import Event, Thread
 from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
@@ -55,14 +59,56 @@ def reservation_leases_healthy() -> bool:
     return _lease_last_success is not None and time.monotonic() - _lease_last_success < 90
 
 
+@dataclass
+class DeferredAmbiguity:
+    """Ambiguity and call guarantees from one attempt, held for a decision.
+
+    The Draw fallback coordinator decides after an attempt fails whether Canary
+    absorbs it (``release``) or the job keeps today's retained hold. Leaving the
+    scope unresolved commits, so an unhandled path can never lose a hold.
+    """
+
+    jobs: set[str] = field(default_factory=set)
+    call_ids: list[str] = field(default_factory=list)
+    resolved: bool = False
+
+    def release(self, db: Client, *, user_id: str) -> None:
+        """Free this attempt's call guarantees; the user is not charged for it."""
+        for call_id in self.call_ids:
+            release_model_call_authorization(db, user_id=user_id, call_id=call_id)
+        self.jobs.clear()
+        self.resolved = True
+
+    def commit(self) -> None:
+        _unsettled_jobs.update(self.jobs)
+        self.resolved = True
+
+
+_deferred_ambiguity: ContextVar[DeferredAmbiguity | None] = ContextVar("canary_deferred_ambiguity", default=None)
+
+
+@contextmanager
+def deferred_ambiguity() -> Iterator[DeferredAmbiguity]:
+    scope = DeferredAmbiguity()
+    token = _deferred_ambiguity.set(scope)
+    try:
+        yield scope
+    finally:
+        _deferred_ambiguity.reset(token)
+        if not scope.resolved:
+            scope.commit()
+
+
 def retain_ambiguous_job(job_id: str | None) -> None:
     """Retain the authoritative hold when submission or settlement is unknown."""
     if job_id:
-        _unsettled_jobs.add(job_id)
+        scope = _deferred_ambiguity.get()
+        (scope.jobs if scope is not None else _unsettled_jobs).add(job_id)
 
 
 def is_ambiguous_job(job_id: str | None) -> bool:
-    return job_id is not None and job_id in _unsettled_jobs
+    scope = _deferred_ambiguity.get()
+    return job_id is not None and (job_id in _unsettled_jobs or (scope is not None and job_id in scope.jobs))
 
 
 def start_reservation_leases(db: Client) -> None:
@@ -565,6 +611,9 @@ def authorize_model_call(
             "error": "insufficient_credits",
             "message": "Insufficient credits for the next model call. The job stopped before submission.",
         })
+    scope = _deferred_ambiguity.get()
+    if scope is not None:
+        scope.call_ids.append(call_id)
 
 
 def release_model_call_authorization(db: Client, *, user_id: str, call_id: str) -> None:

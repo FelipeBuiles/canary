@@ -34,7 +34,7 @@ class AnthropicRefusalDetails(unittest.TestCase):
 
     def test_patch_is_idempotent_and_rejects_changed_upstream(self):
         for kind, source in (
-            ("transformation", '        context_management = completion_response.get("context_management")'),
+            ("transformation", '        context_management: Final = completion_response.get("context_management")'),
             ("handler", '                finish_reason, usage, container = self._handle_message_delta(chunk)'),
         ):
             patched = patch_source(source, kind)

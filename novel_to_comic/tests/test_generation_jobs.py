@@ -9,7 +9,7 @@ from novel_to_comic.server.generation_jobs import (
     generation_worker,
     user_generation_semaphore,
     _account_lane,
-    is_fal_page_draw,
+    is_parallel_page_draw,
 )
 
 
@@ -163,7 +163,7 @@ def test_per_user_generation_semaphore_serializes_same_user(monkeypatch):
     assert peak == 1
 
 
-def test_fal_page_lane_runs_three_pages_but_keeps_other_work_exclusive():
+def test_page_lane_runs_three_pages_but_keeps_other_work_exclusive():
     app = SimpleNamespace(state=SimpleNamespace())
     lane = _account_lane(app, "user-1")
     release_pages = asyncio.Event()
@@ -212,15 +212,21 @@ def test_fal_page_lane_runs_three_pages_but_keeps_other_work_exclusive():
     assert peak == 3
 
 
-def test_fal_parallel_routing_uses_frozen_page_provider():
+def test_parallel_routing_uses_frozen_page_provider():
     job = GenerationJob(
-        id="fal-page", project_name="account:book", kind="complete_page_draw",
+        id="page", project_name="account:book", kind="complete_page_draw",
         label="Page 1", payload={"page_number": 1}, sequence=1, runner=None,
         command=SimpleNamespace(operation="page_draw", arguments={"request": {"provider": "fal-queue"}}),
     )
-    assert is_fal_page_draw(job)
+    assert is_parallel_page_draw(job)
     job.command.arguments["request"]["provider"] = "openai"
-    assert not is_fal_page_draw(job)
+    assert is_parallel_page_draw(job)
+    for provider in ("openrouter", "vertex-multimodal", "codex-dev"):
+        job.command.arguments["request"]["provider"] = provider
+        assert not is_parallel_page_draw(job)
+    job.command.arguments["request"]["provider"] = "openai"
+    job.kind = "cast_reference"
+    assert not is_parallel_page_draw(job)
 
 
 def test_queued_fal_page_cancelled_while_waiting_never_enters_provider(tmp_path, monkeypatch):

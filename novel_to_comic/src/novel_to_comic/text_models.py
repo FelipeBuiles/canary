@@ -43,11 +43,17 @@ class TextModel:
 TEXT_MODELS = (
     TextModel("gpt-6-sol", "GPT-6 Sol", "OpenAI", "openai", temperature=False),
     TextModel("gpt-6-luna", "GPT-6 Luna", "OpenAI", "openai", temperature=False),
+    # Text routes run at low effort; Claude defaults (``high`` on Fable and
+    # Sonnet, ``medium`` on Opus 5.5) are never left implicit.
     TextModel("claude-fable-5-1", "Claude Fable 5.1", "Anthropic", "anthropic",
-              temperature=False, claude_native_json=True),
-    # Thinking is always on (disabling it is a 400 at every effort). ``high``
-    # keeps parity with the Opus 5 route it replaces.
+              temperature=False, claude_native_json=True, effort="low"),
+    # Thinking is always on (disabling it is a 400 at every effort).
     TextModel("claude-opus-5-5", "Claude Opus 5.5", "Anthropic", "anthropic",
+              temperature=False, claude_native_json=True, effort="low",
+              thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
+              max_output_tokens=128_000),
+    # Adaptive thinking is on by default and bills against the same limit.
+    TextModel("claude-sonnet-5-5", "Claude Sonnet 5.5", "Anthropic", "anthropic",
               temperature=False, claude_native_json=True, effort="low",
               thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
               max_output_tokens=128_000),

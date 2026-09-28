@@ -1069,6 +1069,21 @@ the FAL request ID. If that charge is unavailable, a completed Sunburst image
 (`expected_*` consumption), labelled `request_estimate`. All-zero token usage
 is treated as unknown, never as a free image.
 
+New Sunburst Draw editions use the `openai-fal` profile: each page goes to
+OpenAI first (streamed through the gateway's `image-sunburst-openai` route) and,
+if OpenAI fails for availability, to FAL once. A rejection before OpenAI
+accepted the request falls back with nothing to absorb. An OpenAI attempt with
+an unknown outcome also falls back once; its image can never arrive later, so no
+duplicate page is published, and Canary absorbs its possible charge (the job
+hold is not retained for it; the render provenance records the absorbed usage
+event and its estimated cost). Refusals, invalid requests, cancellation, and
+completed output that fails validation stop without trying FAL. After three
+consecutive OpenAI failures a worker sends pages straight to FAL for 15 minutes.
+Editions bound to the earlier FAL-only profile keep drawing on FAL; the adapter
+always follows the edition's or frozen request's profile, never mutable
+settings. Render provenance keeps the profile's provider and records the route
+that drew the page (`response_metadata.route`, `usage.provider`).
+
 Read-only immediate quotes are distinct from the full-stage rerun estimate:
 
 | GET route | Quoted work |

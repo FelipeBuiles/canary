@@ -154,7 +154,7 @@ RUN /app/.venv-litellm/bin/python /app/patch_anthropic_refusals.py
 # PYTHONPATH makes the handlers importable; config.yaml's custom_provider_map
 # registers them with the proxy at boot.
 COPY litellm/config.yaml /app/config.yaml
-COPY litellm_handlers/__init__.py litellm_handlers/provider_wire.py litellm_handlers/fal_provider.py /app/litellm_handlers/
+COPY litellm_handlers/__init__.py litellm_handlers/provider_wire.py litellm_handlers/fal_provider.py litellm_handlers/openai_image_stream.py /app/litellm_handlers/
 
 # Copy the merged entrypoint (materializes GCP creds → starts litellm → waits
 # for readiness → supervises litellm and the web process together).
@@ -166,6 +166,9 @@ RUN chmod +x /app/entrypoint.sh
 COPY --from=frontend /build/web/dist ./web/dist
 
 ENV PYTHONPATH=/app:/app/litellm_handlers
+# Price and gate every route from the bundled map plus config model_info, never
+# a copy fetched at boot (see litellm/config.yaml).
+ENV LITELLM_LOCAL_MODEL_COST_MAP=True
 
 EXPOSE 8000
 

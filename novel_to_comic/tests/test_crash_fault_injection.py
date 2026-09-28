@@ -24,7 +24,7 @@ def _child(root: Path, phase: str):
     from novel_to_comic.server.generation_jobs import persist_generation_job
     from novel_to_comic.usage import ApiResult
     from tests.test_complete_page_draw import (
-        _compile, _page, _provider_result, _RecordingTransport,
+        _compile, _page, _provider_result, _RecordingTransport, _vertex_adapter,
         VertexCompletePageAdapter, draw_complete_page,
     )
 
@@ -67,7 +67,7 @@ def _child(root: Path, phase: str):
 
     transport = _RecordingTransport(_provider_result())
     (root / "usage-call-id").write_text(transport.result.usage.call_id)
-    adapter = VertexCompletePageAdapter(transport)
+    adapter = _vertex_adapter(transport)
     original_generate = adapter.generate
 
     async def generate(prepared):
