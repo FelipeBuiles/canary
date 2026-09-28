@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from .publications import PublicationInput
 from .telemetry import capture_exception, log_event
 
-_reported: set[tuple[str, int]] = set()
+_reported: set[tuple[str, int | None]] = set()
 
 
 class ShowcasePage(BaseModel):
@@ -65,7 +65,12 @@ def books(*, strict: bool = False) -> list[tuple[dict, Path]]:
 
 
 def _report(manifest: Path, error: ValueError) -> None:
-    key = (str(manifest), manifest.stat().st_mtime_ns)
+    try:
+        modified = manifest.stat().st_mtime_ns
+    except OSError:
+        # A mounted catalogue can change after validation; reporting must still work.
+        modified = None
+    key = (str(manifest), modified)
     if key in _reported:
         return
     _reported.add(key)
