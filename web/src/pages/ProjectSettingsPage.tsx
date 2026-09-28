@@ -15,7 +15,7 @@ const TABS = [
   { id: "general", label: "General" },
   { id: "language", label: "Language" },
   ...(import.meta.env.DEV ? [{ id: "models", label: "Models (dev)" }] : []),
-  { id: "dev", label: "Advanced" },
+  ...(import.meta.env.DEV ? [{ id: "dev", label: "Advanced" }] : []),
   { id: "delete", label: "Delete Project" },
 ];
 
@@ -217,7 +217,7 @@ export function ProjectSettingsPage() {
           </Suspense>
         </div>)}
 
-        {activeTab === "dev" && (<div>
+        {import.meta.env.DEV && activeTab === "dev" && (<div>
           <SectionHeader title="Advanced" description="Development tools and smaller test runs." />
           <Surface border="soft" shadow="none">
             <SettingsRow

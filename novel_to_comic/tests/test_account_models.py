@@ -547,3 +547,22 @@ def test_existing_edition_allows_text_changes_but_not_draw_model_changes(client,
     assert response.status_code == 409
     assert "new edition" in response.json()["detail"]
     assert (project_settings / "config.yaml").read_bytes() == before
+
+
+@pytest.mark.parametrize("environment", ["production", "prod", "live"])
+@pytest.mark.parametrize("value", [True, False])
+def test_production_rejects_dev_mode_creation_and_edits(tmp_path, monkeypatch, environment, value):
+    from fastapi import HTTPException
+    from novel_to_comic.server.account_models import creation_config
+    from novel_to_comic.server.routers.config import update_config
+
+    monkeypatch.setenv("CANARY_ENV", environment)
+    with pytest.raises(ValueError, match="cannot be set in production"):
+        creation_config({"dev_mode": value}, tmp_path, "alice")
+    config = Config()
+    with pytest.raises(HTTPException) as exc:
+        update_config({"dev_mode": value, "target_language": "fr"}, None,
+                      project=(tmp_path, config, None), user_id="alice")
+    assert exc.value.status_code == 403
+    assert config.target_language == "en"
+    assert not (tmp_path / "config.yaml").exists()

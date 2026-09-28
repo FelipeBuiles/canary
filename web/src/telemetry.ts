@@ -1,19 +1,91 @@
-/** Content-free errors only. Product events retain their authenticated API path. */
+/**
+ * Content-free errors, canonical page views, and anonymous signup intent.
+ * Authenticated product events retain their API path. Nothing is stored in
+ * cookies or browser storage; URLs are reduced to route templates.
+ */
 import type { PostHog, CaptureResult } from "posthog-js/dist/module.no-external";
 
 let client: PostHog | undefined;
 let loading: Promise<void> | undefined;
 let account: string | null = null;
 const tokenPattern = /^[A-Za-z0-9_./:{}@+-]{1,160}$/;
+const campaignPattern = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const labelPattern = /^[A-Za-z0-9 ._-]{1,40}$/;
+const pathPattern = /^\/[a-z/:_-]{0,80}$/;
+const staticPaths = new Set([
+  "/", "/samples", "/login", "/signup", "/reset-password", "/account", "/credits", "/backoffice",
+  "/legal/terms", "/legal/privacy", "/legal/acceptable-use",
+]);
+const projectRooms = new Set(["story", "cast", "pages", "book", "styles", "settings"]);
+
+export interface Acquisition {
+  source: string;
+  medium?: string;
+  campaign?: string;
+  referring_domain?: string;
+}
+
+function campaignToken(value: string | null | undefined): string | undefined {
+  const token = value?.trim().toLowerCase();
+  return token && campaignPattern.test(token) ? token : undefined;
+}
+
+function campaignParams(search: string): Partial<Record<"utm_source" | "utm_medium" | "utm_campaign", string>> {
+  const params = new URLSearchParams(search);
+  const result: Partial<Record<"utm_source" | "utm_medium" | "utm_campaign", string>> = {};
+  for (const key of ["utm_source", "utm_medium", "utm_campaign"] as const) {
+    const value = campaignToken(params.get(key));
+    if (value) result[key] = value;
+  }
+  return result;
+}
+
+/** First-touch attribution: bounded campaign tokens and an external referring domain only. */
+export function readAcquisition(location: { search: string; hostname: string }, referrer: string): Acquisition {
+  const campaign = campaignParams(location.search);
+  let referringDomain: string | undefined;
+  try {
+    const host = new URL(referrer).hostname.toLowerCase().replace(/^www\./, "");
+    if (host !== location.hostname.toLowerCase().replace(/^www\./, "")) referringDomain = campaignToken(host);
+  } catch { /* No or malformed referrer: direct. */ }
+  const bookReferral = /^book-[a-f0-9]{32}$/.test(new URLSearchParams(location.search).get("ref") ?? "");
+  const result: Acquisition = {
+    source: campaign.utm_source ?? (bookReferral ? "book_referral" : referringDomain ?? "direct"),
+  };
+  if (campaign.utm_medium) result.medium = campaign.utm_medium;
+  if (campaign.utm_campaign) result.campaign = campaign.utm_campaign;
+  if (referringDomain) result.referring_domain = referringDomain;
+  return result;
+}
+
+const firstTouch: Acquisition = typeof window === "undefined"
+  ? { source: "direct" }
+  : readAcquisition(window.location, document.referrer);
+
+export function getAcquisition(): Acquisition {
+  return { ...firstTouch };
+}
+
+/** Route template for analytics: never project/book IDs, query strings, or unknown paths. */
+export function canonicalPath(pathname: string, signedIn: boolean): string {
+  const path = pathname.replace(/\/+$/, "") || "/";
+  if (path === "/") return signedIn ? "/library" : "/";
+  if (staticPaths.has(path)) return path;
+  if (/^\/read\/[^/]+$/.test(path)) return "/read/:id";
+  const project = /^\/project\/[^/]+(?:\/([^/]+))?/.exec(path);
+  if (project) return project[1] ? `/project/:id/${projectRooms.has(project[1]) ? project[1] : "other"}` : "/project/:id";
+  return "/other";
+}
 
 export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
   if (!event) return null;
   try {
-    if (!["$exception", "$identify", "$create_alias"].includes(event.event)) return null;
+    if (!["$exception", "$identify", "$create_alias", "$pageview", "signup_submitted"].includes(event.event)) return null;
     const source = event.properties ?? {};
     const properties: Record<string, unknown> = {
       $geoip_disable: true,
-      $process_person_profile: true,
+      // Anonymous visitors stay personless; identified accounts keep profiles.
+      $process_person_profile: typeof source.$process_person_profile === "boolean" ? source.$process_person_profile : true,
       environment: import.meta.env.VITE_CANARY_ENV ?? "development",
       release: import.meta.env.VITE_CANARY_VERSION ?? "unknown",
       $release_id: import.meta.env.VITE_CANARY_VERSION ?? "unknown",
@@ -21,6 +93,27 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
     };
     for (const key of ["distinct_id", "$device_id", "$anon_distinct_id", "$session_id", "$window_id", "$exception_fingerprint"]) {
       if (typeof source[key] === "string" && tokenPattern.test(source[key])) properties[key] = source[key];
+    }
+    if (event.event === "$pageview") {
+      const path = source.canonical_path;
+      if (typeof path !== "string" || !pathPattern.test(path)) return null;
+      Object.assign(properties, {
+        $pathname: path,
+        $current_url: window.location.origin + path,
+        $host: window.location.host,
+        $referring_domain: "$direct",
+      });
+      const referrer = campaignToken(typeof source.$referring_domain === "string" ? source.$referring_domain.replace(/^www\./, "") : undefined);
+      if (referrer && referrer !== window.location.hostname.replace(/^www\./, "")) properties.$referring_domain = referrer;
+      for (const key of ["$browser", "$os", "$device_type"]) {
+        if (typeof source[key] === "string" && labelPattern.test(source[key])) properties[key] = source[key];
+      }
+    }
+    for (const key of ["utm_source", "utm_medium", "utm_campaign", "acquisition_source", "acquisition_medium",
+      "acquisition_campaign", "referring_domain"]) {
+      if (event.event !== "$exception" && typeof source[key] === "string" && campaignPattern.test(source[key])) {
+        properties[key] = source[key];
+      }
     }
     if (Array.isArray(source.$exception_list)) {
       properties.$exception_list = source.$exception_list.slice(0, 5).map((item: Record<string, unknown>) => {
@@ -53,9 +146,12 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
 
 export function setTelemetryUser(userId: string | null): void {
   if (account === userId) return;
+  const previous = account;
   account = userId;
   if (!client) return;
-  client.reset();
+  // Signing in from an anonymous visit keeps that visit's page views; switching
+  // or leaving an account starts a fresh anonymous identity.
+  if (previous) client.reset();
   if (userId) client.identify(userId);
 }
 
@@ -86,6 +182,20 @@ export function initTelemetry(): Promise<void> {
     if (account) posthog.identify(account);
   })().catch(() => { /* Telemetry must not prevent the application from loading. */ });
   return loading;
+}
+
+export function trackPageview(pathname: string, signedIn: boolean): void {
+  const properties = { canonical_path: canonicalPath(pathname, signedIn), ...campaignParams(window.location.search) };
+  void initTelemetry().then(() => client?.capture("$pageview", properties));
+}
+
+export function trackSignupSubmitted(): void {
+  const { source, medium, campaign, referring_domain } = firstTouch;
+  const properties: Record<string, string> = { acquisition_source: source };
+  if (medium) properties.acquisition_medium = medium;
+  if (campaign) properties.acquisition_campaign = campaign;
+  if (referring_domain) properties.referring_domain = referring_domain;
+  void initTelemetry().then(() => client?.capture("signup_submitted", properties));
 }
 
 export function captureUiError(error: unknown): void {

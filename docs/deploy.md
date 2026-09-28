@@ -701,7 +701,10 @@ the same environment.
 Non-secret runtime config is in `fly.toml [env]`: `CANARY_ENV`,
 `CANARY_COOKIE_SECURE`, `POSTHOG_TRACE_SAMPLE_RATE`, `CANARY_LABS_ENABLED`,
 `CANARY_ALLOWED_HOSTS`, `SCENEWRIGHT_APP_URL`, `LITELLM_BASE_URL`, pricing
-policy, worker counts, body limits, and timeouts.
+policy, worker counts, body limits, and timeouts. Optionally set
+`CANARY_INTERNAL_ACCOUNT_IDS` (comma-separated account UUIDs) so staff and test
+accounts are excluded from PostHog launch views; see
+[observability](reference/observability.md#launch-analytics-dashboards).
 
 ### `canary-web` — build args (via `fly deploy --build-arg`)
 

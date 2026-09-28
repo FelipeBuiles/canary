@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import get_current_user
 from ..db import get_db
-from ..product_events import record_product_event
+from ..product_events import record_account_created, record_product_event
 
 logger = logging.getLogger("canary.product_events")
 router = APIRouter()
@@ -54,4 +54,15 @@ def ingest_web_event(
     except Exception as exc:
         logger.warning("Web product event persistence failed: %s", exc)
         raise HTTPException(503, "Analytics temporarily unavailable") from exc
+    return {"status": "accepted"}
+
+
+@router.post("/account", status_code=202)
+def observe_account(user_id: str = Depends(get_current_user)):
+    """Record the account's signup milestone once; safe to call on every app load."""
+    try:
+        record_account_created(user_id)
+    except Exception as exc:
+        # Analytics must never block the app shell.
+        logger.warning("Account analytics capture failed: %s", type(exc).__name__)
     return {"status": "accepted"}

@@ -1,11 +1,12 @@
-import { lazy, Suspense, type ComponentType, type ReactElement } from "react";
-import { BrowserRouter, Navigate, Routes, Route } from "react-router-dom";
+import { lazy, Suspense, useEffect, type ComponentType, type ReactElement } from "react";
+import { BrowserRouter, Navigate, Routes, Route, useLocation } from "react-router-dom";
 import { AuthGuard } from "./components/AuthGuard";
 import { LoadingBlock } from "./components/ui/StateBlock";
 import { useAuth } from "./hooks/useAuth";
 import { I18nProvider } from "./i18n";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./api/queryClient";
+import { trackPageview } from "./telemetry";
 
 const Shell = lazy(() => import("./layout/Shell").then(({ Shell }) => ({ default: Shell })));
 const ProjectRooms = lazy(() =>
@@ -80,9 +81,21 @@ function BackofficeRoute() {
   return lazyRoute(BackofficePage);
 }
 
+/** One canonical page view per route change, once auth state is known. */
+function PageviewTracker() {
+  const { pathname } = useLocation();
+  const { session, loading } = useAuth();
+  const signedIn = !!session;
+  useEffect(() => {
+    if (!loading) trackPageview(pathname, signedIn);
+  }, [pathname, signedIn, loading]);
+  return null;
+}
+
 export function App() {
   return (
     <I18nProvider>
+      <PageviewTracker />
       <Routes>
         <Route path="/read/:id" element={lazyRoute(PublicBookPage)} />
         <Route path="/samples" element={lazyRoute(SampleLibraryPage)} />

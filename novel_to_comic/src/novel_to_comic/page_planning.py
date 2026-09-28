@@ -43,6 +43,7 @@ from novel_to_comic.narrative_review import planning_context, review_narrative, 
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.paid_shards import run_paid_shards
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
+from novel_to_comic.text_models import text_wire
 from novel_to_comic.usage import ApiResult, estimate_text_cost
 
 
@@ -228,8 +229,16 @@ class _BookDetailDraft(_BookPlanDraft):
 def _plan_response_schema(
     references: ApprovedVisualReferenceInventory,
     target_pages: tuple[_PageMapEntry, ...] | None = None,
+    *,
+    shared_panel: bool = False,
 ) -> dict:
-    """Limit authored citations to Cast's actual entity/state pairs."""
+    """Limit authored citations to Cast's actual entity/state pairs.
+
+    ``shared_panel`` keeps one panel definition for the whole batch, allowing
+    any batch beat in any panel. Claude compiles each page variant's inlined
+    panel into its grammar, and an 8-page batch exceeds its grammar limit;
+    ``_detail_matches_map`` still rejects beats placed on the wrong page.
+    """
     schema = (_BookDetailDraft if target_pages is not None else _BookPlanDraft).model_json_schema()
     panel_type = "_PanelCompositionDraft" if target_pages is not None else "_PageContentDraft"
     content = schema["$defs"][panel_type]["properties"]
@@ -258,12 +267,20 @@ def _plan_response_schema(
     else:
         content["appearance_states"]["maxItems"] = 0
     if target_pages is not None:
+        if shared_panel:
+            schema["$defs"][panel_type]["properties"]["beat_ids"]["items"] = {
+                "type": "string",
+                "enum": list(dict.fromkeys(b for page in target_pages for b in page.beat_ids)),
+            }
         variants = []
         for page in target_pages:
             variant = deepcopy(schema["$defs"]["_PageDetailDraft"])
             variant["properties"]["page_number"] = {"type": "integer", "enum": [page.page_number]}
-            panel = deepcopy(schema["$defs"][panel_type])
-            panel["properties"]["beat_ids"]["items"] = {"type": "string", "enum": list(page.beat_ids)}
+            if shared_panel:
+                panel = {"$ref": f"#/$defs/{panel_type}"}
+            else:
+                panel = deepcopy(schema["$defs"][panel_type])
+                panel["properties"]["beat_ids"]["items"] = {"type": "string", "enum": list(page.beat_ids)}
             variant["properties"]["lettering_placements"] = {
                 "type": "object", "additionalProperties": False,
                 "properties": {item_id: {"$ref": "#/$defs/_LetteringPlacementDraft"}
@@ -1377,7 +1394,10 @@ async def _generate_detail_batch(
                     ),
                     user_content=attempt_prompt,
                     feature="plan.detail",
-                    json_schema=_plan_response_schema(references, page_map.pages[start:stop]),
+                    json_schema=_plan_response_schema(
+                        references, page_map.pages[start:stop],
+                        shared_panel=text_wire(model).claude_native_json,
+                    ),
                 )
                 result = await generate(**request)
             _record_plan_usage(ctx, result)

@@ -1,7 +1,7 @@
 # PostHog and launch learning
 
 Status: Current implementation; cloud activation and deployment remain separate.
-Last reviewed: 2026-09-26.
+Last reviewed: 2026-09-28.
 
 ## What is consolidated
 
@@ -29,9 +29,13 @@ reducing the Fly machine size.
   W3C trace context. Only selected `canary.observations` logs are exported.
   Generic tracing is a PostHog alpha capability; the selected project exposes its configuration with the expected
   `posthogDistinctId` correlation key. Live request, worker, stage, and AI span ingestion was verified on 2026-09-26; worker and AI spans retain parent links. This is not automatic browser tracing or host infrastructure APM.
-- Replay, autocapture, page views, surveys, console collection and IP enrichment
-  are disabled. Browser identity uses the authenticated account ID and resets on
-  account changes; no email or display name is sent.
+- Replay, autocapture, automatic page views, surveys, console collection and
+  GeoIP enrichment are disabled; explicit canonical page views are described
+  under [launch analytics dashboards](#launch-analytics-dashboards). Browser
+  identity uses the authenticated account ID and resets on account changes; no
+  email or display name is sent. The SDK's `ip: false` does not stop PostHog
+  storing `$ip` on ingested events; only the project's "Discard client IP data"
+  setting does.
 
 New `ai_usage_events` writes keep compact database projections: allowlisted
 scalar request controls, SHA-256/byte-count summaries of response schemas and
@@ -64,6 +68,7 @@ server restart was performed as part of configuration.
 | --- | --- |
 | Backend runtime | `POSTHOG_PROJECT_TOKEN`, `POSTHOG_HOST=https://us.i.posthog.com` |
 | Sampling / release | `POSTHOG_TRACE_SAMPLE_RATE` (default 1), `CANARY_ENV`, `CANARY_VERSION` |
+| Launch-view exclusion | `CANARY_INTERNAL_ACCOUNT_IDS` (comma-separated account UUIDs) |
 | Frontend build | `VITE_POSTHOG_PROJECT_TOKEN`, `VITE_POSTHOG_HOST`, `VITE_CANARY_ENV` |
 | Source-map build only | `POSTHOG_PROJECT_ID`, private `POSTHOG_API_KEY` BuildKit secret |
 
@@ -99,6 +104,68 @@ window and can include multiple projects per account; do not call it first-proje
 activation without a cohort analysis. The [launch dashboard](https://us.posthog.com/project/630262/dashboard/2139283)
 and its three launch insights were provisioned and verified in the UI. The two diagnostic insights were added and their queries verified against live development events on 2026-09-26. Events, logs, and traces are arriving; production traffic and browser exception symbolication remain unverified. The official wizard was not run: explicit instrumentation applies
 the documented integration recipes while keeping content out of telemetry.
+
+## Launch analytics dashboards
+
+Two pinned dashboards answer the launch questions; both filter
+`environment=production` and exclude the project's **Internal / Test users**
+cohort (`$internal_or_test_user = true`):
+
+- [Canary — Launch pulse](https://us.posthog.com/project/630262/dashboard/2145123):
+  7-day KPIs with prior-week comparison (new accounts, active authors, pages
+  drawn, exporting authors, gross credit revenue, homepage visits); daily growth
+  and output; activation funnel (account → project → style → first page →
+  export, 14-day window); visit → signup funnel; accounts by acquisition source;
+  homepage visits by referrer; weekly retention and lifecycle; credit block →
+  checkout → purchase; friction signals; station views.
+- [Canary — Pipeline health & cost](https://us.posthog.com/project/630262/dashboard/2145124):
+  stage success rate and known AI spend KPIs; per-stage reliability and duration;
+  AI calls by feature (failure rate, error types, p50/p95 latency, spend); queue
+  wait and run time; daily spend by cost confidence; cost per page drawn; spend
+  by stage; AI failures by error type; stage failures by cause; exceptions.
+
+"Active author" is the **Author active** action: `project_created`,
+`stage_started`, `stage_approved`, `style_selected`, `station_viewed`,
+`panel_regenerated`, `export_download_requested`, `checkout_started`, and
+`feedback_submitted`. Background completions such as `page_ready` never count as
+activity. A project annotation marks the production launch on 2026-09-28.
+The earlier **Canary launch learning** dashboard and the configuration script
+remain valid; the new dashboards were provisioned with the PostHog MCP.
+
+Data added for these views:
+
+- **Canonical page views.** The browser sends `$pageview` on each route change
+  after auth state is known. Paths become route templates (`/`, `/library` for
+  a signed-in root, `/read/:id`, `/project/:id/<room>`, `/other`); the URL is
+  rebuilt from the template, the referrer is reduced to an external domain, and
+  only bounded `utm_source`/`utm_medium`/`utm_campaign` tokens and browser, OS,
+  and device labels survive the scrubber. Anonymous visitors stay personless.
+  Persistence remains in memory, so a reload is a new anonymous visitor: count
+  visits, not unique people. Signing in from an anonymous visit identifies that
+  visit; switching accounts still resets identity.
+- **Signup attribution.** First-touch source (UTM source, `book_referral`,
+  external referring domain, or `direct`) is captured on landing, sent as
+  anonymous `signup_submitted`, and saved in Supabase user metadata as
+  `acquisition`, so it survives the email-confirmation hop.
+- **`account_created`.** On each app load the browser calls
+  `POST /api/events/account`. The server records one outbox event per account,
+  dated at the Supabase signup time, with a deterministic ID (repeat writes are
+  ignored) and `acquisition_*`/`referring_domain`/`referred_by_book` properties
+  plus `$set_once` person properties (`signed_up_at` and the same attribution).
+  Accounts created before attribution capture report `acquisition_source=unknown`.
+  Existing accounts are recorded on their next visit; accounts that never return
+  are not backfilled. A best-effort `$set` sends `$internal_or_test_user` once per
+  process from `CANARY_INTERNAL_ACCOUNT_IDS`.
+- **Durations and causes.** Stage outcome events carry `latency_ms`;
+  `stage_failed` carries `error_type` (the stage `error_code`, else
+  `stage_error`); `operation_completed` carries run `latency_ms` beside
+  `queue_ms`. Earlier events have none of these.
+
+Person properties cross the wire only through an allowlist in `telemetry.py`
+(`$internal_or_test_user`, `signed_up_at`, and attribution fields). Revenue
+tiles use gross `credits_purchased.gross_amount_cents`; refunds are not netted
+and the ledger stays authoritative. No alert, subscription, or recurring report
+was created.
 
 ## Local launchers
 

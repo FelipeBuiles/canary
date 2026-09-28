@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 import { setTelemetryUser } from "../telemetry";
+import { recordAccountSeen } from "../api/events";
 import { clearAccountRequests } from "../lib/accountEpoch";
 import { replaceAccountQueryClient } from "../api/queryClient";
 import { usePipelineStore } from "../store/pipeline";
@@ -20,6 +21,7 @@ function receiveSession(session: Session | null) {
     useStyleGenStore.setState({ pending: {}, jobIds: {}, statuses: {}, queuePositions: {} });
     useInsufficientCreditsStore.getState().close();
     replaceAccountQueryClient(session?.user.id ?? null);
+    if (session) void recordAccountSeen();
   }
   snapshot = { session, user: session?.user ?? null, loading: false };
   setTelemetryUser(snapshot.user?.id ?? null);

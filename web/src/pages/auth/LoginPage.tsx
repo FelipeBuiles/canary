@@ -6,6 +6,7 @@ import { Button } from "../../components/ui/Button";
 import { BrandMark } from "../../components/BrandMark";
 import { cn } from "../../lib/cn";
 import { useI18n } from "../../i18n";
+import { getAcquisition, trackSignupSubmitted } from "../../telemetry";
 
 type AuthMode = "signin" | "signup";
 
@@ -65,11 +66,13 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
         const { error } = await supabase.auth.signUp({
           email: email.trim(), password,
           options: {
-            data: { studio_name: studioName, ...referral },
+            // First-touch attribution survives the email-confirmation hop.
+            data: { studio_name: studioName, ...referral, acquisition: getAcquisition() },
             ...(sampleDestination !== "/" ? { emailRedirectTo: `${window.location.origin}${sampleDestination}` } : {}),
           },
         });
         if (error) throw error;
+        trackSignupSubmitted();
         setMessage(t("Check {email} for the confirmation link.", { email: email.trim() }));
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });

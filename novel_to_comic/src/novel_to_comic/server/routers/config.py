@@ -6,6 +6,7 @@ from novel_to_comic.config import LANGUAGE_NAMES, image_model_aliases, save_conf
 
 from ..deps import get_project
 from ..auth import get_current_user
+from ..runtime_environment import app_environment
 
 router = APIRouter()
 
@@ -48,6 +49,9 @@ def update_config(body: dict, request: Request, project=Depends(get_project), us
     project_dir, config, state = project
     if "lettering_mode" in body and body["lettering_mode"] != config.lettering_mode:
         raise HTTPException(409, "Choose lettering when creating a project. Switching requires a new project and new page generation.")
+
+    if "dev_mode" in body and app_environment() == "production":
+        raise HTTPException(403, "Dev / demo mode cannot be set in production.")
 
     # Reject attempts to set API keys via the web UI
     for key in _SECRET_FIELDS:

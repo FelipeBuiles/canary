@@ -10,7 +10,7 @@ import { LegalLayout } from "../../layout/LegalLayout";
  */
 export function PrivacyPage() {
   return (
-    <LegalLayout title="Privacy Policy" updated="September 26, 2026">
+    <LegalLayout title="Privacy Policy" updated="September 28, 2026">
       <p>
         This Privacy Policy explains what Scenewright collects, how we use it,
         and the choices you have. We aim to collect only what we need to run the
@@ -68,10 +68,14 @@ export function PrivacyPage() {
           <strong>Stripe</strong> for payment processing.
         </li>
         <li>
-          <strong>PostHog</strong> for selected usage milestones, error reports,
-          and operational diagnostics linked to an account identifier. We do not
-          send manuscripts, prompts, generated artwork, or feedback messages to
-          PostHog. Session replay and automatic page-content capture are disabled.
+          <strong>PostHog</strong> for page views, selected usage milestones,
+          error reports, and operational diagnostics, linked to an account
+          identifier once you sign in. Page views record a route template (never
+          a project or book ID), campaign tags, and the referring site's domain;
+          how you found us is saved with your account at signup. We do not send
+          manuscripts, prompts, generated artwork, email addresses, or feedback
+          messages to PostHog, and analytics uses no cookies or browser storage.
+          Session replay and automatic page-content capture are disabled.
         </li>
       </ul>
 

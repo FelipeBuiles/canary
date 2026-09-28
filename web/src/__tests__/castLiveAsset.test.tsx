@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import { useLiveStageAsset } from "../hooks/useLiveStageAsset";
 
 function ProbeHarness({ timestamp, stageRegenerating }: { timestamp: number; stageRegenerating: boolean }) {
-  const { probe } = useLiveStageAsset("/asset.png", timestamp, stageRegenerating);
-  return <div data-testid="probe">{probe}</div>;
+  const { probe, hasImage, imageSrc } = useLiveStageAsset("/asset.png", timestamp, stageRegenerating);
+  return <div data-testid="probe" data-available={hasImage} data-src={imageSrc}>{probe}</div>;
 }
 
 function getProbe(container: HTMLElement) {
@@ -45,6 +45,20 @@ describe("useLiveStageAsset", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("invalidates a successful probe when the image revision changes", () => {
+    const view = render(<ProbeHarness timestamp={100} stageRegenerating />);
+    fireEvent.load(getProbe(view.container));
+    expect(view.getByTestId("probe").dataset.available).toBe("true");
+
+    view.rerender(<ProbeHarness timestamp={200} stageRegenerating />);
+    expect(view.getByTestId("probe").dataset.available).toBe("false");
+    expect(getProbe(view.container).getAttribute("src")).toBe("/asset.png?t=200");
+
+    view.rerender(<ProbeHarness timestamp={300} stageRegenerating={false} />);
+    expect(view.container.querySelector("img")).toBeNull();
+    expect(view.getByTestId("probe").dataset.src).toBe("/asset.png?t=300");
   });
 
   it("stops probing after the asset loads", () => {

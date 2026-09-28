@@ -12,6 +12,7 @@ export function useLiveStageAsset(src: string, timestamp: string | number, stage
   const [probeState, setProbeState] = useState(() => ({
     key,
     loaded: false,
+    loadedFor: "",
     token: stageRegenerating ? String(timestamp) : null,
   }));
   const retryTimer = useRef<number | null>(null);
@@ -32,17 +33,18 @@ export function useLiveStageAsset(src: string, timestamp: string | number, stage
   // Derive a fresh probe during a stage/source transition instead of setting
   // state from an effect. This also keeps a parent status poll from replacing
   // the current request.
-  const current = probeState.key === key
+  const current = probeState.key === key && (!probeState.loaded || probeState.loadedFor === String(timestamp))
     ? probeState
     : {
         key,
         loaded: false,
+        loadedFor: "",
         token: stageRegenerating ? String(timestamp) : null,
       };
 
   const handleLoad = () => {
     clearRetry();
-    setProbeState({ key, loaded: true, token: null });
+    setProbeState({ key, loaded: true, loadedFor: String(timestamp), token: current.token });
   };
 
   const handleError = () => {
@@ -56,6 +58,7 @@ export function useLiveStageAsset(src: string, timestamp: string | number, stage
       setProbeState({
         key,
         loaded: false,
+        loadedFor: "",
         token: `${timestamp}-${retryAttempt.current}`,
       });
     }, delay);
@@ -75,5 +78,9 @@ export function useLiveStageAsset(src: string, timestamp: string | number, stage
     />
   ) : null;
 
-  return { hasImage: stageRegenerating && current.loaded, probe };
+  // Reuse the URL that actually loaded; the original URL may have a cached
+  // missing-file response from before generation finished.
+  const hasImage = stageRegenerating && current.loaded;
+  const imageSrc = `${src}?t=${encodeURIComponent(hasImage ? current.token! : String(timestamp))}`;
+  return { hasImage, imageSrc, probe };
 }

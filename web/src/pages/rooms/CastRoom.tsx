@@ -590,7 +590,7 @@ function CharacterCastCard({
   const isInstructionBusy = regenRefInstructed.isPending || isSubmitting;
 
   const { t } = useI18n();
-  const { hasImage, probe } = useLiveStageAsset(refUrl, timestamp, stageRegenerating);
+  const { hasImage, imageSrc, probe } = useLiveStageAsset(refUrl, timestamp, stageRegenerating);
   // A card hides its asset only while that asset is genuinely absent or
   // while this card's own regeneration is in flight.
   const isGenerating = (stageRegenerating && !hasImage) || regenRef.isPending || isInstructionBusy || !!activeJob;
@@ -603,7 +603,7 @@ function CharacterCastCard({
         entityId={character.id}
         name={character.name}
         aspect="square"
-        imageSrc={`${refUrl}?t=${timestamp}`}
+        imageSrc={imageSrc}
         imageWidth={320}
         imageHeight={320}
         probe={probe}
@@ -633,8 +633,8 @@ function CharacterCastCard({
       <ImageModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        src={`${refUrl}?t=${timestamp}`}
-        imageAvailable={!imgFailed}
+        src={imageSrc}
+        imageAvailable={!imgFailed || hasImage}
         emptyLabel={t("NO REF IMAGE")}
         alt={character.name}
         title={character.name.toUpperCase()}
@@ -646,7 +646,7 @@ function CharacterCastCard({
               assetLabel={character.name}
               cost={regenEstimate}
               instructionCost={regenEstimate?.instruction_estimate}
-              hasImage={!imgFailed}
+              hasImage={!imgFailed || hasImage}
               busy={isGenerating || isInstructionBusy}
               busyLabel={isQueued ? t("QUEUED") : t("DRAWING…")}
               error={regenError}
@@ -803,7 +803,7 @@ function LocationPlateCard({
   const isInstructionBusy = regenPlateInstructed.isPending || isSubmitting;
 
   const { t } = useI18n();
-  const { hasImage, probe } = useLiveStageAsset(plateUrl, timestamp, stageRegenerating);
+  const { hasImage, imageSrc, probe } = useLiveStageAsset(plateUrl, timestamp, stageRegenerating);
   // A card hides its asset only while that asset is genuinely absent or
   // while this card's own regeneration is in flight.
   const isGenerating = (stageRegenerating && !hasImage) || regenPlate.isPending || isInstructionBusy || !!activeJob;
@@ -816,7 +816,7 @@ function LocationPlateCard({
         entityId={location.id}
         name={location.name}
         aspect="wide"
-        imageSrc={`${plateUrl}?t=${timestamp}`}
+        imageSrc={imageSrc}
         imageWidth={480}
         imageHeight={270}
         probe={probe}
@@ -845,8 +845,8 @@ function LocationPlateCard({
       <ImageModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        src={`${plateUrl}?t=${timestamp}`}
-        imageAvailable={!imgFailed}
+        src={imageSrc}
+        imageAvailable={!imgFailed || hasImage}
         emptyLabel={t("NO PLATE IMAGE")}
         alt={location.name}
         title={location.name.toUpperCase()}
@@ -857,7 +857,7 @@ function LocationPlateCard({
               assetLabel={location.name}
               cost={regenEstimate}
               instructionCost={regenEstimate?.instruction_estimate}
-              hasImage={!imgFailed}
+              hasImage={!imgFailed || hasImage}
               busy={isGenerating || isInstructionBusy}
               busyLabel={isQueued ? t("QUEUED") : t("DRAWING…")}
               error={regenError}
@@ -980,7 +980,7 @@ function PropRefCard({
   const isInstructionBusy = regenPropInstructed.isPending || isSubmitting;
 
   const { t } = useI18n();
-  const { hasImage, probe } = useLiveStageAsset(refUrl, timestamp, stageRegenerating);
+  const { hasImage, imageSrc, probe } = useLiveStageAsset(refUrl, timestamp, stageRegenerating);
   // A card hides its asset only while that asset is genuinely absent or
   // while this card's own regeneration is in flight.
   const isGenerating = (stageRegenerating && !hasImage) || regenProp.isPending || isInstructionBusy || !!activeJob;
@@ -993,7 +993,7 @@ function PropRefCard({
         entityId={prop.id}
         name={prop.name}
         aspect="square"
-        imageSrc={`${refUrl}?t=${timestamp}`}
+        imageSrc={imageSrc}
         imageWidth={400}
         imageHeight={400}
         probe={probe}
@@ -1014,8 +1014,8 @@ function PropRefCard({
       <ImageModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        src={`${refUrl}?t=${timestamp}`}
-        imageAvailable={!imgFailed}
+        src={imageSrc}
+        imageAvailable={!imgFailed || hasImage}
         emptyLabel={t("NO REF IMAGE")}
         alt={prop.name}
         title={prop.name.toUpperCase()}
@@ -1026,7 +1026,7 @@ function PropRefCard({
               assetLabel={prop.name}
               cost={regenEstimate}
               instructionCost={regenEstimate?.instruction_estimate}
-              hasImage={!imgFailed}
+              hasImage={!imgFailed || hasImage}
               busy={isGenerating || isInstructionBusy}
               busyLabel={isQueued ? t("QUEUED") : t("DRAWING…")}
               error={regenError}
