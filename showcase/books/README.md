@@ -39,8 +39,10 @@ version named in `book.json` is served. Edit title, author, or description in
 - Check all entries:
   `novel_to_comic/.venv/bin/python scripts/prepare_showcase.py --check`.
 - Commit each `book.json` with its versioned image folder, and delete older version
-  folders after an update so the image stays small. The image build validates the
-  catalogue; no database import is needed.
+  folders after an update so the image stays small. The image build and the backend
+  tests validate the catalogue; no database import is needed.
+- If an invalid `book.json` still reaches a server, the homepage skips only that
+  book and reports the error to error tracking.
 - A separately mounted catalogue can still replace the bundled one through
   `CANARY_SHOWCASE_DIR`; validate it with `scripts/prepare_showcase.py --check`
   using the same variable.
