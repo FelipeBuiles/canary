@@ -102,7 +102,7 @@ def test_cover_enqueue_failure_keeps_cast_successful(tmp_path, monkeypatch):
 def test_cover_queues_after_draw_initializes(tmp_path, monkeypatch):
     state = PipelineState(project_name="book", novel_path="book.txt", created_at="2026-09-12")
     order = []
-    async def run(*args):
+    async def run(*args, **_kwargs):
         order.append("draw")
         state.stages["draw"] = StageState(status=StageStatus.RUNNING)
     monkeypatch.setattr(pipeline, "_run_stage", run)
