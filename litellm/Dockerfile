@@ -27,7 +27,8 @@ RUN PATH="/app/.venv/bin:$PATH" HOME=/opt/prisma XDG_CACHE_HOME=/opt/prisma/.cac
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm
 ENV PRISMA_OFFLINE_MODE=true
 
-COPY litellm/patch_http_errors.py litellm/patch_anthropic_refusals.py /app/
+COPY litellm/patch_http_errors.py litellm/patch_anthropic_refusals.py \
+    litellm/canary_metrics.py litellm/canary_metrics_callback.py /app/
 RUN /app/.venv/bin/python /app/patch_http_errors.py \
     && /app/.venv/bin/python /app/patch_anthropic_refusals.py
 

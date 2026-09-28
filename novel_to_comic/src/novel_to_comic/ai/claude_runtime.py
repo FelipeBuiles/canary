@@ -8,11 +8,11 @@ CLAUDE.md, and no session persistence. Authentication is checked before the
 prompt is sent and the effective session is checked against Claude Code's init
 event; any mismatch fails closed. No credential files are inspected.
 
-Claude Opus 5.5 request quirks this transport keeps in step with the API route
-(``text_models.py``): thinking is always on and is never configured here;
-effort is sent explicitly because the model's default is ``medium``; the output
-limit includes the thinking headroom; and structured output relies on Claude
-Code's own schema support because forced ``tool_choice`` is a 400 on this model.
+Claude Opus 5.5 and Sonnet 5.5 controls follow the API route
+(``text_models.py``): the CLI manages thinking; effort is explicitly low rather
+than the provider default; the output limit includes thinking headroom and is
+capped at the model limit. Structured output uses Claude Code's schema support,
+without app-supplied forced tool calls or sampling parameters.
 """
 from __future__ import annotations
 

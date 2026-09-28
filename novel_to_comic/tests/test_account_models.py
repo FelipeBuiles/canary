@@ -52,7 +52,7 @@ def test_operator_models_apply_to_every_production_project_and_require_token(cli
     assert catalog.status_code == 200
     assert not any(model["id"].startswith("codex-dev/") for model in catalog.json()["models"])
     assert client.patch(path, headers=headers, json={"selections": {
-        "extract": "claude-fable-5-1", "plan": "mimo-v2.6-pro",
+        "extract": "claude-opus-5-5", "plan": "mimo-v2.6-pro",
     }}).status_code == 200
     assert read_global_selections(tmp_path)["plan"] == "mimo-v2.6-pro"
     assert client.patch(path, headers=headers, json={"selections": {"adapt": "codex-dev/text/gpt-6-sol"}}).status_code == 400
@@ -61,7 +61,7 @@ def test_operator_models_apply_to_every_production_project_and_require_token(cli
     monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType({**codex_dev._PROCESS, "CANARY_ENV": "production"}))
     for user in ("alice", "bob"):
         resolved = account_config(Config(dev_model_selections={"plan": "gpt-6-luna"}), tmp_path, user)
-        assert resolved.extraction_model == "claude-fable-5-1"
+        assert resolved.extraction_model == "claude-opus-5-5"
         assert resolved.plan_model == "mimo-v2.6-pro"
 
 
@@ -115,7 +115,7 @@ def test_retired_project_model_does_not_block_open_or_change_project_files(clien
     (project / "cover").mkdir()
     (project / "cover" / "cover.png").write_bytes(b"saved-cover")
     before = {name: (project / name).read_bytes() for name in ("config.yaml", "state.json")}
-    update_global_selections(tmp_path, {"adapt": "claude-fable-5-1"})
+    update_global_selections(tmp_path, {"adapt": "claude-opus-5-5"})
     monkeypatch.setattr(deps, "_resolve_project_slug", lambda user, project_id: "novel")
     client.app.include_router(files_router, prefix="/api/projects/{project_id}")
 
@@ -124,7 +124,7 @@ def test_retired_project_model_does_not_block_open_or_change_project_files(clien
     )
 
     assert opened == project
-    assert config.adapt_model == "claude-fable-5-1"
+    assert config.adapt_model == "claude-opus-5-5"
     assert config.dev_model_selections == {"adapt": "glm-5.3-flash"}
     assert state.project_name == "novel"
     assert client.get("/api/projects/novel/files/cover/cover.png").content == b"saved-cover"
@@ -136,7 +136,7 @@ def test_retired_account_and_operator_choices_use_defaults_without_erasing_histo
     account = tmp_path / "alice" / ".model-settings.json"
     account.parent.mkdir(parents=True)
     operator.write_text(json.dumps({"version": 1, "selections": {"adapt": "glm-5.3-flash", "plan": "claude-opus-5-5"}}))
-    account.write_text(json.dumps({"version": 1, "selections": {"adapt": "deepseek-v4-flash", "prompt": "claude-fable-5-1"}}))
+    account.write_text(json.dumps({"version": 1, "selections": {"adapt": "deepseek-v4-flash", "prompt": "claude-opus-5-5"}}))
     original_operator = operator.read_bytes()
     original_account = account.read_bytes()
 
@@ -195,13 +195,13 @@ def test_authentication_required(client):
 def test_concurrent_partial_updates_preserve_both_fields(client, tmp_path):
     with ThreadPoolExecutor(2) as pool:
         futures = [pool.submit(update_selections, tmp_path, "alice", change) for change in (
-            {"adapt": "mimo-v2.6-pro"}, {"prompt": "claude-fable-5-1"},
+            {"adapt": "mimo-v2.6-pro"}, {"prompt": "claude-opus-5-5"},
         )]
         for result in futures:
             result.result()
     choices = read_selections(tmp_path, "alice")
     assert choices["adapt"] == "mimo-v2.6-pro"
-    assert choices["prompt"] == "claude-fable-5-1"
+    assert choices["prompt"] == "claude-opus-5-5"
 
 
 def test_project_files_cannot_override_account_models(client, tmp_path):
@@ -275,7 +275,7 @@ def enable_codex(monkeypatch):
     monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType(values))
 
 
-@pytest.mark.parametrize("reasoner", ("gpt-6-sol", "gpt-6-luna", "gpt-5.6-terra"))
+@pytest.mark.parametrize("reasoner", ("gpt-6-sol", "gpt-6-luna"))
 def test_explicit_codex_models_route_without_shadowing_api(client, tmp_path, monkeypatch, reasoner):
     enable_codex(monkeypatch)
     selection = f"codex-dev/text/{reasoner}"
@@ -294,7 +294,7 @@ def test_explicit_codex_models_route_without_shadowing_api(client, tmp_path, mon
 
 def test_disabled_codex_choices_remain_visible_but_cannot_execute(client, tmp_path, monkeypatch):
     enable_codex(monkeypatch)
-    selected = "codex-dev/text/gpt-5.5"
+    selected = "codex-dev/text/gpt-6-sol"
     assert client.patch("/api/account/model-settings", json={"selections": {"adapt": selected}}).status_code == 200
     values = dict(codex_dev._PROCESS)
     values["CANARY_CODEX_DEV_ENABLED"] = "0"
@@ -310,14 +310,14 @@ def test_disabled_codex_choices_remain_visible_but_cannot_execute(client, tmp_pa
     assert client.patch("/api/account/model-settings", json={"selections": {"adapt": "gpt-6-sol"}}).status_code == 200
 
 
-@pytest.mark.parametrize("reasoner", ("gpt-6-sol", "gpt-6-luna", "gpt-5.6-luna"))
+@pytest.mark.parametrize("reasoner", ("gpt-5.5",))
 def test_codex_image_reasoner_and_text_only_constraints(client, monkeypatch, reasoner):
     enable_codex(monkeypatch)
     image = f"codex-dev/image/{reasoner}"
     assert client.patch("/api/account/model-settings", json={"selections": {"image": image, "draw": image}}).status_code == 200
     route = codex_dev.route_for("complete_page", image)
     assert (route.reasoning_model, route.image_model) == (reasoner, "gpt-image-2")
-    for stage, model in (("draw", "codex-dev/text/gpt-5.5"), ("ocr", "codex-dev/text/gpt-5.3-codex-spark"), ("image", "codex-dev/image/gpt-5.3-codex-spark")):
+    for stage, model in (("draw", "codex-dev/text/gpt-6-sol"), ("ocr", "codex-dev/text/gpt-5.3-codex-spark"), ("image", "codex-dev/image/gpt-5.3-codex-spark")):
         assert client.patch("/api/account/model-settings", json={"selections": {stage: model}}).status_code == 400
 
 
@@ -362,11 +362,11 @@ def test_project_choices_are_rejected_and_inert_outside_dev(client, tmp_path, mo
     for selections in ({}, {'adapt': 'gpt-6-luna'}):
         with pytest.raises(ValueError, match='local development'):
             creation_config({'dev_model_selections': selections}, tmp_path, 'alice')
-    resolved = account_config(Config(dev_model_selections={'adapt': 'codex-dev/text/gpt-5.5'}), tmp_path, 'alice')
+    resolved = account_config(Config(dev_model_selections={'adapt': 'codex-dev/text/gpt-6-sol'}), tmp_path, 'alice')
     assert resolved.adapt_model == 'gpt-6-sol'
 
 
-@pytest.mark.parametrize('selections', [None, [], {'invalid': 'gpt-6-luna'}, {'draw': 'gpt-6-luna'}, {'adapt': 'codex-dev/text/gpt-5.5'}])
+@pytest.mark.parametrize('selections', [None, [], {'invalid': 'gpt-6-luna'}, {'draw': 'gpt-6-luna'}, {'adapt': 'codex-dev/text/gpt-6-sol'}])
 def test_creation_validates_project_choices_and_routes(client, tmp_path, selections):
     from novel_to_comic.server.account_models import creation_config
     with pytest.raises((ValueError, codex_dev.CodexRoutingError)):
@@ -377,7 +377,7 @@ def test_project_codex_overrides_allow_mixed_jobs(client, tmp_path, monkeypatch)
     from novel_to_comic.server.account_models import creation_config
     from novel_to_comic.server.codex_admission import admit_stage_action
     enable_codex(monkeypatch)
-    model = 'codex-dev/text/gpt-5.5'
+    model = 'codex-dev/text/gpt-6-sol'
     config = creation_config({'dev_model_selections': {'adapt': model}}, tmp_path, 'alice')
     assert admit_stage_action(config, 'adapt') == 'api'
     config = creation_config({'dev_model_selections': {'adapt': model, 'plan': model}}, tmp_path, 'alice')
@@ -438,7 +438,6 @@ def test_creation_endpoints_persist_dev_choices_or_reject(client, tmp_path, monk
 
 
 @pytest.mark.parametrize("model,expected_cost", [
-    ("claude-fable-5-1", 0.06),
     ("claude-opus-5-5", 0.024),
     ("claude-sonnet-5-5", 0.012),
 ])
@@ -567,3 +566,20 @@ def test_production_rejects_dev_mode_creation_and_edits(tmp_path, monkeypatch, e
     assert exc.value.status_code == 403
     assert config.target_language == "en"
     assert not (tmp_path / "config.yaml").exists()
+
+
+def test_curated_model_choices(client, monkeypatch):
+    enable_codex(monkeypatch)
+    values = dict(codex_dev._PROCESS)
+    values.update(CANARY_CLAUDE_DEV_ENABLED="1", CANARY_CLAUDE_DEV_MODELS=None)
+    monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType(values))
+    models = client.get("/api/account/model-settings").json()["models"]
+    assert {m["id"] for m in models if m["funding"] == "codex_subscription"} == {
+        "codex-dev/text/gpt-6-luna", "codex-dev/text/gpt-6-sol", "codex-dev/image/gpt-5.5",
+    }
+    assert "claude-fable-5-1" not in {m["id"] for m in models}
+    sonnet = "claude-dev/text/claude-sonnet-5-5"
+    assert client.patch("/api/account/model-settings", json={"selections": {"adapt": sonnet}}).status_code == 200
+    assert codex_dev.route_for("text", sonnet).reasoning_model == "claude-sonnet-5-5"
+    for stage, model in (("adapt", "claude-fable-5-1"), ("adapt", "codex-dev/text/gpt-5.5"), ("draw", "codex-dev/image/gpt-6-sol")):
+        assert client.patch("/api/account/model-settings", json={"selections": {stage: model}}).status_code == 400

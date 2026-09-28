@@ -14,7 +14,7 @@ def _usage(details=None, **extra):
             'input_tokens_details': details or {'text_tokens': 200, 'image_tokens': 1000}, **extra}
 
 
-@pytest.mark.parametrize('alias', ['image-sunburst', 'image-flare'])
+@pytest.mark.parametrize('alias', ['image-sunburst', 'image-sunburst-openai'])
 def test_real_image_usage_modality_cost(alias):
     record = _extract_usage({'usage': _usage()}, 'call', alias, 'image')
     assert calculate_cost_breakdown(record).cost_usd == pytest.approx(.069)
@@ -30,7 +30,7 @@ def test_cached_modalities_are_discounted_separately():
 
 
 def test_provider_dollars_override_calculation():
-    record = _extract_usage({'usage': _usage()}, 'call', 'image-flare', 'image',
+    record = _extract_usage({'usage': _usage()}, 'call', 'image-sunburst-openai', 'image',
         httpx.Headers({'x-litellm-response-cost': '.12'}))
     assert calculate_cost_breakdown(record).cost_usd == .12
 
@@ -66,7 +66,7 @@ def test_invalid_generic_image_settings_are_rejected_before_transport(width, hei
 def test_image_output_detail_excludes_nonimage_tokens():
     record = _extract_usage({'usage': _usage(output_tokens=2100,
         output_tokens_details={'image_tokens': 2000, 'text_tokens': 100})},
-        'call', 'image-flare', 'image')
+        'call', 'image-sunburst-openai', 'image')
     assert calculate_cost_breakdown(record).cost_usd == pytest.approx(.069)
 
 
@@ -88,7 +88,6 @@ def test_measured_style_estimate_is_bounded_and_never_changes_settlement():
 
 
 @pytest.mark.parametrize("model,quality,width,height", [
-    ("image-flare", "medium", 1024, 1280),
     ("image-sunburst", "high", 1024, 1280),
     ("image-sunburst", "auto", 1024, 1280),
     ("image-sunburst", "medium", 1536, 1536),
@@ -111,11 +110,6 @@ def test_measured_draw_quote_covers_observed_usage_without_flat_allowance():
     assert quote.source == 'measured_consumption_estimate'
     assert quote.cost_usd == pytest.approx(.12661)
     assert .082855 < quote.cost_usd < .15
-    flare = get_pricing_resolver().estimate_image_cost(
-        'image-flare', 1, quality='high', width=1024, height=1536,
-    )
-    assert flare.source == 'configured_reservation_allowance'
-    assert flare.cost_usd == .25
 
 
 def test_gateway_reported_provider_charge_settles_with_its_own_label():

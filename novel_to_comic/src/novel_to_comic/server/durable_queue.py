@@ -186,6 +186,10 @@ class DurableQueue:
                             await self.worker
                             raise RuntimeError("Generation worker exited unexpectedly")
                         await self.dispatch()
+                        from .telemetry import metric_gauge
+                        # Snapshot first: worker threads may add jobs mid-count.
+                        jobs = list(self.app.state.generation_jobs.values())
+                        metric_gauge("jobs.queue_depth", sum(job.status == "queued" for job in jobs))
                         self.last_healthy = time.monotonic()
                         self.ready = True
                         await asyncio.sleep(1)

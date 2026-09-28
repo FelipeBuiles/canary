@@ -16,7 +16,7 @@ from rich.logging import RichHandler
 from rich.markup import escape
 
 from novel_to_comic.server.env import bool_env
-from novel_to_comic.server.telemetry import configure_telemetry
+from novel_to_comic.server.telemetry import configure_telemetry, metric_count, metric_histogram
 from novel_to_comic.server.metrics import increment, observe
 
 
@@ -199,6 +199,15 @@ async def _request_log_middleware(
             method=request.method,
             route=route,
         )
+        metric_attributes = {
+            "method": request.method,
+            "route": route,
+            "status_class": "5xx",
+        }
+        metric_count("http.server.requests", attributes=metric_attributes)
+        metric_histogram(
+            "http.server.duration", elapsed_ms, unit="ms", attributes=metric_attributes
+        )
         api_logger.exception(
             "[bold red]API failed[/] %s [white]%s[/] elapsed=[bold]%.0fms[/] request_id=%s",
             request.method,
@@ -222,6 +231,15 @@ async def _request_log_middleware(
             elapsed_ms / 1000,
             method=request.method,
             route=route,
+        )
+        metric_attributes = {
+            "method": request.method,
+            "route": route,
+            "status_class": f"{response.status_code // 100}xx",
+        }
+        metric_count("http.server.requests", attributes=metric_attributes)
+        metric_histogram(
+            "http.server.duration", elapsed_ms, unit="ms", attributes=metric_attributes
         )
     response.headers["X-Request-ID"] = request_id
     if _should_log_request(request, response.status_code, elapsed_ms):

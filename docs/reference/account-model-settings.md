@@ -1,6 +1,6 @@
 # Model settings
 
-**Status: Current, September 22, 2026.** Implementation, gateway configuration,
+**Status: Current, September 28, 2026.** Implementation, gateway configuration,
 and tests are authoritative.
 
 ## Production operator defaults
@@ -33,7 +33,7 @@ operator connection used by its other views.
 | Visual review | GPT-6 Luna | Visual consistency checks |
 
 Text and vision choices are `gpt-6-sol`, `gpt-6-luna`,
-`claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5-5`, `mimo-v2.6-pro`, and
+`claude-opus-5-5`, `claude-sonnet-5-5`, `mimo-v2.6-pro`, and
 `deepseek-v4.1-flash`.
 Image and Draw choices are `image-sunburst` only. The gateway maps these to
 OpenAI, Anthropic, OpenRouter/Xiaomi, Together AI, and FAL respectively.
@@ -95,7 +95,8 @@ An existing Draw edition keeps its recorded profile and cannot silently switch
 to the fallback model for new pages.
 
 The optional Codex adapter uses explicit `codex-dev/text/<model>` and
-`codex-dev/image/<reasoning-model>` choices. It also requires
+`codex-dev/image/<reasoning-model>` choices. The selector offers GPT-6 Luna and
+GPT-6 Sol for text, and GPT-5.5 for images. It also requires
 `CANARY_CODEX_DEV_ENABLED=1`, a local runtime, and a Codex login. Codex image
 choices select the reasoning model driving the built-in image tool; they do not
 select Sunburst. Codex usage is subscription-funded and does not settle API
@@ -104,7 +105,7 @@ image omits the Codex execution modules and Labs router; the operator catalog
 never lists Codex models.
 
 The optional Claude Code adapter uses explicit `claude-dev/text/<model>`
-choices (text only; default allowlist `claude-opus-5-5`, override with
+choices (text only; default allowlist `claude-opus-5-5` and `claude-sonnet-5-5`, override with
 `CANARY_CLAUDE_DEV_MODELS` as a JSON list). It requires
 `CANARY_CLAUDE_DEV_ENABLED=1` (`./scripts/dev.sh --claude-code`), a local
 runtime, the `claude` CLI, and a claude.ai login; `claude auth status` must

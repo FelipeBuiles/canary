@@ -1,30 +1,16 @@
-# Current selectable rates are checked against provider model pages. Historical
-# entries remain here only to settle usage from existing projects and editions.
+# Active API routes only; retired model aliases and overrides are removed.
+# Current selectable rates are checked against provider model pages.
 # GPT Image 2.5 estimated_* fields are reservation allowances, not tariffs;
 # expected_* fields settle completed requests whose provider charge is unreported.
 aliases:
   gpt-6-sol: openai/gpt-6-sol
   gpt-6-luna: openai/gpt-6-luna
-  gpt-6-astra: openai/gpt-6-astra
-  claude-fable-5-1: anthropic/claude-fable-5-1
-  claude-opus-5: anthropic/claude-opus-5
   claude-opus-5-5: anthropic/claude-opus-5-5
   claude-sonnet-5-5: anthropic/claude-sonnet-5-5
-  gpt-5.6-terra: openai/gpt-5.6-terra
-  gpt-5.6-luna: openai/gpt-5.6-luna
-  gemini-3.8-flash: vertex_ai/gemini-3.8-flash
   deepseek-v4.1-flash: together_ai/deepseek-ai/DeepSeek-V4.1-Flash
-  glm-5.3-flash: openrouter/z-ai/glm-5.3-flash
   mimo-v2.6-pro: openrouter/xiaomi/mimo-v2.6-pro
-  union-alpha: openrouter/stealth/union-alpha
-  image-gemini-flash-lite: vertex_ai/gemini-3.1-flash-lite-image
-  image-gemini-pro: vertex_ai/gemini-3-pro-image
-  image-gpt-2: openai/gpt-image-2
-  image-seedream-v5-lite: bytedance/seedream/v5/lite/edit
   image-sunburst: openai/gpt-image-2.5/sunburst
   image-sunburst-openai: openai/gpt-image-2.5-sunburst
-  image-flare: openai/gpt-image-2.5-flare
-  image-muse: openrouter/meta/muse-image
 model_overrides:
   # https://developers.openai.com/api/docs/models/gpt-6-sol (2026-09-22)
   gpt-6-sol:
@@ -42,50 +28,6 @@ model_overrides:
     mode: chat
     max_input_tokens: 1050000
     max_output_tokens: 128000
-  gemini-2.5-pro:
-    input_cost_per_token: 1.25e-06
-    output_cost_per_token: 1.0e-05
-    mode: chat
-  gemini-2.5-flash:
-    input_cost_per_token: 3.0e-07
-    output_cost_per_token: 2.5e-06
-    mode: chat
-  gemini-2.5-flash-lite:
-    input_cost_per_token: 1.0e-07
-    output_cost_per_token: 4.0e-07
-    mode: chat
-  gemini-3.5-flash:
-    input_cost_per_token: 1.5e-06
-    output_cost_per_token: 9.0e-06
-    mode: chat
-  gemini-3.8-flash:
-    input_cost_per_token: 7.5e-07
-    output_cost_per_token: 3.75e-06
-    mode: chat
-  gemini-3.6-flash:
-    input_cost_per_token: 7.5e-07
-    output_cost_per_token: 3.75e-06
-    mode: chat
-  gemini-3-flash-preview:
-    input_cost_per_token: 5.0e-07
-    output_cost_per_token: 3.0e-06
-    mode: chat
-  gemini-3.1-flash-lite-preview:
-    input_cost_per_token: 2.5e-07
-    output_cost_per_token: 1.5e-06
-    mode: chat
-  gemini-3.1-flash-lite:
-    input_cost_per_token: 2.5e-07
-    output_cost_per_token: 1.5e-06
-    mode: chat
-  gemini-3.5-flash-lite:
-    input_cost_per_token: 3.0e-07
-    output_cost_per_token: 2.5e-06
-    mode: chat
-  gemini-3.1-flash-preview:
-    input_cost_per_token: 3.0e-07
-    output_cost_per_token: 2.5e-06
-    mode: chat
   # https://platform.claude.com/docs/en/about-claude/pricing (2026-09-25).
   # Not yet in the cached LiteLLM map. Unprefixed key also covers the
   # provider model returned in usage responses.
@@ -107,121 +49,6 @@ model_overrides:
     mode: chat
     max_input_tokens: 1000000
     max_output_tokens: 128000
-  claude-haiku-4-5:
-    input_cost_per_token: 1.0e-06
-    output_cost_per_token: 5.0e-06
-    mode: chat
-  claude-sonnet-4-6:
-    input_cost_per_token: 3.0e-06
-    output_cost_per_token: 1.5e-05
-    mode: chat
-  claude-opus-4-7:
-    input_cost_per_token: 5.0e-06
-    output_cost_per_token: 2.5e-05
-    mode: chat
-  gpt-5.4:
-    input_cost_per_token: 2.5e-06
-    output_cost_per_token: 1.5e-05
-    mode: chat
-  gpt-5.4-mini:
-    input_cost_per_token: 7.5e-07
-    output_cost_per_token: 4.5e-06
-    mode: chat
-  gpt-image-2:
-    input_cost_per_token: 5.0e-06
-    image_input_cost_per_token: 8.0e-06
-    output_cost_per_token: 3.0e-05
-    output_cost_per_image: 0.03168
-    image_input_tokens_per_ref: 250
-    image_output_tokens_by_quality:
-      low: 272
-      medium: 1056
-      high: 4160
-      auto: 1056
-    mode: image_generation
-  gemini-3-pro-image:
-    input_cost_per_image: 0.00112
-    output_cost_per_image: 0.134
-    mode: image_generation
-  gemini-3-pro-image-preview:
-    input_cost_per_image: 0.00112
-    output_cost_per_image: 0.134
-    mode: image_generation
-  gemini-3.1-flash-image:
-    input_cost_per_image: 0.00056
-    output_cost_per_image: 0.101
-    mode: image_generation
-  gemini-3.1-flash-lite-image:
-    input_cost_per_image: 0.00028
-    output_cost_per_image: 0.0336
-    mode: image_generation
-  black-forest-labs/FLUX.1-pro:
-    output_cost_per_image: 0.04
-    mode: image_generation
-  black-forest-labs/FLUX.1-kontext-pro:
-    output_cost_per_image: 0.04
-    mode: image_generation
-  black-forest-labs/FLUX.2-kontext-pro:
-    output_cost_per_image: 0.03
-    mode: image_generation
-  black-forest-labs/FLUX.1-dev:
-    output_cost_per_image: 0.025
-    mode: image_generation
-  black-forest-labs/FLUX.1-schnell:
-    output_cost_per_image: 0.0027
-    mode: image_generation
-  fal-ai/flux-pro/kontext/max/multi:
-    output_cost_per_image: 0.08
-    mode: image_generation
-  bytedance/seedream/v5/lite/edit:
-    output_cost_per_image: 0.035
-    mode: image_generation
-  bytedance/seedream/v5/pro/edit:
-    output_cost_per_image: 0.0675
-    mode: image_generation
-  fal-ai/flux-2-pro/edit:
-    input_cost_per_megapixel: 0.015
-    output_cost_first_megapixel: 0.03
-    output_cost_per_extra_megapixel: 0.015
-    mode: image_generation
-  fal-ai/recraft/v4/text-to-image:
-    output_cost_per_image: 0.04
-    mode: image_generation
-  fal-ai/nano-banana-2/edit:
-    output_cost_per_image: 0.08
-    mode: image_generation
-  fal-ai/z-image/turbo:
-    output_cost_per_image: 0.008
-    mode: image_generation
-  fal-ai/flux-2-klein:
-    output_cost_per_image: 0.015
-    mode: image_generation
-  gpt-5.6-terra:
-    input_cost_per_token: 2.0e-06
-    output_cost_per_token: 1.2e-05
-    mode: chat
-    max_input_tokens: 1050000
-    max_output_tokens: 128000
-  gpt-5.6-luna:
-    input_cost_per_token: 2.0e-07
-    output_cost_per_token: 1.2e-06
-    mode: chat
-    max_input_tokens: 1050000
-    max_output_tokens: 128000
-  openrouter/deepseek/deepseek-v4.1-flash:
-    input_cost_per_token: 3.0e-07
-    output_cost_per_token: 1.2e-06
-    mode: chat
-    max_input_tokens: 1048576
-    max_output_tokens: 384000
-  # OpenRouter public model catalog, verified 2026-09-10; standard paid route.
-  openrouter/z-ai/glm-5.3-flash:
-    input_cost_per_token: 1.5e-07
-    output_cost_per_token: 5.0e-07
-    cache_read_input_token_cost: 3.0e-08
-    mode: chat
-    max_input_tokens: 1048576
-    max_output_tokens: 131072
   openrouter/xiaomi/mimo-v2.6-pro:
     input_cost_per_token: 4.35e-07
     output_cost_per_token: 8.7e-07
@@ -238,14 +65,6 @@ model_overrides:
     mode: chat
     max_input_tokens: 1048576
     max_output_tokens: 384000
-  # OpenRouter endpoint catalog, verified 2026-09-16; currently zero-priced.
-  # Unprefixed key also covers the provider model returned in usage responses.
-  stealth/union-alpha:
-    input_cost_per_token: 0.0
-    output_cost_per_token: 0.0
-    mode: chat
-    max_input_tokens: 262144
-    max_output_tokens: 131072
   gpt-image-2.5-sunburst:
     input_cost_per_token: 5.0e-06
     image_input_cost_per_token: 8.0e-06
@@ -263,7 +82,7 @@ model_overrides:
     estimated_image_tokens_by_quality_and_size:
       # 2026-09-12 project a16e7aae: three high-quality 1024x1536 pages,
       # each 1372 output tokens. Allow 1750 (~28% headroom); do not apply
-      # these observations to Flare or other sizes/qualities.
+      # these observations to other sizes/qualities.
       high:
         1024x1536: 1750
       medium:
@@ -323,16 +142,3 @@ model_overrides:
         1024x1024: 439
         1344x768: 255
         1536x1024: 255
-  gpt-image-2.5-flare:
-    input_cost_per_token: 5.0e-06
-    image_input_cost_per_token: 8.0e-06
-    cached_text_input_cost_per_token: 1.25e-06
-    cached_image_input_cost_per_token: 2.0e-06
-    output_cost_per_token: 3.0e-05
-    mode: image_generation
-    estimated_output_cost_per_image: 0.25
-    estimated_input_cost_per_reference: 0.01
-  # OpenRouter's Meta Muse Image catalog price, verified 2026-09-10.
-  meta/muse-image:
-    output_cost_per_image: 0.01
-    mode: image_generation

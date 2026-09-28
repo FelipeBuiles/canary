@@ -144,7 +144,9 @@ RUN PATH="/app/.venv-litellm/bin:$PATH" HOME=/opt/prisma XDG_CACHE_HOME=/opt/pri
     && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm
 ENV PRISMA_OFFLINE_MODE=true
 
-COPY litellm/patch_http_errors.py /app/patch_http_errors.py
+# The patched proxy imports canary_metrics and config.yaml loads the metrics
+# callback, so both modules ship beside the patch on PYTHONPATH=/app.
+COPY litellm/patch_http_errors.py litellm/canary_metrics.py litellm/canary_metrics_callback.py /app/
 RUN /app/.venv-litellm/bin/python /app/patch_http_errors.py
 
 COPY litellm/patch_anthropic_refusals.py /app/patch_anthropic_refusals.py

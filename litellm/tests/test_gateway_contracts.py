@@ -95,7 +95,7 @@ def test_real_gateway_and_only_supported_custom_handler_are_loaded():
     assert issubclass(OpenAIImageStreamLLM, CustomLLM)
     config = yaml.safe_load((ROOT / "litellm/config.yaml").read_text())
     assert {route["model_name"] for route in config["model_list"]} == {
-        "gpt-6-sol", "gpt-6-luna", "claude-fable-5-1", "claude-opus-5-5",
+        "gpt-6-sol", "gpt-6-luna", "claude-opus-5-5",
         "claude-sonnet-5-5", "mimo-v2.6-pro", "deepseek-v4.1-flash", "image-sunburst",
         "image-sunburst-openai",
     }

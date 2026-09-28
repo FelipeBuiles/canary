@@ -73,9 +73,7 @@ def _model(value: object) -> str:
 # Explicit local selectors are separate from API aliases. This allowlist is
 # captured at import with the operator gate; project dotenv cannot extend it.
 _DEFAULT_MODELS = (
-    "gpt-6-astra", "gpt-6-sol", "gpt-6-luna",
-    "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
-    "gpt-5.5", "gpt-5.3-codex-spark",
+    "gpt-6-sol", "gpt-6-luna", "gpt-5.5",
 )
 
 
@@ -91,7 +89,7 @@ def selectable_models() -> tuple[str, ...]:
 
 
 # Claude Code selectors. Text only: Claude Code has no image generation tool.
-_DEFAULT_CLAUDE_MODELS = ("claude-opus-5-5",)
+_DEFAULT_CLAUDE_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5")
 
 
 def _claude_model(value: object) -> str:

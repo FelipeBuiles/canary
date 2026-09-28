@@ -43,6 +43,7 @@ from ..generation_jobs import generation_job_payload
 from ..admission import project_busy
 from ..event_channel import EventChannel
 from ..metrics import increment, observe
+from ..telemetry import metric_count, metric_histogram
 from ..product_events import capture_server_event
 from ..ratelimit import cost_limit, limiter
 
@@ -267,6 +268,14 @@ async def _run_stage_with_credits(
         time.perf_counter() - started,
         stage=stage,
         outcome=outcome,
+    )
+    metric_attributes = {"stage": stage, "outcome": outcome}
+    metric_count("pipeline.stage_runs", attributes=metric_attributes)
+    metric_histogram(
+        "pipeline.stage_duration",
+        (time.perf_counter() - started) * 1000,
+        unit="ms",
+        attributes=metric_attributes,
     )
     if (
         stage == "draw"

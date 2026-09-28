@@ -296,13 +296,13 @@ pipeline projects. These are opt-in instructions, not startup/test behavior:
 
 ```sh
 novel_to_comic/.venv/bin/python scripts/codex_dev_probe.py --probe image --preflight-only --output-dir "$HOME/canary-codex-probes"
-novel_to_comic/.venv/bin/python scripts/codex_dev_probe.py --probe structured-text --reasoning-model gpt-5.6-terra --output-dir "$HOME/canary-codex-probes"
+novel_to_comic/.venv/bin/python scripts/codex_dev_probe.py --probe structured-text --reasoning-model gpt-6-luna --output-dir "$HOME/canary-codex-probes"
 novel_to_comic/.venv/bin/python scripts/codex_dev_probe.py --probe image --reasoning-model gpt-5.5 --output-dir "$HOME/canary-codex-probes"
 novel_to_comic/.venv/bin/python scripts/codex_dev_probe.py --probe edit --reasoning-model gpt-5.5 --source-image "$HOME/canary-codex-probes/previous-result.png" --output-dir "$HOME/canary-codex-probes"
 ```
 
 Replace `previous-result.png` with the real preceding successful result. Defaults
-are `gpt-5.6-terra` for text and `gpt-5.5` for image/edit. No `--probe` prints help
+are `gpt-6-luna` for text and `gpt-5.5` for image/edit. No `--probe` prints help
 and submits nothing. Reports distinguish completed validation, failure and ambiguous
 submission; images require visual review.
 

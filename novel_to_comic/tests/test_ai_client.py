@@ -1449,7 +1449,7 @@ class TestStreamingOptOut:
         assert client._stream_text_enabled() is True
 
     @pytest.mark.parametrize("model", [
-        "gpt-6-sol", "gpt-6-luna", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5",
+        "gpt-6-sol", "gpt-6-luna", "claude-opus-5-5", "claude-sonnet-5-5",
     ])
     def test_opting_out_falls_back_to_a_buffered_request(
         self, monkeypatch, _patch_events, model
@@ -1856,7 +1856,7 @@ def test_terminal_image_refusal_releases_credit_hold(monkeypatch):
     assert not credits._unsettled_jobs
 
 
-@pytest.mark.parametrize("model", ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"])
+@pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-sonnet-5-5"])
 def test_new_claude_models_use_native_json_schema(monkeypatch, _patch_events, model):
     monkeypatch.setenv("CANARY_AI_STREAM_TEXT", "0")
     _patch_http(monkeypatch, {
@@ -1890,7 +1890,7 @@ def test_claude_text_models_run_at_low_effort():
     from novel_to_comic.text_models import TEXT_MODELS
 
     claude = [model for model in TEXT_MODELS if model.claude_native_json]
-    assert {model.id for model in claude} >= {"claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"}
+    assert {model.id for model in claude} >= {"claude-opus-5-5", "claude-sonnet-5-5"}
     assert {model.id: model.effort for model in claude} == {model.id: "low" for model in claude}
 
 
@@ -1997,11 +1997,11 @@ def test_source_diagnostics_are_isolated_across_concurrent_shards():
 def test_anthropic_stop_details_survive_stream_collapse_and_local_diagnostics():
     details = {'type': 'refusal', 'category': 'general_harms', 'explanation': 'Provider explanation.'}
     data = client._collapse_chat_chunks([
-        {'model': 'claude-fable-5-1', 'choices': [{'delta': {'content': ''}}]},
+        {'model': 'claude-sonnet-5-5', 'choices': [{'delta': {'content': ''}}]},
         {'choices': [{'delta': {'provider_specific_fields': {'stop_details': details, 'thinking_blocks': ['private']}}, 'finish_reason': 'content_filter'}]},
     ])
     error = client._text_refusal_error(
-        data, reason=client._refusal_reason(data), model='claude-fable-5-1',
+        data, reason=client._refusal_reason(data), model='claude-sonnet-5-5',
         feature='adapt.narrative_treatment', event_id='event-test', response=None,
     )
     assert error.diagnostics['stop_details'] == details
@@ -2016,7 +2016,7 @@ def test_anthropic_unknown_category_stays_unknown():
         'provider_specific_fields': {'stop_details': details},
     }}]}
     error = client._text_refusal_error(
-        data, reason=client._refusal_reason(data), model='claude-fable-5-1',
+        data, reason=client._refusal_reason(data), model='claude-sonnet-5-5',
         feature='adapt.narrative_treatment', event_id='event-test', response=None,
     )
     assert error.diagnostics['stop_details'] == details

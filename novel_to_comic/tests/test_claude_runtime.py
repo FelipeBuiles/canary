@@ -16,6 +16,12 @@ from novel_to_comic.config import Config
 from novel_to_comic.text_models import text_wire
 
 MODEL = "claude-opus-5-5"
+
+
+@pytest.fixture(autouse=True, params=["claude-opus-5-5", "claude-sonnet-5-5"])
+def selected_claude_model(request, monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "MODEL", request.param)
+
 _DEVELOPMENT = {
     "CANARY_ENV": "development", "ENV": None, "FLY_APP_NAME": None, "FLY_MACHINE_ID": None,
     "RENDER": None, "RAILWAY_ENVIRONMENT": None, "K_SERVICE": None, "VERCEL": None,
@@ -94,7 +100,7 @@ def _run(**kwargs):
     return asyncio.run(claude_runtime.run_text(**kwargs))
 
 
-def test_isolated_invocation_carries_opus_controls_and_subscription_usage(fake_cli):
+def test_isolated_invocation_carries_model_controls_and_subscription_usage(fake_cli):
     capture = fake_cli([_init(), _assistant(), _result()])
     result = _run()
     sent = json.loads(capture.read_text())
@@ -139,13 +145,13 @@ def test_non_subscription_login_fails_before_the_prompt_is_sent(fake_cli, auth):
 
 
 @pytest.mark.parametrize("init,code", [
-    (_init(apiKeySource="ANTHROPIC_API_KEY"), "effective_api_key_conflict"),
-    (_init(model="claude-opus-5"), "effective_model_conflict"),
-    (_init(tools=["Bash"]), "effective_tool_isolation_failed"),
-    (_init(mcp_servers=[{"name": "x"}]), "mcp_isolation_failed"),
+    ({"apiKeySource": "ANTHROPIC_API_KEY"}, "effective_api_key_conflict"),
+    ({"model": "claude-opus-5"}, "effective_model_conflict"),
+    ({"tools": ["Bash"]}, "effective_tool_isolation_failed"),
+    ({"mcp_servers": [{"name": "x"}]}, "mcp_isolation_failed"),
 ])
 def test_effective_session_conflicts_fail_closed(fake_cli, init, code):
-    fake_cli([init, _assistant(), _result()])
+    fake_cli([_init(**init), _assistant(), _result()])
     with pytest.raises(claude_runtime.ClaudeRuntimeError) as caught:
         _run()
     assert caught.value.code == code
@@ -320,7 +326,7 @@ def test_client_sends_api_route_controls_and_records_comparable_usage(claude_cli
     wire = text_wire(MODEL)
     assert call["model"] == MODEL
     # The API route's controls: explicit effort, and the answer budget plus
-    # the thinking headroom Opus 5.5 bills against the same limit.
+    # the thinking headroom Claude 5.5 bills against the same limit.
     assert wire.effort is not None and call["effort"] == wire.effort
     assert call["max_output_tokens"] == 4_000 + wire.thinking_headroom_tokens
     assert call["json_schema"] == {"type": "object"}
@@ -331,7 +337,7 @@ def test_client_sends_api_route_controls_and_records_comparable_usage(claude_cli
     terminal = claude_client.events[-1][1]
     assert terminal["status"] == "succeeded"
     assert terminal["estimated_cost_usd"] is None
-    assert terminal["metadata"]["api_equivalent_cost_usd"] == pytest.approx(125 * 4e-6 + 40 * 20e-6)
+    assert terminal["metadata"]["api_equivalent_cost_usd"] == pytest.approx(125 * (4e-6 if MODEL == "claude-opus-5-5" else 2e-6) + 40 * (20e-6 if MODEL == "claude-opus-5-5" else 10e-6))
 
 
 def test_subscription_usage_never_reaches_the_credit_ledger():
@@ -341,3 +347,14 @@ def test_subscription_usage_never_reaches_the_credit_ledger():
     usage = UsageRecord(provider="claude", model=f"claude-dev/text/{MODEL}", operation="text",
                         input_tokens=10_000, output_tokens=10_000, funding="claude_subscription")
     assert usage_to_credit_debit(usage) == (0, 0.0)
+
+
+@pytest.mark.parametrize("budget,expected_limit", [(None, 32_768), (200_000, 128_000)])
+def test_subscription_thinking_budget_defaults_and_caps(claude_client, budget, expected_limit):
+    asyncio.run(client.generate_text(
+        config=Config(), model=f"claude-dev/text/{MODEL}", system_prompt="s",
+        user_content="u", max_output_tokens=budget,
+    ))
+    call = claude_client.calls[0]
+    assert call["effort"] == "low"
+    assert call["max_output_tokens"] == expected_limit

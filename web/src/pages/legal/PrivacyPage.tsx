@@ -75,7 +75,9 @@ export function PrivacyPage() {
           how you found us is saved with your account at signup. We do not send
           manuscripts, prompts, generated artwork, email addresses, or feedback
           messages to PostHog, and analytics uses no cookies or browser storage.
-          Session replay and automatic page-content capture are disabled.
+          Session replays and click analytics record interface layout and
+          interactions with all typed input, story and page text masked, and
+          images, artwork, and uploads blocked.
         </li>
       </ul>
 

@@ -22,7 +22,7 @@ class TextModel:
     # Reasoning models and current Claude routes reject sampling temperature.
     temperature: bool = True
     # Claude routes use native ``output_config`` JSON; the pinned gateway turns
-    # a Claude ``response_format`` into forced tool calls, which Fable rejects.
+    # a Claude ``response_format`` into forced tool calls, which these routes do not use.
     claude_native_json: bool = False
     # OpenRouter and Together document ``max_tokens``; the gateway forwards the
     # newer OpenAI spelling to them unchanged.
@@ -43,10 +43,8 @@ class TextModel:
 TEXT_MODELS = (
     TextModel("gpt-6-sol", "GPT-6 Sol", "OpenAI", "openai", temperature=False),
     TextModel("gpt-6-luna", "GPT-6 Luna", "OpenAI", "openai", temperature=False),
-    # Text routes run at low effort; Claude defaults (``high`` on Fable and
-    # Sonnet, ``medium`` on Opus 5.5) are never left implicit.
-    TextModel("claude-fable-5-1", "Claude Fable 5.1", "Anthropic", "anthropic",
-              temperature=False, claude_native_json=True, effort="low"),
+    # Text routes run at low effort; Claude defaults (``high`` on Sonnet,
+    # ``medium`` on Opus 5.5) are never left implicit.
     # Thinking is always on (disabling it is a 400 at every effort).
     TextModel("claude-opus-5-5", "Claude Opus 5.5", "Anthropic", "anthropic",
               temperature=False, claude_native_json=True, effort="low",

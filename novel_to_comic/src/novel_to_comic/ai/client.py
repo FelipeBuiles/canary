@@ -701,7 +701,7 @@ def _provider_from_model(model: str | None) -> str:
         return "anthropic"
     if lower.startswith("gpt") or lower.startswith("dall-e"):
         return "openai"
-    # Bare gateway aliases (gpt-5.6-luna, image-gemini-pro, etc.) land here.
+    # Bare gateway aliases (gpt-6-luna, image-sunburst, etc.) land here.
     return "litellm"
 
 

@@ -4,7 +4,7 @@ import pytest
 from novel_to_comic.model_costs import PricingResolver
 
 
-@pytest.mark.parametrize("variant", ["sunburst", "flare"])
+@pytest.mark.parametrize("variant", ["sunburst", "sunburst-openai"])
 def test_gpt25_uses_explicit_allowance_instead_of_gpt2_token_estimate(variant):
     resolver = PricingResolver()
     estimate = resolver.estimate_image_cost(

@@ -253,7 +253,10 @@ jobs:
           docker pull "$IMAGE"
           docker run --rm --entrypoint /app/novel_to_comic/.venv/bin/python "$IMAGE" \
             -c "import novel_to_comic.server.app, novel_to_comic.server.durable_queue"
-          docker run --rm --entrypoint /app/.venv-litellm/bin/python "$IMAGE" -c "import litellm"
+          # The patched proxy and config callbacks import /app modules; plain
+          # `import litellm` would not load them.
+          docker run --rm --entrypoint /app/.venv-litellm/bin/python "$IMAGE" \
+            -c "import litellm.proxy.proxy_server, canary_metrics_callback"
       - name: Drain production and wait for running work
         if: ${{ !inputs.skip_drain }}
         env:
