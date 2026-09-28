@@ -422,7 +422,7 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=cors_origins,
-            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
             allow_headers=["Content-Type", "Authorization", "Idempotency-Key", "X-Canary-Ops-Token"],
         )
 
