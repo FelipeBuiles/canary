@@ -1,4 +1,4 @@
-"""Retired GLM routing stays closed while historical costs remain auditable."""
+"""Retired GLM routing and pricing stay outside the active configuration."""
 from pathlib import Path
 
 import pytest
@@ -20,6 +20,7 @@ def test_glm_is_not_an_active_generation_route():
     assert "glm-5.3-flash" not in allowed_models("draw")
 
 
-def test_glm_historical_token_estimate():
+def test_retired_glm_token_estimate_has_unknown_pricing():
     quote = get_pricing_resolver().estimate_text_cost("glm-5.3-flash", 1_000_000, 1_000_000)
-    assert quote.cost_usd == pytest.approx(0.65)
+    assert quote.source == "unknown_pricing"
+    assert quote.cost_usd == 0.0
