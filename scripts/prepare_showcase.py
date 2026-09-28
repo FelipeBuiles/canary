@@ -55,7 +55,7 @@ def main():
     parser.add_argument("--check", action="store_true", help="Validate all packaged showcase books")
     args = parser.parse_args()
     if args.check:
-        books = showcase.books()
+        books = showcase.books(strict=True)
         print(f"Validated {len(books)} showcase books ({sum(len(b['pages']) for b, _ in books)} pages).")
         return
     if not all((args.project, args.folder, args.title, args.author)):

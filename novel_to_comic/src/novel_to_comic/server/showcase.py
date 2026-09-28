@@ -2,11 +2,15 @@
 
 from pathlib import Path
 from typing import Literal
+import logging
 import os
 
 from pydantic import BaseModel, Field
 
 from .publications import PublicationInput
+from .telemetry import capture_exception, log_event
+
+_reported: set[tuple[str, int | None]] = set()
 
 
 class ShowcasePage(BaseModel):
@@ -38,39 +42,68 @@ def root() -> Path:
     ))
 
 
-def books() -> list[tuple[dict, Path]]:
-    """Folder names determine display order; only explicit book manifests are public."""
+def books(*, strict: bool = False) -> list[tuple[dict, Path]]:
+    """Folder names determine display order; only explicit book manifests are public.
+
+    An invalid manifest hides only its own book unless `strict` is set.
+    """
     result = []
     seen = set()
     for manifest in sorted(root().glob("*/book.json")):
-        book = ShowcaseBook.model_validate_json(manifest.read_text())
-        if book.id in seen:
-            raise ValueError(f"Duplicate showcase book ID in {manifest}")
-        seen.add(book.id)
-        numbers = [page.number for page in book.pages]
-        if numbers != list(range(1, len(numbers) + 1)):
-            raise ValueError(f"Showcase pages must be consecutive in {manifest}")
-        directory = manifest.parent / book.version
-        languages = [("", book.pages)] + [(f"{t.locale}/", t.pages) for t in book.translations or ()]
-        for prefix, pages in languages:
-            if [page.number for page in pages] != numbers:
-                raise ValueError(f"Showcase translation pages must match the book in {manifest}")
-            for number in numbers:
-                page = directory / f"{prefix}{number}.jpg"
-                if not page.is_file() or not page.resolve().is_relative_to(manifest.parent.resolve()):
-                    raise ValueError(f"Missing or external showcase page: {page}")
-        record = book.model_dump(exclude_none=True)
-        record.update(allow_feature=True, featured=True)
-        for page in record["pages"]:
-            page["url"] = f"/api/public/books/{book.id}/{book.version}/pages/{page['number']}"
-        for translation in record.get("translations", ()):
-            for page in translation["pages"]:
-                page["url"] = (
-                    f"/api/public/books/{book.id}/{book.version}/locales/"
-                    f"{translation['locale']}/pages/{page['number']}"
-                )
+        try:
+            record, directory = _load(manifest)
+            if record["id"] in seen:
+                raise ValueError(f"Duplicate showcase book ID in {manifest}")
+        except ValueError as error:
+            if strict:
+                raise
+            _report(manifest, error)
+            continue
+        seen.add(record["id"])
         result.append((record, directory))
     return result
+
+
+def _report(manifest: Path, error: ValueError) -> None:
+    try:
+        modified = manifest.stat().st_mtime_ns
+    except OSError:
+        # A mounted catalogue can change after validation; reporting must still work.
+        modified = None
+    key = (str(manifest), modified)
+    if key in _reported:
+        return
+    _reported.add(key)
+    log_event("showcase.book_skipped", level=logging.ERROR, feature="showcase",
+              source=manifest.parent.name, error_type=type(error).__name__)
+    capture_exception(error, feature="showcase", source=manifest.parent.name)
+
+
+def _load(manifest: Path) -> tuple[dict, Path]:
+    book = ShowcaseBook.model_validate_json(manifest.read_text())
+    numbers = [page.number for page in book.pages]
+    if numbers != list(range(1, len(numbers) + 1)):
+        raise ValueError(f"Showcase pages must be consecutive in {manifest}")
+    directory = manifest.parent / book.version
+    languages = [("", book.pages)] + [(f"{t.locale}/", t.pages) for t in book.translations or ()]
+    for prefix, pages in languages:
+        if [page.number for page in pages] != numbers:
+            raise ValueError(f"Showcase translation pages must match the book in {manifest}")
+        for number in numbers:
+            page = directory / f"{prefix}{number}.jpg"
+            if not page.is_file() or not page.resolve().is_relative_to(manifest.parent.resolve()):
+                raise ValueError(f"Missing or external showcase page: {page}")
+    record = book.model_dump(exclude_none=True)
+    record.update(allow_feature=True, featured=True)
+    for page in record["pages"]:
+        page["url"] = f"/api/public/books/{book.id}/{book.version}/pages/{page['number']}"
+    for translation in record.get("translations", ()):
+        for page in translation["pages"]:
+            page["url"] = (
+                f"/api/public/books/{book.id}/{book.version}/locales/"
+                f"{translation['locale']}/pages/{page['number']}"
+            )
+    return record, directory
 
 
 def find(book_id: str) -> tuple[dict, Path] | None:
