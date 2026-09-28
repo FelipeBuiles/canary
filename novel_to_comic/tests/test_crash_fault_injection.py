@@ -25,7 +25,7 @@ def _child(root: Path, phase: str):
     from novel_to_comic.usage import ApiResult
     from tests.test_complete_page_draw import (
         _compile, _page, _provider_result, _RecordingTransport, _vertex_adapter,
-        VertexCompletePageAdapter, draw_complete_page,
+        draw_complete_page,
     )
 
     root.mkdir(parents=True, exist_ok=True)
