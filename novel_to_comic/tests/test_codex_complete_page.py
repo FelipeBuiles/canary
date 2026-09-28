@@ -34,7 +34,12 @@ def _codex_config():
 
 def dev_routes(monkeypatch):
     process = dict.fromkeys(codex_dev._PROCESS)
-    process.update(CANARY_CODEX_DEV_ENABLED="1", CANARY_ENV="development")
+    process.update(
+        CANARY_CODEX_DEV_ENABLED="1",
+        CANARY_ENV="development",
+        # Pin the fixture's reasoners independently of the operator defaults.
+        CANARY_CODEX_DEV_MODELS=json.dumps(["gpt-5.5", "gpt-5.6-terra"]),
+    )
     monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType(process))
     monkeypatch.setattr(codex_dev, "_SETTINGS_ERROR", None)
     monkeypatch.setattr(codex_dev, "_IMAGES", frozenset())
