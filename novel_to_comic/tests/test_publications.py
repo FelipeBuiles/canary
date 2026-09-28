@@ -298,6 +298,31 @@ def test_invalid_showcase_manifest_hides_only_that_book(setup):
         showcase.books(strict=True)
 
 
+def test_invalid_showcase_removed_before_reporting(setup):
+    from novel_to_comic.server import showcase
+
+    client, _ = setup
+    manifest = showcase.root() / "removed" / "book.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("{}")
+    load = showcase._load
+
+    def load_then_remove(path):
+        try:
+            return load(path)
+        finally:
+            path.unlink()
+
+    with patch.object(showcase, "_load", side_effect=load_then_remove), \
+         patch.object(showcase, "capture_exception") as capture:
+        response = client.get("/api/public/books")
+    assert response.status_code == 200
+    assert response.json() == []
+    capture.assert_called_once()
+    assert isinstance(capture.call_args.args[0], ValueError)
+    assert capture.call_args.kwargs["source"] == "removed"
+
+
 def test_committed_showcase_manifests_are_valid(monkeypatch):
     from pathlib import Path
     from novel_to_comic.server import showcase
