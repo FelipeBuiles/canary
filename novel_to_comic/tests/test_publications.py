@@ -274,6 +274,39 @@ def test_folder_showcase_supports_reader_downloads_updates_and_removal(setup, tm
     assert client.get(f"/api/public/books/{book.id}").status_code == 404
 
 
+def test_invalid_showcase_manifest_hides_only_that_book(setup):
+    import runpy
+    from pathlib import Path
+    from novel_to_comic.server import showcase, publications as store
+    from novel_to_comic.state import save_state
+
+    client, _ = setup
+    project, _, state = client.app.dependency_overrides[get_project]()
+    save_state(state, project)
+    prepare = runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts" / "prepare_showcase.py"))["prepare"]
+    book = prepare(project, showcase.root() / "01-good", store.PublicationInput(title="Good", author="Author"))
+    bad = showcase.root() / "00-bad" / "book.json"
+    bad.parent.mkdir()
+    bad.write_text(json.dumps({**json.loads((showcase.root() / "01-good" / "book.json").read_text()),
+                               "unknown_field": True}))
+    with patch("novel_to_comic.server.showcase.capture_exception") as capture:
+        assert [record["id"] for record in client.get("/api/public/books").json()] == [book.id]
+        assert client.get(f"/api/public/books/{book.id}").status_code == 200
+    capture.assert_called_once()
+    assert capture.call_args.kwargs["source"] == "00-bad"
+    with pytest.raises(ValueError, match="unknown_field"):
+        showcase.books(strict=True)
+
+
+def test_committed_showcase_manifests_are_valid(monkeypatch):
+    from pathlib import Path
+    from novel_to_comic.server import showcase
+
+    monkeypatch.delenv("CANARY_SHOWCASE_DIR", raising=False)
+    committed = list((Path(__file__).resolve().parents[2] / "showcase" / "books").glob("*/book.json"))
+    assert len(showcase.books(strict=True)) == len(committed)
+
+
 def test_scp_showcase_keeps_credit_after_portable_packaging(setup, tmp_path):
     import runpy
     from pathlib import Path
@@ -314,11 +347,13 @@ def test_showcase_rejects_unsafe_manifest_and_missing_pages(tmp_path, monkeypatc
     manifest = destination / "book.json"
     manifest.write_text(json.dumps(record))
     with pytest.raises(ValueError):
-        showcase.books()
+        showcase.books(strict=True)
+    assert showcase.books() == []
     record["version"] = "b" * 32
     manifest.write_text(json.dumps(record))
     with pytest.raises(ValueError, match="Missing"):
-        showcase.books()
+        showcase.books(strict=True)
+    assert showcase.books() == []
 
 
 LONG = "An extremely long caption. " * 100

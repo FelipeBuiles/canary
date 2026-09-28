@@ -109,7 +109,7 @@ RUN rm novel_to_comic/src/novel_to_comic/ai/codex_runtime.py \
        novel_to_comic/src/novel_to_comic/codex_complete_page.py \
        novel_to_comic/src/novel_to_comic/server/routers/labs.py \
     && rm -r novel_to_comic/src/novel_to_comic/labs
-RUN /app/novel_to_comic/.venv/bin/python -c "from novel_to_comic.server.showcase import books; books()"
+RUN /app/novel_to_comic/.venv/bin/python -c "from novel_to_comic.server.showcase import books; books(strict=True)"
 
 # ─── LiteLLM proxy (loopback subprocess) ────────────────────────────────────
 # The proxy has its own dependency tree (transitively large, occasionally
