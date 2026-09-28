@@ -65,6 +65,36 @@ def test_operator_models_apply_to_every_production_project_and_require_token(cli
         assert resolved.plan_model == "mimo-v2.6-pro"
 
 
+def test_production_operator_model_save_allows_configured_origin(client, tmp_path, monkeypatch):
+    from novel_to_comic.server.app import create_app
+
+    origin = "http://localhost:5173"
+    monkeypatch.setenv("CANARY_BACKOFFICE_ORIGINS", origin)
+    monkeypatch.setenv("CANARY_OPS_TOKEN", "operator-secret")
+    production = TestClient(create_app(tmp_path, dev=False))
+    path = "/api/ops/backoffice/models"
+    preflight_headers = {
+        "Origin": origin,
+        "Access-Control-Request-Method": "PATCH",
+        "Access-Control-Request-Headers": "content-type,x-canary-ops-token",
+    }
+    preflight = production.options(path, headers=preflight_headers)
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == origin
+    assert "PATCH" in preflight.headers["access-control-allow-methods"]
+
+    denied = production.options(path, headers={**preflight_headers, "Origin": "https://untrusted.example"})
+    assert denied.status_code == 400
+    assert "access-control-allow-origin" not in denied.headers
+
+    assert production.patch(path, headers={"Origin": origin}, json={"selections": {}}).status_code == 401
+    saved = production.patch(path, headers={"Origin": origin, "X-Canary-Ops-Token": "operator-secret"},
+                             json={"selections": {"plan": "mimo-v2.6-pro"}})
+    assert saved.status_code == 200
+    assert saved.headers["access-control-allow-origin"] == origin
+    assert read_global_selections(tmp_path)["plan"] == "mimo-v2.6-pro"
+
+
 def test_model_change_does_not_change_existing_job_snapshot(client, tmp_path):
     snapshot = account_config(Config(), tmp_path, "alice")
     client.patch("/api/account/model-settings", json={"selections": {"plan": "gpt-6-luna"}})
