@@ -326,7 +326,7 @@ def prepare_undrawn_pages(*, project_dir, config, rerun: bool = False):
     )
     inventory = approved_visual_inventory(project_dir)
     reference_files = approved_reference_files(project_dir)
-    adapter = complete_page_adapter(config)
+    adapter = complete_page_adapter(config, edition.capability_profile)
     prepared = []
     for selected in target.read_plan().pages:
         page_number = selected.page_number
@@ -696,7 +696,7 @@ def _prepare_initial_generation(
             style_template=config.style_template,
             style_reference_path=require_style_reference(project_dir, config.style_template),
         )
-        complete_page_adapter(config).prepare(compiled)
+        complete_page_adapter(config, request=compiled.request).prepare(compiled)
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
     return target, page, compiled
@@ -752,7 +752,7 @@ def generate_page(
         page_number,
         generation.depiction if generation is not None else "canonical",
     )
-    adapter = complete_page_adapter(config)
+    adapter = complete_page_adapter(config, request=compiled.request)
     pkey = project_key(user_id, project_id)
     queue = request.app.state.event_queues.get(pkey)
     if queue is not None:
@@ -1122,7 +1122,7 @@ def _prepare_explicit_correction(
             style_template=config.style_template,
             style_reference_path=require_style_reference(target.project_dir, config.style_template),
         )
-        complete_page_adapter(config).prepare(prepared.compiled)
+        complete_page_adapter(config, request=prepared.compiled.request).prepare(prepared.compiled)
         return prepared
     except StaleCorrectionError as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -1301,7 +1301,7 @@ def submit_page_correction(
             if exc.status_code != 404:
                 raise
             primary_issue = None
-    adapter = complete_page_adapter(config)
+    adapter = complete_page_adapter(config, request=compiled.request)
     queue = request.app.state.event_queues.get(pkey)
     if queue is not None:
         queue.put_nowait(

@@ -170,9 +170,33 @@ def fal_sunburst_page_capability_profile() -> PageCapabilityProfile:
     )
 
 
+_SUNBURST_FALLBACK_PAGE_PROFILE_ID = "gpt-image-2.5-sunburst-openai-fal-complete-page-medium-hybrid-v1"
+SUNBURST_FALLBACK_PROVIDER = "openai-fal"
+
+
+def sunburst_fallback_page_capability_profile() -> PageCapabilityProfile:
+    """Sunburst at medium quality: OpenAI first, one FAL attempt as backup.
+
+    The route order is part of this versioned identity; changing it needs a
+    new profile id. Both routes accept the same references, size, and quality.
+    """
+    return PageCapabilityProfile(
+        id=_SUNBURST_FALLBACK_PAGE_PROFILE_ID,
+        exact_visible_lettering=False, provider=SUNBURST_FALLBACK_PROVIDER, model="gpt-image-2.5-sunburst",
+        max_image_references=16, reference_ordering="ordered",
+        editing_modes=("instructed", "region_targeted"),
+        output_width=1024, output_height=1536, max_prompt_characters=32_000,
+        retry_semantics="bounded_submission", max_attempts=2,
+    )
+
+
+# Providers whose corrections upload the parent page beside the references.
+_EDIT_SOURCE_COUNTS_AS_REFERENCE = frozenset({"openai", "openrouter", "fal-queue", SUNBURST_FALLBACK_PROVIDER})
+
+
 def page_image_quality(profile_id: str, provider: str) -> str | None:
     """The image quality an edition's profile submits, fixed by its identity."""
-    if profile_id.removesuffix("-integrated-v1") == _FAL_SUNBURST_PAGE_PROFILE_ID:
+    if profile_id.removesuffix("-integrated-v1") in {_FAL_SUNBURST_PAGE_PROFILE_ID, _SUNBURST_FALLBACK_PAGE_PROFILE_ID}:
         return "medium"
     # Retained direct-OpenAI and FAL editions were drawn at high quality.
     if provider in {"openai", "fal-queue"}:
@@ -201,7 +225,7 @@ def estimate_page_request_cost_usd(
 
 def production_page_capability_profile() -> PageCapabilityProfile:
     """Return the only complete-page profile offered for new API work."""
-    return fal_sunburst_page_capability_profile()
+    return sunburst_fallback_page_capability_profile()
 
 
 def muse_page_capability_profile() -> PageCapabilityProfile:
@@ -230,7 +254,9 @@ def _supported_page_profile(profile: PageCapabilityProfile) -> bool:
     if profile == current_page_capability_profile() or any(
         profile == openai_page_capability_profile(model)
         for model in ("gpt-image-2.5-sunburst", "gpt-image-2.5-flare")
-    ) or profile in (fal_sunburst_page_capability_profile(), _integrated_page_profile(fal_sunburst_page_capability_profile())) or profile == muse_page_capability_profile():
+    ) or profile in (fal_sunburst_page_capability_profile(), _integrated_page_profile(fal_sunburst_page_capability_profile()),
+                     sunburst_fallback_page_capability_profile(),
+                     _integrated_page_profile(sunburst_fallback_page_capability_profile())) or profile == muse_page_capability_profile():
         return True
     return selector_available() and any(
         profile == current_page_capability_profile(Config(draw_model=f"codex-dev/image/{model}"))
@@ -261,7 +287,7 @@ def _editable_page_capability_profile(config: Config | None = None) -> PageCapab
 
     selected = getattr(config, "draw_model", COMPLETE_PAGE_GATEWAY_MODEL)
     if selected == "image-sunburst":
-        return fal_sunburst_page_capability_profile()
+        return sunburst_fallback_page_capability_profile()
     if selected != COMPLETE_PAGE_GATEWAY_MODEL and not selected.startswith("codex-dev/image/"):
         raise ValueError("Unsupported complete-page model selection")
     route = route_for("complete_page", selected)
@@ -303,11 +329,42 @@ def page_profile_uses_native_dimensions(profile: PageCapabilityProfile) -> bool:
     )
 
 
-def complete_page_adapter(config: Config) -> CompletePageAdapter:
-    profile = current_page_capability_profile(config)
-    if profile.provider == "fal-queue":
-        return OpenAICompletePageAdapter(config, profile)
-    if profile.provider == "openai":
+def spendable_page_profiles(config: Config | None = None) -> tuple[PageCapabilityProfile, ...]:
+    """Profiles this project may still spend on: the current one for new
+    editions, plus the FAL Sunburst profile its existing editions were bound to.
+    Existing editions never change profile; they keep drawing on their route.
+    """
+    current = current_page_capability_profile(config)
+    if getattr(config, "draw_model", COMPLETE_PAGE_GATEWAY_MODEL) != "image-sunburst":
+        return (current,)
+    retained = fal_sunburst_page_capability_profile()
+    return (current, _integrated_page_profile(retained) if current.exact_visible_lettering else retained)
+
+
+def request_page_profile(config: Config, request: FrozenPageGenerationRequest) -> PageCapabilityProfile:
+    """The spendable profile a frozen request was compiled against."""
+    for profile in spendable_page_profiles(config):
+        if profile.id == request.profile_id and profile.content_sha256 == request.profile_sha256:
+            return profile
+    raise ValueError(
+        "This page request belongs to a page profile this project can no longer draw with; "
+        "prepare a new draw."
+    )
+
+
+def complete_page_adapter(
+    config: Config,
+    profile: PageCapabilityProfile | None = None,
+    *, request: FrozenPageGenerationRequest | None = None,
+) -> CompletePageAdapter:
+    """The adapter for an edition's profile (or a frozen request's), never
+    re-derived from mutable settings when either is known."""
+    if request is not None:
+        profile = request_page_profile(config, request)
+    profile = profile or current_page_capability_profile(config)
+    if profile.provider == SUNBURST_FALLBACK_PROVIDER:
+        return SunburstFallbackPageAdapter(config, profile)
+    if profile.provider in {"fal-queue", "openai"}:
         return OpenAICompletePageAdapter(config, profile)
     if profile.provider == "openrouter":
         return OpenRouterCompletePageAdapter(config, profile)
@@ -315,7 +372,7 @@ def complete_page_adapter(config: Config) -> CompletePageAdapter:
         from novel_to_comic.codex_complete_page import CodexCompletePageAdapter
 
         return CodexCompletePageAdapter(config)
-    return VertexCompletePageAdapter(GoogleVertexCompletePageTransport(config), profile)
+    return VertexCompletePageAdapter(GoogleVertexCompletePageTransport(config, profile), profile)
 
 
 
@@ -372,7 +429,7 @@ def ensure_current_page_edition(
     """New spend is strict; retained baked art remains inspectable without rebinding."""
     if allow_retained_review and retained_baked_profile(edition.capability_profile):
         return edition
-    if edition.capability_profile != current_page_capability_profile(config):
+    if edition.capability_profile not in spendable_page_profiles(config):
         raise ValueError(
             "This edition uses a different page profile. Existing editions cannot "
             "change profiles; existing pages will not be mixed with another model."
@@ -809,7 +866,7 @@ def compile_page_generation_request(
             raise ValueError("edit source bytes do not match correction lineage")
     authorities = _selected_authorities(page, inventory)
     max_references = selected_edition.capability_profile.max_image_references
-    if (page_profile_uses_native_dimensions(selected_edition.capability_profile) or selected_edition.capability_profile.provider in {"openai", "openrouter", "fal-queue"}) and correction is not None:
+    if (page_profile_uses_native_dimensions(selected_edition.capability_profile) or selected_edition.capability_profile.provider in _EDIT_SOURCE_COUNTS_AS_REFERENCE) and correction is not None:
         max_references -= 1  # The parent is an input image, never an authority replacement.
     if style_reference_path is not None:
         max_references -= 1  # Keep the proof separate from subject transport sheets.
@@ -1092,7 +1149,7 @@ def _validate_compiled_page(
     ):
         raise ValueError("Frozen complete-page request does not match the selected profile")
     total = len(request.references)
-    if (page_profile_uses_native_dimensions(profile) or profile.provider in {"openai", "openrouter", "fal-queue"}) and request.correction is not None:
+    if (page_profile_uses_native_dimensions(profile) or profile.provider in _EDIT_SOURCE_COUNTS_AS_REFERENCE) and request.correction is not None:
         total += 1
     if total > profile.max_image_references:
         raise ValueError("Complete-page image inputs exceed profile capacity; references cannot be dropped")
@@ -1199,10 +1256,14 @@ class VertexCompletePageAdapter:
 class GoogleVertexCompletePageTransport:
     """Gateway transport to the isolated native Vertex multimodal handler."""
 
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, profile: PageCapabilityProfile | None = None) -> None:
         self._config = config
-        self._profile = current_page_capability_profile(config)
+        self._profile = profile or current_page_capability_profile(config)
         self._gateway_model = COMPLETE_PAGE_GATEWAY_MODEL
+        # The provider and upstream model this transport submits to. A
+        # single-route profile's route is the profile itself.
+        self._route_provider = self._profile.provider
+        self._provider_model: str | None = None
 
     async def generate(
         self,
@@ -1272,7 +1333,7 @@ class GoogleVertexCompletePageTransport:
             "canary_requested_aspect": str(request.width / request.height),
             "canary_idempotency_key": request.idempotency_key,
         }
-        if self._profile.provider in {"openai", "openrouter", "fal-queue"}:
+        if self._route_provider in {"openai", "openrouter", "fal-queue"}:
             # GPT Image 2.5 rejects input_fidelity, including on image edits.
             # Reference images are still sent unchanged in the multipart files.
             request_data = {
@@ -1280,13 +1341,11 @@ class GoogleVertexCompletePageTransport:
                 "size": f"{request.width}x{request.height}", "n": 1,
             }
             quality = page_image_quality(self._profile.id, self._profile.provider)
-            if self._profile.provider == "openai":
+            if self._route_provider in {"openai", "fal-queue"}:
                 request_data.update({"quality": quality, "output_format": "png"})
-            elif self._profile.provider == "fal-queue":
-                request_data.update({"quality": quality, "output_format": "png"})
-                # Custom-provider routing can strip standard Images fields.
-                # Preserve dimensions and controls through the same manifest
-                # consumed by the FAL handler for other image requests.
+                # Both routes run through custom gateway handlers, which lose
+                # standard Images fields. Preserve dimensions and controls
+                # through the manifest those handlers consume.
                 request_data["canary_wire_request"] = json.dumps({
                     "width": request.width,
                     "height": request.height,
@@ -1397,30 +1456,32 @@ class GoogleVertexCompletePageTransport:
             )
             usage = with_request_estimate(usage, ctx)
             response_model = str(payload.get("model") or "")
+            route_model = self._provider_model or request.model
+            route_prefix = "vertex_ai" if self._route_provider == "vertex-multimodal" else self._route_provider
             actual_provider_model = (
-                f"{'vertex_ai' if self._profile.provider == 'vertex-multimodal' else self._profile.provider}/{request.model}"
+                f"{route_prefix}/{route_model}"
                 if response_model == self._gateway_model
-                else response_model or f"{'vertex_ai' if self._profile.provider == 'vertex-multimodal' else self._profile.provider}/{request.model}"
+                else response_model or f"{route_prefix}/{route_model}"
             )
-            if self._profile.provider == "openai" and actual_provider_model.removeprefix("openai/") not in {
-                request.model, request.model + "-2026-09-08",
+            if self._route_provider == "openai" and actual_provider_model.removeprefix("openai/") not in {
+                route_model, route_model + "-2026-09-08",
             }:
                 raise ValueError("OpenAI response model does not match frozen page profile")
-            if self._profile.provider == "fal-queue":
+            if self._route_provider == "fal-queue":
                 observed = actual_provider_model.removeprefix("fal-queue/")
                 if observed not in {
-                    request.model,
-                    request.model + "/text-to-image",
-                    request.model + "/edit",
+                    route_model,
+                    route_model + "/text-to-image",
+                    route_model + "/edit",
                 }:
                     raise ValueError("FAL response model does not match frozen page profile")
-            if self._profile.provider == "openrouter" and actual_provider_model.removeprefix("openrouter/") != request.model:
+            if self._route_provider == "openrouter" and actual_provider_model.removeprefix("openrouter/") != route_model:
                 raise ValueError("OpenRouter response model does not match frozen page profile")
             usage = usage.model_copy(
                 update={
                     "model": self._gateway_model,
                     "provider_model": actual_provider_model,
-                    "provider": self._profile.provider,
+                    "provider": self._route_provider,
                 }
             )
             response_data = {
@@ -1440,6 +1501,13 @@ class GoogleVertexCompletePageTransport:
             raise
         except BaseException as exc:
             retain_incomplete_response()
+            # Lets a fallback coordinator name the usage event it absorbs;
+            # per exception, so parallel pages sharing an adapter never mix.
+            if not hasattr(exc, "canary_usage_event_id"):
+                try:
+                    exc.canary_usage_event_id = ctx.event_id  # type: ignore[attr-defined]
+                except AttributeError:
+                    pass
             await finalise_image_failure(
                 ctx=ctx,
                 config=self._config,
@@ -1497,20 +1565,236 @@ class OpenAICompletePageAdapter(GoogleVertexCompletePageTransport):
     """Public Image API through the gateway; one accounted submission per page."""
 
     def __init__(self, config: Config, profile: PageCapabilityProfile) -> None:
-        super().__init__(config)
+        super().__init__(config, profile)
         base = (fal_sunburst_page_capability_profile()
                 if profile.provider == "fal-queue"
                 else openai_page_capability_profile(profile.model))
         if profile not in (base, _integrated_page_profile(base)):
             raise ValueError("Unsupported complete-page profile")
-        self._profile = profile
         self._gateway_model = (
             "image-sunburst" if profile.provider == "fal-queue"
+            else _OPENAI_SUNBURST_GATEWAY_MODEL if profile.model == "gpt-image-2.5-sunburst"
             else "image-" + profile.model.removeprefix("gpt-image-2.5-")
         )
 
     def prepare(self, compiled: CompiledPageGeneration) -> PreparedCompletePageRequest:
         return _prepare_complete_page(compiled, self._profile)
+
+
+_OPENAI_SUNBURST_GATEWAY_MODEL = "image-sunburst-openai"
+_FAL_SUNBURST_GATEWAY_MODEL = "image-sunburst"
+
+
+class _PageRouteTransport(GoogleVertexCompletePageTransport):
+    """One route of a multi-route profile: the profile's frozen request, sent
+    to a specific provider deployment."""
+
+    def __init__(self, config: Config, profile: PageCapabilityProfile, *,
+                 provider: str, gateway_model: str, provider_model: str) -> None:
+        super().__init__(config, profile)
+        self._route_provider = provider
+        self._gateway_model = gateway_model
+        self._provider_model = provider_model
+
+
+# The streaming OpenAI gateway handler tags failures with the phase they
+# happened in; the proxy wraps them in a generic HTTP 500, keeping the message.
+_OPENAI_IMAGE_PHASE = re.compile(
+    r"OpenAI image (?P<phase>[a-z_]+) failed for [\w./-]+(?:; upstream_status=(?P<status>\d{3}))?"
+)
+# Failures after which OpenAI cannot have charged for the attempt.
+_UNCHARGED_REASONS = frozenset({"gateway_unreachable", "not_submitted", "capacity", "credentials"})
+
+
+def classify_openai_page_failure(exc: BaseException) -> str | None:
+    """Why a failed OpenAI attempt may fall back to FAL, or None to stop.
+
+    Stops on refusals, invalid requests, cancellation, and completed output
+    that failed validation: another provider would not fix those.
+    """
+    import httpx
+    from novel_to_comic.ai.errors import AITransportError
+
+    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
+        return "gateway_unreachable"
+    if not isinstance(exc, AITransportError):
+        return None
+    if exc.phase == "ambiguous_submission":
+        return "unknown_outcome"
+    if exc.phase != "gateway_request":
+        return None
+    match = _OPENAI_IMAGE_PHASE.search(str(exc))
+    if match is None:
+        status = exc.response.status_code if exc.response is not None else None
+        return "unknown_outcome" if status is not None and status >= 500 else None
+    phase, status = match["phase"], int(match["status"]) if match["status"] else None
+    if phase == "submit_connect":
+        return "not_submitted"
+    if phase == "submit":
+        if status in {429, 503}:
+            return "capacity"
+        if status in {401, 403}:
+            return "credentials"
+        # 400/404/413/422 (including moderation) are the request's fault.
+        return "unknown_outcome" if status is not None and status >= 500 else None
+    if phase in {"submit_transport", "stream", "result"}:
+        return "unknown_outcome"
+    return None
+
+
+class _RouteCircuit:
+    """Skip a route after repeated failures, bounding paid double attempts.
+
+    Process-local: each worker learns independently, and a restart retries.
+    """
+
+    def __init__(self, *, threshold: int = 3, cooldown_seconds: float = 900.0) -> None:
+        self._threshold = threshold
+        self._cooldown = cooldown_seconds
+        self._failures = 0
+        self._open_until = 0.0
+
+    def is_open(self) -> bool:
+        return time.monotonic() < self._open_until
+
+    def record_success(self) -> None:
+        self._failures = 0
+
+    def record_failure(self) -> None:
+        self._failures += 1
+        if self._failures >= self._threshold:
+            self._open_until = time.monotonic() + self._cooldown
+            self._failures = 0
+            logger.error("OpenAI Sunburst route disabled for %.0fs after %d consecutive failures; "
+                         "pages go straight to FAL", self._cooldown, self._threshold)
+            _increment_metric("canary_draw_route_circuit_opened_total", route="openai")
+
+    def reset(self) -> None:
+        self._failures = 0
+        self._open_until = 0.0
+
+
+_OPENAI_SUNBURST_CIRCUIT = _RouteCircuit()
+
+
+def _increment_metric(name: str, **labels: str) -> None:
+    try:
+        from novel_to_comic.server.metrics import increment
+
+        increment(name, 1.0, **labels)
+    except Exception:
+        pass
+
+
+def _with_route(result: CompletePageProviderResult, route: str, fallback: dict | None = None) -> CompletePageProviderResult:
+    metadata: dict[str, object] = {**(result.response_metadata or {}), "route": route}
+    if fallback is not None:
+        metadata["fallback"] = fallback
+    return result.model_copy(update={"response_metadata": metadata})
+
+
+class SunburstFallbackPageAdapter:
+    """OpenAI Sunburst first; one FAL attempt when OpenAI fails for availability.
+
+    An OpenAI attempt with an unknown outcome still falls back once: its image
+    can never arrive later, so no duplicate page can be published. Canary
+    absorbs that attempt's possible charge — its call guarantee is released and
+    the job hold is not retained for it. The user's credits settle only the
+    attempt that produced the page. Everything else keeps today's behaviour.
+    """
+
+    def __init__(self, config: Config, profile: PageCapabilityProfile) -> None:
+        base = sunburst_fallback_page_capability_profile()
+        if profile not in (base, _integrated_page_profile(base)):
+            raise ValueError("Unsupported Sunburst fallback page profile")
+        self._config = config
+        self._profile = profile
+        self._primary = _PageRouteTransport(
+            config, profile, provider="openai",
+            gateway_model=_OPENAI_SUNBURST_GATEWAY_MODEL, provider_model="gpt-image-2.5-sunburst",
+        )
+        self._backup = _PageRouteTransport(
+            config, profile, provider="fal-queue",
+            gateway_model=_FAL_SUNBURST_GATEWAY_MODEL, provider_model="openai/gpt-image-2.5/sunburst",
+        )
+
+    def prepare(self, compiled: CompiledPageGeneration) -> PreparedCompletePageRequest:
+        return _prepare_complete_page(compiled, self._profile)
+
+    async def generate(self, prepared: PreparedCompletePageRequest) -> CompletePageProviderResult:
+        _validate_prepared_page(prepared, self._profile)
+        if _OPENAI_SUNBURST_CIRCUIT.is_open():
+            _increment_metric("canary_draw_route_fallbacks_total", reason="circuit_open")
+            result = await self._backup.generate(prepared)
+            return _with_route(result, "fal-queue", {"from_route": "openai", "reason": "circuit_open"})
+        from novel_to_comic.ai import client as ai_client
+        from novel_to_comic.server.credits import deferred_ambiguity
+
+        with deferred_ambiguity() as scope:
+            try:
+                result = await self._primary.generate(prepared)
+            except asyncio.CancelledError:
+                scope.commit()
+                raise
+            except Exception as exc:
+                reason = classify_openai_page_failure(exc)
+                if reason is None:
+                    scope.commit()
+                    raise
+                failure = exc
+            else:
+                _OPENAI_SUNBURST_CIRCUIT.record_success()
+                scope.commit()
+                return _with_route(result, "openai")
+            absorbed_calls = list(dict.fromkeys(
+                [*scope.call_ids, *filter(None, [getattr(failure, "canary_usage_event_id", None)])]
+            ))
+            await self._release(scope)
+        _OPENAI_SUNBURST_CIRCUIT.record_failure()
+        fallback: dict[str, object] = {"from_route": "openai", "reason": reason}
+        _increment_metric("canary_draw_route_fallbacks_total", reason=reason)
+        if reason not in _UNCHARGED_REASONS:
+            estimate = self._openai_attempt_estimate_usd(prepared)
+            fallback.update({"absorbed_call_ids": absorbed_calls, "absorbed_estimated_cost_usd": estimate})
+            _increment_metric("canary_absorbed_image_attempts_total", route="openai")
+            logger.error(
+                "Absorbing OpenAI Sunburst attempt with unknown outcome; falling back to FAL "
+                "request_sha256=%s job_id=%s call_ids=%s estimated_cost_usd=%.4f error=%s",
+                prepared.request_sha256, ai_client.current_ai_request_context().job_id,
+                absorbed_calls, estimate, type(failure).__name__,
+            )
+        elif reason == "credentials":
+            logger.error("OpenAI Sunburst credentials rejected; falling back to FAL request_sha256=%s",
+                         prepared.request_sha256)
+        else:
+            logger.warning("OpenAI Sunburst unavailable (%s); falling back to FAL request_sha256=%s",
+                           reason, prepared.request_sha256)
+        result = await self._backup.generate(prepared)
+        return _with_route(result, "fal-queue", fallback)
+
+    async def _release(self, scope) -> None:
+        """Free the OpenAI attempt's call guarantee before the FAL attempt
+        authorizes its own, so the fallback never needs two guarantees."""
+        from novel_to_comic.ai import client as ai_client
+
+        user_id = ai_client.current_ai_request_context().user_id
+        if not user_id or not scope.call_ids:
+            scope.jobs.clear()
+            scope.resolved = True
+            return
+        from novel_to_comic.server.db import get_db
+
+        await asyncio.to_thread(scope.release, get_db(), user_id=user_id)
+
+    def _openai_attempt_estimate_usd(self, prepared: PreparedCompletePageRequest) -> float:
+        from novel_to_comic.usage import estimate_image_cost
+
+        return estimate_image_cost(
+            _OPENAI_SUNBURST_GATEWAY_MODEL, 1,
+            quality=page_image_quality(self._profile.id, self._profile.provider),
+            ref_count=len(prepared.references) + int(prepared.edit_source_bytes is not None),
+            prompt_text=prepared.prompt, width=prepared.width, height=prepared.height, basis="expected",
+        )
 
 
 class OpenRouterCompletePageAdapter(GoogleVertexCompletePageTransport):

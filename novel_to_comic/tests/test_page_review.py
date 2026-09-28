@@ -31,7 +31,7 @@ from novel_to_comic.page_drawing import (
     VertexCompletePageAdapter,
     compile_page_generation_request,
     correct_complete_page,
-    production_page_capability_profile,
+    fal_sunburst_page_capability_profile,
 )
 from novel_to_comic.page_review import (
     accept_editorial_page_issue,
@@ -487,7 +487,7 @@ def test_page_issues_are_reviewed_by_exception_and_copy_changes_route_to_adapt(
 
 
 def _profile() -> PageCapabilityProfile:
-    return production_page_capability_profile()
+    return fal_sunburst_page_capability_profile()
 
 
 def test_region_target_creates_a_complete_page_correction_request_only() -> None:
@@ -616,7 +616,7 @@ def test_correction_supersedes_without_overwriting_parent_or_creating_panels(
         correct_complete_page(
             compiled,
             issue=issue,
-            adapter=VertexCompletePageAdapter(_Transport()),
+            adapter=VertexCompletePageAdapter(_Transport(), _profile()),
             artifacts=artifacts,
             page=_page(),
             request_revision=2,

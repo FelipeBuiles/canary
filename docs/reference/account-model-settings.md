@@ -28,12 +28,13 @@ operator connection used by its other views.
 | Style/Cast images | Sunburst on FAL | Style, cast, and cover art |
 | Adapt | GPT-6 Sol | Script and dialogue |
 | Plan | GPT-6 Sol | Pages and panels |
-| Draw | Sunburst on FAL | Complete page art |
+| Draw | Sunburst on OpenAI, FAL backup | Complete page art |
 | Lettering checks | GPT-6 Luna | OCR and canonical copy checks |
 | Visual review | GPT-6 Luna | Visual consistency checks |
 
 Text and vision choices are `gpt-6-sol`, `gpt-6-luna`,
-`claude-fable-5-1`, `claude-opus-5-5`, `mimo-v2.6-pro`, and `deepseek-v4.1-flash`.
+`claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5-5`, `mimo-v2.6-pro`, and
+`deepseek-v4.1-flash`.
 Image and Draw choices are `image-sunburst` only. The gateway maps these to
 OpenAI, Anthropic, OpenRouter/Xiaomi, Together AI, and FAL respectively.
 New Draw editions render pages at medium quality; Style/Cast images use
@@ -42,7 +43,9 @@ gateway so Sunburst images settle at FAL's billed charge; without it they settle
 at a labelled request estimate (see [stage contracts](stage-contracts.md)).
 `novel_to_comic/src/novel_to_comic/text_models.py` lists the selectable text aliases and the
 request fields each accepts; every alias needs a gateway route and a pricing
-alias. The DeepSeek route turns off Together's default thinking with
+alias. Reasoning text routes run at low effort: GPT-6 routes set
+`reasoning_effort: low` on the gateway, and Claude routes send
+`output_config.effort: low` from `text_models.py`. The DeepSeek route turns off Together's default thinking with
 `extra_body.reasoning.enabled: false`. The pinned gateway drops a route-level
 `reasoning_effort` for this model. The OpenAI model pages publish the
 standard text rates per million tokens: [Sol](https://developers.openai.com/api/docs/models/gpt-6-sol)

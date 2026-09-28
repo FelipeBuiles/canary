@@ -32,9 +32,12 @@ RUN /app/.venv/bin/python /app/patch_http_errors.py \
     && /app/.venv/bin/python /app/patch_anthropic_refusals.py
 
 COPY litellm/config.yaml /app/config.yaml
-COPY litellm_handlers/__init__.py litellm_handlers/provider_wire.py litellm_handlers/fal_provider.py /app/litellm_handlers/
+COPY litellm_handlers/__init__.py litellm_handlers/provider_wire.py litellm_handlers/fal_provider.py litellm_handlers/openai_image_stream.py /app/litellm_handlers/
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH=/app:/app/litellm_handlers
+# Price and gate every route from the bundled map plus config model_info, never
+# a copy fetched at boot (see litellm/config.yaml).
+ENV LITELLM_LOCAL_MODEL_COST_MAP=True
 EXPOSE 4000
 ENTRYPOINT ["/app/.venv/bin/litellm"]
 CMD ["--host", "0.0.0.0", "--port", "4000", "--config", "/app/config.yaml"]

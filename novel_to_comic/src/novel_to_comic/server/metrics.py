@@ -42,6 +42,9 @@ _COUNTERS: dict[str, tuple[str, tuple[str, ...]]] = {
     "canary_ai_reasoning_tokens_total": ("AI hidden reasoning tokens", ("provider", "model", "stage")),
     "canary_structured_call_attempts_total": ("Structured model call attempts", ("feature", "attempt")),
     "canary_credit_debit_failures_total": ("Provider charges that failed customer debit", ("stage",)),
+    "canary_draw_route_fallbacks_total": ("Draw pages that fell back from their primary route", ("reason",)),
+    "canary_absorbed_image_attempts_total": ("Unknown-outcome image attempts Canary absorbed", ("route",)),
+    "canary_draw_route_circuit_opened_total": ("Draw routes skipped after repeated failures", ("route",)),
 }
 
 _HISTOGRAMS: dict[str, tuple[str, tuple[str, ...], tuple[float, ...]]] = {

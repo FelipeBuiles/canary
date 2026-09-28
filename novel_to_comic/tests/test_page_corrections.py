@@ -47,7 +47,7 @@ from novel_to_comic.page_drawing import (
     correct_complete_page,
     correction_credit_estimate,
     prepare_page_correction,
-    production_page_capability_profile,
+    fal_sunburst_page_capability_profile,
 )
 from novel_to_comic.page_review import (
     InvalidCorrectionError,
@@ -179,11 +179,16 @@ def _page() -> ComicPage:
 
 
 def _profile() -> PageCapabilityProfile:
-    return production_page_capability_profile()
+    return fal_sunburst_page_capability_profile()
 
 
 def _edition(profile: PageCapabilityProfile | None = None) -> BookEdition:
     return BookEdition(revision=1, id="edition-1", capability_profile=profile or _profile())
+
+
+def _vertex_adapter(transport) -> VertexCompletePageAdapter:
+    """The validating adapter for this module's FAL-edition fixture profile."""
+    return VertexCompletePageAdapter(transport, _profile())
 
 
 def _issue(issue_id: str, **updates: object) -> PageIssue:
@@ -779,7 +784,7 @@ def test_visual_findings_stay_revised_until_human_confirmation(tmp_path: Path) -
         correct_complete_page(
             prepared.compiled,
             issue=artifacts.read_issues(1)[0],
-            adapter=VertexCompletePageAdapter(_Transport()),
+            adapter=_vertex_adapter(_Transport()),
             artifacts=artifacts,
             page=page,
             request_revision=2,
@@ -836,7 +841,7 @@ def test_proven_lettering_fix_resolves_while_visuals_stay_revised(tmp_path: Path
         correct_complete_page(
             prepared.compiled,
             issue=artifacts.read_issues(1)[0],
-            adapter=VertexCompletePageAdapter(_Transport()),
+            adapter=_vertex_adapter(_Transport()),
             artifacts=artifacts,
             page=page,
             ocr=_ExactOCR(),
@@ -862,7 +867,7 @@ def test_created_manual_issues_enter_history_and_stay_revised(tmp_path: Path) ->
         correct_complete_page(
             prepared.compiled,
             issue=None,
-            adapter=VertexCompletePageAdapter(_Transport()),
+            adapter=_vertex_adapter(_Transport()),
             artifacts=artifacts,
             page=page,
             request_revision=2,
@@ -1313,7 +1318,7 @@ def test_interrupted_correction_route_resumes_original_parent_without_redraw(tmp
             raise asyncio.CancelledError("read-back interrupted")
 
     transport = CountingTransport()
-    adapter = VertexCompletePageAdapter(transport)
+    adapter = _vertex_adapter(transport)
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(correct_complete_page(
             prepared.compiled, issue=None, adapter=adapter,
@@ -1355,7 +1360,7 @@ def test_reviewing_existing_art_never_requires_todays_draw_profile(tmp_path: Pat
         def prepare(self, _compiled):
             raise ValueError("Frozen complete-page request does not match the selected profile")
 
-    monkeypatch.setattr(pages, "complete_page_adapter", lambda _config: RetiredDrawProfile())
+    monkeypatch.setattr(pages, "complete_page_adapter", lambda _config, *_args, **_kwargs: RetiredDrawProfile())
 
     assert client.get("/api/projects/test_project/pages/1/visual-review/estimate").status_code == 200
     saved = client.get("/api/projects/test_project/pages/1/visual-review")

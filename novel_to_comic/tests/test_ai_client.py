@@ -1448,7 +1448,9 @@ class TestStreamingOptOut:
         monkeypatch.setenv("CANARY_AI_STREAM_TEXT", "1")
         assert client._stream_text_enabled() is True
 
-    @pytest.mark.parametrize("model", ["gpt-6-sol", "gpt-6-luna", "claude-fable-5-1", "claude-opus-5-5"])
+    @pytest.mark.parametrize("model", [
+        "gpt-6-sol", "gpt-6-luna", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5",
+    ])
     def test_opting_out_falls_back_to_a_buffered_request(
         self, monkeypatch, _patch_events, model
     ):
@@ -1854,7 +1856,7 @@ def test_terminal_image_refusal_releases_credit_hold(monkeypatch):
     assert not credits._unsettled_jobs
 
 
-@pytest.mark.parametrize("model", ["claude-fable-5-1", "claude-opus-5-5"])
+@pytest.mark.parametrize("model", ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"])
 def test_new_claude_models_use_native_json_schema(monkeypatch, _patch_events, model):
     monkeypatch.setenv("CANARY_AI_STREAM_TEXT", "0")
     _patch_http(monkeypatch, {
@@ -1884,23 +1886,32 @@ def test_new_claude_models_use_native_json_schema(monkeypatch, _patch_events, mo
     assert sent["output_config"].get("effort") == wire.effort
 
 
-def test_opus_5_5_sends_effort_without_schema_and_caps_thinking_headroom(
-    monkeypatch, _patch_events,
+def test_claude_text_models_run_at_low_effort():
+    from novel_to_comic.text_models import TEXT_MODELS
+
+    claude = [model for model in TEXT_MODELS if model.claude_native_json]
+    assert {model.id for model in claude} >= {"claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"}
+    assert {model.id: model.effort for model in claude} == {model.id: "low" for model in claude}
+
+
+@pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-sonnet-5-5"])
+def test_claude_5_5_sends_effort_without_schema_and_caps_thinking_headroom(
+    monkeypatch, _patch_events, model,
 ):
     monkeypatch.setenv("CANARY_AI_STREAM_TEXT", "0")
     _patch_http(monkeypatch, {
-        "model": "claude-opus-5-5",
+        "model": model,
         "choices": [{"message": {"content": "plain answer"}}],
         "usage": {"prompt_tokens": 5, "completion_tokens": 2},
     })
     asyncio.run(client.generate_text(
-        config=Config(), model="claude-opus-5-5", system_prompt="Answer.",
+        config=Config(), model=model, system_prompt="Answer.",
         user_content="{}", max_output_tokens=120_000,
     ))
     sent = _FakeAsyncClient.last_request["json"]
-    # Thinking cannot be disabled; the app never sends a thinking override,
+    # The app never sends a thinking override (it is gateway route config),
     # sampling controls, or forced tool choice for this route.
-    assert sent["output_config"] == {"effort": text_wire("claude-opus-5-5").effort}
+    assert sent["output_config"] == {"effort": "low"}
     assert "thinking" not in sent
     assert "temperature" not in sent
     assert "tool_choice" not in sent and "response_format" not in sent

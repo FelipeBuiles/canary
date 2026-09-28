@@ -44,6 +44,7 @@ from novel_to_comic.page_drawing import (
     estimate_draw_api_cost,
     ensure_current_page_edition,
     enqueue_complete_page_draw,
+    fal_sunburst_page_capability_profile,
     production_page_capability_profile,
     select_book_edition,
 )
@@ -55,7 +56,7 @@ from novel_to_comic.usage import ApiResult, UsageRecord
 
 
 def _profile(**updates: object) -> PageCapabilityProfile:
-    payload: dict[str, object] = production_page_capability_profile().model_dump()
+    payload: dict[str, object] = fal_sunburst_page_capability_profile().model_dump()
     payload.update(updates)
     return PageCapabilityProfile(**payload)
 
@@ -66,6 +67,11 @@ def _edition(profile: PageCapabilityProfile | None = None) -> BookEdition:
         id="edition-001",
         capability_profile=profile or _profile(),
     )
+
+
+def _vertex_adapter(transport) -> VertexCompletePageAdapter:
+    """The validating adapter for this module's FAL-edition fixture profile."""
+    return VertexCompletePageAdapter(transport, _profile())
 
 
 def _page(*, revision: int = 2, visual_intent: str = "Ward sees the idol.") -> ComicPage:
@@ -308,8 +314,8 @@ def test_production_profile_estimates_page_and_selected_reference_cost(
     from novel_to_comic.page_drawing import estimate_page_request_cost_usd
     from novel_to_comic.usage import estimate_image_cost
 
-    assert profile.provider == "fal-queue"
-    assert profile.model == "openai/gpt-image-2.5/sunburst"
+    assert profile.provider == "openai-fal"
+    assert profile.model == "gpt-image-2.5-sunburst"
     # The frozen request carries no price; quotes come from pricing config.
     assert compiled.request.estimated_cost_usd == Decimal("0")
     assert estimate_page_request_cost_usd(compiled) == pytest.approx(estimate_image_cost(
@@ -361,7 +367,7 @@ def test_request_identity_records_retry_lineage(tmp_path: Path) -> None:
             retries_request_sha256=retried.request.request_sha256,
         ),
     )
-    prepared = VertexCompletePageAdapter(_RecordingTransport(_provider_result())).prepare(later)
+    prepared = _vertex_adapter(_RecordingTransport(_provider_result())).prepare(later)
     assert prepared.request_sha256 == later.request.request_sha256
     assert later.request.retry.attempt > _edition().capability_profile.max_attempts
 
@@ -433,7 +439,7 @@ def test_failed_request_gets_its_own_revision_before_render_retry(
     asyncio.run(
         draw_complete_page(
             compiled,
-            adapter=VertexCompletePageAdapter(
+            adapter=_vertex_adapter(
                 _RecordingTransport(_provider_result())
             ),
             artifacts=artifacts,
@@ -558,7 +564,7 @@ def test_vertex_adapter_submits_exactly_the_prepared_complete_page_request(
 ) -> None:
     compiled = _compile(tmp_path)
     transport = _RecordingTransport(_provider_result())
-    adapter = VertexCompletePageAdapter(transport)
+    adapter = _vertex_adapter(transport)
     prepared = adapter.prepare(compiled)
 
     result = asyncio.run(adapter.generate(prepared))
@@ -571,7 +577,7 @@ def test_vertex_adapter_submits_exactly_the_prepared_complete_page_request(
     wrong_model = _provider_result().model_copy(
         update={"actual_provider_model": "vertex_ai/another-model"}
     )
-    rejecting_adapter = VertexCompletePageAdapter(_RecordingTransport(wrong_model))
+    rejecting_adapter = _vertex_adapter(_RecordingTransport(wrong_model))
     with pytest.raises(
         ValueError,
         match=(
@@ -584,7 +590,7 @@ def test_vertex_adapter_submits_exactly_the_prepared_complete_page_request(
     wrong_dimensions = _provider_result().model_copy(
         update={"width": 2048, "height": 3072}
     )
-    rejecting_adapter = VertexCompletePageAdapter(
+    rejecting_adapter = _vertex_adapter(
         _RecordingTransport(wrong_dimensions)
     )
     with pytest.raises(
@@ -598,7 +604,7 @@ def test_draw_persists_immutable_request_render_usage_cost_and_lineage(
     tmp_path: Path,
 ) -> None:
     compiled = _compile(tmp_path)
-    adapter = VertexCompletePageAdapter(_RecordingTransport(_provider_result()))
+    adapter = _vertex_adapter(_RecordingTransport(_provider_result()))
     artifacts = TargetArtifacts(tmp_path / "project")
 
     result = asyncio.run(
@@ -684,7 +690,7 @@ def test_complete_page_enqueue_uses_credited_lifecycle_and_persists_result(
     app = _make_app()
     compiled = _compile(tmp_path)
     artifacts = TargetArtifacts(tmp_path / "project")
-    adapter = VertexCompletePageAdapter(_RecordingTransport(_provider_result()))
+    adapter = _vertex_adapter(_RecordingTransport(_provider_result()))
 
     with (
         patch("novel_to_comic.server.credited_job.get_db", return_value=object()),
@@ -763,7 +769,7 @@ def test_failed_complete_page_persists_a_user_facing_failure(
             project_dir=tmp_path / "project",
             config=Config(),
             compiled=_compile(tmp_path),
-            adapter=VertexCompletePageAdapter(_BlockedTransport()),
+            adapter=_vertex_adapter(_BlockedTransport()),
             artifacts=artifacts,
             page=_page(),
         )
@@ -807,7 +813,7 @@ def test_a_failed_read_back_does_not_fail_the_paid_page(
             project_dir=tmp_path / "project",
             config=Config(),
             compiled=_compile(tmp_path),
-            adapter=VertexCompletePageAdapter(
+            adapter=_vertex_adapter(
                 _RecordingTransport(_provider_result())
             ),
             artifacts=artifacts,
@@ -871,7 +877,7 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
             project_dir=tmp_path / "project",
             config=Config(),
             compiled=compiled,
-            adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+            adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
             artifacts=TargetArtifacts(tmp_path / "unanalysed"),
             page=_page(),
         )
@@ -884,7 +890,7 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
             project_dir=tmp_path / "project",
             config=Config(),
             compiled=compiled,
-            adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+            adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
             artifacts=artifacts,
             page=_page(),
             ocr=_OCR(),
@@ -1028,7 +1034,7 @@ def test_correction_revisions_are_allocated_when_the_job_runs(tmp_path: Path) ->
     initial = asyncio.run(
         draw_complete_page(
             _compile(tmp_path),
-            adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+            adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
             artifacts=artifacts,
             page=page,
         )
@@ -1056,7 +1062,7 @@ def test_correction_revisions_are_allocated_when_the_job_runs(tmp_path: Path) ->
                 correction=correction,
                 edit_source_bytes=b"complete-page-png",
             ),
-            adapter=VertexCompletePageAdapter(
+            adapter=_vertex_adapter(
                 _RecordingTransport(
                     _provider_result().model_copy(
                         update={"image_bytes": b"corrected-page-png"}
@@ -1141,7 +1147,7 @@ def test_explicit_draw_analysis_records_advisory_lettering_issues(
     asyncio.run(
         draw_complete_page(
             _compile(tmp_path),
-            adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+            adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
             artifacts=artifacts,
             page=page,
             ocr=_OCR(),
@@ -1163,7 +1169,7 @@ def test_a_stale_compiled_request_cannot_be_drawn(tmp_path: Path) -> None:
         asyncio.run(
             draw_complete_page(
                 _compile(tmp_path),
-                adapter=VertexCompletePageAdapter(
+                adapter=_vertex_adapter(
                     _RecordingTransport(_provider_result())
                 ),
                 artifacts=TargetArtifacts(tmp_path / "project"),
@@ -1184,7 +1190,7 @@ def test_a_failed_read_back_leaves_the_paid_render_recorded(tmp_path: Path) -> N
     asyncio.run(
         draw_complete_page(
             _compile(tmp_path),
-            adapter=VertexCompletePageAdapter(
+            adapter=_vertex_adapter(
                 _RecordingTransport(_provider_result())
             ),
             artifacts=artifacts,
@@ -1225,7 +1231,7 @@ def test_an_existing_render_can_be_analyzed_without_redrawing_it(
     provenance = asyncio.run(
         draw_complete_page(
             _compile(tmp_path),
-            adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+            adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
             artifacts=artifacts,
             page=page,
             defer_completion=True,
@@ -1283,7 +1289,7 @@ def test_visual_review_uses_exact_references_and_reuses_saved_result(tmp_path):
     compiled = _compile(tmp_path)
     artifacts = TargetArtifacts(tmp_path)
     provenance = asyncio.run(draw_complete_page(
-        compiled, adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+        compiled, adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
         artifacts=artifacts, page=_page(),
     ))
     generate = AsyncMock(return_value=ApiResult(value={
@@ -1338,7 +1344,7 @@ def test_visual_review_route_compiles_current_authority_without_redrawing(tmp_pa
     artifacts.write_page(page)
     artifacts.write_book_edition(_edition())
     asyncio.run(draw_complete_page(_compile(tmp_path, files=files),
-        adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+        adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
         artifacts=artifacts, page=page))
 
     async def admitted(**kwargs):
@@ -1368,7 +1374,7 @@ def test_draw_estimate_is_read_only_and_excludes_optional_lettering_check(tmp_pa
 
     artifacts = TargetArtifacts(tmp_path)
     page = _page()
-    edition = _edition(production_page_capability_profile())
+    edition = _edition(fal_sunburst_page_capability_profile())
     files = _reference_files(tmp_path)
     artifacts.write_page(page)
     artifacts.write_book_edition(edition)
@@ -1410,7 +1416,7 @@ def test_existing_page_checks_quote_holds_without_redrawing(tmp_path: Path) -> N
     artifacts.write_book_edition(_edition())
     asyncio.run(draw_complete_page(
         _compile(tmp_path, files=files),
-        adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+        adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
         artifacts=artifacts, page=page,
     ))
     app = FastAPI()
@@ -1451,10 +1457,10 @@ def test_batch_quote_skips_paid_pages_and_sums_individual_holds(tmp_path: Path) 
         artifacts.write_page(page)
     asyncio.run(draw_complete_page(
         _compile(tmp_path, files=files),
-        adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+        adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
         artifacts=artifacts, page=first,
     ))
-    artifacts.write_book_edition(_edition(production_page_capability_profile()))
+    artifacts.write_book_edition(_edition(fal_sunburst_page_capability_profile()))
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[get_project] = lambda: (tmp_path, Config(), None)
@@ -1481,7 +1487,7 @@ def test_interrupted_paid_result_publication_recovers_without_resubmission(
 ):
     artifacts = TargetArtifacts(tmp_path / "project")
     transport = _RecordingTransport(_provider_result())
-    adapter = VertexCompletePageAdapter(transport)
+    adapter = _vertex_adapter(transport)
     compiled = _compile(tmp_path)
     original = getattr(artifacts, publication_step)
     def crash(*args, **kwargs):
@@ -1530,7 +1536,7 @@ def test_legacy_orphan_image_blocks_before_paid_submission(tmp_path):
     transport = _RecordingTransport(_provider_result())
     with pytest.raises(ValueError, match="Interrupted page persistence"):
         asyncio.run(draw_complete_page(
-            _compile(tmp_path), adapter=VertexCompletePageAdapter(transport),
+            _compile(tmp_path), adapter=_vertex_adapter(transport),
             artifacts=artifacts, page=_page(),
         ))
     assert transport.submitted == []
@@ -1540,7 +1546,7 @@ def test_legacy_orphan_image_blocks_before_paid_submission(tmp_path):
 def test_explicit_occupied_revision_is_rejected_before_paid_submission(tmp_path):
     artifacts = TargetArtifacts(tmp_path / "project")
     transport = _RecordingTransport(_provider_result())
-    adapter = VertexCompletePageAdapter(transport)
+    adapter = _vertex_adapter(transport)
     compiled = _compile(tmp_path)
     asyncio.run(draw_complete_page(compiled, adapter=adapter, artifacts=artifacts, page=_page()))
     compiled = compile_page_generation_request(
@@ -1608,7 +1614,7 @@ def test_visual_review_preserves_producing_depiction_and_rejects_wrong_lineage(t
     )
     artifacts = TargetArtifacts(tmp_path / "project")
     rendered = asyncio.run(draw_complete_page(
-        producing, adapter=VertexCompletePageAdapter(_RecordingTransport(_provider_result())),
+        producing, adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
         artifacts=artifacts, page=page,
     ))
     prompt = visual_review_prompt(compiled=current, producing_request=producing.request)
@@ -1644,7 +1650,7 @@ def test_less_graphic_intent_survives_correction_and_visual_review(tmp_path):
         page, edition, inventory, {}, retry=RetryProvenance(attempt=1),
         depiction="less_graphic",
     )
-    adapter = VertexCompletePageAdapter(_RecordingTransport(_provider_result()))
+    adapter = _vertex_adapter(_RecordingTransport(_provider_result()))
     original = asyncio.run(draw_complete_page(
         producing, adapter=adapter, artifacts=artifacts, page=page,
     ))
@@ -1686,7 +1692,7 @@ def test_complete_page_accepted_response_retains_incomplete_hold(tmp_path, monke
     from novel_to_comic.server import credits
     monkeypatch.setattr(credits, "_unsettled_jobs", set())
     monkeypatch.setattr(credits, "_reservation_jobs", {"hold": "job"})
-    prepared = VertexCompletePageAdapter(_RecordingTransport(_provider_result())).prepare(_compile(tmp_path))
+    prepared = _vertex_adapter(_RecordingTransport(_provider_result())).prepare(_compile(tmp_path))
     response = httpx.Response(200, content=b"bad" if failure == "json" else b"{}",
                               request=httpx.Request("POST", "http://gateway/v1/images/edits"))
     post = AsyncMock(return_value=response)
@@ -1694,7 +1700,7 @@ def test_complete_page_accepted_response_retains_incomplete_hold(tmp_path, monke
     async def run():
         with ai_request_context(job_id="job"):
             with pytest.raises((ValueError, asyncio.CancelledError)):
-                await GoogleVertexCompletePageTransport(Config()).generate(prepared)
+                await GoogleVertexCompletePageTransport(Config(), _profile()).generate(prepared)
     with (
         patch("novel_to_comic.ai.client._post_with_retry", post),
         patch("novel_to_comic.ai.client._decode_image_response", decode),

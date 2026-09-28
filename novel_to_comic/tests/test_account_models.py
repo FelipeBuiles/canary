@@ -440,6 +440,7 @@ def test_creation_endpoints_persist_dev_choices_or_reject(client, tmp_path, monk
 @pytest.mark.parametrize("model,expected_cost", [
     ("claude-fable-5-1", 0.06),
     ("claude-opus-5-5", 0.024),
+    ("claude-sonnet-5-5", 0.012),
 ])
 def test_premium_models_select_independently_with_known_pricing(client, tmp_path, model, expected_cost):
     from novel_to_comic.model_costs import PricingResolver

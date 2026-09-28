@@ -217,7 +217,7 @@ class DurableQueue:
                 continue
             try:
                 # Procrastinate's account lock otherwise serializes every page.
-                # Three stable lanes bound FAL Draw dispatch; the in-process
+                # Stable page lanes bound parallel Draw dispatch; the in-process
                 # account gate keeps other operations exclusive with them.
                 dispatch_id = await self.task.configure(
                     lock=dispatch_lock(self.queue_name, job), queueing_lock=f"{self.queue_name}:operation:{job.id}",
