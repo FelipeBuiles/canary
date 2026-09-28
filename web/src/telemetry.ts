@@ -1,7 +1,8 @@
 /**
- * Content-free errors, canonical page views, and anonymous signup intent.
- * Authenticated product events retain their API path. Nothing is stored in
- * cookies or browser storage; URLs are reduced to route templates.
+ * Content-free errors, canonical page views, anonymous signup intent, and
+ * content-masked click and session replay capture. Authenticated product
+ * events retain their API path. Nothing is stored in cookies or browser
+ * storage; URLs are reduced to route templates.
  */
 import type { PostHog, CaptureResult } from "posthog-js/dist/module.no-external";
 
@@ -77,10 +78,70 @@ export function canonicalPath(pathname: string, signedIn: boolean): string {
   return "/other";
 }
 
+/** Same-origin links become route templates; external links keep only their origin. */
+export function canonicalUrl(value: string): string {
+  try {
+    const url = new URL(value, window.location.origin);
+    if (url.origin !== window.location.origin) return url.origin;
+    return window.location.origin + canonicalPath(url.pathname, account !== null);
+  } catch {
+    return window.location.origin + "/other";
+  }
+}
+
+/**
+ * Autocapture elements chain without text, attribute values, or link targets:
+ * tag names, classes, and positions only. The SDK already masks text and
+ * attributes; this is the fail-closed second pass.
+ */
+function scrubElementsChain(chain: string): string | undefined {
+  if (chain.length > 4000) return undefined;
+  const cleaned = chain.replace(/(?:attr__[\w-]+|attr_id|href|text)="(?:[^"\\]|\\.)*"/g, "");
+  return /^[\w\s.:;="()#-]*$/.test(cleaned) ? cleaned : undefined;
+}
+
+/**
+ * Replay frames keep masked DOM structure. URLs are reduced to route
+ * templates and plugin frames (console and network) are dropped, since they
+ * can carry request URLs or logged content.
+ */
+function scrubSnapshotData(data: unknown): unknown[] | undefined {
+  if (!Array.isArray(data)) return undefined;
+  return data.filter(frame => frame && typeof frame === "object" && (frame as { type?: unknown }).type !== 6).map(frame => {
+    const item = frame as { data?: Record<string, unknown> };
+    const payload = item.data;
+    if (!payload || typeof payload !== "object") return frame;
+    const next: Record<string, unknown> = { ...payload };
+    if (typeof next.href === "string") next.href = canonicalUrl(next.href);
+    const inner = next.payload as Record<string, unknown> | undefined;
+    if (inner && typeof inner === "object" && typeof inner.href === "string") {
+      next.payload = { ...inner, href: canonicalUrl(inner.href) };
+    }
+    return { ...item, data: next };
+  });
+}
+
+/** Session replay: mask all prose except interface chrome; never record artwork. */
+const replayChrome = "button, nav, label, [role=tab], [role=menuitem], [role=option], [data-ph-unmask]";
+export function maskReplayText(text: string, element?: HTMLElement): string {
+  return element?.closest(replayChrome) ? text : text.replace(/\S/g, "*");
+}
+
+export function maskReplayAttribute(name: string, value: string): string {
+  if (!["href", "src", "srcset", "action"].includes(name)) return value;
+  try {
+    // Built assets (styles, fonts, icons) stay addressable so replays render.
+    const url = new URL(value, window.location.origin);
+    if (url.origin === window.location.origin && /^\/assets\/[A-Za-z0-9_.-]+$/.test(url.pathname)) return url.origin + url.pathname;
+  } catch { /* Fall through to the route template. */ }
+  return canonicalUrl(value);
+}
+
 export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
   if (!event) return null;
   try {
-    if (!["$exception", "$identify", "$create_alias", "$pageview", "signup_submitted"].includes(event.event)) return null;
+    if (!["$exception", "$identify", "$create_alias", "$pageview", "signup_submitted", "$autocapture", "$rageclick",
+      "$snapshot"].includes(event.event)) return null;
     const source = event.properties ?? {};
     const properties: Record<string, unknown> = {
       $geoip_disable: true,
@@ -93,6 +154,28 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
     };
     for (const key of ["distinct_id", "$device_id", "$anon_distinct_id", "$session_id", "$window_id", "$exception_fingerprint"]) {
       if (typeof source[key] === "string" && tokenPattern.test(source[key])) properties[key] = source[key];
+    }
+    if (event.event === "$snapshot") {
+      const frames = scrubSnapshotData(source.$snapshot_data);
+      if (!frames || typeof properties.$session_id !== "string" || typeof properties.$window_id !== "string") return null;
+      properties.$snapshot_data = frames;
+      for (const key of ["$snapshot_bytes", "$snapshot_source", "$lib", "$lib_version"]) {
+        if (typeof source[key] === "number" || (typeof source[key] === "string" && tokenPattern.test(source[key]))) {
+          properties[key] = source[key];
+        }
+      }
+      return { ...event, properties };
+    }
+    if (event.event === "$autocapture" || event.event === "$rageclick") {
+      const path = canonicalPath(window.location.pathname, account !== null);
+      Object.assign(properties, {
+        $pathname: path,
+        $current_url: window.location.origin + path,
+        $host: window.location.host,
+      });
+      if (typeof source.$event_type === "string" && labelPattern.test(source.$event_type)) properties.$event_type = source.$event_type;
+      const chain = typeof source.$elements_chain === "string" ? scrubElementsChain(source.$elements_chain) : undefined;
+      if (chain) properties.$elements_chain = chain;
     }
     if (event.event === "$pageview") {
       const path = source.canonical_path;
@@ -162,13 +245,28 @@ export function initTelemetry(): Promise<void> {
   if (!key || !["https://us.i.posthog.com", "https://eu.i.posthog.com"].includes(host)) return Promise.resolve();
   loading = (async () => {
     await import("posthog-js/dist/exception-autocapture");
+    // The no-external build never fetches scripts; bundle the replay recorder.
+    await import("posthog-js/dist/posthog-recorder");
     const { default: posthog } = await import("posthog-js/dist/module.no-external");
     posthog.init(key, {
       api_host: host,
-      autocapture: false,
+      // Clicks and rage clicks keep tag/class structure only (see scrubEvent).
+      autocapture: { capture_copied_text: false },
+      mask_all_text: true,
+      mask_all_element_attributes: true,
+      session_recording: {
+        maskAllInputs: true,
+        maskTextSelector: "*",
+        maskTextFn: maskReplayText,
+        maskAttributeFn: maskReplayAttribute,
+        // Manuscript art, generated pages, and uploads are never recorded.
+        blockSelector: "img, picture, video, canvas, svg image, [data-ph-block]",
+        recordHeaders: false,
+        recordBody: false,
+        recordCrossOriginIframes: false,
+      },
       capture_pageview: false,
       capture_pageleave: false,
-      disable_session_recording: true,
       disable_surveys: true,
       enable_heatmaps: false,
       capture_dead_clicks: false,

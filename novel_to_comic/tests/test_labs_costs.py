@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 
 from PIL import Image
-from pytest import approx
+from pytest import approx, fixture
 
 from novel_to_comic.labs.costs import estimate_labs_image_cost
 from novel_to_comic.labs.providers.base import LabsImageInput
@@ -14,18 +14,31 @@ from novel_to_comic.labs.registry import LabsModelEntry
 from novel_to_comic.usage import ApiResult, UsageRecord
 
 
+@fixture
+def synthetic_endpoint_rates(monkeypatch):
+    from novel_to_comic.model_costs import PricingResolver
+
+    resolver = PricingResolver()
+    resolver._overrides = {"model_overrides": {
+        "test/fixed-image": {"output_cost_per_image": .08},
+        "test/megapixel-image": {"input_cost_per_megapixel": .015,
+            "output_cost_first_megapixel": .03, "output_cost_per_extra_megapixel": .015},
+    }}
+    monkeypatch.setattr("novel_to_comic.labs.costs.get_pricing_resolver", lambda: resolver)
+
+
 def _write_png(path: Path, size: tuple[int, int]) -> None:
     Image.new("RGB", size, color=(255, 255, 255)).save(path)
 
 
-def test_labs_cost_uses_endpoint_pricing_before_registry_approximation(tmp_path):
+def test_labs_cost_uses_endpoint_pricing_before_registry_approximation(tmp_path, synthetic_endpoint_rates):
     ref = tmp_path / "ref.png"
     _write_png(ref, (512, 512))
     entry = LabsModelEntry(
-        id="nano-banana-2-edit",
-        label="Nano Banana 2",
+        id="test-fixed",
+        label="Test fixed image",
         provider="fal",
-        endpoint="fal-ai/nano-banana-2/edit",
+        endpoint="test/fixed-image",
         approx_cost=0.01,
     )
 
@@ -41,19 +54,19 @@ def test_labs_cost_uses_endpoint_pricing_before_registry_approximation(tmp_path)
 
     assert breakdown.cost_usd == approx(0.08)
     assert breakdown.source == "canary_pricing_override"
-    assert breakdown.provider_model == "fal-ai/nano-banana-2/edit"
+    assert breakdown.provider_model == "test/fixed-image"
 
 
-def test_labs_cost_scales_flux_2_edit_by_output_and_reference_megapixels(tmp_path):
+def test_labs_cost_scales_output_and_reference_megapixels(tmp_path, synthetic_endpoint_rates):
     ref_a = tmp_path / "ref_a.png"
     ref_b = tmp_path / "ref_b.png"
     _write_png(ref_a, (512, 512))
     _write_png(ref_b, (1600, 900))
     entry = LabsModelEntry(
-        id="flux-2-pro-edit",
-        label="FLUX.2 Pro Edit",
+        id="test-megapixel",
+        label="Test megapixel image",
         provider="fal",
-        endpoint="fal-ai/flux-2-pro/edit",
+        endpoint="test/megapixel-image",
     )
 
     breakdown = estimate_labs_image_cost(
@@ -77,9 +90,13 @@ def test_litellm_provider_returns_calculated_usage_cost(monkeypatch):
             value=output_path,
             usage=UsageRecord(
                 provider="openai",
-                model="openai/gpt-image-2",
+                model="image-sunburst-openai",
                 operation="image",
                 image_count=1,
+                input_tokens=1200, output_tokens=2000,
+                input_text_tokens=200, input_image_tokens=1000,
+                cached_text_tokens=0, cached_image_tokens=0,
+                image_output_tokens=2000,
             ),
         )
 
@@ -88,7 +105,7 @@ def test_litellm_provider_returns_calculated_usage_cost(monkeypatch):
         fake_generate_wire_image,
     )
 
-    config = Config(image_model="openai/gpt-image-2")
+    config = Config(image_model="image-sunburst-openai")
     compiled = compile_non_panel_request(
         config,
         AssetGenerationInput(
@@ -101,14 +118,14 @@ def test_litellm_provider_returns_calculated_usage_cost(monkeypatch):
 
     result = asyncio.run(
         LitellmProvider().generate(
-            endpoint="openai/gpt-image-2",
+            endpoint="image-sunburst-openai",
             inp=inp,
         )
     )
 
-    assert result.cost_usd == approx(0.03168)
+    assert result.cost_usd == approx(0.069)
     assert result.cost_source == "litellm_cost_map+canary_pricing_override"
-    assert result.provider_model == "openai/gpt-image-2"
+    assert result.provider_model == "openai/gpt-image-2.5-sunburst"
 
 
 def test_litellm_temp_output_canonicalizes_symlinked_ancestor(tmp_path):

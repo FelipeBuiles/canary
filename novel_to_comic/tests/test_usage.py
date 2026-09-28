@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from pytest import approx
+from pytest import approx, fixture
 
 from novel_to_comic import usage as usage_module
 from novel_to_comic.model_catalog import models
@@ -15,10 +15,31 @@ from novel_to_comic.usage import (
 )
 
 
-def test_image_alias_with_token_usage_uses_resolved_provider_token_pricing():
+@fixture
+def synthetic_image_rates(monkeypatch):
+    """Exercise generic pricing formulas without shipping retired tariffs."""
+    from novel_to_comic import model_costs
+
+    resolver = PricingResolver()
+    resolver._overrides = {"aliases": {}, "model_overrides": {
+        "test-token-image": {
+            "input_cost_per_token": 5e-6, "output_cost_per_token": 3e-5,
+            "output_cost_per_image": .03168,
+            "image_output_tokens_by_quality": {"auto": 1056, "high": 4160},
+        },
+        "test-fixed-image": {"output_cost_per_image": .134},
+        "test-cheap-image": {"output_cost_per_image": .01},
+        "test-reference-image": {"output_cost_per_image": .0336, "input_cost_per_image": .00028},
+        "test-megapixel-image": {"input_cost_per_megapixel": .015,
+            "output_cost_first_megapixel": .03, "output_cost_per_extra_megapixel": .015},
+    }}
+    monkeypatch.setattr(model_costs, "_DEFAULT_RESOLVER", resolver)
+
+
+def test_image_alias_with_token_usage_uses_resolved_provider_token_pricing(synthetic_image_rates):
     usage = UsageRecord(
         provider="openai",
-        model="gpt-image-2",
+        model="test-token-image",
         operation="image",
         input_tokens=1000,
         output_tokens=2000,
@@ -28,10 +49,10 @@ def test_image_alias_with_token_usage_uses_resolved_provider_token_pricing():
     assert calculate_cost(usage) == 0.065
 
 
-def test_token_priced_image_model_uses_token_pricing():
+def test_token_priced_image_model_uses_token_pricing(synthetic_image_rates):
     usage = UsageRecord(
         provider="openai",
-        model="gpt-image-2",
+        model="test-token-image",
         operation="image",
         input_tokens=1000,
         output_tokens=2000,
@@ -41,10 +62,10 @@ def test_token_priced_image_model_uses_token_pricing():
     assert calculate_cost(usage) == 0.065
 
 
-def test_image_alias_without_token_usage_uses_resolved_per_image_estimate():
+def test_image_alias_without_token_usage_uses_resolved_per_image_estimate(synthetic_image_rates):
     usage = UsageRecord(
         provider="openai",
-        model="gpt-image-2",
+        model="test-token-image",
         operation="image",
         image_count=1,
     )
@@ -53,40 +74,40 @@ def test_image_alias_without_token_usage_uses_resolved_per_image_estimate():
     assert calculate_cost(usage) == 0.03168
 
 
-def test_token_priced_image_alias_estimates_via_quality_token_table():
-    # gpt-image-2 is token-priced. The override yaml
+def test_token_priced_image_alias_estimates_via_quality_token_table(synthetic_image_rates):
+    # test-token-image is token-priced. The override yaml
     # supplies image_output_tokens_by_quality so estimates scale by quality.
     # 2 images × 1056 (auto/medium) × $0.00003 = $0.06336
-    assert estimate_image_cost("gpt-image-2", 2) == approx(0.06336)
+    assert estimate_image_cost("test-token-image", 2) == approx(0.06336)
     # 2 images × 4160 (high) × $0.00003 = $0.2496
-    assert estimate_image_cost("gpt-image-2", 2, quality="high") == approx(0.2496)
+    assert estimate_image_cost("test-token-image", 2, quality="high") == approx(0.2496)
 
 
-def test_balanced_image_alias_estimates_nano_banana_pro_cost():
-    # Image-balanced -> Nano Banana Pro at the 1K/2K tier: $0.134/image.
-    assert estimate_image_cost("image-gemini-pro", 2) == approx(0.268)
+def test_fixed_image_alias_estimates_per_image_cost(synthetic_image_rates):
+    # Synthetic fixed price: $0.134/image.
+    assert estimate_image_cost("test-fixed-image", 2) == approx(0.268)
 
 
-def test_muse_image_alias_uses_openrouter_per_image_pricing():
-    assert estimate_image_cost("image-muse", 3, ref_count=10) == approx(0.03)
+def test_fixed_image_pricing_does_not_bill_references(synthetic_image_rates):
+    assert estimate_image_cost("test-cheap-image", 3, ref_count=10) == approx(0.03)
 
 
-def test_fast_image_alias_estimates_reference_input_images():
-    # image-gemini-flash-lite -> nano banana 2 lite (gemini-3.1-flash-lite-image): $0.0336/image.
-    assert estimate_image_cost("image-gemini-flash-lite", 1, ref_count=0) == 0.0336
-    assert estimate_image_cost("image-gemini-flash-lite", 1, ref_count=4) == approx(0.03472)
+def test_fast_image_alias_estimates_reference_input_images(synthetic_image_rates):
+    # Synthetic per-image price includes each reference input.
+    assert estimate_image_cost("test-reference-image", 1, ref_count=0) == 0.0336
+    assert estimate_image_cost("test-reference-image", 1, ref_count=4) == approx(0.03472)
     assert (
-        provider_usd_to_credits(estimate_image_cost("image-gemini-flash-lite", 1, ref_count=4)) == 4
+        provider_usd_to_credits(estimate_image_cost("test-reference-image", 1, ref_count=4)) == 4
     )
 
 
-def test_per_megapixel_image_pricing_rounds_output_and_references():
-    # fal-ai/flux-2-pro/edit bills the generated image as first MP + extra MP,
+def test_per_megapixel_image_pricing_rounds_output_and_references(synthetic_image_rates):
+    # test-megapixel-image bills the generated image as first MP + extra MP,
     # and each reference image by rounded megapixels.
     # output 1920x1080 = 2MP: $0.03 + $0.015
     # references 512x512 + 1600x900 = 1MP + 2MP: 3 * $0.015
     assert estimate_image_cost(
-        "fal-ai/flux-2-pro/edit",
+        "test-megapixel-image",
         1,
         width=1920,
         height=1080,
@@ -221,12 +242,12 @@ def test_unresolved_settlement_retains_authorization():
     db.table.assert_not_called()
 
 
-def test_subscription_usage_bypasses_tariffs_and_minimum_without_inventing_spend():
+def test_subscription_usage_bypasses_tariffs_and_minimum_without_inventing_spend(synthetic_image_rates):
     from novel_to_comic.server.credits import usage_to_credit_debit
     from novel_to_comic.usage import usage_has_billable_activity
 
     usage = UsageRecord(
-        provider="openai", model="gpt-image-2", operation="image",
+        provider="openai", model="test-token-image", operation="image",
         input_tokens=1000, output_tokens=2000, image_count=1,
         funding="codex_subscription",
     )

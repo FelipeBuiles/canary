@@ -4,6 +4,8 @@ from novel_to_comic.codex_dev import claude_selectable_models, claude_selector_a
 from novel_to_comic.image_models import IMAGE_MODEL_ALIASES, describe_image_model
 from novel_to_comic.text_models import TEXT_MODELS
 
+CODEX_CHOICES = {("text", "gpt-6-luna"), ("text", "gpt-6-sol"), ("image", "gpt-5.5")}
+
 # Keep controls in pipeline order. Style/Cast share settings; Draw has three
 # distinct model jobs rather than three additional pipeline stages.
 STAGE_FIELDS = {
@@ -52,7 +54,7 @@ def codex_models() -> list[dict]:
         "available": selector_available(),
         "description": "Codex reasoning model; built-in image generation uses the GPT Image 2 selector, not GPT Image 2.5." if kind == "image" else "Specific Codex reasoning model using your local subscription session.",
     } for model in selectable_models() for kind in ("text", "image")
-        if kind == "text" or model_has_vision(model)]
+        if (kind, model) in CODEX_CHOICES]
 
 
 def claude_models() -> list[dict]:

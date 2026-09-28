@@ -481,7 +481,13 @@ async def _run_generation_job(app: FastAPI, job: GenerationJob) -> None:
 
 
 async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
-    from .telemetry import operation_span, log_event, capture
+    from .telemetry import (
+        capture,
+        log_event,
+        metric_count,
+        metric_histogram,
+        operation_span,
+    )
     spec = job.command
     carrier = {"traceparent": spec.traceparent} if spec and spec.traceparent else {}
     with operation_span("job.execute", carrier=carrier, operation_id=job.id,
@@ -503,6 +509,25 @@ async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
                           if job.started_at and job.queued_at else None,
                           "latency_ms": max(0, (job.finished_at - job.started_at).total_seconds() * 1000)
                           if job.finished_at and job.started_at else None}
+                metric_attributes = {
+                    "operation": spec.operation if spec else job.kind,
+                    "status": job.status,
+                }
+                metric_count("jobs.processed", attributes=metric_attributes)
+                if fields["latency_ms"] is not None:
+                    metric_histogram(
+                        "jobs.duration",
+                        fields["latency_ms"],
+                        unit="ms",
+                        attributes=metric_attributes,
+                    )
+                if fields["queue_ms"] is not None:
+                    metric_histogram(
+                        "jobs.queue_wait",
+                        fields["queue_ms"],
+                        unit="ms",
+                        attributes=metric_attributes,
+                    )
                 log_event("job.completed", level=logging.ERROR if job.status == "failed" else logging.INFO, **fields)
                 capture("operation_completed", user_id=job.user_id, properties=fields,
                         event_id=f"{job.id}:terminal")

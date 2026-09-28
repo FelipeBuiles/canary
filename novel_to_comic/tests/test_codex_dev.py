@@ -92,7 +92,7 @@ def _runtime(monkeypatch, run):
     monkeypatch.setitem(sys.modules, "novel_to_comic.ai.codex_runtime", SimpleNamespace(run_text=run))
 
 
-@pytest.mark.parametrize("selection,target", [("gpt-5.6-terra", "gpt-5.6-terra"), ("codex-dev/text/gpt-5.6-luna", "gpt-5.6-luna")])
+@pytest.mark.parametrize("selection,target", [("gpt-5.6-terra", "gpt-5.6-terra"), ("codex-dev/text/gpt-6-luna", "gpt-6-luna")])
 def test_selected_json_sink_precedes_parse_and_preserves_vision(monkeypatch, selected_client, selection, target):
     calls = []
     async def run(**kwargs):

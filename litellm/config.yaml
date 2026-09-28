@@ -55,12 +55,6 @@ model_list:
     input_cost_per_token_above_272k_tokens: 2.0e-07
     cache_read_input_token_cost_above_272k_tokens: 2.0e-08
     output_cost_per_token_above_272k_tokens: 7.5e-07
-- model_name: claude-fable-5-1
-  litellm_params:
-    model: anthropic/claude-fable-5-1
-    api_key: os.environ/ANTHROPIC_API_KEY
-    thinking:
-      type: adaptive
 - model_name: claude-opus-5-5
   litellm_params:
     model: anthropic/claude-opus-5-5
@@ -169,6 +163,8 @@ model_list:
 litellm_settings:
   set_verbose: false
   num_retries: 0
+  callbacks:
+  - canary_metrics_callback.metrics_callback
   # Unsupported parameters fail the request instead of vanishing from it.
   drop_params: false
   custom_provider_map:

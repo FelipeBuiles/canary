@@ -115,6 +115,9 @@ services:
       TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
       FAL_KEY: ${FAL_KEY:-}
       FAL_ADMIN_KEY: ${FAL_ADMIN_KEY:-}
+      # Gateway metrics share the app's PostHog project; unset disables them.
+      POSTHOG_PROJECT_TOKEN: ${POSTHOG_PROJECT_TOKEN:-}
+      POSTHOG_HOST: ${POSTHOG_HOST:-}
       PYTHONPATH: /app:/app/litellm_handlers
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro

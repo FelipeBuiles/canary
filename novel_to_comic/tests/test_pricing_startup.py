@@ -77,3 +77,22 @@ def test_fresh_pricing_cache_skips_refresh(monkeypatch, tmp_path):
     server_app._refresh_pricing_if_stale(cache_path)
 
     assert calls == []
+
+
+def test_pricing_overrides_cover_only_active_gateway_routes():
+    from pathlib import Path
+    import yaml
+    from novel_to_comic.model_costs import DEFAULT_OVERRIDES_PATH
+
+    overrides = yaml.safe_load(DEFAULT_OVERRIDES_PATH.read_text())
+    root = Path(__file__).resolve().parents[2]
+    routes = yaml.safe_load((root / "litellm/config.yaml").read_text())["model_list"]
+    assert set(overrides["aliases"]) == {route["model_name"] for route in routes}
+    # An override may use the exact provider target or its unprefixed model id.
+    targets = set(overrides["aliases"].values())
+    candidates = targets | {target.split("/", 1)[1] for target in targets}
+    assert set(overrides["model_overrides"]) <= candidates
+    assert {key for key, value in overrides["model_overrides"].items()
+            if value["mode"] == "image_generation"} == {
+        "gpt-image-2.5-sunburst", "openai/gpt-image-2.5/sunburst",
+    }

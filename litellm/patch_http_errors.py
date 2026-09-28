@@ -10,6 +10,7 @@ import sys
 
 
 MARKER = 'content=b"",  # Canary: never consume an upload while masking an error.'
+METRICS_MIDDLEWARE_MARKER = "app.add_middleware(PostHogMetricsMiddleware)"
 REQUEST_READ = '''        try:
             request_content = original_error.request.content
         except httpx.RequestNotRead:
@@ -27,19 +28,39 @@ def patch_source(source: str) -> str:
     return source.replace(REQUEST_READ, "").replace(old, old.replace("content=request_content,", MARKER))
 
 
+def patch_proxy_source(source: str) -> str:
+    if METRICS_MIDDLEWARE_MARKER in source:
+        return source
+    anchor = "app.add_middleware(\n    CORSMiddleware,"
+    if source.count(anchor) != 1:
+        raise RuntimeError("LiteLLM middleware layout changed; review the metrics patch")
+    metrics = (
+        "from canary_metrics import PostHogMetricsMiddleware\n\n"
+        f"{METRICS_MIDDLEWARE_MARKER}\n\n"
+    )
+    return source.replace(anchor, metrics + anchor)
+
+
 def main() -> None:
     spec = find_spec("litellm")
     if spec is None or spec.origin is None:
         raise RuntimeError("LiteLLM package could not be located")
+    package = Path(spec.origin).parent
     relative = Path("litellm/llms/custom_httpx/http_handler.py")
     targets = {Path(entry) / relative for entry in sys.path}
-    targets.add(Path(spec.origin).parent / "llms/custom_httpx/http_handler.py")
+    targets.add(package / "llms/custom_httpx/http_handler.py")
     targets = {target.resolve() for target in targets if target.is_file()}
     if not targets:
         raise RuntimeError(f"No LiteLLM HTTP patch targets beside {spec.origin}")
     for target in sorted(targets):
         target.write_text(patch_source(target.read_text()))
         print(f"Verified HTTP error patch: {target}")
+
+    proxy_server = package / "proxy/proxy_server.py"
+    if not proxy_server.is_file():
+        raise RuntimeError(f"LiteLLM proxy server could not be located beside {spec.origin}")
+    proxy_server.write_text(patch_proxy_source(proxy_server.read_text()))
+    print(f"Verified PostHog metrics middleware patch: {proxy_server}")
 
 
 if __name__ == "__main__":

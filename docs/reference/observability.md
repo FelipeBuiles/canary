@@ -29,7 +29,21 @@ reducing the Fly machine size.
   W3C trace context. Only selected `canary.observations` logs are exported.
   Generic tracing is a PostHog alpha capability; the selected project exposes its configuration with the expected
   `posthogDistinctId` correlation key. Live request, worker, stage, and AI span ingestion was verified on 2026-09-26; worker and AI spans retain parent links. This is not automatic browser tracing or host infrastructure APM.
-- Replay, autocapture, automatic page views, surveys, console collection and
+- Session replay and click autocapture (including `$rageclick`) feed
+  Self-driving Replay Vision. The recorder is bundled (`posthog-recorder`;
+  the no-external SDK loads no scripts). Replays mask all inputs and all text
+  outside interface chrome (buttons, nav, labels, tabs, menu items,
+  `[data-ph-unmask]`), block images, canvas, and video (`[data-ph-block]`),
+  rewrite link and frame URLs to route templates, and drop console/network
+  plugin frames. Autocapture keeps tag/class/position chains only. `scrubEvent`
+  in `web/src/telemetry.ts` enforces these limits; the Privacy page states them.
+- Application metrics (`http.server.*`, `jobs.*`, `pipeline.stage_*`,
+  `ai.call*`) come from the app client. The LiteLLM gateway emits
+  `http.server.*`, `llm.provider.*`, and `gateway.completions` as service
+  `canary-gateway` from `litellm/canary_metrics*.py`, using the same
+  `POSTHOG_PROJECT_TOKEN`/`POSTHOG_HOST`; its exception reports redact messages.
+  Metric attributes are bounded labels, never IDs or paths.
+- Automatic page views, surveys, heatmaps, dead clicks, console collection and
   GeoIP enrichment are disabled; explicit canonical page views are described
   under [launch analytics dashboards](#launch-analytics-dashboards). Browser
   identity uses the authenticated account ID and resets on account changes; no

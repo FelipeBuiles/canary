@@ -118,7 +118,7 @@ def main() -> int:
     parser.add_argument("--preflight-only", action="store_true",
                         help="Inspect isolated image capability gates without starting any turn")
     parser.add_argument("--source-image", type=Path, help="Previous generated image used by the edit probe")
-    parser.add_argument("--reasoning-model", help="Explicit target (default: text gpt-5.6-terra; image/edit gpt-5.5)")
+    parser.add_argument("--reasoning-model", help="Explicit target (default: text gpt-6-luna; image/edit gpt-5.5)")
     args = parser.parse_args()
     if args.probe is None:
         parser.print_help()
@@ -128,7 +128,7 @@ def main() -> int:
     if args.preflight_only and args.probe != "image":
         parser.error("--preflight-only requires --probe image")
     if args.reasoning_model is None:
-        args.reasoning_model = "gpt-5.6-terra" if args.probe == "structured-text" else "gpt-5.5"
+        args.reasoning_model = "gpt-6-luna" if args.probe == "structured-text" else "gpt-5.5"
     return asyncio.run(_probe(args, parser))
 
 

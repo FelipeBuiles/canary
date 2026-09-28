@@ -199,6 +199,33 @@ def capture_exception(error: BaseException, *, user_id=None, **fields):
         pass
 
 
+def metric_count(name: str, *, value: float = 1, attributes=None) -> None:
+    if _client is None:
+        return
+    try:
+        _client.metrics.count(name, value, attributes=attributes or {})
+    except Exception:
+        pass
+
+
+def metric_gauge(name: str, value: float, *, attributes=None) -> None:
+    if _client is None:
+        return
+    try:
+        _client.metrics.gauge(name, value, attributes=attributes or {})
+    except Exception:
+        pass
+
+
+def metric_histogram(name: str, value: float, *, unit: str, attributes=None) -> None:
+    if _client is None:
+        return
+    try:
+        _client.metrics.histogram(name, value, unit=unit, attributes=attributes or {})
+    except Exception:
+        pass
+
+
 def log_event(name: str, *, level=logging.INFO, **fields):
     """Selected bounded logs only; never attach this exporter to the root logger."""
     fields = safe_fields({**context_fields(), **fields})
@@ -236,7 +263,8 @@ def configure_telemetry() -> bool:
         _client = Posthog(key, host=host, enable_exception_autocapture=False, log_captured_exceptions=False,
                           capture_exception_code_variables=False, disable_geoip=True,
                           before_send=_before_send, max_queue_size=256,
-                          flush_at=256, flush_interval=5, timeout=3, max_retries=0)
+                          flush_at=256, flush_interval=5, timeout=3, max_retries=0,
+                          metrics={"service_name": "novel-to-comic"})
     except Exception:
         logging.getLogger(__name__).warning("PostHog event initialization unavailable")
         return False
@@ -332,6 +360,13 @@ def observe_generation(*, event_id, feature, operation, model_alias, provider_mo
         fields["$ai_provider"] = provider
     if error:
         fields["$ai_error"] = type(error).__name__
+    metric_attributes = {
+        "provider": str(fields.get("provider") or "unknown"),
+        "operation": operation,
+        "status": status,
+    }
+    metric_count("ai.calls", attributes=metric_attributes)
+    metric_histogram("ai.call_duration", latency_ms, unit="ms", attributes=metric_attributes)
     capture("$ai_generation", user_id=ctx.user_id, properties=fields, event_id=event_id, timestamp=started_at)
     log_event("ai.completed", level=logging.INFO if status == "succeeded" else logging.ERROR, **fields)
     try:

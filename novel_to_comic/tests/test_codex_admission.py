@@ -241,7 +241,7 @@ def test_mixed_route_still_rejects_disabled_codex_before_queue(tmp_path, monkeyp
             queue, project_name="project", user_id="user", project_id="id",
             project_dir=tmp_path, stage="style", kind="style", label="Style", payload={},
             work=MagicMock(), debit_description="Style", reservation_credits=10,
-            operations=(("image", "image-gemini-pro"), ("text", "codex-dev/text/gpt-6-astra")),
+            operations=(("image", "image-gemini-pro"), ("text", "codex-dev/text/gpt-6-sol")),
         )
     database.assert_not_called()
     assert queue.state.generation_queue.empty()
