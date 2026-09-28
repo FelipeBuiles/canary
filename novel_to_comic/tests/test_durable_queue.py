@@ -520,6 +520,37 @@ def test_draw_dispatch_failure_persists_stage_failure(tmp_path, monkeypatch):
     assert final.error == "Durable generation queue is unavailable"
 
 
+def test_failed_stage_raises_stage_specific_error(tmp_path, monkeypatch):
+    from novel_to_comic.server import job_execution
+    from novel_to_comic.server.routers import pipeline
+    from novel_to_comic.state import create_initial_state, save_state, fail_stage
+    save_state(create_initial_state("book", "novel.txt"), tmp_path)
+    async def settle_failed(stage, config, directory, state, *args, **kwargs):
+        fail_stage(state, "cast", "Cast rejected the reference sheet")
+    monkeypatch.setattr(pipeline, "_run_stage_with_credits", settle_failed)
+    spec = command("pipeline", tmp_path, Config()).model_copy(update={"stage": "cast"})
+    job = SimpleNamespace(command=spec, project_name="account:book", payload={"stage": "cast"})
+    with pytest.raises(job_execution.PipelineStageFailed, match="reference sheet") as raised:
+        asyncio.run(job_execution._pipeline(make_app(tmp_path), job, tmp_path, Config()))
+    assert raised.value.stage == "cast"
+
+
+@pytest.mark.parametrize("reported", [False, True])
+def test_job_failure_reports_only_unreported_exceptions(tmp_path, monkeypatch, reported):
+    from novel_to_comic.server import generation_jobs, telemetry
+    from novel_to_comic.server.job_execution import PipelineStageFailed
+    captured = []
+    monkeypatch.setattr(telemetry, "capture_exception", lambda exc, **kwargs: captured.append(exc))
+    error = PipelineStageFailed("plan", "Plan failed") if reported else RuntimeError("orchestration failed")
+    def runner():
+        raise error
+    job = generation_jobs.GenerationJob(id="job-1", project_name="account:book", kind="pipeline_stage",
+                                        label="Plan", payload={}, sequence=1, runner=runner)
+    asyncio.run(generation_jobs._run_generation_job(make_app(tmp_path), job))
+    assert job.status == "failed" and job.error == str(error)
+    assert captured == ([] if reported else [error])
+
+
 @pytest.mark.parametrize("sibling_queued", [False, True])
 def test_restore_closes_the_style_stage_a_hard_stop_left_running(tmp_path, sibling_queued):
     """An interrupted Style batch must not leave the room 'generating' forever."""

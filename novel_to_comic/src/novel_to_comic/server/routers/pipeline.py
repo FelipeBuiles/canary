@@ -82,6 +82,7 @@ async def _run_stage(
     state,
     queue: asyncio.Queue,
     *_unused,
+    user_id: str | None = None,
     **_unused_kwargs,
 ) -> None:
     stage_obj = REGISTRY.get(stage)
@@ -125,6 +126,9 @@ async def _run_stage(
             error=exc,
             error_detail=error_detail,
         )
+        from ..telemetry import capture_exception
+
+        capture_exception(exc, user_id=user_id, stage=stage)
         logger.exception(
             "Stage failed project=%s stage=%s elapsed=%.1fs",
             project_dir.name,
@@ -196,7 +200,7 @@ async def _run_stage_with_credits(
             _clear_outputs_for_rerun(project_dir, stage)
             _reset_stage_and_downstream(state, stage)
             save_state(state, project_dir)
-        await _run_stage(stage, config, project_dir, state, queue)
+        await _run_stage(stage, config, project_dir, state, queue, user_id=user_id)
 
     try:
         if stage == "draw":

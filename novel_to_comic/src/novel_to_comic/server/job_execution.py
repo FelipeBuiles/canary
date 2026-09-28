@@ -18,6 +18,14 @@ from novel_to_comic.target_artifacts import TargetArtifacts
 from .job_commands import read_blob
 
 
+class PipelineStageFailed(RuntimeError):
+    """A stage settled as failed; `_run_stage` already reported its cause."""
+
+    def __init__(self, stage: str, message: str):
+        super().__init__(message)
+        self.stage = stage
+
+
 async def execute_command(app, job):
     from .credits import (reserve_credits, assert_reservation_active, debit_model_usage,
                           release_reservation, retain_ambiguous_job)
@@ -155,7 +163,7 @@ async def _pipeline(app, job, directory, config):
         active_stage = job.payload.get("stage", spec.stage)
         outcome = state.stages[active_stage]
         if outcome.status == StageStatus.FAILED:
-            raise RuntimeError(outcome.error or "Pipeline stage failed")
+            raise PipelineStageFailed(active_stage, outcome.error or "Pipeline stage failed")
     except Exception as exc:
         # Orchestration can fail after StageRuntime has initialized Draw but
         # before any child page job exists. Persist that failure too.
