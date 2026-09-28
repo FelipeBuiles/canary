@@ -18,7 +18,7 @@ from threading import RLock
 from weakref import WeakValueDictionary
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from novel_to_comic.ai import ai_request_context
 from novel_to_comic.config import Config
@@ -105,6 +105,13 @@ async def run_credited_stage(
             reservation_credits = estimate_stage_credit_reservation(config, project_dir, state, stage)
         reservation_id, job_id = reserve_credits(db, user_id, project_id, stage, reservation_credits)
     except Exception as exc:
+        # Only insufficient balance is an expected product outcome. Estimation
+        # defects and ledger failures also settle through CreditReservationDenied,
+        # so report their original exception before that boundary loses it.
+        if not isinstance(exc, HTTPException) or exc.status_code != 402:
+            from .telemetry import capture_exception
+
+            capture_exception(exc, user_id=user_id, stage=stage)
         detail = getattr(exc, "detail", None)
         if isinstance(detail, str):
             message = detail

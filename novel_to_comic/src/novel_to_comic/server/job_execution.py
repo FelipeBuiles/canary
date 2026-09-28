@@ -19,7 +19,10 @@ from .job_commands import read_blob
 
 
 class PipelineStageFailed(RuntimeError):
-    """A stage settled as failed; `_run_stage` already reported its cause."""
+    """A settled failure whose cause is reported at its handling boundary.
+
+    Expected insufficient-credit denials intentionally do not report exceptions.
+    """
 
 
 async def execute_command(app, job):
