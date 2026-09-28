@@ -164,6 +164,25 @@ def test_plan_detail_schema_keeps_lettering_on_its_allocated_page():
     assert allowed == {15: ["lettering_0068"], 16: ["lettering_0069"], 17: []}
 
 
+def test_plan_detail_shared_panel_schema_defines_one_panel_for_the_batch():
+    from novel_to_comic.models.page import ApprovedVisualReferenceInventory
+    from novel_to_comic.page_planning import _PageMapEntry, _plan_response_schema
+
+    pages = tuple(_PageMapEntry(
+        page_number=n, beat_ids=beats, lettering_ids=ids,
+        emphasis="initial", density_intent="standard", rhythm_intent="Continue the event.",
+    ) for n, beats, ids in ((15, ("b1", "b2"), ("lettering_0068",)), (16, ("b2", "b3"), ())))
+    schema = _plan_response_schema(ApprovedVisualReferenceInventory(), pages, shared_panel=True)
+    panel_ref = {"$ref": "#/$defs/_PanelCompositionDraft"}
+    variants = schema["$defs"]["_PageDetailDraft"]["anyOf"]
+    assert [v["properties"]["content"]["items"] for v in variants] == [panel_ref, panel_ref]
+    beats = schema["$defs"]["_PanelCompositionDraft"]["properties"]["beat_ids"]["items"]["enum"]
+    assert beats == ["b1", "b2", "b3"]
+    assert [v["properties"]["lettering_placements"]["required"] for v in variants] == [
+        ["lettering_0068"], [],
+    ]
+
+
 @pytest.mark.parametrize("model", [
     _BlueprintDraft, _BookDraft, _LetteringDraft, _LetteringResponse, BookAdaptation, _BookPageMap, _BookPlanDraft,
 ])

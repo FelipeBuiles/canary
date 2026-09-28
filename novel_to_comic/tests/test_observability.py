@@ -249,3 +249,63 @@ def test_stage_that_handles_its_exception_is_recorded_as_failed(tmp_path):
     # pipeline emits have to satisfy the server allowlist.
     for name, properties in captured:
         _clean_properties(name, properties, source="server")
+
+
+def _account_db(metadata, created_at="2026-09-28T00:01:02.345+00:00"):
+    table = MagicMock()
+    db = MagicMock()
+    db.table.return_value = table
+    user = SimpleNamespace(created_at=created_at, user_metadata=metadata)
+    db.auth.admin.get_user_by_id.return_value = SimpleNamespace(user=user)
+    return db, table
+
+
+def test_account_created_is_idempotent_and_dated_at_signup(monkeypatch):
+    from novel_to_comic.server import product_events
+
+    account = "00000000-0000-0000-0000-0000000000a1"
+    monkeypatch.setattr(product_events, "_accounts_recorded", set())
+    monkeypatch.setenv("CANARY_INTERNAL_ACCOUNT_IDS", f" {account.upper()} ,other")
+    db, table = _account_db({"studio_name": "Private Studio", "acquisition": {
+        "source": "Reddit", "medium": "social", "campaign": "launch week!", "referring_domain": "reddit.com",
+    }})
+    capture = MagicMock()
+    with patch.object(product_events, "get_db", return_value=db), \
+         patch("novel_to_comic.server.telemetry.capture", capture):
+        product_events.record_account_created(account)
+        product_events.record_account_created(account)
+
+    db.auth.admin.get_user_by_id.assert_called_once_with(account)
+    payload = table.upsert.call_args.args[0]
+    assert table.upsert.call_args.kwargs == {"on_conflict": "id", "ignore_duplicates": True}
+    assert payload["id"] == str(UUID(payload["id"]))
+    assert payload["occurred_at"] == "2026-09-28T00:01:02.345+00:00"
+    props = payload["properties_json"]
+    # Invalid campaign tokens are dropped rather than truncated or escaped.
+    assert {k: props[k] for k in ("acquisition_source", "acquisition_medium", "referring_domain")} == {
+        "acquisition_source": "reddit", "acquisition_medium": "social", "referring_domain": "reddit.com"}
+    assert "acquisition_campaign" not in props
+    assert props["$set_once"]["signed_up_at"] == "2026-09-28T00:01:02.345+00:00"
+    assert "Private Studio" not in str(payload)
+    capture.assert_called_once_with("$set", user_id=account,
+                                    properties={"$set": {"$internal_or_test_user": True}})
+
+
+def test_account_created_labels_book_referrals_and_unknown_sources(monkeypatch):
+    from novel_to_comic.server import product_events
+
+    assert product_events._acquisition({"referred_by_book": "a" * 32}) == {
+        "referred_by_book": True, "acquisition_source": "book_referral"}
+    assert product_events._acquisition({}) == {"acquisition_source": "unknown"}
+    assert product_events._acquisition({"acquisition": {}}) == {"acquisition_source": "direct"}
+
+
+def test_account_endpoint_never_fails_app_load(tmp_path):
+    from novel_to_comic.server.auth import get_current_user
+    from novel_to_comic.server.routers import events
+
+    app = create_app(tmp_path, dev=True)
+    app.dependency_overrides[get_current_user] = lambda: "00000000-0000-0000-0000-0000000000a2"
+    with patch.object(events, "record_account_created", side_effect=RuntimeError("auth admin down")):
+        response = TestClient(app).post("/api/events/account")
+    assert response.status_code == 202

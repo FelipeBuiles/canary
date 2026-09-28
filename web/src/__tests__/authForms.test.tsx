@@ -46,7 +46,7 @@ describe("Auth forms", () => {
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret" } });
     fireEvent.submit(screen.getByRole("form", { name: "Create account" }));
     await waitFor(() => expect(screen.getByRole("status").textContent).toBe("Check author@example.com for the confirmation link."));
-    expect(auth.signUp).toHaveBeenCalledExactlyOnceWith({ email: "author@example.com", password: "secret", options: { data: { studio_name: "Ink studio" } } });
+    expect(auth.signUp).toHaveBeenCalledExactlyOnceWith({ email: "author@example.com", password: "secret", options: { data: { studio_name: "Ink studio", acquisition: { source: "direct" } } } });
     expect(screen.queryByText("Studio home")).toBeNull();
   });
 
@@ -58,7 +58,7 @@ describe("Auth forms", () => {
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "author@example.com" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret" } });
     fireEvent.submit(screen.getByRole("form", { name: "Create account" }));
-    await waitFor(() => expect(auth.signUp).toHaveBeenCalledWith(expect.objectContaining({ options: { data: { studio_name: "Ink studio", referred_by_book: id } } })));
+    await waitFor(() => expect(auth.signUp).toHaveBeenCalledWith(expect.objectContaining({ options: { data: { studio_name: "Ink studio", referred_by_book: id, acquisition: { source: "direct" } } } })));
   });
 
   it("returns a sample reader to the same story after signup", async () => {
@@ -70,7 +70,7 @@ describe("Auth forms", () => {
     fireEvent.submit(screen.getByRole("form", { name: "Create account" }));
     await waitFor(() => expect(auth.signUp).toHaveBeenCalledWith(expect.objectContaining({
       options: {
-        data: { studio_name: "Ink studio" },
+        data: { studio_name: "Ink studio", acquisition: { source: "direct" } },
         emailRedirectTo: `${window.location.origin}/?sample=an-education`,
       },
     })));

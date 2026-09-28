@@ -1,4 +1,4 @@
-import { render, screen, within, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -7,7 +7,7 @@ import { I18nProvider } from "../i18n";
 import { CastRoom } from "../pages/rooms/CastRoom";
 import type * as Client from "../api/client";
 
-const server = vi.hoisted(() => ({ reads: [] as string[], writes: [] as string[], fail: false }));
+const server = vi.hoisted(() => ({ reads: [] as string[], writes: [] as string[], fail: false, running: false }));
 vi.mock("../api/client", async (original) => ({
   ...await original<typeof Client>(),
   apiFetch: async (path: string, options?: RequestInit) => {
@@ -22,7 +22,7 @@ vi.mock("../api/client", async (original) => ({
       characters: [], props: [], locations: [{ id: "office", name: "Professor Angell’s office", visual_anchor: "Oak walls and a gas lamp", mood: "scholarly",
         appearance_states: [{ id: "night", label: "At night", visual_anchor: "Oak walls at night", visually_significant: true }] }],
     };
-    if (path.endsWith("/status")) return { style_selected: true, stages: { cast: { status: "complete" } } };
+    if (path.endsWith("/status")) return { style_selected: true, stages: { cast: { status: server.running ? "running" : "complete" } } };
     if (path.includes("estimate")) return { estimate_credits: 4, reserved_credits: 6, confidence: "variable", reference_assets_supported: true };
     if (path.includes("location-plate-versions")) return { has_history: true, versions: [
       { version: 1, image_path: "plates/versions/office/v001.png" },
@@ -34,13 +34,14 @@ vi.mock("../api/client", async (original) => ({
   },
 }));
 const clients: QueryClient[] = [];
-afterEach(() => { clients.forEach((c) => c.clear()); clients.length = 0; server.reads = []; server.writes = []; server.fail = false; });
+afterEach(() => { clients.forEach((c) => c.clear()); clients.length = 0; server.reads = []; server.writes = []; server.fail = false; server.running = false; });
 function mount() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   clients.push(client);
   render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/project/demo/cast"]}><I18nProvider><Routes>
     <Route path="/project/:id/cast" element={<CastRoom />} />
   </Routes></I18nProvider></MemoryRouter></QueryClientProvider>);
+  return client;
 }
 it.each([false, true])("shows and restores the selected location version (alternate: %s)", async (alternate) => {
   const user = userEvent.setup();
@@ -73,4 +74,37 @@ it("keeps history available after a restore failure and lets the user retry", as
   await user.click(screen.getByRole("button", { name: "Restore v1" }));
   await waitFor(() => expect(server.writes).toHaveLength(2));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+});
+
+it("recovers a missing location card and modal using the successful live probe URL", async () => {
+  const client = mount();
+  const name = "Professor Angell’s office";
+  const image = await screen.findByAltText(name);
+  // Let the initial idle refresh settle before recording the failed request.
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+  const failedSrc = image.getAttribute("src");
+  fireEvent.error(image);
+  expect(screen.getByText("NO PLATE IMAGE")).toBeTruthy();
+
+  server.running = true;
+  await act(async () => { await client.invalidateQueries({ queryKey: ["project", "demo", "status"] }); });
+  const card = screen.getByRole("button", { name: `Open image · ${name}` });
+  await waitFor(() => expect(card.querySelector("img")).not.toBeNull());
+  const probe = card.querySelector("img")!;
+  vi.useFakeTimers();
+  try {
+    fireEvent.error(probe);
+    act(() => vi.advanceTimersByTime(5_000));
+    const successfulSrc = card.querySelector("img")!.getAttribute("src");
+    expect(successfulSrc).not.toBe(failedSrc);
+    fireEvent.load(card.querySelector("img")!);
+    expect(screen.getByAltText(name).getAttribute("src")).toBe(successfulSrc);
+    fireEvent.load(screen.getByAltText(name));
+    fireEvent.click(card);
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).queryByText("NO PLATE IMAGE")).toBeNull();
+    expect(within(dialog).getByAltText(name).getAttribute("src")).toBe(successfulSrc);
+  } finally {
+    vi.useRealTimers();
+  }
 });

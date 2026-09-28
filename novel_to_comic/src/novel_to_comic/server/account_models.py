@@ -160,6 +160,10 @@ def creation_config(overrides: dict, root: Path, user_id: str) -> Config:
     """Validate creation-only local model preferences before persisting a project."""
     if not isinstance(overrides, dict):
         raise ValueError("Project configuration must be an object")
+    from .runtime_environment import app_environment
+
+    if "dev_mode" in overrides and app_environment() == "production":
+        raise ValueError("Dev / demo mode cannot be set in production.")
     if _SERVER_OWNED_CREATION_FIELDS.intersection(overrides):
         raise ValueError("Operator configuration cannot be supplied in project overrides")
     forbidden = set(STAGE_FIELDS.values()) | {"quality_preset", "fallback_image_model", "image_provider"}

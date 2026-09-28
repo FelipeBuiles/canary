@@ -46,6 +46,7 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `POST` | `/api/editorial/story-changes/preview` | `preview_story_change` | `editorial.py` |
 | `POST` | `/api/editorial/story-changes/{proposal_id}/apply` | `apply_story_change` | `editorial.py` |
 | `POST` | `/api/events` | `ingest_web_event` | `events.py` |
+| `POST` | `/api/events/account` | `observe_account` | `events.py` |
 | `GET` | `/api/projects/{project}/export/preflight` | `get_preflight` | `export.py` |
 | `POST` | `/api/projects/{project}/export/preflight` | `run_preflight` | `export.py` |
 | `POST` | `/api/projects/{project}/export` | `trigger_export` | `export.py` |

@@ -207,3 +207,17 @@ def test_failed_call_keeps_funding_and_provider_without_usage(monkeypatch):
     assert properties["cost_status"] == "unknown"
     assert "$ai_input_tokens" not in properties
     assert "$ai_total_cost_usd" not in properties
+
+
+def test_person_properties_cross_the_wire_only_when_allowlisted():
+    row = {"id": USER, "event_name": "account_created", "user_id": USER,
+           "occurred_at": "2026-09-26T00:00:00Z", "source": "server",
+           "properties_json": {"acquisition_source": "reddit", "$set_once": {
+               "signed_up_at": "2026-09-26T00:00:00+00:00", "acquisition_source": "reddit",
+               "email": "private@example.com", "referring_domain": "not a token"}}}
+    props = delivery.wire_event(row)["properties"]
+    assert props["acquisition_source"] == "reddit"
+    assert props["$set_once"] == {"signed_up_at": "2026-09-26T00:00:00+00:00", "acquisition_source": "reddit"}
+    assert "private" not in json.dumps(props)
+    wire = t._before_send({"event": "$set", "properties": {"$set": {"$internal_or_test_user": True, "name": "x"}}})
+    assert wire["properties"]["$set"] == {"$internal_or_test_user": True}

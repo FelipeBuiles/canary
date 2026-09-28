@@ -22,3 +22,12 @@ export async function trackProductEvent(
     // Product analytics is best-effort and must never interrupt the UI.
   }
 }
+
+/** Lets the server record the account's signup milestone; idempotent per account. */
+export async function recordAccountSeen(): Promise<void> {
+  try {
+    await apiFetch<{ status: "accepted" }>("/events/account", { method: "POST" });
+  } catch {
+    // Best-effort, like other product analytics.
+  }
+}

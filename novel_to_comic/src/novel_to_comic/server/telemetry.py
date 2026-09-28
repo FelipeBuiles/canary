@@ -33,25 +33,35 @@ _FIELDS = frozenset({
     "stripe_mode", "format", "cached", "station", "drawer", "mode", "schema_version",
     "feedback_id", "category", "rating", "trace_id", "span_id", "release", "environment",
     "posthogDistinctId", "source_event_id", "event_origin",
+    "acquisition_source", "acquisition_medium", "acquisition_campaign", "referring_domain",
+    "referred_by_book",
 })
+# Person properties: account lifecycle and first-touch attribution only.
+_PERSON_FIELDS = frozenset({"$internal_or_test_user", "signed_up_at", "acquisition_source",
+    "acquisition_medium", "acquisition_campaign", "referring_domain", "referred_by_book"})
 _AI_FIELDS = frozenset({"$ai_trace_id", "$ai_span_id", "$ai_parent_id", "$ai_model", "$ai_provider",
     "$ai_latency", "$ai_input_tokens", "$ai_output_tokens", "$ai_is_error", "$ai_error",
     "$ai_cost_passthrough", "$ai_total_cost_usd", "$ai_cache_read_input_tokens",
     "$ai_cache_creation_input_tokens", "$ai_cache_reporting_exclusive"})
 
 
+def _safe_value(value: Any) -> bool:
+    return (isinstance(value, int) or (isinstance(value, float) and math.isfinite(value))
+            or (isinstance(value, str) and _TOKEN.fullmatch(value) is not None))
+
+
 def safe_fields(fields: dict[str, Any]) -> dict[str, Any]:
-    result = {}
-    for key, value in fields.items():
-        if key not in _FIELDS | _AI_FIELDS:
-            continue
-        if isinstance(value, bool) or isinstance(value, int):
-            result[key] = value
-        elif isinstance(value, float) and math.isfinite(value):
-            result[key] = value
-        elif isinstance(value, str) and _TOKEN.fullmatch(value):
-            result[key] = value
-    return result
+    return {key: value for key, value in fields.items() if key in _FIELDS | _AI_FIELDS and _safe_value(value)}
+
+
+def _with_person_fields(clean: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
+    for key in ("$set", "$set_once"):
+        values = source.get(key)
+        if isinstance(values, dict):
+            person = {k: v for k, v in values.items() if k in _PERSON_FIELDS and _safe_value(v)}
+            if person:
+                clean[key] = person
+    return clean
 
 
 def context_fields() -> dict[str, Any]:
@@ -134,7 +144,7 @@ def _before_send(event):
     # SDK hooks may fail open on an exception. This hook explicitly fails closed.
     try:
         properties = event.get("properties", {})
-        clean = safe_fields(properties)
+        clean = _with_person_fields(safe_fields(properties), properties)
         for key in ("$exception_list",):
             if key in properties:
                 clean[key] = _exception_list(properties[key])
@@ -167,7 +177,7 @@ def capture(event: str, *, user_id: str | None = None, properties=None, event_id
         return
     try:
         identity = user_id if user_id and _ID.fullmatch(user_id) else "canary-server"
-        props = safe_fields({**context_fields(), **(properties or {})})
+        props = _with_person_fields(safe_fields({**context_fields(), **(properties or {})}), properties or {})
         props.update(environment=os.environ.get("CANARY_ENV", "development"),
                      release=os.environ.get("CANARY_VERSION", "unknown"), schema_version=1)
         if event_id:

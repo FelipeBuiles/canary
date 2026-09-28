@@ -257,7 +257,9 @@ async def _run_stage_with_credits(
         user_id=user_id,
         project_id=project_id,
         job_id=job_id,
-        properties={"stage": stage, "outcome": outcome},
+        properties={"stage": stage, "outcome": outcome,
+                    "latency_ms": round((time.perf_counter() - started) * 1000),
+                    **({"error_type": current.error_code or "stage_error"} if outcome == "failed" else {})},
     )
     increment("canary_stage_runs_total", stage=stage, outcome=outcome)
     observe(

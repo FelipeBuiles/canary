@@ -10,7 +10,7 @@ import datetime
 import os
 import httpx
 from .db import get_db
-from .telemetry import _before_send, log_event, safe_fields
+from .telemetry import _before_send, _with_person_fields, log_event, safe_fields
 
 
 def _pending():
@@ -22,9 +22,10 @@ def _ack(ids):
 
 
 def wire_event(row):
-    properties = safe_fields({**row.get("properties_json", {}),
+    stored = row.get("properties_json", {})
+    properties = _with_person_fields(safe_fields({**stored,
         "project_id": row.get("project_id"), "job_id": row.get("job_id"),
-        "request_id": row.get("request_id"), "event_origin": row.get("source")})
+        "request_id": row.get("request_id"), "event_origin": row.get("source")}), stored)
     properties["$insert_id"] = row["id"]
     event = _before_send({"event": row["event_name"], "properties": properties})
     if event is None:

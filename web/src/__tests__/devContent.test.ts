@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
+  readShowDevContent,
+  writeShowDevContent,
+  SHOW_DEV_CONTENT_KEY,
   redactDevText,
   redactDevParameters,
 } from "../lib/devContent";
@@ -106,5 +109,25 @@ describe("redactDevParameters", () => {
 
   it("handles empty array", () => {
     expect(redactDevParameters([])).toEqual([]);
+  });
+});
+
+
+describe("production dev content restrictions", () => {
+  afterEach(() => { vi.unstubAllEnvs(); window.localStorage.clear(); });
+
+  it("ignores a saved opt-in and refuses writes in production", () => {
+    vi.stubEnv("DEV", false);
+    window.localStorage.setItem(SHOW_DEV_CONTENT_KEY, "1");
+    expect(readShowDevContent()).toBe(false);
+    window.localStorage.clear();
+    writeShowDevContent(true);
+    expect(window.localStorage.getItem(SHOW_DEV_CONTENT_KEY)).toBeNull();
+  });
+
+  it("allows opting in during development", () => {
+    vi.stubEnv("DEV", true);
+    writeShowDevContent(true);
+    expect(readShowDevContent()).toBe(true);
   });
 });

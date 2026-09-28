@@ -492,7 +492,9 @@ async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
                         span.set_status(Status(StatusCode.ERROR))
                 fields = {"status": job.status, "phase": job.phase,
                           "queue_ms": max(0, (job.started_at - job.queued_at).total_seconds() * 1000)
-                          if job.started_at and job.queued_at else None}
+                          if job.started_at and job.queued_at else None,
+                          "latency_ms": max(0, (job.finished_at - job.started_at).total_seconds() * 1000)
+                          if job.finished_at and job.started_at else None}
                 log_event("job.completed", level=logging.ERROR if job.status == "failed" else logging.INFO, **fields)
                 capture("operation_completed", user_id=job.user_id, properties=fields,
                         event_id=f"{job.id}:terminal")

@@ -15,7 +15,7 @@ function canUseStorage() {
 }
 
 export function readShowDevContent() {
-  if (!canUseStorage()) return false;
+  if (!import.meta.env.DEV || !canUseStorage()) return false;
   const stored = window.localStorage.getItem(SHOW_DEV_CONTENT_KEY);
   // Default is OFF — the machinery (IDs, hashes, paths, model names) is
   // opt-in via Settings → Dev Content. Hide it from the happy path.
@@ -23,7 +23,7 @@ export function readShowDevContent() {
 }
 
 export function writeShowDevContent(value: boolean) {
-  if (!canUseStorage()) return;
+  if (!import.meta.env.DEV || !canUseStorage()) return;
   window.localStorage.setItem(SHOW_DEV_CONTENT_KEY, value ? "1" : "0");
   window.dispatchEvent(new Event(CHANGE_EVENT));
 }
@@ -42,7 +42,7 @@ export function useShowDevContent() {
   }, []);
 
   const setShowDevContent = (value: boolean) => {
-    setShowDevContentState(value);
+    setShowDevContentState(import.meta.env.DEV && value);
     writeShowDevContent(value);
   };
 
