@@ -4502,8 +4502,12 @@ def test_plan_reports_all_independent_run_failures_in_first_repair(tmp_path):
         artifacts=artifacts, ctx=StageRuntime("plan", state, tmp_path), model="test", generate=generate))
     assert len(calls) == 2
     assert len(plan.pages) == 2
-    assert [l.text for p in (artifacts.read_page(1), artifacts.read_page(2)) for c in p.content for l in c.lettering] == [
-        l.text for b in adaptation.beats for l in b.lettering]
+    assert [
+        item.text
+        for page in (artifacts.read_page(1), artifacts.read_page(2))
+        for content in page.content
+        for item in content.lettering
+    ] == [item.text for beat in adaptation.beats for item in beat.lettering]
 
 
 @pytest.mark.parametrize("visible", [True, False])
