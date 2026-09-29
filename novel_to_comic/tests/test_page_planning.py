@@ -218,6 +218,8 @@ def test_producer_allocates_global_book_once_and_persists_canonical_artifacts(
     }
 
     async def generate(**_kwargs):
+        if _kwargs["feature"] == "plan.book":
+            assert _kwargs["max_output_tokens"] == 65_536
         return ApiResult(
             value=plan_response(response),
             usage=UsageRecord(

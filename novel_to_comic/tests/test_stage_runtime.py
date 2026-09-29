@@ -371,3 +371,21 @@ def test_refusal_details_follow_existing_local_diagnostics_gate(tmp_path, monkey
     else:
         assert detail is None
         assert not (tmp_path / '.canary/diagnostics.jsonl').exists()
+
+
+def test_failed_json_attempts_preserve_stage_usage(tmp_path):
+    from novel_to_comic.ai.errors import AIStructuredResponseError
+    from novel_to_comic.usage import UsageRecord
+
+    state = _state(tmp_path)
+    ctx = StageRuntime("plan", state, tmp_path)
+    usages = tuple(UsageRecord(provider="test", model="deepseek-v4.1-flash",
+                              operation="text", input_tokens=100, output_tokens=16_384,
+                              cost_usd=0.02) for _ in range(3))
+    with pytest.raises(AIStructuredResponseError):
+        with ctx.execute():
+            raise AIStructuredResponseError("truncated", usage_records=usages)
+    saved = load_state(tmp_path).stages["plan"]
+    assert saved.status == StageStatus.FAILED
+    assert len(saved.usage_log) == 3
+    assert saved.cost_usd == pytest.approx(0.06)

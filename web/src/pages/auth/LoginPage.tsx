@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
-import { supabase } from "../../lib/supabase";
+import { getAuthProviders, supabase } from "../../lib/supabase";
+import { authRedirectUrl } from "../../lib/authRedirect";
+import { authCallbackUrl, authDestination, signupMetadata } from "../../lib/authContext";
 import { useAuth } from "../../hooks/useAuth";
 import { Button } from "../../components/ui/Button";
 import { BrandMark } from "../../components/BrandMark";
@@ -36,16 +38,23 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
   const { t } = useI18n();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const sample = searchParams.get("sample");
-  const sampleDestination = sample && /^[a-z0-9-]{1,100}$/.test(sample)
-    ? `/?sample=${encodeURIComponent(sample)}` : "/";
+  const sampleDestination = authDestination(searchParams);
   const [mode, setMode] = useState<AuthMode>(initialMode);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
   const [studioName, setStudioName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void getAuthProviders(controller.signal).then(({ google }) => {
+      if (!controller.signal.aborted) setGoogleEnabled(google);
+    }).catch(() => { /* Email remains available if provider discovery fails. */ });
+    return () => controller.abort();
+  }, []);
 
   if (!loading && session) {
     return <Navigate to={sampleDestination} replace />;
@@ -59,16 +68,12 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
     setSubmitting(true);
     try {
       if (mode === "signup") {
-        const reference = searchParams.get("ref");
-        const referral = reference && /^book-[a-f0-9]{32}$/.test(reference)
-          ? { referred_by_book: reference.slice(5) }
-          : {};
         const { error } = await supabase.auth.signUp({
           email: email.trim(), password,
           options: {
             // First-touch attribution survives the email-confirmation hop.
-            data: { studio_name: studioName, ...referral, acquisition: getAcquisition() },
-            ...(sampleDestination !== "/" ? { emailRedirectTo: `${window.location.origin}${sampleDestination}` } : {}),
+            data: { studio_name: studioName, ...signupMetadata(searchParams, getAcquisition()) },
+            emailRedirectTo: authRedirectUrl(sampleDestination),
           },
         });
         if (error) throw error;
@@ -86,6 +91,26 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
     }
   }
 
+  async function handleGoogle() {
+    if (submitting || loading || !googleEnabled) return;
+    setError(null);
+    setMessage(null);
+    setSubmitting(true);
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: authCallbackUrl(searchParams, getAcquisition()), skipBrowserRedirect: true },
+      });
+      if (error) throw error;
+      if (!data.url) throw new Error(t("We couldn't start Google sign-in. Please try again."));
+      if (mode === "signup") trackSignupSubmitted();
+      window.location.assign(data.url);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : t("We couldn't start Google sign-in. Please try again."));
+      setSubmitting(false);
+    }
+  }
+
   async function handleForgotPassword() {
     if (submitting || loading) return;
     setError(null);
@@ -97,7 +122,7 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
     setSubmitting(true);
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-        redirectTo: `${window.location.origin}/reset-password`,
+        redirectTo: authRedirectUrl("/reset-password"),
       });
       if (error) throw error;
       setMessage(t("Check {email} for a password-reset link.", { email: email.trim() }));
@@ -180,6 +205,19 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
                   <h2 className="font-display text-2xl font-black tracking-tight">{t(mode === "signup" ? "Create your studio" : "Welcome back")}</h2>
                   <p className="mt-2 font-body text-sm leading-6 text-ink-muted">{t(mode === "signup" ? "Give your stories a place to take shape." : "Sign in to pick up where you left off.")}</p>
                 </div>
+                {googleEnabled && <>
+                  <button type="button" onClick={handleGoogle} disabled={submitting || loading}
+                    className="flex min-h-12 w-full items-center justify-center gap-3 rounded border border-[#747775] bg-white px-4 py-3 font-[Arial,sans-serif] text-sm font-semibold text-[#1f1f1f] transition-colors hover:bg-[#f2f2f2] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red disabled:opacity-60">
+                    <svg aria-hidden="true" className="h-5 w-5 shrink-0" viewBox="0 0 24 24">
+                      <path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.39-.18-2.05H12v3.88h5.38a4.6 4.6 0 0 1-2 3.02v2.51h3.24c1.9-1.75 2.98-4.33 2.98-7.36Z" />
+                      <path fill="#34A853" d="M12 22c2.7 0 4.96-.9 6.62-2.42l-3.24-2.51c-.9.6-2.04.97-3.38.97-2.6 0-4.81-1.76-5.6-4.12H3.06v2.59A10 10 0 0 0 12 22Z" />
+                      <path fill="#FBBC05" d="M6.4 13.92a6 6 0 0 1 0-3.84V7.49H3.06a10 10 0 0 0 0 9.02l3.34-2.59Z" />
+                      <path fill="#EA4335" d="M12 5.96c1.47 0 2.79.51 3.83 1.51L18.7 4.6A9.6 9.6 0 0 0 12 2a10 10 0 0 0-8.94 5.49l3.34 2.59C7.19 7.72 9.4 5.96 12 5.96Z" />
+                    </svg>
+                    {t("Continue with Google")}
+                  </button>
+                  <p className="text-center font-body text-sm text-ink-muted">{t("or continue with email")}</p>
+                </>}
                 {mode === "signup" && (
                   <Field
                     label={t("Studio Name")}
@@ -229,7 +267,7 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
                   {t(submitting ? "WORKING…" : mode === "signup" ? "CREATE ACCOUNT" : "SIGN IN")}
                 </Button>
 
-                {mode === "signin" ? (
+                {mode === "signin" && (
                   <button
                     type="button"
                     onClick={handleForgotPassword}
@@ -238,7 +276,8 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
                   >
                     Forgot password?
                   </button>
-                ) : (
+                )}
+                {mode === "signup" && (
                   <p className="pt-1 text-center font-body text-[0.8rem] font-semibold text-ink-black/60">
                     No subscription. Credits never expire. By creating an
                     account you agree to our{" "}

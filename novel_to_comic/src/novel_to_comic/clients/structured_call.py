@@ -122,21 +122,28 @@ async def generate_validated_json(
 
     for attempt in range(total_attempts):
         temperature = temperatures[min(attempt, len(temperatures) - 1)]
-        api_result = await (generate or generate_json)(
-            config=config,
-            model=model,
-            system_prompt=system_prompt,
-            user_content=user_content,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-            feature=feature,
-        )
+        from novel_to_comic.ai.errors import AIStructuredResponseError
+        try:
+            api_result = await (generate or generate_json)(
+                config=config,
+                model=model,
+                system_prompt=system_prompt,
+                user_content=user_content,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+                feature=feature,
+            )
+        except AIStructuredResponseError as exc:
+            raise AIStructuredResponseError(
+                str(exc), usage_records=(*usage_records, *exc.usage_records),
+            ) from exc
         try:
             from novel_to_comic.server.metrics import record_structured_attempt
 
             record_structured_attempt(feature=feature, retry=attempt > 0)
         except Exception:
             pass
+        usage_records.extend(api_result.additional_usage)
         if api_result.usage is not None:
             usage_records.append(api_result.usage)
         parsed_this_attempt: T | None = None

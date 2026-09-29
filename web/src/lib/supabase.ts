@@ -8,3 +8,13 @@ if (!supabaseUrl || !supabasePublishableKey) {
 }
 
 export const supabase = createClient(supabaseUrl, supabasePublishableKey);
+
+/** Public provider flags; credentials stay in Supabase, never in the web build. */
+export async function getAuthProviders(signal?: AbortSignal): Promise<{ google: boolean }> {
+  const response = await fetch(`${supabaseUrl}/auth/v1/settings`, {
+    headers: { apikey: supabasePublishableKey }, signal,
+  });
+  if (!response.ok) throw new Error("Could not load sign-in options");
+  const settings = await response.json();
+  return { google: settings.external?.google === true };
+}

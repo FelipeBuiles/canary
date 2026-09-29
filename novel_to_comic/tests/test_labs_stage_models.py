@@ -199,6 +199,37 @@ def test_api_equivalent_prices_recorded_subscription_tokens_at_api_rates():
 
     # Canary sends Claude no cache_control: all input at $2/M, output at $10/M.
     assert api_equivalent_usd([claude]) == 2.0 + 1.0
-    # OpenAI caches automatically: 100k at $2/M, 900k at $0.20/M, output at $10/M.
-    assert api_equivalent_usd([gpt]) == 0.2 + 0.18 + 1.0
+    # This request exceeds 272k: 100k at $4/M, 900k at $0.40/M, output at $15/M.
+    assert api_equivalent_usd([gpt]) == 0.4 + 0.36 + 1.5
     assert api_equivalent_usd([{**gpt, "provider_model": "unpriced-model"}]) is None
+
+
+def test_codex_arms_do_not_time_each_others_runtime_queue(root, monkeypatch):
+    async def scenario():
+        active = 0
+        peak = 0
+        calls = []
+
+        async def arm(user_root, run_id, source, phase, model):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0)
+            calls.append((phase, model))
+            active -= 1
+
+        monkeypatch.setattr(stage_models, "_funding", lambda model: "codex_subscription")
+        monkeypatch.setattr(stage_models, "run_arm", arm)
+        await stage_models.run(root, "unused", "story", list(stage_models.PHASES), ["sol", "luna"])
+        assert peak == 1
+        assert len(calls) == 4
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("provider_model", [None, "gpt-6.1-sol", "openai/gpt-6.1-sol"])
+@pytest.mark.parametrize("input_tokens,expected", [(200_000, 0.4), (300_000, 1.105)])
+def test_sol_61_api_equivalent_uses_its_own_cache_and_long_context_rates(provider_model, input_tokens, expected):
+    entry = {"model": "codex-dev/text/gpt-6.1-sol", "provider_model": provider_model,
+             "input_tokens": input_tokens, "cached_text_tokens": 100_000, "output_tokens": 19_000}
+    assert stage_models.api_equivalent_usd([entry]) == pytest.approx(expected)

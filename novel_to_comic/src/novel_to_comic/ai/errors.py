@@ -50,3 +50,11 @@ class AIEmptyResponseError(AITransportError):
     """A completed text request returned no answer and no explicit provider error."""
 
     usage: UsageRecord | None = None
+
+
+class AIStructuredResponseError(ValueError):
+    """Invalid JSON retaining usage for every completed paid attempt."""
+
+    def __init__(self, message: str, *, usage_records=()):
+        super().__init__(message)
+        self.usage_records = tuple(usage_records)

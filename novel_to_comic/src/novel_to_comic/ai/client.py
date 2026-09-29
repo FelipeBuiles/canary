@@ -1561,8 +1561,10 @@ async def generate_structured_object(
                     f"{limit_note} JSON parser error: {exc.msg} at character {exc.pos}."
                 )
     assert last_exc is not None  # loop runs at least once
-    raise _format_json_parse_failure(
-        last_exc, last_text, model, feature, max_parse_retries + 1
+    from novel_to_comic.ai.errors import AIStructuredResponseError
+    raise AIStructuredResponseError(
+        str(_format_json_parse_failure(last_exc, last_text, model, feature, max_parse_retries + 1)),
+        usage_records=prior_usage,
     ) from last_exc
 
 

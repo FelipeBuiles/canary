@@ -178,12 +178,65 @@ settlement; it must not trigger another provider submission.
 
 In the **Supabase dashboard → Authentication → URL Configuration**:
 
-- Add the production domain(s) to **Site URL** and **Redirect URLs**.
-- **Include `/reset-password`** in the redirect URLs — the password-reset flow
-  (wired 2026-07-03) lands there. Missing it = reset emails 404.
+- Set **Site URL** to `https://scenewright.ink`. This is the fallback when a
+  signup omits its redirect or supplies a URL outside the allowlist. Never use
+  the Fly hostname as the production fallback.
+- Include `https://scenewright.ink/` and
+  `https://scenewright.ink/reset-password` in **Redirect URLs**. A missing
+  recovery entry sends users to the fallback instead of the password form.
+- Sample signups request `https://scenewright.ink/?sample=<code>`. To preserve
+  their selected story, allow the exact destinations for the current codes in
+  `novel_to_comic/src/novel_to_comic/sample_stories/catalog.json`, and update the
+  allowlist when the catalog changes. Without those entries, confirmation still
+  succeeds but returns to the home page. Local development needs its own
+  explicitly allowed localhost URLs if email confirmation is tested there.
+- The frontend explicitly supplies confirmation and recovery destinations,
+  mapping the apex, `www`, and Fly production hosts to `https://scenewright.ink`.
+  Other origins retain their own host for development.
+- Under **Authentication → Emails → Confirm sign up**, set the subject to
+  **Confirm your email — Scenewright** and paste the full contents of
+  [`supabase/templates/confirmation.html`](../supabase/templates/confirmation.html)
+  into the source editor. Save and inspect Preview. Hosted email settings are
+  independent of Fly deployments; changing the repository file does not publish it.
+  Keep `{{ .ConfirmationURL }}` for both the button and fallback link: it carries
+  Supabase's verification token and allowed redirect, as described in the
+  [Supabase email template documentation](https://supabase.com/docs/guides/auth/auth-email-templates).
 - **Email delivery:** the default `noreply@mail.app.supabase.io` sender is
   rate-limited. Configure custom SMTP in the dashboard before a public launch
   or expect deliverability problems.
+
+### Google sign-in
+
+Google is offered alongside the existing email-and-password flow.
+
+- Add `https://scenewright.ink/auth/callback` and
+  `https://scenewright.ink/auth/callback?**` to Supabase **Redirect URLs**. The
+  query-specific entry permits the bounded story/referral/campaign values;
+  it does not allow arbitrary callback paths or hosts. When testing locally,
+  allow the equivalent exact callback path and query pattern for the actual
+  development origin.
+- The callback waits for Supabase to restore the session, handles failed or
+  cancelled sign-in, and returns to the selected sample or Library. Its destination
+  is derived only from a validated sample code, never an arbitrary `next` URL.
+- For a fresh Google account, the callback saves bounded first-touch metadata
+  before recording account analytics. Existing attribution is preserved; a
+  metadata write failure does not block studio access.
+- Google setup uses a **Web application** OAuth client in Google Cloud. Its
+  authorized JavaScript origin is `https://scenewright.ink`; its authorized
+  redirect URI is `https://<supabase-project-ref>.supabase.co/auth/v1/callback`.
+  This provider callback is different from the app's `/auth/callback` route.
+  Configure Scenewright branding, public homepage, privacy and terms URLs,
+  and external audience. Request only `openid`, email, and profile scopes.
+- Enter the Google client ID and secret in **Supabase → Authentication →
+  Sign In / Providers → Google**, then enable the provider. Keep nonce checks
+  enabled and require an email. Never put the client secret in a `VITE_*` value.
+  The UI reads the public Supabase `/auth/v1/settings` endpoint and shows
+  **Continue with Google** only when Google is enabled; discovery failure leaves
+  email access available. No application rebuild is needed just to enable Google.
+
+Before release, verify a new Google account, an existing email account using
+Google, cancelled sign-in, and a sample return on the production domain.
+Local mocked tests do not establish Google consent-screen approval.
 
 ## Step 1b — generation queue database
 

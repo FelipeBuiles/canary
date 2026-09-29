@@ -45,7 +45,7 @@ STAGE_MODEL_FIELDS = {
 }
 DEFAULT_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5")
 # Arms run concurrently per funding source; each arm's stages run in order.
-_CONCURRENCY = {"api": 4, "codex_subscription": 2, "claude_subscription": 2}
+_CONCURRENCY = {"api": 4, "codex_subscription": 1, "claude_subscription": 2}
 # Run-local or regenerated state never copied into an arm's workspace.
 _NEVER_COPY = {"requests", "draw", "finish", "exports", "cover", ".jobs", ".locks", ".canary", ".checkpoints"}
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
@@ -193,9 +193,12 @@ def api_equivalent_usd(log: list[dict[str, Any]]) -> float | None:
             return None
         input_tokens, output_tokens = entry.get("input_tokens") or 0, entry.get("output_tokens") or 0
         cached = 0 if model.startswith("claude") else min(entry.get("cached_text_tokens") or 0, input_tokens)
-        total += ((input_tokens - cached) * pricing["input_cost_per_token"]
-                  + cached * pricing.get("cache_read_input_token_cost", pricing["input_cost_per_token"])
-                  + output_tokens * pricing["output_cost_per_token"])
+        suffix = "_above_272k_tokens" if input_tokens > 272_000 else ""
+        input_rate = pricing.get(f"input_cost_per_token{suffix}", pricing["input_cost_per_token"])
+        cache_rate = pricing.get(f"cache_read_input_token_cost{suffix}",
+                                 pricing.get("cache_read_input_token_cost", input_rate))
+        output_rate = pricing.get(f"output_cost_per_token{suffix}", pricing["output_cost_per_token"])
+        total += (input_tokens - cached) * input_rate + cached * cache_rate + output_tokens * output_rate
     return round(total, 6)
 
 

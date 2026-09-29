@@ -21,7 +21,8 @@ function receiveSession(session: Session | null) {
     useStyleGenStore.setState({ pending: {}, jobIds: {}, statuses: {}, queuePositions: {} });
     useInsufficientCreditsStore.getState().close();
     replaceAccountQueryClient(session?.user.id ?? null);
-    if (session) void recordAccountSeen();
+    // OAuth completes first-touch metadata before recording the account milestone.
+    if (session && window.location.pathname !== "/auth/callback") void recordAccountSeen();
   }
   snapshot = { session, user: session?.user ?? null, loading: false };
   setTelemetryUser(snapshot.user?.id ?? null);

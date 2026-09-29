@@ -79,7 +79,7 @@ def test_fresh_pricing_cache_skips_refresh(monkeypatch, tmp_path):
     assert calls == []
 
 
-def test_pricing_overrides_cover_only_active_gateway_routes():
+def test_pricing_overrides_cover_active_routes_and_subscription_equivalents():
     from pathlib import Path
     import yaml
     from novel_to_comic.model_costs import DEFAULT_OVERRIDES_PATH
@@ -91,7 +91,8 @@ def test_pricing_overrides_cover_only_active_gateway_routes():
     # An override may use the exact provider target or its unprefixed model id.
     targets = set(overrides["aliases"].values())
     candidates = targets | {target.split("/", 1)[1] for target in targets}
-    assert set(overrides["model_overrides"]) <= candidates
+    from novel_to_comic.codex_dev import _DEFAULT_MODELS
+    assert set(overrides["model_overrides"]) <= candidates | set(_DEFAULT_MODELS)
     assert {key for key, value in overrides["model_overrides"].items()
             if value["mode"] == "image_generation"} == {
         "gpt-image-2.5-sunburst", "openai/gpt-image-2.5/sunburst",
