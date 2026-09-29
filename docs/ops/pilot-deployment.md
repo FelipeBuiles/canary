@@ -1,6 +1,6 @@
 # Customer-facing deployment
 
-**Status: Current repository procedure, September 9, 2026.** The filename is
+**Status: Current repository procedure, September 29, 2026.** The filename is
 retained for existing links; the target is a bounded self-service release.
 These steps are a procedure, not evidence that production has passed them.
 
@@ -12,12 +12,12 @@ These steps are a procedure, not evidence that production has passed them.
    during verification. Drain intent persists across process replacement; reopen it explicitly after readiness and release verification. For an old binary
    without drain, follow the runbook's controlled first-cutover procedure;
    there is no idle-only fallback.
-3. Push the intended SHA to `main`; manually dispatch `CI` on that SHA. Each
-   dispatch has a unique workflow concurrency group and cannot be automatically
+3. Push the intended SHA to `main`; `CI` automatically deploys that SHA after
+   its checks pass. Each push or optional manual dispatch has a unique workflow concurrency group and cannot be automatically
    cancelled by a later dispatch or push. Actual deployments remain serialized;
    up to 100 pending deployment jobs queue without replacing an older request.
    Check maintenance/schema conditions again when a queued release becomes active.
-4. Backend, frontend, and Docker jobs must pass before `Deploy production`.
+4. Backend, frontend, Docker, gateway, and root-tooling jobs must pass before `Deploy production`.
    That job authenticates `POST /api/ops/drain`, then waits for both
    `draining: true` and `safe_to_deploy: true`. Queued durable operations stay
    unstarted and resume after explicit resume; only running work must finish.

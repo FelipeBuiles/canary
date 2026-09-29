@@ -1,16 +1,18 @@
 """Selectable gateway text models and the request shape each route accepts.
 
 Every alias here needs a matching ``litellm/config.yaml`` route and a pricing
-alias in ``litellm_pricing_overrides.yaml``. Provider-side controls such as
-reasoning effort stay on the gateway route; this table owns only fields the
-app itself must send differently per model. Claude effort is the exception:
-LiteLLM 1.101 drops a route's ``reasoning_effort`` whenever the request carries
-``output_config``, so native-JSON Claude routes send effort from here.
+alias in ``litellm_pricing_overrides.yaml``. This table owns request differences
+and default effort for routes supporting the shared operator control. The app
+sends the job's configured effort; native-JSON Claude routes use output_config
+because LiteLLM 1.101 drops reasoning_effort when output_config is present.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from novel_to_comic.config import Config
 
 
 @dataclass(frozen=True)
@@ -28,8 +30,8 @@ class TextModel:
     # newer OpenAI spelling to them unchanged.
     token_limit_field: Literal["max_completion_tokens", "max_tokens"] = "max_completion_tokens"
     vision: bool = True
-    # Sent as ``output_config.effort`` on native-JSON Claude routes. None keeps
-    # the provider default (Opus 5.5 defaults to ``medium``, one below Opus 5).
+    # Default effort for configurable routes; Claude uses ``output_config.effort``.
+    # None means this route does not accept the shared effort control.
     effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
     # Models whose thinking cannot be disabled bill it against the same output
     # limit as the answer; callers size limits for the answer alone.
@@ -41,19 +43,19 @@ class TextModel:
 
 
 TEXT_MODELS = (
-    TextModel("gpt-6.1-sol", "GPT-6.1 Sol", "OpenAI", "openai", temperature=False),
-    TextModel("gpt-6-sol", "GPT-6 Sol", "OpenAI", "openai", temperature=False),
-    TextModel("gpt-6-luna", "GPT-6 Luna", "OpenAI", "openai", temperature=False),
-    # Text routes run at low effort; Claude defaults (``high`` on Sonnet,
+    TextModel("gpt-6.1-sol", "GPT-6.1 Sol", "OpenAI", "openai", temperature=False, effort="medium"),
+    TextModel("gpt-6-sol", "GPT-6 Sol", "OpenAI", "openai", temperature=False, effort="medium"),
+    TextModel("gpt-6-luna", "GPT-6 Luna", "OpenAI", "openai", temperature=False, effort="medium"),
+    # Text routes default to medium effort; Claude defaults (``high`` on Sonnet,
     # ``medium`` on Opus 5.5) are never left implicit.
     # Thinking is always on (disabling it is a 400 at every effort).
     TextModel("claude-opus-5-5", "Claude Opus 5.5", "Anthropic", "anthropic",
-              temperature=False, claude_native_json=True, effort="low",
+              temperature=False, claude_native_json=True, effort="medium",
               thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
               max_output_tokens=128_000),
     # Adaptive thinking is on by default and bills against the same limit.
     TextModel("claude-sonnet-5-5", "Claude Sonnet 5.5", "Anthropic", "anthropic",
-              temperature=False, claude_native_json=True, effort="low",
+              temperature=False, claude_native_json=True, effort="medium",
               thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
               max_output_tokens=128_000),
     TextModel("mimo-v2.6-pro", "MiMo V2.6 Pro", "OpenRouter", "openrouter",
@@ -68,3 +70,37 @@ DEFAULT_TEXT_WIRE = TextModel("", "", "", "")
 
 def text_wire(model: str) -> TextModel:
     return TEXT_MODEL_BY_ID.get(model, DEFAULT_TEXT_WIRE)
+
+
+TEXT_REASONING_STAGES = ("extract", "brief", "prompt", "adapt", "plan", "ocr", "visual_review")
+
+
+def reasoning_options(model: str) -> tuple[str, ...]:
+    wire = text_wire(model)
+    if wire.provider_key in {"openrouter", "together_ai"}:
+        return ("none", "enabled")
+    return ("low", "medium", "high")
+
+
+def default_reasoning(model: str, effort: str = "medium") -> str:
+    return effort if effort in reasoning_options(model) else "none"
+
+
+def reasoning_stage(feature: str) -> str | None:
+    if feature.endswith("visual_review"):
+        return "visual_review"
+    if feature == "draw.page_ocr":
+        return "ocr"
+    owner = feature.split(".", 1)[0]
+    if owner in {"style", "cast"}:
+        return "prompt"
+    if owner == "lettering":
+        return "adapt"
+    return owner if owner in TEXT_REASONING_STAGES else None
+
+
+def request_reasoning(config: Config, model: str, feature: str) -> str:
+    effort = config.text_reasoning_efforts.get(reasoning_stage(feature), default_reasoning(model, config.text_reasoning_effort))
+    if effort not in reasoning_options(model):
+        raise ValueError(f"Unsupported reasoning setting for {model}: {effort}")
+    return effort

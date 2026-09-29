@@ -116,6 +116,10 @@ export interface OperatorConnection {
 }
 
 export interface OperatorModelSettings {
+  reasoning_efforts: Record<string, string>;
+  reasoning_options: Record<string, string[]>;
+  text_reasoning_effort: string;
+  text_reasoning_effort_options: string[];
   selections: Record<string, string>;
   models: Array<{ id: string; label: string; provider: string; kind: "text" | "image" }>;
   stages: Array<{ id: string; label: string; description: string; model_ids: string[] }>;
@@ -227,10 +231,11 @@ export function fetchOperatorModels(connection: OperatorConnection): Promise<Ope
 export function updateOperatorModels(
   selections: Record<string, string>,
   connection: OperatorConnection,
+  reasoningEfforts: Record<string, string> = {},
 ): Promise<OperatorModelSettings> {
   return operatorFetch<OperatorModelSettings>("/api/ops/backoffice/models", connection, {
     method: "PATCH",
-    body: JSON.stringify({ selections }),
+    body: JSON.stringify({ selections, reasoning_efforts: reasoningEfforts }),
   });
 }
 

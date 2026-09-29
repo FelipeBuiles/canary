@@ -28,6 +28,7 @@ from typing import Any
 from novel_to_comic.ai.context import ai_request_context
 from novel_to_comic.artifacts import story_bible_path
 from novel_to_comic.config import load_config
+from novel_to_comic.text_models import default_reasoning, reasoning_options
 from novel_to_comic.stages import REGISTRY, clean_cascade
 from novel_to_comic.state import STAGE_NAMES, PipelineState, StageState, load_state, save_state
 from novel_to_comic.target_artifacts import TargetArtifacts
@@ -57,7 +58,9 @@ def selectable_models() -> list[dict[str, Any]]:
 
     return [
         {"id": model["id"], "label": model["label"], "provider": model["provider"],
-         "funding": model["funding"], "available": model.get("available", True)}
+         "funding": model["funding"], "available": model.get("available", True),
+         "reasoning_options": list(reasoning_options(model["id"])),
+         "default_reasoning": default_reasoning(model["id"])}
         for model in models() if model["kind"] == "text"
     ]
 
@@ -73,8 +76,8 @@ def validate_spec(source_dir: Path, phases: list[str], models: list[str]) -> Non
     catalog = {model["id"]: model for model in selectable_models()}
     if not phases or any(phase not in PHASES for phase in phases):
         raise ValueError(f"Choose phases from: {', '.join(PHASES)}")
-    if not 2 <= len(models) <= 4 or len(set(models)) != len(models):
-        raise ValueError("Choose between two and four different models")
+    if not 2 <= len(models) <= 6 or len(set(models)) != len(models):
+        raise ValueError("Choose between two and six different models")
     if unknown := [model for model in models if model not in catalog]:
         raise ValueError(f"Unknown text model: {', '.join(unknown)}")
     if unavailable := [model for model in models if not catalog[model]["available"]]:
@@ -87,6 +90,24 @@ def validate_spec(source_dir: Path, phases: list[str], models: list[str]) -> Non
                    if state.stages.get(stage, StageState()).status.value not in {"complete", "awaiting_review"}]
         if missing:
             raise ValueError(f"Adapt and Plan need the source project's {', '.join(missing)} first")
+
+
+def resolve_reasoning(phases: list[str], models: list[str], choices: Any = None) -> dict[str, dict[str, str]]:
+    """Validate and snapshot reasoning independently for every model and stage."""
+    stages = [stage for phase in phases for stage in PHASES[phase]]
+    if choices is None:
+        choices = {}
+    if not isinstance(choices, dict):
+        raise ValueError("reasoning_efforts must be a model-to-stage mapping")
+    result = {model: {stage: default_reasoning(model) for stage in stages} for model in models}
+    for model, settings in choices.items():
+        if model not in result or not isinstance(settings, dict):
+            raise ValueError(f"Invalid reasoning model: {model}")
+        for stage, effort in settings.items():
+            if stage not in stages or effort not in reasoning_options(model):
+                raise ValueError(f"Unsupported reasoning for {model} / {stage}: {effort}")
+            result[model][stage] = effort
+    return result
 
 
 def arm_id(phase: str, model: str) -> str:
@@ -179,7 +200,7 @@ def api_equivalent_usd(log: list[dict[str, Any]]) -> float | None:
     ``cache_control``, so Claude input is priced uncached even when a Claude
     subscription session cached it; OpenAI caches prompts automatically, so its
     cached input is priced at the cache-read rate. Codex counts may include
-    agent-harness overhead and reasoning at Codex's own effort, not Canary's.
+    agent-harness overhead and reasoning at the experiment's configured effort.
     None if any call's model has no configured price.
     """
     from novel_to_comic.model_costs import get_pricing_resolver
@@ -219,13 +240,15 @@ def _usage_summary(state: PipelineState, stage: str) -> dict[str, Any]:
     }
 
 
-async def run_arm(user_root: Path, run_id: str, source: str, phase: str, model: str) -> None:
+async def run_arm(user_root: Path, run_id: str, source: str, phase: str, model: str, reasoning_efforts: dict[str, str] | None = None) -> None:
     from novel_to_comic.stage_runtime import StageRuntime
     from novel_to_comic.text_utils import clean_exception_message
 
+    reasoning_efforts = resolve_reasoning([phase], [model], {model: reasoning_efforts or {}})[model]
     cell_id = arm_id(phase, model)
     workspace = storage.run_file(user_root, run_id, f"workspaces/{cell_id}")
     cell: dict[str, Any] = {"phase": phase, "model": model, "funding": _funding(model), "status": "running",
+                            "reasoning_efforts": reasoning_efforts,
                             "started_at": storage.now(), "workspace": f"workspaces/{cell_id}", "stages": []}
     storage.write_cell(user_root, run_id, cell_id, cell)
     try:
@@ -233,7 +256,7 @@ async def run_arm(user_root: Path, run_id: str, source: str, phase: str, model: 
         config, _ = load_config(workspace)
         config = config.model_copy(update={
             STAGE_MODEL_FIELDS[stage]: model for stage in PHASES[phase]
-        } | {"dev_model_selections": {}})
+        } | {"dev_model_selections": {}, "text_reasoning_efforts": reasoning_efforts})
         state = load_state(workspace)
     except Exception as exc:
         storage.write_cell(user_root, run_id, cell_id, cell | {
@@ -273,12 +296,13 @@ def _sum_known(values: list[float | None]) -> float | None:
     return None if any(value is None for value in values) else round(sum(values), 6)
 
 
-async def run(user_root: Path, run_id: str, source: str, phases: list[str], models: list[str]) -> None:
+async def run(user_root: Path, run_id: str, source: str, phases: list[str], models: list[str], reasoning_efforts: dict[str, dict[str, str]] | None = None) -> None:
     semaphores = {funding: asyncio.Semaphore(limit) for funding, limit in _CONCURRENCY.items()}
 
     async def bounded(phase: str, model: str) -> None:
         async with semaphores[_funding(model)]:
-            await run_arm(user_root, run_id, source, phase, model)
+            kwargs = {"reasoning_efforts": {stage: reasoning_efforts[model][stage] for stage in PHASES[phase]}} if reasoning_efforts is not None else {}
+            await run_arm(user_root, run_id, source, phase, model, **kwargs)
 
     await asyncio.gather(*(bounded(phase, model) for phase in phases for model in models))
 

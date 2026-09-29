@@ -113,6 +113,7 @@ def stage_model_estimate(
     phases, models = list(body.get("phases") or []), list(body.get("models") or [])
     try:
         stage_models.validate_spec(source, phases, models)
+        stage_models.resolve_reasoning(phases, models, body.get("reasoning_efforts"))
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"estimated_cost_usd": stage_models.estimate_usd(source, phases, models)}
@@ -176,12 +177,13 @@ async def create_run(
         phases, models = list(body.get("phases") or []), list(body.get("models") or [])
         try:
             stage_models.validate_spec(source, phases, models)
+            reasoning = stage_models.resolve_reasoning(phases, models, body.get("reasoning_efforts"))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        spec = {"project": project, "phases": phases, "models": models,
+        spec = {"project": project, "phases": phases, "models": models, "reasoning_efforts": reasoning,
                 "estimated_cost_usd": stage_models.estimate_usd(source, phases, models)}
         run = storage.create_run(root, kind=kind, label=str(body.get("label") or "Stage models")[:200], spec=spec)
-        _start(request, root, run["run_id"], stage_models.run(root, run["run_id"], project, phases, models))
+        _start(request, root, run["run_id"], stage_models.run(root, run["run_id"], project, phases, models, reasoning))
     else:
         raise HTTPException(400, f"Unknown experiment kind: {kind!r}")
     return run

@@ -12,6 +12,7 @@ import { Surface } from "./ui/Surface";
 export function OperatorModelPanel({ connection }: { connection: OperatorConnection }) {
   const [settings, setSettings] = useState<OperatorModelSettings | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
+  const [effortDraft, setEffortDraft] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +36,8 @@ export function OperatorModelPanel({ connection }: { connection: OperatorConnect
   if (!settings) return <p role="alert" className="font-body text-sm text-hero-red">{error ?? "Could not load stage models."}</p>;
 
   const changes = Object.fromEntries(Object.entries(draft).filter(([stage, model]) => settings.selections[stage] !== model));
-  const changed = Object.keys(changes).length > 0;
+  const effortChanges = Object.fromEntries(Object.entries(effortDraft).filter(([stage, effort]) => settings.reasoning_efforts[stage] !== effort));
+  const changed = Object.keys(changes).length > 0 || Object.keys(effortChanges).length > 0;
   const byId = new Map(settings.models.map((model) => [model.id, model]));
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -45,9 +47,10 @@ export function OperatorModelPanel({ connection }: { connection: OperatorConnect
     setError(null);
     setSaved(false);
     try {
-      const result = await updateOperatorModels(changes, connection);
+      const result = await updateOperatorModels(changes, connection, effortChanges);
       setSettings(result);
       setDraft({});
+      setEffortDraft({});
       setSaved(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not save stage models.");
@@ -63,9 +66,13 @@ export function OperatorModelPanel({ connection }: { connection: OperatorConnect
       <p className="mt-3 max-w-2xl font-body text-sm leading-6 text-ink-muted">{settings.note}</p>
       <p className="mt-2 max-w-2xl font-body text-sm leading-6 text-ink-muted">Changing Draw requires a new edition or project for existing artwork. Saving does not start generation.</p>
     </header>
+    <p className="font-body text-xs leading-5 text-ink-muted">Reasoning is configured independently for each text stage. Higher effort can increase latency and cost. Style and Cast share their text setting.</p>
     <Surface border="soft" shadow="none" className="divide-y-2 divide-ink-black/10">
       {settings.stages.map((stage) => {
         const selected = draft[stage.id] ?? settings.selections[stage.id];
+        const options = settings.reasoning_options[selected] ?? [];
+        const candidate = effortDraft[stage.id] ?? settings.reasoning_efforts[stage.id];
+        const effort = options.includes(candidate) ? candidate : options.includes("medium") ? "medium" : "none";
         return <div key={stage.id} className="grid gap-3 p-4 md:grid-cols-[minmax(0,1fr)_minmax(220px,360px)] md:items-center md:gap-8 md:p-5">
           <div>
             <label htmlFor={`operator-model-${stage.id}`} className="font-meta text-xs font-bold uppercase tracking-[0.08em]">{stage.label}</label>
@@ -73,11 +80,23 @@ export function OperatorModelPanel({ connection }: { connection: OperatorConnect
           </div>
           <div>
             <SelectField id={`operator-model-${stage.id}`} name={stage.id} value={selected} disabled={saving}
-              onChange={(event) => { setDraft((current) => ({ ...current, [stage.id]: event.target.value })); setSaved(false); }}
+              onChange={(event) => { const model = event.target.value;
+                setDraft((current) => ({ ...current, [stage.id]: model }));
+                const nextOptions = settings.reasoning_options[model] ?? [];
+                if (nextOptions.length) setEffortDraft((current) => ({ ...current, [stage.id]: nextOptions.includes(effort) ? effort : nextOptions.includes("medium") ? "medium" : "none" }));
+                setSaved(false); }}
               className="w-full bg-bristol font-body text-sm">
               {stage.model_ids.map((id) => <option key={id} value={id}>{byId.get(id)?.label ?? id}</option>)}
             </SelectField>
             <p className="mt-1 font-body text-xs text-ink-muted">{byId.get(selected)?.provider ?? "Unknown provider"}</p>
+            {options.length > 0 && <div className="mt-3">
+              <label htmlFor={`operator-reasoning-${stage.id}`} className="font-body text-xs">Reasoning — {stage.label}</label>
+              <SelectField id={`operator-reasoning-${stage.id}`} value={effort} disabled={saving}
+                onChange={(event) => { setEffortDraft((current) => ({ ...current, [stage.id]: event.target.value })); setSaved(false); }}
+                className="mt-1 w-full bg-bristol font-body text-sm">
+                {options.map((value) => <option key={value} value={value}>{value === "none" ? "Off" : value === "enabled" ? "On" : value[0].toUpperCase() + value.slice(1)}</option>)}
+              </SelectField>
+            </div>}
           </div>
         </div>;
       })}
@@ -87,7 +106,7 @@ export function OperatorModelPanel({ connection }: { connection: OperatorConnect
     {saved && <p role="status" className="font-body text-sm">Stage models saved for new jobs across all projects.</p>}
     <div className="flex flex-wrap gap-3">
       <Button type="submit" disabled={!changed || saving}>{saving ? "Saving…" : "Save stage models"}</Button>
-      {changed && <Button type="button" variant="outline" disabled={saving} onClick={() => { setDraft({}); setError(null); }}>Discard changes</Button>}
+      {changed && <Button type="button" variant="outline" disabled={saving} onClick={() => { setDraft({}); setEffortDraft({}); setError(null); }}>Discard changes</Button>}
     </div>
   </form>;
 }

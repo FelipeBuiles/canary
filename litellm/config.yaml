@@ -11,7 +11,7 @@ model_list:
   litellm_params:
     model: openai/gpt-6.1-sol
     api_key: os.environ/OPENAI_API_KEY
-    reasoning_effort: low
+    reasoning_effort: medium
   model_info:
     mode: chat
     supports_reasoning: true
@@ -35,7 +35,7 @@ model_list:
   litellm_params:
     model: openai/gpt-6-sol
     api_key: os.environ/OPENAI_API_KEY
-    reasoning_effort: low
+    reasoning_effort: medium
   model_info:
     mode: chat
     supports_reasoning: true
@@ -59,7 +59,7 @@ model_list:
   litellm_params:
     model: openai/gpt-6-luna
     api_key: os.environ/OPENAI_API_KEY
-    reasoning_effort: low
+    reasoning_effort: medium
   model_info:
     mode: chat
     supports_reasoning: true
@@ -134,7 +134,6 @@ model_list:
   litellm_params:
     model: openrouter/xiaomi/mimo-v2.6-pro
     api_key: os.environ/OPENROUTER_API_KEY
-    reasoning_effort: none
     extra_body:
       reasoning:
         enabled: false

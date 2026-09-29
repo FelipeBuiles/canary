@@ -140,6 +140,8 @@ class Config(BaseModel):
     # AI gateway settings — load from .env or environment variables instead of hardcoding here.
     litellm_base_url: str = "http://localhost:4000"
     litellm_api_key: str = "sk-local-canary"
+    text_reasoning_efforts: dict[str, str] = Field(default_factory=dict)
+    text_reasoning_effort: Literal["low", "medium", "high"] = "medium"
     ai_bill_failed_requests: FailedRequestBillingPolicy = "provider_usage_only"
 
     # Hidden local demo/test mode. It is not exposed by the config API and is
@@ -304,7 +306,7 @@ def load_config(project_dir: Path) -> tuple["Config", Path | None]:
         "fallback_image_model", "image_provider", "google_use_vertex_ai",
         "google_cloud_project", "google_cloud_location", "flux_guidance_scale",
         "negative_prompt", "image_steps",
-        "litellm_base_url", "litellm_api_key", "ai_bill_failed_requests",
+        "litellm_base_url", "litellm_api_key", "ai_bill_failed_requests", "text_reasoning_effort", "text_reasoning_efforts",
         "mock_model_base_url",
     ):
         data.pop(key, None)

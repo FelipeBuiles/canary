@@ -37,7 +37,7 @@ from novel_to_comic.ai.finalisation import (
 from novel_to_comic.config import Config, mock_mode_active
 from novel_to_comic.codex_dev import CodexRoute, CodexRoutingError, is_subscription, route_for
 from novel_to_comic.provider_wire import ProviderWireRequest
-from novel_to_comic.text_models import text_wire
+from novel_to_comic.text_models import text_wire, request_reasoning
 from novel_to_comic.model_costs import get_pricing_resolver
 from novel_to_comic.usage import (
     ApiResult,
@@ -1648,6 +1648,8 @@ async def _chat_completion(
             },
         })
     wire = text_wire(model)
+    effort = request_reasoning(config, model, feature)
+    open_thinking = wire.provider_key in {"openrouter", "together_ai"} and effort != "none"
     response_format: dict[str, Any] | None
     effective_system = system_prompt
     if json_schema:
@@ -1692,6 +1694,12 @@ async def _chat_completion(
         ],
         "metadata": metadata,
     }
+    if route is None and wire.effort and not wire.claude_native_json:
+        payload["reasoning_effort"] = effort
+    if route is None and wire.provider_key in {"openrouter", "together_ai"}:
+        payload["extra_body"] = {"reasoning": {"enabled": effort != "none"}}
+        if wire.provider_key == "openrouter":
+            payload["extra_body"]["provider"] = {"require_parameters": True}
     if route is None and wire.temperature:
         payload["temperature"] = temperature
     if route is None and wire.claude_native_json:
@@ -1699,7 +1707,7 @@ async def _chat_completion(
         # The gateway drops a route's reasoning_effort once output_config is
         # present, so effort travels with the format it would otherwise lose to.
         if wire.effort:
-            output_config["effort"] = wire.effort
+            output_config["effort"] = effort
         # Schema-less JSON uses the instruction and parser above.
         if json_schema:
             output_config["format"] = {
@@ -1709,7 +1717,7 @@ async def _chat_completion(
             payload["output_config"] = output_config
     elif response_format is not None:
         payload["response_format"] = response_format
-    effective_max_output_tokens = (max_output_tokens or 16_384) + wire.thinking_headroom_tokens
+    effective_max_output_tokens = (max_output_tokens or 16_384) + (16_384 if open_thinking else wire.thinking_headroom_tokens)
     if wire.max_output_tokens:
         effective_max_output_tokens = min(effective_max_output_tokens, wire.max_output_tokens)
     if route is None:
@@ -1726,7 +1734,7 @@ async def _chat_completion(
         (estimate_text_cost(
             model, effective_system + "\n" + user_content,
             # The answer budget; the estimator adds the model's typical thinking.
-            output_chars=(max_output_tokens or 16_384) * 4,
+            output_chars=((max_output_tokens or 16_384) + (4_096 if open_thinking else 0)) * 4,
         ) or None)
         if route is None else None
     )
@@ -1809,7 +1817,7 @@ async def _chat_completion(
                     user_content=user_content,
                     json_schema=json_schema,
                     image_attachments=image_attachments,
-                    effort=claude_wire.effort,
+                    effort=effort,
                     max_output_tokens=claude_limit,
                 )
                 metadata["codex_runtime"] = claude_result.metadata
@@ -1832,6 +1840,7 @@ async def _chat_completion(
                     user_content=user_content,
                     json_schema=json_schema,
                     image_attachments=image_attachments,
+                    effort=effort,
                 )
                 metadata["codex_runtime"] = result.metadata
                 data = {

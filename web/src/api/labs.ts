@@ -60,12 +60,16 @@ export interface ImageEstimate {
   problems: { item: string; arm: number; error: string }[];
 }
 
+export type LabsReasoning = Record<string, Record<string, string>>;
+
 export interface StageModelOption {
   id: string;
   label: string;
   provider: string;
   funding: LabsFunding;
   available: boolean;
+  reasoning_options: string[];
+  default_reasoning: string;
 }
 
 export interface StageModelOptions {
@@ -133,6 +137,7 @@ export interface StageResult {
 }
 
 export interface StageModelCell {
+  reasoning_efforts?: Record<string, string>;
   cell_id: string;
   phase: string;
   model: string;
@@ -154,7 +159,7 @@ export interface LabsRunDetail extends Omit<LabsRunSummary, "cell_count"> {
 
 export type LabsRunCreatePayload =
   | { kind: "image_compare"; label?: string; project: string; items: string[]; arms: ImageArm[] }
-  | { kind: "stage_models"; label?: string; project: string; phases: string[]; models: string[] };
+  | { kind: "stage_models"; label?: string; project: string; phases: string[]; models: string[]; reasoning_efforts?: LabsReasoning };
 
 export function labsRunFileUrl(runId: string, path: string): string {
   return `/api/labs/runs/${encodeURIComponent(runId)}/files/${path.split("/").map(encodeURIComponent).join("/")}`;
@@ -185,7 +190,7 @@ export function getStageModelOptions(): Promise<StageModelOptions> {
 }
 
 export function estimateStageModels(
-  body: { project: string; phases: string[]; models: string[] },
+  body: { project: string; phases: string[]; models: string[]; reasoning_efforts?: LabsReasoning },
 ): Promise<{ estimated_cost_usd: Record<string, number | null> }> {
   return apiFetch("/labs/stage-models/estimate", { method: "POST", body: JSON.stringify(body) });
 }

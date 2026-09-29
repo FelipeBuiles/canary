@@ -356,5 +356,5 @@ def test_subscription_thinking_budget_defaults_and_caps(claude_client, budget, e
         user_content="u", max_output_tokens=budget,
     ))
     call = claude_client.calls[0]
-    assert call["effort"] == "low"
+    assert call["effort"] == "medium"
     assert call["max_output_tokens"] == expected_limit

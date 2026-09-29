@@ -1,6 +1,6 @@
 # Model settings
 
-**Status: Current, September 28, 2026.** Implementation, gateway configuration,
+**Status: Current, September 29, 2026.** Implementation, gateway configuration,
 and tests are authoritative.
 
 ## Production operator defaults
@@ -46,11 +46,32 @@ gateway so Sunburst images settle at FAL's billed charge; without it they settle
 at a labelled request estimate (see [stage contracts](stage-contracts.md)).
 `novel_to_comic/src/novel_to_comic/text_models.py` lists the selectable text aliases and the
 request fields each accepts; every alias needs a gateway route and a pricing
-alias. Reasoning text routes run at low effort: GPT-6 routes set
-`reasoning_effort: low` on the gateway, and Claude routes send
-`output_config.effort: low` from `text_models.py`. The DeepSeek route turns off Together's default thinking with
-`extra_body.reasoning.enabled: false`. The pinned gateway drops a route-level
-`reasoning_effort` for this model. The OpenAI model pages publish the
+alias. GPT and Claude text routes default to medium reasoning effort.
+Backoffice offers a reasoning selector beside each text-stage model: Extract,
+Brief, shared Style/Cast text, Adapt, Plan, lettering checks, and visual review.
+GPT and Claude accept low, medium, or high. MiMo and DeepSeek accept Off or On
+(`none` or `enabled`), using their routes' native reasoning toggles.
+PATCH accepts a partial `reasoning_efforts` mapping, for example
+`{"reasoning_efforts": {"adapt": "high", "plan": "low"}}`, or a model and
+reasoning change together:
+`{"selections": {"adapt": "mimo-v2.6-pro"}, "reasoning_efforts": {"adapt": "enabled"}}`.
+Incompatible model/setting combinations are rejected before saving. Switching
+models resets an incompatible saved reasoning choice to the new model's default:
+medium for GPT/Claude, Off for MiMo/DeepSeek. Image generation has no text
+reasoning setting.
+
+Settings are saved atomically with operator model defaults and snapshotted for
+new jobs. Changes do not affect running jobs. GPT requests send
+`reasoning_effort`; Claude sends `output_config.effort`; open-model requests send
+`extra_body.reasoning.enabled`. OpenRouter requests preserve
+`provider.require_parameters`. Enabling reasoning on the open routes adds 16K
+completion-token headroom and a 4K thinking-token allowance to the request's cost
+estimate; actual usage remains provider-reported. The API's shared
+`text_reasoning_effort` default remains available for GPT/Claude; per-stage values
+are what the backoffice edits. Provider request formats follow the
+[OpenRouter reasoning API](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
+and [Together reasoning toggle](https://docs.together.ai/docs/deepseek-v4-quickstart#reducing-reasoning-overhead).
+The OpenAI model pages publish the
 standard text rates per million tokens: [Sol](https://developers.openai.com/api/docs/models/gpt-6-sol)
 $2 input / $0.20 cached input / $10 output, and
 [Luna](https://developers.openai.com/api/docs/models/gpt-6-luna)
@@ -115,7 +136,7 @@ runtime, the `claude` CLI, and a claude.ai login; `claude auth status` must
 report a claude.ai first-party login before each prompt is sent. Each call runs
 `claude --print` in an empty directory with no tools, MCP servers, user or
 project settings, CLAUDE.md, or session persistence, and an environment that
-never carries `ANTHROPIC_*` credentials. It sends the API route's effort and
+never carries `ANTHROPIC_*` credentials. It sends the job's configured text effort and
 output limit from `text_models.py`, and schemas through Claude Code's
 `--json-schema`. Usage is `claude_subscription`-funded and does not settle
 credits. Usage events record the served model's tokens (including cache reads
@@ -128,3 +149,24 @@ API and subscription routes can be mixed in a development job. API reservations 
 API work only. Request hashes identify input, not provider deduplication, and
 ambiguous image submissions are not retried automatically. Automated tests use
 mocked providers and do not establish account access or image quality.
+
+
+## Labs comparison reasoning
+
+**Labs → Stage models** compares two to six models and offers a reasoning selector for every selected model and
+stage in the chosen phases (Extract/Brief and Adapt/Plan). GPT and Claude API and
+subscription routes offer Low, Medium, and High; MiMo and DeepSeek offer Off and
+On. Labs defaults to Medium for GPT/Claude and Off for the open-model routes.
+These are run-specific experiment settings, independent of backoffice defaults.
+
+The create and estimate APIs accept `reasoning_efforts` keyed by model, then
+stage, for example
+`{"gpt-6-sol": {"adapt": "high", "plan": "low"}, "mimo-v2.6-pro": {"adapt": "enabled", "plan": "none"}}`.
+Choices are validated against selected models and stages before a run is
+created. The run spec stores resolved defaults and explicit choices; each
+result cell records its phase's settings and displays them with its results.
+The isolated arm config applies them through the normal text client. Claude
+Code receives the selected effort; Codex pins `model_reasoning_effort` in its
+verified runtime configuration. Source projects and operator defaults are not
+modified. Cost estimates still use source-project token logs and cannot predict
+how changing reasoning will affect a new run's token usage.

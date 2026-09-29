@@ -8,6 +8,8 @@ const state = vi.hoisted(() => ({
   options: {
     data: undefined as unknown, error: null as Error | null, isLoading: false, isFetching: false, refetch: vi.fn(),
   },
+  stageOptions: undefined as unknown,
+  create: vi.fn(),
   run: undefined as unknown,
   retry: vi.fn(),
 }));
@@ -26,9 +28,9 @@ vi.mock("../api/queries", () => ({
   ] }, isLoading: false }),
   useImageArmPreview: () => ({ data: undefined }),
   useImageCompareEstimate: () => ({ data: undefined }),
-  useStageModelOptions: () => ({ data: undefined, isLoading: true }),
+  useStageModelOptions: () => ({ data: state.stageOptions, isLoading: !state.stageOptions }),
   useStageModelEstimate: () => ({ data: undefined }),
-  useCreateLabsRun: () => ({ mutate: vi.fn(), isPending: false, error: null }),
+  useCreateLabsRun: () => ({ mutate: state.create, isPending: false, error: null }),
   useDeleteLabsRun: () => ({ mutate: vi.fn(), isPending: false }),
   useRetryLabsCells: () => ({ mutate: state.retry, isPending: false, error: null }),
   useLabsRuns: () => ({ data: { runs: [] } }),
@@ -49,6 +51,8 @@ describe("Labs", () => {
     state.options.error = null;
     state.options.refetch.mockClear();
     state.run = undefined;
+    state.stageOptions = undefined;
+    state.create.mockClear();
     state.retry.mockClear();
   });
 
@@ -146,4 +150,43 @@ describe("Labs", () => {
       .toBe("/api/labs/runs/r2/files/workspaces/adapt_plan.opus/plan/book.json");
     expect(screen.getByText("Claude subscription")).toBeTruthy();
   });
+  it("submits independent reasoning choices for each Labs model and stage", () => {
+    state.stageOptions = {
+      models: [
+        { id: "opus", label: "Opus", provider: "Anthropic", funding: "api", available: true,
+          reasoning_options: ["low", "medium", "high"], default_reasoning: "medium" },
+        { id: "mimo", label: "MiMo", provider: "OpenRouter", funding: "api", available: true,
+          reasoning_options: ["none", "enabled"], default_reasoning: "none" },
+      ],
+      default_models: ["opus", "mimo"], phases: { extract_brief: ["extract", "brief"] },
+    };
+    renderAt("/labs?new=stage_models");
+    fireEvent.change(screen.getByRole("combobox", { name: "Opus extract reasoning" }), { target: { value: "high" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "MiMo brief reasoning" }), { target: { value: "enabled" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run comparison" }));
+    expect(state.create).toHaveBeenCalledWith(expect.objectContaining({
+      reasoning_efforts: { opus: { extract: "high", brief: "medium" }, mimo: { extract: "none", brief: "enabled" } },
+    }), expect.anything());
+  });
+
+  it("allows six models and re-enables another choice after deselecting one", () => {
+    state.stageOptions = {
+      models: Array.from({ length: 7 }, (_, index) => ({
+        id: `model-${index}`, label: `Model ${index}`, provider: "API", funding: "api", available: true,
+        reasoning_options: ["low", "medium", "high"], default_reasoning: "medium",
+      })),
+      default_models: ["model-0", "model-1"], phases: { extract_brief: ["extract", "brief"] },
+    };
+    renderAt("/labs?new=stage_models");
+    for (const index of [2, 3, 4, 5]) fireEvent.click(screen.getByRole("checkbox", { name: `Model ${index}` }));
+    const seventh = screen.getByRole("checkbox", { name: "Model 6" }) as HTMLInputElement;
+    expect(seventh.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Run comparison" }));
+    expect(state.create).toHaveBeenCalledWith(expect.objectContaining({
+      models: ["model-0", "model-1", "model-2", "model-3", "model-4", "model-5"],
+    }), expect.anything());
+    fireEvent.click(screen.getByRole("checkbox", { name: "Model 5" }));
+    expect(seventh.disabled).toBe(false);
+  });
+
 });

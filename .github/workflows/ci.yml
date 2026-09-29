@@ -6,7 +6,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch: # manual trigger for prod release validation
+  workflow_dispatch: # optional release rerun or offline recovery
     inputs:
       skip_drain:
         description: "Offline recovery only: skip drain because production machines are stopped"
@@ -17,10 +17,10 @@ on:
 permissions:
   contents: read
 
-# Manual releases cannot cancel one another or be cancelled by normal CI.
+# Release runs have unique groups; only superseded PR checks are cancelled.
 concurrency:
-  group: ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   backend:
@@ -178,8 +178,8 @@ jobs:
     name: Deploy production
     needs: [backend, web, docker, gateway, tooling]
     # The authenticated drain barrier excludes new admissions and stays set
-    # on failure. Production remains restricted to an explicit main dispatch.
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    # on failure. Release every main push after all required checks pass.
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     environment:
       name: production

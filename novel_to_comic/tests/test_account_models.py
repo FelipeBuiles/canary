@@ -50,6 +50,9 @@ def test_operator_models_apply_to_every_production_project_and_require_token(cli
     headers = {"X-Canary-Ops-Token": "operator-secret"}
     catalog = client.get(path, headers=headers)
     assert catalog.status_code == 200
+    assert catalog.json()["text_reasoning_effort"] == "medium"
+    assert client.patch(path, headers=headers, json={"text_reasoning_effort": "high"}).json()["text_reasoning_effort"] == "high"
+    assert client.patch(path, headers=headers, json={"text_reasoning_effort": "invalid"}).status_code == 400
     assert not any(model["id"].startswith("codex-dev/") for model in catalog.json()["models"])
     assert client.patch(path, headers=headers, json={"selections": {
         "extract": "claude-opus-5-5", "plan": "mimo-v2.6-pro",
@@ -61,6 +64,7 @@ def test_operator_models_apply_to_every_production_project_and_require_token(cli
     monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType({**codex_dev._PROCESS, "CANARY_ENV": "production"}))
     for user in ("alice", "bob"):
         resolved = account_config(Config(dev_model_selections={"plan": "gpt-6-luna"}), tmp_path, user)
+        assert resolved.text_reasoning_effort == "high"
         assert resolved.extraction_model == "claude-opus-5-5"
         assert resolved.plan_model == "mimo-v2.6-pro"
 
@@ -607,3 +611,45 @@ def test_curated_model_choices(client, monkeypatch):
     assert codex_dev.route_for("text", sonnet).reasoning_model == "claude-sonnet-5-5"
     for stage, model in (("adapt", "claude-fable-5-1"), ("adapt", "codex-dev/text/gpt-5.5"), ("draw", "codex-dev/image/gpt-6-sol")):
         assert client.patch("/api/account/model-settings", json={"selections": {stage: model}}).status_code == 400
+
+
+def test_stage_reasoning_saved_atomically_and_snapshotted(tmp_path):
+    from novel_to_comic.server.account_models import read_global_reasoning
+    update_global_selections(tmp_path, {"adapt": "mimo-v2.6-pro", "plan": "deepseek-v4.1-flash"},
+                             reasoning_efforts={"adapt": "enabled", "plan": "enabled", "extract": "low", "brief": "high"})
+    first = account_config(Config(), tmp_path, "alice")
+    assert first.text_reasoning_efforts["adapt"] == "enabled"
+    assert first.text_reasoning_efforts["plan"] == "enabled"
+    assert first.text_reasoning_efforts["extract"] == "low"
+    update_global_selections(tmp_path, {}, reasoning_efforts={"adapt": "none"})
+    second = account_config(Config(), tmp_path, "bob")
+    assert second.text_reasoning_efforts["adapt"] == "none"
+    assert first.text_reasoning_efforts["adapt"] == "enabled"
+    before = (tmp_path / ".operator-model-settings.json").read_text()
+    with pytest.raises(ValueError, match="Unsupported reasoning"):
+        update_global_selections(tmp_path, {"brief": "mimo-v2.6-pro"}, reasoning_efforts={"brief": "medium"})
+    assert (tmp_path / ".operator-model-settings.json").read_text() == before
+    update_global_selections(tmp_path, {"adapt": "gpt-6-sol"})
+    assert read_global_reasoning(tmp_path, read_global_selections(tmp_path))["adapt"] == "medium"
+
+
+@pytest.mark.parametrize("stage", ["draw", "image", "unknown"])
+def test_reject_reasoning_for_non_text_stage(tmp_path, stage):
+    with pytest.raises(ValueError, match="Unsupported reasoning"):
+        update_global_selections(tmp_path, {}, reasoning_efforts={stage: "high"})
+
+
+def test_operator_reasoning_patch_validates_against_new_model(client, tmp_path, monkeypatch):
+    from novel_to_comic.server.routers.backoffice import router as operator_router
+    monkeypatch.setenv("CANARY_OPS_TOKEN", "operator-secret")
+    client.app.include_router(operator_router, prefix="/api/ops/backoffice")
+    headers = {"X-Canary-Ops-Token": "operator-secret"}
+    path = "/api/ops/backoffice/models"
+    result = client.patch(path, headers=headers, json={
+        "selections": {"adapt": "deepseek-v4.1-flash"}, "reasoning_efforts": {"adapt": "enabled", "plan": "low"}})
+    assert result.status_code == 200
+    assert result.json()["reasoning_efforts"]["adapt"] == "enabled"
+    assert result.json()["reasoning_efforts"]["plan"] == "low"
+    assert result.json()["reasoning_options"]["deepseek-v4.1-flash"] == ["none", "enabled"]
+    assert client.patch(path, headers=headers, json={"reasoning_efforts": {"adapt": "medium"}}).status_code == 400
+    assert client.get(path, headers=headers).json()["reasoning_efforts"]["adapt"] == "enabled"

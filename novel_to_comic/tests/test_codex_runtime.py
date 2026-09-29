@@ -1155,3 +1155,17 @@ def test_explicit_model_capacity_is_actionable_without_resubmission():
     assert error.metadata == evidence
     # A model-authored statement or unrelated failure must not become capacity.
     assert runtime._runtime_error("text_output_missing", evidence).code == "text_output_missing"
+
+
+@pytest.mark.parametrize("effort", ["low", "medium", "high"])
+def test_text_reasoning_is_pinned_in_runtime_config(sdk, effort):
+    observed = []
+    sdk.config_change = lambda config: observed.append(config.get("model_reasoning_effort"))
+    sdk.events = [
+        sdk.types.ItemCompletedNotification(item=_Record(root=sdk.types.AgentMessageThreadItem(
+            id="message-1", type="agentMessage", phase=None, text="ready"))),
+        _completed(sdk),
+    ]
+    result = asyncio.run(runtime.run_text(model="exact-model", system_prompt="Reply", user_content="Hello", effort=effort))
+    assert result.text == "ready"
+    assert observed and all(value == effort for value in observed)

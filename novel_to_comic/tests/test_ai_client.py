@@ -1888,12 +1888,12 @@ def test_new_claude_models_use_native_json_schema(monkeypatch, _patch_events, mo
     assert sent["output_config"].get("effort") == wire.effort
 
 
-def test_claude_text_models_run_at_low_effort():
+def test_claude_text_models_default_to_medium_effort():
     from novel_to_comic.text_models import TEXT_MODELS
 
     claude = [model for model in TEXT_MODELS if model.claude_native_json]
     assert {model.id for model in claude} >= {"claude-opus-5-5", "claude-sonnet-5-5"}
-    assert {model.id: model.effort for model in claude} == {model.id: "low" for model in claude}
+    assert {model.id: model.effort for model in claude} == {model.id: "medium" for model in claude}
 
 
 @pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-sonnet-5-5"])
@@ -1913,7 +1913,7 @@ def test_claude_5_5_sends_effort_without_schema_and_caps_thinking_headroom(
     sent = _FakeAsyncClient.last_request["json"]
     # The app never sends a thinking override (it is gateway route config),
     # sampling controls, or forced tool choice for this route.
-    assert sent["output_config"] == {"effort": "low"}
+    assert sent["output_config"] == {"effort": "medium"}
     assert "thinking" not in sent
     assert "temperature" not in sent
     assert "tool_choice" not in sent and "response_format" not in sent
@@ -2098,3 +2098,54 @@ def test_fal_style_image_settles_billed_charge_or_labelled_request_estimate(
     finalized = _patch_events[-1][1]
     assert finalized["usage"] == result.usage
     assert result.provider_request_id == "fal-req-7"
+
+@pytest.mark.parametrize("model", ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "claude-opus-5-5", "claude-sonnet-5-5"])
+@pytest.mark.parametrize("effort", ["low", "medium", "high"])
+def test_text_effort_override_reaches_provider_payload(monkeypatch, _patch_events, model, effort):
+    monkeypatch.setenv("CANARY_AI_STREAM_TEXT", "0")
+    _patch_http(monkeypatch, {
+        "model": model,
+        "choices": [{"message": {"content": "answer"}}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2},
+    })
+    asyncio.run(client.generate_text(
+        config=Config(text_reasoning_effort=effort), model=model,
+        system_prompt="Answer.", user_content="Hello",
+    ))
+    sent = _FakeAsyncClient.last_request["json"]
+    if text_wire(model).claude_native_json:
+        assert sent["output_config"]["effort"] == effort
+        assert "reasoning_effort" not in sent
+    else:
+        assert sent["reasoning_effort"] == effort
+
+
+@pytest.mark.parametrize("model", ["mimo-v2.6-pro", "deepseek-v4.1-flash"])
+@pytest.mark.parametrize("effort", ["none", "enabled"])
+def test_open_stage_reasoning_reaches_payload(monkeypatch, _patch_events, model, effort):
+    monkeypatch.setenv("CANARY_AI_STREAM_TEXT", "0")
+    _patch_http(monkeypatch, {"model": model,
+        "choices": [{"message": {"content": "answer"}}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2}})
+    asyncio.run(client.generate_text(
+        config=Config(text_reasoning_efforts={"adapt": effort}), model=model,
+        system_prompt="Answer.", user_content="Hello", feature="adapt.book", max_output_tokens=4096))
+    sent = _FakeAsyncClient.last_request["json"]
+    assert sent["extra_body"]["reasoning"] == {"enabled": effort == "enabled"}
+    assert sent["max_tokens"] == (20480 if effort == "enabled" else 4096)
+    if model == "mimo-v2.6-pro":
+        assert sent["extra_body"]["provider"]["require_parameters"] is True
+
+
+@pytest.mark.parametrize("feature, stage", [
+    ("extract.story_bible", "extract"), ("brief.infer", "brief"),
+    ("style.sample_brief", "prompt"), ("cast.design", "prompt"),
+    ("adapt.book", "adapt"), ("lettering.translate", "adapt"),
+    ("plan.detail", "plan"), ("draw.page_ocr", "ocr"),
+    ("draw.visual_review", "visual_review"), ("cast.visual_review", "visual_review"),
+])
+def test_reasoning_feature_uses_own_stage(feature, stage):
+    from novel_to_comic.text_models import request_reasoning
+    config = Config(text_reasoning_efforts={stage: "high"})
+    assert request_reasoning(config, "gpt-6-sol", feature) == "high"
+    assert request_reasoning(config, "gpt-6-sol", "unrelated") == "medium"

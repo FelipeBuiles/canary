@@ -353,7 +353,7 @@ def test_text_route_keeps_controls_and_app_price_on_the_bundled_map(monkeypatch,
 
     body = sent[-1]
     if wire.claude_native_json:
-        assert body["output_config"]["effort"] == wire.effort == "low"
+        assert body["output_config"]["effort"] == wire.effort == "medium"
     if "reasoning_effort" in route["litellm_params"]:
         assert body["reasoning_effort"] == route["litellm_params"]["reasoning_effort"]
     for key, value in route["litellm_params"].get("extra_body", {}).items():
@@ -413,3 +413,28 @@ def test_openai_stream_route_keeps_manifest_usage_and_reports_no_gateway_cost(mo
     assert body["provider_request_id"] == "req_9"
     # The proxy's x-litellm-response-cost comes from here; 0.0 would settle as free.
     assert response._hidden_params.get("response_cost") is None
+
+
+@pytest.mark.parametrize("model", ["mimo-v2.6-pro", "deepseek-v4.1-flash"])
+@pytest.mark.parametrize("enabled", [False, True])
+def test_open_model_request_overrides_gateway_reasoning_default(monkeypatch, model, enabled):
+    import json
+    import litellm
+    route = next(item for item in _gateway_config()["model_list"] if item["model_name"] == model)
+    sent = []
+    def send(self, request, **kwargs):
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, request=request, json={
+            "id": "r", "object": "chat.completion", "created": 0, "model": model,
+            "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "answer"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        })
+    monkeypatch.setattr(httpx.Client, "send", send)
+    router = litellm.Router(model_list=[{**route, "litellm_params": {**route["litellm_params"], "api_key": "test-key"}}])
+    payload = {"extra_body": {"reasoning": {"enabled": enabled}}}
+    if model == "mimo-v2.6-pro":
+        payload["extra_body"]["provider"] = {"require_parameters": True}
+    router.completion(model=model, messages=[{"role": "user", "content": "Hello"}], max_tokens=32768, **payload)
+    assert sent[-1]["reasoning"]["enabled"] is enabled
+    if model == "mimo-v2.6-pro":
+        assert sent[-1]["provider"]["require_parameters"] is True
