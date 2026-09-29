@@ -520,6 +520,90 @@ def test_draw_dispatch_failure_persists_stage_failure(tmp_path, monkeypatch):
     assert final.error == "Durable generation queue is unavailable"
 
 
+def test_failed_stage_raises_stage_specific_error(tmp_path, monkeypatch):
+    from novel_to_comic.server import job_execution
+    from novel_to_comic.server.routers import pipeline
+    from novel_to_comic.state import create_initial_state, save_state, fail_stage
+    save_state(create_initial_state("book", "novel.txt"), tmp_path)
+    async def settle_failed(stage, config, directory, state, *args, **kwargs):
+        fail_stage(state, "cast", "Cast rejected the reference sheet")
+    monkeypatch.setattr(pipeline, "_run_stage_with_credits", settle_failed)
+    spec = command("pipeline", tmp_path, Config()).model_copy(update={"stage": "cast"})
+    job = SimpleNamespace(command=spec, project_name="account:book", payload={"stage": "cast"})
+    with pytest.raises(job_execution.PipelineStageFailed, match="reference sheet"):
+        asyncio.run(job_execution._pipeline(make_app(tmp_path), job, tmp_path, Config()))
+
+
+@pytest.mark.parametrize("settled", [False, True])
+def test_job_failure_does_not_report_settled_stage_wrapper(tmp_path, monkeypatch, settled):
+    from novel_to_comic.server import generation_jobs, telemetry
+    from novel_to_comic.server.job_execution import PipelineStageFailed
+    captured = []
+    monkeypatch.setattr(telemetry, "capture_exception", lambda exc, **kwargs: captured.append(exc))
+    error = PipelineStageFailed("Plan failed") if settled else RuntimeError("orchestration failed")
+    def runner():
+        raise error
+    job = generation_jobs.GenerationJob(id="job-1", project_name="account:book", kind="pipeline_stage",
+                                        label="Plan", payload={}, sequence=1, runner=runner)
+    asyncio.run(generation_jobs._run_generation_job(make_app(tmp_path), job))
+    assert job.status == "failed" and job.error == str(error)
+    assert captured == ([] if settled else [error])
+
+
+@pytest.mark.parametrize("failure_boundary", ["estimate_stage_credit_reservation", "reserve_credits"])
+@pytest.mark.parametrize("failure_kind", ["connection", "estimation", "maintenance", "balance"])
+def test_reservation_failure_reports_original_unexpected_cause_once(
+    tmp_path, monkeypatch, failure_boundary, failure_kind,
+):
+    from fastapi import HTTPException
+    from novel_to_comic.server import credited_job, generation_jobs, job_execution, telemetry
+    from novel_to_comic.server.routers import pipeline
+    from novel_to_comic.state import StageStatus, create_initial_state, load_state, save_state
+
+    errors = {
+        "connection": ConnectionError("Billing database unavailable"),
+        "estimation": ValueError("Invalid reservation estimate"),
+        "maintenance": HTTPException(503, {"error": "credit_reservation_reconciliation", "message": "Ledger needs maintenance"}),
+        "balance": HTTPException(402, {"error": "insufficient_credits", "message": "Insufficient credits"}),
+    }
+    error = errors[failure_kind]
+    save_state(create_initial_state("book", "novel.txt"), tmp_path)
+    app = make_app(tmp_path)
+    captured = []
+    monkeypatch.setattr(telemetry, "capture_exception", lambda exc, **fields: captured.append((exc, fields)))
+    monkeypatch.setattr(credited_job, "get_db", lambda: object())
+    monkeypatch.setattr(credited_job, "estimate_stage_credit_reservation", lambda *args: 10)
+    monkeypatch.setattr(pipeline, "capture_server_event", lambda *args, **kwargs: None)
+
+    def fail(*args, **kwargs):
+        raise error
+
+    async def unexpected_stage(*args, **kwargs):
+        pytest.fail("A denied reservation must not start generation")
+
+    monkeypatch.setattr(credited_job, failure_boundary, fail)
+    monkeypatch.setattr(pipeline, "_run_stage", unexpected_stage)
+    spec = command("pipeline", tmp_path, Config()).model_copy(
+        update={"stage": "extract", "user_id": "account", "project_id": "book"},
+    )
+    pipeline_job = SimpleNamespace(command=spec, project_name="account:book", payload={"stage": "extract"})
+
+    async def runner():
+        await job_execution._pipeline(app, pipeline_job, tmp_path, Config())
+
+    job = generation_jobs.GenerationJob(
+        id="reservation-failure", project_name="account:book", kind="pipeline_stage",
+        label="Extract", payload={}, sequence=1, runner=runner,
+    )
+    asyncio.run(generation_jobs._run_generation_job(app, job))
+    expected_message = error.detail["message"] if isinstance(error, HTTPException) else str(error)
+    assert job.status == "failed" and job.error == expected_message
+    state = load_state(tmp_path)
+    assert state.stages["extract"].status == StageStatus.FAILED
+    assert state.stages["extract"].error == expected_message
+    assert captured == ([] if failure_kind == "balance" else [(error, {"user_id": "account", "stage": "extract"})])
+
+
 @pytest.mark.parametrize("sibling_queued", [False, True])
 def test_restore_closes_the_style_stage_a_hard_stop_left_running(tmp_path, sibling_queued):
     """An interrupted Style batch must not leave the room 'generating' forever."""

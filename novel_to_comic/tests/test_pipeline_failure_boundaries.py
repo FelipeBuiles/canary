@@ -121,7 +121,7 @@ async def test_adapt_restart_archives_only_after_hold_and_resume_keeps_work(tmp_
         await kwargs["run"]()
         return "held-job"
 
-    async def run(stage, config, project_dir, active_state, queue):
+    async def run(stage, config, project_dir, active_state, queue, **_kwargs):
         assert stage == "adapt"
         assert all((tmp_path / path).exists() is not rerun for path in paths)
         assert all((tmp_path / path).read_text() == path for path in upstream)
@@ -278,7 +278,7 @@ async def test_continuing_plan_repairs_an_adaptation_no_plan_can_satisfy(tmp_pat
         await kwargs["run"]()
         return "held-job"
 
-    async def run(stage, config, project_dir, active_state, queue):
+    async def run(stage, config, project_dir, active_state, queue, **_kwargs):
         ran.append(stage)
         if stage == "adapt":
             repaired["done"] = True
@@ -295,3 +295,21 @@ async def test_continuing_plan_repairs_an_adaptation_no_plan_can_satisfy(tmp_pat
 
     assert ran == (["adapt", "plan"] if needs_repair else ["plan"])
     assert state.stages["plan"].status == StageStatus.COMPLETE
+
+
+@run_async
+async def test_stage_exception_reaches_error_tracking_with_its_stage(tmp_path, monkeypatch):
+    from novel_to_comic.server import telemetry
+    state = PipelineState(project_name="book", novel_path="novel.txt", created_at="2026-01-01T00:00:00Z")
+    error = KeyError("panel")
+
+    class Broken:
+        async def run(self, config, project_dir, ctx):
+            raise error
+
+    captured = []
+    monkeypatch.setitem(pipeline.REGISTRY, "plan", Broken())
+    monkeypatch.setattr(telemetry, "capture_exception", lambda exc, **kwargs: captured.append((exc, kwargs)))
+    await pipeline._run_stage("plan", Config(), tmp_path, state, EventChannel(), user_id="account")
+    assert state.stages["plan"].status == StageStatus.FAILED
+    assert captured == [(error, {"user_id": "account", "stage": "plan"})]

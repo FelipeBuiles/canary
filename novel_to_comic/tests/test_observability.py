@@ -95,7 +95,7 @@ def test_stage_success_is_accepted_with_nullable_uuid_job_id(
 
     table.insert.return_value.execute.side_effect = accept_event
 
-    async def finish_stage(*_args):
+    async def finish_stage(*_args, **_kwargs):
         state.stages[stage].status = status
 
     async def run_credited_stage(**kwargs):
@@ -211,7 +211,7 @@ def test_stage_that_handles_its_exception_is_recorded_as_failed(tmp_path):
     async def fake_run_credited_stage(**kwargs):
         await kwargs["run"]()
 
-    async def fail_stage(*_args):
+    async def fail_stage(*_args, **_kwargs):
         state.stages["extract"].status = StageStatus.FAILED
         state.stages["extract"].error_code = "provider_timeout"
 
