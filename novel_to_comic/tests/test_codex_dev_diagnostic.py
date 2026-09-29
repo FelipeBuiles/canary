@@ -75,7 +75,7 @@ def diagnostic(monkeypatch):
 
 @pytest.fixture
 def fake_runtime(diagnostic, monkeypatch):
-    monkeypatch.setattr(importlib.metadata, "version", lambda name: "0.156.1")
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: "0.159.0")
     monkeypatch.setattr(diagnostic.shutil, "which", lambda name: "/fake/codex")
     commands = []
     environments = []
@@ -195,7 +195,7 @@ def test_child_environment_drops_inherited_credentials_and_provider_overrides(
 
 def test_untrusted_local_evidence_cannot_leak_secrets_or_claim_live_verification(diagnostic):
     report = diagnostic.build_report(evidence={
-        "sdk_version": f"0.156.1 {SECRET}",
+        "sdk_version": f"0.159.0 {SECRET}",
         "bundled_runtime_version": EMAIL,
         "local_runtime_version": SECRET,
         "local_runtime_status": SECRET,
@@ -215,7 +215,7 @@ def test_untrusted_local_evidence_cannot_leak_secrets_or_claim_live_verification
     assert all(not capability["live_verified"] for capability in report["capabilities"].values())
 
 
-@pytest.mark.parametrize("sdk_version", ["0.156.1", "9.0.0"])
+@pytest.mark.parametrize("sdk_version", ["0.159.0", "9.0.0"])
 def test_installed_versions_and_schema_cannot_claim_live_capability(diagnostic, sdk_version):
     report = diagnostic.build_report(evidence={
         "sdk_version": sdk_version,
@@ -241,7 +241,7 @@ def test_schema_child_only_inspects_types_never_constructs_sdk(diagnostic, capsy
 
 
 def test_process_failure_does_not_echo_raw_credentials(diagnostic, monkeypatch, capsys):
-    monkeypatch.setattr(importlib.metadata, "version", lambda name: "0.156.1")
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: "0.159.0")
     monkeypatch.setattr(diagnostic.shutil, "which", lambda name: "/fake/codex")
 
     def failed_process(*args, **kwargs):

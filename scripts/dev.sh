@@ -137,7 +137,7 @@ import importlib.metadata
 import sys
 try:
     installed = all(
-        importlib.metadata.version(package) == "0.156.1"
+        importlib.metadata.version(package) == "0.159.0"
         for package in ("openai-codex", "openai-codex-cli-bin")
     )
 except importlib.metadata.PackageNotFoundError:
@@ -242,9 +242,9 @@ required_failed=false
 
 if [ "$MODE" = "codex" ]; then
   if codex_sdk_installed; then
-    ok "Codex SDK and bundled runtime (0.156.1; local metadata only)"
+    ok "Codex SDK and bundled runtime (0.159.0; local metadata only)"
   else
-    failed "Codex mode requires the optional SDK and bundled runtime pinned to 0.156.1"
+    failed "Codex mode requires the optional SDK and bundled runtime pinned to 0.159.0"
     echo "[dev] Install explicitly from the repository root (the launcher never installs it):" >&2
     echo "[dev] uv pip install --python novel_to_comic/.venv/bin/python -r scripts/requirements-codex-dev.txt" >&2
     echo "[dev] Or select --api for normal paid API routing, or --mock for replay." >&2

@@ -23,7 +23,7 @@ import tempfile
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-SDK_VERSION = "0.156.1"
+SDK_VERSION = "0.159.0"
 INSPECTED_RUNTIME_VERSIONS = ("0.147.0", "0.153.4")
 TIMEOUT_SECONDS = 10
 MAX_OUTPUT_BYTES = 65536
@@ -276,10 +276,10 @@ def build_report(*, evidence: Mapping[str, Any] | None = None) -> dict[str, Any]
                    "child_timeout_seconds": TIMEOUT_SECONDS,
                    "effective_config_provenance": "unverified", "config_evidence": CONFIG_EVIDENCE},
         "sources": [
-            "https://pypi.org/pypi/openai-codex/0.156.1/json",
-            SOURCE_ROOT + "rust-v0.156.1/sdk/python/src/openai_codex/api.py",
-            SOURCE_ROOT + "rust-v0.156.1/sdk/python/src/openai_codex/client.py",
-            SOURCE_ROOT + "rust-v0.156.1/sdk/python/src/openai_codex/generated/v2_all.py",
+            "https://pypi.org/pypi/openai-codex/0.159.0/json",
+            SOURCE_ROOT + "rust-v0.159.0/sdk/python/src/openai_codex/api.py",
+            SOURCE_ROOT + "rust-v0.159.0/sdk/python/src/openai_codex/client.py",
+            SOURCE_ROOT + "rust-v0.159.0/sdk/python/src/openai_codex/generated/v2_all.py",
             SOURCE_ROOT + "rust-v0.153.4/codex-rs/cli/src/login.rs",
             SOURCE_ROOT + "rust-v0.153.4/codex-rs/login/src/auth/manager.rs",
             SOURCE_ROOT + "rust-v0.153.4/codex-rs/login/src/auth/personal_access_token.rs",

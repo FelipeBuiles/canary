@@ -93,7 +93,7 @@ Keep any historical volumes until their data is no longer needed. See the
 PostgreSQL stays on 17 for the queue and LiteLLM databases. Major upgrades
 require data-format, restore, and resource tests.
 
-The optional `openai-codex` SDK and bundled runtime are pinned to 0.156.1.
+The optional `openai-codex` SDK and bundled runtime are pinned to 0.159.0.
 That adapter has an explicitly restricted execution, authentication, tool and
 funding contract; its pinned
 runtime is also part of the recorded generation identity. Runtime upgrades
