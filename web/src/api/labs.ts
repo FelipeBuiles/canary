@@ -1,183 +1,197 @@
 import { apiFetch } from "./client";
 
-export type LabsTier = "fast" | "balanced" | "premium";
+/**
+ * Local-development experiments. API calls cost operator USD; subscription calls
+ * use the local Claude or Codex allowance. Neither ever touches account credits.
+ */
 
-export interface LabsModel {
+export type LabsFunding = "api" | "codex_subscription" | "claude_subscription";
+
+export interface LabsProject {
+  id: string;
+  title: string;
+  statuses: Record<string, string>;
+  words: number | null;
+}
+
+export interface ImageTarget {
   id: string;
   label: string;
-  provider: "fal" | "together" | "litellm";
-  endpoint: string;
-  tier: LabsTier;
-  multi_ref: boolean;
-  max_refs: number;
-  style_refs: boolean;
-  approx_cost: number | null;
-  notes: string | null;
+  provider: string;
+  funding: LabsFunding;
+  available: boolean;
 }
 
-export interface LabsReferenceImage {
-  filename: string;
-  label: string;
-  role: string;
-  url: string;
+export type ImagePrompt = "production" | "restructured";
+
+export interface ImageArm {
+  target: string;
+  prompt: ImagePrompt;
 }
 
-export interface LabsPanel {
-  idx: number;
-  label: string;
-  prompt: string;
-  prompt_variant_b?: string | null;
-  /** Exact S7 production payload (style + brief + refs + constraints embedded).
-   * Only present on imported project panels. Run with an empty style template. */
-  production_prompt?: string | null;
-  width: number;
-  height: number;
-}
-
-export interface LabsFixtureScene {
+export interface ImageItem {
   id: string;
+  kind: "asset" | "page";
   label: string;
-  description: string;
-  default_style_template: string;
-  reference_images: LabsReferenceImage[];
-  panels: LabsPanel[];
+  recorded_at?: string | null;
+  recorded_route?: string | null;
+  references?: number;
+  /** Project-relative path of the recorded output, for a thumbnail. */
+  preview?: string;
 }
 
-export interface LabsImportableProject {
-  id: string;
-  name: string;
-  scene_count: number;
-}
-
-export interface LabsProjectScene {
-  scene_id: string;
-  panel_count: number;
-  first_prompt_preview: string;
-}
-
-export interface LabsImportedScene {
-  label: string;
-  style_template: string;
-  panels: LabsPanel[];
-  imported_references?: LabsImportedReference[];
-  imported_reference_paths: string[];
-}
-
-export interface LabsImportedReference {
-  path: string;
-  relative_path: string;
-  label: string;
-  role: string;
-  url: string;
-}
-
-export type LabsCellStatus = "pending" | "ok" | "failed";
-
-export interface LabsCell {
-  status: LabsCellStatus;
-  variant?: "A" | "B";
-  image_url?: string;
-  latency_ms?: number;
-  cost_usd?: number | null;
-  cost_source?: string | null;
-  provider_model?: string | null;
-  pricing_snapshot?: string | null;
-  error?: string;
-  provider_request_id?: string | null;
-  started_at?: string;
-}
-
-export interface LabsRunPanelResult {
-  idx: number;
-  variant: "A" | "B";
-  label: string;
-  prompt: string;
-  cells: Record<string, LabsCell>;
-}
-
-export interface LabsRunDetail {
-  run_id: string;
-  label: string;
-  status: "running" | "complete" | "failed" | "cancelled";
-  created_at: string;
-  finished_at: string | null;
-  cells_total: number;
-  cells_done: number;
-  total_cost_usd: number;
-  model_ids: string[];
-  style_template: string;
-  prompt_compare_mode: boolean;
-  reference_image_names: string[];
+export interface ArmPreview {
   error: string | null;
-  panels: LabsRunPanelResult[];
+  prompt?: string;
+  chars?: number;
+  width?: number;
+  height?: number;
+  references?: number;
+  /** Anchors, style or lettering the production prompt carries that this arm drops. */
+  missing_verbatim?: string[];
+  estimated_cost_usd?: number | null;
+  /** This request priced at API rates, even when a subscription runs it. */
+  api_equivalent_usd?: number | null;
 }
+
+export interface ImageEstimate {
+  estimated_cost_usd: number;
+  calls: { api: number; subscription: number };
+  problems: { item: string; arm: number; error: string }[];
+}
+
+export interface StageModelOption {
+  id: string;
+  label: string;
+  provider: string;
+  funding: LabsFunding;
+  available: boolean;
+}
+
+export interface StageModelOptions {
+  models: StageModelOption[];
+  default_models: string[];
+  phases: Record<string, string[]>;
+}
+
+export type LabsRunStatus = "running" | "complete" | "failed" | "interrupted";
 
 export interface LabsRunSummary {
   run_id: string;
+  kind: "image_compare" | "stage_models";
+  label: string;
+  status: LabsRunStatus;
   created_at: string;
-  label: string;
-  model_ids: string[];
-  panel_count: number;
+  finished_at: string | null;
+  total_cost_usd: number | null;
+  cell_count: number;
+}
+
+export interface ImageCell {
+  cell_id: string;
+  item: string;
+  arm: number;
+  target: string;
+  prompt: ImagePrompt;
+  funding: LabsFunding;
+  status: "running" | "ok" | "failed";
+  prompt_file?: string;
+  prompt_chars?: number;
+  estimated_cost_usd?: number | null;
+  /** Approximate API price of this request, for comparing subscription arms on cost. */
+  api_equivalent_usd?: number | null;
+  /** "WIDTHxHEIGHT" the request asked for, and what the model returned. */
+  requested_size?: string;
+  output_size?: string | null;
+  input_sha256?: string;
+  /** Earlier failed attempts of this cell, oldest first. */
+  attempts?: { started_at?: string; latency_ms?: number; error?: string }[];
+  image?: string;
+  latency_ms?: number;
+  cost_usd?: number | null;
+  error?: string;
+}
+
+export interface StageResult {
+  stage: string;
   status: string;
-  total_cost_usd?: number | null;
+  error: string | null;
+  seconds: number;
+  calls: number;
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  unpriced_calls: number;
+  /** Recorded tokens priced at the model's API rates on Canary's route; null if unpriced. */
+  api_equivalent_usd?: number | null;
+  models: string[];
+  funding: string[];
+  counts?: Record<string, number>;
+  validation?: { attempts: number | null; invariant_failures: number; editorial_issues: number; blocking_issues: number };
+  artifact?: string;
 }
 
-export type LabsReferenceSource = "fixture" | "imported" | "none";
-
-export interface LabsRunCreatePayload {
-  label: string;
-  model_ids: string[];
-  style_template: string;
-  prompt_compare_mode?: boolean;
-  panels: {
-    idx: number;
-    label: string;
-    prompt: string;
-    prompt_variant_b?: string | null;
-    width: number;
-    height: number;
-  }[];
-  reference_source: LabsReferenceSource;
-  reference_image_paths?: string[];
+export interface StageModelCell {
+  cell_id: string;
+  phase: string;
+  model: string;
+  funding: LabsFunding;
+  status: "running" | "ok" | "failed";
+  workspace: string;
+  stages: StageResult[];
+  seconds?: number;
+  cost_usd?: number;
+  api_equivalent_usd?: number | null;
+  error?: string;
 }
 
-export function listLabsModels(): Promise<{ models: LabsModel[] }> {
-  return apiFetch("/labs/models");
+export interface LabsRunDetail extends Omit<LabsRunSummary, "cell_count"> {
+  spec: Record<string, unknown>;
+  error: string | null;
+  cells: (ImageCell | StageModelCell)[];
 }
 
-export function getDefaultFixture(): Promise<LabsFixtureScene> {
-  return apiFetch("/labs/fixtures/default");
+export type LabsRunCreatePayload =
+  | { kind: "image_compare"; label?: string; project: string; items: string[]; arms: ImageArm[] }
+  | { kind: "stage_models"; label?: string; project: string; phases: string[]; models: string[] };
+
+export function labsRunFileUrl(runId: string, path: string): string {
+  return `/api/labs/runs/${encodeURIComponent(runId)}/files/${path.split("/").map(encodeURIComponent).join("/")}`;
 }
 
-export function listImportableProjects(): Promise<{ projects: LabsImportableProject[] }> {
+export function listLabsProjects(): Promise<{ projects: LabsProject[] }> {
   return apiFetch("/labs/projects");
 }
 
-export function listProjectScenes(projectId: string): Promise<{ scenes: LabsProjectScene[] }> {
-  return apiFetch(`/labs/projects/${encodeURIComponent(projectId)}/scenes`);
+export function getImageCompareOptions(): Promise<{ targets: ImageTarget[]; prompts: ImagePrompt[] }> {
+  return apiFetch("/labs/image-compare/options");
 }
 
-export function importProjectScene(
-  projectId: string,
-  body: { scene_id: string; panel_limit?: number },
-): Promise<LabsImportedScene> {
-  return apiFetch(`/labs/projects/${encodeURIComponent(projectId)}/import-scene`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+export function listImageItems(project: string): Promise<{ items: ImageItem[] }> {
+  return apiFetch(`/labs/image-compare/projects/${encodeURIComponent(project)}/items`);
 }
 
-export function createLabsRun(payload: LabsRunCreatePayload): Promise<{ run_id: string; status: string }> {
-  return apiFetch("/labs/runs", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+export function previewImageArms(body: { project: string; item: string; arms: ImageArm[] }): Promise<{ arms: ArmPreview[] }> {
+  return apiFetch("/labs/image-compare/preview", { method: "POST", body: JSON.stringify(body) });
 }
 
-export function deleteLabsRun(runId: string): Promise<{ run_id: string; status: string }> {
-  return apiFetch(`/labs/runs/${encodeURIComponent(runId)}`, {
-    method: "DELETE",
-  });
+export function estimateImageCompare(body: { project: string; items: string[]; arms: ImageArm[] }): Promise<ImageEstimate> {
+  return apiFetch("/labs/image-compare/estimate", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function getStageModelOptions(): Promise<StageModelOptions> {
+  return apiFetch("/labs/stage-models/options");
+}
+
+export function estimateStageModels(
+  body: { project: string; phases: string[]; models: string[] },
+): Promise<{ estimated_cost_usd: Record<string, number | null> }> {
+  return apiFetch("/labs/stage-models/estimate", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function createLabsRun(payload: LabsRunCreatePayload): Promise<LabsRunDetail> {
+  return apiFetch("/labs/runs", { method: "POST", body: JSON.stringify(payload) });
 }
 
 export function listLabsRuns(): Promise<{ runs: LabsRunSummary[] }> {
@@ -186,4 +200,15 @@ export function listLabsRuns(): Promise<{ runs: LabsRunSummary[] }> {
 
 export function getLabsRun(runId: string): Promise<LabsRunDetail> {
   return apiFetch(`/labs/runs/${encodeURIComponent(runId)}`);
+}
+
+/** Resubmit failed image cells with the same prompt and inputs; omit ``cells`` to retry every failure. */
+export function retryLabsCells(runId: string, cells?: string[]): Promise<{ status: string; cells: string[] }> {
+  return apiFetch(`/labs/runs/${encodeURIComponent(runId)}/retry`, {
+    method: "POST", body: JSON.stringify(cells ? { cells } : {}),
+  });
+}
+
+export function deleteLabsRun(runId: string): Promise<{ status: string }> {
+  return apiFetch(`/labs/runs/${encodeURIComponent(runId)}`, { method: "DELETE" });
 }

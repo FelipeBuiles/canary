@@ -689,7 +689,7 @@ def test_text_result_preserves_raw_schema_failure_for_consumer(sdk):
     assert len(sdk.turns) == 1
 
 
-@pytest.mark.parametrize("model", ("gpt-6-sol", "gpt-6-luna"))
+@pytest.mark.parametrize("model", ("gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"))
 def test_gpt6_text_selection_uses_exact_catalog_model(sdk, model):
     sdk.models = [_Record(model=model, input_modalities=["text", "image"])]
     sdk.events = [

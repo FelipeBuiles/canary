@@ -1600,6 +1600,31 @@ class _PageRouteTransport(GoogleVertexCompletePageTransport):
         self._provider_model = provider_model
 
 
+def sunburst_openai_page_transport(config: Config, profile: PageCapabilityProfile) -> CompletePageTransport:
+    """The OpenAI Sunburst route alone, with no fallback."""
+    return _PageRouteTransport(
+        config, profile, provider="openai",
+        gateway_model=OPENAI_SUNBURST_GATEWAY_MODEL, provider_model="gpt-image-2.5-sunburst",
+    )
+
+
+def sunburst_fal_page_transport(config: Config, profile: PageCapabilityProfile) -> CompletePageTransport:
+    """The FAL Sunburst route alone, with no fallback."""
+    return _PageRouteTransport(
+        config, profile, provider="fal-queue",
+        gateway_model=FAL_SUNBURST_GATEWAY_MODEL, provider_model="openai/gpt-image-2.5/sunburst",
+    )
+
+
+def prepare_frozen_page_request(
+    request: FrozenPageGenerationRequest,
+    reference_bytes: tuple[bytes, ...],
+    profile: PageCapabilityProfile,
+) -> PreparedCompletePageRequest:
+    """Prepare an already-frozen initial-generation request for submission."""
+    return _prepare_complete_page(CompiledPageGeneration(request, reference_bytes, None), profile)
+
+
 def _with_route(result: CompletePageProviderResult, route: str, fallback: dict | None = None) -> CompletePageProviderResult:
     metadata: dict[str, object] = {**(result.response_metadata or {}), "route": route}
     if fallback is not None:
@@ -1623,14 +1648,8 @@ class SunburstFallbackPageAdapter:
             raise ValueError("Unsupported Sunburst fallback page profile")
         self._config = config
         self._profile = profile
-        self._primary = _PageRouteTransport(
-            config, profile, provider="openai",
-            gateway_model=OPENAI_SUNBURST_GATEWAY_MODEL, provider_model="gpt-image-2.5-sunburst",
-        )
-        self._backup = _PageRouteTransport(
-            config, profile, provider="fal-queue",
-            gateway_model=FAL_SUNBURST_GATEWAY_MODEL, provider_model="openai/gpt-image-2.5/sunburst",
-        )
+        self._primary = sunburst_openai_page_transport(config, profile)
+        self._backup = sunburst_fal_page_transport(config, profile)
 
     def prepare(self, compiled: CompiledPageGeneration) -> PreparedCompletePageRequest:
         return _prepare_complete_page(compiled, self._profile)

@@ -4402,3 +4402,51 @@ def test_generated_plan_requires_explicit_staging_decisions():
     panel = schema["$defs"]["_PageContentDraft"]
     assert {"setting", "physical_relationships"} <= set(panel["required"])
     assert panel["properties"]["setting"] == {"$ref": "#/$defs/_PanelSetting"}
+
+
+def _split_beat_response(first_panel: dict[str, object]) -> dict:
+    """beat_0001 (which soaks Johansen) drawn as two panels: the approach, then the soaking."""
+
+    response = _two_page_response({"entity_ids": ["location_alert"]})
+    page = response["pages"][0]
+    lead_up = {
+        **page["content"][0], "id": "page_001_content_001", "order": 1, "lettering_ids": [],
+        "visual_intent": "Johansen steers toward the wall of spray, still dry.", **first_panel,
+    }
+    outcome = {**page["content"][0], "id": "page_001_content_002", "order": 2,
+               "visual_intent": "The spray breaks over Johansen."}
+    page["content"] = [lead_up, outcome]
+    page["reading_order"] = ["page_001_content_001", "page_001_content_002", "lettering_0001"]
+    return response
+
+
+def test_a_split_beat_takes_its_appearance_change_on_its_last_panel(tmp_path: Path) -> None:
+    # Production failure: a death beat split into turn, cry and fall bound
+    # every panel to the dead state, so Draw would show the death too early.
+    artifacts, calls, plan = _run_plan(
+        _soaked_adaptation(), _soaked_inventory(),
+        _split_beat_response({"entity_ids": ["character_johansen", "location_alert"]}), tmp_path,
+    )
+
+    assert isinstance(plan, BookPlan) and len(calls) == 1
+    lead_up, outcome = artifacts.read_page(1).content
+    assert lead_up.appearance_states == {}
+    assert outcome.appearance_states == {"character_johansen": "johansen_soaked"}
+    assert artifacts.read_page(2).content[0].appearance_states == {"character_johansen": "johansen_soaked"}
+    assert artifacts.read_validation("plan").invariant_failures == ()
+
+
+def test_an_earlier_panel_of_the_beat_may_still_cite_the_new_state(tmp_path: Path) -> None:
+    artifacts, calls, plan = _run_plan(
+        _soaked_adaptation(), _soaked_inventory(),
+        _split_beat_response({
+            "entity_ids": ["character_johansen", "location_alert"],
+            "appearance_states": [{"entity_id": "character_johansen", "state_id": "johansen_soaked"}],
+        }),
+        tmp_path,
+    )
+
+    assert isinstance(plan, BookPlan) and len(calls) == 1
+    assert [content.appearance_states for content in artifacts.read_page(1).content] == [
+        {"character_johansen": "johansen_soaked"}, {"character_johansen": "johansen_soaked"}]
+    assert artifacts.read_validation("plan").invariant_failures == ()

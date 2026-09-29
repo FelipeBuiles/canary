@@ -37,13 +37,17 @@ import {
 import { createStyleDirection, generateStyleValidation, getStyles, suggestStyles, fetchStyleDirectionEstimate, fetchSuggestStylesEstimate, fetchStyleSampleEstimate, generateStyleSamples, setActiveStyle, updateStylePresentation } from "./styles";
 import { getProjectConfig, updateProjectConfig } from "./config";
 import {
-  listLabsModels,
-  getDefaultFixture,
-  listImportableProjects,
-  listProjectScenes,
-  importProjectScene,
+  listLabsProjects,
+  getImageCompareOptions,
+  listImageItems,
+  previewImageArms,
+  estimateImageCompare,
+  getStageModelOptions,
+  estimateStageModels,
+  type ImageArm,
   createLabsRun,
   deleteLabsRun,
+  retryLabsCells,
   listLabsRuns,
   getLabsRun,
   type LabsRunCreatePayload,
@@ -866,41 +870,50 @@ export function useCreateCheckout() {
 
 // ── Labs ──────────────────────────────────────────────────────────────────────
 
-export function useLabsModels() {
+export function useLabsProjects() {
+  return useQuery({ queryKey: ["labs", "projects"], queryFn: listLabsProjects });
+}
+
+export function useImageCompareOptions() {
+  return useQuery({ queryKey: ["labs", "image-compare", "options"], queryFn: getImageCompareOptions });
+}
+
+export function useImageItems(project: string) {
   return useQuery({
-    queryKey: ["labs", "models"],
-    queryFn: listLabsModels,
-    staleTime: 0,
+    queryKey: ["labs", "image-compare", "items", project],
+    queryFn: () => listImageItems(project),
+    enabled: !!project,
   });
 }
 
-export function useLabsFixture() {
+export function useImageArmPreview(body: { project: string; item: string; arms: ImageArm[] } | null) {
   return useQuery({
-    queryKey: ["labs", "fixtures", "default"],
-    queryFn: getDefaultFixture,
-    staleTime: Infinity,
+    queryKey: ["labs", "image-compare", "preview", body],
+    queryFn: () => previewImageArms(body!),
+    enabled: !!body,
+    retry: false,
   });
 }
 
-export function useLabsImportableProjects() {
+export function useImageCompareEstimate(body: { project: string; items: string[]; arms: ImageArm[] } | null) {
   return useQuery({
-    queryKey: ["labs", "projects"],
-    queryFn: listImportableProjects,
+    queryKey: ["labs", "image-compare", "estimate", body],
+    queryFn: () => estimateImageCompare(body!),
+    enabled: !!body,
+    retry: false,
   });
 }
 
-export function useLabsProjectScenes(projectId: string | undefined) {
-  return useQuery({
-    queryKey: ["labs", "projects", projectId, "scenes"],
-    queryFn: () => listProjectScenes(projectId!),
-    enabled: !!projectId,
-  });
+export function useStageModelOptions() {
+  return useQuery({ queryKey: ["labs", "stage-models"], queryFn: getStageModelOptions });
 }
 
-export function useImportLabsScene() {
-  return useMutation({
-    mutationFn: ({ projectId, sceneId, panelLimit }: { projectId: string; sceneId: string; panelLimit?: number }) =>
-      importProjectScene(projectId, { scene_id: sceneId, panel_limit: panelLimit ?? 8 }),
+export function useStageModelEstimate(body: { project: string; phases: string[]; models: string[] } | null) {
+  return useQuery({
+    queryKey: ["labs", "stage-models", "estimate", body],
+    queryFn: () => estimateStageModels(body!),
+    enabled: !!body,
+    retry: false,
   });
 }
 
@@ -925,21 +938,31 @@ export function useDeleteLabsRun() {
   });
 }
 
-export function useLabsRuns() {
-  return useQuery({
-    queryKey: ["labs", "runs"],
-    queryFn: listLabsRuns,
+export function useRetryLabsCells(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (cells?: string[]) => retryLabsCells(runId, cells),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["labs", "runs", runId] });
+      qc.invalidateQueries({ queryKey: ["labs", "runs"], exact: true });
+    },
   });
 }
 
+export function useLabsRuns() {
+  return useQuery({ queryKey: ["labs", "runs"], queryFn: listLabsRuns });
+}
+
 export function useLabsRun(runId: string | undefined) {
+  const qc = useQueryClient();
   return useQuery<LabsRunDetail>({
     queryKey: ["labs", "runs", runId],
-    queryFn: () => getLabsRun(runId!),
-    enabled: !!runId,
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      return data && data.status === "running" ? 1500 : false;
+    queryFn: async () => {
+      const run = await getLabsRun(runId!);
+      if (run.status !== "running") qc.invalidateQueries({ queryKey: ["labs", "runs"], exact: true });
+      return run;
     },
+    enabled: !!runId,
+    refetchInterval: (query) => (query.state.data?.status === "running" ? 2000 : false),
   });
 }

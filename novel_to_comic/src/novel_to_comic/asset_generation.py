@@ -42,7 +42,6 @@ from novel_to_comic.usage import ApiResult, estimate_image_cost
 
 AssetKind = Literal[
     "style_sample", "style_calibration", "character_ref", "location_plate", "prop_ref", "project_cover",
-    "labs_image",
 ]
 
 

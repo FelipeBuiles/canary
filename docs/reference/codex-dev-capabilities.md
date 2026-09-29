@@ -35,6 +35,13 @@ No generation turn was submitted for this upgrade. The changed runtime version
 changes the execution fingerprint, so an existing Draw edition retains its
 original runtime profile.
 
+On September 29, `gpt-6.1-sol` was added as an optional text/vision selector
+following the [official Codex model rollout documentation](https://developers.openai.com/codex/models#gpt-6.1-sol).
+The local cached catalog inspected that day did not yet list it; account access
+and live generation remain unverified. Runtime catalog validation still rejects
+unavailable models before submitting a turn. Existing selections and image
+profiles are unchanged.
+
 From the repository root, start the local stack with:
 
 ```sh

@@ -3,6 +3,60 @@ import { canonicalPath, maskReplayAttribute, maskReplayText, readAcquisition, sc
 
 describe("PostHog privacy boundary", () => {
   afterEach(() => vi.unstubAllEnvs());
+  it("keeps the configured ingestion token when scrubbing a real SDK pageview", async () => {
+    vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "phc_offline_test");
+    const { PostHog } = await import("posthog-js/dist/module.no-external");
+    const sdk = new PostHog();
+    const captured = vi.fn(scrubEvent);
+    sdk.init("phc_offline_test", {
+      persistence: "memory", capture_pageview: false, capture_pageleave: false,
+      autocapture: false, disable_session_recording: true, advanced_disable_decide: true,
+      person_profiles: "identified_only",
+      before_send: event => { captured(event); return null; }, // Never transmit test events.
+    });
+    sdk.capture("$pageview", { canonical_path: "/", token: "private", manuscript: "private" });
+    const result = captured.mock.results.at(-1)?.value;
+    expect(result?.properties).toMatchObject({
+      token: "phc_offline_test", $pathname: "/", $lib: "web", $process_person_profile: false,
+    });
+    expect(result?.properties.distinct_id).toBeTruthy();
+    expect(result?.properties.$session_id).toBeTruthy();
+    expect(JSON.stringify(result)).not.toContain("private");
+  });
+  it.each(["$identify", "$exception", "$autocapture", "signup_submitted", "$snapshot"])(
+    "keeps ingestion and diagnostic metadata on %s without admitting content", event => {
+      vi.stubEnv("VITE_POSTHOG_PROJECT_TOKEN", "phc_offline_test");
+      const result = scrubEvent({ uuid: "test", event, properties: {
+        token: "private", $session_id: "session-1", $window_id: "window-1", $snapshot_data: [],
+        $lib: "web", $lib_version: "1.434.15", $insert_id: "insert-1", $pageview_id: "view-1",
+        $browser: "Chrome", $browser_version: 140, $os: "Mac OS X", $os_version: "15.0",
+        $browser_language: "en-CA", $device_type: "Desktop", $timezone: "America/Toronto",
+        $screen_width: 1920, $viewport_height: 900, $timezone_offset: 240, $is_identified: true,
+        $raw_user_agent: "private", $set: { email: "private" }, prompt: "private", title: "private",
+        $session_entry_url: "http://localhost/project/private-id/pages?token=private#private",
+        $session_entry_referring_domain: "www.reddit.com", $referrer: "https://reddit.com/private",
+      } });
+      expect(result?.properties).toMatchObject({
+        token: "phc_offline_test", $lib: "web", $lib_version: "1.434.15", $pageview_id: "view-1",
+        $browser_version: 140, $os_version: "15.0", $browser_language: "en-CA",
+        $timezone: "America/Toronto", $screen_width: 1920, $viewport_height: 900, $is_identified: true,
+      });
+      if (event !== "$snapshot") expect(result?.properties).toMatchObject({
+        $session_entry_url: "http://localhost/project/:id/pages",
+        $session_entry_pathname: "/project/:id/pages", $session_entry_referring_domain: "reddit.com",
+      });
+      expect(JSON.stringify(result)).not.toContain("private");
+    },
+  );
+  it("rejects malformed metadata and unknown event types", () => {
+    const result = scrubEvent({ uuid: "test", event: "$exception", properties: {
+      $screen_width: Infinity, $browser_version: "private", $os: { text: "private" },
+      $timezone: "private value?", $is_identified: "private", unknown: "private",
+    } });
+    expect(result?.properties.$screen_width).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain("private");
+    expect(scrubEvent({ uuid: "test", event: "unknown", properties: {} })).toBeNull();
+  });
   it("labels browser exceptions with the configured release and environment", () => {
     vi.stubEnv("VITE_CANARY_VERSION", "abc123-dirty");
     vi.stubEnv("VITE_CANARY_ENV", "development");
