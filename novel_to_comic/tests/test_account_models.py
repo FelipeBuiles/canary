@@ -65,6 +65,25 @@ def test_operator_models_apply_to_every_production_project_and_require_token(cli
         assert resolved.plan_model == "mimo-v2.6-pro"
 
 
+@pytest.mark.parametrize("stage", ["extract", "brief", "prompt", "adapt", "plan", "ocr", "visual_review"])
+def test_sol_6_1_operator_selection_reaches_production_config(client, tmp_path, monkeypatch, stage):
+    from novel_to_comic.model_catalog import STAGE_FIELDS
+    from novel_to_comic.server.routers.backoffice import router as operator_router
+
+    monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType({"CANARY_ENV": "production"}))
+    monkeypatch.setenv("CANARY_OPS_TOKEN", "operator-secret")
+    client.app.include_router(operator_router, prefix="/api/ops/backoffice")
+    path = "/api/ops/backoffice/models"
+    headers = {"X-Canary-Ops-Token": "operator-secret"}
+    catalog = client.get(path, headers=headers).json()
+    assert any(model["id"] == "gpt-6.1-sol" and model["funding"] == "api" for model in catalog["models"])
+    saved = client.patch(path, headers=headers, json={"selections": {stage: "gpt-6.1-sol"}})
+    assert saved.status_code == 200
+    assert client.get(path, headers=headers).json()["selections"][stage] == "gpt-6.1-sol"
+    assert getattr(account_config(Config(), tmp_path, "alice"), STAGE_FIELDS[stage]) == "gpt-6.1-sol"
+    assert client.patch(path, headers=headers, json={"selections": {"draw": "gpt-6.1-sol"}}).status_code == 400
+
+
 def test_production_operator_model_save_allows_configured_origin(client, tmp_path, monkeypatch):
     from novel_to_comic.server.app import create_app
 

@@ -1451,7 +1451,7 @@ class TestStreamingOptOut:
         assert client._stream_text_enabled() is True
 
     @pytest.mark.parametrize("model", [
-        "gpt-6-sol", "gpt-6-luna", "claude-opus-5-5", "claude-sonnet-5-5",
+        "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "claude-opus-5-5", "claude-sonnet-5-5",
     ])
     def test_opting_out_falls_back_to_a_buffered_request(
         self, monkeypatch, _patch_events, model

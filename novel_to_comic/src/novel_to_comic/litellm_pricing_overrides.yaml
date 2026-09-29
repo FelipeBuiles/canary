@@ -3,6 +3,7 @@
 # GPT Image 2.5 estimated_* fields are reservation allowances, not tariffs;
 # expected_* fields settle completed requests whose provider charge is unreported.
 aliases:
+  gpt-6.1-sol: openai/gpt-6.1-sol
   gpt-6-sol: openai/gpt-6-sol
   gpt-6-luna: openai/gpt-6-luna
   claude-opus-5-5: anthropic/claude-opus-5-5
@@ -13,7 +14,7 @@ aliases:
   image-sunburst-openai: openai/gpt-image-2.5-sunburst
 model_overrides:
   # https://developers.openai.com/api/docs/models/gpt-6.1-sol (2026-09-29)
-  # Also prices Labs Codex subscription usage; this does not add an API route.
+  # Shared by the production API route and Labs Codex subscription usage.
   gpt-6.1-sol:
     input_cost_per_token: 2.0e-06
     cache_read_input_token_cost: 1.0e-07
