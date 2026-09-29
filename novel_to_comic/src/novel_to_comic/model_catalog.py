@@ -77,6 +77,21 @@ def subscription_models() -> list[dict]:
     return [*codex_models(), *claude_models()]
 
 
+# How each image provider key reads in model pickers. Sunburst names its
+# route order so operators and users can see where images are generated.
+_IMAGE_PROVIDER_LABELS = {
+    "openai": "OpenAI",
+    "openai-fal": "OpenAI, FAL backup",
+    "fal-queue": "FAL",
+    "openrouter": "OpenRouter",
+    "vertex-multimodal": "Google Vertex AI",
+}
+
+
+def image_provider_label(provider_key: str) -> str:
+    return _IMAGE_PROVIDER_LABELS.get(provider_key, provider_key)
+
+
 def models(*, include_codex: bool = True) -> list[dict]:
     return [
         *(subscription_models() if include_codex else []),
@@ -86,7 +101,7 @@ def models(*, include_codex: bool = True) -> list[dict]:
         } for model in TEXT_MODELS],
         *[{
             "id": model, "label": describe_image_model(model).display_name,
-            "provider": describe_image_model(model).provider_key,
+            "provider": image_provider_label(describe_image_model(model).provider_key),
             "kind": "image", "vision": True, "funding": "api",
         } for model in IMAGE_MODEL_ALIASES],
     ]

@@ -35,8 +35,11 @@ operator connection used by its other views.
 Text and vision choices are `gpt-6-sol`, `gpt-6-luna`,
 `claude-opus-5-5`, `claude-sonnet-5-5`, `mimo-v2.6-pro`, and
 `deepseek-v4.1-flash`.
-Image and Draw choices are `image-sunburst` only. The gateway maps these to
-OpenAI, Anthropic, OpenRouter/Xiaomi, Together AI, and FAL respectively.
+Image and Draw choices are `image-sunburst` only. The gateway maps the text
+choices to OpenAI, Anthropic, OpenRouter/Xiaomi, and Together AI respectively.
+`image-sunburst` runs on OpenAI first with one FAL attempt as backup, for
+Style/Cast images and Draw pages alike; model pickers label it "OpenAI, FAL
+backup". There is no route-priority setting.
 New Draw editions render pages at medium quality; Style/Cast images use
 `image_quality` (default medium). Set an Admin-scoped `FAL_ADMIN_KEY` on the
 gateway so Sunburst images settle at FAL's billed charge; without it they settle

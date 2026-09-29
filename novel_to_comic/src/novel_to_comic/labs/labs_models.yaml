@@ -8,4 +8,4 @@ models:
     multi_ref: true
     max_refs: 16
     approx_cost: 0.25
-    notes: "The production Sunburst route through the FAL queue handler."
+    notes: "The production Sunburst route: OpenAI first, one FAL attempt as backup."

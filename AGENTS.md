@@ -34,10 +34,11 @@ resources, not a mandatory onboarding sequence; reuse context already loaded.
   fixed profile; do not silently upgrade existing pages to a different model.
 - Request hashes identify input, not guaranteed provider deduplication.
   Avoid automatic retries after ambiguous paid image submissions. The one
-  approved exception (2026-09-28): `SunburstFallbackPageAdapter`
-  (`page_drawing.py`) makes one FAL attempt after an ambiguous OpenAI Sunburst
-  Draw submission. Canary absorbs the lost attempt's cost, but it is still
-  recorded in provenance, never hidden. Do not extend this to other routes.
+  approved exception (2026-09-28): `run_openai_first`
+  (`image_route_fallback.py`) makes one FAL attempt after an ambiguous OpenAI
+  Sunburst submission, for Draw pages and Style/Cast images alike. Canary
+  absorbs the lost attempt's cost, but it is still recorded in provenance,
+  never hidden. Do not extend this to other routes.
 - OCR observes base art only: unwanted comic lettering for hybrid profiles,
   canonical-copy checks for integrated profiles, including retained baked editions. It is optional evidence.
   Visual concerns require visual review;

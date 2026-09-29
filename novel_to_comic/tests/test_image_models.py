@@ -40,8 +40,8 @@ from novel_to_comic.image_models import (
         (
             "image-sunburst",
             ImageRoute.GPT_IMAGE_2,
-            "fal-queue/openai/gpt-image-2.5/sunburst",
-            "fal-queue",
+            "gpt-image-2.5-sunburst",
+            "openai-fal",
             "GPT Image 2.5 Sunburst",
         ),
         (
@@ -86,7 +86,22 @@ def test_production_alias_descriptions_match_litellm_config():
 
     assert set(configured_models) == set(IMAGE_MODEL_ALIASES)
     for alias, provider_model in configured_models.items():
+        if describe_image_model(alias).provider_key == "openai-fal":
+            continue  # Multi-route; its deployments are checked below.
         assert describe_image_model(alias).provider_model == provider_model
+
+
+def test_sunburst_routes_match_their_gateway_deployments():
+    from novel_to_comic.image_route_fallback import FAL_SUNBURST_GATEWAY_MODEL, OPENAI_SUNBURST_GATEWAY_MODEL
+
+    gateway_config = Path(__file__).resolve().parents[2] / "litellm" / "config.yaml"
+    deployments = {
+        item["model_name"]: item["litellm_params"]["model"]
+        for item in yaml.safe_load(gateway_config.read_text())["model_list"]
+    }
+    # The app alias names the OpenAI-first pair; each route is one deployment.
+    assert deployments[OPENAI_SUNBURST_GATEWAY_MODEL] == "openai-stream/gpt-image-2.5-sunburst"
+    assert deployments[FAL_SUNBURST_GATEWAY_MODEL] == "fal-queue/openai/gpt-image-2.5/sunburst"
 
 
 def test_labs_seedream_gateway_alias_resolves_to_fal_provider():
