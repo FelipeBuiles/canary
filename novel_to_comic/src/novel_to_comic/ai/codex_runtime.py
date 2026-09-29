@@ -403,6 +403,28 @@ async def _terminate(process: asyncio.subprocess.Process) -> None:
     await process.wait()
 
 
+async def _finish_cleanup(awaitable):
+    """Do not release the runtime lock while repeated cancellation leaves cleanup alive."""
+    task = asyncio.ensure_future(awaitable)
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            continue
+    return task.result()
+
+
+async def _watch_parent(parent_pid: int, owner: asyncio.Task) -> None:
+    """A detached runtime must not outlive a crashed/reloaded server."""
+    while os.getppid() == parent_pid:
+        await asyncio.sleep(1)
+    owner.cancel()
+    # Give SDK interruption/accounting a bounded opportunity, then terminate
+    # only this child's session (including its SDK subprocesses).
+    await asyncio.sleep(5)
+    os.killpg(os.getpgrp(), signal.SIGKILL)
+
+
 async def _run(request: dict[str, Any]) -> dict[str, Any]:
     if sys.platform != "darwin" or not Path("/usr/bin/sandbox-exec").is_file():
         raise CodexRuntimeError("unsupported_process_isolation_platform")
@@ -417,7 +439,7 @@ async def _run(request: dict[str, Any]) -> dict[str, Any]:
             root = Path(temp).resolve()
             env = _parent_environment()
             request_path = root / "request.json"
-            request_path.write_text(json.dumps(request), encoding="utf-8")
+            request_path.write_text(json.dumps({**request, "parent_pid": os.getpid()}), encoding="utf-8")
             request_path.chmod(0o600)
             spawning = asyncio.create_task(asyncio.create_subprocess_exec(
                 sys.executable, "-I", str(Path(__file__).resolve()), "--child", str(root),
@@ -428,8 +450,8 @@ async def _run(request: dict[str, Any]) -> dict[str, Any]:
             try:
                 process = await asyncio.shield(spawning)
             except asyncio.CancelledError as exc:
-                process = await asyncio.shield(spawning)
-                await asyncio.shield(_terminate(process))
+                process = await _finish_cleanup(spawning)
+                await _finish_cleanup(_terminate(process))
                 completed = _read_completed(root, request)
                 exc.metadata = {**_read_evidence(root), "process_group_terminated": True}
                 if completed is not None:
@@ -441,7 +463,7 @@ async def _run(request: dict[str, Any]) -> dict[str, Any]:
                 await asyncio.wait_for(process.wait(), timeout=_timeout_seconds(request) + CHILD_CLEANUP_SECONDS)
             except (asyncio.TimeoutError, asyncio.CancelledError) as exc:
                 cancelled = isinstance(exc, asyncio.CancelledError)
-                await asyncio.shield(_terminate(process))
+                await _finish_cleanup(_terminate(process))
                 evidence = _read_evidence(root)
                 evidence["process_group_terminated"] = True
                 if not cancelled:
@@ -958,10 +980,16 @@ async def _child(root: Path) -> None:
     import fcntl
 
     lock_fd = None
+    parent_watch = None
     task = asyncio.current_task()
     asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, task.cancel)
     _save_evidence(root, evidence)
     try:
+        request = json.loads((root / "request.json").read_text(encoding="utf-8"))
+        if parent_pid := request.get("parent_pid"):
+            if os.getppid() != parent_pid:
+                raise CodexRuntimeError("runtime_parent_exited")
+            parent_watch = asyncio.create_task(_watch_parent(parent_pid, task))
         lock_path = Path(tempfile.gettempdir()) / f"canary-codex-{os.getuid()}.lock"
         lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         try:
@@ -971,7 +999,6 @@ async def _child(root: Path) -> None:
         for package in ("openai-codex", "openai-codex-cli-bin"):
             if importlib.metadata.version(package) != SDK_VERSION:
                 raise CodexRuntimeError("unsupported_sdk_runtime_version")
-        request = json.loads((root / "request.json").read_text(encoding="utf-8"))
         evidence["timeout_seconds"] = _timeout_seconds(request)
         _save_evidence(root, evidence)
         result = await asyncio.wait_for(_execute(root, request, evidence), _timeout_seconds(request))
@@ -993,6 +1020,9 @@ async def _child(root: Path) -> None:
     finally:
         evidence["execution_elapsed_seconds"] = round(
             asyncio.get_running_loop().time() - execution_started, 3)
+        if parent_watch is not None:
+            parent_watch.cancel()
+            await asyncio.gather(parent_watch, return_exceptions=True)
         if lock_fd is not None:
             os.close(lock_fd)
     _save_evidence(root, evidence)

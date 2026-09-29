@@ -488,6 +488,8 @@ def test_generate_structured_object_raises_with_context_after_exhausting_retries
     assert "malformed JSON" in msg
     assert "gpt-5.6-terra" in msg
     assert "tru" in msg
+    assert len(exc_info.value.usage_records) == 3
+    assert sum(u.output_tokens for u in exc_info.value.usage_records) == 9
     assert isinstance(exc_info.value.__cause__, __import__("json").JSONDecodeError)
 
 

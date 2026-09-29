@@ -1,3 +1,45 @@
 {
-  "buildPath": "code"
+  "buildPath": "code",
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "tight-leading",
+        "value": "*",
+        "files": [
+          "supabase/templates/confirmation.html"
+        ],
+        "createdAt": "2026-09-29T20:01:02.540Z",
+        "reason": "Agent review: detector reports the hidden email preheader at 1px/1px; visible body text uses 1.57–1.67 line height. Compact display heading and single-line wordmark/button are intentional."
+      },
+      {
+        "rule": "overused-font",
+        "value": "arial",
+        "files": [
+          "supabase/templates/confirmation.html"
+        ],
+        "createdAt": "2026-09-29T20:01:02.632Z",
+        "reason": "Agent review: Arial is an intentional system-font fallback for transactional email clients that do not reliably load Scenewright web fonts; scoped to this email template."
+      },
+      {
+        "rule": "cream-palette",
+        "value": "*",
+        "files": [
+          "supabase/templates/confirmation.html"
+        ],
+        "createdAt": "2026-09-29T20:01:02.711Z",
+        "reason": "Agent review: #fcfaed is the existing pulp-paper brand token in web/src/index.css and the ink-on-paper palette explicitly documented in DESIGN.md; this email preserves that identity."
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "web/src/index.css"
+        ],
+        "createdAt": "2026-09-29T20:25:37.887Z",
+        "reason": "Agent review: the only detected stripe is .ui-field[aria-invalid=\"true\"], a bottom inset validation indicator on input/select/textarea controls used by Field.tsx, not a decorative card side accent. Preserve the existing error-state affordance."
+      }
+    ]
+  }
 }

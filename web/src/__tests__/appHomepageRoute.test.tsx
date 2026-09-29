@@ -52,6 +52,6 @@ describe("public homepage routing", () => {
       </MemoryRouter></QueryClientProvider>,
     );
 
-    expect(await screen.findByRole("button", { name: "SIGN IN" })).toBeTruthy();
+    expect(await screen.findByRole("form", { name: "Sign in" })).toBeTruthy();
   });
 });

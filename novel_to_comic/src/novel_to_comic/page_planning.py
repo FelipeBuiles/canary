@@ -76,6 +76,9 @@ _MIN_PLAN_GENERATION_CALLS = 64
 # provider wall-clock limits.  Sixteen thousand tokens still leaves ample room
 # for a long book map while keeping the reasoning phase bounded.
 _PAGE_MAP_MAX_OUTPUT_TOKENS = 16_000
+# Full panel descriptions and exact lettering exceed the generic 16k limit.
+_PLAN_BOOK_MAX_OUTPUT_TOKENS = 65_536
+_PLAN_DETAIL_MAX_OUTPUT_TOKENS = 32_768
 
 
 class PlanValidation(BaseModel):
@@ -948,13 +951,13 @@ async def _produce_book_plan_one_shot(
                         ),
                         user_content=attempt_prompt,
                         feature="plan.book",
+                        max_output_tokens=_PLAN_BOOK_MAX_OUTPUT_TOKENS,
                         json_schema=_plan_response_schema(references),
                     )
                     result = await generate(**request)
                 # A retried attempt was still paid for, so its usage is recorded
                 # without counting a completed item.
-                if result.usage is not None:
-                    ctx.record_api_usage(result.usage)
+                _record_plan_usage(ctx, result)
                 try:
                     draft = _BookPlanDraft.model_validate(
                         _normalize_book_plan_draft(
@@ -1399,6 +1402,7 @@ async def _generate_detail_batch(
                     ),
                     user_content=attempt_prompt,
                     feature="plan.detail",
+                    max_output_tokens=_PLAN_DETAIL_MAX_OUTPUT_TOKENS,
                     json_schema=_plan_response_schema(
                         references, page_map.pages[start:stop],
                         shared_panel=text_wire(model).claude_native_json,

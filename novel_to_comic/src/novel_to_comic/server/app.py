@@ -282,7 +282,8 @@ async def _lifespan(app: FastAPI):
     # before closing provider clients, allowing credited runners to settle.
     pipeline_tasks = list(app.state.running_tasks.values())
     style_tasks = list(app.state.style_tasks.values())
-    for task in [*pipeline_tasks, *style_tasks]:
+    labs_tasks = list(getattr(app.state, "labs_tasks", {}).values())
+    for task in [*pipeline_tasks, *style_tasks, *labs_tasks]:
         task.cancel()
     if not app.state.pricing_refresh_task.done():
         app.state.pricing_refresh_task.cancel()
@@ -295,6 +296,7 @@ async def _lifespan(app: FastAPI):
         *app.state.generation_worker_tasks,
         *pipeline_tasks,
         *style_tasks,
+        *labs_tasks,
         return_exceptions=True,
     )
     # Accepted but unstarted commands remain durable across shutdown. Running

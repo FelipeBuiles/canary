@@ -1,4 +1,4 @@
-# Active API routes only; retired model aliases and overrides are removed.
+# Active API routes and API-equivalent rates for local subscription models.
 # Current selectable rates are checked against provider model pages.
 # GPT Image 2.5 estimated_* fields are reservation allowances, not tariffs;
 # expected_* fields settle completed requests whose provider charge is unreported.
@@ -12,6 +12,18 @@ aliases:
   image-sunburst: openai/gpt-image-2.5/sunburst
   image-sunburst-openai: openai/gpt-image-2.5-sunburst
 model_overrides:
+  # https://developers.openai.com/api/docs/models/gpt-6.1-sol (2026-09-29)
+  # Also prices Labs Codex subscription usage; this does not add an API route.
+  gpt-6.1-sol:
+    input_cost_per_token: 2.0e-06
+    cache_read_input_token_cost: 1.0e-07
+    output_cost_per_token: 1.0e-05
+    input_cost_per_token_above_272k_tokens: 4.0e-06
+    cache_read_input_token_cost_above_272k_tokens: 2.0e-07
+    output_cost_per_token_above_272k_tokens: 1.5e-05
+    mode: chat
+    max_input_tokens: 1050000
+    max_output_tokens: 128000
   # https://developers.openai.com/api/docs/models/gpt-6-sol (2026-09-22)
   gpt-6-sol:
     input_cost_per_token: 2.0e-06

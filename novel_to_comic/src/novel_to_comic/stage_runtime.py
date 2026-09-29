@@ -175,7 +175,10 @@ class StageRuntime:
                 from novel_to_comic.text_utils import clean_exception_message
                 from novel_to_comic.server.diagnostics import local_diagnostics_enabled
 
-                from novel_to_comic.ai.errors import AIRefusalError
+                from novel_to_comic.ai.errors import AIRefusalError, AIStructuredResponseError
+                if isinstance(exc, AIStructuredResponseError):
+                    for usage in exc.usage_records:
+                        self.record_api_usage(usage)
                 from novel_to_comic.generation_budget import GenerationWorkLimitError
 
                 error_detail = None

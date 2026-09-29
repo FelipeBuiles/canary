@@ -707,7 +707,8 @@ def test_gpt6_text_selection_uses_exact_catalog_model(sdk, model):
 
 @pytest.fixture
 def supported_host(monkeypatch):
-    # Simulated host only; no claim about actual sandbox enforcement.
+    # Simulated host/child in this process; no actual sandbox enforcement.
+    monkeypatch.setattr(runtime.os, "getppid", lambda: runtime.os.getpid())
     monkeypatch.setattr(runtime, "sys", SimpleNamespace(platform="darwin", executable=sys.executable))
     monkeypatch.setattr(runtime, "_parent_environment", lambda: {})
     original_is_file = Path.is_file
@@ -1085,3 +1086,61 @@ def test_queued_codex_calls_report_execution_only_after_the_runtime_lock(support
         assert started == ["queued call"]
 
     asyncio.run(exercise())
+
+
+def test_repeated_cancellation_drains_runtime_before_releasing_lock(monkeypatch, supported_host):
+    async def scenario():
+        waiting, cleaning, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        class Process:
+            async def wait(self):
+                waiting.set()
+                await asyncio.Future()
+
+        async def spawn(*args, **kwargs):
+            return Process()
+
+        async def terminate(process):
+            cleaning.set()
+            await release.wait()
+
+        monkeypatch.setattr(runtime.asyncio, "create_subprocess_exec", spawn)
+        monkeypatch.setattr(runtime, "_terminate", terminate)
+        monkeypatch.setattr(runtime, "_LOCK", asyncio.Lock())
+        task = asyncio.create_task(runtime._run({"kind": "text", "model": "test"}))
+        await waiting.wait()
+        task.cancel()
+        await cleaning.wait()
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        assert runtime._LOCK.locked()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not runtime._LOCK.locked()
+
+    asyncio.run(scenario())
+
+
+def test_parent_loss_interrupts_then_kills_only_owned_session(monkeypatch):
+    async def scenario():
+        events = []
+        monkeypatch.setattr(runtime.os, "getppid", lambda: 1)
+        monkeypatch.setattr(runtime.os, "getpgrp", lambda: 12345)
+        monkeypatch.setattr(runtime.os, "killpg", lambda group, sig: events.append((group, sig)))
+        async def grace(seconds):
+            events.append(seconds)
+        monkeypatch.setattr(runtime.asyncio, "sleep", grace)
+        await runtime._watch_parent(99, SimpleNamespace(cancel=lambda: events.append("cancel")))
+        assert events == ["cancel", 5, (12345, runtime.signal.SIGKILL)]
+    asyncio.run(scenario())
+
+
+def test_orphaned_child_refuses_before_sdk_submission(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime.os, "getppid", lambda: 1)
+    (tmp_path / "request.json").write_text(json.dumps({"kind": "text", "parent_pid": 99}))
+    asyncio.run(runtime._child(tmp_path))
+    result = json.loads((tmp_path / "result.json").read_text())
+    assert result["error"] == "runtime_parent_exited"
+    assert result["metadata"]["submitted"] is False
