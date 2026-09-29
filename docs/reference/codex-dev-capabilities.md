@@ -14,7 +14,7 @@ requirement was explicitly relaxed for built-in tools, live probes and
 
 The optional SDK is lazy-loaded; API-only startup does not require it.
 Before using the default development launcher, explicitly install the optional
-SDK and bundled CLI into the existing backend environment, both pinned to 0.156.1:
+SDK and bundled CLI into the existing backend environment, both pinned to 0.159.0:
 
 ```sh
 uv pip install --python novel_to_comic/.venv/bin/python -r scripts/requirements-codex-dev.txt
@@ -37,10 +37,31 @@ original runtime profile.
 
 On September 29, `gpt-6.1-sol` was added as an optional text/vision selector
 following the [official Codex model rollout documentation](https://developers.openai.com/codex/models#gpt-6.1-sol).
-The local cached catalog inspected that day did not yet list it; account access
-and live generation remain unverified. Runtime catalog validation still rejects
-unavailable models before submitting a turn. Existing selections and image
-profiles are unchanged.
+An authenticated catalog comparison found it absent in bundled Codex 0.156.1
+and present in 0.159.0 with text and image input support and no next page. The
+optional SDK and bundled runtime were upgraded together to 0.159.0. A live
+structured-text probe through the adapter completed with the exact model and
+provider, no inherited instruction sources, and the restricted execution
+boundary intact. It transcribed an attached image as `{"text":"CANARY"}` and
+passed schema validation (2,447 input tokens, 16 output tokens; subscription
+funding). The local probe ID is `77049c6b1bde48229bb9f939f802cf9c`.
+This verifies account access and one text/vision call, not a complete Labs run
+or image generation. Runtime catalog validation still rejects unavailable
+models before submitting a turn. Restart the backend after upgrading; existing
+selections remain unchanged and retained Draw editions keep their original
+runtime fingerprint.
+
+A separate September 29 image probe with `gpt-6.1-sol` on 0.159.0 failed
+with `image_output_missing` (probe `73edc198e3874cef8131ee9283b5d864`).
+Provider image/namespace capabilities, account eligibility, image input support,
+and the effective image-generation feature passed. The submitted turn completed
+with only an assistant message saying the image tool was unavailable; no
+image-generation item or image bytes were observed. This does not verify image
+generation support for this reasoner, and no automatic retry was submitted.
+The [0.159.0 image-tool source](https://github.com/openai/codex/blob/rust-v0.159.0/codex-rs/ext/image-generation/src/tool.rs#L58)
+still requests `gpt-image-2`, not a 2.5 selector. The SDK result schema does not
+expose the resolved backend image-model identity, so neither a generated 2.0
+image nor a generated 2.5 image was established by this probe.
 
 From the repository root, start the local stack with:
 
@@ -158,7 +179,7 @@ Review generated pages and OCR findings before Finish. See the scoped
 ## Restricted runtime
 
 The [adapter runtime](../../novel_to_comic/src/novel_to_comic/ai/codex_runtime.py)
-uses the official [0.156.1 async client][client156] and supported config/account/
+uses the official [0.159.0 async client][client159] and supported config/account/
 models/thread/turn APIs. The child receives an exact replacement environment from
 an allowlisted original-process snapshot, not an environment merged with backend
 secrets. Temporary image attachments are read-only; HOME retains intended local
@@ -512,8 +533,8 @@ images do not claim a full-book run or uninterrupted extraction-to-Finish proof.
 [api-guide]: https://developers.openai.com/api/docs/guides/image-generation
 [sunburst]: https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst
 [flare]: https://developers.openai.com/api/docs/models/gpt-image-2.5-flare
-[pypi-sdk]: https://pypi.org/pypi/openai-codex/0.156.1/json
-[pypi-runtime]: https://pypi.org/pypi/openai-codex-cli-bin/0.156.1/json
-[client156]: https://github.com/openai/codex/blob/rust-v0.156.1/sdk/python/src/openai_codex/client.py
+[pypi-sdk]: https://pypi.org/pypi/openai-codex/0.159.0/json
+[pypi-runtime]: https://pypi.org/pypi/openai-codex-cli-bin/0.159.0/json
+[client159]: https://github.com/openai/codex/blob/rust-v0.159.0/sdk/python/src/openai_codex/client.py
 [image147]: https://github.com/openai/codex/blob/rust-v0.147.0/codex-rs/ext/image-generation/src/tool.rs
 [image153]: https://github.com/openai/codex/blob/rust-v0.153.4/codex-rs/ext/image-generation/src/tool.rs
