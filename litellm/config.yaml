@@ -7,6 +7,30 @@
 # litellm/tests/test_gateway_contracts.py checks that prices match the app's
 # pricing overrides and that no route depends on the fetched map.
 model_list:
+- model_name: gpt-6.1-sol
+  litellm_params:
+    model: openai/gpt-6.1-sol
+    api_key: os.environ/OPENAI_API_KEY
+    reasoning_effort: low
+  model_info:
+    mode: chat
+    supports_reasoning: true
+    supports_none_reasoning_effort: false
+    supports_xhigh_reasoning_effort: true
+    supports_max_reasoning_effort: true
+    supports_response_schema: true
+    supports_system_messages: true
+    supports_vision: true
+    supports_native_streaming: true
+    supports_prompt_caching: true
+    max_input_tokens: 922000
+    max_output_tokens: 128000
+    input_cost_per_token: 2.0e-06
+    cache_read_input_token_cost: 1.0e-07
+    output_cost_per_token: 1.0e-05
+    input_cost_per_token_above_272k_tokens: 4.0e-06
+    cache_read_input_token_cost_above_272k_tokens: 2.0e-07
+    output_cost_per_token_above_272k_tokens: 1.5e-05
 - model_name: gpt-6-sol
   litellm_params:
     model: openai/gpt-6-sol

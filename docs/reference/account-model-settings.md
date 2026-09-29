@@ -32,7 +32,7 @@ operator connection used by its other views.
 | Lettering checks | GPT-6 Luna | OCR and canonical copy checks |
 | Visual review | GPT-6 Luna | Visual consistency checks |
 
-Text and vision choices are `gpt-6-sol`, `gpt-6-luna`,
+Text and vision choices are `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`,
 `claude-opus-5-5`, `claude-sonnet-5-5`, `mimo-v2.6-pro`, and
 `deepseek-v4.1-flash`.
 Image and Draw choices are `image-sunburst` only. The gateway maps the text

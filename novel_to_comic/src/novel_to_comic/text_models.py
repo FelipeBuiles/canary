@@ -41,6 +41,7 @@ class TextModel:
 
 
 TEXT_MODELS = (
+    TextModel("gpt-6.1-sol", "GPT-6.1 Sol", "OpenAI", "openai", temperature=False),
     TextModel("gpt-6-sol", "GPT-6 Sol", "OpenAI", "openai", temperature=False),
     TextModel("gpt-6-luna", "GPT-6 Luna", "OpenAI", "openai", temperature=False),
     # Text routes run at low effort; Claude defaults (``high`` on Sonnet,
