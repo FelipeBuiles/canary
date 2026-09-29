@@ -352,11 +352,14 @@ def _attachments(refs: tuple[tuple[bytes, str], ...]) -> list[dict[str, str]]:
 
 async def run_text(*, model: str, system_prompt: str, user_content: str,
                    json_schema: dict[str, Any] | None = None,
-                   image_attachments: tuple[tuple[bytes, str], ...] = ()) -> CodexTextResult:
+                   image_attachments: tuple[tuple[bytes, str], ...] = (),
+                   effort: str | None = None) -> CodexTextResult:
     from novel_to_comic.ai.codex_schema import strict_output_schema
 
+    if effort is not None and effort not in {"low", "medium", "high"}:
+        raise ValueError("Text reasoning effort must be low, medium, or high")
     result = await _run({"kind": "text", "model": model, "system_prompt": system_prompt,
-                         "prompt": user_content,
+                         "prompt": user_content, "effort": effort,
                          "schema": strict_output_schema(json_schema) if json_schema is not None else None,
                          "references": _attachments(image_attachments)})
     return CodexTextResult(result["text"], result.get("input_tokens"),
@@ -588,6 +591,7 @@ _DISABLED_FEATURES = (
 def _config(root: Path, request: dict[str, Any], profile: str) -> dict[str, Any]:
     workspace = root / "workspace"
     return {
+        **({"model_reasoning_effort": request["effort"]} if request.get("effort") else {}),
         "model_provider": PROVIDER,
         "forced_login_method": "chatgpt", "approval_policy": "never",
         "approvals_reviewer": "user", "web_search": "disabled", "notify": [],

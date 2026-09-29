@@ -16,6 +16,8 @@ Production stage models are overlaid from operator settings when a job config is
 | `_one_shot_image_model_alias` | `str | None` | `PrivateAttr(default=None)` |  |
 | `litellm_base_url` | `str` | `'http://localhost:4000'` |  |
 | `litellm_api_key` | `str` | `'sk-local-canary'` |  |
+| `text_reasoning_efforts` | `dict[str, str]` | `Field(default_factory=dict)` |  |
+| `text_reasoning_effort` | `Literal['low', 'medium', 'high']` | `'medium'` |  |
 | `ai_bill_failed_requests` | `FailedRequestBillingPolicy` | `'provider_usage_only'` |  |
 | `mock_mode` | `bool` | `False` |  |
 | `mock_model_base_url` | `str` | `'http://127.0.0.1:4010'` |  |

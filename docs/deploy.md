@@ -405,7 +405,8 @@ Copy `docs/ops/release-evidence-template.md` for each customer-facing release.
 
 ### CI-managed production deployment
 
-Run the `CI` workflow manually against `main` to request a production release.
+Every push to `main` automatically requests a production release through `CI`.
+Manual dispatch on `main` remains available for reruns and offline recovery.
 For offline recovery when production machines are already stopped, select
 `skip_drain` in the manual dispatch form (CLI: `gh workflow run ci.yml --ref main
 -F skip_drain=true`). This explicit override skips only the HTTP drain step and
@@ -413,9 +414,9 @@ records the choice in the run summary; builds, smoke tests, and deployment
 verification still run. It defaults to false. An unreachable endpoint alone
 does not establish that machines are stopped; normal releases still require drain.
 
-The manual dispatch is the operator's confirmation that the maintenance window
-is active. The `Deploy production` job starts only after the backend, frontend,
-and production-image jobs pass for the exact SHA; it then:
+Prepare any required maintenance restrictions before pushing to `main`. The
+`Deploy production` job starts only after backend, frontend, production-image,
+gateway, and root-tooling jobs pass for the exact SHA; it then:
 
 1. Authenticates `POST /api/ops/drain`, then waits for deployment status to show
    both `draining: true` and `safe_to_deploy: true`. Queued durable operations
@@ -434,13 +435,13 @@ and production-image jobs pass for the exact SHA; it then:
 
 The workflow deliberately has no production database credential and cannot
 apply schema changes. If a release requires a database change, complete the
-reviewed manual operation in Step 1 before dispatching the deployment.
+reviewed manual operation in Step 1 before pushing the release to `main`.
 
-**Release cancellation protection:** each manual dispatch has a unique
-workflow concurrency group and disables automatic cancellation; ordinary
-push/PR runs still cancel superseded CI on the same ref. The existing
+**Release cancellation protection:** each main push and manual dispatch has a unique
+workflow concurrency group and disables automatic cancellation; PR runs
+still cancel superseded CI on the same ref. The existing
 `production-deploy` job group runs one deployment at a time and uses
-`queue: max` so later dispatches do not replace an earlier pending deploy.
+`queue: max` so later releases do not replace an earlier pending deploy.
 GitHub caps this queue at 100 pending jobs; additional requests are cancelled.
 These semantics follow [GitHub's concurrency documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#concurrency).
 
@@ -465,8 +466,8 @@ Do not store the Supabase service-role key as a `VITE_*` value. The deploy job
 closes server admission but does not announce a customer maintenance window.
 It cannot bootstrap drain on an old binary: complete the controlled first
 cutover and stop the old process before using the offline recovery option.
-If the repository plan supports required
-environment reviewers, enabling one adds a useful second approval.
+For unattended deployment, leave required environment reviewers disabled;
+configured reviewers would still require approval before deployment.
 
 ### Drain, wait for idle, and explicitly resume
 

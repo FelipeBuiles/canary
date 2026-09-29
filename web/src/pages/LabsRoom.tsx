@@ -26,6 +26,7 @@ import {
   type LabsRunDetail,
   type LabsRunSummary,
   type StageModelCell,
+  type LabsReasoning,
   type StageResult,
 } from "../api/labs";
 import { SectionHeader } from "../components/composites";
@@ -388,12 +389,18 @@ function StageModelsSetup({ projects, onStarted }: { projects: LabsProject[]; on
   const project = picked || projects[0]?.id || "";
   const [phases, setPhases] = useState<string[]>(["extract_brief", "adapt_plan"]);
   const [models, setModels] = useState<string[] | null>(null);
+  const [reasoningDraft, setReasoning] = useState<LabsReasoning>({});
   const chosenModels = models ?? data?.default_models ?? [];
   const source = projects.find((candidate) => candidate.id === project);
   const adaptReady = !!source && ["brief", "style", "cast"].every((stage) => READY.has(source.statuses[stage] ?? ""));
   const activePhases = phases.filter((phase) => phase !== "adapt_plan" || adaptReady);
+  const activeStages = activePhases.flatMap((phase) => data?.phases[phase] ?? []);
+  const reasoning = Object.fromEntries(chosenModels.map((id) => {
+    const model = data?.models.find((candidate) => candidate.id === id);
+    return [id, Object.fromEntries(activeStages.map((stage) => [stage, reasoningDraft[id]?.[stage] ?? model?.default_reasoning ?? "medium"]))];
+  }));
   const request = source && activePhases.length && chosenModels.length >= 2
-    ? { project, phases: activePhases, models: chosenModels } : null;
+    ? { project, phases: activePhases, models: chosenModels, reasoning_efforts: reasoning } : null;
   const estimate = useStageModelEstimate(request);
   const providers = useMemo(() => {
     const groups = new Map<string, NonNullable<typeof data>["models"]>();
@@ -437,7 +444,7 @@ function StageModelsSetup({ projects, onStarted }: { projects: LabsProject[]; on
           ))}
         </fieldset>
         <fieldset>
-          <legend className={META}>Models (2–4)</legend>
+          <legend className={META}>Models (2–6)</legend>
           <div className="grid gap-x-5 sm:grid-cols-2">
             {providers.map(([provider, group]) => (
               <div key={provider} className="mt-2">
@@ -446,7 +453,7 @@ function StageModelsSetup({ projects, onStarted }: { projects: LabsProject[]; on
                   <Checkbox
                     key={model.id}
                     checked={chosenModels.includes(model.id)}
-                    disabled={!model.available || (!chosenModels.includes(model.id) && chosenModels.length >= 4)}
+                    disabled={!model.available || (!chosenModels.includes(model.id) && chosenModels.length >= 6)}
                     onChange={(next) => setModels(toggle(chosenModels, model.id, next))}
                   >
                     <span className="font-body text-sm">{model.label}</span>
@@ -463,6 +470,27 @@ function StageModelsSetup({ projects, onStarted }: { projects: LabsProject[]; on
           </div>
         </fieldset>
       </div>
+      <fieldset className="space-y-3">
+        <legend className={META}>Reasoning per model and stage</legend>
+        <p className="font-body text-sm text-ink-muted">These choices apply to this comparison. Higher reasoning can increase latency and token usage; estimates use the source project's recorded tokens.</p>
+        {chosenModels.map((id) => {
+          const model = data.models.find((candidate) => candidate.id === id);
+          if (!model) return null;
+          return <Surface key={id} padding="sm" shadow="none" border="soft">
+            <p className="font-meta text-xs font-bold">{model.label}</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {activeStages.map((stage) => <label key={stage} className="font-body text-xs">
+                {stage[0].toUpperCase() + stage.slice(1)}
+                <select aria-label={`${model.label} ${stage} reasoning`} className="mt-1 w-full border-2 border-ink-black/20 bg-bristol p-2 font-body text-sm"
+                  disabled={create.isPending} value={reasoning[id][stage]}
+                  onChange={(event) => setReasoning((current) => ({ ...current, [id]: { ...current[id], [stage]: event.target.value } }))}>
+                  {model.reasoning_options.map((value) => <option key={value} value={value}>{value === "none" ? "Off" : value === "enabled" ? "On" : value[0].toUpperCase() + value.slice(1)}</option>)}
+                </select>
+              </label>)}
+            </div>
+          </Surface>;
+        })}
+      </fieldset>
       <div className="flex flex-wrap items-center gap-3">
         <Button
           disabled={!request || create.isPending}
@@ -753,6 +781,7 @@ function StageModelsRun({ run }: { run: LabsRunDetail }) {
                       <span className="text-ink-muted"> · ≈{usd(estimate[cell.model], 2)} est. for all phases</span>
                     )}
                   </p>
+                  {cell.reasoning_efforts && <p className="mt-1 font-body text-xs text-ink-muted">Reasoning: {Object.entries(cell.reasoning_efforts).map(([stage, effort]) => `${stage}: ${effort === "none" ? "Off" : effort === "enabled" ? "On" : effort}`).join(" · ")}</p>}
                   {cell.error && <p className="mt-1 font-body text-sm text-hero-red">{cell.error}</p>}
                 </Surface>
               ))}

@@ -14,12 +14,13 @@ from pathlib import Path
 
 from novel_to_comic.codex_dev import CodexRoutingError, is_subscription_selector, process_setting, route_for, validate_local_runtime
 from novel_to_comic.config import Config
+from novel_to_comic.text_models import TEXT_REASONING_STAGES, default_reasoning, reasoning_options
 from novel_to_comic.model_catalog import STAGE_FIELDS, allowed_models, default_selections, validate_selections
 
 # Creation/import must not bypass the config edit API's trust boundary. These
 # affect provider routing, credentials or billing, not a customer's book.
 _SERVER_OWNED_CREATION_FIELDS = frozenset({
-    "litellm_base_url", "litellm_api_key", "ai_bill_failed_requests",
+    "litellm_base_url", "litellm_api_key", "ai_bill_failed_requests", "text_reasoning_effort", "text_reasoning_efforts",
     "mock_mode", "mock_model_base_url", "google_use_vertex_ai",
     "google_cloud_project", "google_cloud_location",
 })
@@ -88,9 +89,35 @@ def read_global_selections(root: Path) -> dict[str, str]:
     return {**default_selections(), **_read(root / ".operator-model-settings.json")}
 
 
-def update_global_selections(root: Path, changes: dict) -> dict[str, str]:
+def read_global_effort(root: Path) -> str:
+    path = root / ".operator-model-settings.json"
+    if not path.exists():
+        return "medium"
+    effort = json.loads(path.read_text()).get("text_reasoning_effort", "medium")
+    if effort not in ("low", "medium", "high"):
+        raise ValueError("Text reasoning effort must be low, medium, or high")
+    return effort
+
+
+def read_global_reasoning(root: Path, selections: dict[str, str]) -> dict[str, str]:
+    path = root / ".operator-model-settings.json"
+    saved = json.loads(path.read_text()).get("reasoning_efforts", {}) if path.exists() else {}
+    if not isinstance(saved, dict):
+        raise ValueError("Saved reasoning efforts must be a mapping")
+    default_effort = read_global_effort(root)
+    result = {stage: default_reasoning(selections[stage], default_effort) for stage in TEXT_REASONING_STAGES}
+    for stage, effort in saved.items():
+        if stage not in result or effort not in reasoning_options(selections[stage]):
+            raise ValueError(f"Unsupported reasoning setting for {stage}: {effort}")
+        result[stage] = effort
+    return result
+
+
+def update_global_selections(root: Path, changes: dict, text_reasoning_effort: str | None = None, reasoning_efforts: dict[str, str] | None = None) -> dict[str, str]:
     """Atomically update production-capable defaults without accepting Codex routes."""
     validate_selections(changes)
+    if text_reasoning_effort is not None and text_reasoning_effort not in ("low", "medium", "high"):
+        raise ValueError("Text reasoning effort must be low, medium, or high")
     if any(is_subscription_selector(model) for model in changes.values()):
         raise ValueError("Subscription models cannot be selected as operator defaults")
     root.mkdir(parents=True, exist_ok=True)
@@ -98,12 +125,25 @@ def update_global_selections(root: Path, changes: dict) -> dict[str, str]:
     with (root / ".operator-model-settings.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         saved = _read_raw(path)
-        selections = {**read_global_selections(root), **changes}
+        previous = read_global_selections(root)
+        reasoning = read_global_reasoning(root, previous)
+        selections = {**previous, **changes}
+        for stage in TEXT_REASONING_STAGES:
+            if reasoning[stage] not in reasoning_options(selections[stage]):
+                reasoning[stage] = default_reasoning(selections[stage], text_reasoning_effort or read_global_effort(root))
+            elif text_reasoning_effort and stage not in (reasoning_efforts or {}) and previous[stage] == selections[stage]:
+                reasoning[stage] = default_reasoning(selections[stage], text_reasoning_effort)
+        for stage, effort in (reasoning_efforts or {}).items():
+            if stage not in TEXT_REASONING_STAGES or effort not in reasoning_options(selections[stage]):
+                raise ValueError(f"Unsupported reasoning setting for {stage}: {effort}")
+            reasoning[stage] = effort
         _require_available_routes(selections)
         fd, temporary = tempfile.mkstemp(prefix=".operator-model-settings-", dir=root)
         try:
             with os.fdopen(fd, "w") as output:
-                json.dump({"version": 1, "selections": {**saved, **changes}}, output, indent=2)
+                json.dump({"version": 1, "selections": {**saved, **changes},
+                           "text_reasoning_effort": text_reasoning_effort or read_global_effort(root),
+                           "reasoning_efforts": reasoning}, output, indent=2)
                 output.flush()
                 os.fsync(output.fileno())
             os.replace(temporary, path)
@@ -153,7 +193,12 @@ def account_config(config: Config, root: Path, user_id: str) -> Config:
         selections.update(read_selections(root, user_id))
         selections.update(_supported_saved_selections(config.dev_model_selections))
     _require_available_routes(selections)
-    return config.model_copy(deep=True, update={STAGE_FIELDS[k]: v for k, v in selections.items()})
+    return config.model_copy(deep=True, update={
+        **{STAGE_FIELDS[k]: v for k, v in selections.items()},
+        "text_reasoning_effort": read_global_effort(root),
+        "text_reasoning_efforts": {stage: effort for stage, effort in read_global_reasoning(root, read_global_selections(root)).items()
+                                    if effort in reasoning_options(selections[stage])},
+    })
 
 
 def creation_config(overrides: dict, root: Path, user_id: str) -> Config:

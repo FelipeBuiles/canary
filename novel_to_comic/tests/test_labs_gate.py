@@ -103,3 +103,32 @@ def test_labs_run_files_never_resolve_outside_their_run(tmp_path):
             storage.run_file(tmp_path, run["run_id"], escape)
     with _pytest.raises(ValueError):
         storage.run_dir(tmp_path, "../x")
+
+
+def test_labs_reasoning_is_validated_before_creating_run(monkeypatch, tmp_path):
+    from novel_to_comic.server.routers import labs
+    from novel_to_comic.labs import stage_models, storage
+    client = _labs_client(monkeypatch, tmp_path)
+    source = tmp_path / "owner" / "story"
+    source.mkdir(parents=True)
+    monkeypatch.setattr(stage_models, "validate_spec", lambda *args: None)
+    monkeypatch.setattr(stage_models, "estimate_usd", lambda source, phases, models: {model: None for model in models})
+    dispatched = []
+    def start(request, root, run_id, coroutine):
+        dispatched.append(run_id)
+        coroutine.close()
+    monkeypatch.setattr(labs, "_start", start)
+    body = {"kind": "stage_models", "project": "story", "phases": ["extract_brief"],
+            "models": ["gpt-6-sol", "mimo-v2.6-pro"],
+            "reasoning_efforts": {"mimo-v2.6-pro": {"extract": "medium"}}}
+    assert client.post("/api/labs/runs", json=body).status_code == 400
+    assert client.post("/api/labs/stage-models/estimate", json=body).status_code == 400
+    assert not dispatched
+    assert not storage.list_runs(tmp_path / "owner")
+    body["reasoning_efforts"] = {"mimo-v2.6-pro": {"extract": "enabled"}, "gpt-6-sol": {"brief": "low"}}
+    result = client.post("/api/labs/runs", json=body)
+    assert result.status_code == 200
+    selected = result.json()["spec"]["reasoning_efforts"]
+    assert selected == {"mimo-v2.6-pro": {"extract": "enabled", "brief": "none"},
+                        "gpt-6-sol": {"extract": "medium", "brief": "low"}}
+    assert dispatched == [result.json()["run_id"]]

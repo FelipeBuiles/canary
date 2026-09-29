@@ -17,7 +17,9 @@ from ..release import release_identity
 from ..runtime_environment import stripe_environment_snapshot
 from novel_to_comic.state import STAGE_NAMES, StageStatus, is_stale, load_state
 from novel_to_comic.model_catalog import STAGE_FIELDS as MODEL_STAGE_FIELDS, STAGE_LABELS as MODEL_STAGE_LABELS, STAGE_DESCRIPTIONS as MODEL_STAGE_DESCRIPTIONS, allowed_models, models
-from ..account_models import read_global_selections, update_global_selections
+from ..account_models import read_global_reasoning, read_global_effort, read_global_selections, update_global_selections
+
+from novel_to_comic.text_models import reasoning_options
 
 router = APIRouter(dependencies=[Depends(require_ops_token)])
 logger = logging.getLogger("canary.backoffice")
@@ -51,7 +53,9 @@ class GrantCreditsRequest(BaseModel):
 
 class OperatorModelSettingsPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    selections: dict[str, str]
+    selections: dict[str, str] = Field(default_factory=dict)
+    text_reasoning_effort: str | None = None
+    reasoning_efforts: dict[str, str] = Field(default_factory=dict)
 
 
 def _rows(response: Any) -> list[dict[str, Any]]:
@@ -798,9 +802,14 @@ def backoffice_snapshot(request: Request):
     return _load_snapshot(request)
 
 
-def _operator_model_payload(selections: dict[str, str]) -> dict[str, Any]:
+def _operator_model_payload(selections: dict[str, str], effort: str, reasoning: dict[str, str]) -> dict[str, Any]:
     return {
         "selections": selections,
+        "text_reasoning_effort": effort,
+        "reasoning_efforts": reasoning,
+        "reasoning_options": {model["id"]: list(reasoning_options(model["id"]))
+                              for model in models(include_codex=False) if model["kind"] == "text"},
+        "text_reasoning_effort_options": ["low", "medium", "high"],
         "models": models(include_codex=False),
         "stages": [
             {"id": stage, "label": MODEL_STAGE_LABELS[stage],
@@ -815,7 +824,9 @@ def _operator_model_payload(selections: dict[str, str]) -> dict[str, Any]:
 @router.get("/models")
 def operator_model_settings(request: Request):
     try:
-        return _operator_model_payload(read_global_selections(request.app.state.projects_dir))
+        return _operator_model_payload(read_global_selections(request.app.state.projects_dir),
+                                       read_global_effort(request.app.state.projects_dir),
+                                       read_global_reasoning(request.app.state.projects_dir, read_global_selections(request.app.state.projects_dir)))
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -823,8 +834,9 @@ def operator_model_settings(request: Request):
 @router.patch("/models")
 def patch_operator_model_settings(body: OperatorModelSettingsPatch, request: Request):
     try:
-        selections = update_global_selections(request.app.state.projects_dir, body.selections)
-        return _operator_model_payload(selections)
+        selections = update_global_selections(request.app.state.projects_dir, body.selections, body.text_reasoning_effort, body.reasoning_efforts)
+        return _operator_model_payload(selections, read_global_effort(request.app.state.projects_dir),
+                                       read_global_reasoning(request.app.state.projects_dir, selections))
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 

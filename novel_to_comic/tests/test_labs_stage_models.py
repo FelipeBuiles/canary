@@ -72,7 +72,7 @@ def _fake_stages(monkeypatch, *, fail: str | None = None):
         async def run(config, project_dir, ctx):
             model = getattr(config, stage_models.STAGE_MODEL_FIELDS[name])
             seen.append({"stage": name, "model": model, "user": current_ai_request_context().user_id,
-                         "dir": project_dir})
+                         "dir": project_dir, "reasoning": dict(config.text_reasoning_efforts)})
             if name == fail:
                 raise RuntimeError(f"{name} broke")
             state = ctx.state
@@ -124,8 +124,8 @@ def test_a_failed_stage_stops_its_arm(root, monkeypatch):
 
 
 @pytest.mark.parametrize("phases,models,message", [
-    (["adapt_plan"], [OPUS], "two and four"),
-    (["adapt_plan"], [OPUS, OPUS], "two and four"),
+    (["adapt_plan"], [OPUS], "two and six"),
+    (["adapt_plan"], [OPUS, OPUS], "two and six"),
     (["adapt_plan"], [OPUS, "codex-dev/text/gpt-6-luna"], "Unknown text model"),
     (["draw"], [OPUS, SONNET], "Choose phases"),
 ])
@@ -233,3 +233,35 @@ def test_sol_61_api_equivalent_uses_its_own_cache_and_long_context_rates(provide
     entry = {"model": "codex-dev/text/gpt-6.1-sol", "provider_model": provider_model,
              "input_tokens": input_tokens, "cached_text_tokens": 100_000, "output_tokens": 19_000}
     assert stage_models.api_equivalent_usd([entry]) == pytest.approx(expected)
+
+
+def test_labs_snapshots_reasoning_for_each_model_and_stage(root, monkeypatch):
+    seen = _fake_stages(monkeypatch)
+    selected = stage_models.resolve_reasoning(["adapt_plan"], [OPUS, "mimo-v2.6-pro"], {
+        OPUS: {"adapt": "high", "plan": "low"}, "mimo-v2.6-pro": {"adapt": "enabled"},
+    })
+    run = storage.create_run(root, kind=stage_models.KIND, label="reasoning", spec={"reasoning_efforts": selected})
+    before = (root / "story/config.yaml").read_text()
+    asyncio.run(stage_models.run(root, run["run_id"], "story", ["adapt_plan"], [OPUS, "mimo-v2.6-pro"], selected))
+    cells = storage.read_run(root, run["run_id"])["cells"]
+    assert all(cell["status"] == "ok" and cell["reasoning_efforts"] == selected[cell["model"]] for cell in cells)
+    assert all(call["reasoning"] == selected[call["model"]] for call in seen)
+    assert selected["mimo-v2.6-pro"]["plan"] == "none"
+    assert (root / "story/config.yaml").read_text() == before
+
+
+@pytest.mark.parametrize("choices", [
+    {OPUS: {"draw": "high"}}, {OPUS: {"adapt": "enabled"}},
+    {"mimo-v2.6-pro": {"adapt": "medium"}}, {"other": {"adapt": "high"}},
+    [], {OPUS: []},
+])
+def test_labs_rejects_invalid_reasoning_before_execution(choices):
+    with pytest.raises(ValueError):
+        stage_models.resolve_reasoning(["adapt_plan"], [OPUS, "mimo-v2.6-pro"], choices)
+
+
+def test_text_comparison_accepts_six_models_and_rejects_seven(root):
+    models = [entry["id"] for entry in stage_models.selectable_models() if entry["funding"] == "api"]
+    stage_models.validate_spec(root / "story", ["adapt_plan"], models[:6])
+    with pytest.raises(ValueError, match="two and six"):
+        stage_models.validate_spec(root / "story", ["adapt_plan"], models[:7])

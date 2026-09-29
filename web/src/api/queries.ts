@@ -908,7 +908,7 @@ export function useStageModelOptions() {
   return useQuery({ queryKey: ["labs", "stage-models"], queryFn: getStageModelOptions });
 }
 
-export function useStageModelEstimate(body: { project: string; phases: string[]; models: string[] } | null) {
+export function useStageModelEstimate(body: { project: string; phases: string[]; models: string[]; reasoning_efforts?: Record<string, Record<string, string>> } | null) {
   return useQuery({
     queryKey: ["labs", "stage-models", "estimate", body],
     queryFn: () => estimateStageModels(body!),
