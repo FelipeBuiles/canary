@@ -35,14 +35,18 @@ Availability fallback and creative repair are separate.
   set `reasoning_effort: low` on the gateway, and Claude routes send
   `output_config.effort: low`. Routes that already disable reasoning (MiMo,
   DeepSeek) stay disabled. A backup route must run at the same effort.
-- **Images: OpenAI primary, FAL backup.** `image-sunburst` becomes
-  `sunburst-openai`, then `sunburst-fal`, for new fallback-capable Draw
-  profiles only. Existing FAL-bound editions and queued wires stay on FAL (see
-  [Identities and ownership](#identities-and-ownership)).
+- **Images: OpenAI primary, FAL backup, for all Sunburst images
+  (2026-09-29, implemented).** `image-sunburst` means OpenAI first, then one FAL
+  attempt, for new Draw editions and for every new Style/Cast image (samples,
+  references, covers). There is no operator priority selector: the order is
+  fixed in code. Existing FAL-bound editions and already-frozen FAL requests stay
+  on FAL (see [Identities and ownership](#identities-and-ownership)).
   [OpenAI primary consequences](#openai-primary-consequences) lists what that
   order changes.
 - **Unknown OpenAI outcomes get one FAL attempt, and Canary absorbs the cost
-  (implemented: `SunburstFallbackPageAdapter` in `page_drawing.py`).**
+  (implemented: `run_openai_first` in `image_route_fallback.py`, used by
+  `SunburstFallbackPageAdapter` for Draw and `generate_wire_image` for
+  Style/Cast).**
   OpenAI's Images API gives no way to recover a result. When an OpenAI Sunburst
   submission ends `unknown`, the coordinator may make exactly one FAL attempt
   for the same frozen request. A lost OpenAI result can never arrive later, so
@@ -59,7 +63,10 @@ Availability fallback and creative repair are separate.
   `completed`), so the stream opening is not early proof of acceptance: a lost
   connection is almost always `submit_transport`. Both count as unknown and get
   the one absorbed FAL attempt. Streaming identifies failures; it does not
-  recover them. The Responses API's
+  recover them. The Style/Cast sizes were certified live on 2026-09-29
+  (`--asset-sizes`): 1024x1280 with one reference, 768x1024, and 1344x768 all
+  returned their exact size in 15–22 seconds, with output tokens (378, 301, 255)
+  equal to the `expected_*` settlement estimates. The Responses API's
   background mode was rejected: its chat model revises the image prompt, which
   breaks verbatim visual anchors.
 - **Parallel page lanes cover OpenAI (implemented).** `is_parallel_page_draw`
@@ -99,10 +106,12 @@ Availability fallback and creative repair are separate.
   Compilation also depends on the route: the reference plan applies the route
   profile's hard cap before compilation. `ImageRoute` is a model-family enum,
   not a provider route: `GPT_IMAGE_2` covers GPT Image 2, Sunburst, and Flare.
-  `image_model_profile()` currently gives one logical model different contracts
-  on different deployments: `image-sunburst` (FAL) resolves to 4 references,
-  and `openai/gpt-image-2.5-sunburst` resolves to 16. The 16-reference override
-  matches `gpt-image-2.5-` and misses FAL's `gpt-image-2.5/` path.
+  `image_model_profile()` gave one logical model different contracts on
+  different deployments: `image-sunburst` (FAL) resolved to 4 references, and
+  `openai/gpt-image-2.5-sunburst` to 16. Resolved 2026-09-29: `image-sunburst`
+  now describes the OpenAI-first pair and resolves to 16 for Style/Cast too,
+  matching Draw, which already sends up to 16 references to both routes.
+  Retained FAL literals keep 4.
 - `ai/providers/litellm_http.py` already has distinct provider serializers and
   conservative image submission handling (`retry_ambiguous=False`). Reuse these
   implementations.
@@ -190,8 +199,9 @@ attempt fingerprint describes what actually reaches upstream.
 
 Keep LiteLLM as transport for supported routes, with explicit deployment aliases
 and no hidden fallback. For example, the app resolves `image-sunburst` into
-`image-sunburst-openai` (primary) or `image-sunburst-fal` (backup) before
-serialization. Aggregator routes such as OpenRouter are hidden routers unless
+`image-sunburst-openai` (primary) or the FAL deployment (backup) before
+serialization. The FAL deployment keeps the gateway name `image-sunburst`, so
+retained FAL editions and frozen FAL requests keep resolving to it. Aggregator routes such as OpenRouter are hidden routers unless
 the deployment pins a single upstream provider, disables provider fallbacks,
 and requires parameters. Model aliases and price configuration remain
 configuration-owned.
@@ -359,8 +369,13 @@ Canary absorbs the cost of an unknown OpenAI attempt that is followed by the
 approved FAL attempt. The OpenAI attempt keeps its failed usage event; the page
 provenance records that event ID and its estimated cost as absorbed. The user's
 credits settle only the attempt that produced the page, so the page's single
-reservation is enough: both routes share the same pricing. Absorbed attempts
-are counted in `canary_absorbed_image_attempts_total`.
+reservation is enough: both routes share the same pricing. Style/Cast images
+authorize a per-call guarantee instead; the OpenAI attempt's guarantee is
+released before the FAL attempt authorizes its own, so one image never holds
+two. Fallbacks, absorbed attempts, and circuit openings are counted in
+`canary_image_route_fallbacks_total`, `canary_absorbed_image_attempts_total`
+(both labelled `surface` = `draw` or `asset`), and
+`canary_image_route_circuit_opened_total`.
 
 For the initial safe-fallback policy, estimate enough for the most expensive
 eligible route, including cold caches. Recheck/authorize the actual attempt before

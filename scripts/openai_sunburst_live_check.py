@@ -8,6 +8,10 @@ the images for visual review. Never writes pipeline artifacts. Run with the
 gateway environment; the key comes from OPENAI_API_KEY or the repository .env:
 
     litellm/.venv/bin/python scripts/openai_sunburst_live_check.py --output-dir ~/sunburst-check
+
+``--asset-sizes`` instead certifies the Style/Cast sizes (~$0.05): a one-reference
+1024x1280 style proof, a 768x1024 portrait, and a 1344x768 location plate, each
+with the controls Style/Cast wires carry (quality only).
 """
 from __future__ import annotations
 
@@ -135,13 +139,66 @@ async def _run(output_dir: Path) -> None:
     print(json.dumps({"gateway_response_cost": edited._hidden_params.get("response_cost")}))
 
 
+# Style/Cast wires carry only the quality control; the handler adds size and streaming.
+ASSET_CASES = (
+    ("style_proof_1024x1280", 1024, 1280, True,
+     "A comic style sample: a lighthouse keeper on a rocky coast, ink and flat colour, using the palette "
+     "of Reference 1. No text or balloons."),
+    ("portrait_768x1024", 768, 1024, False,
+     "A full-body character reference of a lighthouse keeper in an oilskin coat, plain background, "
+     "ink and flat colour. No text."),
+    ("location_1344x768", 1344, 768, False,
+     "A wide establishing shot of a lighthouse on a rocky coast at dusk, ink and flat colour. No text."),
+)
+
+
+async def _run_assets(output_dir: Path) -> None:
+    import litellm
+    import yaml
+    from litellm.utils import custom_llm_setup
+    from litellm_handlers import openai_image_stream as handler
+
+    litellm.drop_params = False
+    litellm.custom_provider_map = [{"provider": "openai-stream", "custom_handler": handler.openai_image_stream_llm}]
+    custom_llm_setup()
+    route = next(item for item in yaml.safe_load((ROOT / "litellm/config.yaml").read_text())["model_list"]
+                 if item["model_name"] == "image-sunburst-openai")
+    router = litellm.Router(model_list=[route])
+    total = 0.0
+    for name, width, height, with_reference, prompt in ASSET_CASES:
+        manifest = json.dumps({"width": width, "height": height, "controls": [["quality", "medium"]]})
+        started = time.monotonic()
+        if with_reference:
+            swatch = io.BytesIO(_solid_png(512, 512, (40, 90, 160)))
+            swatch.name = "reference-0.png"
+            response = await router.aimage_edit(
+                model="image-sunburst-openai", image=[swatch], prompt=prompt,
+                canary_wire_request=manifest, response_format="b64_json")
+        else:
+            response = await router.aimage_generation(
+                model="image-sunburst-openai", prompt=prompt,
+                canary_wire_request=manifest, response_format="b64_json")
+        body = json.loads(response.model_dump_json())
+        data = base64.b64decode(body["data"][0]["b64_json"])
+        (output_dir / f"{name}.png").write_bytes(data)
+        usage = body.get("usage") or {}
+        priced = _priced(usage)
+        total += priced
+        print(json.dumps({"call": name, "requested": [width, height], "size": _png_size(data),
+                          "seconds": round(time.monotonic() - started, 1), "usage": usage,
+                          "priced_usd": round(priced, 5),
+                          "gateway_response_cost": response._hidden_params.get("response_cost")}, default=str))
+    print(json.dumps({"total_priced_usd": round(total, 5)}))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--asset-sizes", action="store_true", help="certify the Style/Cast sizes instead")
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     _load_key()
-    asyncio.run(_run(args.output_dir))
+    asyncio.run(_run_assets(args.output_dir) if args.asset_sizes else _run(args.output_dir))
 
 
 if __name__ == "__main__":

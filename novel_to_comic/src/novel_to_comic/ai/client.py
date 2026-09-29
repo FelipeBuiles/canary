@@ -2070,12 +2070,63 @@ async def generate_wire_image(
     output_path: Path,
     feature: str = "image.generate_wire",
 ) -> ApiResult[Path]:
-    """Submit an immutable exact-wire request through the isolated adapter."""
-    from novel_to_comic.ai.providers import selector
-    from novel_to_comic.provider_wire import materialize_wire_references
+    """Submit an immutable exact-wire request through the isolated adapter.
+
+    A multi-route Sunburst wire runs OpenAI first with one FAL attempt as
+    backup (``image_route_fallback``); each route is its own usage event.
+    """
+    from novel_to_comic.image_route_fallback import SUNBURST_FALLBACK_PROVIDER
 
     if wire.execution_fingerprint != wire.recompute_execution_fingerprint():
         raise ValueError("ProviderWireRequest execution fingerprint mismatch")
+    if wire.provider_key == SUNBURST_FALLBACK_PROVIDER:
+        return await _generate_sunburst_wire_image(
+            config=config, wire=wire, output_path=output_path, feature=feature,
+        )
+    return await _generate_wire_image_once(
+        config=config, wire=wire, output_path=output_path, feature=feature,
+    )
+
+
+async def _generate_sunburst_wire_image(
+    *, config: Config, wire: "ProviderWireRequest", output_path: Path, feature: str,
+) -> ApiResult[Path]:
+    from dataclasses import replace
+
+    from novel_to_comic.image_route_fallback import (
+        FAL_SUNBURST_GATEWAY_MODEL,
+        OPENAI_SUNBURST_GATEWAY_MODEL,
+        run_openai_first,
+    )
+    from novel_to_comic.usage import estimate_image_cost
+
+    def attempt(gateway_model: str):
+        # The frozen request, addressed to one route's gateway deployment.
+        routed = replace(wire, requested_alias=gateway_model)
+        routed = replace(routed, execution_fingerprint=routed.recompute_execution_fingerprint())
+        return _generate_wire_image_once(config=config, wire=routed, output_path=output_path, feature=feature)
+
+    result, route, fallback = await run_openai_first(
+        primary=lambda: attempt(OPENAI_SUNBURST_GATEWAY_MODEL),
+        backup=lambda: attempt(FAL_SUNBURST_GATEWAY_MODEL),
+        surface="asset", request_key=wire.execution_fingerprint,
+        estimate_openai_usd=lambda: estimate_image_cost(
+            OPENAI_SUNBURST_GATEWAY_MODEL, 1, quality=dict(wire.controls).get("quality"),
+            ref_count=len(wire.references), prompt_text=wire.prompt_parts[0],
+            width=wire.width, height=wire.height, basis="expected",
+        ),
+    )
+    metadata: dict[str, Any] = {**(result.response_metadata or {}), "route": route}
+    if fallback is not None:
+        metadata["fallback"] = fallback
+    return replace(result, response_metadata=metadata)
+
+
+async def _generate_wire_image_once(
+    *, config: Config, wire: "ProviderWireRequest", output_path: Path, feature: str,
+) -> ApiResult[Path]:
+    from novel_to_comic.ai.providers import selector
+    from novel_to_comic.provider_wire import materialize_wire_references
 
     transport_wire = wire
     blobs = materialize_wire_references(transport_wire)

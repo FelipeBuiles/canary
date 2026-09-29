@@ -35,6 +35,12 @@ from novel_to_comic.config import (
     MUSE_PAGE_ESTIMATED_COST_USD,
     Config,
 )
+from novel_to_comic.image_route_fallback import (
+    FAL_SUNBURST_GATEWAY_MODEL,
+    OPENAI_SUNBURST_GATEWAY_MODEL,
+    SUNBURST_FALLBACK_PROVIDER,
+    run_openai_first,
+)
 from novel_to_comic.models.draw import (
     BookEdition,
     CompletePageProviderResult,
@@ -171,7 +177,6 @@ def fal_sunburst_page_capability_profile() -> PageCapabilityProfile:
 
 
 _SUNBURST_FALLBACK_PAGE_PROFILE_ID = "gpt-image-2.5-sunburst-openai-fal-complete-page-medium-hybrid-v1"
-SUNBURST_FALLBACK_PROVIDER = "openai-fal"
 
 
 def sunburst_fallback_page_capability_profile() -> PageCapabilityProfile:
@@ -1573,7 +1578,7 @@ class OpenAICompletePageAdapter(GoogleVertexCompletePageTransport):
             raise ValueError("Unsupported complete-page profile")
         self._gateway_model = (
             "image-sunburst" if profile.provider == "fal-queue"
-            else _OPENAI_SUNBURST_GATEWAY_MODEL if profile.model == "gpt-image-2.5-sunburst"
+            else OPENAI_SUNBURST_GATEWAY_MODEL if profile.model == "gpt-image-2.5-sunburst"
             else "image-" + profile.model.removeprefix("gpt-image-2.5-")
         )
 
@@ -1581,8 +1586,6 @@ class OpenAICompletePageAdapter(GoogleVertexCompletePageTransport):
         return _prepare_complete_page(compiled, self._profile)
 
 
-_OPENAI_SUNBURST_GATEWAY_MODEL = "image-sunburst-openai"
-_FAL_SUNBURST_GATEWAY_MODEL = "image-sunburst"
 
 
 class _PageRouteTransport(GoogleVertexCompletePageTransport):
@@ -1595,95 +1598,6 @@ class _PageRouteTransport(GoogleVertexCompletePageTransport):
         self._route_provider = provider
         self._gateway_model = gateway_model
         self._provider_model = provider_model
-
-
-# The streaming OpenAI gateway handler tags failures with the phase they
-# happened in; the proxy wraps them in a generic HTTP 500, keeping the message.
-_OPENAI_IMAGE_PHASE = re.compile(
-    r"OpenAI image (?P<phase>[a-z_]+) failed for [\w./-]+(?:; upstream_status=(?P<status>\d{3}))?"
-)
-# Failures after which OpenAI cannot have charged for the attempt.
-_UNCHARGED_REASONS = frozenset({"gateway_unreachable", "not_submitted", "capacity", "credentials"})
-
-
-def classify_openai_page_failure(exc: BaseException) -> str | None:
-    """Why a failed OpenAI attempt may fall back to FAL, or None to stop.
-
-    Stops on refusals, invalid requests, cancellation, and completed output
-    that failed validation: another provider would not fix those.
-    """
-    import httpx
-    from novel_to_comic.ai.errors import AITransportError
-
-    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
-        return "gateway_unreachable"
-    if not isinstance(exc, AITransportError):
-        return None
-    if exc.phase == "ambiguous_submission":
-        return "unknown_outcome"
-    if exc.phase != "gateway_request":
-        return None
-    match = _OPENAI_IMAGE_PHASE.search(str(exc))
-    if match is None:
-        status = exc.response.status_code if exc.response is not None else None
-        return "unknown_outcome" if status is not None and status >= 500 else None
-    phase, status = match["phase"], int(match["status"]) if match["status"] else None
-    if phase == "submit_connect":
-        return "not_submitted"
-    if phase == "submit":
-        if status in {429, 503}:
-            return "capacity"
-        if status in {401, 403}:
-            return "credentials"
-        # 400/404/413/422 (including moderation) are the request's fault.
-        return "unknown_outcome" if status is not None and status >= 500 else None
-    if phase in {"submit_transport", "stream", "result"}:
-        return "unknown_outcome"
-    return None
-
-
-class _RouteCircuit:
-    """Skip a route after repeated failures, bounding paid double attempts.
-
-    Process-local: each worker learns independently, and a restart retries.
-    """
-
-    def __init__(self, *, threshold: int = 3, cooldown_seconds: float = 900.0) -> None:
-        self._threshold = threshold
-        self._cooldown = cooldown_seconds
-        self._failures = 0
-        self._open_until = 0.0
-
-    def is_open(self) -> bool:
-        return time.monotonic() < self._open_until
-
-    def record_success(self) -> None:
-        self._failures = 0
-
-    def record_failure(self) -> None:
-        self._failures += 1
-        if self._failures >= self._threshold:
-            self._open_until = time.monotonic() + self._cooldown
-            self._failures = 0
-            logger.error("OpenAI Sunburst route disabled for %.0fs after %d consecutive failures; "
-                         "pages go straight to FAL", self._cooldown, self._threshold)
-            _increment_metric("canary_draw_route_circuit_opened_total", route="openai")
-
-    def reset(self) -> None:
-        self._failures = 0
-        self._open_until = 0.0
-
-
-_OPENAI_SUNBURST_CIRCUIT = _RouteCircuit()
-
-
-def _increment_metric(name: str, **labels: str) -> None:
-    try:
-        from novel_to_comic.server.metrics import increment
-
-        increment(name, 1.0, **labels)
-    except Exception:
-        pass
 
 
 def _with_route(result: CompletePageProviderResult, route: str, fallback: dict | None = None) -> CompletePageProviderResult:
@@ -1711,11 +1625,11 @@ class SunburstFallbackPageAdapter:
         self._profile = profile
         self._primary = _PageRouteTransport(
             config, profile, provider="openai",
-            gateway_model=_OPENAI_SUNBURST_GATEWAY_MODEL, provider_model="gpt-image-2.5-sunburst",
+            gateway_model=OPENAI_SUNBURST_GATEWAY_MODEL, provider_model="gpt-image-2.5-sunburst",
         )
         self._backup = _PageRouteTransport(
             config, profile, provider="fal-queue",
-            gateway_model=_FAL_SUNBURST_GATEWAY_MODEL, provider_model="openai/gpt-image-2.5/sunburst",
+            gateway_model=FAL_SUNBURST_GATEWAY_MODEL, provider_model="openai/gpt-image-2.5/sunburst",
         )
 
     def prepare(self, compiled: CompiledPageGeneration) -> PreparedCompletePageRequest:
@@ -1723,74 +1637,19 @@ class SunburstFallbackPageAdapter:
 
     async def generate(self, prepared: PreparedCompletePageRequest) -> CompletePageProviderResult:
         _validate_prepared_page(prepared, self._profile)
-        if _OPENAI_SUNBURST_CIRCUIT.is_open():
-            _increment_metric("canary_draw_route_fallbacks_total", reason="circuit_open")
-            result = await self._backup.generate(prepared)
-            return _with_route(result, "fal-queue", {"from_route": "openai", "reason": "circuit_open"})
-        from novel_to_comic.ai import client as ai_client
-        from novel_to_comic.server.credits import deferred_ambiguity
-
-        with deferred_ambiguity() as scope:
-            try:
-                result = await self._primary.generate(prepared)
-            except asyncio.CancelledError:
-                scope.commit()
-                raise
-            except Exception as exc:
-                reason = classify_openai_page_failure(exc)
-                if reason is None:
-                    scope.commit()
-                    raise
-                failure = exc
-            else:
-                _OPENAI_SUNBURST_CIRCUIT.record_success()
-                scope.commit()
-                return _with_route(result, "openai")
-            absorbed_calls = list(dict.fromkeys(
-                [*scope.call_ids, *filter(None, [getattr(failure, "canary_usage_event_id", None)])]
-            ))
-            await self._release(scope)
-        _OPENAI_SUNBURST_CIRCUIT.record_failure()
-        fallback: dict[str, object] = {"from_route": "openai", "reason": reason}
-        _increment_metric("canary_draw_route_fallbacks_total", reason=reason)
-        if reason not in _UNCHARGED_REASONS:
-            estimate = self._openai_attempt_estimate_usd(prepared)
-            fallback.update({"absorbed_call_ids": absorbed_calls, "absorbed_estimated_cost_usd": estimate})
-            _increment_metric("canary_absorbed_image_attempts_total", route="openai")
-            logger.error(
-                "Absorbing OpenAI Sunburst attempt with unknown outcome; falling back to FAL "
-                "request_sha256=%s job_id=%s call_ids=%s estimated_cost_usd=%.4f error=%s",
-                prepared.request_sha256, ai_client.current_ai_request_context().job_id,
-                absorbed_calls, estimate, type(failure).__name__,
-            )
-        elif reason == "credentials":
-            logger.error("OpenAI Sunburst credentials rejected; falling back to FAL request_sha256=%s",
-                         prepared.request_sha256)
-        else:
-            logger.warning("OpenAI Sunburst unavailable (%s); falling back to FAL request_sha256=%s",
-                           reason, prepared.request_sha256)
-        result = await self._backup.generate(prepared)
-        return _with_route(result, "fal-queue", fallback)
-
-    async def _release(self, scope) -> None:
-        """Free the OpenAI attempt's call guarantee before the FAL attempt
-        authorizes its own, so the fallback never needs two guarantees."""
-        from novel_to_comic.ai import client as ai_client
-
-        user_id = ai_client.current_ai_request_context().user_id
-        if not user_id or not scope.call_ids:
-            scope.jobs.clear()
-            scope.resolved = True
-            return
-        from novel_to_comic.server.db import get_db
-
-        await asyncio.to_thread(scope.release, get_db(), user_id=user_id)
+        result, route, fallback = await run_openai_first(
+            primary=lambda: self._primary.generate(prepared),
+            backup=lambda: self._backup.generate(prepared),
+            surface="draw", request_key=prepared.request_sha256,
+            estimate_openai_usd=lambda: self._openai_attempt_estimate_usd(prepared),
+        )
+        return _with_route(result, route, fallback)
 
     def _openai_attempt_estimate_usd(self, prepared: PreparedCompletePageRequest) -> float:
         from novel_to_comic.usage import estimate_image_cost
 
         return estimate_image_cost(
-            _OPENAI_SUNBURST_GATEWAY_MODEL, 1,
+            OPENAI_SUNBURST_GATEWAY_MODEL, 1,
             quality=page_image_quality(self._profile.id, self._profile.provider),
             ref_count=len(prepared.references) + int(prepared.edit_source_bytes is not None),
             prompt_text=prepared.prompt, width=prepared.width, height=prepared.height, basis="expected",

@@ -12,11 +12,11 @@ from novel_to_comic.ai.context import ai_request_context
 from novel_to_comic.ai.errors import AIRefusalError, AITransportError
 from novel_to_comic.config import Config
 from novel_to_comic.models.draw import BookEdition, RetryProvenance
-from novel_to_comic import page_drawing
+from novel_to_comic import image_route_fallback
+from novel_to_comic.image_route_fallback import classify_openai_image_failure
 from novel_to_comic.page_drawing import (
     OpenAICompletePageAdapter,
     SunburstFallbackPageAdapter,
-    classify_openai_page_failure,
     compile_page_generation_request,
     complete_page_adapter,
     current_page_capability_profile,
@@ -40,9 +40,9 @@ FAL = "image-sunburst"
 @pytest.fixture(autouse=True)
 def fresh_state(monkeypatch):
     monkeypatch.setattr(credits, "_unsettled_jobs", set())
-    page_drawing._OPENAI_SUNBURST_CIRCUIT.reset()
+    image_route_fallback.OPENAI_SUNBURST_CIRCUIT.reset()
     yield
-    page_drawing._OPENAI_SUNBURST_CIRCUIT.reset()
+    image_route_fallback.OPENAI_SUNBURST_CIRCUIT.reset()
 
 
 def _compiled(tmp_path, profile=None):
@@ -203,7 +203,7 @@ def test_rejection_before_acceptance_falls_back_without_absorbing(tmp_path, deta
 ])
 def test_unknown_openai_outcome_is_absorbed_and_drawn_on_fal(tmp_path, failure):
     adapter = complete_page_adapter(Config(draw_model="image-sunburst"))
-    with patch("novel_to_comic.page_drawing._increment_metric") as metric:
+    with patch("novel_to_comic.image_route_fallback.increment_metric") as metric:
         result, calls = _run(adapter, _compiled(tmp_path), [failure, _ok("fal-queue/openai/gpt-image-2.5/sunburst")])
     assert [call["data"]["model"] for call in calls] == [OPENAI, FAL]
     fallback = result.response_metadata["fallback"]
@@ -212,7 +212,7 @@ def test_unknown_openai_outcome_is_absorbed_and_drawn_on_fal(tmp_path, failure):
     assert 0 < fallback["absorbed_estimated_cost_usd"] < 0.25
     # Canary absorbs it: the user's hold is not retained for the lost attempt.
     assert JOB not in credits._unsettled_jobs
-    metric.assert_any_call("canary_absorbed_image_attempts_total", route="openai")
+    metric.assert_any_call("canary_absorbed_image_attempts_total", route="openai", surface="draw")
 
 
 @pytest.mark.parametrize("failure", [
@@ -235,7 +235,7 @@ def test_refusal_and_invalid_output_stop_without_trying_fal(tmp_path):
                            request=httpx.Request("POST", "http://gateway"))
     with pytest.raises(ValueError, match="does not match"):
         _run(adapter, _compiled(tmp_path), [wrong])
-    assert classify_openai_page_failure(AIRefusalError("refused")) is None
+    assert classify_openai_image_failure(AIRefusalError("refused")) is None
 
 
 def test_cancellation_stops_and_keeps_the_hold(tmp_path):
@@ -271,7 +271,7 @@ def test_a_success_resets_the_failure_count(tmp_path):
     for outcomes in ([_ambiguous(), fal], [_ambiguous(), fal], [_ok("openai/gpt-image-2.5-sunburst")],
                      [_ambiguous(), fal]):
         _run(adapter, _compiled(tmp_path), outcomes)
-    assert not page_drawing._OPENAI_SUNBURST_CIRCUIT.is_open()
+    assert not image_route_fallback.OPENAI_SUNBURST_CIRCUIT.is_open()
 
 
 def test_fallback_provenance_persists_the_absorbed_attempt(tmp_path):
@@ -319,7 +319,7 @@ def test_fallback_provenance_persists_the_absorbed_attempt(tmp_path):
     (RuntimeError("anything else"), None),
 ])
 def test_classification_of_non_gateway_failures(exc, reason):
-    assert classify_openai_page_failure(exc) == reason
+    assert classify_openai_image_failure(exc) == reason
 
 
 # Credits scope -----------------------------------------------------------------

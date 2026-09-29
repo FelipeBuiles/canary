@@ -35,6 +35,8 @@ IMAGE_PROVIDER_OPENAI = "openai"
 IMAGE_PROVIDER_OPENROUTER = "openrouter"
 IMAGE_PROVIDER_VERTEX_MULTIMODAL = "vertex-multimodal"
 IMAGE_PROVIDER_FAL_QUEUE = "fal-queue"
+#: Sunburst: OpenAI first, one FAL attempt as backup (``image_route_fallback``).
+IMAGE_PROVIDER_OPENAI_FAL = "openai-fal"
 IMAGE_PROVIDER_UNKNOWN = "unknown"
 
 
@@ -82,8 +84,8 @@ _ALIAS_DESCRIPTIONS: dict[str, ImageModelDescription] = {
     GATEWAY_IMAGE_SUNBURST: ImageModelDescription(
         route=ImageRoute.GPT_IMAGE_2,
         display_name="GPT Image 2.5 Sunburst",
-        provider_model="fal-queue/openai/gpt-image-2.5/sunburst",
-        provider_key=IMAGE_PROVIDER_FAL_QUEUE,
+        provider_model="gpt-image-2.5-sunburst",
+        provider_key=IMAGE_PROVIDER_OPENAI_FAL,
     ),
     GATEWAY_IMAGE_FLARE: ImageModelDescription(
         route=ImageRoute.GPT_IMAGE_2,
@@ -113,8 +115,8 @@ def describe_image_model(model: str) -> ImageModelDescription:
         return _ALIAS_DESCRIPTIONS[normalized]
     if normalized.removeprefix("openai/") in {
         "gpt-image-2",
-        # Retained historical literals remain OpenAI routes; the selectable
-        # image-sunburst alias below is the FAL route.
+        # Retained historical literals remain OpenAI-only routes; the
+        # selectable image-sunburst alias is OpenAI first with FAL backup.
         "gpt-image-2.5-sunburst",
         "gpt-image-2.5-sunburst-2026-09-08",
         "gpt-image-2.5-flare",
@@ -392,7 +394,10 @@ def image_model_profile(model: str) -> ImageModelProfile:
     description = describe_image_model(model)
     if "gpt-image-2.5-" in description.provider_model:
         from dataclasses import replace
-        return replace(_profile_for_route(description.route), max_references=16)
+        return replace(
+            _profile_for_route(description.route, provider_key=description.provider_key),
+            max_references=16,
+        )
     return _profile_for_route(
         description.route,
         provider_key=description.provider_key,
