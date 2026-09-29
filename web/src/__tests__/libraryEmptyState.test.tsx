@@ -71,7 +71,7 @@ describe("Library first-run (Issue #0)", () => {
     const user = userEvent.setup();
     projectsResult.data = [];
     renderLibrary();
-    expect(screen.getByRole("img", { name: /Generated comic page/ }).getAttribute("src")).toBe("/marketing/cthulhu-page.webp");
+    expect(screen.getByRole("img", { name: /Generated comic page/ }).getAttribute("src")).toBe("/marketing/elm-and-keep-page-12.webp");
     const opener = screen.getByRole("button", { name: "NEW PRODUCTION" });
     await user.click(opener);
     const dialog = screen.getByRole("dialog");

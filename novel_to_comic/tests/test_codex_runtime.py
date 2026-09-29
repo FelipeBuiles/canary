@@ -1144,3 +1144,14 @@ def test_orphaned_child_refuses_before_sdk_submission(monkeypatch, tmp_path):
     result = json.loads((tmp_path / "result.json").read_text())
     assert result["error"] == "runtime_parent_exited"
     assert result["metadata"]["submitted"] is False
+
+
+def test_explicit_model_capacity_is_actionable_without_resubmission():
+    evidence = {"submitted": True, "indeterminate": False,
+                "provider_error": {"message": "Selected model is at capacity. Please try a different model."}}
+    error = runtime._runtime_error("runtime_turn_error", evidence)
+    assert error.code == "runtime_capacity"
+    assert "Retry the same model later" in str(error)
+    assert error.metadata == evidence
+    # A model-authored statement or unrelated failure must not become capacity.
+    assert runtime._runtime_error("text_output_missing", evidence).code == "text_output_missing"

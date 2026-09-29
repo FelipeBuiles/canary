@@ -1555,7 +1555,7 @@ def test_lettering_cited_by_the_wrong_content_item_cannot_be_planned(
         )
 
     assert [failure.code for failure in raised.value.validation.invariant_failures] == [
-        "unknown_lettering"
+        "unknown_lettering", "lettering_changed"
     ]
 
 
@@ -4452,3 +4452,74 @@ def test_an_earlier_panel_of_the_beat_may_still_cite_the_new_state(tmp_path: Pat
     assert [content.appearance_states for content in artifacts.read_page(1).content] == [
         {"character_johansen": "johansen_soaked"}, {"character_johansen": "johansen_soaked"}]
     assert artifacts.read_validation("plan").invariant_failures == ()
+
+
+def test_plan_reports_all_independent_run_failures_in_first_repair(tmp_path):
+    """The Labs run exhausted repairs as staging hid copy order and acting."""
+    from copy import deepcopy
+    from novel_to_comic.page_planning import _normalize_book_plan_draft, _validate_plan_draft, _repair_prompt
+    from novel_to_comic.models.page import CharacterActing
+
+    adaptation = _adaptation()
+    inventory = _inventory().model_copy(update={"references": tuple(
+        ref.model_copy(update={"kind": "character" if ref.entity_id == "character_johansen" else "location"})
+        for ref in _inventory().references
+    )})
+    raw = plan_response(_two_page_response({"entity_ids": ["character_johansen"]}))
+    raw["pages"][0]["content"][0]["setting"] = None
+    for page, item in zip(raw["pages"], ("lettering_0002", "lettering_0001")):
+        panel = page["content"][0]
+        panel["lettering_ids"] = [item]
+        panel["lettering_reservations"] = [{"lettering_item_id": item, **reservation()}]
+    draft = _BookPlanDraft.model_validate(_normalize_book_plan_draft(raw, adaptation))
+    pages, validation = _validate_plan_draft(adaptation, inventory, ApprovedPageRange(minimum=1, maximum=2), draft, {})
+    assert not pages
+    codes = {f.code for f in validation.invariant_failures}
+    assert {"staging_authority", "lettering_changed", "lettering_beat_mismatch", "missing_character_acting"} <= codes
+    feedback = _repair_prompt("base", raw, validation).split("BLOCKING CONTRACT FAILURES:\n")[1]
+    assert "page_001_content_001" in feedback
+    assert "page_002_content_001" in feedback
+    assert "Position 1: expected lettering_0001, found lettering_0002" in feedback
+    assert "belongs to 'beat_0002'" in feedback
+
+    fixed = deepcopy(raw)
+    for page, item in zip(fixed["pages"], ("lettering_0001", "lettering_0002")):
+        panel = page["content"][0]
+        panel["setting"] = {"location_entity_id": None, "environment_visible": False, "direction": "Tight shot."}
+        panel["lettering_ids"] = [item]
+        panel["lettering_reservations"] = [{"lettering_item_id": item, **reservation()}]
+        panel["acting"] = [CharacterActing(entity_id="character_johansen", facing="profile_left",
+                                          gaze="horizon", expression="tense").model_dump()]
+    calls = []
+    async def generate(**request):
+        calls.append(request)
+        if len(calls) == 2:
+            assert all(code in request["user_content"] for code in codes)
+        return ApiResult(value=raw if len(calls) == 1 else fixed)
+    artifacts = TargetArtifacts(tmp_path)
+    state = PipelineState(project_name="test", novel_path="novel.txt", created_at=datetime.now(timezone.utc))
+    plan = asyncio.run(produce_book_plan(adaptation, inventory, ApprovedPageRange(minimum=1, maximum=2),
+        artifacts=artifacts, ctx=StageRuntime("plan", state, tmp_path), model="test", generate=generate))
+    assert len(calls) == 2
+    assert len(plan.pages) == 2
+    assert [l.text for p in (artifacts.read_page(1), artifacts.read_page(2)) for c in p.content for l in c.lettering] == [
+        l.text for b in adaptation.beats for l in b.lettering]
+
+
+@pytest.mark.parametrize("visible", [True, False])
+def test_plan_compiles_explicit_setting_and_relationship_citations(visible):
+    from novel_to_comic.page_planning import _normalize_book_plan_draft
+    raw = plan_response(_two_page_response({
+        "entity_ids": [],
+        "setting": {"location_entity_id": "location_alert", "environment_visible": visible, "direction": "On deck."},
+        "physical_relationships": [{"entity_ids": ["character_johansen"], "contact": "Hands on railing.",
+                                    "orientation": "Leaning forward.", "support": "Feet on deck."}],
+    }))
+    normalized = _normalize_book_plan_draft(raw, _adaptation())
+    before = raw["pages"][0]["content"][0]
+    after = normalized["pages"][0]["content"][0]
+    assert set(after["entity_ids"]) == ({"location_alert", "character_johansen"} if visible else {"character_johansen"})
+    assert after["physical_relationships"] == before["physical_relationships"]
+    assert after["lettering_ids"] == before["lettering_ids"]
+    assert after["acting"] == [], "Acting must still be authored, never synthesized."
+    assert before["entity_ids"] == [], "Do not mutate the retained provider response."
