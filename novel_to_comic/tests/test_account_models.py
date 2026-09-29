@@ -576,8 +576,13 @@ def test_curated_model_choices(client, monkeypatch):
     models = client.get("/api/account/model-settings").json()["models"]
     assert {m["id"] for m in models if m["funding"] == "codex_subscription"} == {
         "codex-dev/text/gpt-6-luna", "codex-dev/text/gpt-6-sol", "codex-dev/image/gpt-5.5",
+        "codex-dev/text/gpt-6.1-sol",
     }
     assert "claude-fable-5-1" not in {m["id"] for m in models}
+    sol = "codex-dev/text/gpt-6.1-sol"
+    for stage in ("adapt", "plan", "ocr", "visual_review"):
+        assert client.patch("/api/account/model-settings", json={"selections": {stage: sol}}).status_code == 200
+    assert codex_dev.route_for("text", sol).reasoning_model == "gpt-6.1-sol"
     sonnet = "claude-dev/text/claude-sonnet-5-5"
     assert client.patch("/api/account/model-settings", json={"selections": {"adapt": sonnet}}).status_code == 200
     assert codex_dev.route_for("text", sonnet).reasoning_model == "claude-sonnet-5-5"

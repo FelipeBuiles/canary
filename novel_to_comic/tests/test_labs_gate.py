@@ -59,3 +59,47 @@ def test_labs_flag_cannot_enable_labs_outside_original_process_development(monke
     monkeypatch.setenv("CANARY_LABS_ENABLED", "true")
     app = create_app(Path(str(tmp_path)), dev=True)
     assert not _has_labs_routes(app)
+
+
+def _labs_client(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from novel_to_comic.server.auth import get_current_user
+
+    _original_process(monkeypatch, CANARY_ENV="development")
+    monkeypatch.setenv("CANARY_LABS_ENABLED", "true")
+    app = create_app(Path(str(tmp_path)), dev=True)
+    app.dependency_overrides[get_current_user] = lambda: "owner"
+    return TestClient(app)
+
+
+def test_labs_rejects_bad_runs_and_paths_before_any_spend(monkeypatch, tmp_path):
+    client = _labs_client(monkeypatch, tmp_path)
+
+    assert client.get("/api/labs/runs").json() == {"runs": []}
+    assert client.post("/api/labs/runs", json={"kind": "panels"}).status_code == 400
+    assert client.post("/api/labs/runs", json={
+        "kind": "image_compare", "project": "missing", "items": ["page:1"],
+        "arms": [{"target": "sunburst-openai", "prompt": "production"}, {"target": "sunburst-fal", "prompt": "production"}],
+    }).status_code == 400
+    assert client.post("/api/labs/image-compare/preview", json={"project": "../x", "item": "page:1", "arms": []}).status_code == 400
+    assert client.post("/api/labs/runs", json={
+        "kind": "stage_models", "project": "../other", "phases": ["adapt_plan"],
+        "models": ["claude-opus-5-5", "claude-sonnet-5-5"],
+    }).status_code == 400
+    assert client.get("/api/labs/runs/not-a-run").status_code == 400
+    assert client.get("/api/labs/runs/20260929-000000-abcdef/files/../../../secret.json").status_code in {400, 404}
+
+
+def test_labs_run_files_never_resolve_outside_their_run(tmp_path):
+    import pytest as _pytest
+
+    from novel_to_comic.labs import storage
+
+    run = storage.create_run(tmp_path, kind="image_compare", label="t", spec={})
+    assert storage.run_file(tmp_path, run["run_id"], "images/a.png").is_relative_to(tmp_path)
+    for escape in ("../other/run.json", "/etc/passwd", "images/../../x"):
+        with _pytest.raises(ValueError):
+            storage.run_file(tmp_path, run["run_id"], escape)
+    with _pytest.raises(ValueError):
+        storage.run_dir(tmp_path, "../x")

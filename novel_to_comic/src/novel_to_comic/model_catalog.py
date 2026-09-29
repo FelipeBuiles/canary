@@ -4,7 +4,7 @@ from novel_to_comic.codex_dev import claude_selectable_models, claude_selector_a
 from novel_to_comic.image_models import IMAGE_MODEL_ALIASES, describe_image_model
 from novel_to_comic.text_models import TEXT_MODELS
 
-CODEX_CHOICES = {("text", "gpt-6-luna"), ("text", "gpt-6-sol"), ("image", "gpt-5.5")}
+CODEX_CHOICES = {("text", "gpt-6-luna"), ("text", "gpt-6-sol"), ("text", "gpt-6.1-sol"), ("image", "gpt-5.5")}
 
 # Keep controls in pipeline order. Style/Cast share settings; Draw has three
 # distinct model jobs rather than three additional pipeline stages.

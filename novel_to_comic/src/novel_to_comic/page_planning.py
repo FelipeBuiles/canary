@@ -10,7 +10,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from novel_to_comic.appearance_chronology import CODE as CHRONOLOGY_CODE, appearance_chronology, first_activation
+from novel_to_comic.appearance_chronology import (
+    CODE as CHRONOLOGY_CODE,
+    appearance_chronology,
+    final_beat_carriers,
+    first_activation,
+)
 from novel_to_comic.generation_checkpoints import discard_checkpointed_response
 from novel_to_comic.ai.context import ai_source_context, execution_observer
 from novel_to_comic.ai.transport import text_transport_limits
@@ -2088,6 +2093,7 @@ def _derived_state_citations(
     content: "_PageContentDraft",
     beat_by_id: Mapping[str, Any],
     approved_pairs: set[tuple[str, str]],
+    final_beats: frozenset[str] = frozenset(),
 ) -> tuple[tuple[str, ...], dict[str, str], list[tuple[str, str, str]]]:
     """Fold each carried beat's appearance changes into the content citations.
 
@@ -2118,6 +2124,11 @@ def _derived_state_citations(
         for change in beat.appearance_changes:
             if (change.entity_id, change.to_state_id) not in approved_pairs:
                 unapproved.append((beat_id, change.entity_id, change.to_state_id))
+                continue
+            # The change is the beat's outcome: only the beat's last panel is
+            # bound to it. Earlier panels of a split beat keep their prior
+            # state unless the planner cites the new one itself.
+            if beat_id not in final_beats:
                 continue
             if change.entity_id not in entity_ids:
                 entity_ids.append(change.entity_id)
@@ -2167,6 +2178,7 @@ def _canonical_pages(
     claimed: set[str] = set()
     active_state_by_entity: dict[str, str] = {}
     applied_state_change_beats: set[str] = set()
+    final_carrier = final_beat_carriers(draft.pages)
     pages: list[ComicPage] = []
     for page in draft.pages:
         content_items: list[PageContent] = []
@@ -2258,15 +2270,20 @@ def _canonical_pages(
                 else reservation
                 for reservation, item in zip(content.lettering_reservations, lettering, strict=True)
             )
+            final_beats = frozenset(
+                beat_id for beat_id in content.beat_ids
+                if final_carrier.get(beat_id) == (page.page_number, content.order)
+            )
             entity_ids, states, unapproved = _derived_state_citations(
                 content,
                 beat_by_id,
                 approved_pairs,
+                final_beats,
             )
             entity_ids = _derived_speaker_citations(entity_ids, tuple(lettering))
             for beat_id in content.beat_ids:
                 beat = beat_by_id.get(beat_id)
-                if beat is None or beat_id in applied_state_change_beats:
+                if beat is None or beat_id in applied_state_change_beats or beat_id not in final_beats:
                     continue
                 for change in beat.appearance_changes:
                     if (change.entity_id, change.to_state_id) in approved_pairs:
@@ -2726,6 +2743,7 @@ def validate_book_plan(
     failures.extend(_reference_authority_failures(pages, references))
 
     beat_by_id = {beat.id: beat for beat in adaptation.beats}
+    final_carrier = final_beat_carriers(pages)
     for page in pages:
         for content in page.content:
             # One content item has one state per entity. Beats that move the
@@ -2774,7 +2792,7 @@ def validate_book_plan(
                 )
             for beat_id in content.beat_ids:
                 beat = beat_by_id.get(beat_id)
-                if beat is None:
+                if beat is None or final_carrier.get(beat_id) != (page.page_number, content.order):
                     continue
                 for change in beat.appearance_changes:
                     if change.entity_id in conflicted:

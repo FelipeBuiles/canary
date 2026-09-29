@@ -152,9 +152,22 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
       $release_id: import.meta.env.VITE_CANARY_VERSION ?? "unknown",
       schema_version: 1,
     };
-    for (const key of ["distinct_id", "$device_id", "$anon_distinct_id", "$session_id", "$window_id", "$exception_fingerprint"]) {
+    // The SDK puts its public ingestion credential in event properties before
+    // before_send. Rebuild it from configuration, never from arbitrary payloads.
+    const projectToken = import.meta.env.VITE_POSTHOG_PROJECT_TOKEN;
+    if (projectToken) properties.token = projectToken;
+    for (const key of ["distinct_id", "$device_id", "$anon_distinct_id", "$session_id", "$window_id", "$exception_fingerprint",
+      "$insert_id", "$pageview_id", "$lib", "$lib_version", "$sdk_dist_channel", "$config_defaults", "$timezone"]) {
       if (typeof source[key] === "string" && tokenPattern.test(source[key])) properties[key] = source[key];
     }
+    for (const key of ["$browser", "$browser_language", "$browser_language_prefix", "$os", "$os_version", "$device_type", "$browser_type"]) {
+      if (typeof source[key] === "string" && labelPattern.test(source[key])) properties[key] = source[key];
+    }
+    for (const key of ["$browser_version", "$screen_height", "$screen_width", "$viewport_height", "$viewport_width",
+      "$timezone_offset", "$time", "$initialization_time", "$configured_session_timeout_ms"]) {
+      if (typeof source[key] === "number" && Number.isFinite(source[key])) properties[key] = source[key];
+    }
+    if (typeof source.$is_identified === "boolean") properties.$is_identified = source.$is_identified;
     if (event.event === "$snapshot") {
       const frames = scrubSnapshotData(source.$snapshot_data);
       if (!frames || typeof properties.$session_id !== "string" || typeof properties.$window_id !== "string") return null;
@@ -165,6 +178,24 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
         }
       }
       return { ...event, properties };
+    }
+    // Keep navigation context for clicks, errors, and conversion events too.
+    const currentPath = canonicalPath(window.location.pathname, account !== null);
+    Object.assign(properties, {
+      $pathname: currentPath,
+      $current_url: window.location.origin + currentPath,
+      $host: window.location.host,
+    });
+    if (typeof source.$session_entry_url === "string") {
+      const entry = new URL(canonicalUrl(source.$session_entry_url));
+      properties.$session_entry_url = entry.href;
+      properties.$session_entry_host = entry.host;
+      properties.$session_entry_pathname = entry.pathname;
+    }
+    for (const key of ["$referring_domain", "$session_entry_referring_domain"]) {
+      const value = source[key];
+      const domain = campaignToken(typeof value === "string" ? value.replace(/^www\./, "") : undefined);
+      properties[key] = domain && domain !== window.location.hostname.replace(/^www\./, "") ? domain : "$direct";
     }
     if (event.event === "$autocapture" || event.event === "$rageclick") {
       const path = canonicalPath(window.location.pathname, account !== null);
@@ -184,13 +215,7 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
         $pathname: path,
         $current_url: window.location.origin + path,
         $host: window.location.host,
-        $referring_domain: "$direct",
       });
-      const referrer = campaignToken(typeof source.$referring_domain === "string" ? source.$referring_domain.replace(/^www\./, "") : undefined);
-      if (referrer && referrer !== window.location.hostname.replace(/^www\./, "")) properties.$referring_domain = referrer;
-      for (const key of ["$browser", "$os", "$device_type"]) {
-        if (typeof source[key] === "string" && labelPattern.test(source[key])) properties[key] = source[key];
-      }
     }
     for (const key of ["utm_source", "utm_medium", "utm_campaign", "acquisition_source", "acquisition_medium",
       "acquisition_campaign", "referring_domain"]) {

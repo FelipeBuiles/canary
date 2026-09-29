@@ -17,7 +17,7 @@ from novel_to_comic.style_contract import (
 
 @pytest.mark.parametrize("kind", [
     "character_ref", "location_plate", "prop_ref", "style_sample",
-    "style_calibration", "project_cover", "labs_image",
+    "style_calibration", "project_cover",
 ])
 @pytest.mark.parametrize("has_references", [False, True])
 def test_every_asset_gets_one_shared_policy_without_mutating_input(kind, has_references):

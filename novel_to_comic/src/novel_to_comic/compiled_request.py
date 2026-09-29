@@ -91,7 +91,7 @@ COMPILED_REQUEST_SCHEMA_VERSION = 3
 
 AssetKind = Literal[
     "character_ref", "location_plate", "prop_ref", "style_sample", "style_calibration",
-    "project_cover", "labs_image",
+    "project_cover",
 ]
 
 

@@ -37,6 +37,12 @@ reducing the Fly machine size.
   rewrite link and frame URLs to route templates, and drop console/network
   plugin frames. Autocapture keeps tag/class/position chains only. `scrubEvent`
   in `web/src/telemetry.ts` enforces these limits; the Privacy page states them.
+- Browser events retain the configured public ingestion token (required by
+  PostHog after `before_send`), SDK/version and event/pageview IDs, browser/OS
+  versions, language, device type, screen/viewport dimensions, timezone, and
+  session timing metadata. Navigation and session-entry URLs use route
+  templates; referrers keep domains only. Unknown properties, raw user agents,
+  page titles, and automatic person-property payloads remain excluded.
 - Application metrics (`http.server.*`, `jobs.*`, `pipeline.stage_*`,
   `ai.call*`) come from the app client. The LiteLLM gateway emits
   `http.server.*`, `llm.provider.*`, and `gateway.completions` as service

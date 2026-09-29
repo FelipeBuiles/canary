@@ -107,7 +107,7 @@ log = logging.getLogger(__name__)
 def _labs_enabled() -> bool:
     """Feature flag for the Labs experimentation router.
 
-    Defaults OFF: Labs is an image-model experimentation surface that bypasses
+    Defaults OFF: Labs is a model experimentation surface that bypasses
     the credit system (it bills provider quota directly to operator keys).
     Mount it only in local development with ``CANARY_LABS_ENABLED=true``."""
     from .account_models import model_settings_enabled
@@ -588,7 +588,7 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         prefix="/api/projects/{project_id}",
         tags=["files"],
     )
-    # Labs is an image-model experimentation surface that bills provider quota
+    # Labs is a model experimentation surface that bills provider quota
     # directly and is not credit-gated. It defaults OFF; set
     # CANARY_LABS_ENABLED=true for local development.
     if _labs_enabled():

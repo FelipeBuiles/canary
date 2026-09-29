@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable
 
 from novel_to_comic.models.adaptation import BookAdaptation
 from novel_to_comic.models.page import ComicPage
@@ -33,6 +33,26 @@ class ChronologyFinding:
     not_yet_activated: tuple[str, ...] = ()
 
 
+def final_beat_carriers(pages: Iterable[Any]) -> dict[str, tuple[int, int]]:
+    """(page number, panel order) of the last panel carrying each beat.
+
+    A beat's appearance change is its outcome ("Prospero falls dead"). When
+    Plan splits one beat across several panels, the change takes effect on the
+    beat's last panel; the panels before it show the moments leading up to it
+    and keep the entity's prior state unless they cite the new one explicitly.
+    Works for Plan drafts and canonical pages alike.
+    """
+
+    final: dict[str, tuple[int, int]] = {}
+    for page in pages:
+        for content in page.content:
+            key = (page.page_number, content.order)
+            for beat_id in content.beat_ids:
+                if key > final.get(beat_id, (-1, -1)):
+                    final[beat_id] = key
+    return final
+
+
 def first_activation(adaptation: BookAdaptation) -> dict[tuple[str, str], str]:
     """The beat that first moves each entity into each state."""
 
@@ -49,20 +69,30 @@ def appearance_chronology(
 ) -> dict[int, list[ChronologyFinding]]:
     """Check explicit state chronology in reading order."""
 
+    pages = tuple(pages)
     beats = {beat.id: beat for beat in adaptation.beats}
+    final = final_beat_carriers(pages)
     active: dict[str, str] = {}
     activated: dict[str, set[str]] = defaultdict(set)
     seen_beats: set[str] = set()
     findings: dict[int, list[ChronologyFinding]] = defaultdict(list)
     for page in pages:
         for content in page.content:
+            position = (page.page_number, content.order)
+            # States this panel may cite early: it depicts the beat that
+            # produces them, so it may show the change already under way.
+            carried = {
+                (change.entity_id, change.to_state_id)
+                for beat_id in content.beat_ids if beat_id in beats
+                for change in beats[beat_id].appearance_changes
+            }
             for beat_id in content.beat_ids:
                 beat = beats.get(beat_id)
-                if beat is None or beat.id in seen_beats:
+                if beat is None or beat.id in seen_beats or final.get(beat.id) != position:
                     continue
                 # Adjacent content items may decompose one adapted beat into
-                # several visual moments. Apply its state changes once, not
-                # once per content item.
+                # several visual moments. Its state changes take effect once,
+                # on the last of them (see ``final_beat_carriers``).
                 for change in beat.appearance_changes:
                     current = active.get(change.entity_id)
                     if (
@@ -90,6 +120,7 @@ def appearance_chronology(
                     state_id
                     for state_id in cited
                     if state_id not in activated.get(entity_id, set())
+                    and (entity_id, state_id) not in carried
                 ]
                 # A page may explicitly cite an earlier state for a timeline
                 # or composite image. The invariant is that the state has

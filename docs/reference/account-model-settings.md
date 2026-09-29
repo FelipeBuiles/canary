@@ -99,7 +99,7 @@ to the fallback model for new pages.
 
 The optional Codex adapter uses explicit `codex-dev/text/<model>` and
 `codex-dev/image/<reasoning-model>` choices. The selector offers GPT-6 Luna and
-GPT-6 Sol for text, and GPT-5.5 for images. It also requires
+GPT-6 Sol and GPT-6.1 Sol for text, and GPT-5.5 for images. It also requires
 `CANARY_CODEX_DEV_ENABLED=1`, a local runtime, and a Codex login. Codex image
 choices select the reasoning model driving the built-in image tool; they do not
 select Sunburst. Codex usage is subscription-funded and does not settle API

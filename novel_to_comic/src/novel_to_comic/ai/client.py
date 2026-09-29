@@ -2101,10 +2101,10 @@ async def _generate_sunburst_wire_image(
     from novel_to_comic.usage import estimate_image_cost
 
     def attempt(gateway_model: str):
-        # The frozen request, addressed to one route's gateway deployment.
-        routed = replace(wire, requested_alias=gateway_model)
-        routed = replace(routed, execution_fingerprint=routed.recompute_execution_fingerprint())
-        return _generate_wire_image_once(config=config, wire=routed, output_path=output_path, feature=feature)
+        return generate_wire_image_on_route(
+            config=config, wire=wire, gateway_model=gateway_model,
+            output_path=output_path, feature=feature,
+        )
 
     result, route, fallback = await run_openai_first(
         primary=lambda: attempt(OPENAI_SUNBURST_GATEWAY_MODEL),
@@ -2120,6 +2120,23 @@ async def _generate_sunburst_wire_image(
     if fallback is not None:
         metadata["fallback"] = fallback
     return replace(result, response_metadata=metadata)
+
+
+async def generate_wire_image_on_route(
+    *, config: Config, wire: "ProviderWireRequest", gateway_model: str,
+    output_path: Path, feature: str,
+) -> ApiResult[Path]:
+    """Submit a frozen wire to exactly one route's gateway deployment, once.
+
+    No fallback: the caller owns what happens when this route fails.
+    """
+    from dataclasses import replace
+
+    routed = replace(wire, requested_alias=gateway_model)
+    routed = replace(routed, execution_fingerprint=routed.recompute_execution_fingerprint())
+    return await _generate_wire_image_once(
+        config=config, wire=routed, output_path=output_path, feature=feature,
+    )
 
 
 async def _generate_wire_image_once(

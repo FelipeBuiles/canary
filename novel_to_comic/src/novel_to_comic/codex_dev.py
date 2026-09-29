@@ -73,7 +73,7 @@ def _model(value: object) -> str:
 # Explicit local selectors are separate from API aliases. This allowlist is
 # captured at import with the operator gate; project dotenv cannot extend it.
 _DEFAULT_MODELS = (
-    "gpt-6-sol", "gpt-6-luna", "gpt-5.5",
+    "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-5.5",
 )
 
 
