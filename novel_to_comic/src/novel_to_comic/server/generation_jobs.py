@@ -432,8 +432,10 @@ async def _run_generation_job(app: FastAPI, job: GenerationJob) -> None:
             timeout_seconds,
         )
     except Exception as exc:
+        from .job_execution import PipelineStageFailed
         from .telemetry import capture_exception
-        capture_exception(exc, user_id=job.user_id)
+        if not isinstance(exc, PipelineStageFailed):
+            capture_exception(exc, user_id=job.user_id)
         elapsed = time.perf_counter() - started
         job.status = "failed"
         if _looks_like_timeout_cancellation(exc, elapsed, timeout_seconds):
