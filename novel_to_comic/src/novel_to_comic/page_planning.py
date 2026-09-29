@@ -372,6 +372,20 @@ def _normalize_book_plan_draft(
             content_id = f"page_{page_number:03d}_content_{order:03d}"
             normalized_item["id"] = content_id
             normalized_item["order"] = order
+            # These are already explicit visibility decisions. Compile their
+            # redundant entity citations without inventing staging or acting.
+            visible = list(normalized_item.get("entity_ids") or ())
+            setting = normalized_item.get("setting")
+            if isinstance(setting, Mapping) and setting.get("environment_visible"):
+                location = setting.get("location_entity_id")
+                if location and location not in visible:
+                    visible.append(location)
+            for relationship in normalized_item.get("physical_relationships") or ():
+                if isinstance(relationship, Mapping):
+                    for entity in relationship.get("entity_ids") or ():
+                        if entity not in visible:
+                            visible.append(entity)
+            normalized_item["entity_ids"] = visible
             # Placement is an authored narrative decision. Do not fill omissions,
             # deduplicate, or move words between visual moments to pass validation.
             cited = list(normalized_item.get("lettering_ids") or ())
@@ -494,7 +508,8 @@ _SEMANTIC_PAGE_CONTRACT = (
     "provider prompts. Only explicit author geometry pins own exact placement. "
     "Explicitly place each assigned canonical lettering ID on the panel whose "
     "visual moment it belongs to. Every item must occur exactly once, in Adapt "
-    "order, without rewriting. Code "
+    "order, without rewriting. Each panel must cite the owning beat of every lettering ID "
+    "placed there; captions cannot migrate to a later beat. Code "
     "derives reading_order from this placement but never moves or fills words. "
     "Stage on-screen speakers visibly; off-screen speech must not point at a visible "
     "character. Silent sequences are valid when action, causality, and transitions "
@@ -502,7 +517,10 @@ _SEMANTIC_PAGE_CONTRACT = (
     "canonical narrative context, never invent copy. "
     "Every panel sets camera: shot size and angle chosen for the beat's emphasis; "
     "vary shot size across a page and keep unusual angles for emphasis. For every "
-    "visible entity whose reference kind is character, author exactly one acting entry. "
+    "visible entity whose reference kind is character, author exactly one acting entry, "
+    "including on-screen speakers, appearance-state carriers, masked figures, silhouettes, "
+    "and dead or motionless characters. Describe an obscured face or absent gaze honestly; "
+    "do not omit the entry or invent visible eyes or a living expression. "
     "facing is the reader's screen direction. gaze names whom or what the eyes are on "
     "(an entity ID or a concrete target). expression is the specific momentary face for "
     "this beat, not the character's general temperament. gesture is the concrete hand "
@@ -868,12 +886,80 @@ def estimate_book_plan_cost(
     return total + review_allowance
 
 
+def _draft_contract_failures(adaptation, references, draft):
+    """Report independent allocation and acting defects in the same repair round.
+
+    Raw reference failures previously hid canonical lettering and acting errors
+    until a later paid attempt. Inspect those without constructing invalid pages.
+    """
+    failures = list(_reference_authority_failures(draft.pages, references))
+    approved_pairs = _approved_state_pairs(references)
+    owners = {item.id: beat.id for beat in adaptation.beats for item in beat.lettering}
+    expected = list(owners)
+    actual = []
+    destinations = []
+    claimed = set()
+    beat_by_id = {beat.id: beat for beat in adaptation.beats}
+    lettering_by_id = {item.id: item for beat in adaptation.beats for item in beat.lettering}
+    final_carrier = final_beat_carriers(draft.pages)
+    acting_pages = []
+    for page in draft.pages:
+        acting_content = []
+        for content in page.content:
+            panel = f"page_{page.page_number:03d}_content_{content.order:03d}"
+            for item_id in content.lettering_ids:
+                actual.append(item_id)
+                destinations.append(panel)
+                owner = owners.get(item_id)
+                if owner is None:
+                    code, message = "unknown_lettering", f"{item_id!r} is not canonical Adapt lettering."
+                elif item_id in claimed:
+                    code, message = "duplicate_lettering", f"{item_id!r} was already allocated earlier."
+                elif owner not in content.beat_ids:
+                    code = "lettering_beat_mismatch"
+                    message = (f"{item_id!r} belongs to {owner!r}, but this panel carries "
+                               f"{list(content.beat_ids)!r}. Place the copy with its owning visual "
+                               "moment; preserve canonical story order and unaffected panels.")
+                else:
+                    code = None
+                if code:
+                    failures.append(InvariantFailure(
+                        id=f"plan_failure_{code}_{panel}_{item_id}", owner_stage="plan", code=code,
+                        message="Lettering must remain with its canonical beat, exactly once.",
+                        artifact_ids=[panel, item_id, *([owner] if owner else [])], evidence=[message],
+                    ))
+                claimed.add(item_id)
+            final_beats = frozenset(b for b in content.beat_ids
+                                    if final_carrier.get(b) == (page.page_number, content.order))
+            visible, _, _ = _derived_state_citations(
+                content, beat_by_id, approved_pairs, final_beats,
+            )
+            visible = _derived_speaker_citations(visible, tuple(
+                lettering_by_id[item] for item in content.lettering_ids if item in lettering_by_id
+            ))
+            acting_content.append(content.model_copy(update={"entity_ids": visible}))
+        acting_pages.append(page.model_copy(update={"content": tuple(acting_content)}))
+    if actual != expected:
+        missing = [item for item in expected if item not in claimed]
+        mismatches = [
+            f"Position {index + 1}: expected {wanted}, found {found} at {destinations[index]}."
+            for index, (wanted, found) in enumerate(zip(expected, actual)) if wanted != found
+        ]
+        failures.append(InvariantFailure(
+            id="plan_failure_lettering_changed", owner_stage="plan", code="lettering_changed",
+            message="Plan must allocate every canonical lettering item once in Adapt order.",
+            artifact_ids=list(dict.fromkeys(destinations)),
+            evidence=[f"Expected order: {expected!r}.", f"Actual order: {actual!r}.",
+                      f"Missing items: {missing!r}.", *mismatches],
+        ))
+    failures.extend(_staging_failures(references, acting_pages))
+    return tuple(failures)
+
+
 def _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat):
-    reference_failures = _reference_authority_failures(draft.pages, references)
-    if reference_failures:
-        # Validate authored citations before Adapt-derived state activation can
-        # overwrite them, including in the one-shot path.
-        return (), PlanValidation(invariant_failures=reference_failures)
+    failures = _draft_contract_failures(adaptation, references, draft)
+    if failures:
+        return (), PlanValidation(invariant_failures=failures)
     pages = _canonical_pages(adaptation, draft, pin_by_beat, references)
     validation = validate_book_plan(adaptation, references, target_range, pages)
     return pages, PlanValidation(
@@ -1182,7 +1268,7 @@ async def _generate_page_map(
             + page_map.model_dump_json()
             + "\nFAILURES:\n"
             + "\n".join(
-                f"[{failure.code}] {failure.message} " + " ".join(failure.evidence)
+                _failure_feedback(failure)
                 for failure in validation.invariant_failures
             )
         )
@@ -1320,7 +1406,10 @@ def _compile_detail_response(
             panel["beat_ids"] = sorted(carried, key=positions.__getitem__)
         pages.append(page.model_dump(mode="json", exclude={"lettering_placements", "content"})
                      | {"content": panels})
-    return _BookPlanDraft.model_validate(response.model_dump(mode="json") | {"pages": pages})
+    return _BookPlanDraft.model_validate(_normalize_book_plan_draft(
+        response.model_dump(mode="json") | {"pages": pages}, adaptation,
+        page_number_offset=target_pages[0].page_number - 1,
+    ))
 
 
 def _detail_response_view(draft: _BookPlanDraft) -> dict:
@@ -1456,7 +1545,7 @@ async def _generate_detail_batch(
             "their lettering; never restage an event to accommodate a repeated ID. "
             "\nPREVIOUS DETAIL:\n" + json.dumps(result.value, ensure_ascii=False, separators=(",", ":"))
             + "\nERRORS:\n" + "\n".join([
-                *errors, *(f"[{f.code}] {f.message} " + " ".join(f.evidence)
+                *errors, *(_failure_feedback(f)
                            for f in reference_failures),
             ])
         )
@@ -1825,13 +1914,18 @@ def _schema_repair_prompt(base_prompt: str, raw: object, error: Exception) -> st
     )
 
 
+def _failure_feedback(failure: InvariantFailure) -> str:
+    location = ", ".join(failure.artifact_ids)
+    return (f"[{failure.code}] ({location}) {failure.message} " + " ".join(failure.evidence))
+
+
 def _repair_prompt(
     prompt: str,
     raw: object,
     validation: PlanValidation,
 ) -> str:
     failures = "\n".join(
-        f"- [{failure.code}] {failure.message} " + " ".join(failure.evidence)
+        "- " + _failure_feedback(failure)
         for failure in validation.invariant_failures
     )
     scope = (

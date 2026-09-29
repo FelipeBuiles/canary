@@ -114,6 +114,8 @@ class CodexRuntimeError(RuntimeError):
         self.metadata = metadata or {}
         provider = self.metadata.get("provider_error", {})
         reason = provider.get("message") if isinstance(provider, dict) else None
+        if code == "runtime_capacity":
+            reason = "Selected model is temporarily at capacity. Retry the same model later."
         if code == "image_tool_failed":
             reason = _image_tool_failure_reason(self.metadata) or reason
         if code == "runtime_timeout" and self.metadata.get("timeout_seconds"):
@@ -164,6 +166,11 @@ def _image_tool_failure_reason(metadata: dict[str, Any]) -> str | None:
 def _runtime_error(code: str, metadata: dict[str, Any]) -> CodexRuntimeError:
     provider = metadata.get("provider_error") or {}
     message = provider.get("message", "") if isinstance(provider, dict) else ""
+    if code in {"runtime_turn_error", "turn_not_completed"} and isinstance(provider, dict) and (
+        provider.get("code") == "serverOverloaded"
+        or isinstance(message, str) and "Selected model is at capacity." in message
+    ):
+        return CodexRuntimeError("runtime_capacity", metadata)
     if code == "runtime_turn_error" and isinstance(message, str) and message.endswith(
         "Incomplete response returned, reason: content_filter"
     ):

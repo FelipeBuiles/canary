@@ -28,10 +28,10 @@ function FirstIssueInvitation({ onStart }: { onStart: () => void }) {
         </ol>
       </div>
       <figure className="bg-pulp-paper p-5 sm:p-8">
-        <a href="/marketing/cthulhu-page.webp" target="_blank" rel="noopener noreferrer" aria-label={t("View example comic page at full size")} className="block focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red">
-          <img src="/marketing/cthulhu-page.webp" alt={t("Generated comic page from The Call of Cthulhu, with three illustrated and narrated panels")} width={1100} height={1640} className="mx-auto max-h-[640px] w-full object-contain" />
+        <a href="/marketing/elm-and-keep-page-12.webp" target="_blank" rel="noopener noreferrer" aria-label={t("View example comic page at full size")} className="block focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red">
+          <img src="/marketing/elm-and-keep-page-12.webp" alt={t("Generated comic page from Elm and Keep, showing a goblin examining a coin in two illustrated panels")} width={1024} height={1536} className="mx-auto max-h-[640px] w-full object-contain" />
         </a>
-        <figcaption className="mt-4 font-body text-sm text-ink-muted"><strong className="text-ink-black">{t("An example generated page")}</strong><br />The Call of Cthulhu · H. P. Lovecraft</figcaption>
+        <figcaption className="mt-4 font-body text-sm text-ink-muted"><strong className="text-ink-black">{t("An example generated page")}</strong><br />Elm and Keep · @strnglft (CC0)</figcaption>
       </figure>
     </section>
   );

@@ -1,6 +1,7 @@
 """Paid responses survive stage restarts without recharging cached work."""
 
 import asyncio
+import json
 
 import pytest
 
@@ -69,3 +70,6 @@ def test_rejected_response_can_be_replaced_without_discarding_other_batches(tmp_
     assert asyncio.run(generator(prompt="good")).value == good.value
     assert asyncio.run(generator(prompt="bad")).value != bad.value
     assert len(calls) == 3
+    rejected = list((tmp_path / ".checkpoints/plan/rejected").glob("*.json"))
+    assert len(rejected) == 1
+    assert json.loads(rejected[0].read_text())["value"] == bad.value

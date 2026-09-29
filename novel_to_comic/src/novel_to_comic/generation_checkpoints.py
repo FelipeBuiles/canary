@@ -38,11 +38,15 @@ def read_checkpointed_response(*, artifacts, stage, model, request) -> ApiResult
 def discard_checkpointed_response(*, artifacts, stage, model, request) -> None:
     """Do not replay a response already rejected by the owning validator.
 
-    Only completed structured responses are removed. Transport errors never
+    Completed rejected responses are archived for offline diagnosis, never replayed.
+    Transport errors never
     reach this path and therefore never authorize an ambiguous resubmission.
     """
     path, _ = _checkpoint_location(artifacts, stage, model, request)
-    path.unlink(missing_ok=True)
+    if path.exists():
+        rejected = path.parent.parent / "rejected"
+        rejected.mkdir(parents=True, exist_ok=True)
+        path.replace(rejected / f"{path.stem}-{uuid.uuid4().hex}.json")
 
 
 def checkpointed_generator(
