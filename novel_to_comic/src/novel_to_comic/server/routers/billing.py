@@ -310,22 +310,17 @@ def _handle_checkout_completed(session: dict) -> None:
             "gross_amount_cents": receipt.gross_amount_cents,
             "currency": receipt.currency,
             "offer_version": receipt.offer_version,
+            "purchase_event_environment": os.environ.get("CANARY_ENV", "development"),
+            "purchase_event_release": os.environ.get("CANARY_VERSION", "unknown"),
+            "stripe_mode": "live" if session.get("livemode") is True else "test" if session.get("livemode") is False else "unknown",
         },
         on_conflict="stripe_payment_intent_id",
         ignore_duplicates=True,
     ).execute()
 
     if response.data:
-        capture_server_event(
-            "credits_purchased",
-            user_id=receipt.user_id,
-            properties={
-                "package_id": receipt.package_id,
-                "credits": receipt.credits,
-                "gross_amount_cents": receipt.gross_amount_cents,
-                "currency": receipt.currency,
-            },
-        )
+        # The ledger INSERT trigger commits the purchase outbox event atomically.
+        # Never emit a second best-effort event here, including webhook retries.
         logger.info("Added %d credits for user %s (payment_intent %s)", receipt.credits, receipt.user_id, receipt.payment_intent_id)
     else:
         logger.info("Duplicate webhook for payment_intent %s — skipping", receipt.payment_intent_id)

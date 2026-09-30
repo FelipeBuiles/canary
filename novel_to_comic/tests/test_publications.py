@@ -513,3 +513,90 @@ def test_source_edits_exclude_stale_translations_from_publication(hybrid):
     assert not result["translations"]
     assert "es" in result["unpublished_locales"]
     assert artifacts.read_lettering(1).elements[0].text_by_locale["es"] == "La puerta se abrió."
+
+
+def test_reader_unique_metadata_and_public_intro(setup, tmp_path):
+    client, _ = setup
+    book = publish(client)
+    index = tmp_path / "index.html"
+    from pathlib import Path
+    index.write_text(Path("web/index.html").read_text())
+    body = publications.reader_html(book["id"], tmp_path, index).body.decode()
+    assert body.count("<title>") == 1
+    assert body.count('rel="canonical"') == 1
+    assert f'https://scenewright.ink/read/{book["id"]}' in body
+    assert body.count('name="description"') == 1
+    assert "Turn a short excerpt" not in body
+    assert f'<h1>{book["title"]}</h1>' in body
+
+
+def test_sitemap_only_discovers_curated_public_content(setup, monkeypatch):
+    client, _ = setup
+    private_link = publish(client, allow_feature=False)
+    curated = {"id": "b" * 32}
+    monkeypatch.setattr(publications.showcase, "books", lambda: [(curated, None)])
+    body = publications.sitemap_document().body.decode()
+    from xml.etree import ElementTree
+    root = ElementTree.fromstring(body)
+    assert root.tag.endswith("urlset")
+    assert curated["id"] in body
+    assert private_link["id"] not in body
+    client.delete("/api/projects/project/publication")
+    assert private_link["id"] not in publications.sitemap_document().body.decode()
+    assert "/project/" not in body and "/api/" not in body
+    robots = publications.robots_document()
+    assert robots.media_type == "text/plain"
+    assert "Sitemap: https://scenewright.ink/sitemap.xml" in robots.body.decode()
+
+
+def test_sample_metadata_deep_link_and_escaping(tmp_path):
+    index = tmp_path / "index.html"
+    from pathlib import Path
+    index.write_text(Path("web/index.html").read_text())
+    body = publications.samples_html(index, "kaitlin-out-of-space").body.decode()
+    assert body.count("<title>") == 1
+    assert body.count('name="description"') == 1
+    assert 'href="https://scenewright.ink/samples?story=kaitlin-out-of-space"' in body
+    assert "Kaitlin" in body
+    body = publications.samples_html(index, '<script>private</script>').body.decode()
+    assert 'href="https://scenewright.ink/samples"' in body
+    assert "private" not in body
+
+
+def test_crawler_routes_precede_spa_without_auth(tmp_path, monkeypatch):
+    from novel_to_comic.server.app import create_app
+    monkeypatch.setenv("CANARY_SHOWCASE_DIR", str(tmp_path / "empty-showcase"))
+    client = TestClient(create_app(tmp_path, dev=False))  # No lifespan/provider/DB startup.
+    sitemap = client.get("/sitemap.xml")
+    assert sitemap.status_code == 200
+    assert sitemap.headers["content-type"].startswith("application/xml")
+    assert "<urlset" in sitemap.text and '<div id="root"' not in sitemap.text
+    robots = client.get("/robots.txt")
+    assert robots.status_code == 200
+    assert robots.headers["content-type"].startswith("text/plain")
+    assert "Sitemap:" in robots.text
+    samples = client.get("/samples?story=kaitlin-out-of-space")
+    assert samples.status_code == 200
+    assert 'href="https://scenewright.ink/samples?story=kaitlin-out-of-space"' in samples.text
+    missing = client.get("/read/" + "a" * 32)
+    assert missing.status_code == 404
+    assert missing.headers["x-robots-tag"] == "noindex"
+
+
+def test_empty_curation_and_untrusted_request_host_are_safe(tmp_path, monkeypatch):
+    from novel_to_comic import sample_library
+    from novel_to_comic.server.app import create_app
+    from xml.etree import ElementTree
+    monkeypatch.setattr(publications.showcase, "books", lambda: [])
+    monkeypatch.setattr(sample_library, "catalog", lambda: [])
+    monkeypatch.delenv("SCENEWRIGHT_PUBLIC_URL", raising=False)
+    client = TestClient(create_app(tmp_path, dev=False))
+    response = client.get("/sitemap.xml", headers={"Host": "attacker.invalid", "X-Forwarded-Host": "attacker.invalid"})
+    root = ElementTree.fromstring(response.text)
+    urls = [node.text for node in root.iter("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")]
+    assert urls == ["https://scenewright.ink/", "https://scenewright.ink/samples"]
+    assert "attacker.invalid" not in response.text
+    response = client.get('/samples?story=%22%3E%3Cscript%3Ealert(1)%3C/script%3E', headers={"Host": "attacker.invalid"})
+    assert 'href="https://scenewright.ink/samples"' in response.text
+    assert "alert(1)" not in response.text
+    assert "attacker.invalid" not in response.text

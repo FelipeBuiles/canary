@@ -1,5 +1,7 @@
 """Release-blocking security and readiness contracts."""
 
+import os
+
 import asyncio
 import json
 from pathlib import Path
@@ -116,6 +118,9 @@ def test_checkout_webhook_credits_paid_session_once():
             "gross_amount_cents": 1200,
             "currency": "usd",
             "offer_version": "legacy",
+            "purchase_event_environment": os.environ.get("CANARY_ENV", "development"),
+            "purchase_event_release": os.environ.get("CANARY_VERSION", "unknown"),
+            "stripe_mode": "unknown",
         },
         on_conflict="stripe_payment_intent_id",
         ignore_duplicates=True,

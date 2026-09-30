@@ -111,7 +111,7 @@ describe("PostHog privacy boundary", () => {
     expect(JSON.stringify(result)).not.toContain("private");
     expect(result?.properties).toMatchObject({
       $current_url: `${window.location.origin}/project/:id/book`, $session_id: "session-1", $event_type: "click",
-      $elements_chain: 'button.primary:nth-child="1"',
+      $elements_chain: 'button',
     });
   });
   it("keeps replay frames with route-template URLs and no plugin payloads", () => {
@@ -133,14 +133,14 @@ describe("PostHog privacy boundary", () => {
     ]);
     expect(scrubEvent({ uuid: "test", event: "$snapshot", properties: { $snapshot_data: [] } })).toBeNull();
   });
-  it("masks replay prose outside interface chrome and rewrites links", () => {
+  it("masks replay prose including dynamic chrome and rewrites safe links", () => {
     document.body.innerHTML = '<button><span id="chrome">Export</span></button><p id="prose">Private manuscript</p>';
-    expect(maskReplayText("Export", document.getElementById("chrome")!)).toBe("Export");
+    expect(maskReplayText("Export", document.getElementById("chrome")!)).toBe("******");
     expect(maskReplayText("Private manuscript", document.getElementById("prose")!)).toBe("******* **********");
     expect(maskReplayAttribute("href", "/project/private-id/cast")).toBe(`${window.location.origin}/project/:id/cast`);
-    expect(maskReplayAttribute("href", "/assets/index-abc.css")).toBe(`${window.location.origin}/assets/index-abc.css`);
-    expect(maskReplayAttribute("src", "https://cdn.example/private.png?token=private")).toBe("https://cdn.example");
-    expect(maskReplayAttribute("class", "primary")).toBe("primary");
+    expect(maskReplayAttribute("href", "/assets/index-abc.css")).toBe(`${window.location.origin}/other`);
+    expect(maskReplayAttribute("src", "https://cdn.example/private.png?token=private")).toBe("[redacted]");
+    expect(maskReplayAttribute("class", "primary")).toBe("[redacted]");
   });
   it("maps every route shape to a bounded template", () => {
     expect(canonicalPath("/", false)).toBe("/");
@@ -158,4 +158,41 @@ describe("PostHog privacy boundary", () => {
     expect(readAcquisition({ search: "", hostname: "scenewright.ink" }, "https://scenewright.ink/read/x")).toEqual({ source: "direct" });
     expect(readAcquisition({ search: `?ref=book-${"a".repeat(32)}`, hostname: "scenewright.ink" }, "")).toEqual({ source: "book_referral" });
   });
+});
+
+
+it("scrubs full and incremental serialized DOM content, attributes and unsupported frames", () => {
+  const secret = "DISTINCTIVE_UNPUBLISHED_SECRET";
+  const result = scrubEvent({ uuid: "test", event: "$snapshot", properties: {
+    $session_id: "session-1", $window_id: "window-1", $snapshot_data: [
+      { type: 2, timestamp: 1, data: { node: { type: 2, id: 1, tagName: "button", attributes: {
+        title: secret, "aria-label": secret, class: secret, style: `background:url(https://${secret}.invalid)`,
+        "data-ph-unmask": "true", role: "button", href: `/project/${secret}/pages?token=${secret}`,
+      }, childNodes: [{ type: 3, id: 2, textContent: secret }] } } },
+      { type: 3, data: { source: 0, texts: [{ id: 2, value: secret }], attributes: [{ id: 1, attributes: { title: secret, role: "button" } }] } },
+      { type: 3, data: { source: 5, id: 3, text: secret, isChecked: false } },
+      { type: 3, data: { source: 8, rules: [{ rule: secret }] } },
+      { type: 5, data: { tag: secret, payload: { secret } } },
+      { type: 6, data: { plugin: "console", payload: { secret } } },
+    ],
+  } });
+  expect(JSON.stringify(result)).not.toContain(secret);
+  expect(result?.properties.$snapshot_data).toHaveLength(3);
+  expect(result?.properties.$snapshot_data[0].data.node.attributes).toEqual({ role: "button", href: `${window.location.origin}/project/:id/pages` });
+  expect(maskReplayAttribute("aria-label", secret)).toBe("[redacted]");
+  expect(maskReplayAttribute("style", secret)).toBe("[redacted]");
+  expect(maskReplayAttribute("src", `https://${secret}.invalid/art`)).toBe("[redacted]");
+});
+
+
+it("drops automatic top-level person properties and opaque compressed replay frames", () => {
+  const raw = { uuid: "test", event: "$snapshot", $set_once: { initial_url: "UNPUBLISHED_SECRET" }, properties: {
+    $session_id: "session-1", $window_id: "window-1", $snapshot_data: [
+      { type: 2, cv: "2024-10", data: "opaque-packed-private-content" },
+      { type: 3, cv: "2024-10", data: { source: 0, texts: "packed" } },
+    ],
+  } };
+  const result = scrubEvent(raw);
+  expect(JSON.stringify(result)).not.toContain("UNPUBLISHED_SECRET");
+  expect(result?.properties.$snapshot_data).toEqual([]);
 });

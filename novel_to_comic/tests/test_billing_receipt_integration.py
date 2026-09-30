@@ -12,7 +12,7 @@ from novel_to_comic.server.checkout_receipts import offer_snapshot
 def _paid_session():
     return {
         "id": "cs_test_purchase", "payment_intent": "pi_purchase",
-        "mode": "payment", "status": "complete", "payment_status": "paid",
+        "mode": "payment", "status": "complete", "payment_status": "paid", "livemode": False,
         "amount_total": 1200, "currency": "usd",
         "metadata": {"user_id": "account", "package": "starter", **offer_snapshot(1200, 1200)},
     }
@@ -34,7 +34,10 @@ def test_fulfillment_uses_snapshot_and_database_deduplication(monkeypatch):
     assert call.args[0]["amount_credits"] == 1200
     assert call.args[0]["gross_amount_cents"] == 1200
     assert call.kwargs == {"on_conflict": "stripe_payment_intent_id", "ignore_duplicates": True}
-    assert events.call_count == 1
+    assert call.args[0]["stripe_mode"] == "test"
+    assert call.args[0]["purchase_event_environment"]
+    assert call.args[0]["purchase_event_release"]
+    events.assert_not_called()
 
 
 def test_invalid_paid_receipt_never_touches_ledger(monkeypatch):
@@ -145,3 +148,19 @@ def test_refund_success_local_failure_preserves_recovery(refund_services):
     assert caught.value.status_code == 503
     services.events.assert_not_called()
     assert services.db.table.return_value.update.call_args.args[0]["stripe_refund_id"] == "re_purchase"
+
+
+@pytest.mark.parametrize("livemode, expected", [(True, "live"), (False, "test"), (None, "unknown")])
+def test_purchase_mode_never_guessed_from_account_or_session_name(monkeypatch, livemode, expected):
+    db = MagicMock()
+    monkeypatch.setattr(billing, "get_db", lambda: db)
+    monkeypatch.setenv("CANARY_ENV", "production")
+    monkeypatch.setenv("CANARY_VERSION", "fixture-release")
+    session = _paid_session()
+    session["livemode"] = livemode
+    billing._handle_checkout_completed(session)
+    payload = db.table.return_value.upsert.call_args.args[0]
+    assert payload["stripe_mode"] == expected
+    assert payload["user_id"] == "account"
+    assert payload["purchase_event_environment"] == "production"
+    assert payload["purchase_event_release"] == "fixture-release"
