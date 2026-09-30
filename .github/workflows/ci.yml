@@ -45,10 +45,7 @@ jobs:
         # The web extra includes production telemetry integrations.
         run: uv sync --locked --extra web --extra dev
       - name: Check locked production dependencies
-        run: |
-          uv pip check
-          uv export --locked --extra web --no-dev --no-emit-project > /tmp/app-requirements.txt
-          uvx pip-audit==2.10.1 -r /tmp/app-requirements.txt --no-deps --disable-pip
+        run: python ../scripts/check_release.py audit-app
       - name: Install Playwright Chromium
         run: uv run playwright install --with-deps chromium
       - name: Documentation reliability
@@ -57,10 +54,10 @@ jobs:
       - name: Ruff
         run: uv run ruff check .
       - name: Pytest
-        run: uv run pytest -x -q
+        run: uv run python ../scripts/run_backend_checks.py -x -q
       - name: Full-page contract gates
         # Local fixtures only; no provider credentials or credits required.
-        run: uv run pytest -q tests/test_full_page_contracts.py
+        run: uv run python ../scripts/run_backend_checks.py -q tests/test_full_page_contracts.py
 
   web:
     name: Web (vitest + build)
@@ -153,9 +150,7 @@ jobs:
       - name: Verify database-free and PostgreSQL-backed gateway startup
         run: python scripts/smoke_gateway.py canary-gateway-ci
       - name: Check locked production dependencies
-        run: |
-          uv export --project litellm --locked --no-dev --no-emit-project > /tmp/gateway-requirements.txt
-          uvx pip-audit==2.10.1 -r /tmp/gateway-requirements.txt --no-deps --disable-pip
+        run: python scripts/check_release.py audit-gateway
 
   tooling:
     name: Root tooling

@@ -200,3 +200,24 @@ were made independent of an ignored frontend build and the working directory,
 without weakening assertions: 321 selected regressions passed with the actual
 build hidden, and all 28 publication tests passed from the backend CI directory.
 The production migration was not repeated during these application-only fixes.
+
+### Requested pre-push improvement and full local gate
+
+Added `npm run check:push` and `npm run check:release`, documented in
+`docs/agents/pre-push.md`. CI shares dependency auditors, the build-absent backend
+runner and disposable PostgreSQL component. Existing hooks were unchanged.
+Fast checks passed 67 backend and 33 frontend tests, audits, lint/build and docs.
+Negative fixtures rejected the previous vulnerable lock and build-dependent test,
+missing uv and unconfigured database, without checkout switching or downgrades.
+The gate caught and fixed the empty-catalog test’s local-build dependency using
+the same reusable SPA fixture as the crawler test.
+
+Before the next push, the full CI-equivalent local components passed: 2,745
+backend tests (9 skipped), 61 page-contract tests, 30 real disposable PostgreSQL
+tests, 798 frontend tests, 36 gateway tests, gateway Docker build and startup
+smokes with/without PostgreSQL, production Docker build, both Python production
+audits, npm audits, Ruff, lint, build and docs checks. The original runner was
+interrupted during frontend tests by unavailable Mac execution tools; completed
+backend/database checks were retained and the remaining components resumed.
+The abandoned test-only tmpfs container was stopped/removed; existing developer
+database containers were preserved. No new production migration was performed.
