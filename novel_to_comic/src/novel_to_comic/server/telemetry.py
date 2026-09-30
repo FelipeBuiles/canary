@@ -26,7 +26,7 @@ _ID = re.compile(r"^[a-fA-F0-9-]{16,64}$")
 _FIELDS = frozenset({
     "request_id", "operation_id", "job_id", "project_id", "stage", "feature", "operation",
     "status", "phase", "error_type", "model_alias", "provider_model", "provider", "funding",
-    "cost_status", "cost_source", "cost_usd", "estimated_cost_usd", "latency_ms", "image_count",
+    "code", "cost_status", "cost_source", "cost_usd", "estimated_cost_usd", "latency_ms", "image_count",
     "input_tokens", "output_tokens", "page_number", "is_correction", "queue_ms", "http_status",
     "route", "method", "source", "file_type", "rerun", "retry_failed", "outcome", "style_id",
     "package_id", "gross_amount_cents", "currency", "credits", "amount_credits", "app_environment",
@@ -148,8 +148,8 @@ def _before_send(event):
         for key in ("$exception_list",):
             if key in properties:
                 clean[key] = _exception_list(properties[key])
-        for key in ("$exception_type", "$exception_level", "$exception_personURL"):
-            if key in properties and key != "$exception_personURL":
+        for key in ("$exception_type", "$exception_level", "$exception_fingerprint"):
+            if key in properties:
                 value = str(properties[key])
                 if _TOKEN.fullmatch(value):
                     clean[key] = value
@@ -193,8 +193,13 @@ def capture_exception(error: BaseException, *, user_id=None, **fields):
         return
     try:
         identity = user_id if user_id and _ID.fullmatch(user_id) else "canary-server"
-        _client.capture_exception(error, distinct_id=identity,
-                                  properties=safe_fields({**context_fields(), "$ai_trace_id": context_fields().get("operation_id"), **fields}))
+        # Runtime errors carry a sanitized `code`; the message stays redacted.
+        code = getattr(error, "code", None)
+        properties = safe_fields({**context_fields(), "$ai_trace_id": context_fields().get("operation_id"),
+                                  "code": code if isinstance(code, str) else None, **fields})
+        if "code" in properties:
+            properties["$exception_fingerprint"] = f"{type(error).__name__}:{properties['code']}"
+        _client.capture_exception(error, distinct_id=identity, properties=properties)
     except Exception:
         pass
 

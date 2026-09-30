@@ -140,6 +140,23 @@ def test_exception_wire_labels_match_other_events(monkeypatch):
     assert wire["operation_id"] == USER
 
 
+def test_runtime_error_code_groups_exceptions_without_message(monkeypatch):
+    from novel_to_comic.ai.codex_runtime import CodexRuntimeError
+    sdk = MagicMock()
+    monkeypatch.setattr(t, "_client", sdk)
+    wires = []
+    for code in ("runtime_capacity", "image_output_missing"):
+        t.capture_exception(CodexRuntimeError(code, {"provider_error": {"message": "private"}}), user_id=USER)
+        props = sdk.capture_exception.call_args.kwargs["properties"]
+        wires.append(t._before_send({"event": "$exception", "properties": props})["properties"])
+    assert [w["code"] for w in wires] == ["runtime_capacity", "image_output_missing"]
+    assert [w["$exception_fingerprint"] for w in wires] == [
+        "CodexRuntimeError:runtime_capacity", "CodexRuntimeError:image_output_missing"]
+    assert "private" not in json.dumps(wires)
+    t.capture_exception(ValueError("private"), user_id=USER)
+    assert "$exception_fingerprint" not in sdk.capture_exception.call_args.kwargs["properties"]
+
+
 def test_delayed_delivery_preserves_capture_release(monkeypatch):
     monkeypatch.setenv("CANARY_VERSION", "new-release")
     row = {"id": USER, "event_name": "station_viewed", "user_id": USER,
