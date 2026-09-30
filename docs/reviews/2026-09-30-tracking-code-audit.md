@@ -186,3 +186,17 @@ Release Ruff caught test formatting and fixture import warnings, corrected
 without changing assertions; all backend Ruff and 23 disposable PostgreSQL
 regressions passed afterward. Main push includes the existing user-authored
 `67012a9` labs-fixes commit in addition to these reviewed changes.
+
+### Release gate recovery
+
+Initial release CI blocked deployment on PyJWT 2.14.0
+(CVE-2026-101918, upstream advisory
+https://github.com/jpadilla/pyjwt/security/advisories/GHSA-42vr-xj54-vc7v).
+Updated only PyJWT in both production locks to 2.15.1 and the app minimum to
+2.15.0; both production dependency audits and 39 auth/security tests passed.
+Upstream 2.15.1 also restores valid trailing Base64URL padding compatibility.
+The recovery gateway CI and billing/security workflow passed. New SEO tests
+were made independent of an ignored frontend build and the working directory,
+without weakening assertions: 321 selected regressions passed with the actual
+build hidden, and all 28 publication tests passed from the backend CI directory.
+The production migration was not repeated during these application-only fixes.

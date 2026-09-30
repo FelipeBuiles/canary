@@ -182,7 +182,7 @@ def test_migration_rerun_does_not_backfill_historical_purchases(purchase_db):
         db.query(
             "alter table public.credit_ledger enable trigger settled_purchase_event;"
         )
-    migration = Path("docs/migrations/2026-09-30-purchase-event-outbox.sql").read_text()
+    migration = (Path(__file__).resolve().parents[2] / "docs/migrations/2026-09-30-purchase-event-outbox.sql").read_text()
     db.query(migration)
     db.query(migration)
     assert pending(db, user) == []

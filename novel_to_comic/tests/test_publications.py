@@ -520,7 +520,7 @@ def test_reader_unique_metadata_and_public_intro(setup, tmp_path):
     book = publish(client)
     index = tmp_path / "index.html"
     from pathlib import Path
-    index.write_text(Path("web/index.html").read_text())
+    index.write_text((Path(__file__).resolve().parents[2] / "web/index.html").read_text())
     body = publications.reader_html(book["id"], tmp_path, index).body.decode()
     assert body.count("<title>") == 1
     assert body.count('rel="canonical"') == 1
@@ -552,7 +552,7 @@ def test_sitemap_only_discovers_curated_public_content(setup, monkeypatch):
 def test_sample_metadata_deep_link_and_escaping(tmp_path):
     index = tmp_path / "index.html"
     from pathlib import Path
-    index.write_text(Path("web/index.html").read_text())
+    index.write_text((Path(__file__).resolve().parents[2] / "web/index.html").read_text())
     body = publications.samples_html(index, "kaitlin-out-of-space").body.decode()
     assert body.count("<title>") == 1
     assert body.count('name="description"') == 1
