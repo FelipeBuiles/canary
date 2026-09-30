@@ -23,7 +23,7 @@ vi.mock("../api/queries", () => ({
   useLabsProjects: () => ({ data: { projects: [{ id: "story", title: "Story", statuses: {}, words: 1200 }] }, isLoading: false }),
   useImageCompareOptions: () => state.options,
   useImageItems: () => ({ data: { items: [
-    { id: "page:1", kind: "page", label: "Page 1 · 3 panels" },
+    { id: "page:1", kind: "page", label: "Page 1 · 3 panels", preview: "pages/page_001.png" },
     { id: "asset:abc", kind: "asset", label: "Character sheet · refs/char_001/sheet.png", recorded_at: null, recorded_route: "fal-queue", references: 1 },
   ] }, isLoading: false }),
   useImageArmPreview: () => ({ data: undefined }),
@@ -54,6 +54,12 @@ describe("Labs", () => {
     state.stageOptions = undefined;
     state.create.mockClear();
     state.retry.mockClear();
+  });
+
+  it("loads source thumbnails through the Labs slug-based file route", () => {
+    const { container } = renderAt("/labs");
+    expect(container.querySelector("img")?.getAttribute("src"))
+      .toBe("/api/labs/projects/story/files/pages/page_001.png");
   });
 
   it("offers a single retry when models fail to load", () => {

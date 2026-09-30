@@ -57,6 +57,7 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/labs/image-compare/projects/{project}/items` | `image_compare_items` | `labs.py` |
 | `POST` | `/api/labs/image-compare/preview` | `image_compare_preview` | `labs.py` |
 | `GET` | `/api/labs/projects` | `list_projects` | `labs.py` |
+| `GET` | `/api/labs/projects/{project}/files/{path:path}` | `get_project_file` | `labs.py` |
 | `GET` | `/api/labs/stage-models/options` | `stage_model_options` | `labs.py` |
 | `POST` | `/api/labs/stage-models/estimate` | `stage_model_estimate` | `labs.py` |
 | `POST` | `/api/labs/image-compare/estimate` | `image_compare_estimate` | `labs.py` |
