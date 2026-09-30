@@ -20,6 +20,7 @@ from novel_to_comic.state import load_state
 
 from ..auth import get_current_user
 from ..deps import get_projects_dir
+from .files import _is_denied
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -94,6 +95,29 @@ def _projects(root: Path) -> list[dict[str, Any]]:
 @router.get("/projects")
 def list_projects(request: Request, user_id: str = Depends(get_current_user)) -> dict[str, Any]:
     return {"projects": _projects(_user_root(request, user_id))}
+
+
+@router.get("/projects/{project}/files/{path:path}")
+def get_project_file(
+    project: str, path: str, request: Request, user_id: str = Depends(get_current_user),
+) -> FileResponse:
+    """Read Labs source assets using its filesystem project identifier."""
+    user_root = _user_root(request, user_id).resolve()
+    directory = _project_dir(user_root, project).resolve()
+    target = (directory / path).resolve()
+    if (
+        not directory.is_relative_to(user_root)
+        or not target.is_relative_to(directory)
+        or _is_denied(target.relative_to(directory))
+    ):
+        raise HTTPException(403, "Access denied")
+    if not (directory / "state.json").is_file() or not target.is_file():
+        raise HTTPException(404, "File not found")
+    return FileResponse(
+        target,
+        media_type=mimetypes.guess_type(target.name)[0] or "application/octet-stream",
+        headers={"Cache-Control": "private, max-age=60"},
+    )
 
 
 @router.get("/stage-models/options")

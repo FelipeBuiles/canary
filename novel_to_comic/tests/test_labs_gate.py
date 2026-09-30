@@ -132,3 +132,30 @@ def test_labs_reasoning_is_validated_before_creating_run(monkeypatch, tmp_path):
     assert selected == {"mimo-v2.6-pro": {"extract": "enabled", "brief": "none"},
                         "gpt-6-sol": {"extract": "medium", "brief": "low"}}
     assert dispatched == [result.json()["run_id"]]
+
+
+def test_labs_source_files_use_slugs_and_stay_in_owned_project(monkeypatch, tmp_path):
+    client = _labs_client(monkeypatch, tmp_path)
+    project = tmp_path / "owner" / "elm-and-keep"
+    (project / "pages").mkdir(parents=True)
+    (project / "state.json").write_text("{}")
+    (project / "pages" / "page.png").write_bytes(b"image")
+    (project / "config.yaml").write_text("secret")
+    (project / ".private").write_text("secret")
+    other = tmp_path / "other" / "story"
+    other.mkdir(parents=True)
+    (other / "state.json").write_text("{}")
+    (other / "page.png").write_bytes(b"private")
+    (project / "escape.png").symlink_to(other / "page.png")
+    (tmp_path / "owner" / "linked-project").symlink_to(other)
+
+    base = "/api/labs/projects/elm-and-keep/files/"
+    response = client.get(base + "pages/page.png")
+    assert response.status_code == 200
+    assert response.content == b"image"
+    assert response.headers["cache-control"] == "private, max-age=60"
+    assert client.get(base + "missing.png").status_code == 404
+    for path in ("config.yaml", ".private", "escape.png", "pages/%2E%2E/%2E%2E/secret"):
+        assert client.get(base + path).status_code == 403
+    assert client.get("/api/labs/projects/story/files/page.png").status_code == 404
+    assert client.get("/api/labs/projects/linked-project/files/page.png").status_code == 403

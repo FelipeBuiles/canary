@@ -333,7 +333,7 @@ function ImageCompareSetup({ projects, onStarted }: { projects: LabsProject[]; o
                 )}
               </Checkbox>
               {item.preview && (
-                <img src={`/api/projects/${encodeURIComponent(project)}/files/${item.preview}`} alt=""
+                <img src={`/api/labs/projects/${encodeURIComponent(project)}/files/${item.preview}`} alt=""
                   className="h-10 w-10 shrink-0 border border-ink-black/15 object-cover" loading="lazy" />
               )}
               <button
