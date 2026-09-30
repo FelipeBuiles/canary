@@ -600,6 +600,14 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     else:
         log.info("Labs router disabled (CANARY_LABS_ENABLED not set to truthy)")
 
+    @app.get("/sitemap.xml", include_in_schema=False)
+    def public_sitemap():
+        return publications.sitemap_document()
+
+    @app.get("/robots.txt", include_in_schema=False)
+    def public_robots():
+        return publications.robots_document()
+
     # Serve bundled fonts
     app.mount("/static/fonts", StaticFiles(directory=str(FONTS_DIR)), name="fonts")
 
@@ -612,6 +620,10 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
             @app.get("/read/{book_id}", include_in_schema=False)
             def public_reader_document(book_id: str):
                 return publications.reader_html(book_id, projects_dir, dist / "index.html")
+
+            @app.get("/samples", include_in_schema=False)
+            def public_samples_document(story: str | None = None):
+                return publications.samples_html(dist / "index.html", story)
 
             app.mount("/", SPAStaticFiles(directory=str(dist), html=True), name="frontend")
 

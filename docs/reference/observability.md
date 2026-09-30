@@ -32,10 +32,14 @@ reducing the Fly machine size.
 - Session replay and click autocapture (including `$rageclick`) feed
   Self-driving Replay Vision. The recorder is bundled (`posthog-recorder`;
   the no-external SDK loads no scripts). Replays mask all inputs and all text
-  outside interface chrome (buttons, nav, labels, tabs, menu items,
-  `[data-ph-unmask]`), block images, canvas, and video (`[data-ph-block]`),
-  rewrite link and frame URLs to route templates, and drop console/network
-  plugin frames. Autocapture keeps tag/class/position chains only. `scrubEvent`
+  including interface controls and `[data-ph-unmask]`. Images, SVG, media,
+  canvas, iframes, embedded objects and `[data-ph-block]` are blocked. A second
+  boundary scrubs serialized full snapshots and mutations: arbitrary attributes,
+  CSS, URLs, custom/plugin frames and opaque packed events are excluded; only
+  bounded structural roles/types/geometry and route templates survive. Replay
+  event packing is disabled so this boundary can inspect the DOM; transport
+  compression remains available. This intentionally reduces replay visual fidelity.
+  Autocapture retains known HTML tag chains without classes, text or attributes. `scrubEvent`
   in `web/src/telemetry.ts` enforces these limits; the Privacy page states them.
 - Browser events retain the configured public ingestion token (required by
   PostHog after `before_send`), SDK/version and event/pageview IDs, browser/OS
@@ -291,3 +295,27 @@ usage after deployment, without treating missing observations as user behavior.
 
 Primary documentation and exact recipe decisions are recorded in the
 [PostHog integration research](../research/2026-09-26-posthog-integration-recipes.md).
+
+
+## Atomic purchase analytics outbox
+
+Apply `docs/migrations/2026-09-30-purchase-event-outbox.sql` before deploying the
+updated billing writer; do not run a historical backfill. The full schema also
+includes the change. A settled Stripe purchase INSERT and its content-free
+`credits_purchased` event commit in the same PostgreSQL transaction. Event IDs
+are deterministic from the ledger row ID; duplicate payment-intent deliveries
+retain the original grant and event. A lost webhook response after commit leaves
+both durable. Outbox delivery retries vendor failures with the same `$insert_id`;
+a lost vendor acknowledgement can resend the event and relies on PostHog insert-ID
+deduplication, rather than claiming exactly-once network delivery.
+
+The writer freezes environment, release and Stripe `livemode` as `test`, `live`
+or `unknown` (missing legacy evidence is never guessed). The trigger preserves
+the account UUID and purchase amount/package/currency only; no Stripe IDs,
+payment payloads, customer details or attribution URLs enter telemetry. Existing
+account attribution joins remain unchanged. The new writer's environment marker
+activates atomic capture; old releases retain their best-effort path during the
+migration-before-code interval, avoiding duplicate events. The guarantee starts
+when the updated writer runs. Do not remove the migration while that writer is
+active; missing columns or a failed event INSERT must leave the webhook
+unacknowledged for retry, not silently settle without an event.

@@ -1,11 +1,18 @@
 import { Link, useSearchParams } from "react-router-dom";
 import { BrandIdentity } from "../components/BrandIdentity";
 import { SampleLibrary } from "../components/wizard/SampleLibrary";
+import { usePublicMetadata } from "../lib/publicMetadata";
+import { useShortStories } from "../api/queries";
 import { useI18n } from "../i18n";
 
 export function SampleLibraryPage() {
   const { t } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { data: stories } = useShortStories();
+  const story = stories?.find(item => item.code === searchParams.get("story"));
+  usePublicMetadata(story ? `${story.title} by ${story.author} — Scenewright` : "Sample stories — Scenewright",
+    story?.description || (story ? `Read ${story.title} by ${story.author} in the Scenewright sample library.` : "Explore selected stories, authors and themes in the Scenewright sample library."),
+    story ? `/samples?story=${encodeURIComponent(story.code)}` : "/samples");
   return (
     <div className="min-h-svh bg-pulp-paper text-ink-black">
       <a href="#samples-main" className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:bg-bristol focus:p-3">{t("Skip to stories")}</a>

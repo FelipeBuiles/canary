@@ -41,7 +41,10 @@ describe("public sample shelf", () => {
     </MemoryRouter></I18nProvider>);
 
     expect(await screen.findByText("A student enters the classroom.")).toBeTruthy();
+    expect(document.title).toBe("An Education by Angie — Scenewright");
+    expect(document.querySelector('link[rel="canonical"]')?.getAttribute("href")).toBe("https://scenewright.ink/samples?story=an-education");
     await user.click(screen.getByRole("button", { name: /Back to stories/ }));
+    expect(document.title).toBe("Sample stories — Scenewright");
     expect(screen.getByLabelText("Current route").textContent).toBe("/samples");
     await user.click(screen.getAllByRole("button", { name: "READ STORY" })[0]);
     expect(screen.getByLabelText("Current route").textContent).toBe("/samples?story=an-education");

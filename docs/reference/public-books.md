@@ -111,3 +111,25 @@ updates, unfinished editions, unpublishing, account-scoped management, manual sh
 and reader languages (completeness and fit, frozen versions, baked editions).
 `publicBook.test.tsx` covers anonymous reading, unavailable books, export options,
 the language toggle, and explicit owner publishing/unpublishing.
+
+## Public search metadata
+
+Public reader documents replace the SPA's homepage title, description, canonical
+and social metadata with the frozen publication's public title, author and
+synopsis. The initial HTML includes a short public introduction; React updates
+existing head nodes during client navigation. Unavailable/unpublished reader
+URLs return 404 with `X-Robots-Tag: noindex`.
+
+The public sample shelf and recognized story deep links also receive unique
+metadata and a crawler-visible introduction. `/sitemap.xml` is real XML and
+lists the homepage, sample shelf, curated bundled sample stories and valid
+showcase books only. Owner publications remain accessible by direct public
+link but are not automatically listed for discovery. Private projects,
+unpublished snapshots and the uncurated classic archive are not enumerated.
+`/robots.txt` points to the sitemap and disallows private app/API paths; access
+control remains the authority for private content.
+
+Server canonical URLs default to `https://scenewright.ink`; deployments can set
+`SCENEWRIGHT_PUBLIC_URL` for the server's public origin. This is separate from
+`SCENEWRIGHT_APP_URL`, which owns signup/export referral destinations. The web
+metadata hook currently targets the production public origin.

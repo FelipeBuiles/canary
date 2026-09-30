@@ -22,6 +22,10 @@ describe("public books", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => book }));
     wrapper(<Routes><Route path="/read/:id" element={<PublicBookPage />} /></Routes>);
     const reader = await screen.findByRole("dialog", { name: "Book reader" });
+    expect(document.title).toBe(`${book.title} — Scenewright`);
+    expect(document.querySelectorAll("title")).toHaveLength(1);
+    expect(document.querySelector('link[rel="canonical"]')?.getAttribute("href")).toBe(`https://scenewright.ink/read/${book.id}`);
+    expect(document.querySelector('meta[name="description"]')?.getAttribute("content")).toBe(book.description);
     expect(within(reader).getByText(book.title)).toBeTruthy();
     expect(screen.getByRole("img", { name: "Page 1 — Page 1" }).getAttribute("src")).toBe("/public-page-1");
     expect(screen.queryByRole("img", { name: /— Page 2/ })).toBeNull();

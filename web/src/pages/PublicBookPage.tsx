@@ -10,6 +10,7 @@ import type { ReaderPage } from "../lib/bookReader";
 import { LANGUAGES, useI18n } from "../i18n";
 import { cn } from "../lib/cn";
 import "./PublicBookPage.css";
+import { usePublicMetadata } from "../lib/publicMetadata";
 
 /** One reading-language preference per viewer, shared by every public book. */
 const READER_LANGUAGE_KEY = "canary.readerLanguage";
@@ -41,6 +42,8 @@ export function PublicBookPage() {
   const [readerOpen, setReaderOpen] = useState(true);
   const [message, setMessage] = useState("");
   const book = query.data;
+  usePublicMetadata(book ? `${book.title} — Scenewright` : undefined,
+    book?.description || `By ${book?.author ?? ""} · Read on Scenewright`, `/read/${id}`, book?.pages[0]?.url);
   const referral = `/signup?ref=book-${encodeURIComponent(id)}`;
   const languages = useMemo(() => book ? publicationLanguages(book) : [], [book]);
   const [preferredLanguage, setPreferredLanguage] = useState<string | null>(() => storedReaderLanguage() ?? language ?? null);
@@ -125,7 +128,6 @@ export function PublicBookPage() {
         <Button onClick={() => void query.refetch()}>{t("Try again")}</Button>
       </section>}
       {book && <>
-        <title>{book.title} — Scenewright</title>
         {!readerOpen && <>
           <section className="public-book-intro">
             {bookPages?.[0] && <button className="public-book-cover" onClick={() => setReaderOpen(true)} aria-label={t("Open the first page")}>

@@ -78,11 +78,11 @@ export function canonicalPath(pathname: string, signedIn: boolean): string {
   return "/other";
 }
 
-/** Same-origin links become route templates; external links keep only their origin. */
+/** Links become same-origin route templates; external destinations are redacted. */
 export function canonicalUrl(value: string): string {
   try {
     const url = new URL(value, window.location.origin);
-    if (url.origin !== window.location.origin) return url.origin;
+    if (url.origin !== window.location.origin) return window.location.origin + "/external";
     return window.location.origin + canonicalPath(url.pathname, account !== null);
   } catch {
     return window.location.origin + "/other";
@@ -96,8 +96,8 @@ export function canonicalUrl(value: string): string {
  */
 function scrubElementsChain(chain: string): string | undefined {
   if (chain.length > 4000) return undefined;
-  const cleaned = chain.replace(/(?:attr__[\w-]+|attr_id|href|text)="(?:[^"\\]|\\.)*"/g, "");
-  return /^[\w\s.:;="()#-]*$/.test(cleaned) ? cleaned : undefined;
+  const tags = chain.match(/(?:^|;)(?:button|a|input|textarea|select|option|div|span)(?=[.:;]|$)/g);
+  return tags?.map(tag => tag.replace(/^;/, "")).join(";");
 }
 
 /**
@@ -105,36 +105,80 @@ function scrubElementsChain(chain: string): string | undefined {
  * templates and plugin frames (console and network) are dropped, since they
  * can carry request URLs or logged content.
  */
-function scrubSnapshotData(data: unknown): unknown[] | undefined {
-  if (!Array.isArray(data)) return undefined;
-  return data.filter(frame => frame && typeof frame === "object" && (frame as { type?: unknown }).type !== 6).map(frame => {
-    const item = frame as { data?: Record<string, unknown> };
-    const payload = item.data;
-    if (!payload || typeof payload !== "object") return frame;
-    const next: Record<string, unknown> = { ...payload };
-    if (typeof next.href === "string") next.href = canonicalUrl(next.href);
-    const inner = next.payload as Record<string, unknown> | undefined;
-    if (inner && typeof inner === "object" && typeof inner.href === "string") {
-      next.payload = { ...inner, href: canonicalUrl(inner.href) };
+const replayTags = new Set("html head body title div span p main section article aside header footer nav button a label input textarea select option ul ol li h1 h2 h3 h4 h5 h6 form fieldset legend details summary dialog table thead tbody tr th td br hr link meta".split(" "));
+const replayKeys = new Set("id parentId nextId previousId type source x y timeOffset width height scrollTop scrollLeft isChecked positions adds removes texts attributes node childNodes initialOffset isSVG isShadow isShadowHost rootId".split(" "));
+const replayAttributes = new Set(["href", "src", "rel", "type", "role", "width", "height", "aria-expanded", "aria-selected", "aria-pressed", "aria-hidden", "disabled", "checked"]);
+
+/** Fail closed after rrweb serialization too: input masking alone cannot protect DOM attributes. */
+function scrubReplayValue(value: unknown): unknown {
+  if (value === null || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))) return value;
+  if (Array.isArray(value)) return value.map(scrubReplayValue);
+  if (!value || typeof value !== "object") return undefined;
+  const result: Record<string, unknown> = {};
+  const object = value as Record<string, unknown>;
+  for (const [key, item] of Object.entries(object)) {
+    if (key === "tagName") result[key] = typeof item === "string" && replayTags.has(item) ? item : "div";
+    else if (key === "textContent" || key === "text" || key === "value") {
+      if (typeof item === "string") result[key] = maskReplayText(item);
+    } else if (key === "attributes" && item && typeof item === "object" && !Array.isArray(item)) {
+      result[key] = Object.fromEntries(Object.entries(item).filter(([name]) => replayAttributes.has(name))
+        .map(([name, content]) => [name, typeof content === "string" ? maskReplayAttribute(name, content) : null]));
+    } else if (replayKeys.has(key)) {
+      const clean = scrubReplayValue(item);
+      if (clean !== undefined) result[key] = clean;
     }
-    return { ...item, data: next };
+  }
+  // No script, CSS, media, iframe, or custom-element child content is replayable.
+  if (typeof object.tagName === "string" && !replayTags.has(object.tagName)) {
+    result.attributes = {};
+    result.childNodes = [];
+  }
+  return result;
+}
+
+export function scrubSnapshotData(data: unknown): unknown[] | undefined {
+  if (!Array.isArray(data)) return undefined;
+  return data.flatMap(frame => {
+    if (!frame || typeof frame !== "object") return [];
+    const item = frame as { type?: unknown; timestamp?: unknown; data?: Record<string, unknown> };
+    const payload = item.data;
+    if ("cv" in frame || typeof payload === "string") return [];
+    if (typeof item.type !== "number" || ![0, 1, 2, 3, 4, 5].includes(item.type)) return [];
+    const timestamp = typeof item.timestamp === "number" && Number.isFinite(item.timestamp) ? { timestamp: item.timestamp } : {};
+    if (item.type === 4) {
+      if (typeof payload?.href !== "string") return [];
+      return [{ type: 4, ...timestamp, data: { ...scrubReplayValue(payload) as object, href: canonicalUrl(payload.href) } }];
+    }
+    if (item.type === 5) {
+      const inner = payload?.payload as Record<string, unknown> | undefined;
+      if (payload?.tag !== "$url_changed" || typeof inner?.href !== "string") return [];
+      return [{ type: 5, ...timestamp, data: { tag: "$url_changed", payload: { href: canonicalUrl(inner.href) } } }];
+    }
+    if (item.type === 3 && (typeof payload?.source !== "number" || payload.source < 0 || payload.source > 6)) return [];
+    return [{ type: item.type, ...timestamp, data: scrubReplayValue(payload) ?? {} }];
   });
 }
 
-/** Session replay: mask all prose except interface chrome; never record artwork. */
-const replayChrome = "button, nav, label, [role=tab], [role=menuitem], [role=option], [data-ph-unmask]";
-export function maskReplayText(text: string, element?: HTMLElement): string {
-  return element?.closest(replayChrome) ? text : text.replace(/\S/g, "*");
+/** All prose, including dynamic controls and opt-out markers, stays masked. */
+export function maskReplayText(text: string, _element?: HTMLElement | null): string {
+  void _element; // rrweb supplies the element; no element may opt out of masking.
+  return text.replace(/\S/g, "*");
 }
 
 export function maskReplayAttribute(name: string, value: string): string {
-  if (!["href", "src", "srcset", "action"].includes(name)) return value;
-  try {
-    // Built assets (styles, fonts, icons) stay addressable so replays render.
-    const url = new URL(value, window.location.origin);
-    if (url.origin === window.location.origin && /^\/assets\/[A-Za-z0-9_.-]+$/.test(url.pathname)) return url.origin + url.pathname;
-  } catch { /* Fall through to the route template. */ }
-  return canonicalUrl(value);
+  if (name === "href" || name === "src") {
+    try {
+      const url = new URL(value, window.location.origin);
+      if (url.origin === window.location.origin) return window.location.origin + canonicalPath(url.pathname, account !== null);
+    } catch { /* Redact malformed or external destinations. */ }
+    return "[redacted]";
+  }
+  if ((name === "width" || name === "height") && /^\d{1,5}$/.test(value)) return value;
+  if (["aria-expanded", "aria-selected", "aria-pressed", "aria-hidden", "disabled", "checked"].includes(name) && ["true", "false", ""].includes(value)) return value;
+  if (name === "role" && ["button", "dialog", "tab", "tabpanel", "navigation", "status", "alert", "group", "listbox", "option"].includes(value)) return value;
+  if (name === "type" && ["button", "submit", "text", "password", "email", "checkbox", "radio", "search", "number"].includes(value)) return value;
+  if (name === "rel" && ["stylesheet", "preload"].includes(value)) return value;
+  return "[redacted]";
 }
 
 export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
@@ -177,7 +221,7 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
           properties[key] = source[key];
         }
       }
-      return { ...event, properties };
+      return { event: event.event, uuid: event.uuid, timestamp: event.timestamp, properties };
     }
     // Keep navigation context for clicks, errors, and conversion events too.
     const currentPath = canonicalPath(window.location.pathname, account !== null);
@@ -227,7 +271,7 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
       properties.$exception_list = source.$exception_list.slice(0, 5).map((item: Record<string, unknown>) => {
         const stack = item.stacktrace as { frames?: Record<string, unknown>[] } | undefined;
         return {
-          type: typeof item.type === "string" && tokenPattern.test(item.type) ? item.type : "Error",
+          type: typeof item.type === "string" && ["Error", "TypeError", "RangeError", "ReferenceError", "SyntaxError", "URIError", "EvalError", "DOMException", "AbortError", "ApiError", "InsufficientCreditsError", "ChunkLoadError"].includes(item.type) ? item.type : "Error",
           value: "[redacted]",
           stacktrace: { frames: (stack?.frames ?? []).slice(-40).map(frame => {
             const clean: Record<string, unknown> = {};
@@ -246,7 +290,7 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
       });
       properties.$exception_message = "[redacted]";
     }
-    return { ...event, properties };
+    return { event: event.event, uuid: event.uuid, timestamp: event.timestamp, properties };
   } catch {
     return null;
   }
@@ -285,7 +329,9 @@ export function initTelemetry(): Promise<void> {
         maskTextFn: maskReplayText,
         maskAttributeFn: maskReplayAttribute,
         // Manuscript art, generated pages, and uploads are never recorded.
-        blockSelector: "img, picture, video, canvas, svg image, [data-ph-block]",
+        blockSelector: "img, picture, video, audio, canvas, svg, iframe, object, embed, [data-ph-block]",
+        // before_send must see serialized nodes, not opaque packed DOM strings.
+        compress_events: false,
         recordHeaders: false,
         recordBody: false,
         recordCrossOriginIframes: false,
