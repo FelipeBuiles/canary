@@ -403,6 +403,13 @@ fails. If intake cannot be reliably blocked, do not proceed with the cutover.
 
 Copy `docs/ops/release-evidence-template.md` for each customer-facing release.
 
+### Local pre-push and release checks
+
+Run `npm run check:push` before pushing. Use `npm run check:release` with an
+explicit disposable local PostgreSQL database for the full release gate. See
+[coverage, prerequisites and hook setup](agents/pre-push.md). Local success does
+not bypass CI or authorize production migration/deployment.
+
 ### CI-managed production deployment
 
 Every push to `main` automatically requests a production release through `CI`.

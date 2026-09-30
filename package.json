@@ -4,5 +4,9 @@
   },
   "engines": {
     "node": ">=24.15.0 <25"
+  },
+  "scripts": {
+    "check:push": "python3 scripts/check_release.py fast",
+    "check:release": "python3 scripts/check_release.py full"
   }
 }

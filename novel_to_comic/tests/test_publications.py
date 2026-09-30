@@ -563,15 +563,19 @@ def test_sample_metadata_deep_link_and_escaping(tmp_path):
     assert "private" not in body
 
 
-def test_crawler_routes_precede_spa_without_auth(tmp_path, monkeypatch):
+@pytest.fixture
+def spa_dist(tmp_path, monkeypatch):
     from novel_to_comic.server import app as app_module
-    from novel_to_comic.server.app import create_app
     # Backend CI has no frontend build; provide its own SPA fixture instead of
     # depending on an ignored local web/dist directory.
     dist = tmp_path / "web" / "dist"
     dist.mkdir(parents=True)
     dist.joinpath("index.html").write_text("<html><head><title>Fixture</title></head><body><div id='root'></div></body></html>")
     monkeypatch.setattr(app_module, "__file__", str(tmp_path / "one/two/three/four/app.py"))
+
+
+def test_crawler_routes_precede_spa_without_auth(tmp_path, monkeypatch, spa_dist):
+    from novel_to_comic.server.app import create_app
     monkeypatch.setenv("CANARY_SHOWCASE_DIR", str(tmp_path / "empty-showcase"))
     client = TestClient(create_app(tmp_path, dev=False))  # No lifespan/provider/DB startup.
     sitemap = client.get("/sitemap.xml")
@@ -590,7 +594,7 @@ def test_crawler_routes_precede_spa_without_auth(tmp_path, monkeypatch):
     assert missing.headers["x-robots-tag"] == "noindex"
 
 
-def test_empty_curation_and_untrusted_request_host_are_safe(tmp_path, monkeypatch):
+def test_empty_curation_and_untrusted_request_host_are_safe(tmp_path, monkeypatch, spa_dist):
     from novel_to_comic import sample_library
     from novel_to_comic.server.app import create_app
     from xml.etree import ElementTree
