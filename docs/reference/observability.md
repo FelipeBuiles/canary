@@ -320,10 +320,12 @@ when the updated writer runs. Do not remove the migration while that writer is
 active; missing columns or a failed event INSERT must leave the webhook
 unacknowledged for retry, not silently settle without an event.
 
-## Local tracking correction contract (not deployed)
+## Tracking correction contract (production rollout)
 
-**Status: Local implementation under verification, 2026-09-30.** Supersedes the
-app-load signup interpretation above only after approved migration/deployment.
+**Status: Production signup cutover 2026-10-01T00:02:36.520134Z; initial
+tracking rollout verified at `002e5e0d`.** Supersedes the historical app-load
+signup interpretation above. Terminal summaries preserve request-estimate
+provenance with the validated follow-up correction.
 
 - `stage_started`, `stage_dispatched`, `stage_succeeded`, `stage_failed` carry
   `run_id` (owning pipeline operation UUID) and `attempt_id` (new stage attempt

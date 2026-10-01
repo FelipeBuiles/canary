@@ -71,7 +71,7 @@ def stage_properties(current, stage: str, outcome: str) -> dict:
             costs.append(None)
     known = [cost.cost_usd for cost in costs if cost is not None and cost.cost_usd is not None]
     status = "unknown" if len(known) != len(costs) or not costs else (
-        "reported" if all(record.get("cost_usd") is not None for record in current.usage_log) else "estimated")
+        "reported" if all(record.get("cost_usd") is not None and record.get("cost_source") != "request_estimate" for record in current.usage_log) else "estimated")
     return {"stage": stage, "outcome": outcome, "run_id": current.run_id,
             "attempt_id": current.attempt_id, "cost_status": status,
             "cost_usd": sum(known) if known else None,

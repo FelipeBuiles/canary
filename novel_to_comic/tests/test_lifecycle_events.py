@@ -164,3 +164,13 @@ def test_acceptance_requires_successful_draw_approval(tmp_path, monkeypatch):
     with pytest.raises(HTTPException):
         asyncio.run(pipeline.approve(**kwargs))
     assert lifecycle_events.flush(app) == 0
+
+
+@pytest.mark.parametrize("sources,expected", [(["request_estimate"], "estimated"), (["provider"], "reported"), (["provider", "request_estimate"], "estimated")])
+def test_terminal_stage_cost_preserves_estimate_provenance(sources, expected):
+    from novel_to_comic.state import StageState
+    records = [{"provider": "fixture", "model": "image-sunburst", "operation": "image", "image_count": 1, "cost_usd": 0.1, "cost_source": source} for source in sources]
+    properties = lifecycle_events.stage_properties(StageState(usage_log=records), "draw", "awaiting_review")
+    assert properties["cost_status"] == expected
+    assert properties["cost_source"] == ("provider_reported" if expected == "reported" else "pricing_estimate")
+    assert properties["cost_usd"] == pytest.approx(0.1 * len(sources))
