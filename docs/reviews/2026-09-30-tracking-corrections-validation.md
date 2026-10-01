@@ -1,6 +1,6 @@
 # Tracking corrections and controlled validation
 
-**Status: Production rollout approved; signup migration applied, deployment pending.** Checkout
+**Status: Production rollout verified at `002e5e0d`; cost-label follow-up validated for release.** Checkout
 `/Users/jbuiles/Code/canary`, main, baseline
 `a6a0fc567d9f0177a6113199a02b40ba7ecd3676`; baseline clean. No worktree,
 commit, push, deployment, production migration, backfill, paid generation or
@@ -20,7 +20,7 @@ purchase was performed for this change set.
 
 Server source paths above are relative to
 `novel_to_comic/src/novel_to_comic/`. Exact local contracts are documented in
-[observability](../reference/observability.md#local-tracking-correction-contract-not-deployed).
+[observability](../reference/observability.md#tracking-correction-contract-production-rollout).
 
 ## Controlled matrix and limits
 
@@ -208,3 +208,31 @@ verified. The installed trigger preserved a temporary fixture insert when
 analytics failed; the fixture transaction was rolled back without creating
 an auth user or event. The purchase migration was not reapplied. Earlier
 local-only status statements describe the pre-approval validation history.
+
+## Verified rollout and cost-label follow-up
+
+Main `002e5e0de9f7d0ade970ba85f74b25e5f18f4475` deployed successfully:
+[CI/deployment](https://github.com/FelipeBuiles/canary/actions/runs/36794248722)
+and [database contracts](https://github.com/FelipeBuiles/canary/actions/runs/36794248644).
+Public exact-SHA version, health/readiness/dependencies/security headers passed.
+Installed Chromium passed before/after-JS metadata, reader Close, real sitemap
+and robots, unknown-book safety and attribution reload/navigation/new-tab
+continuity. All analytics/external and non-GET browser requests were blocked.
+No post-cutover auth accounts/events existed at the aggregate check; no signup
+capture gaps or recent signup/delivery error markers. No live event-emission
+proof was claimed. No purchase migration reapplication.
+
+Tester-credit review found one terminal-stage cost-label mismatch: a numeric
+request_estimate could be marked reported. The follow-up aligns terminal stage
+classification with existing per-call telemetry, preserving estimated sources
+in single-source and mixed-source summaries. Charging and cost amounts do not
+change. Provider-free regressions cover reported, estimated and mixed provenance.
+
+The final cost-provenance follow-up passed `check:push` (171 backend tests,
+1 skip; 122 frontend tests) and `check:release` (34 PostgreSQL checks,
+2,766 backend tests/9 skips, 61 stage contracts, 804 frontend tests,
+36 gateway tests, both gateway smoke modes, production Docker build and
+all audits/lint/type/docs checks). Evidence:
+`/tmp/tracking-push-cost-provenance-final.log` and
+`/tmp/tracking-release-cost-provenance-final.log`. No implementation changed
+after those gates began. Owned fixture database stopped. No further migration.
