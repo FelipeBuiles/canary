@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
 import { PageArtwork } from "../components/pages/PageArtwork";
 
@@ -8,6 +8,16 @@ const artwork = (src: string) => (
 );
 
 describe("PageArtwork", () => {
+  it("reports loaded artwork, never loading or failed images", () => {
+    const onLoaded = vi.fn();
+    render(<I18nProvider><PageArtwork src="/synthetic.png" alt="Synthetic" onLoaded={onLoaded} /></I18nProvider>);
+    expect(onLoaded).not.toHaveBeenCalled();
+    fireEvent.error(screen.getByAltText("Synthetic"));
+    expect(onLoaded).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    fireEvent.load(screen.getByAltText("Synthetic"));
+    expect(onLoaded).toHaveBeenCalledTimes(1);
+  });
   it("reserves a loading surface and reveals artwork only after the image loads", () => {
     const { container } = render(artwork("/page-1-r1.png"));
     const image = screen.getByAltText("Page 1 artwork");

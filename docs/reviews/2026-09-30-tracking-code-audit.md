@@ -1,6 +1,6 @@
 # Tracking code audit — September 30, 2026
 
-**Status: Current code audit with local SEO, replay-privacy and purchase-outbox fixes**, against HEAD `67012a9559c30e226c3a395ae448142f4dbb1796` plus local SEO changes. The initial audit was read-only; the two subsequently authorized fixes are implemented and verified below. Live settings remain unchanged.
+**Status: Historical initial audit and released SEO/replay/purchase fix record; current local follow-up linked below**, against HEAD `67012a9559c30e226c3a395ae448142f4dbb1796` plus local SEO changes. The initial audit was read-only; the two subsequently authorized fixes are implemented and verified below. Live settings remain unchanged.
 
 Baseline: `/Users/jbuiles/Code/canary`, branch `main`, origin `git@github.com:FelipeBuiles/canary.git`, initially clean. No other checkout was used.
 
@@ -221,3 +221,12 @@ interrupted during frontend tests by unavailable Mac execution tools; completed
 backend/database checks were retained and the remaining components resumed.
 The abandoned test-only tmpfs container was stopped/removed; existing developer
 database containers were preserved. No new production migration was performed.
+
+
+## Follow-up tracking corrections (local, not deployed)
+
+The post-release follow-up is documented in
+[tracking corrections and controlled validation](2026-09-30-tracking-corrections-validation.md).
+It distinguishes the new tested contracts from this audit's historical findings.
+The purchase outbox is already deployed; its migration was not reapplied. True
+signup capture has a separate locally tested migration requiring future approval.

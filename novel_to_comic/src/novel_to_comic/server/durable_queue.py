@@ -95,6 +95,14 @@ class DurableQueue:
                 persist_generation_job(self.app, job)
             self.app.state.generation_jobs[job.id] = job
         self._settle_interrupted_styles()
+        # Reconcile only after every expected job has been restored, including
+        # cohorts whose final page was interrupted before terminal telemetry.
+        from .routers.pages import _sync_draw_progress
+        for directory in {job.command.project_dir for job in self.app.state.generation_jobs.values() if job.command and job.command.stage == "draw"}:
+            try:
+                _sync_draw_progress(Path(directory), self.app)
+            except Exception as exc:
+                logger.warning("Draw telemetry reconciliation deferred type=%s", type(exc).__name__)
 
     def _settle_interrupted_styles(self):
         """Close the Style stage of work a hard stop interrupted (see settle_interrupted_style)."""

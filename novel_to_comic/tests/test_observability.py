@@ -48,7 +48,7 @@ def test_server_product_event_persists_only_bounded_scalar_properties(monkeypatc
             properties={"source": "upload", "file_type": "x" * 500},
         )
 
-    payload = table.insert.call_args.args[0]
+    payload = (table.upsert.call_args or table.insert.call_args).args[0]
     assert payload["event_name"] == "project_created"
     assert payload["source"] == "server"
     assert payload["properties_json"] == {
@@ -86,7 +86,7 @@ def test_stage_success_is_accepted_with_nullable_uuid_job_id(
     db.table.return_value = table
 
     def accept_event():
-        payload = table.insert.call_args.args[0]
+        payload = (table.upsert.call_args or table.insert.call_args).args[0]
         # Match the database's nullable UUID contract, including capture's
         # best-effort behavior when an invalid identity rejects the write.
         if payload["job_id"] is not None:
@@ -94,6 +94,7 @@ def test_stage_success_is_accepted_with_nullable_uuid_job_id(
         accepted.append(payload)
 
     table.insert.return_value.execute.side_effect = accept_event
+    table.upsert.return_value.execute.side_effect = accept_event
 
     async def finish_stage(*_args, **_kwargs):
         state.stages[stage].status = status
@@ -221,8 +222,8 @@ def test_stage_that_handles_its_exception_is_recorded_as_failed(tmp_path):
         patch.object(pipeline, "_run_stage", new=fail_stage),
         patch.object(
             pipeline,
-            "capture_server_event",
-            side_effect=lambda name, **kwargs: captured.append(
+            "capture_lifecycle",
+            side_effect=lambda app, name, identity, **kwargs: captured.append(
                 (name, kwargs.get("properties") or {})
             ),
         ),
@@ -260,7 +261,7 @@ def _account_db(metadata, created_at="2026-09-28T00:01:02.345+00:00"):
     return db, table
 
 
-def test_account_created_is_idempotent_and_dated_at_signup(monkeypatch):
+def test_account_observed_is_idempotent_and_not_backdated(monkeypatch):
     from novel_to_comic.server import product_events
 
     account = "00000000-0000-0000-0000-0000000000a1"
@@ -272,14 +273,15 @@ def test_account_created_is_idempotent_and_dated_at_signup(monkeypatch):
     capture = MagicMock()
     with patch.object(product_events, "get_db", return_value=db), \
          patch("novel_to_comic.server.telemetry.capture", capture):
-        product_events.record_account_created(account)
-        product_events.record_account_created(account)
+        product_events.record_account_observed(account)
+        product_events.record_account_observed(account)
 
     db.auth.admin.get_user_by_id.assert_called_once_with(account)
     payload = table.upsert.call_args.args[0]
     assert table.upsert.call_args.kwargs == {"on_conflict": "id", "ignore_duplicates": True}
     assert payload["id"] == str(UUID(payload["id"]))
-    assert payload["occurred_at"] == "2026-09-28T00:01:02.345+00:00"
+    assert payload["event_name"] == "account_observed"
+    assert "occurred_at" not in payload
     props = payload["properties_json"]
     # Invalid campaign tokens are dropped rather than truncated or escaped.
     assert {k: props[k] for k in ("acquisition_source", "acquisition_medium", "referring_domain")} == {
@@ -306,6 +308,6 @@ def test_account_endpoint_never_fails_app_load(tmp_path):
 
     app = create_app(tmp_path, dev=True)
     app.dependency_overrides[get_current_user] = lambda: "00000000-0000-0000-0000-0000000000a2"
-    with patch.object(events, "record_account_created", side_effect=RuntimeError("auth admin down")):
+    with patch.object(events, "record_account_observed", side_effect=RuntimeError("auth admin down")):
         response = TestClient(app).post("/api/events/account")
     assert response.status_code == 202

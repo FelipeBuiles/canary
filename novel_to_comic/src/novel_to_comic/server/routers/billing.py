@@ -220,6 +220,7 @@ async def create_checkout(
             "package_id": package_id,
             "gross_amount_cents": pkg["price_cents"],
             "currency": "usd",
+            "stripe_mode": "live" if getattr(session, "livemode", None) is True else "test" if getattr(session, "livemode", None) is False else "unknown",
         },
     )
     return {"url": session.url}

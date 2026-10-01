@@ -74,7 +74,10 @@ export function PrivacyPage() {
           a project or book ID), campaign tags, and the referring site's domain;
           how you found us is saved with your account at signup. We do not send
           manuscripts, prompts, generated artwork, email addresses, or feedback
-          messages to PostHog, and analytics uses no cookies or browser storage.
+          messages to PostHog. PostHog identity uses no cookies or browser storage.
+          Validated campaign tokens and referring domains are stored locally for
+          up to 24 hours to preserve signup attribution across reloads and tabs;
+          this record contains no visitor identifier, full URL, or manuscript content.
           Session replays and click analytics record interface layout and
           interactions with all typed input, story and page text masked, and
           images, artwork, and uploads blocked.

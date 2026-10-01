@@ -45,6 +45,13 @@ class StageStatus(str, Enum):
 
 
 class StageState(BaseModel):
+    run_id: Optional[str] = None
+    attempt_id: Optional[str] = None
+    telemetry_user_id: Optional[str] = None
+    telemetry_project_id: Optional[str] = None
+    telemetry_draw_jobs: list[str] = Field(default_factory=list)
+    telemetry_draw_rerun: bool = False
+    telemetry_terminal_outcome: Optional[str] = None
     status: StageStatus = StageStatus.PENDING
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None

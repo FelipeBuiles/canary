@@ -1,3 +1,4 @@
+import { trackProductEvent } from "../../api/events";
 import { PageVersions } from "../../components/pages/PageVersions";
 import { ArchivedArtwork } from "../../components/pages/ArchivedArtwork";
 import { createPortal } from "react-dom";
@@ -272,6 +273,7 @@ function PageReview({
   onCheckText,
   checkingText,
   checkError,
+  deliberateView,
 }: {
   project: string;
   item: CompletePageSummary;
@@ -287,8 +289,10 @@ function PageReview({
   onCheckText: () => void;
   checkingText: boolean;
   checkError?: string;
+  deliberateView: boolean;
 }) {
   const { t } = useI18n();
+  const viewed = useRef(new Set<string>());
   // Canonical page revision being corrected; the redraw starts from the
   // active render revision. The render's own parent is comparison only.
   const comicPageRevision = item.page.revision;
@@ -427,6 +431,15 @@ function PageReview({
                   onSeedsConsumed={() => setVisualSeeds([])}
                   onDraftKeysChange={setDraftKeys}
                   onJobQueued={(jobId) => onJobQueued(jobId, item.page.page_number)}
+                  onArtworkLoaded={() => {
+                    const key = `${project}:${item.page.page_number}:${editSourceRevision}`;
+                    if (deliberateView && view === "page" && !viewed.current.has(key)) {
+                      viewed.current.add(key);
+                      void trackProductEvent("page_viewed", { projectId: project, properties: {
+                        page_number: item.page.page_number, render_revision: editSourceRevision,
+                      } });
+                    }
+                  }}
                   disabled={pageIsDrawing}
                 />
               ) : (
@@ -546,7 +559,9 @@ export function PagesRoom() {
     } catch { /* Storage is optional; the URL remains authoritative. */ }
   }, [id, searchParams, setSearchParams]);
 
+  const [deliberatePage, setDeliberatePage] = useState<string | null>(null);
   function updateContext(changes: Record<string, string | null>) {
+    if ("page" in changes) setDeliberatePage(changes.page);
     const next = new URLSearchParams(searchParams);
     for (const [key, value] of Object.entries(changes)) {
       if (value == null) next.delete(key);
@@ -1169,6 +1184,7 @@ export function PagesRoom() {
 
       {selectedItem && (
         <PageReview
+          deliberateView={deliberatePage === String(selectedItem.page.page_number)}
           key={`${id}:${selectedItem.page.page_number}`}
           project={id}
           item={selectedItem}

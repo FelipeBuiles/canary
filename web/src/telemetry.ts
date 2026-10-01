@@ -1,8 +1,8 @@
 /**
  * Content-free errors, canonical page views, anonymous signup intent, and
  * content-masked click and session replay capture. Authenticated product
- * events retain their API path. Nothing is stored in cookies or browser
- * storage; URLs are reduced to route templates.
+ * events retain their API path. Identity stays memory-only. Bounded attribution
+ * tokens expire in browser storage after 24 hours; URLs are reduced to route templates.
  */
 import type { PostHog, CaptureResult } from "posthog-js/dist/module.no-external";
 
@@ -59,9 +59,37 @@ export function readAcquisition(location: { search: string; hostname: string }, 
   return result;
 }
 
-const firstTouch: Acquisition = typeof window === "undefined"
-  ? { source: "direct" }
-  : readAcquisition(window.location, document.referrer);
+const acquisitionKey = "canary:acquisition:v1";
+const acquisitionTtl = 24 * 60 * 60 * 1000;
+
+/** No IDs, URLs, content or raw query strings; storage denial is non-blocking. */
+export function firstTouchAcquisition(storage: Pick<Storage, "getItem" | "setItem">, current: Acquisition, now = Date.now()): Acquisition {
+  try {
+    const raw = JSON.parse(storage.getItem(acquisitionKey) ?? "null");
+    if (raw && Number.isFinite(raw.created) && raw.created <= now && now - raw.created < acquisitionTtl
+      && raw.value && typeof raw.value.source === "string" && campaignToken(raw.value.source)) {
+      const value: Acquisition = { source: campaignToken(raw.value.source)! };
+      for (const key of ["medium", "campaign", "referring_domain"] as const) {
+        const token = typeof raw.value[key] === "string" ? campaignToken(raw.value[key]) : undefined;
+        if (token) value[key] = token;
+      }
+      return value;
+    }
+  } catch { /* Malformed or inaccessible storage: use this visit. */ }
+  const value: Acquisition = { source: campaignToken(current.source) ?? "direct" };
+  for (const key of ["medium", "campaign", "referring_domain"] as const) {
+    const token = campaignToken(current[key]);
+    if (token) value[key] = token;
+  }
+  try { storage.setItem(acquisitionKey, JSON.stringify({ created: now, value })); } catch { /* Optional storage. */ }
+  return value;
+}
+
+const firstTouch: Acquisition = (() => {
+  if (typeof window === "undefined") return { source: "direct" };
+  const current = readAcquisition(window.location, document.referrer);
+  try { return firstTouchAcquisition(window.localStorage, current); } catch { return current; }
+})();
 
 export function getAcquisition(): Acquisition {
   return { ...firstTouch };

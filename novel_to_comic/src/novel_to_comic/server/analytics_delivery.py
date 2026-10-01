@@ -45,10 +45,26 @@ async def deliver_once(client):
     return len(rows)
 
 
-async def deliver_product_events():
+async def reconcile_signups():
+    # RPC returns counts only; no broad auth listing or private rows cross this
+    # boundary. Missing migration/outage is observable and never blocks delivery
+    # of unrelated existing product events or any customer request.
+    try:
+        response = await asyncio.to_thread(lambda: get_db().rpc("reconcile_account_created_events", {}).execute())
+        result = response.data or {}
+        if result.get("recovered") or result.get("remaining") or result.get("legacy_observed"):
+            log_event("analytics.signup_reconciled", **{key: int(result.get(key, 0)) for key in ("recovered", "remaining", "legacy_observed")})
+    except Exception as exc:
+        log_event("analytics.signup_reconciliation_failed", error_type=type(exc).__name__)
+
+
+async def deliver_product_events(app=None):
     async with httpx.AsyncClient(timeout=5) as client:
         while True:
+            await reconcile_signups()
             try:
+                from .lifecycle_events import flush
+                await asyncio.to_thread(flush, app)
                 await deliver_once(client)
             except Exception as exc:
                 log_event("analytics.delivery_failed", error_type=type(exc).__name__)

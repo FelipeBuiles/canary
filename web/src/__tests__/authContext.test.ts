@@ -18,6 +18,8 @@ describe("auth return context", () => {
     const params = new URLSearchParams("sample=an-education&next=https://evil.example&ref=invalid");
     const url = new URL(authCallbackUrl(params, { source: "google", campaign: "launch", medium: "a private phrase" }));
     expect(url.pathname).toBe("/auth/callback");
+    expect(url.searchParams.get("signup_started_at")).toMatch(/^\d{13}$/);
+    url.searchParams.delete("signup_started_at");
     expect(url.search).toBe("?sample=an-education&source=google&campaign=launch");
     expect(authDestination(params)).toBe("/?sample=an-education");
     expect(authDestination(new URLSearchParams("sample=//evil.example"))).toBe("/");
@@ -39,4 +41,13 @@ describe("auth return context", () => {
     const params = new URLSearchParams(`ref=book-${"b".repeat(32)}&source=${"x".repeat(1000)}`);
     expect(oauthSignupMetadata(user({ referred_by_book: "original" }), params, now)).toEqual({ acquisition: { source: "direct" } });
   });
+});
+
+it("preserves delayed OAuth first touch only for an account created during this flow", () => {
+  const started = now - 2 * 60 * 60_000;
+  const params = new URLSearchParams({ signup_started_at: String(started), source: "reddit", campaign: "controlled" });
+  expect(oauthSignupMetadata(user({}, 60 * 60_000), params, now)?.acquisition).toEqual({ source: "reddit", campaign: "controlled" });
+  expect(oauthSignupMetadata(user({}, 3 * 60 * 60_000), params, now)).toBeNull();
+  expect(oauthSignupMetadata(user({ acquisition: { source: "newsletter" } }, 60 * 60_000), params, now)).toBeNull();
+  expect(oauthSignupMetadata(user({}, 60 * 60_000), new URLSearchParams({ signup_started_at: String(now + 1000), source: "reddit" }), now)).toBeNull();
 });

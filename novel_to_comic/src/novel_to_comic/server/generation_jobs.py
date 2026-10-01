@@ -13,6 +13,7 @@ from collections import deque
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal
 
 from fastapi import FastAPI
@@ -215,6 +216,15 @@ def enqueue_generation_job(
         on_cancel=on_cancel,
     )
 
+    # Capture correlation at admission, not from mutable stage state at finish.
+    if command is not None:
+        from novel_to_comic.state import load_state
+        try:
+            current = load_state(Path(command.project_dir)).stages.get(command.stage)
+            if current and current.run_id:
+                job.payload = {**job.payload, "run_id": current.run_id, "stage_attempt_id": current.attempt_id}
+        except (OSError, ValueError):
+            pass
     durable = getattr(app.state, "durable_queue", None) if app is not None else None
     if durable is not None and getattr(app.state, "durable_queue_required", False) is True:
         durable.publish(job)
@@ -484,7 +494,6 @@ async def _run_generation_job(app: FastAPI, job: GenerationJob) -> None:
 
 async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
     from .telemetry import (
-        capture,
         log_event,
         metric_count,
         metric_histogram,
@@ -531,8 +540,8 @@ async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
                         attributes=metric_attributes,
                     )
                 log_event("job.completed", level=logging.ERROR if job.status == "failed" else logging.INFO, **fields)
-                capture("operation_completed", user_id=job.user_id, properties=fields,
-                        event_id=f"{job.id}:terminal")
+                # Terminal analytics is persisted with the job below, including
+                # dispatch/restart paths which do not enter this runner.
 
 
 async def generation_worker(app: FastAPI) -> None:
@@ -554,6 +563,30 @@ def persist_generation_job(app, job: GenerationJob) -> None:
         db.execute("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, project TEXT NOT NULL, payload TEXT NOT NULL)")
         db.execute("INSERT OR REPLACE INTO jobs VALUES(?,?,?)",
                    (job.id, job.project_name, json.dumps(payload)))
+        if job.status in {"complete", "failed", "cancelled"}:
+            from .lifecycle_events import enqueue
+            project_id = job.command.project_id if job.command else None
+            enqueue(db, "operation_completed", job.id, user_id=job.user_id,
+                    project_id=project_id, job_id=job.id,
+                    properties={"operation": job.command.operation if job.command else job.kind, "operation_id": job.id, "run_id": job.payload.get("run_id") or job.id, "attempt_id": job.id,
+                                "stage_attempt_id": job.payload.get("stage_attempt_id"),
+                                "stage": payload["stage"], "status": job.status,
+                                "outcome": "outcome_unknown" if job.phase == "outcome_unknown" else job.status,
+                                "phase": job.phase,
+                                "queue_ms": max(0, (job.started_at - job.queued_at).total_seconds() * 1000) if job.started_at else None,
+                                "latency_ms": max(0, (job.finished_at - job.started_at).total_seconds() * 1000) if job.finished_at and job.started_at else None})
+            if job.kind == "pipeline_stage" and job.status in {"failed", "cancelled"} and job.payload.get("stage_attempt_id"):
+                enqueue(db, "stage_failed", job.payload["stage_attempt_id"], user_id=job.user_id,
+                        project_id=project_id, job_id=job.id,
+                        properties={"stage": payload["stage"], "run_id": job.payload.get("run_id") or job.id,
+                                    "attempt_id": job.payload["stage_attempt_id"],
+                                    "outcome": "outcome_unknown" if job.phase == "outcome_unknown" else job.status})
+    if job.command and job.command.stage == "draw" and job.status in {"complete", "failed", "cancelled"}:
+        from .routers.pages import _sync_draw_progress
+        try:
+            _sync_draw_progress(Path(job.command.project_dir), app)
+        except Exception as exc:  # analytics reconciliation cannot fail the job
+            logger.warning("Draw terminal reconciliation deferred type=%s", type(exc).__name__)
 
 
 def recovered_generation_jobs(app, pkey: str) -> list[dict]:

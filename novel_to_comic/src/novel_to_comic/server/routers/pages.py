@@ -251,7 +251,7 @@ def _select_active_correction_job(jobs, *, pkey: str, page_number: int, request_
     return ("free", None)
 
 
-def _sync_draw_progress(project_dir) -> None:
+def _sync_draw_progress(project_dir, app=None) -> None:
     """Reconcile Draw's stage state with the renders actually on disk.
 
     Progress is recomputed from artifacts rather than incremented, so a state
@@ -266,9 +266,29 @@ def _sync_draw_progress(project_dir) -> None:
         return
     state = load_state(project_dir)
     draw_state = state.stages["draw"]
+    if not plan.pages:
+        return
     rendered = sum(
         bool(target.provenance_revisions(page.page_number)) for page in plan.pages
     )
+    def terminal(outcome):
+        if draw_state.attempt_id and draw_state.telemetry_terminal_outcome is None:
+            from ..lifecycle_events import capture, stage_properties
+            if capture(app, "stage_succeeded" if outcome == "awaiting_review" else "stage_failed", draw_state.attempt_id,
+                       user_id=draw_state.telemetry_user_id, project_id=draw_state.telemetry_project_id,
+                       properties=stage_properties(draw_state, "draw", outcome)):
+                draw_state.telemetry_terminal_outcome = outcome
+                save_state(state, project_dir)
+
+    jobs = getattr(getattr(app, "state", None), "generation_jobs", {})
+    expected = [jobs.get(job_id) for job_id in draw_state.telemetry_draw_jobs]
+    cohort_failed = any(job is not None and job.status in {"failed", "cancelled"} for job in expected)
+    if expected and all(job is not None and job.status in {"complete", "failed", "cancelled"} for job in expected):
+        terminal("outcome_unknown" if any(job.phase == "outcome_unknown" for job in expected) else
+                 "cancelled" if any(job.status == "cancelled" for job in expected) else
+                 "failed" if cohort_failed else "awaiting_review")
+    elif not expected and not draw_state.telemetry_draw_rerun and rendered == len(plan.pages) and draw_state.status in {StageStatus.AWAITING_REVIEW, StageStatus.COMPLETE}:
+        terminal("awaiting_review")
     if draw_state.items_done == rendered and (
         rendered < len(plan.pages) or draw_state.status != StageStatus.RUNNING
     ):
@@ -276,6 +296,8 @@ def _sync_draw_progress(project_dir) -> None:
     draw_state.items_done = rendered
     if rendered == len(plan.pages) and draw_state.status == StageStatus.RUNNING:
         complete_stage(state, "draw")
+        if not expected and not draw_state.telemetry_draw_rerun:
+            terminal("awaiting_review")
     save_state(state, project_dir)
 
 
@@ -286,13 +308,18 @@ def _draw_success_callback(
     project_dir,
 ):
     def callback(provenance) -> None:
-        from ..product_events import capture_server_event
+        from ..lifecycle_events import capture
         from ..telemetry import context_fields
         context = context_fields()
-        capture_server_event("page_ready", user_id=context.get("posthogDistinctId"),
+        operation_id = context.get("operation_id")
+        job = request.app.state.generation_jobs.get(operation_id)
+        payload = job.payload if job else {}
+        capture(request.app, "page_ready", f"{operation_id}:{provenance.render.page_number}:{provenance.render.revision}", user_id=context.get("posthogDistinctId"),
             project_id=context.get("project_id"), job_id=context.get("operation_id"),
-            properties={"page_number": provenance.render.page_number})
-        _sync_draw_progress(project_dir)
+            properties={"page_number": provenance.render.page_number, "render_revision": provenance.render.revision,
+                        "run_id": payload.get("run_id") or operation_id, "attempt_id": operation_id,
+                        "stage_attempt_id": payload.get("stage_attempt_id")})
+        _sync_draw_progress(project_dir, request.app)
         queue = request.app.state.event_queues.get(pkey)
         if queue is not None:
             queue.put_nowait(
@@ -397,13 +424,13 @@ async def enqueue_all_undrawn_pages(
 
 
 @router.get("/pages")
-def list_pages(project=Depends(get_project)):
+def list_pages(request: Request = None, project=Depends(get_project)):
     project_dir, _config, _state = project
     target = TargetArtifacts(project_dir)
     # Keep the typed error so the shared handler recognizes an expected
     # not-yet-generated artifact during stage loading/recovery.
     plan = target.read_plan()
-    _sync_draw_progress(project_dir)
+    _sync_draw_progress(project_dir, request.app if request else None)
     hybrid = _hybrid_lettering(target)
     return {
         "pages": [

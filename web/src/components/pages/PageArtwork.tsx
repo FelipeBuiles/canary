@@ -1,10 +1,10 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ImageOff } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { Button } from "../ui/Button";
 
 /** Reserve the reader's space before loading; never draw a border around an unsized image. */
-export function PageArtwork({ src, alt }: { src: string; alt: string }) {
+export function PageArtwork({ src, alt, onLoaded }: { src: string; alt: string; onLoaded?: () => void }) {
   const { t } = useI18n();
   const [loadedSource, setLoadedSource] = useState<string | null>(null);
   const [failedSource, setFailedSource] = useState<string | null>(null);
@@ -13,6 +13,7 @@ export function PageArtwork({ src, alt }: { src: string; alt: string }) {
   useLayoutEffect(() => { currentSource.current = src; }, [src]);
   const loaded = loadedSource === src;
   const failed = failedSource === src;
+  useEffect(() => { if (loaded) onLoaded?.(); }, [loaded, onLoaded]);
 
   return <div className="relative flex h-full w-full items-center justify-center" aria-busy={!loaded && !failed}>
     {!loaded && <div className="flex aspect-[2/3] h-full max-w-full flex-col items-center justify-center gap-3 bg-surface-container px-6 text-center">

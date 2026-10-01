@@ -120,6 +120,7 @@ interface RevisionDraftProps {
   onDraftKeysChange: (keys: string[]) => void;
   onJobQueued: (jobId: string) => void;
   disabled?: boolean;
+  onArtworkLoaded?: () => void;
 }
 
 function suggestibleIssues(issues: PageIssue[]): PageIssue[] {
@@ -209,6 +210,7 @@ export function RevisionDraft({
   onDraftKeysChange,
   onJobQueued,
   disabled,
+  onArtworkLoaded,
 }: RevisionDraftProps) {
   const { t } = useI18n();
   const preview = useCorrectionPreview();
@@ -608,7 +610,7 @@ export function RevisionDraft({
           ) : (
             <figure ref={artRef} className="flex h-[max(12rem,calc(100dvh-20rem))] justify-center">
               <Loupe className="flex h-full w-full justify-center">
-                <PageArtwork src={canvasSrc} alt={canvasAlt} />
+                <PageArtwork src={canvasSrc} alt={canvasAlt} onLoaded={onArtworkLoaded} />
               </Loupe>
             </figure>
           )}

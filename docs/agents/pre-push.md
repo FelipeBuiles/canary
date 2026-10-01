@@ -13,8 +13,9 @@ npm run check:release
 excluding initial package/audit downloads). It audits both locked production
 Python dependency sets with the same pinned pip-audit command used by CI; checks
 installed Python package compatibility; runs docs reliability and backend Ruff;
-runs all publication, auth and security-boundary regressions; audits frontend
-and root dependencies; runs focused metadata/replay tests, frontend lint and
+runs all publication, auth, security-boundary, lifecycle, observability, job,
+queue and pipeline-failure regressions; audits frontend
+and root dependencies; runs focused metadata/replay, OAuth/auth-form and artwork/viewing tests, frontend lint and
 production build. It does not claim the full backend, gateway, Docker or real
 PostgreSQL suites passed.
 
@@ -28,7 +29,7 @@ and uses the same dependency-audit and disposable-database components as the loc
 `check:release` adds the full backend and page-contract suites, all frontend
 checks, root checks, gateway dependency/provider tests and PostgreSQL-backed
 startup smoke checks, the production Docker build, and real database authorization,
-ledger and purchase-outbox tests. Expect several minutes and substantial Docker
+ledger, purchase-outbox and auth-signup-outbox tests. Expect several minutes and substantial Docker
 CPU/network use. It requires an **explicitly disposable**, fresh PostgreSQL
 database named `canary_test` on loopback, `CREDIT_TEST_DATABASE_URL`, and
 `CANARY_DISPOSABLE_DATABASE=1`. It bootstraps that database with the existing CI
@@ -66,3 +67,12 @@ The complete local gate components also passed: 2,745 backend tests (9 skipped),
 smokes and both Docker builds. When a tool interruption stopped the original
 runner during frontend tests, the completed components were retained and the
 remaining components resumed; the abandoned test database was removed.
+
+Tracking follow-up: the expanded fast path passed 168 backend regressions
+(1 skipped) and 122 frontend cases, audits/docs/Ruff/lint/build. Full release
+passed 32 real database checks (including the new local signup trigger),
+2,758 backend tests (9 skipped), 61 contracts, 804 frontend cases, 36 gateway
+cases, both gateway startup modes and production Docker build. Subsequent
+focused final stage checks passed 91 cases; real Chromium continuity/artwork
+fixtures passed seven checks with external traffic blocked. No live signup,
+purchase or paid generation was used.

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { canonicalPath, maskReplayAttribute, maskReplayText, readAcquisition, scrubEvent } from "../telemetry";
+import { firstTouchAcquisition, canonicalPath, maskReplayAttribute, maskReplayText, readAcquisition, scrubEvent } from "../telemetry";
 
 describe("PostHog privacy boundary", () => {
   afterEach(() => vi.unstubAllEnvs());
@@ -195,4 +195,22 @@ it("drops automatic top-level person properties and opaque compressed replay fra
   const result = scrubEvent(raw);
   expect(JSON.stringify(result)).not.toContain("UNPUBLISHED_SECRET");
   expect(result?.properties.$snapshot_data).toEqual([]);
+});
+
+
+describe("first-touch continuity without persistent identity", () => {
+  it("preserves bounded tokens across reload and new tabs, then expires", () => {
+    const store = new Map<string, string>();
+    const storage = { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => { store.set(key, value); } };
+    const first = firstTouchAcquisition(storage, { source: "reddit", campaign: "launch", medium: "social" }, 100);
+    expect(firstTouchAcquisition(storage, { source: "direct" }, 200)).toEqual(first);
+    expect(firstTouchAcquisition(storage, { source: "newsletter" }, 300)).toEqual(first);
+    expect(firstTouchAcquisition(storage, { source: "direct" }, 100 + 24 * 60 * 60 * 1000)).toEqual({ source: "direct" });
+    expect(JSON.stringify([...store])).not.toMatch(/distinct_id|session_id|email|referrer_url/);
+  });
+  it("drops secret-like tokens and tolerates storage denial/corruption", () => {
+    const deny = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("denied"); } };
+    expect(firstTouchAcquisition(deny, { source: "https://private/?secret=VALUE", campaign: "private manuscript title" })).toEqual({ source: "direct" });
+    expect(firstTouchAcquisition({ getItem: () => "bad json", setItem: () => {} }, { source: "reddit" })).toEqual({ source: "reddit" });
+  });
 });
