@@ -14,6 +14,7 @@ from novel_to_comic import artifacts
 from novel_to_comic.config import Config
 from novel_to_comic.models.appearance import AppearanceState
 from novel_to_comic.models.story_bible import Character, Location
+from novel_to_comic.workspace import series_root
 from novel_to_comic.image_models import image_model_profile_for_config
 from novel_to_comic.image_ref_strategy import RefStrategy
 from novel_to_comic.style_contract import rendering_style_template
@@ -55,7 +56,7 @@ def _relative(path: Path | None, project_dir: Path) -> str | None:
     if path is None:
         return None
     try:
-        return str(path.relative_to(project_dir))
+        return str(path.relative_to(series_root(project_dir)))
     except ValueError:
         return str(path)
 
@@ -250,8 +251,9 @@ def mark_dependent_states_stale(
         if asset_kind == "character" else artifacts.location_plate_path(project_dir, entity_id)
     )
     current_hash = _sha256(parent)
-    pattern = (project_dir / "refs" / entity_id / "states" if asset_kind == "character"
-               else project_dir / "plates" / entity_id / "states")
+    root = series_root(project_dir)
+    pattern = (root / "refs" / entity_id / "states" if asset_kind == "character"
+               else root / "plates" / entity_id / "states")
     warnings: list[dict] = []
     for meta_path in sorted(pattern.glob("**/*.png.meta.json")) if pattern.exists() else []:
         try:

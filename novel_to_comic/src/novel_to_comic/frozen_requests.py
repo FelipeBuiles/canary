@@ -28,6 +28,7 @@ from novel_to_comic.provider_wire import (
     ProviderWireError,
     ProviderWireRequest,
 )
+from novel_to_comic.workspace import series_root
 
 if TYPE_CHECKING:
     from novel_to_comic.config import Config
@@ -452,8 +453,12 @@ def _stage_blob(
 
 
 def _read_source_snapshot(project_dir: Path, source: Path) -> bytes:
-    """Read one project file through no-follow descriptors and one inode."""
-    project_root = project_dir.resolve()
+    """Read one project file through no-follow descriptors and one inode.
+
+    References are series-level Look assets, so a part workspace's requests
+    read them within the series root rather than the workspace.
+    """
+    project_root = series_root(project_dir).resolve()
     raw_candidate = Path(
         os.path.abspath(source if source.is_absolute() else project_dir / source)
     )

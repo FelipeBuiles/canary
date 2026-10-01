@@ -4,8 +4,10 @@ Every stage reads inputs and writes outputs through these functions. Path
 construction knowledge lives here and nowhere else — if a directory layout
 changes, this is the only file that needs updating.
 
-This module owns Story, Style, and Cast assets. Full-page pipeline artifacts
-live behind :class:`novel_to_comic.target_artifacts.TargetArtifacts`.
+This module owns Story, Style, and Cast assets. They are series-level Look
+assets: every path resolves against the series root (see ``workspace.py``), so
+each part workspace reads the same Story Bible and references. Full-page
+pipeline artifacts live behind :class:`novel_to_comic.target_artifacts.TargetArtifacts`.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ if TYPE_CHECKING:
 
 
 from novel_to_comic.target_artifacts import ArtifactMissing
+from novel_to_comic.workspace import series_root
 
 
 # ---------------------------------------------------------------------------
@@ -26,7 +29,7 @@ from novel_to_comic.target_artifacts import ArtifactMissing
 # ---------------------------------------------------------------------------
 
 def story_bible_path(project_dir: Path) -> Path:
-    return project_dir / "story_bible.json"
+    return series_root(project_dir) / "story_bible.json"
 
 
 def read_story_bible(project_dir: Path) -> "StoryBible":
@@ -101,11 +104,11 @@ def asset_matches_meta(output_path: Path, expected: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 def character_ref_sheet_path(project_dir: Path, char_id: str) -> Path:
-    return project_dir / "refs" / char_id / "sheet.png"
+    return series_root(project_dir) / "refs" / char_id / "sheet.png"
 
 
 def character_ref_pose_path(project_dir: Path, char_id: str, pose: str) -> Path:
-    return project_dir / "refs" / char_id / f"{pose}.png"
+    return series_root(project_dir) / "refs" / char_id / f"{pose}.png"
 
 
 def character_ref_meta_path(project_dir: Path, char_id: str) -> Path:
@@ -113,24 +116,24 @@ def character_ref_meta_path(project_dir: Path, char_id: str) -> Path:
 
 
 def character_ref_instructions_path(project_dir: Path, char_id: str) -> Path:
-    return project_dir / "refs" / char_id / "instructions.jsonl"
+    return series_root(project_dir) / "refs" / char_id / "instructions.jsonl"
 
 
 def character_state_ref_sheet_path(project_dir: Path, char_id: str, state_id: str) -> Path:
-    return project_dir / "refs" / char_id / "states" / state_id / "sheet.png"
+    return series_root(project_dir) / "refs" / char_id / "states" / state_id / "sheet.png"
 
 
 def character_state_ref_instructions_path(
     project_dir: Path, char_id: str, state_id: str
 ) -> Path:
-    return project_dir / "refs" / char_id / "states" / state_id / "instructions.jsonl"
+    return series_root(project_dir) / "refs" / char_id / "states" / state_id / "instructions.jsonl"
 
 
 CHARACTER_REF_POSES = ("portrait", "full_body")
 
 
 def primary_refs_path(project_dir: Path) -> Path:
-    return project_dir / "refs" / "primary_refs.json"
+    return series_root(project_dir) / "refs" / "primary_refs.json"
 
 
 def read_primary_refs(project_dir: Path) -> dict[str, str]:
@@ -156,7 +159,7 @@ def write_primary_refs(project_dir: Path, data: dict[str, str]) -> None:
 # ---------------------------------------------------------------------------
 
 def location_plate_path(project_dir: Path, loc_id: str) -> Path:
-    return project_dir / "plates" / f"{loc_id}.png"
+    return series_root(project_dir) / "plates" / f"{loc_id}.png"
 
 
 def location_plate_meta_path(project_dir: Path, loc_id: str) -> Path:
@@ -164,17 +167,17 @@ def location_plate_meta_path(project_dir: Path, loc_id: str) -> Path:
 
 
 def location_plate_instructions_path(project_dir: Path, loc_id: str) -> Path:
-    return project_dir / "plates" / f"{loc_id}.instructions.jsonl"
+    return series_root(project_dir) / "plates" / f"{loc_id}.instructions.jsonl"
 
 
 def location_state_plate_path(project_dir: Path, loc_id: str, state_id: str) -> Path:
-    return project_dir / "plates" / loc_id / "states" / f"{state_id}.png"
+    return series_root(project_dir) / "plates" / loc_id / "states" / f"{state_id}.png"
 
 
 def location_state_plate_instructions_path(
     project_dir: Path, loc_id: str, state_id: str
 ) -> Path:
-    return project_dir / "plates" / loc_id / "states" / f"{state_id}.instructions.jsonl"
+    return series_root(project_dir) / "plates" / loc_id / "states" / f"{state_id}.instructions.jsonl"
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +185,7 @@ def location_state_plate_instructions_path(
 # ---------------------------------------------------------------------------
 
 def prop_ref_path(project_dir: Path, prop_id: str) -> Path:
-    return project_dir / "refs" / "props" / prop_id / "ref.png"
+    return series_root(project_dir) / "refs" / "props" / prop_id / "ref.png"
 
 
 def prop_ref_meta_path(project_dir: Path, prop_id: str) -> Path:
@@ -190,7 +193,7 @@ def prop_ref_meta_path(project_dir: Path, prop_id: str) -> Path:
 
 
 def prop_ref_instructions_path(project_dir: Path, prop_id: str) -> Path:
-    return project_dir / "refs" / "props" / prop_id / "instructions.jsonl"
+    return series_root(project_dir) / "refs" / "props" / prop_id / "instructions.jsonl"
 
 
 def read_active_addendum(instructions_path: Path) -> str:
@@ -226,15 +229,15 @@ def append_instruction_log_entry(instructions_path: Path, payload: dict) -> None
 # ---------------------------------------------------------------------------
 
 def style_suggestions_path(project_dir: Path) -> Path:
-    return project_dir / "samples" / "style_suggestions.json"
+    return series_root(project_dir) / "samples" / "style_suggestions.json"
 
 
 def style_sample_path(project_dir: Path, index: int) -> Path:
-    return project_dir / "samples" / f"style_{index}.png"
+    return series_root(project_dir) / "samples" / f"style_{index}.png"
 
 
 def style_sample_brief_path(project_dir: Path) -> Path:
-    return project_dir / "samples" / "style_sample_brief.json"
+    return series_root(project_dir) / "samples" / "style_sample_brief.json"
 
 
 def style_direction_path(project_dir: Path, direction_id: str) -> Path:
@@ -242,7 +245,7 @@ def style_direction_path(project_dir: Path, direction_id: str) -> Path:
 
     if not re.fullmatch(r"direction_[a-f0-9]{16}", direction_id or ""):
         raise ValueError("invalid style direction id")
-    root = project_dir.resolve()
+    root = series_root(project_dir).resolve()
     base = (root / "samples" / "directions").resolve()
     candidate = (base / direction_id / "direction.json").resolve()
     if not base.is_relative_to(root) or not candidate.is_relative_to(base):
@@ -265,7 +268,7 @@ def style_validation_path(project_dir: Path, suggestion_id: str) -> Path:
 
     if not re.fullmatch(r"style_[a-f0-9]{16}", suggestion_id or ""):
         raise ValueError("invalid style suggestion id")
-    root = project_dir.resolve()
+    root = series_root(project_dir).resolve()
     base = (root / "samples" / "validations").resolve()
     candidate = (base / f"{suggestion_id}.png").resolve()
     if not base.is_relative_to(root) or candidate.parent != base:
@@ -286,4 +289,4 @@ def export_cbz_path(project_dir: Path) -> Path:
 
 
 def prop_state_ref_path(project_dir: Path, prop_id: str, state_id: str) -> Path:
-    return project_dir / "refs" / "props" / prop_id / "states" / state_id / "ref.png"
+    return series_root(project_dir) / "refs" / "props" / prop_id / "states" / state_id / "ref.png"

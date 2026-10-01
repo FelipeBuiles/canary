@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from novel_to_comic.localization import Language, LANGUAGE_NAMES as LANGUAGE_NAMES
+from novel_to_comic.workspace import series_root
 
 from novel_to_comic.image_models import (
     GATEWAY_IMAGE_FAST as GATEWAY_IMAGE_FAST,
@@ -294,7 +295,7 @@ def load_config(project_dir: Path) -> tuple["Config", Path | None]:
         # Deployment environment wins over a project-adjacent .env file.
         load_dotenv(env_file, override=False)
 
-    config_path = project_dir / "config.yaml"
+    config_path = series_root(project_dir) / "config.yaml"
     data: dict = {}
     if config_path.exists():
         with open(config_path) as f:
@@ -345,6 +346,6 @@ def save_config(config: Config, project_dir: Path) -> None:
         "# dev_model_selections is available only on a local development server.\n"
         "# API credentials and gateway configuration belong in the server environment.\n"
     )
-    (project_dir / "config.yaml").write_text(
+    (series_root(project_dir) / "config.yaml").write_text(
         header + yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
     )

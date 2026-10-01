@@ -15,6 +15,7 @@ from novel_to_comic.frozen_requests import (
     FROZEN_REQUEST_VERSION,
 )
 from novel_to_comic.provider_wire import PROVIDER_WIRE_SCHEMA_VERSION
+from novel_to_comic.workspace import series_root
 
 IMAGE_PROVENANCE_SCHEMA_VERSION = 1
 
@@ -34,7 +35,8 @@ def _reference_record(asset: Any, index: int, project_dir: Path | None) -> dict[
     path = str(asset.path) if project_dir is not None else None
     if project_dir is not None:
         try:
-            path = str(asset.path.relative_to(project_dir))
+            # References are series-level Look assets, even for part pages.
+            path = str(asset.path.relative_to(series_root(project_dir)))
         except ValueError:
             path = "<external-reference>"
     scope = getattr(asset.authority_scope, "value", asset.authority_scope)

@@ -24,7 +24,7 @@ from novel_to_comic.models.source import (
     _follows_title_abbreviation,
     sentence_end_offsets,
 )
-from novel_to_comic.models.story_bible import Scene, StoryBible
+from novel_to_comic.models.story_bible import Scene, StoryBible, story_bible_context
 from novel_to_comic.models.page import (
     BookPlan,
     ComicPage,
@@ -929,7 +929,7 @@ def test_brief_inference_uses_source_units_and_story_bible_without_approval() ->
         {"id": unit.id, "text": unit.text} for unit in source.units
     ]
     assert "".join(unit["text"] for unit in context["source_units"]) == source.text
-    assert context["story_bible"] == _story_bible().model_dump(mode="json")
+    assert context["story_bible"] == story_bible_context(_story_bible())
     assert "plain strings, never objects" in prompts[0]
     assert "'faithful', 'medium_specific', or 'transformative'" in prompts[0]
 

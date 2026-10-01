@@ -39,12 +39,15 @@ class SourceSceneAnchor(BaseModel):
     start_offset: int | None = Field(default=None, ge=0)
 
 
-def source_units(text: str) -> tuple[SourceUnit, ...]:
-    """Segment the immutable source once into stable sentence-aligned units."""
+def source_units(text: str, *, first_ordinal: int = 1) -> tuple[SourceUnit, ...]:
+    """Segment the immutable source once into stable sentence-aligned units.
+
+    A later part's units continue the series ordinals from ``first_ordinal``.
+    """
 
     start = 0
     units: list[SourceUnit] = []
-    for ordinal, end in enumerate(sentence_end_offsets(text), start=1):
+    for ordinal, end in enumerate(sentence_end_offsets(text), start=first_ordinal):
         units.append(
             SourceUnit(
                 id=f"source_{ordinal:06d}",
@@ -143,6 +146,8 @@ def _unit_for_opening_quote(
 def build_source_document(
     text: str,
     scene_anchors: list[SourceSceneAnchor] | tuple[SourceSceneAnchor, ...],
+    *,
+    first_ordinal: int = 1,
 ) -> SourceDocument:
     """Build exact sentence units and contiguous primary scene ownership."""
 
@@ -151,7 +156,7 @@ def build_source_document(
     if not scene_anchors:
         raise ValueError("at least one source scene anchor is required")
 
-    units = source_units(text)
+    units = source_units(text, first_ordinal=first_ordinal)
     boundary_indexes: list[int] = []
     search_from = 0
     for anchor in scene_anchors:
@@ -357,6 +362,9 @@ def produce_source_document(
     text: str,
     story_bible: StoryBible,
     /,
+    *,
+    part_id: str | None = None,
+    first_ordinal: int = 1,
 ) -> SourceDocument:
     """Build and persist Extract's sole canonical source-text artifact.
 
@@ -367,6 +375,9 @@ def produce_source_document(
     here leaves the user with nothing to inspect or correct.
     """
 
+    # A part's source document covers only that part's scenes.
+    scenes = [scene for scene in story_bible.scenes
+              if part_id is None or scene.part_id == part_id]
     anchors, unresolved = resolvable_anchors(
         text,
         tuple(
@@ -376,7 +387,7 @@ def produce_source_document(
                 opening_quote=scene.source_start_quote,
                 start_offset=scene.source_start_offset,
             )
-            for scene in story_bible.scenes
+            for scene in scenes
         ),
     )
     if not anchors:
@@ -388,6 +399,6 @@ def produce_source_document(
             "Source scenes folded into the preceding scene, anchor not locatable: %s",
             ", ".join(unresolved),
         )
-    document = build_source_document(text, anchors)
+    document = build_source_document(text, anchors, first_ordinal=first_ordinal)
     artifacts.write_source(document)
     return document

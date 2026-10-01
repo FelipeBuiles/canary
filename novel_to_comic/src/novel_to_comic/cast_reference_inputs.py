@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from novel_to_comic import artifacts
 from novel_to_comic.image_references import AuthorityScope, ReferenceAsset
+from novel_to_comic.workspace import series_root
 
 
 class CastReferenceInput(BaseModel):
@@ -68,7 +69,7 @@ def resolve_reference_inputs(project_dir: Path, attachments, *, target=None):
             role = "location_plate"
         else:
             path, role = artifacts.prop_ref_path(project_dir, item.asset_id), "prop"
-        if not path.is_file() or not path.resolve().is_relative_to(project_dir.resolve()):
+        if not path.is_file() or not path.resolve().is_relative_to(series_root(project_dir).resolve()):
             raise HTTPException(400, f"Generate the reference image for {entity.name} first.")
         from PIL import Image
         try:
