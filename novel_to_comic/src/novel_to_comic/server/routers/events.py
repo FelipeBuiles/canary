@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import get_current_user
 from ..db import get_db
-from ..product_events import record_account_created, record_product_event
+from ..product_events import record_account_observed, record_product_event
 
 logger = logging.getLogger("canary.product_events")
 router = APIRouter()
@@ -28,6 +28,8 @@ def ingest_web_event(
     request: Request,
     user_id: str = Depends(get_current_user),
 ):
+    if body.event_name == "page_viewed" and not body.project_id:
+        raise HTTPException(400, "page_viewed requires a project")
     if body.project_id:
         owned = (
             get_db()
@@ -59,9 +61,9 @@ def ingest_web_event(
 
 @router.post("/account", status_code=202)
 def observe_account(user_id: str = Depends(get_current_user)):
-    """Record the account's signup milestone once; safe to call on every app load."""
+    """Observe an account once; this is not a signup event."""
     try:
-        record_account_created(user_id)
+        record_account_observed(user_id)
     except Exception as exc:
         # Analytics must never block the app shell.
         logger.warning("Account analytics capture failed: %s", type(exc).__name__)

@@ -236,7 +236,7 @@ def _readiness_result() -> tuple[bool, dict[str, str]]:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     from .analytics_delivery import deliver_product_events
-    app.state.analytics_task = asyncio.create_task(deliver_product_events()) if configure_telemetry() else None
+    app.state.analytics_task = asyncio.create_task(deliver_product_events(app)) if configure_telemetry() else None
     _audit_pricing_at_startup()
     app.state.pricing_refresh_task = asyncio.create_task(
         asyncio.to_thread(_refresh_pricing_if_stale)

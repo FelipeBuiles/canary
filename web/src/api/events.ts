@@ -1,6 +1,7 @@
 import { apiFetch } from "./client";
 
 export type WebProductEventName =
+  | "page_viewed"
   | "station_viewed"
   | "inspect_drawer_opened"
   | "checkout_cancelled";
@@ -23,7 +24,7 @@ export async function trackProductEvent(
   }
 }
 
-/** Lets the server record the account's signup milestone; idempotent per account. */
+/** Observe authenticated account usage; this does not assert a signup occurred. */
 export async function recordAccountSeen(): Promise<void> {
   try {
     await apiFetch<{ status: "accepted" }>("/events/account", { method: "POST" });

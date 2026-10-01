@@ -162,6 +162,7 @@ def component(name):
                 "tests/test_credit_ledger_postgres.py",
                 "tests/test_project_data_api_postgres.py",
                 "tests/test_purchase_outbox_postgres.py",
+                "tests/test_account_outbox_postgres.py",
             ]
         )
     elif name == "docker":
@@ -192,6 +193,11 @@ def component(name):
                     "tests/test_publications.py",
                     "tests/test_auth.py",
                     "tests/test_security_boundary_contracts.py",
+                    "tests/test_lifecycle_events.py",
+                    "tests/test_observability.py",
+                    "tests/test_generation_jobs.py",
+                    "tests/test_durable_queue.py",
+                    "tests/test_pipeline_failure_boundaries.py",
                 ]
             )
             for args in [
@@ -201,6 +207,10 @@ def component(name):
                     "test",
                     "--",
                     "src/__tests__/telemetry.test.ts",
+                    "src/__tests__/authContext.test.ts",
+                    "src/__tests__/authForms.test.tsx",
+                    "src/__tests__/pagesRoom.test.tsx",
+                    "src/__tests__/pageArtwork.test.tsx",
                     "src/__tests__/publicMetadata.test.tsx",
                     "src/__tests__/publicBook.test.tsx",
                     "src/__tests__/sampleLibraryPage.test.tsx",

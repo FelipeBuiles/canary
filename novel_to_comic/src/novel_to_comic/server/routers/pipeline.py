@@ -8,6 +8,7 @@ import logging
 import shutil
 import time
 import traceback
+import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -45,6 +46,8 @@ from ..event_channel import EventChannel
 from ..metrics import increment, observe
 from ..telemetry import metric_count, metric_histogram
 from ..product_events import capture_server_event
+from ..lifecycle_events import capture as capture_lifecycle, stage_properties
+from ..telemetry import context_fields
 from ..ratelimit import cost_limit, limiter
 
 
@@ -189,30 +192,52 @@ async def _run_stage_with_credits(
                 active.payload["stage"] = stage
                 persist_generation_job(request.app, active)
     started = time.perf_counter()
+    run_id = context_fields().get("operation_id") or str(uuid.uuid4())
+    attempt_id = str(uuid.uuid4())
+    app = request.app if request is not None else None
+
+    def correlate():
+        current = state.stages[stage]
+        current.run_id, current.attempt_id = run_id, attempt_id
+        current.telemetry_user_id, current.telemetry_project_id = user_id, project_id
+        current.telemetry_draw_rerun = stage == "draw" and rerun
+        current.telemetry_draw_jobs = []
+        current.telemetry_terminal_outcome = None
+        save_state(state, project_dir)
+        if app is not None:
+            for active in app.state.generation_jobs.values():
+                if active.id == run_id:
+                    active.payload.update(run_id=run_id, stage_attempt_id=attempt_id)
+                    persist_generation_job(app, active)
+
     async def execute():
-        capture_server_event(
-            "stage_started",
-            user_id=user_id,
-            project_id=project_id,
-            properties={"stage": stage, "rerun": rerun},
-        )
         # The credited wrapper invokes this only after acquiring the hold.
         if rerun:
             _clear_outputs_for_rerun(project_dir, stage)
             _reset_stage_and_downstream(state, stage)
-            save_state(state, project_dir)
+        correlate()
+        capture_lifecycle(
+            app, "stage_started", attempt_id,
+            user_id=user_id,
+            project_id=project_id,
+            properties={"stage": stage, "rerun": rerun, "run_id": run_id, "attempt_id": attempt_id},
+        )
         await _run_stage(stage, config, project_dir, state, queue, user_id=user_id)
 
     try:
         if stage == "draw":
             if not rerun:
                 await execute()
+            else:
+                correlate()
+                capture_lifecycle(app, "stage_started", attempt_id, user_id=user_id, project_id=project_id,
+                                  properties={"stage": stage, "rerun": True, "run_id": run_id, "attempt_id": attempt_id})
             if queue_draw_pages or rerun:
                 if request is None or project_id is None:
                     raise ValueError("queueing Draw pages requires an active request")
                 from .pages import enqueue_all_undrawn_pages
 
-                await enqueue_all_undrawn_pages(
+                draw_jobs = await enqueue_all_undrawn_pages(
                     request,
                     project_id=project_id,
                     user_id=user_id,
@@ -220,6 +245,11 @@ async def _run_stage_with_credits(
                     config=config,
                     rerun=rerun,
                 )
+                state.stages[stage].telemetry_draw_jobs = [job.id for job in draw_jobs]
+                save_state(state, project_dir)
+                # Fast local/mock jobs can finish before cohort publication.
+                from .pages import _sync_draw_progress
+                _sync_draw_progress(project_dir, request.app)
             job_id = None
         else:
             job_id = await run_credited_stage(
@@ -245,7 +275,15 @@ async def _run_stage_with_credits(
         if denied.detail:
             event.update(denied.detail)
         queue.put_nowait(event)
+        capture_lifecycle(app, "stage_failed", attempt_id, user_id=user_id, project_id=project_id,
+                          properties={"stage": stage, "outcome": "blocked", "error_type": "insufficient_credits",
+                                      "run_id": run_id, "attempt_id": attempt_id})
         return
+    except Exception as exc:
+        capture_lifecycle(app, "stage_failed", attempt_id, user_id=user_id, project_id=project_id,
+                          properties={"stage": stage, "outcome": "failed", "error_type": type(exc).__name__,
+                                      "run_id": run_id, "attempt_id": attempt_id})
+        raise
 
     current = state.stages[stage]
     outcome = (
@@ -257,12 +295,14 @@ async def _run_stage_with_credits(
             else "succeeded"
         )
     )
-    capture_server_event(
-        ("stage_dispatched" if stage == "draw" and outcome != "failed" else f"stage_{'failed' if outcome == 'failed' else 'succeeded'}"),
+    if stage == "draw" and outcome != "failed":
+        outcome = "dispatched"
+    capture_lifecycle(
+        app, ("stage_dispatched" if stage == "draw" and outcome != "failed" else f"stage_{'failed' if outcome == 'failed' else 'succeeded'}"), attempt_id,
         user_id=user_id,
         project_id=project_id,
         job_id=job_id,
-        properties={"stage": stage, "outcome": outcome,
+        properties={**stage_properties(current, stage, outcome),
                     "latency_ms": round((time.perf_counter() - started) * 1000),
                     **({"error_type": current.error_code or "stage_error"} if outcome == "failed" else {})},
     )
@@ -763,6 +803,12 @@ async def approve(
         project_id=project_id,
         properties={"stage": stage},
     )
+    if stage == "draw":
+        current = state.stages[stage]
+        capture_lifecycle(request.app, "output_accepted", current.attempt_id or f"{project_id}:draw:{current.finished_at}",
+                          user_id=user_id, project_id=project_id,
+                          properties={"stage": "draw", "scope": "edition", "run_id": current.run_id,
+                                      "attempt_id": current.attempt_id})
     response = {"status": "approved", "stage": stage}
     if should_start_adapt:
         pkey = project_key(user_id, project_id)

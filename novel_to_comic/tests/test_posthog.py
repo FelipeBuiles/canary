@@ -221,3 +221,24 @@ def test_person_properties_cross_the_wire_only_when_allowlisted():
     assert "private" not in json.dumps(props)
     wire = t._before_send({"event": "$set", "properties": {"$set": {"$internal_or_test_user": True, "name": "x"}}})
     assert wire["properties"]["$set"] == {"$internal_or_test_user": True}
+
+
+def test_signup_reconciliation_failure_is_private_and_nonfatal(monkeypatch):
+    db = MagicMock()
+    db.rpc.return_value.execute.side_effect = RuntimeError("PRIVATE DATABASE SECRET")
+    monkeypatch.setattr(delivery, "get_db", lambda: db)
+    log = MagicMock()
+    monkeypatch.setattr(delivery, "log_event", log)
+    asyncio.run(delivery.reconcile_signups())
+    db.rpc.assert_called_once_with("reconcile_account_created_events", {})
+    log.assert_called_once_with("analytics.signup_reconciliation_failed", error_type="RuntimeError")
+
+
+def test_signup_reconciliation_logs_counts_only(monkeypatch):
+    db = MagicMock()
+    db.rpc.return_value.execute.return_value.data = {"recovered": 2, "remaining": 1, "legacy_observed": 0, "secret": "PRIVATE"}
+    monkeypatch.setattr(delivery, "get_db", lambda: db)
+    log = MagicMock()
+    monkeypatch.setattr(delivery, "log_event", log)
+    asyncio.run(delivery.reconcile_signups())
+    log.assert_called_once_with("analytics.signup_reconciled", recovered=2, remaining=1, legacy_observed=0)

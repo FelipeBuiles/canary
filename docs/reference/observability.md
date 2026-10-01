@@ -319,3 +319,64 @@ migration-before-code interval, avoiding duplicate events. The guarantee starts
 when the updated writer runs. Do not remove the migration while that writer is
 active; missing columns or a failed event INSERT must leave the webhook
 unacknowledged for retry, not silently settle without an event.
+
+## Local tracking correction contract (not deployed)
+
+**Status: Local implementation under verification, 2026-09-30.** Supersedes the
+app-load signup interpretation above only after approved migration/deployment.
+
+- `stage_started`, `stage_dispatched`, `stage_succeeded`, `stage_failed` carry
+  `run_id` (owning pipeline operation UUID) and `attempt_id` (new stage attempt
+  UUID). Dispatch means scheduling only. Draw terminal success waits for all
+  admitted page jobs; reruns cannot succeed from previous artwork. Terminal
+  outcomes distinguish `awaiting_review`, `failed`, `cancelled`, `outcome_unknown`,
+  and credit-admission `blocked`. Awaiting review is generated, not accepted.
+- `operation_completed` records persisted job terminal states, including dispatch
+  failure and restart recovery, with `operation_id=attempt_id=job UUID`, owning
+  `run_id`, optional `stage_attempt_id`, operation/stage, status/outcome/phase and
+  queue/run durations. Pipeline operation completion can mean dispatch completed;
+  use stage terminal events for generated output. An explicit retry is a new job.
+- Stage/page/job intents retry from the existing local SQLite journal into the
+  product-event outbox with stable UUIDs. Vendor retries never retry generation.
+  Environment/release are fixed at capture, not changed by delayed delivery.
+  Local journal I/O failure is logged and cannot guarantee analytics recovery.
+- `page_ready` means generated artwork, with page number/render revision and
+  operation/stage correlation. `page_viewed` requires a deliberate review open
+  and successful main artwork load. Restored/deep-linked/automatic views are
+  excluded. Repeated loads within the same review emit once. It is not acceptance.
+- `output_accepted` means a successful existing Draw approval, `scope=edition`.
+  It does not assert visual quality or per-page acceptance. Repeated approval of
+  the same attempt uses the same event UUID.
+- `account_observed` replaces app-load `account_created`: current observation
+  time; original auth signup date remains only person metadata. True
+  `account_created` requires the new auth insert trigger migration, without
+  historical backfill. The production-target migration uses creation time and
+  content-free metadata; outbox failure preserves signup; a service-role-only bounded reconciler recovers post-migration gaps. Verify prerequisites
+  and existing named objects before any approved production application. A partial
+  unique index rejects existing duplicate signup rows and prevents the prior app
+  writer from duplicating new signups during a migration-before-deploy gap.
+- Bounded first-touch tokens persist locally for 24 hours across reload/new tabs;
+  PostHog identifiers remain memory-only. No consent/replay configuration changes.
+  OAuth callback carries only bounded tokens and an advisory flow-start time.
+  Delayed returns up to 24 hours fill attribution only if the account was created
+  during that flow; existing acquisition metadata is never overwritten.
+- `checkout_started` adds Stripe session `stripe_mode=test|live|unknown`; missing
+  mode stays unknown. Purchase settlement/credit semantics are unchanged.
+- Stage costs distinguish provider-reported, pricing-estimated, and unknown
+  usage. Missing usage does not become measured zero; reserved estimates remain
+  separate from known spend and charged credits.
+
+Run `npm run check:push`, `npm run check:release` with an explicitly disposable
+loopback database, and `novel_to_comic/.venv/bin/python
+scripts/verify_tracking_continuity.py` (installed Chromium only, intercepted
+external traffic, own fixture server stopped afterward). Tests are not live
+proof of signup, purchases, acceptance, or provider image quality.
+
+### Signup capture production cutover
+
+The new signup migration was applied and verified on production Supabase
+`dfzwfinycjaaxbqayceh` at **2026-10-01T00:02:36.520134Z**.
+Fail-open trigger behavior was verified with a rolled-back temporary fixture;
+reconciliation is service-role-only. Application deployment is tracked by
+the exact main commit's CI run. No historical signup backfill or purchase
+migration reapplication was performed.

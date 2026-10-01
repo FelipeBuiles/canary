@@ -732,7 +732,7 @@ def test_page_list_flags_unreviewed_placement_without_writing_lettering(book, mo
     from novel_to_comic.server.routers import pages
     from novel_to_comic.server.routers.pages import router as pages_router
 
-    monkeypatch.setattr(pages, "_sync_draw_progress", lambda _project_dir: None)
+    monkeypatch.setattr(pages, "_sync_draw_progress", lambda _project_dir, app=None: None)
 
     artifacts, _image = book
     app = FastAPI()

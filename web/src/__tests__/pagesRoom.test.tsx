@@ -8,6 +8,8 @@ import { usePipelineStore } from "../store/pipeline";
 import type * as PagesApi from "../api/pages";
 import type { CostEstimate, EditorialIssue, StageStatus } from "../types/api";
 
+const productEvent = vi.fn();
+vi.mock("../api/events", () => ({ trackProductEvent: (...args: unknown[]) => productEvent(...args) }));
 const previewCorrections = vi.fn();
 const submitCorrections = vi.fn();
 const reviewVisuals = vi.fn();
@@ -273,6 +275,7 @@ function renderRoom(url = "/project/demo/pages") {
 
 describe("PagesRoom", () => {
   beforeEach(() => {
+    productEvent.mockClear();
     usePipelineStore.setState({ connect: vi.fn(), events: [] });
     window.localStorage.removeItem(SHOW_DEV_CONTENT_KEY);
     window.localStorage.clear();
@@ -431,6 +434,27 @@ describe("PagesRoom", () => {
     expect(generatePage).not.toHaveBeenCalled();
     expect(runPipeline).not.toHaveBeenCalled();
     expect(analyzePage).not.toHaveBeenCalled();
+  });
+
+  it("counts deliberate loaded review once, without inferring acceptance", () => {
+    pageIssues = [];
+    renderRoom();
+    expect(productEvent).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Start reading" }));
+    expect(productEvent).not.toHaveBeenCalled();
+    const image = within(screen.getByRole("dialog")).getByAltText("Complete page 1, render revision 2");
+    fireEvent.load(image);
+    expect(productEvent).toHaveBeenCalledExactlyOnceWith("page_viewed", {
+      projectId: "demo", properties: { page_number: 1, render_revision: 2 },
+    });
+    fireEvent.load(image);
+    expect(productEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not count restored or deep-linked review as deliberate viewing", () => {
+    renderRoom("/project/demo/pages?page=1&review=page");
+    fireEvent.load(within(screen.getByRole("dialog")).getByAltText("Complete page 1, render revision 2"));
+    expect(productEvent).not.toHaveBeenCalled();
   });
 
   it("offers Start reading when drawn pages have no unresolved findings", () => {

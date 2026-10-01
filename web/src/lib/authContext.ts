@@ -33,6 +33,7 @@ export function authRetryPath(params: URLSearchParams): string {
 /** Carry only bounded, non-secret attribution across browsers and production origins. */
 export function authCallbackUrl(params: URLSearchParams, acquisition: Acquisition): string {
   const callback = new URL(authRedirectUrl("/auth/callback"));
+  callback.searchParams.set("signup_started_at", String(Date.now()));
   const sample = params.get("sample");
   const ref = params.get("ref");
   if (sample && samplePattern.test(sample)) callback.searchParams.set("sample", sample);
@@ -46,9 +47,16 @@ export function authCallbackUrl(params: URLSearchParams, acquisition: Acquisitio
 
 /** OAuth cannot accept signup metadata. Fill it once for a freshly created account. */
 export function oauthSignupMetadata(user: User, params: URLSearchParams, now = Date.now()) {
-  const age = now - Date.parse(user.created_at);
+  const createdAt = Date.parse(user.created_at);
+  const age = now - createdAt;
+  const rawStarted = params.get("signup_started_at");
+  const started = rawStarted && /^\d{13}$/.test(rawStarted) ? Number(rawStarted) : NaN;
+  // A bounded advisory start time admits delayed callback returns only when
+  // the account was created during this flow. It never grants authorization.
+  const withinFlow = Number.isFinite(started) && started <= now
+    && now - started <= 24 * 60 * 60_000 && createdAt >= started - 60_000;
   if (user.app_metadata.provider !== "google" || user.user_metadata.acquisition
-      || !Number.isFinite(age) || age < 0 || age > 10 * 60_000) return null;
+      || !Number.isFinite(age) || age < 0 || (age > 10 * 60_000 && !withinFlow)) return null;
   const acquisition: Acquisition = { source: "direct" };
   for (const key of ["source", "medium", "campaign", "referring_domain"] as const) {
     const value = params.get(key);

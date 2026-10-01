@@ -32,9 +32,13 @@ describe("Auth forms", () => {
     setup("signup", "?sample=an-education");
     fireEvent.click(await screen.findByRole("button", { name: "Continue with Google" }));
     await screen.findByText("Google is temporarily unavailable");
-    expect(auth.signInWithOAuth).toHaveBeenCalledWith({ provider: "google", options: {
-      redirectTo: `${window.location.origin}/auth/callback?sample=an-education&source=direct`, skipBrowserRedirect: true,
-    } });
+    const oauth = auth.signInWithOAuth.mock.calls[0][0];
+    const callback = new URL(oauth.options.redirectTo);
+    expect(callback.searchParams.get("signup_started_at")).toMatch(/^\d{13}$/);
+    callback.searchParams.delete("signup_started_at");
+    expect(callback.toString()).toBe(`${window.location.origin}/auth/callback?sample=an-education&source=direct`);
+    expect(oauth.provider).toBe("google");
+    expect(oauth.options.skipBrowserRedirect).toBe(true);
     expect(screen.getByRole("button", { name: "Continue with Google" })).toHaveProperty("disabled", false);
   });
 

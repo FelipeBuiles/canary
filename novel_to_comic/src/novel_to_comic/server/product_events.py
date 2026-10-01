@@ -27,26 +27,29 @@ ACQUISITION_FIELDS = frozenset({
 })
 
 SERVER_EVENT_PROPERTIES: dict[str, frozenset[str]] = {
-    "page_ready": frozenset({"page_number"}),
+    "page_ready": frozenset({"page_number", "render_revision", "run_id", "attempt_id", "stage_attempt_id"}),
+    "operation_completed": frozenset({"operation", "operation_id", "run_id", "attempt_id", "stage_attempt_id", "stage", "status", "outcome", "phase", "queue_ms", "latency_ms"}),
+    "output_accepted": frozenset({"stage", "scope", "run_id", "attempt_id"}),
     "feedback_submitted": frozenset({"category", "rating", "feedback_id"}),
     "credit_blocked": frozenset({"stage"}),
-    "stage_dispatched": frozenset({"stage", "outcome", "latency_ms"}),
+    "stage_dispatched": frozenset({"stage", "outcome", "latency_ms", "run_id", "attempt_id", "cost_usd", "estimated_cost_usd", "cost_status", "cost_source", "unknown_usage_count"}),
     "export_package_ready": frozenset({"format", "cached"}),
     "export_download_requested": frozenset({"format"}),
     "project_created": frozenset({"source", "file_type"}),
-    "stage_started": frozenset({"stage", "rerun", "retry_failed"}),
-    "stage_succeeded": frozenset({"stage", "outcome", "latency_ms"}),
-    "stage_failed": frozenset({"stage", "outcome", "error_type", "latency_ms"}),
+    "stage_started": frozenset({"stage", "rerun", "retry_failed", "run_id", "attempt_id"}),
+    "stage_succeeded": frozenset({"stage", "outcome", "latency_ms", "run_id", "attempt_id", "cost_usd", "estimated_cost_usd", "cost_status", "cost_source", "unknown_usage_count"}),
+    "stage_failed": frozenset({"stage", "outcome", "error_type", "latency_ms", "run_id", "attempt_id", "cost_usd", "estimated_cost_usd", "cost_status", "cost_source", "unknown_usage_count"}),
     "stage_approved": frozenset({"stage"}),
     "style_selected": frozenset({"style_id"}),
     "panel_flagged": frozenset(),
     "panel_regenerated": frozenset({"mode"}),
-    "checkout_started": frozenset({"package_id", "gross_amount_cents", "currency"}),
+    "checkout_started": frozenset({"package_id", "gross_amount_cents", "currency", "stripe_mode"}),
     "credits_purchased": frozenset({"package_id", "credits", "gross_amount_cents", "currency", "stripe_mode"}),
     "refund_completed": frozenset({"credits", "gross_amount_cents", "currency"}),
     "operator_credit_granted": frozenset({"amount_credits", "app_environment", "stripe_mode"}),
     "export_succeeded": frozenset({"format", "cached"}),
-    "account_created": ACQUISITION_FIELDS,
+    "account_created": ACQUISITION_FIELDS | frozenset({"signup_capture_method"}),
+    "account_observed": ACQUISITION_FIELDS,
 }
 
 PERSON_PROPERTIES = frozenset({"signed_up_at", *ACQUISITION_FIELDS})
@@ -58,6 +61,7 @@ WEB_EVENT_PROPERTIES: dict[str, frozenset[str]] = {
     "station_viewed": frozenset({"station"}),
     "inspect_drawer_opened": frozenset({"drawer"}),
     "checkout_cancelled": frozenset({"package_id"}),
+    "page_viewed": frozenset({"page_number", "render_revision"}),
 }
 
 
@@ -74,6 +78,9 @@ def _clean_properties(event_name: str, properties: dict[str, Any], *, source: st
              "drawer": {"inspect", "details", "generation", "history"}}
     for key, choices in enums.items():
         if key in properties and properties[key] not in choices:
+            raise ValueError(f"Invalid {key}")
+    for key in ("page_number", "render_revision"):
+        if key in properties and (type(properties[key]) is not int or properties[key] < 1):
             raise ValueError(f"Invalid {key}")
     clean: dict[str, Any] = {}
     for key, value in properties.items():
@@ -100,6 +107,8 @@ def record_product_event(
     event_id: str | None = None,
     occurred_at: str | None = None,
     person_set_once: dict[str, Any] | None = None,
+    event_environment: str | None = None,
+    event_release: str | None = None,
 ) -> None:
     """Validate and persist one product event; raises on invalid input/write.
 
@@ -107,7 +116,7 @@ def record_product_event(
     write with the same ID is ignored rather than duplicated.
     """
     clean = _clean_properties(event_name, properties or {}, source=source)
-    clean.update(schema_version=1, environment=os.environ.get("CANARY_ENV", "development"), release=os.environ.get("CANARY_VERSION", "unknown"))
+    clean.update(schema_version=1, environment=event_environment or os.environ.get("CANARY_ENV", "development"), release=event_release or os.environ.get("CANARY_VERSION", "unknown"))
     if person_set_once:
         unknown = set(person_set_once) - PERSON_PROPERTIES
         if unknown:
@@ -164,8 +173,8 @@ def _attribute(record: Any, name: str) -> Any:
     return record.get(name) if isinstance(record, dict) else getattr(record, name, None)
 
 
-def record_account_created(user_id: str) -> None:
-    """Emit one ``account_created`` per account, dated at its original signup.
+def record_account_observed(user_id: str) -> None:
+    """Observe an authenticated account, without inventing a signup occurrence.
 
     Called on each authenticated app load; the deterministic event ID makes the
     write idempotent and the process-local set avoids repeated auth lookups.
@@ -186,11 +195,10 @@ def record_account_created(user_id: str) -> None:
     metadata = _attribute(user, "user_metadata") or {}
     acquisition = _acquisition(metadata if isinstance(metadata, dict) else {})
     record_product_event(
-        "account_created",
+        "account_observed",
         user_id=user_id,
         properties=acquisition,
-        event_id=str(uuid.uuid5(_ACCOUNT_NAMESPACE, f"account_created:{user_id}")),
-        occurred_at=created if isinstance(created, str) else None,
+        event_id=str(uuid.uuid5(_ACCOUNT_NAMESPACE, f"account_observed:{user_id}")),
         person_set_once={**acquisition, **({"signed_up_at": created} if isinstance(created, str) else {})},
     )
     _accounts_recorded.add(user_id)
