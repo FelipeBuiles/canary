@@ -1,12 +1,17 @@
 """Pydantic models for the Story Bible — the central pipeline artifact."""
 
 import re
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
 from novel_to_comic.models.appearance import AppearanceState, StateActivation
 from novel_to_comic.models.asset_id import safe_asset_id
+from novel_to_comic.workspace import FIRST_PART_ID
+
+# "extracted" entities come from the source; "author" entities were added by
+# the author in the Story Bible editor and carry no extraction evidence.
+EntityOrigin = Literal["extracted", "author"]
 
 
 class CharacterRelationship(BaseModel):
@@ -31,6 +36,10 @@ class Character(BaseModel):
     # Alternate looks this character takes on mid-story (e.g. stumps, silver
     # hands, restored). Each anchor is self-contained. Empty = one stable look.
     appearance_timeline: list[StateActivation] = []
+    # Other names this character goes by. Merging records the absorbed name
+    # here so later parts' extraction resolves it to this ID.
+    aliases: list[str] = []
+    origin: EntityOrigin = "extracted"
 
     _safe_id = field_validator("id")(safe_asset_id)
     # Ordered transitions into the states above. The look before the first
@@ -58,6 +67,8 @@ class Location(BaseModel):
     # mix pre/post in one. Empty = one stable look. State ids must extend the
     # parent location id (e.g. "loc_001_pre") so generated plates never collide.
     appearance_timeline: list[StateActivation] = []
+    aliases: list[str] = []
+    origin: EntityOrigin = "extracted"
 
     _safe_id = field_validator("id")(safe_asset_id)
     # Ordered transitions into the states above, resolved per panel by
@@ -81,6 +92,9 @@ class TransientObject(BaseModel):
 
 class Scene(BaseModel):
     id: str  # "scene_001"
+    # The part whose source text contains this scene; its offsets and opening
+    # quote refer to that part's text.
+    part_id: str = FIRST_PART_ID
     chapter: int
     title: str
     location_id: str
@@ -99,6 +113,8 @@ class Scene(BaseModel):
 
 
 class NarrativeArc(BaseModel):
+    # Acts are organized per part: each part has its own three acts.
+    part_id: str = FIRST_PART_ID
     act: int  # 1, 2, 3
     title: str
     scenes: list[str]  # Scene IDs in this act
@@ -139,11 +155,23 @@ class Prop(BaseModel):
     first_appearance_scene: Optional[str] = None
     appearance_states: list[AppearanceState] = []
     appearance_timeline: list[StateActivation] = []
+    aliases: list[str] = []
+    origin: EntityOrigin = "extracted"
 
     _safe_id = field_validator("id")(safe_asset_id)
 
 
+class ExcludedEntity(BaseModel):
+    """An entity the author removed; later extraction must not recreate it."""
+
+    kind: Literal["character", "location", "prop"]
+    name: str
+    aliases: list[str] = []
+
+
 class StoryBible(BaseModel):
+    # Incremented by every author edit; edits carry the revision they read.
+    revision: int = Field(default=1, ge=1)
     title: str
     author: str
     total_scenes: int
@@ -153,3 +181,23 @@ class StoryBible(BaseModel):
     narrative_arcs: list[NarrativeArc]
     style_notes: Optional[str] = None
     props: list[Prop] = []  # Key recurring objects — monkey's paw, magic ring, etc.
+    excluded_entities: list[ExcludedEntity] = []
+
+
+_EDITOR_BOOKKEEPING: dict = {
+    "revision": True,
+    "excluded_entities": True,
+    "characters": {"__all__": {"origin"}},
+    "locations": {"__all__": {"origin"}},
+    "props": {"__all__": {"origin"}},
+}
+
+
+def story_bible_context(bible: StoryBible) -> dict:
+    """The Story Bible as model or lineage context, without editor bookkeeping.
+
+    Edit revisions, removal records, and entity origin describe how the Bible
+    was maintained, not the story, so they never reach a prompt or a hash.
+    """
+
+    return bible.model_dump(mode="json", exclude=_EDITOR_BOOKKEEPING)

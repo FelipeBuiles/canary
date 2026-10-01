@@ -20,6 +20,7 @@ from novel_to_comic.models.generation import PromptAnchor, PromptSubject
 from novel_to_comic.models.story_bible import Character, Prop, StoryBible
 from novel_to_comic.asset_versions import record_asset_version
 from novel_to_comic.stage_runtime import StageRuntime
+from novel_to_comic.workspace import series_root
 from novel_to_comic.style_reference import find_style_reference as _find_style_ref
 
 from novel_to_comic.state_assets import (
@@ -104,7 +105,7 @@ def _relative_to_project(path: Path | None, project_dir: Path) -> str | None:
     if path is None:
         return None
     try:
-        return str(path.relative_to(project_dir))
+        return str(path.relative_to(series_root(project_dir)))
     except ValueError:
         return str(path)
 
@@ -549,7 +550,7 @@ async def regenerate_character_ref(
         raise ValueError(f"Character not found: {char_id}")
 
     sem = semaphore or asyncio.Semaphore(1)
-    output_path = project_dir / "refs" / char.id / "sheet.png"
+    output_path = series_root(project_dir) / "refs" / char.id / "sheet.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     approved_style_ref = _cast_asset_style_ref(
         config, _find_style_ref(project_dir, config.style_template)
@@ -601,7 +602,7 @@ async def regenerate_character_state_ref(
     require_character_inputs(config, project_dir, char_id, state=True)
 
     sem = semaphore or asyncio.Semaphore(1)
-    output_path = project_dir / "refs" / char.id / "states" / state.id / "sheet.png"
+    output_path = series_root(project_dir) / "refs" / char.id / "states" / state.id / "sheet.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     approved_style_ref = _cast_asset_style_ref(
         config, _find_style_ref(project_dir, config.style_template)
@@ -672,7 +673,7 @@ async def regenerate_location_plate(
         plate_stem = f"{loc.id}/states/{state.id}"
 
     sem = semaphore or asyncio.Semaphore(1)
-    output_path = project_dir / "plates" / f"{plate_stem}.png"
+    output_path = series_root(project_dir) / "plates" / f"{plate_stem}.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
     if state_id:
@@ -717,7 +718,7 @@ async def _generate_character_refs(
         return
     console.print("[bold]Generating character reference images...[/bold]")
     ctx.log("Generating character reference sheets...")
-    refs_dir = project_dir / "refs"
+    refs_dir = series_root(project_dir) / "refs"
 
     # A visual style reference image is far stronger than text for locking style.
     # Without it, the model applies different stylistic conventions per character
@@ -822,7 +823,7 @@ async def _generate_character_state_refs(
 
         async def _one_state(char: Character, state_id: str, anchor: str) -> None:
             state_obj = next((s for s in char.appearance_states or [] if s.id == state_id), None)
-            out_dir = project_dir / "refs" / char.id / "states" / state_id
+            out_dir = series_root(project_dir) / "refs" / char.id / "states" / state_id
             out_dir.mkdir(parents=True, exist_ok=True)
             output_path = out_dir / "sheet.png"
             parent_path = artifacts.character_ref_sheet_path(project_dir, char.id)
@@ -886,7 +887,7 @@ async def _generate_location_plates(
     """Part C: Generate location background plates — one per location state."""
     console.print("[bold]Generating location plates...[/bold]")
     ctx.log("Generating location plates...")
-    plates_dir = project_dir / "plates"
+    plates_dir = series_root(project_dir) / "plates"
     plates_dir.mkdir(parents=True, exist_ok=True)
 
     locs_to_gen = [loc for loc in story_bible.locations if not loc_ids or loc.id in loc_ids]
@@ -1356,7 +1357,7 @@ def cast_approval_blocker(config: Config, project_dir: Path, stage_state) -> str
         paths.extend(artifacts.character_state_ref_sheet_path(project_dir, char.id, sid)
                      for sid, _anchor in _character_state_jobs(char))
     for loc in bible.locations:
-        paths.extend(project_dir / "plates" / f"{stem}.png"
+        paths.extend(series_root(project_dir) / "plates" / f"{stem}.png"
                      for stem, _anchor, _sid in _location_plate_jobs(loc))
     for prop in bible.props:
         paths.append(artifacts.prop_ref_path(project_dir, prop.id))
@@ -1464,7 +1465,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     missing_location_states: list[tuple[str, str]] = []
     for loc in story_bible.locations:
         for stem, _anchor, state_id in _location_plate_jobs(loc):
-            if (project_dir / "plates" / f"{stem}.png").exists():
+            if (series_root(project_dir) / "plates" / f"{stem}.png").exists():
                 continue
             if state_id:
                 missing_location_states.append((loc.id, state_id))
@@ -1501,7 +1502,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
                 missing_state_refs.append((char.id, appearance.id))
     for loc in story_bible.locations:
         for stem, anchor, state_id in _location_plate_jobs(loc):
-            if state_id is None and not (project_dir / "plates" / f"{stem}.png").exists():
+            if state_id is None and not (series_root(project_dir) / "plates" / f"{stem}.png").exists():
                 total += estimate_non_panel_request(
                     config, _location_generation_input(config, loc, anchor=anchor),
                     reference_plan=style_plan,

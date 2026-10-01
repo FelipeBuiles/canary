@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from novel_to_comic.asset_scope import require_project_asset_path
+from novel_to_comic.workspace import series_root
 
 
 def asset_versions_dir(image_path: Path) -> Path:
@@ -54,7 +55,7 @@ def record_asset_version(
         "created_at": datetime.now(UTC).isoformat(),
         "reason": reason,
         "sha256": digest,
-        "image_path": str(archived.relative_to(project_dir)),
+        "image_path": str(archived.relative_to(series_root(project_dir))),
     }
     entries.append(entry)
     manifest_path.write_text(
@@ -74,7 +75,7 @@ def list_asset_versions(image_path: Path, project_dir: Path) -> list[dict]:
             "version": max((entry["version"] for entry in result), default=0) + 1,
             "current": True,
             "sha256": hashlib.sha256(image_path.read_bytes()).hexdigest(),
-            "image_path": str(image_path.relative_to(project_dir)),
+            "image_path": str(image_path.relative_to(series_root(project_dir))),
         })
     return result
 

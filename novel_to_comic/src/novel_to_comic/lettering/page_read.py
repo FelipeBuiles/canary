@@ -18,6 +18,7 @@ from novel_to_comic.models.draw import ObservedFigure, PageRenderRevision
 from novel_to_comic.models.page import ComicPage
 from novel_to_comic.page_ocr import CastPortrait, GatewayPageOCRAdapter
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
+from novel_to_comic.workspace import series_root
 
 MAX_PORTRAITS = 4  # Keeps the check's extra image input small and its price stable.
 PORTRAIT_EDGE = 256
@@ -58,7 +59,7 @@ def cast_portraits(artifacts: TargetArtifacts, page: ComicPage) -> tuple[CastPor
             states.setdefault(entity, state)
     portraits = []
     for entity in speakers(page)[:MAX_PORTRAITS]:
-        root = artifacts.project_dir / "refs" / entity
+        root = series_root(artifacts.project_dir) / "refs" / entity
         candidates = [root / "states" / states[entity] / "portrait.png"] if entity in states else []
         candidates.append(character_ref_pose_path(artifacts.project_dir, entity, "portrait"))
         path = next((c for c in candidates if c.is_file()), None)

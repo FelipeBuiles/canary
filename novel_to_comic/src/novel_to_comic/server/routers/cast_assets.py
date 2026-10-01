@@ -483,7 +483,7 @@ async def regenerate_location_state_instructed(
 def _character_ref_sheet_path(
     project_dir: Path, char_id: str, state_id: str | None
 ) -> Path:
-    base = project_dir / "refs" / char_id
+    base = artifacts.character_ref_sheet_path(project_dir, char_id).parent
     return base / "states" / state_id / "sheet.png" if state_id else base / "sheet.png"
 
 

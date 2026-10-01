@@ -27,7 +27,7 @@ from novel_to_comic.models.adaptation import (
     NarrativeTreatment,
 )
 from novel_to_comic.models.source import SourceDocument
-from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.models.story_bible import StoryBible, story_bible_context
 from novel_to_comic.editorial import story_instruction_section
 from novel_to_comic.models.validation import (
     EditorialIssue,
@@ -3278,7 +3278,7 @@ def recoverable_adaptation_candidate(
 
 def _adaptation_work_inputs(source, story_bible, brief, instruction):
     return {"source": source.model_dump(mode="json"), "brief": brief.model_dump(mode="json"),
-            "bible": story_bible.model_dump(mode="json"), "instruction": instruction}
+            "bible": story_bible_context(story_bible), "instruction": instruction}
 
 
 def _reviewed_candidate_for_resume(source, story_bible, brief, *, artifacts, model,

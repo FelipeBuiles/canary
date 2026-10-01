@@ -143,7 +143,11 @@ class SourceScene(BaseModel):
 
 
 class SourceDocument(BaseModel):
-    """The canonical source text and its exact unit/scene index."""
+    """One part's canonical source text and its exact unit/scene index.
+
+    Offsets are relative to this part's text. Unit ordinals and IDs continue
+    across the series' parts, so every unit ID is unique within a project.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -162,7 +166,10 @@ class SourceDocument(BaseModel):
         ids = [unit.id for unit in self.units]
         if len(ids) != len(set(ids)):
             raise ValueError("source unit IDs must be unique")
-        if [unit.ordinal for unit in self.units] != list(range(1, len(self.units) + 1)):
+        first_ordinal = self.units[0].ordinal
+        if [unit.ordinal for unit in self.units] != list(
+            range(first_ordinal, first_ordinal + len(self.units))
+        ):
             raise ValueError("source unit ordinals must be consecutive")
 
         expected_start = 0

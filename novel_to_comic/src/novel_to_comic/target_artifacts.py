@@ -32,8 +32,10 @@ from novel_to_comic.models.draw import (
 )
 from novel_to_comic.models.finish import FinishPreflight
 from novel_to_comic.models.page import BookPlan, ComicPage, PlanReviewDraft
+from novel_to_comic.models.parts import PartManifest, text_sha256
 from novel_to_comic.models.source import SourceDocument
 from novel_to_comic.models.validation import StageValidation
+from novel_to_comic.workspace import part_ordinal, series_root
 
 if TYPE_CHECKING:
     from novel_to_comic.editorial import (
@@ -59,6 +61,7 @@ _ARTIFACT_OWNER_STAGES = {
     "cast_design": "Cast",
     "cast_review": "Cast",
     "source": "Extract",
+    "part_manifest": "Extract",
     "adaptation_brief": "Brief",
     "book_adaptation": "Adapt",
     "failed_book_adaptation": "Adapt",
@@ -97,14 +100,21 @@ class ArtifactInvalid(Exception):
 
 
 class TargetArtifacts:
-    """The sole path and serialization boundary for target artifacts."""
+    """The sole path and serialization boundary for target artifacts.
+
+    ``project_dir`` is a part workspace (or a single-directory project). Page
+    artifacts resolve against it; series-level artifacts (part manifest and
+    texts, Cast design/review, the book lettering style) resolve against
+    ``series_dir``. See ``workspace.py``.
+    """
 
     def __init__(self, project_dir: Path) -> None:
         self.project_dir = Path(project_dir)
+        self.series_dir = series_root(self.project_dir)
 
     @property
     def cast_design_path(self) -> Path:
-        return self.project_dir / "refs" / "cast_design.json"
+        return self.series_dir / "refs" / "cast_design.json"
 
     def read_cast_design(self):
         from novel_to_comic.cast_design import CastDesignPlan
@@ -115,7 +125,7 @@ class TargetArtifacts:
 
     @property
     def cast_review_path(self) -> Path:
-        return self.project_dir / "refs" / "cast_review.json"
+        return self.series_dir / "refs" / "cast_review.json"
 
     def read_cast_review(self):
         from novel_to_comic.cast_design import CastVisualReview
@@ -227,6 +237,39 @@ class TargetArtifacts:
     @property
     def source_path(self) -> Path:
         return self.project_dir / "source" / "source.json"
+
+    @property
+    def part_manifest_path(self) -> Path:
+        return self.series_dir / "source" / "parts.json"
+
+    def part_text_path(self, identifier: str) -> Path:
+        part_ordinal(identifier)
+        return self.series_dir / "source" / "parts" / f"{identifier}.txt"
+
+    def read_part_manifest(self) -> PartManifest:
+        return self._read_model("part_manifest", self.part_manifest_path, PartManifest)
+
+    def write_part_manifest(self, manifest: PartManifest) -> None:
+        self._write_model(self.part_manifest_path, manifest)
+
+    def read_part_text(self, identifier: str) -> str:
+        """Return a part's exact source text, verified against its record."""
+
+        record = self.read_part_manifest().get(identifier)
+        path = self.part_text_path(identifier)
+        if not path.exists():
+            raise ArtifactMissing("part_text", path)
+        text = path.read_text(encoding="utf-8")
+        if text_sha256(text) != record.text_sha256:
+            raise ValueError(f"source text for {identifier} changed outside Canary")
+        return text
+
+    def write_part_text(self, identifier: str, text: str) -> None:
+        path = self.part_text_path(identifier)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.tmp")
+        temporary.write_text(text, encoding="utf-8")
+        os.replace(temporary, path)
 
     @property
     def brief_path(self) -> Path:
@@ -555,7 +598,7 @@ class TargetArtifacts:
 
     @property
     def lettering_style_path(self) -> Path:
-        return self.project_dir / "lettering" / "style.json"
+        return self.series_dir / "lettering" / "style.json"
 
     def lettering_path(self, page_number: int) -> Path:
         if page_number < 1:
@@ -578,7 +621,7 @@ class TargetArtifacts:
     def lettering_proof_path(self, identity: str) -> Path:
         if not re.fullmatch(r"[a-f0-9]{64}", identity):
             raise ValueError("invalid lettering proof identity")
-        return self.project_dir / "samples" / "lettering-proofs" / f"{identity}.png"
+        return self.series_dir / "samples" / "lettering-proofs" / f"{identity}.png"
 
     @locked_mutation
     def write_lettering_proof(self, identity: str, data: bytes) -> Path:

@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict
 from novel_to_comic.narrative_instructions import BRIEF_DEPICTION_GUIDANCE
 from novel_to_comic.models.adaptation import AdaptationBrief
 from novel_to_comic.models.source import SourceDocument
-from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.models.story_bible import StoryBible, story_bible_context
 from novel_to_comic.target_artifacts import TargetArtifacts
 
 logger = logging.getLogger("canary.briefing")
@@ -77,7 +77,7 @@ def build_brief_inference_prompt(
             scene.model_dump(mode="json")
             for scene in source.scenes
         ],
-        "story_bible": story_bible.model_dump(mode="json"),
+        "story_bible": story_bible_context(story_bible),
     }
     return (
         "Infer an adaptation brief from the canonical source units and Story Bible. "
