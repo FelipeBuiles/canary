@@ -348,3 +348,11 @@ def test_extraction_rejects_duplicate_looks_but_allows_a_canonical_return():
 
     payload["characters"][0]["appearance_states"][1]["canonical_equivalent"] = True
     assert len(_parse_extraction(payload, SOURCE).characters[0].appearance_states) == 2
+
+
+@pytest.mark.parametrize("anchor", ["", "  "])
+def test_extraction_rejects_a_blank_visual_anchor_for_correction(anchor):
+    payload = _payload()
+    payload["characters"][0]["visual_anchor"] = anchor
+    with pytest.raises(ValueError, match=r"Blank visual_anchor for: Ari \(Ari\)"):
+        _parse_extraction(payload, SOURCE)

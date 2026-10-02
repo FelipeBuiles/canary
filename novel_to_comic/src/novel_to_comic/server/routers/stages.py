@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from novel_to_comic import artifacts
 from novel_to_comic.briefing import revise_persisted_brief
-from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.models.story_bible import StoryBible, blank_visual_anchors
 from novel_to_comic.source_extraction import (
     SourceSceneAnchor,
     align_scene_anchors,
@@ -68,6 +68,8 @@ def update_story_bible(body: dict, project=Depends(get_project)):
         from novel_to_comic.clients.structured_call import validation_error_summary
 
         raise HTTPException(422, validation_error_summary(exc)) from exc
+    if blank := blank_visual_anchors(bible):
+        raise HTTPException(422, "Add a visual anchor for: " + ", ".join(blank))
     target = TargetArtifacts(project_dir)
     # Source scenes are derived from the bible's scene anchors, so an edited
     # bible has to re-derive them or source.json keeps describing scenes that no
