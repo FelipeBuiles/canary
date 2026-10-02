@@ -24,6 +24,7 @@ import {
   useAssetRegenEstimate,
   useImageGenerationMeta,
   useResetStale,
+  useFillVisualAnchor,
 } from "../../api/queries";
 import { ApprovalBar, ConfirmDrawer, RoomHeader, RoomShell, RerunStageAction, StagePlaceholder, SectionHeader, EntityCard } from "../../components/composites";
 import { useRunAction } from "../../hooks/useRunAction";
@@ -39,7 +40,7 @@ import { useI18n } from "../../i18n";
 import { FlowingDotsPlaceholder } from "../../components/ui/FlowingDotsPlaceholder";
 import { StaleStageNotice } from "../../components/composites";
 import { getCastCheckpointAction } from "../../lib/castCheckpoint";
-import { readableAnchor } from "../../lib/visualAnchor";
+import { missingVisualAnchors, readableAnchor, type MissingVisualAnchor } from "../../lib/visualAnchor";
 
 function queuedLabel(job: GenerationJob | null) {
   if (!job) return "QUEUED";
@@ -1060,6 +1061,45 @@ function castFailureFor(failures: CastFailure[] | undefined, entityId: string, s
   return failures?.find((failure) => failure.entity_id === entityId && failure.state_id === stateId);
 }
 
+/** Pages need a written look for every entry; a blank one is filled here, not by rerunning Extract. */
+export function MissingAnchorsNotice({ projectId, missing }: { projectId: string; missing: MissingVisualAnchor[] }) {
+  const { t } = useI18n();
+  const fill = useFillVisualAnchor();
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  return (
+    <section role="alert" aria-labelledby="cast-missing-anchors-title" className="border-[3px] border-hero-red bg-surface-container p-4 md:p-5">
+      <h2 id="cast-missing-anchors-title" className="font-meta text-xs font-bold tracking-[0.12em] text-hero-red">{t("MISSING DESCRIPTIONS")}</h2>
+      <p className="mt-2 font-body text-sm text-ink-black">{t("Pages need a written look for these entries. Add one to continue; nothing already made is redone.")}</p>
+      <ul className="mt-3 space-y-3">
+        {missing.map((entry) => {
+          const draft = drafts[entry.key] ?? "";
+          const inputId = `missing-anchor-${entry.key}`;
+          return (
+            <li key={entry.key}>
+              <form
+                className="flex flex-wrap items-end gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (!draft.trim()) return;
+                  fill.mutate({ project: projectId, entity_id: entry.entityId, appearance_state_id: entry.stateId, visual_anchor: draft });
+                }}
+              >
+                <div className="min-w-0 flex-1">
+                  <FieldLabel htmlFor={inputId}>{t("Describe how {name} looks", { name: entry.name })}</FieldLabel>
+                  <TextField id={inputId} value={draft} maxLength={2000} disabled={fill.isPending}
+                    onChange={(event) => setDrafts((current) => ({ ...current, [entry.key]: event.target.value }))} />
+                </div>
+                <Button type="submit" variant="outline" size="sm" disabled={fill.isPending || !draft.trim()}>{t("SAVE")}</Button>
+              </form>
+            </li>
+          );
+        })}
+      </ul>
+      {fill.error && <p role="alert" className="mt-2 font-body text-sm text-hero-red">{fill.error.message}</p>}
+    </section>
+  );
+}
+
 /** Names each reference that stopped Cast and why, so Resume is never a blind retry. */
 export function CastFailureNotice({ failures, onResume, resumeDisabled = false }: {
   failures: CastFailure[];
@@ -1117,7 +1157,9 @@ export function CastRoom() {
   const stageRegenerating = isCastStageRunning;
   const stageInfo = status?.stages?.cast;
   const stageStatus = stageInfo?.status ?? "pending";
-  const checkpointAction = getCastCheckpointAction(stageStatus, stageInfo?.approval_blocker);
+  const missingAnchors = bible ? missingVisualAnchors([...bible.characters, ...bible.locations, ...bible.props]) : [];
+  // A missing anchor is fixed in place below; resuming Cast cannot write one.
+  const checkpointAction = getCastCheckpointAction(stageStatus, missingAnchors.length ? null : stageInfo?.approval_blocker);
   const isStageStuck = !!stageInfo?.stale;
   const lastProgressAt = stageInfo?.last_progress_at ?? null;
   const needsApproval = checkpointAction === "approve";
@@ -1246,6 +1288,8 @@ export function CastRoom() {
         />
       )}
 
+      {!stageRegenerating && missingAnchors.length > 0 && <MissingAnchorsNotice projectId={id} missing={missingAnchors} />}
+
       {!stageRegenerating && (
         <CastFailureNotice
           failures={stageInfo?.failures ?? []}
@@ -1327,6 +1371,8 @@ export function CastRoom() {
       />
       <ApprovalBar
         next={canStartCast ? t("Start the character and place references when you are ready")
+          : missingAnchors.length > 0
+          ? t("Add the missing descriptions above to continue")
           : checkpointAction === "resume"
           ? stageInfo?.approval_blocker ?? "Some cast references did not finish — resume from the missing images"
           : needsApproval
@@ -1345,7 +1391,7 @@ export function CastRoom() {
             ? "LOOKS RIGHT — CONTINUE →"
             : "GO TO PAGES →"}
         onPrimary={handleContinueToPages}
-        primaryDisabled={approveStage.isPending || isPipelineRunning || (!canStartCast && checkpointAction === "wait") || ((canStartCast || checkpointAction === "resume") && (!status?.style_selected || !castResumeEstimate))}
+        primaryDisabled={approveStage.isPending || isPipelineRunning || (!canStartCast && missingAnchors.length > 0) || (!canStartCast && checkpointAction === "wait") || ((canStartCast || checkpointAction === "resume") && (!status?.style_selected || !castResumeEstimate))}
         busy={approveStage.isPending || isPipelineRunning}
         error={actionError}
         secondary={<RerunStageAction project={id} stage="cast" label="cast" disabled={stageRegenerating} />}

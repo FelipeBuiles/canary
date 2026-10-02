@@ -17,9 +17,12 @@ CONTENT_SECURITY_POLICY = "; ".join(
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
         "font-src 'self' data: https://fonts.gstatic.com",
         "img-src 'self' data: blob: https:",
+        # posthog-js reads its remote config (which enables session replay)
+        # from the regional assets host; ingestion goes to the regional i host.
         (
             "connect-src 'self' https://*.supabase.co wss://*.supabase.co "
-            "https://*.stripe.com https://us.i.posthog.com https://eu.i.posthog.com"
+            "https://*.stripe.com https://us.i.posthog.com https://eu.i.posthog.com "
+            "https://us-assets.i.posthog.com https://eu-assets.i.posthog.com"
         ),
         # The homepage film loads the privacy-enhanced YouTube player on click.
         "frame-src https://js.stripe.com https://hooks.stripe.com https://www.youtube-nocookie.com",

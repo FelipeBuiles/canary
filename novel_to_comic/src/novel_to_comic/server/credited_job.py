@@ -77,6 +77,17 @@ class CreditReservationDenied(Exception):
         self.message = message
         self.detail = detail
 
+    @property
+    def insufficient_credits(self) -> bool:
+        return bool(self.detail and self.detail.get("error") == "insufficient_credits")
+
+    @property
+    def error_type(self) -> str:
+        """Telemetry label: a balance shortfall, or the defect that blocked the hold."""
+        if self.insufficient_credits:
+            return "insufficient_credits"
+        return type(self.__cause__).__name__ if self.__cause__ is not None else "reservation_failed"
+
 
 async def run_credited_stage(
     *,

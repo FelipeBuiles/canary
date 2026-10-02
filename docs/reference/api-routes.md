@@ -137,6 +137,7 @@ Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project di
 | `GET` | `/api/projects/{project}/story` | `get_story` | `stages.py` |
 | `GET` | `/api/projects/{project}/story-bible` | `get_story_bible` | `stages.py` |
 | `PUT` | `/api/projects/{project}/story-bible` | `update_story_bible` | `stages.py` |
+| `POST` | `/api/projects/{project}/story-bible/visual-anchor` | `fill_visual_anchor` | `stages.py` |
 | `GET` | `/api/projects/{project}/brief` | `get_brief` | `stages.py` |
 | `PUT` | `/api/projects/{project}/brief` | `update_brief` | `stages.py` |
 | `GET` | `/api/projects/{project}/validation/{stage}` | `get_stage_validation` | `stages.py` |
