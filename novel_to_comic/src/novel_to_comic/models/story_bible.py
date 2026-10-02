@@ -159,7 +159,6 @@ class MissingVisualAnchor(ValueError):
     """A persisted Story Bible entry has no visual anchor for Plan to use."""
 
     def __init__(self, entries: list[str]):
-        self.entries = entries
         super().__init__(
             "These Story Bible entries have no visual anchor: "
             + ", ".join(entries)
@@ -179,8 +178,3 @@ def blank_visual_anchors(bible: StoryBible) -> list[str]:
             if not state.visual_anchor.strip()
         )
     return blank
-
-
-def require_visual_anchors(bible: StoryBible) -> None:
-    if blank := blank_visual_anchors(bible):
-        raise MissingVisualAnchor(blank)
