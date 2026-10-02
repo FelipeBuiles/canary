@@ -19,6 +19,16 @@ export function updateStoryBible(project: string, data: StoryBible): Promise<Sto
   });
 }
 
+export function fillVisualAnchor(
+  project: string,
+  body: { entity_id: string; appearance_state_id: string | null; visual_anchor: string },
+): Promise<{ story_bible: StoryBible; missing_visual_anchors: string[] }> {
+  return apiFetch(`/projects/${encodeURIComponent(project)}/story-bible/visual-anchor`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export function getStory(project: string): Promise<StoryDecision> {
   return apiFetch(`/projects/${encodeURIComponent(project)}/story`);
 }

@@ -415,6 +415,7 @@ export interface Prop {
   name: string;
   visual_anchor: string;
   first_appearance_scene: string | null;
+  appearance_states?: AppearanceState[];
 }
 
 export interface StoryBible {
