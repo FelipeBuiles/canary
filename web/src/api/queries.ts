@@ -12,6 +12,7 @@ import {
   getStory,
   updateBrief,
   updateStoryBible,
+  fillVisualAnchor,
   getImageGenerationMeta,
   getPrimaryRefs,
   setPrimaryRef,
@@ -443,6 +444,19 @@ export function useUpdateStoryBible() {
       updateStoryBible(project, data),
     onSuccess: (_data, { project }) => {
       qc.invalidateQueries({ queryKey: ["project", project, "story-bible"] });
+    },
+  });
+}
+
+export function useFillVisualAnchor() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, ...body }: { project: string; entity_id: string; appearance_state_id: string | null; visual_anchor: string }) =>
+      fillVisualAnchor(project, body),
+    onSuccess: (_data, { project }) => {
+      qc.invalidateQueries({ queryKey: ["project", project, "story-bible"] });
+      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+      qc.invalidateQueries({ queryKey: ["project", project, "estimate"] });
     },
   });
 }

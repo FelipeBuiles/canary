@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
 from novel_to_comic.briefing import approve_brief, require_approved_brief
+from novel_to_comic.models.story_bible import MissingVisualAnchor
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.stages import REGISTRY
 from novel_to_comic.state import (
@@ -263,7 +264,9 @@ async def _run_stage_with_credits(
                 fresh_adaptation=rerun and stage == "adapt",
             )
     except CreditReservationDenied as denied:
-        capture_server_event("credit_blocked", user_id=user_id, project_id=project_id, properties={"stage": stage})
+        # Estimation defects share this boundary; only a balance shortfall is a credit block.
+        if denied.insufficient_credits:
+            capture_server_event("credit_blocked", user_id=user_id, project_id=project_id, properties={"stage": stage})
         if not rerun:
             fail_stage(state, stage, denied.message, detail=denied.detail)
             save_state(state, project_dir)
@@ -276,7 +279,8 @@ async def _run_stage_with_credits(
             event.update(denied.detail)
         queue.put_nowait(event)
         capture_lifecycle(app, "stage_failed", attempt_id, user_id=user_id, project_id=project_id,
-                          properties={"stage": stage, "outcome": "blocked", "error_type": "insufficient_credits",
+                          properties={"stage": stage, "outcome": "blocked" if denied.insufficient_credits else "failed",
+                                      "error_type": denied.error_type,
                                       "run_id": run_id, "attempt_id": attempt_id})
         return
     except Exception as exc:
@@ -445,15 +449,18 @@ async def estimate_stage_cost(
 
         return {"stage": stage, **estimate_remaining_page_generation(project, request, project_id, user_id)}
     chain = [stage, *STAGE_AUTO_CHAIN.get(stage, ())]
-    parts = [
-        UnifiedCostResolver.estimate_stage_cost(
-            config,
-            project_dir,
-            state,
-            name,
-        )
-        for name in chain
-    ]
+    try:
+        parts = [
+            UnifiedCostResolver.estimate_stage_cost(
+                config,
+                project_dir,
+                state,
+                name,
+            )
+            for name in chain
+        ]
+    except MissingVisualAnchor as exc:
+        raise HTTPException(409, str(exc)) from exc
     return {
         "stage": stage,
         **({"archived_page_count": TargetArtifacts(project_dir).drawn_page_count()}

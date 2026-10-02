@@ -153,3 +153,28 @@ class StoryBible(BaseModel):
     narrative_arcs: list[NarrativeArc]
     style_notes: Optional[str] = None
     props: list[Prop] = []  # Key recurring objects — monkey's paw, magic ring, etc.
+
+
+class MissingVisualAnchor(ValueError):
+    """A persisted Story Bible entry has no visual anchor for Plan to use."""
+
+    def __init__(self, entries: list[str]):
+        super().__init__(
+            "These Story Bible entries have no visual anchor: "
+            + ", ".join(entries)
+            + ". Add the missing descriptions in the Cast station, or rerun Extract."
+        )
+
+
+def blank_visual_anchors(bible: StoryBible) -> list[str]:
+    """Characters, locations, props, and appearance states with a blank anchor."""
+    blank = []
+    for entity in (*bible.characters, *bible.locations, *bible.props):
+        if not entity.visual_anchor.strip():
+            blank.append(f"{entity.name} ({entity.id})")
+        blank.extend(
+            f"{entity.name} ({entity.id}:{state.id})"
+            for state in entity.appearance_states
+            if not state.visual_anchor.strip()
+        )
+    return blank

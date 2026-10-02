@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from novel_to_comic import artifacts
 from novel_to_comic.briefing import revise_persisted_brief
-from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.models.story_bible import StoryBible, blank_visual_anchors
 from novel_to_comic.source_extraction import (
     SourceSceneAnchor,
     align_scene_anchors,
@@ -68,6 +68,8 @@ def update_story_bible(body: dict, project=Depends(get_project)):
         from novel_to_comic.clients.structured_call import validation_error_summary
 
         raise HTTPException(422, validation_error_summary(exc)) from exc
+    if blank := blank_visual_anchors(bible):
+        raise HTTPException(422, "Add a visual anchor for: " + ", ".join(blank))
     target = TargetArtifacts(project_dir)
     # Source scenes are derived from the bible's scene anchors, so an edited
     # bible has to re-derive them or source.json keeps describing scenes that no
@@ -118,6 +120,47 @@ def update_story_bible(body: dict, project=Depends(get_project)):
         state.stages[stage] = StageState()
     save_state(state, project_dir)
     return {"story_bible": bible, "brief": None}
+
+
+class VisualAnchorFill(BaseModel):
+    entity_id: str = Field(min_length=1)
+    appearance_state_id: str | None = None
+    visual_anchor: str = Field(min_length=1, max_length=2000)
+
+
+@router.post("/story-bible/visual-anchor")
+def fill_visual_anchor(body: VisualAnchorFill, project=Depends(get_project)):
+    """Add a missing visual anchor without resetting any stage.
+
+    Existing anchors stay verbatim: only a blank one can be filled. Nothing
+    downstream was derived from an empty anchor, so no output becomes stale.
+    """
+    project_dir, _config, state = project
+    if any(stage.status == StageStatus.RUNNING for stage in state.stages.values()):
+        raise HTTPException(409, "Wait for the running stage to finish before adding a visual anchor.")
+    anchor = body.visual_anchor.strip()
+    if not anchor:
+        raise HTTPException(422, "Describe how this entry looks.")
+    try:
+        bible = artifacts.read_story_bible(project_dir)
+    except ArtifactMissing as exc:
+        raise _not_found(exc) from exc
+    entity = next(
+        (item for item in (*bible.characters, *bible.locations, *bible.props) if item.id == body.entity_id),
+        None,
+    )
+    if entity is None:
+        raise HTTPException(404, f"Unknown Story Bible entry: {body.entity_id}")
+    target = entity
+    if body.appearance_state_id is not None:
+        target = next((s for s in entity.appearance_states if s.id == body.appearance_state_id), None)
+        if target is None:
+            raise HTTPException(404, f"Unknown appearance state: {body.entity_id}:{body.appearance_state_id}")
+    if target.visual_anchor.strip():
+        raise HTTPException(409, "This entry already has a visual anchor; existing anchors are preserved verbatim.")
+    target.visual_anchor = anchor
+    artifacts.write_story_bible(project_dir, bible)
+    return {"story_bible": bible, "missing_visual_anchors": blank_visual_anchors(bible)}
 
 
 @router.get("/brief")
