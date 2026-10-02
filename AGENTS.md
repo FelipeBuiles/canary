@@ -13,6 +13,12 @@ resources, not a mandatory onboarding sequence; reuse context already loaded.
 - The active stages are `extract → brief → style → cast → adapt → plan → draw → finish`.
   `state.py` and `stages/__init__.py` are authoritative. Checkpoints are
   `brief`, `style`, `cast`, and `draw`.
+- A project is a series of parts ([ADR 0023](docs/adr/0023-series-parts-and-author-owned-story-bible.md)).
+  Style, Cast and the Story Bible belong to the series root (`workspace.series_root`);
+  Extract through Finish work belongs to the part workspace `parts/<part_id>/`.
+  Only the newest part's text changes, until its Adapt starts. Story Bible
+  edits are revision-checked and never remove or merge away what an adapted
+  part cites.
 - The CLI supports only `init` and `serve`. Run, approve, status, correction,
   and export operations use HTTP APIs. Never suggest `pipeline run` or
   `pipeline approve` CLI commands.

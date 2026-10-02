@@ -3,6 +3,8 @@
 **Status:** Accepted  
 **Date:** 2026-07-25
 
+Amended by [ADR 0023](0023-series-parts-and-author-owned-story-bible.md): the ordered adaptation is per part, with continuity from earlier parts.
+
 ## Decision
 
 `adapt` produces one logically ordered adaptation for the whole book. Source

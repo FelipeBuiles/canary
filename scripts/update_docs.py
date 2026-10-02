@@ -154,14 +154,25 @@ def _extract_routes() -> list[dict]:
     router_dir = SRC / "server" / "routers"
 
     # These must stay in sync with the include_router() calls in server/app.py.
+    # Series routes mount at /api/projects/{project}; part routes add
+    # /parts/{part_id}. pipeline.py, stages.py and files.py mount at both.
+    part = "/api/projects/{project}/parts/{part_id}"
     prefix_map = {
         "account_models.py": "/api/account",
         "backoffice.py": "/api/ops/backoffice",
+        "operator_billing.py": "/api/ops/billing",
         "projects.py": "/api/projects",
-        "publications.py": "/api/projects/{project_id}",
+        "publications.py": part,
         "pipeline.py": "/api/projects/{project}",
-        "pages.py": "/api/projects/{project}",
-        "export.py": "/api/projects/{project}/export",
+        "pages.py": part,
+        "lettering.py": part,  # included by pages.py
+        "export.py": f"{part}/export",
+        "editorial.py": part,
+        "files.py": "/api/projects/{project}",
+        "parts.py": "/api/projects/{project}",
+        "story_bible.py": "/api/projects/{project}",
+        "cast_assets.py": "/api/projects/{project}",
+        "styles.py": "/api/projects/{project}",
         "config.py": "/api/projects/{project}/config",
         "stages.py": "/api/projects/{project}",   # NO /data/ — mounted at project root
     }
@@ -202,6 +213,9 @@ def write_api_routes_doc(routes: list[dict]) -> None:
         "# API Routes Reference\n\n",
         "_Auto-generated from `server/routers/*.py`. Do not edit manually._\n\n",
         "Base URL: `http://localhost:8000` (dev). Replace `{project}` with the project directory name.\n\n",
+        "Routes from `pipeline.py`, `stages.py` and `files.py` serve under both "
+        "`/api/projects/{project}` (the series) and `/api/projects/{project}/parts/{part_id}` "
+        "(one part).\n\n",
         "## Routes\n\n",
         "| Method | Path | Handler | File |\n",
         "|--------|------|---------|------|\n",
@@ -211,7 +225,8 @@ def write_api_routes_doc(routes: list[dict]) -> None:
 
     lines += [
         "\n## SSE Streaming\n\n",
-        "`GET /api/projects/{project}/events` — Server-sent events stream. "
+        "`GET /api/projects/{project}/events` (or a part's `/parts/{part_id}/events`, "
+        "which also carries series events) — Server-sent events stream. "
         "Connect before `POST /run` to receive stage progress. "
         "Event schema: `{type, stage, done, total, message, level}`. "
         "See `events.py` for the full schema.\n",

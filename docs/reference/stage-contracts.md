@@ -1,6 +1,6 @@
 # Stage contracts
 
-**Status: Current, September 15, 2026.** Implementation and tests are authoritative.
+**Status: Current, October 2, 2026.** Implementation and tests are authoritative.
 Each stage owns its file boundary. Server orchestration runs the explicit chain;
 stages do not call one another. The CLI has only `init` and `serve`.
 
@@ -15,11 +15,98 @@ stages do not call one another. The CLI has only `init` and `serve`.
 | 7 | `draw` | Yes | Complete base-art images and issue review; optional base-art OCR |
 | 8 | `finish` | No | Provider-free lettering composition, preflight and PDF/CBZ packaging |
 
-`state.py` and `stages/__init__.py` define ordering and gates. All routes below
-serve under `/api/projects/{project_id}`: pipeline operations live in
-`server/routers/pipeline.py`; page generation, saved-pixel text-check recovery,
-correction, visual review, and render history live in `server/routers/pages.py`;
-editorial decisions and story changes live in `server/routers/editorial.py`.
+`state.py` and `stages/__init__.py` define ordering and gates. Series routes
+(Style, Cast, the Story Bible and parts) serve under `/api/projects/{project_id}`;
+part routes serve under `/api/projects/{project_id}/parts/{part_id}`. Pipeline
+operations live in `server/routers/pipeline.py` and serve both: a series stage
+reached from a part route still runs on the series root. Page generation,
+saved-pixel text-check recovery, correction, visual review, and render history
+live in `server/routers/pages.py`; editorial decisions and story changes live in
+`server/routers/editorial.py`; Finish export lives in `server/routers/export.py`.
+All of these are part routes.
+
+## Series and parts
+
+A project is a series of parts ([ADR 0023](../adr/0023-series-parts-and-author-owned-story-bible.md)).
+Each part is its own issue with its own source text, source document, Brief,
+adaptation, plan, pages, cover, Finish and export. The Story Bible, Style and
+Cast belong to the series.
+
+- **Layout.** `workspace.series_root` holds the Look work (Story Bible, Style
+  proofs, Cast references, `config.yaml`, book lettering style) and the part
+  manifest `source/parts.json` with each part's text. A part workspace is
+  `parts/<part_id>/`, marked by `part.json`. Look paths resolve against the
+  series root and page paths against the part workspace, so stored relative
+  paths keep their meaning. A directory without the marker is its own series.
+- **State.** The series `state.json` owns `style` and `cast`; each part's
+  `state.json` owns `extract` through `finish`. `load_state(part)` overlays the
+  series stages read-only; `load_series_state` reads the series record.
+- **Migration.** Opening a project created before parts moves it once into a
+  one-part series (`series_migration.migrate_to_series`); the manifest write is
+  the commit point. Artifact schemas and contents are unchanged.
+- **Text.** Parts are appended by upload or paste (`POST /parts`), and the
+  response proposes detected chapters as splits (`POST /parts/{part_id}/split`).
+  Only the newest part's text can be replaced, split or deleted, and only until
+  its Adapt starts; once a later part's extraction has started, earlier text is
+  final (`series.edit_blocker`). Renaming is always allowed.
+- **Order.** Extract and Adapt run in reading order: a part's Extract waits
+  for the previous part's Extract to complete, and its Adapt for the previous
+  part's Adapt (`part_order_blocker`). Brief, Plan, Draw and Finish are
+  independent of other parts.
+- **Extract.** A part extracts only its own text against the shared registry.
+  Source-unit ordinals continue across parts; offsets are relative to the
+  part's text. The extraction delta records what the part added, so replacing
+  or deleting an unadapted part withdraws exactly that.
+- **Brief.** A later part's draft takes `themes`, `point_of_view`,
+  `narrator_treatment`, `tone`, `motifs` and `transformation_level` from the
+  nearest earlier approved Brief; the author can still edit them.
+- **Cast.** Cast is a series checkpoint. It reopens only when the reference
+  inventory grows (a part's extraction or an author's addition) and designs
+  only characters without a current per-character fingerprint.
+- **Adapt.** A later part's Adapt receives continuity from earlier parts'
+  adapted scripts and records which scripts it read. When an earlier part's
+  adaptation changes afterwards, the later part reports an advisory
+  `earlier_part_changed` flag. Nothing re-runs.
+- **Draw.** A part's first edition inherits the previous part's profile while
+  the project can spend on it, and otherwise binds the current profile.
+- **Concurrency.** Admission, busy checks and event streams are per part. A
+  part's work waits only for its own jobs and series work; series work waits
+  only for series work. Extract and Brief use the light lane, so the next
+  part's Story and Look work can run while another part draws. A part's
+  `/events` stream also carries series events.
+- **Export.** `POST /parts/export` combines consecutive finished parts from
+  their verified normalized pages into one PDF or CBZ; each part starts on a
+  right-hand page. Publications still use the project's single record.
+
+## Story Bible editing
+
+The author owns the series Story Bible (`story_bible_edits.py`,
+`server/routers/story_bible.py`). Every write carries `expected_revision` and
+is refused (409 `stale_story_bible`) when the Bible changed since.
+
+- Edit, add, remove and merge characters, places and props; add, edit and
+  remove their looks. Removing or merging away an entity or look that an
+  adapted part's script or pages name is refused (409 `entity_cited`, with the
+  parts). Editing is always allowed. Removal and merge also wait for running
+  Adapt and Plan work.
+- Removed names become `excluded_entities`; registry-based extraction skips
+  them until the author restores them. Merged names become `aliases` of the
+  kept entry, and extraction recognizes aliases.
+- An added entry (`origin: author`) joins only scenes in parts whose Adapt
+  hasn't started. `POST /story-bible/{kind}/draft` proposes its details from
+  the passages that mention the name, under a credit hold
+  (`GET /story-bible/{kind}/draft-estimate` gives the estimate); nothing is
+  saved.
+- New entities or looks reopen an approved Cast for those items only.
+- A changed description makes only that entity's references out of date
+  (`GET /cast/freshness`, compared through the same frozen requests generation
+  uses). `POST /cast/references/keep` keeps an image as it is (recorded beside
+  its provenance, never replacing it); `POST /cast/reopen` returns an approved
+  Cast to pending so a resumed Cast regenerates every out-of-date or missing
+  reference. Edits that change no appearance carry current references over.
+- `GET /parts/{part_id}/page-flags` lists drawn pages whose frozen references
+  differ from the current Story Bible or Cast. Pages are never redrawn
+  automatically.
 
 `TargetArtifacts` owns the active source, brief, adaptation, plan, Draw,
 lettering, and Finish paths. `artifacts.py` owns Story Bible and Cast reference paths. Never

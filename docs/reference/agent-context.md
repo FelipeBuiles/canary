@@ -1,7 +1,9 @@
 # Canary agent context
 
-**Status: Current, September 15, 2026.** Canary generates complete lettered comic
+**Status: Current, October 2, 2026.** Canary generates complete lettered comic
 pages from novels through an eight-stage Python/FastAPI and React application.
+A project is a series of parts that share one Story Bible, Style and Cast
+([ADR 0023](../adr/0023-series-parts-and-author-owned-story-bible.md)).
 
 | # | Stage | Checkpoint? |
 |---|-------|-------------|
@@ -57,6 +59,13 @@ process routing/funding controls from scoped live evidence, including experiment
   receipt requires inspection and explicit recovery, never automatic paid retry.
   Browser receipts are account-scoped; account changes abort tracked requests,
   reject late results, replace query caches, and clear pipeline/style/resume state.
+- Each part is its own issue. The web app opens a part as `/project/<id>~<part>/<room>`;
+  page work calls `/api/projects/{project_id}/parts/{part_id}/…` and Look work the
+  series routes. Only the newest part's text changes, until its Adapt starts.
+- The Story room edits the shared Story Bible (revision-checked; cited entries
+  can't be removed or merged away). Changed descriptions flag only that entry's
+  Cast references; the author keeps or regenerates them. Drawn pages are flagged,
+  never redrawn.
 - `/api/projects/{project_id}/jobs` returns live and persisted job observations.
   Interrupted queued/running jobs appear failed/recoverable, never auto-requeued.
   Pipeline/style SSE is bounded broadcast, not durable history; refetch status/jobs.
@@ -142,7 +151,17 @@ word or page quotas. Review is metered text work and not a quality guarantee.
 
 ## Code navigation
 
-- `state.py`, `stages/__init__.py`: stage order, gates, cleanup cascade.
+- `state.py`, `stages/__init__.py`: stage order, gates, cleanup cascade; series
+  (`style`, `cast`) and part stages, and the part-state overlay.
+- `workspace.py`, `models/parts.py`, `series.py`, `series_migration.py`: series
+  roots, part workspaces, the part manifest, freeze rules, part add/split/replace/
+  delete, and the one-time move into a one-part series.
+- `story_bible_edits.py`, `entity_drafting.py`, `server/routers/story_bible.py`:
+  revision-checked Story Bible edits, citations, Draft from source; Cast
+  freshness, keep and reopen live in `stages/s3_cast.py` and
+  `server/routers/cast_assets.py`.
+- `continuity.py`, `combined_export.py`, `server/routers/parts.py`: Adapt
+  continuity between parts, combined exports, and the parts API.
 - `target_artifacts.py`: canonical full-page artifact storage and validation.
 - `artifacts.py`: Story Bible, style, Cast references, accepted addenda.
 - `book_adaptation.py`, `page_planning.py`: creative text generation and validation.
@@ -171,7 +190,8 @@ word or page quotas. Review is metered text work and not a quality guarantee.
   drain/idle deployment guard and explicit operational recovery.
 - `server/routers/pipeline.py`, `server/routers/pages.py`: pipeline plus page
   correction, saved-pixel OCR recovery, visual-review, and render-history APIs.
-- `server/auth.py`, `server/deps.py`: authentication and project scoping.
+- `server/auth.py`, `server/deps.py`: authentication and project scoping; a route
+  under `/parts/{part_id}` receives that part's workspace and overlaid state.
 - `server/routers/projects.py`: source-only upload/import creation.
 
 Frontend: Pages room (`web/src/pages/rooms/PagesRoom.tsx`) exposes the page
@@ -190,6 +210,10 @@ Story draft ownership is in `StoryRoom.tsx`; estimated starts use
 and exception filters; `components/pages/PageCheckRecovery.tsx` owns cached/paid
 OCR recovery selection; `BookRoom.tsx` owns package readiness and review links.
 `components/InsufficientCreditsDialog.tsx` owns explicit post-top-up Resume.
+`web/src/api/projectScope.ts` owns project keys, part/series paths and
+cross-part invalidation; `components/parts/` owns the part switcher, Parts
+panel, notices and combined export; `components/story/` owns the Story Bible
+editor and out-of-date reference actions.
 
 ## Local validation
 
