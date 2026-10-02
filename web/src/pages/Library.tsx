@@ -13,6 +13,7 @@ import { UploadStep } from "../components/wizard/UploadStep";
 import type { ConfigOverrides, ProjectSummary } from "../types/api";
 import { useI18n } from "../i18n";
 import { maybeShowInsufficientCredits } from "../store/insufficientCredits";
+import { partProjectKey, splitProjectKey } from "../api/projectScope";
 
 function FirstIssueInvitation({ onStart }: { onStart: () => void }) {
   const { t } = useI18n();
@@ -107,6 +108,8 @@ function NewProjectModal({ isOpen, onClose, initialStoryCode }: { isOpen: boolea
     </div>
   );
 }
+
+const coverProject = (key: string | undefined) => (key ? splitProjectKey(key).id : undefined);
 
 export function Library() {
   const location = useLocation();
@@ -206,18 +209,19 @@ export function Library() {
                 project={project}
                 expanded={visibleProjects?.length === 1}
                 coverPending={
-                  (generateCover.isPending && generateCover.variables?.project === project.id) ||
+                  (generateCover.isPending && coverProject(generateCover.variables?.project) === project.id) ||
                   project.cover_job?.status === "queued" ||
                   project.cover_job?.status === "running"
                 }
                 coverFailed={project.cover_job?.status === "failed"}
-                coverRetrying={generateCover.isPending && generateCover.variables?.project === project.id}
+                coverRetrying={generateCover.isPending && coverProject(generateCover.variables?.project) === project.id}
                 onDeleteIncompatible={project.incompatible ? () => setIncompatibleProject(project) : undefined}
                 deleteIncompatiblePending={
                   deleteProject.isPending && deleteProject.variables?.id === project.id
                 }
                 onRetryCover={() => generateCover.mutate(
-                  { project: project.id },
+                  // Covers belong to a part; the card shows the first part's.
+                  { project: partProjectKey(project.id, project.cover_part_id) },
                   {
                     onError: (error) => {
                       maybeShowInsufficientCredits(error, { actionLabel: t("Create project cover") });

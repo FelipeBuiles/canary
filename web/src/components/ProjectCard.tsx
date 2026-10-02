@@ -5,6 +5,7 @@ import { LazyImage } from "./ui/LazyImage";
 import { Skeleton } from "./ui/Skeleton";
 import { BACKEND_STAGE_TO_STATION_ROUTE, STATIONS, stationForRoute } from "../lib/stations";
 import { useI18n } from "../i18n";
+import { partProjectKey, projectFileUrl } from "../api/projectScope";
 
 const STAGE_COVER_STYLE: Partial<Record<StageName, { bg: string }>> = {
   extract:   { bg: "#2d3a2e" },
@@ -70,7 +71,8 @@ export function ProjectCard({
 }: Props) {
   const { t } = useI18n();
   const card = statusLine(project, t);
-  const coverUrl = `/api/projects/${encodeURIComponent(project.id)}/files/cover/cover.png`;
+  // Each part has its own cover; the card shows the first part's.
+  const coverUrl = projectFileUrl(partProjectKey(project.id, project.cover_part_id), "cover/cover.png");
   const coverComplete = project.has_cover && project.cover_job?.status === "complete";
   const [coverTransition, setCoverTransition] = useState({ project: project.id, complete: coverComplete, reveal: false });
   if (coverTransition.project !== project.id || coverTransition.complete !== coverComplete) {

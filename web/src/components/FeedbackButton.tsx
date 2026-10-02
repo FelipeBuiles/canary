@@ -3,6 +3,7 @@ import { apiFetch } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
 import { useDialogFocus } from "../hooks/useDialogFocus";
 import { Button } from "./ui/Button";
+import { splitProjectKey } from "../api/projectScope";
 
 export function FeedbackButton({ projectId }: { projectId?: string }) {
   const { user } = useAuth();
@@ -27,7 +28,7 @@ function AccountFeedback({ projectId }: { projectId?: string }) {
     setBusy(true); setError("");
     receipt.current ??= crypto.randomUUID();
     try {
-      await apiFetch("/feedback", { method: "POST", body: JSON.stringify({ id: receipt.current, category, message, project_id: projectId ?? null }) });
+      await apiFetch("/feedback", { method: "POST", body: JSON.stringify({ id: receipt.current, category, message, project_id: projectId ? splitProjectKey(projectId).id : null }) });
       setSent(true); setMessage(""); receipt.current = null;
     } catch {
       setError("We couldn't save your feedback. Your message is still here; please try again.");

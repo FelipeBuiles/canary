@@ -1,4 +1,5 @@
 import { apiFetch } from "./client";
+import { splitProjectKey } from "./projectScope";
 
 export type WebProductEventName =
   | "page_viewed"
@@ -15,7 +16,8 @@ export async function trackProductEvent(
       method: "POST",
       body: JSON.stringify({
         event_name: eventName,
-        project_id: options.projectId,
+        // Events describe the project; a part key names the same project.
+        project_id: options.projectId ? splitProjectKey(options.projectId).id : options.projectId,
         properties: options.properties ?? {},
       }),
     });

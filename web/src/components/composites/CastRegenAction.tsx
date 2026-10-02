@@ -5,6 +5,7 @@ import { useReferenceJob } from "../../hooks/useReferenceJob";
 import type { CastReferenceInput } from "../../types/api";
 import { useI18n } from "../../i18n";
 import { RegenAction } from "./RegenAction";
+import { seriesPath } from "../../api/projectScope";
 
 type Props = Omit<ComponentProps<typeof RegenAction>, "onRegenerateWithInstruction"> & {
   projectName: string;
@@ -57,7 +58,7 @@ export function CastRegenAction({ projectName, assetType, assetId, stateId, onRe
       {selected.length > 0 && estimate && !estimate.reference_assets_supported && <p role="alert" className="font-body text-sm text-hero-red">{t("Reference attachments are temporarily unavailable. Refresh before trying again.")}</p>}
       {selected.length > 0 && <ul aria-label={t("Attached references")} className="space-y-2">
         {selected.map((item) => <li key={referenceKey(item)} className="flex min-w-0 items-center gap-2 bg-surface-container p-2">
-          <img src={`/api/projects/${encodeURIComponent(projectName)}/files/${referenceImage(item)}`} alt="" className="h-12 w-14 shrink-0 object-contain" />
+          <img src={`/api${seriesPath(projectName)}/files/${referenceImage(item)}`} alt="" className="h-12 w-14 shrink-0 object-contain" />
           <span className="min-w-0 flex-1 break-words font-body text-xs leading-5 text-ink-black">{labelFor(item)}</span>
           <button type="button" disabled={props.busy || props.disabled} aria-label={`${t("Remove reference")} · ${labelFor(item)}`}
             onClick={() => setSelection(selected.filter((attachment) => referenceKey(attachment) !== referenceKey(item)))}

@@ -239,6 +239,30 @@ def restore_story_bible_name(
     return _saved(bible)
 
 
+@router.get("/story-bible/{kind}/draft-estimate")
+def draft_estimate(
+    kind: Kind, name: str = Query(min_length=1, max_length=200), aliases: list[str] = Query(default=[]),
+    project=Depends(get_project),
+):
+    """What drafting this name would cost, from the passages it would send."""
+    from novel_to_comic.codex_dev import classify_operations
+    from novel_to_comic.entity_drafting import NoMentions, draft_cost, mention_passages
+    from ..credits import credit_estimate_for_provider_cost
+
+    root, config, _state = project
+    try:
+        passages, scene_ids = mention_passages(root, [name, *aliases[:10]])
+    except NoMentions as exc:
+        return {"mentioned": False, "message": str(exc), "mentioned_scene_ids": []}
+    except ArtifactMissing as exc:
+        raise HTTPException(404, str(exc)) from exc
+    funding = classify_operations((("text", config.effective_extraction_model()),))
+    estimate = credit_estimate_for_provider_cost(
+        draft_cost(config, kind, name, passages), "extract", reserve=True, funding=funding,
+    )
+    return {"mentioned": True, "estimate": estimate, "mentioned_scene_ids": scene_ids}
+
+
 @router.post("/story-bible/{kind}/draft")
 async def draft_story_bible_entity(
     kind: Kind, body: DraftRequest, project_id: str, project=Depends(get_project),

@@ -6,12 +6,13 @@ import { EntityCard, SectionHeader } from "../composites";
 import { FieldLabel, TextAreaField, TextField } from "../ui/Field";
 import { Button } from "../ui/Button";
 import { useI18n } from "../../i18n";
+import { projectPath } from "../../api/projectScope";
 
 export function BookPublication({ project, title, ready, onPreview }: { project: string; title: string; ready: boolean; onPreview?: () => void }) {
   const { t } = useI18n();
   const cache = useQueryClient();
   const key = ["publication", project];
-  const query = useQuery({ queryKey: key, queryFn: () => apiFetch<Publication | null>(`/projects/${project}/publication`) });
+  const query = useQuery({ queryKey: key, queryFn: () => apiFetch<Publication | null>(`${projectPath(project)}/publication`) });
   const [draft, setDraft] = useState<{ title: string; author: string; description: string; allow_feature: boolean } | null>(null);
   const [editing, setEditing] = useState(false);
   const [message, setMessage] = useState("");
@@ -19,7 +20,7 @@ export function BookPublication({ project, title, ready, onPreview }: { project:
   const values = draft ?? { title: query.data?.title ?? title, author: query.data?.author ?? "", description: query.data?.description ?? "", allow_feature: query.data?.allow_feature ?? false };
   const update = (change: Partial<typeof values>) => setDraft({ ...values, ...change });
   const mutation = useMutation({
-    mutationFn: (remove: boolean) => apiFetch<Publication | null>(`/projects/${project}/publication`, { method: remove ? "DELETE" : "POST", ...(remove ? {} : { body: JSON.stringify(values) }) }),
+    mutationFn: (remove: boolean) => apiFetch<Publication | null>(`${projectPath(project)}/publication`, { method: remove ? "DELETE" : "POST", ...(remove ? {} : { body: JSON.stringify(values) }) }),
     onSuccess: (result, remove) => { setLeftOut(Object.keys(result?.unpublished_locales ?? {}).map(code => code.toUpperCase())); setDraft(null); setEditing(false); setMessage(t(remove ? "Your book is no longer public." : "Your finished book is now public. Copy the link to share it.")); void cache.invalidateQueries({ queryKey: key }); },
   });
   const url = query.data ? `${window.location.origin}/read/${query.data.id}` : "";

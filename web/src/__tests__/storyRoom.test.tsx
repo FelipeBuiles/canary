@@ -66,6 +66,13 @@ vi.mock("../api/queries", () => ({
   useStageEstimate: () => ({ data: undefined }),
 }));
 
+// The shared Story Bible editor has its own tests; here no Bible editor loads.
+vi.mock("../api/seriesQueries", () => ({
+  useStoryBibleEditor: () => ({ data: undefined, error: null, isLoading: false }),
+  useRemoveEntity: () => ({ mutate: vi.fn(), isPending: false, error: null }),
+  useRestoreExcluded: () => ({ mutate: vi.fn(), isPending: false, error: null }),
+}));
+
 import { StoryRoom } from "../pages/rooms/StoryRoom";
 
 function renderRoom() {

@@ -311,6 +311,12 @@ def test_drafting_reads_only_passages_that_name_the_entity(series, monkeypatch) 
     monkeypatch.setattr(entity_drafting.text, "generate_json", generate_json)
     monkeypatch.setattr(credited_job, "run_credited_call", run_credited_call)
 
+    estimate = client.get("/api/projects/pid/story-bible/characters/draft-estimate", params={"name": "Old Tom"}).json()
+    assert estimate["mentioned"] is True and estimate["estimate"]["estimate_credits"] >= 1
+    assert estimate["mentioned_scene_ids"] == ["scene_003"]
+    assert client.get("/api/projects/pid/story-bible/characters/draft-estimate",
+                      params={"name": "Captain Ahab"}).json()["mentioned"] is False
+
     drafted = client.post("/api/projects/pid/story-bible/characters/draft", json={"name": "old tom"})
     assert drafted.status_code == 200, drafted.text
     body = drafted.json()

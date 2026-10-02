@@ -72,6 +72,8 @@ import type { DrawerKind } from "../../lib/stations";
 import { BottomBarPortal } from "../../layout/TopBarSlot";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
+import { seriesPath } from "../../api/projectScope";
+import { PartNotices } from "../../components/parts/PartNotices";
 
 type ReviewView = "page" | "source" | "visual" | "checks" | "lettering" | "versions";
 type PageFilter = "all" | "needs-review" | "drawing" | "failed";
@@ -883,6 +885,7 @@ export function PagesRoom() {
         title={t("REVIEW COMPLETE PAGES")}
         lead={t("Each thumbnail is one fully lettered page. Corrections always create a complete new revision.")}
       />
+      <PartNotices project={id} status={status} onOpenPage={(page) => updateContext({ page: String(page), review: "page" })} />
       <section className="grid gap-6 bg-ink-black p-6 text-pulp-paper shadow-paper md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] md:p-8">
         <div>
           <h2 className="font-display text-3xl font-black uppercase leading-tight tracking-[-0.03em] md:text-4xl">{t("Your story, page by page")}</h2>
@@ -897,7 +900,7 @@ export function PagesRoom() {
           <progress aria-label={t("Drawing progress")} value={drawnPages.length} max={Math.max(1, pages.length)} className="mt-3 h-2 w-full overflow-hidden [&::-webkit-progress-bar]:bg-pulp-paper/20 [&::-webkit-progress-value]:bg-narrator-gold [&::-moz-progress-bar]:bg-narrator-gold" />
           <p className="mt-3 font-body text-xs leading-6 text-pulp-paper/85">{t("Open completed pages to check the artwork and lettering.")}</p>
           {status?.style_selected && selectedStyle && <div className="mt-4 flex items-center gap-3">
-            {selectedStyle.has_sample && <img src={`/api/projects/${encodeURIComponent(id)}/files/samples/style_${selectedStyle.index}.png`} alt="" className="h-14 w-11 shrink-0 object-contain" />}
+            {selectedStyle.has_sample && <img src={`/api${seriesPath(id)}/files/samples/style_${selectedStyle.index}.png`} alt="" className="h-14 w-11 shrink-0 object-contain" />}
             <p className="font-body text-xs leading-6"><span className="block font-meta text-narrator-gold">{t("Visual direction")}</span>{selectedStyle.label}</p>
           </div>}
         </div>

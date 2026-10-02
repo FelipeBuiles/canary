@@ -6,6 +6,8 @@ import { useI18n } from "../i18n";
 import { cn } from "../lib/cn";
 import { Icon } from "../components/ui/Icon";
 import { canReadDocument, getRoomAccess } from "../lib/stationAccess";
+import { projectFileUrl, splitProjectKey } from "../api/projectScope";
+import { PartSwitcher } from "../components/parts/PartSwitcher";
 import { LockKeyhole } from "lucide-react";
 import {
   STATIONS,
@@ -55,7 +57,7 @@ function ProjectCoverThumb({
     >
       {showCover ? (
         <img
-          src={`/api/projects/${encodeURIComponent(projectId)}/files/cover/cover.png`}
+          src={projectFileUrl(projectId, "cover/cover.png")}
           alt=""
           className="h-full w-full object-cover"
           onError={() => setCoverFailed(true)}
@@ -82,7 +84,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   const { data: projects } = useProjects();
   const readingParam = new URLSearchParams(location.search).get("reading");
 
-  const current = projects?.find((p) => p.id === projectId);
+  const current = projects?.find((p) => p.id === splitProjectKey(projectId ?? "").id);
   const projectTitle = current?.project_name ?? projectId ?? t("PROJECT INDEX");
   const settingsPath = projectId ? `/project/${encodeURIComponent(projectId)}/settings` : "/account";
   const isSettingsActive = location.pathname.endsWith("/settings");
@@ -238,7 +240,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           <ProjectCoverThumb
             key={projectId}
             projectId={projectId}
-            hasCover={current?.has_cover ?? false}
+            hasCover={status?.has_cover ?? current?.has_cover ?? false}
             compact
           />
           <span className="min-w-0">
@@ -267,6 +269,11 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           className="max-w-[9.5rem]"
         />
       </header>
+      {status?.parts && status.parts.length > 0 && (
+        <div className="flex shrink-0 border-b-[2px] border-ink-black bg-ink-black px-3 pb-2 md:hidden">
+          <PartSwitcher project={projectId} parts={status.parts} className="w-full" />
+        </div>
+      )}
       {!isSettingsActive && activeDecisions.length > 1 && (
         <nav className="flex shrink-0 border-b-[2px] border-ink-black bg-bristol md:hidden" aria-label={`${activeStation?.label} decisions`}>
           {activeDecisions.map((substep) => (
@@ -304,7 +311,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
             <ProjectCoverThumb
               key={projectId}
               projectId={projectId}
-              hasCover={current?.has_cover ?? false}
+              hasCover={status?.has_cover ?? current?.has_cover ?? false}
             />
           )}
           <span className="min-w-0">
@@ -316,6 +323,12 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
             </span>
           </span>
         </Link>
+
+        {projectId && status?.parts && status.parts.length > 0 && (
+          <div className="shrink-0 border-b-[2px] border-bristol/10 px-5 py-3 xl:px-6">
+            <PartSwitcher project={projectId} parts={status.parts} className="w-full" />
+          </div>
+        )}
 
         <nav aria-label="Stations" className="min-h-0 flex-1 overflow-y-auto py-3">
           {projectId ? (

@@ -1,4 +1,5 @@
 import { apiFetch, isNotFoundError } from "./client";
+import { projectPath, seriesPath } from "./projectScope";
 import type {
   StoryBible,
   StoryDecision,
@@ -9,18 +10,11 @@ import type {
 // ── Story Bible ──────────────────────────────────────────────────────────────
 
 export function getStoryBible(project: string): Promise<StoryBible> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/story-bible`);
-}
-
-export function updateStoryBible(project: string, data: StoryBible): Promise<StoryBible> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/story-bible`, {
-    method: "PUT",
-    body: JSON.stringify(data),
-  });
+  return apiFetch(`${seriesPath(project)}/story-bible`);
 }
 
 export function getStory(project: string): Promise<StoryDecision> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/story`);
+  return apiFetch(`${projectPath(project)}/story`);
 }
 
 export function updateBrief(
@@ -28,7 +22,7 @@ export function updateBrief(
   expectedRevision: number,
   changes: Partial<AdaptationBrief>,
 ): Promise<AdaptationBrief> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/brief`, {
+  return apiFetch(`${projectPath(project)}/brief`, {
     method: "PUT",
     body: JSON.stringify({
       expected_revision: expectedRevision,
@@ -38,7 +32,7 @@ export function updateBrief(
 }
 
 export function getPrimaryRefs(project: string): Promise<{ primary_refs: Record<string, string> }> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/cast/primary-refs`);
+  return apiFetch(`${seriesPath(project)}/cast/primary-refs`);
 }
 
 export function setPrimaryRef(
@@ -47,7 +41,7 @@ export function setPrimaryRef(
   pose: string | null,
 ): Promise<{ char_id: string; pose: string | null; primary_refs: Record<string, string> }> {
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/cast/${encodeURIComponent(charId)}/primary-ref`,
+    `${seriesPath(project)}/cast/${encodeURIComponent(charId)}/primary-ref`,
     { method: "PUT", body: JSON.stringify({ pose }) },
   );
 }
@@ -62,12 +56,12 @@ export async function getImageGenerationMeta(
     .join("/");
   const encodedPath = encodeProjectFile(`${relativeImagePath}.meta.json`);
   try {
-    return await apiFetch(`/projects/${encodeURIComponent(project)}/files/${encodedPath}`);
+    return await apiFetch(`${seriesPath(project)}/files/${encodedPath}`);
   } catch (err) {
     if (isNotFoundError(err)) {
       const failurePath = encodeProjectFile(`${relativeImagePath}.failure.json`);
       try {
-        return await apiFetch(`/projects/${encodeURIComponent(project)}/files/${failurePath}`);
+        return await apiFetch(`${seriesPath(project)}/files/${failurePath}`);
       } catch (failureErr) {
         if (isNotFoundError(failureErr)) {
           return null;

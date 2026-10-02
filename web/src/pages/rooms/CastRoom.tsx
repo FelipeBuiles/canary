@@ -4,7 +4,7 @@ import { ArrowUpRight, Search, Users, MapPin, Box, LoaderCircle, ImagePlus, Expa
 import { FieldLabel, TextField } from "../../components/ui/Field";
 import { useReferenceJob } from "../../hooks/useReferenceJob";
 import { useEffect, useState, type ReactNode } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   useApproveStage,
   useGenerationJobs,
@@ -40,6 +40,9 @@ import { FlowingDotsPlaceholder } from "../../components/ui/FlowingDotsPlacehold
 import { StaleStageNotice } from "../../components/composites";
 import { getCastCheckpointAction } from "../../lib/castCheckpoint";
 import { readableAnchor } from "../../lib/visualAnchor";
+import { seriesPath } from "../../api/projectScope";
+import type { EntityKind } from "../../api/storyBible";
+import { OutdatedReferences } from "../../components/story/OutdatedReferences";
 
 function queuedLabel(job: GenerationJob | null) {
   if (!job) return "QUEUED";
@@ -72,7 +75,7 @@ function ReferenceViews({ projectName, charId, timestamp }: { projectName: strin
       </div>
       <div className="flex flex-wrap gap-2">
         {visiblePoses.map(({ pose, label }) => {
-          const src = `/api/projects/${encodeURIComponent(projectName)}/files/refs/${encodeURIComponent(charId)}/${pose}.png?t=${encodeURIComponent(timestamp)}`;
+          const src = `/api${seriesPath(projectName)}/files/refs/${encodeURIComponent(charId)}/${pose}.png?t=${encodeURIComponent(timestamp)}`;
           return (
             <div
               key={pose}
@@ -137,7 +140,7 @@ export function StateRefRow({
     return encodeURIComponent(`${refreshToken ?? "current"}${restoredAt[stateId] ? `-restored-${restoredAt[stateId]}` : ""}${job ? `-${job.id}-${job.status}` : ""}`);
   };
 
-  const base = `/api/projects/${encodeURIComponent(projectName)}/files`;
+  const base = `/api${seriesPath(projectName)}/files`;
   const thumbUrl = (stateId: string) =>
     kind === "character"
       ? `${base}/refs/${encodeURIComponent(entityId)}/states/${encodeURIComponent(stateId)}/portrait.png?v=${version(stateId)}`
@@ -234,7 +237,7 @@ function StateAppearanceModal({ projectName, entityId, kind, state, failure, sta
   const [instruction, setInstruction] = useState<string | null>(null);
   const { data: estimate } = useAssetRegenEstimate(projectName, kind, entityId, state.id);
   const busy = stageRegenerating || job.isSubmitting || !!job.activeJob || characterRegen.isPending || locationRegen.isPending || characterEdit.isPending || locationEdit.isPending;
-  const src = `/api/projects/${encodeURIComponent(projectName)}/files/${kind === "character"
+  const src = `/api${seriesPath(projectName)}/files/${kind === "character"
     ? `refs/${encodeURIComponent(entityId)}/states/${encodeURIComponent(state.id)}/sheet.png`
     : `plates/${encodeURIComponent(entityId)}/states/${encodeURIComponent(state.id)}.png`}?t=${job.timestamp}`;
   const submit = (text?: string, referenceAssets?: CastReferenceInput[]) => {
@@ -300,7 +303,7 @@ function RefVersionHistory({
   if (archived.length === 0) return null;
 
   const fileUrl = (relPath: string) =>
-    `/api/projects/${encodeURIComponent(projectName)}/files/${relPath}`;
+    `/api${seriesPath(projectName)}/files/${relPath}`;
 
   return (
     <div className="mt-1.5">
@@ -373,6 +376,7 @@ function sceneLabel(sceneId: string, t: (key: string, values?: Record<string, st
 function CastCard({
   projectName,
   entityId,
+  editKind,
   name,
   aspect,
   imageSrc,
@@ -395,6 +399,8 @@ function CastCard({
 }: {
   projectName: string;
   entityId: string;
+  /** Where "Edit details" opens this entry in the Story Bible editor. */
+  editKind: EntityKind;
   name: string;
   aspect: "square" | "wide";
   imageSrc: string;
@@ -494,6 +500,13 @@ function CastCard({
         <Button variant="outline" size="sm" className="w-full" disabled={generating} onClick={onOpen} aria-label={`${t("Review & adjust")} · ${name}`}>
           <ArrowUpRight size={16} aria-hidden="true" />{t("Review & adjust")}
         </Button>
+        <Link
+          to={{ pathname: "../story", search: `?edit=${editKind}:${encodeURIComponent(entityId)}` }}
+          relative="path"
+          className="mt-3 inline-flex min-h-11 items-center font-meta text-xs text-ink-muted underline underline-offset-4 hover:text-ink-black"
+        >
+          {t("Edit details")}
+        </Link>
         {error && (
           <div role="alert" className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-sm leading-relaxed text-bristol">
             <strong className="block">{t("REGENERATION FAILED")}</strong>
@@ -515,7 +528,7 @@ function CharacterCastCard({
   projectName: string;
   stageRegenerating: boolean;
 }) {
-  const refUrl = `/api/projects/${encodeURIComponent(projectName)}/files/refs/${encodeURIComponent(character.id)}/sheet.png`;
+  const refUrl = `/api${seriesPath(projectName)}/files/refs/${encodeURIComponent(character.id)}/sheet.png`;
   const [isModalOpen, setIsModalOpen] = useState(false);
   const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, isSubmitting, instructionDraft, regenError, setRegenError } =
     useReferenceJob(projectName, "char_id", character.id);
@@ -601,6 +614,7 @@ function CharacterCastCard({
       <CastCard
         projectName={projectName}
         entityId={character.id}
+        editKind="characters"
         name={character.name}
         aspect="square"
         imageSrc={imageSrc}
@@ -728,7 +742,7 @@ function LocationPlateCard({
   projectName: string;
   stageRegenerating: boolean;
 }) {
-  const plateUrl = `/api/projects/${encodeURIComponent(projectName)}/files/plates/${encodeURIComponent(location.id)}.png`;
+  const plateUrl = `/api${seriesPath(projectName)}/files/plates/${encodeURIComponent(location.id)}.png`;
   const [isModalOpen, setIsModalOpen] = useState(false);
   const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, isSubmitting, instructionDraft, regenError, setRegenError: setLocalRegenError } =
     useReferenceJob(projectName, "loc_id", location.id);
@@ -814,6 +828,7 @@ function LocationPlateCard({
       <CastCard
         projectName={projectName}
         entityId={location.id}
+        editKind="locations"
         name={location.name}
         aspect="wide"
         imageSrc={imageSrc}
@@ -905,7 +920,7 @@ function PropRefCard({
   projectName: string;
   stageRegenerating: boolean;
 }) {
-  const refUrl = `/api/projects/${encodeURIComponent(projectName)}/files/refs/props/${encodeURIComponent(prop.id)}/ref.png`;
+  const refUrl = `/api${seriesPath(projectName)}/files/refs/props/${encodeURIComponent(prop.id)}/ref.png`;
   const [isModalOpen, setIsModalOpen] = useState(false);
   const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, isSubmitting, instructionDraft, regenError, setRegenError: setLocalRegenError } =
     useReferenceJob(projectName, "prop_id", prop.id);
@@ -991,6 +1006,7 @@ function PropRefCard({
       <CastCard
         projectName={projectName}
         entityId={prop.id}
+        editKind="props"
         name={prop.name}
         aspect="square"
         imageSrc={imageSrc}
@@ -1244,6 +1260,11 @@ export function CastRoom() {
           stageLabel="CAST"
           itemLabel="cast images"
         />
+      )}
+
+      {!stageRegenerating && (
+        <OutdatedReferences project={id} bible={bible} castStatus={stageStatus}
+          onResume={() => setConfirmCast(true)} resumeDisabled={isPipelineRunning || !status?.style_selected} />
       )}
 
       {!stageRegenerating && (

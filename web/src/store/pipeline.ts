@@ -4,6 +4,7 @@ import { applyPipelineEvent } from "../lib/stageProgress";
 import type { PipelineEvent } from "../types/api";
 import { useInsufficientCreditsStore } from "./insufficientCredits";
 import { STAGE_DISPLAY_NAMES, type StageName } from "../types/api";
+import { invalidateProject, projectPath } from "../api/projectScope";
 
 interface PipelineStore {
   connected: boolean;
@@ -48,7 +49,7 @@ export const usePipelineStore = create<PipelineStore>((set) => ({
     }
     set({ connected: false });
     const es = new EventSource(
-      `/api/projects/${encodeURIComponent(projectId)}/events`,
+      `/api${projectPath(projectId)}/events`,
     );
     es.onmessage = (e) => {
       if (eventSource !== es) return;
@@ -88,7 +89,7 @@ export const usePipelineStore = create<PipelineStore>((set) => ({
           });
         }
         if (event.type === "pipeline_done") {
-          void queryClient.invalidateQueries({ queryKey: ["project", projectId, "status"] });
+          void invalidateProject(queryClient, projectId, "status");
           void queryClient.invalidateQueries({ queryKey: ["projects"] });
           closeCurrentSource(es);
           set({ connected: false });

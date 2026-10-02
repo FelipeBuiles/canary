@@ -13,6 +13,11 @@ let approvalBlocker: string | null = null;
 let selectedStyle = true;
 let failures: unknown[] = [];
 vi.mock("../hooks/useRunAction", () => ({ useRunAction: () => ({ handleRun: run, isPending: false }) }));
+vi.mock("../api/seriesQueries", () => ({
+  useCastFreshness: () => ({ data: undefined }),
+  useKeepReference: () => ({ mutate: vi.fn(), isPending: false, error: null }),
+  useReopenCast: () => ({ mutate: vi.fn(), isPending: false, error: null }),
+}));
 vi.mock("../api/queries", () => ({
   useStoryBible: () => ({ data: { characters: [], locations: [], props: [] }, isLoading: false }),
   useProjectStatus: () => ({ data: { style_selected: selectedStyle, stages: { cast: { status: stageStatus, approval_blocker: approvalBlocker, failures } } } }),

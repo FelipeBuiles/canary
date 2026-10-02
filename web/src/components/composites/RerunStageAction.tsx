@@ -9,6 +9,7 @@ import { AdaptRestartDrawer } from "./AdaptRestartDrawer";
 import { DestructiveButton } from "../ui/DestructiveButton";
 import type { StageName } from "../../types/api";
 import { Button } from "../ui/Button";
+import { invalidateProject } from "../../api/projectScope";
 
 interface RerunStageActionProps {
   project: string;
@@ -47,7 +48,7 @@ export function RerunStageAction({
       actionLabel,
       onSuccess: () => {
         setOpen(false);
-        void queryClient.invalidateQueries({ queryKey: ["project", project] });
+        void invalidateProject(queryClient, project);
       },
       onError: (failure) => setError(failure.message),
     });

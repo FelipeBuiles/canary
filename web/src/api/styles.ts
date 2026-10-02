@@ -1,4 +1,5 @@
 import { apiFetch } from "./client";
+import { seriesPath } from "./projectScope";
 import type { CostEstimate, GenerationJob } from "../types/api";
 
 export interface StyleSuggestion {
@@ -79,11 +80,11 @@ export interface StyleDirectionEstimate extends CostEstimate {
 }
 
 export function getStyles(project: string): Promise<StylesData> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/styles`);
+  return apiFetch(`${seriesPath(project)}/styles`);
 }
 
 export function suggestStyles(project: string, directionId?: string): Promise<{ status: string; job?: GenerationJob }> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/styles/suggest`, {
+  return apiFetch(`${seriesPath(project)}/styles/suggest`, {
     method: "POST",
     body: directionId ? JSON.stringify({ direction_id: directionId }) : undefined,
   });
@@ -97,7 +98,7 @@ export function createStyleDirection(
   if (input.direction) form.append("direction_text", input.direction);
   if (input.image) form.append("image", input.image);
   form.append("with_neighbors", String(input.withNeighbors));
-  return apiFetch(`/projects/${encodeURIComponent(project)}/styles/direction`, {
+  return apiFetch(`${seriesPath(project)}/styles/direction`, {
     method: "POST",
     headers: {},
     body: form,
@@ -105,22 +106,22 @@ export function createStyleDirection(
 }
 
 export function fetchSuggestStylesEstimate(project: string): Promise<CostEstimate> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/styles/suggest-estimate`);
+  return apiFetch(`${seriesPath(project)}/styles/suggest-estimate`);
 }
 
 export function fetchStyleSampleEstimate(project: string): Promise<CostEstimate> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/styles/sample-estimate`);
+  return apiFetch(`${seriesPath(project)}/styles/sample-estimate`);
 }
 
 export function fetchStyleDirectionEstimate(project: string): Promise<StyleDirectionEstimate> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/styles/direction-estimate`);
+  return apiFetch(`${seriesPath(project)}/styles/direction-estimate`);
 }
 
 export function generateStyleSamples(
   project: string,
   ids: string[],
 ): Promise<{ status: string; indices: number[]; jobs: GenerationJob[] }> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/styles/generate-samples`, {
+  return apiFetch(`${seriesPath(project)}/styles/generate-samples`, {
     method: "POST",
     body: JSON.stringify({ ids }),
   });
@@ -130,7 +131,7 @@ export function generateStyleValidation(
   project: string,
   id: string,
 ): Promise<{ status: "queued"; id: string; url: string; job: GenerationJob }> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/styles/validation`, {
+  return apiFetch(`${seriesPath(project)}/styles/validation`, {
     method: "POST",
     body: JSON.stringify({ id }),
   });
@@ -142,7 +143,7 @@ export function isAuthorDirection(suggestion: Pick<StyleSuggestion, "origin">): 
 
 export function proofImageUrl(projectName: string, suggestion: Pick<StyleSuggestion, "sample_preview_url" | "index">): string {
   return suggestion.sample_preview_url
-    ?? `/api/projects/${encodeURIComponent(projectName)}/files/samples/style_${suggestion.index}.png`;
+    ?? `/api${seriesPath(projectName)}/files/samples/style_${suggestion.index}.png`;
 }
 
 export function styleName(suggestion: Pick<StyleSuggestion, "label" | "display_label">): string {
@@ -154,7 +155,7 @@ export function updateStylePresentation(
   id: string,
   changes: { display_label?: string; hidden?: boolean },
 ): Promise<{ suggestion: StyleSuggestion }> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/styles/${encodeURIComponent(id)}`, {
+  return apiFetch(`${seriesPath(project)}/styles/${encodeURIComponent(id)}`, {
     method: "PATCH",
     body: JSON.stringify(changes),
   });
@@ -164,7 +165,7 @@ export function setActiveStyle(
   project: string,
   id: string,
 ): Promise<{ status: string; id: string; index: number; style_template: string }> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/styles/active`, {
+  return apiFetch(`${seriesPath(project)}/styles/active`, {
     method: "PATCH",
     body: JSON.stringify({ id }),
   });
