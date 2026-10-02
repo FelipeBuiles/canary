@@ -115,6 +115,14 @@ export function restoreExcluded(
   );
 }
 
+/** Fill a blank visual anchor in place; an existing anchor is never overwritten. */
+export function fillVisualAnchor(
+  project: string,
+  body: { entity_id: string; appearance_state_id: string | null; visual_anchor: string },
+): Promise<SavedStoryBible & { missing_visual_anchors: string[] }> {
+  return apiFetch(`${base(project)}/visual-anchor`, { method: "POST", body: JSON.stringify(body) });
+}
+
 export interface DraftEstimate {
   /** Whether any part's source mentions the name. */
   mentioned: boolean;

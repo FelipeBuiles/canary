@@ -280,6 +280,58 @@ def test_new_entities_and_looks_reopen_an_approved_cast(series) -> None:
     assert client.delete("/api/projects/pid/story-bible/excluded/characters/nobody?expected_revision=5").status_code == 404
 
 
+def test_no_edit_can_blank_a_visual_anchor(series) -> None:
+    client, root = series
+    refused = client.patch("/api/projects/pid/story-bible/characters/char_003/states/wet",
+                           json={"expected_revision": 1, "changes": {"visual_anchor": " "}})
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == "Add a visual anchor for: Ines Vale (char_003:wet)"
+    assert client.patch("/api/projects/pid/story-bible/characters/char_001",
+                        json={"expected_revision": 1, "changes": {"visual_anchor": ""}}).status_code == 422
+    assert artifacts.read_story_bible(root).revision == 1
+
+
+def test_a_blank_anchor_is_filled_once_in_the_series_bible(series) -> None:
+    client, root = series
+    bible = artifacts.read_story_bible(root)
+    # Extractions from before anchors were required can leave them blank.
+    bible.props[0].visual_anchor = " "
+    bible.characters[2].appearance_states[0].visual_anchor = ""
+    artifacts.write_story_bible(root, bible)
+    fill = "/api/projects/pid/story-bible/visual-anchor"
+
+    state = load_state(root)
+    state.stages["cast"].status = StageStatus.RUNNING
+    save_state(state, root)
+    assert client.post(fill, json={"entity_id": "prop_001", "visual_anchor": "small brass key"}).status_code == 409
+    state.stages["cast"].status = StageStatus.AWAITING_REVIEW
+    save_state(state, root)
+
+    filled = client.post(fill, json={"entity_id": "prop_001", "visual_anchor": "  small brass key "})
+    assert filled.status_code == 200
+    assert filled.json()["revision"] == 2
+    assert filled.json()["missing_visual_anchors"] == ["Ines Vale (char_003:wet)"]
+    look = client.post(fill, json={
+        "entity_id": "char_003", "appearance_state_id": "wet", "visual_anchor": "long red hair, soaked",
+    })
+    assert look.json()["missing_visual_anchors"] == []
+    saved = artifacts.read_story_bible(root)
+    assert (saved.props[0].visual_anchor, saved.revision) == ("small brass key", 3)
+    assert load_state(root).stages["cast"].status == StageStatus.AWAITING_REVIEW
+
+    # Existing anchors stay verbatim, and an editor loaded before the fill reloads.
+    assert client.post(fill, json={"entity_id": "prop_001", "visual_anchor": "iron key"}).status_code == 409
+    assert client.post(fill, json={"entity_id": "loc_001", "visual_anchor": "   "}).status_code == 422
+    assert client.post(fill, json={"entity_id": "prop_404", "visual_anchor": "x"}).status_code == 404
+    stale = client.patch("/api/projects/pid/story-bible/props/prop_001",
+                         json={"expected_revision": 1, "changes": {"name": "Key"}})
+    assert stale.status_code == 409 and stale.json()["detail"]["code"] == "stale_story_bible"
+    # The Story Bible belongs to the series: no part route writes it (only the
+    # web app's static mount matches, and it refuses POST).
+    assert client.post("/api/projects/pid/parts/part_0001/story-bible/visual-anchor",
+                       json={"entity_id": "prop_001", "visual_anchor": "x"}).status_code in {404, 405}
+
+
 def test_drafting_reads_only_passages_that_name_the_entity(series, monkeypatch) -> None:
     client, root = series
     from novel_to_comic import entity_drafting

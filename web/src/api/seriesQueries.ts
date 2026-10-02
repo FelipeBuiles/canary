@@ -17,6 +17,7 @@ import {
   draftEntity,
   editEntity,
   editLook,
+  fillVisualAnchor,
   getCastFreshness,
   getDraftEstimate,
   getStoryBibleEditor,
@@ -121,9 +122,9 @@ export function useStoryBibleEditor(project: string | undefined, enabled = true)
   });
 }
 
-/** An edit changes what every part shows: the Bible, Cast references and stage status. */
+/** An edit changes what every part shows: the Bible, Cast references, stage status and estimates. */
 function refreshStoryBible(qc: QueryClient, project: string) {
-  for (const resource of ["story-bible-editor", "story-bible", "story", "status", "cast-freshness", "page-flags"]) {
+  for (const resource of ["story-bible-editor", "story-bible", "story", "status", "estimate", "cast-freshness", "page-flags"]) {
     void invalidateProject(qc, project, resource);
   }
 }
@@ -177,6 +178,12 @@ export const useEditLook = () => useStoryBibleMutation(
 export const useRemoveLook = () => useStoryBibleMutation(
   ({ project, kind, id, stateId, revision }: EntityTarget & { stateId: string }) =>
     removeLook(project, kind, id, stateId, revision),
+);
+
+/** Fills only a blank anchor, so it needs no editor revision; no stage resets. */
+export const useFillVisualAnchor = () => useStoryBibleMutation(
+  ({ project, ...body }: { project: string; entity_id: string; appearance_state_id: string | null; visual_anchor: string }) =>
+    fillVisualAnchor(project, body),
 );
 
 export const useRestoreExcluded = () => useStoryBibleMutation(

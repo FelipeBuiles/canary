@@ -66,6 +66,32 @@ async def test_reservation_race_rejection_does_not_reset_rerun(tmp_path, monkeyp
     assert (tmp_path / "state.json").read_bytes() == before
 
 
+@pytest.mark.parametrize(("cause", "detail", "credit_blocked", "outcome", "error_type"), [
+    (HTTPException(402, {"error": "insufficient_credits", "message": "Insufficient credits"}),
+     {"error": "insufficient_credits", "message": "Insufficient credits"}, True, "blocked", "insufficient_credits"),
+    (ValueError("estimate defect"), None, False, "failed", "ValueError"),
+])
+@run_async
+async def test_only_a_balance_shortfall_is_reported_as_a_credit_block(
+    tmp_path, monkeypatch, cause, detail, credit_blocked, outcome, error_type,
+):
+    state, _ = existing_project(tmp_path)
+    server_events, lifecycle = [], []
+
+    async def reject(**kwargs):
+        raise CreditReservationDenied("Blocked", detail) from cause
+
+    monkeypatch.setattr(pipeline, "run_credited_stage", reject)
+    monkeypatch.setattr(pipeline, "capture_server_event", lambda name, **kwargs: server_events.append(name))
+    monkeypatch.setattr(pipeline, "capture_lifecycle", lambda app, name, attempt_id, **kwargs: lifecycle.append((name, kwargs["properties"])))
+    await pipeline._run_stage_with_credits("extract", Config(), tmp_path, state, EventChannel(), "account", "book")
+
+    assert ("credit_blocked" in server_events) is credit_blocked
+    failed = [properties for name, properties in lifecycle if name == "stage_failed"]
+    assert [(p["outcome"], p["error_type"]) for p in failed] == [(outcome, error_type)]
+    assert state.stages["extract"].status == StageStatus.FAILED
+
+
 def test_failed_stage_reset_returns_pending_without_destroying_outputs(tmp_path):
     state, artifact = existing_project(tmp_path)
     state.stages["extract"] = StageState(status=StageStatus.FAILED, error="provider unavailable")
@@ -313,3 +339,32 @@ async def test_stage_exception_reaches_error_tracking_with_its_stage(tmp_path, m
     await pipeline._run_stage("plan", Config(), tmp_path, state, EventChannel(), user_id="account")
     assert state.stages["plan"].status == StageStatus.FAILED
     assert captured == [(error, {"user_id": "account", "stage": "plan"})]
+
+
+@run_async
+async def test_plan_estimate_rejects_a_blank_visual_anchor_with_an_instruction(tmp_path, monkeypatch):
+    from novel_to_comic.artifacts import write_story_bible
+    from novel_to_comic.models.story_bible import Character, StoryBible
+    from novel_to_comic.stages.s5_plan import approved_visual_inventory
+
+    state, _ = existing_project(tmp_path)
+    write_story_bible(tmp_path, StoryBible(
+        title="Book", author="Author", total_scenes=0, scenes=[], locations=[], narrative_arcs=[],
+        characters=[Character(
+            id="char_001", name="Ari", visual_anchor="", age_range="adult", gender="male",
+            distinguishing_features=[], default_outfit="coat", first_appearance_scene="scene_001",
+        )],
+    ))
+    monkeypatch.setattr(
+        pipeline.UnifiedCostResolver, "estimate_stage_cost",
+        lambda config, project_dir, active_state, stage: approved_visual_inventory(project_dir),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await pipeline.estimate_stage_cost(None, "book", stage="plan", project=(tmp_path, Config(), state), user_id="account")
+
+    assert error.value.status_code == 409
+    assert error.value.detail == (
+        "These Story Bible entries have no visual anchor: Ari (char_001). "
+        "Add the missing descriptions in the Cast station or the Story Bible."
+    )

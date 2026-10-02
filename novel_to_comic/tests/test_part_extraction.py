@@ -6,12 +6,14 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
+
 from novel_to_comic import artifacts
 from novel_to_comic import extraction_sections as sections
 from novel_to_comic.briefing import build_brief_inference_prompt, propose_brief
 from novel_to_comic.config import Config
 from novel_to_comic.models.adaptation import AdaptationBrief
-from novel_to_comic.models.story_bible import ExcludedEntity
+from novel_to_comic.models.story_bible import ExcludedEntity, MissingVisualAnchor
 from novel_to_comic.series import append_parts, initialize_series, read_extraction_delta, replace_part_text
 from novel_to_comic.source_extraction import source_units
 from novel_to_comic.stage_runtime import StageRuntime
@@ -152,6 +154,25 @@ def test_removed_names_stay_out_and_replacing_the_part_withdraws_it(tmp_path, mo
     assert {scene.part_id for scene in withdrawn.scenes} == {"part_0001"}
     assert {arc.part_id for arc in withdrawn.narrative_arcs} == {"part_0001"}
     assert load_state(part_workspace(root, "part_0002")).stages["extract"].status.value == "pending"
+
+
+def test_a_later_part_waits_for_blank_anchors_before_any_model_call(tmp_path, monkeypatch) -> None:
+    root = _series(tmp_path)
+    config = Config(extraction_chunk_chars=4000)
+    _fake_model(monkeypatch)
+    earlier = _extract(root, "part_0001", config)
+    # An extraction from before anchors were required can leave one blank.
+    # Sections must keep known anchors verbatim, so no attempt could fix it.
+    earlier.characters[0].visual_anchor = ""
+    artifacts.write_story_bible(root, earlier)
+    calls = _fake_model(monkeypatch, newcomer="Ferryman")
+
+    workspace = part_workspace(root, "part_0002")
+    with pytest.raises(MissingVisualAnchor, match=r"no visual anchor: Ari \(part0001_char_001\)"):
+        s1_extract.estimate_cost(config, workspace, load_state(workspace))
+    with pytest.raises(MissingVisualAnchor):
+        _extract(root, "part_0002", config)
+    assert calls == []
 
 
 def _brief(**changes) -> AdaptationBrief:

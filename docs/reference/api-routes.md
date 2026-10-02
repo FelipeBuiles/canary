@@ -163,6 +163,7 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `GET` | `/api/projects/{project}/cast/primary-refs` | `get_primary_refs` | `stages.py` |
 | `PUT` | `/api/projects/{project}/cast/{char_id}/primary-ref` | `set_primary_ref` | `stages.py` |
 | `GET` | `/api/projects/{project}/story-bible/editor` | `story_bible_editor` | `story_bible.py` |
+| `POST` | `/api/projects/{project}/story-bible/visual-anchor` | `fill_visual_anchor` | `story_bible.py` |
 | `PATCH` | `/api/projects/{project}/story-bible/{kind}/{entity_id}` | `edit_story_bible_entity` | `story_bible.py` |
 | `POST` | `/api/projects/{project}/story-bible/{kind}` | `add_story_bible_entity` | `story_bible.py` |
 | `DELETE` | `/api/projects/{project}/story-bible/{kind}/{entity_id}` | `remove_story_bible_entity` | `story_bible.py` |

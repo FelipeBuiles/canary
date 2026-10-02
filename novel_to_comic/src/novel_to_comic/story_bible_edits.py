@@ -30,6 +30,7 @@ from novel_to_comic.models.story_bible import (
     Location,
     Prop,
     StoryBible,
+    blank_visual_anchors,
 )
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
 from novel_to_comic.workspace import part_workspaces, series_root
@@ -62,6 +63,10 @@ class StaleStoryBible(ValueError):
 
 class EditRejected(ValueError):
     """The edit would break the Story Bible or adapted work; the message says why."""
+
+
+class AnchorAlreadySet(EditRejected):
+    """Only a blank visual anchor can be filled; existing anchors stay verbatim."""
 
 
 class EntityCited(EditRejected):
@@ -525,9 +530,43 @@ def apply_edit(root: Path, expected_revision: int,
             validate_references(updated)
         except ValueError as exc:
             raise EditRejected(str(exc)) from exc
+        # Plan needs a written look for every entry, so no edit may blank one.
+        if introduced := sorted(set(blank_visual_anchors(updated)) - set(blank_visual_anchors(bible))):
+            raise EditRejected("Add a visual anchor for: " + ", ".join(introduced))
         updated.revision = bible.revision + 1
         artifacts.write_story_bible(root, updated)
         if on_saved is not None:
             on_saved(bible, updated)
         reopen_cast_for_new_inventory(root, before)
     return updated, extra
+
+
+def fill_blank_anchor(root: Path, entity_id: str, state_id: str | None, anchor: str) -> StoryBible:
+    """Give a blank visual anchor its first description, under the series lock.
+
+    The blank itself is the precondition, so no editor revision is needed; the
+    revision still advances so an open editor reloads before its next save.
+    Only that text changes: no reference, Cast inventory or stage moves.
+    """
+    anchor = anchor.strip()
+    if not anchor:
+        raise EditRejected("Describe how this entry looks.")
+    root = series_root(root)
+    with production_lock(root):
+        bible = artifacts.read_story_bible(root)
+        entity = next((item for kind in _MODELS for item in getattr(bible, kind) if item.id == entity_id), None)
+        if entity is None:
+            raise KeyError(entity_id)
+        target = entity
+        if state_id is not None:
+            target = next((state for state in entity.appearance_states if state.id == state_id), None)
+            if target is None:
+                raise KeyError(f"{entity_id}:{state_id}")
+        if target.visual_anchor.strip():
+            raise AnchorAlreadySet(
+                "This entry already has a visual anchor; existing anchors are preserved verbatim."
+            )
+        target.visual_anchor = anchor
+        bible.revision += 1
+        artifacts.write_story_bible(root, bible)
+    return bible

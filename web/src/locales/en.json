@@ -3014,5 +3014,10 @@
   "prop": "prop",
   "Add a character": "Add a character",
   "Add a place": "Add a place",
-  "Add a prop": "Add a prop"
+  "Add a prop": "Add a prop",
+  "MISSING DESCRIPTIONS": "MISSING DESCRIPTIONS",
+  "Pages need a written look for these entries. Add one to continue; nothing already made is redone.": "Pages need a written look for these entries. Add one to continue; nothing already made is redone.",
+  "Describe how {name} looks": "Describe how {name} looks",
+  "Add the missing descriptions above to continue": "Add the missing descriptions above to continue",
+  "SAVE": "SAVE"
 }
