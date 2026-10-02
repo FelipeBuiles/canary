@@ -541,6 +541,38 @@ def test_cast_approval_rejects_a_blank_visual_anchor_before_adapt(tmp_path: Path
     assert response.json()["detail"] == {
         "code": "cast_approval_rejected",
         "message": "These Story Bible entries have no visual anchor: Hero (hero). "
-        "Rerun Extract to regenerate the Story Bible.",
+        "Add the missing descriptions in the Cast station, or rerun Extract.",
     }
     assert state.stages["cast"].status == StageStatus.AWAITING_REVIEW
+
+
+def test_a_missing_visual_anchor_is_filled_without_resetting_any_stage(tmp_path: Path):
+    project_dir, state, bible = _story_project(tmp_path)
+    write_story_bible(project_dir, bible.model_copy(update={"characters": [Character.model_validate(_blank_anchor_hero())]}))
+    state.stages["cast"].status = StageStatus.COMPLETE
+    state.stages["adapt"].status = StageStatus.COMPLETE
+    save_state(state, project_dir)
+    client = _client(tmp_path, project_dir, state)
+
+    response = client.post("/api/projects/test_project/story-bible/visual-anchor", json={
+        "entity_id": "hero", "visual_anchor": "  tall, grey coat, scar over left eye ",
+    })
+
+    assert response.status_code == 200
+    assert response.json()["missing_visual_anchors"] == []
+    assert read_story_bible(project_dir).characters[0].visual_anchor == "tall, grey coat, scar over left eye"
+    assert state.stages["cast"].status == state.stages["adapt"].status == StageStatus.COMPLETE
+
+
+def test_an_existing_visual_anchor_is_never_overwritten(tmp_path: Path):
+    project_dir, state, bible = _story_project(tmp_path)
+    hero = Character.model_validate({**_blank_anchor_hero(), "visual_anchor": "tall, grey coat"})
+    write_story_bible(project_dir, bible.model_copy(update={"characters": [hero]}))
+    client = _client(tmp_path, project_dir, state)
+
+    response = client.post("/api/projects/test_project/story-bible/visual-anchor", json={
+        "entity_id": "hero", "visual_anchor": "short, red coat",
+    })
+
+    assert response.status_code == 409
+    assert read_story_bible(project_dir).characters[0].visual_anchor == "tall, grey coat"

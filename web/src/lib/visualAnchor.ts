@@ -28,3 +28,27 @@ export function readableAnchor(anchor: string | null | undefined): string {
   const sentence = tags.join(", ");
   return `${sentence.charAt(0).toLocaleUpperCase()}${sentence.slice(1)}.`;
 }
+
+export interface MissingVisualAnchor {
+  key: string;
+  entityId: string;
+  stateId: string | null;
+  name: string;
+}
+
+interface AnchoredEntity {
+  id: string;
+  name: string;
+  visual_anchor: string;
+  appearance_states?: { id: string; label: string; visual_anchor: string }[];
+}
+
+/** Entries Plan cannot use: a blank base or appearance-state anchor (mirrors the server check). */
+export function missingVisualAnchors(entities: AnchoredEntity[]): MissingVisualAnchor[] {
+  return entities.flatMap((entity) => [
+    ...(entity.visual_anchor.trim() ? [] : [{ key: entity.id, entityId: entity.id, stateId: null, name: entity.name }]),
+    ...(entity.appearance_states ?? [])
+      .filter((state) => !state.visual_anchor.trim())
+      .map((state) => ({ key: `${entity.id}:${state.id}`, entityId: entity.id, stateId: state.id, name: `${entity.name} — ${state.label}` })),
+  ]);
+}

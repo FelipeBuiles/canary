@@ -162,7 +162,7 @@ class MissingVisualAnchor(ValueError):
         super().__init__(
             "These Story Bible entries have no visual anchor: "
             + ", ".join(entries)
-            + ". Rerun Extract to regenerate the Story Bible."
+            + ". Add the missing descriptions in the Cast station, or rerun Extract."
         )
 
 
