@@ -6,7 +6,7 @@ from pathlib import Path
 
 from novel_to_comic.style_reference import require_style_reference
 from novel_to_comic.config import Config
-from novel_to_comic.page_drawing import current_page_capability_profile, ensure_current_page_edition
+from novel_to_comic.page_drawing import ensure_current_page_edition, initial_page_profile
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.state import PipelineState
 from novel_to_comic.target_artifacts import TargetArtifacts
@@ -33,7 +33,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> None:
 
     edition = select_book_edition(
         edition_id=existing.id if existing is not None else "book-edition-001",
-        profile=current_page_capability_profile(config),
+        profile=existing.capability_profile if existing is not None else initial_page_profile(project_dir, config),
         existing=existing,
     )
     ctx.begin(total=len(plan.pages))
@@ -49,7 +49,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     target = TargetArtifacts(project_dir)
     profile = (
         ensure_current_page_edition(target, target.read_book_edition(), config).capability_profile
-        if target.book_edition_path.exists() else current_page_capability_profile(config)
+        if target.book_edition_path.exists() else initial_page_profile(project_dir, config)
     )
     if not target.plan_path.exists():
         return 0.0

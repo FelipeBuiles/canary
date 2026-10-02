@@ -45,7 +45,7 @@ def test_cover_attempt_is_not_replayed_after_restart(tmp_path):
         request = SimpleNamespace(app=current)
         assert not projects.needs_initial_project_cover(request, "account:book", tmp_path)
         assert projects.needs_initial_project_cover(request, "account:other", tmp_path)
-        payload = projects._project_cover_job_payload(request, "account:book")
+        payload = projects._project_cover_job_payload(request, "account:book", tmp_path)
         assert payload["status"] == ("queued" if current is app else "failed")
 
 

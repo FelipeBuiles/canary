@@ -53,9 +53,13 @@ def read_story_bible_safe(project_dir: Path) -> "StoryBible | None":
 
 
 def write_story_bible(project_dir: Path, bible: "StoryBible") -> None:
+    # Atomic: parts read the series Story Bible while another part or an
+    # author edit writes it, so a reader must never see a partial file.
     path = story_bible_path(project_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(bible.model_dump_json(indent=2))
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(bible.model_dump_json(indent=2))
+    temporary.replace(path)
 
 
 # ---------------------------------------------------------------------------
@@ -78,9 +82,12 @@ def read_asset_meta(output_path: Path) -> dict:
 
 
 def write_asset_meta(output_path: Path, meta: dict) -> None:
+    # Atomic: page jobs read reference metadata while an author keeps an image.
     path = asset_meta_path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(meta, indent=2, sort_keys=True))
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(json.dumps(meta, indent=2, sort_keys=True))
+    temporary.replace(path)
 
 
 def write_asset_failure(output_path: Path, payload: dict) -> None:

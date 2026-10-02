@@ -89,7 +89,15 @@ def is_parallel_page_draw(job: GenerationJob) -> bool:
 LIGHT_JOB_KINDS = frozenset({"lettering_translation"})
 
 
+# Text-only pipeline stages, so the next part can extract and brief while
+# another part's pages render.
+LIGHT_PIPELINE_STAGES = frozenset({"extract", "brief"})
+
+
 def is_light_job(job: GenerationJob) -> bool:
+    if job.kind == "pipeline_stage":
+        stage = job.payload.get("stage") or (job.command.stage if job.command else "")
+        return stage in LIGHT_PIPELINE_STAGES
     return job.kind in LIGHT_JOB_KINDS
 
 
@@ -282,6 +290,7 @@ def generation_job_payload(app: FastAPI | None, job: GenerationJob) -> dict[str,
     return {
         "id": job.id,
         "project_name": job.project_name,
+        "part_id": job_part_id(job),
         "kind": job.kind,
         "stage": "draw" if stage == "lettering" else stage,
         "label": job.label,
@@ -298,6 +307,17 @@ def generation_job_payload(app: FastAPI | None, job: GenerationJob) -> dict[str,
         "recoverable": job.recoverable,
         "phase": job.phase,
     }
+
+
+def job_part_id(job: GenerationJob) -> str | None:
+    """The part a job works on, or ``None`` for series work (Style, Cast)."""
+    from novel_to_comic.workspace import part_id_for_path
+
+    command = getattr(job, "command", None)
+    if command is not None:
+        return part_id_for_path(command.project_dir)
+    part = (getattr(job, "payload", None) or {}).get("part_id")
+    return part if isinstance(part, str) else None
 
 
 def find_active_generation_job(

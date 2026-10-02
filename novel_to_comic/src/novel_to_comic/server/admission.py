@@ -20,12 +20,13 @@ from .auth import SESSION_COOKIE_NAME, get_current_user
 from .deps import project_key
 
 _PROJECT = re.compile(r"^/api/projects/([^/]+)(/.*)?$")
-_PAID = re.compile(r"^/(?:run|regen-[^/]+|cover|lettering/translate|approve/(?:brief|cast)|styles/(?:direction|suggest|generate-samples|validation)|pages/\d+/(?:generate|analyze|visual-review|corrections|replan)|(?:characters|locations)/[^/]+/states/[^/]+/(?:regenerate|regenerate-instructed)|story-changes/[^/]+/apply)$")
+_PAID = re.compile(r"^/(?:run|regen-[^/]+|cover|lettering/translate|approve/(?:brief|cast)|styles/(?:direction|suggest|generate-samples|validation)|pages/\d+/(?:generate|analyze|visual-review|corrections|replan)|(?:characters|locations)/[^/]+/states/[^/]+/(?:regenerate|regenerate-instructed)|story-changes/[^/]+/apply|story-bible/(?:characters|locations|props)/draft)$")
 # Correction previews read the same page inputs as submission and must remain
 # available while independent page jobs run. Submission owns same-page conflicts.
 _TARGETED = re.compile(r"^/(?:regen-(?!extract)[^/]+|cover|pages/\d+/(?:generate|analyze|visual-review|corrections(?:/preview)?)|(?:characters|locations)/[^/]+/states/[^/]+/(?:regenerate|regenerate-instructed))$")
 
 
+_PART_ROUTE = re.compile(r"^/parts/(part_\d{4})(/.*)?$")
 _STYLE_PRESENTATION = re.compile(r"^/styles/style_[0-9a-f]{16}$")
 _APPROVAL = re.compile(r"^/approve/[a-z_]+$")
 
@@ -50,23 +51,66 @@ def cast_approval_was_rejected(method: str, suffix: str, status: int, body: byte
     )
 
 
-def project_busy(app, key: str) -> bool:
-    for name in ("running_tasks", "style_tasks"):
-        task = getattr(app.state, name, {}).get(key)
-        if task is not None and not task.done():
-            return True
-    return any(job.project_name == key and job.status in {"queued", "running"}
-               for job in getattr(app.state, "generation_jobs", {}).values())
+def _job_part(job) -> str | None:
+    from .generation_jobs import job_part_id
+
+    return job_part_id(job)
 
 
-def mutation_conflicts(app, key: str, suffix: str) -> bool:
-    """Resource policy: independent presentation edits do not own all artwork."""
-    jobs = [job for job in getattr(app.state, "generation_jobs", {}).values()
+def _active_jobs(app, key: str) -> list:
+    return [job for job in getattr(app.state, "generation_jobs", {}).values()
             if job.project_name == key and job.status in {"queued", "running"}]
+
+
+def _live_task(app, key: str) -> bool:
     # Legacy live tasks are exclusive during rolling/test compatibility.
-    if any(task is not None and not task.done() for task in
-           (getattr(app.state, name, {}).get(key) for name in ("running_tasks", "style_tasks"))):
+    return any(task is not None and not task.done() for task in
+               (getattr(app.state, name, {}).get(key) for name in ("running_tasks", "style_tasks")))
+
+
+def project_busy(app, key: str, part: str | None = None, *, series: bool = False) -> bool:
+    """Whether new work must wait for work already in the project.
+
+    Parts progress independently: a part's stage waits only for that part's
+    jobs and series work (Style, Cast), and a series stage waits only for
+    series work. Without a part or series scope the whole project counts.
+    """
+    if _live_task(app, key):
         return True
+    for job in _active_jobs(app, key):
+        if series:
+            if _job_part(job) is None:
+                return True
+        elif part is None or _job_part(job) in {part, None}:
+            return True
+    return False
+
+
+def mutation_conflicts(app, key: str, suffix: str, part: str | None = None,
+                       method: str = "POST") -> bool:
+    """Resource policy: independent presentation edits do not own all artwork.
+
+    ``part`` is the part a route addresses; another part's work never blocks it.
+    """
+    jobs = _active_jobs(app, key)
+    if _live_task(app, key):
+        return True
+    if part is not None:
+        if method == "PATCH" and suffix == "":
+            return False  # renaming a part changes no work
+        jobs = [job for job in jobs if _job_part(job) in {part, None}]
+    elif suffix in {"/parts", "/parts/export"}:
+        # Appending a part or combining finished parts touches no running work.
+        return False
+    elif suffix.startswith("/story-bible"):
+        # Story Bible edits wait only for an extraction writing the same Bible.
+        # Removing or merging also waits for Adapt and Plan, which cite entities.
+        citing = {"extract", "adapt", "plan"} if method == "DELETE" or suffix.endswith("/merge") else {"extract"}
+        return any(job.kind == "pipeline_stage" and job.payload.get("stage") in citing for job in jobs)
+    elif (suffix == "/run" or _APPROVAL.fullmatch(suffix) or suffix.startswith("/reset/")
+          or suffix in {"/cast/references/keep", "/cast/reopen"}):
+        # Series pipeline actions (Style, Cast) wait only for series work.
+        jobs = [job for job in jobs if _job_part(job) is None]
     if suffix == "/styles/active":
         return any(job.kind not in {"style_sample", "style_suggest", "style_validation"} for job in jobs)
     # Approving a checkpoint changes no artwork. The cover that Cast starts on
@@ -138,10 +182,14 @@ class Admission:
 
 async def admission_middleware(request, call_next):
     match = _PROJECT.match(request.url.path)
-    status_read = bool(match and request.method == "GET" and match.group(2) == "/status")
+    project_id, suffix = (match.group(1), match.group(2) or "") if match else ("", "")
+    # Part routes share every suffix policy with their series-scoped forms.
+    part_route = _PART_ROUTE.match(suffix)
+    if part_route:
+        suffix = part_route.group(2) or ""
+    status_read = bool(match and request.method == "GET" and suffix == "/status")
     if not match or (not status_read and request.method not in {"POST", "PUT", "PATCH", "DELETE"}):
         return await call_next(request)
-    project_id, suffix = match.group(1), match.group(2) or ""
     if project_id in {"import-story", "short-stories"}:
         return await call_next(request)
     admission = request.app.state.admission
@@ -228,10 +276,12 @@ async def admission_middleware(request, call_next):
             ):
                 raise HTTPException(503, {"code": "credits_unavailable", "message": "Credit authorization is temporarily unavailable. Try again when service is ready."})
             pkey = project_key(account, project_id)
+            part = part_route.group(1) if part_route else None
             if any(job.project_name == pkey and getattr(job, "kind", None) == "lettering_translation" and job.status in {"queued", "running"}
+                   and (part is None or _job_part(job) in {part, None})
                    for job in getattr(request.app.state, "generation_jobs", {}).values()):
                 raise HTTPException(409, "Wait for project lettering translation to finish before changing this project.")
-            if not _TARGETED.fullmatch(suffix) and mutation_conflicts(request.app, pkey, suffix):
+            if not _TARGETED.fullmatch(suffix) and mutation_conflicts(request.app, pkey, suffix, part, request.method):
                 raise HTTPException(409, "Wait for all project jobs to finish before changing this project.")
             if _TARGETED.fullmatch(suffix):
                 if any(job.project_name == pkey and job.status in {"queued", "running"}

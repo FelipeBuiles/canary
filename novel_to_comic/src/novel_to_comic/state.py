@@ -95,6 +95,13 @@ STAGE_NAMES = [
     "finish",
 ]
 CHECKPOINT_STAGES = {"brief", "style", "cast", "draw"}
+# Style and Cast are decided once for the whole series; the rest run per part.
+SERIES_STAGES = ("style", "cast")
+PART_STAGES = tuple(name for name in STAGE_NAMES if name not in SERIES_STAGES)
+
+
+def is_series_stage(stage: str) -> bool:
+    return stage in SERIES_STAGES
 
 
 class PipelineState(BaseModel):
@@ -128,8 +135,7 @@ def _state_path(project_dir: Path) -> Path:
     return project_dir / "state.json"
 
 
-def load_state(project_dir: Path) -> PipelineState:
-    """Load pipeline state from state.json."""
+def _read_state_file(project_dir: Path) -> PipelineState:
     path = _state_path(project_dir)
     if not path.exists():
         raise FileNotFoundError(
@@ -139,6 +145,35 @@ def load_state(project_dir: Path) -> PipelineState:
         )
     with open(path) as f:
         return PipelineState.model_validate_json(f.read())
+
+
+def load_state(project_dir: Path) -> PipelineState:
+    """Load pipeline state from state.json.
+
+    A part workspace's state owns its part stages. The series stages (Style,
+    Cast) are overlaid from the series root on every load, so gating always
+    sees current series decisions. Those overlaid copies are read-only: saving
+    a part state never writes the series file; series stages change only
+    through ``load_series_state``/``save_state`` on the root.
+    """
+    from novel_to_comic.workspace import is_part_workspace, series_root
+
+    state = _read_state_file(project_dir)
+    if is_part_workspace(project_dir):
+        series = _read_state_file(series_root(project_dir))
+        for name in SERIES_STAGES:
+            state.stages[name] = series.stages[name].model_copy(deep=True)
+        state.style_template_hash = series.style_template_hash
+        # The display name belongs to the project, not to one of its parts.
+        state.project_name = series.project_name
+    return state
+
+
+def load_series_state(project_dir: Path) -> PipelineState:
+    """The series root's state, which owns the Style and Cast stages."""
+    from novel_to_comic.workspace import series_root
+
+    return _read_state_file(series_root(project_dir))
 
 
 def save_state(state: PipelineState, project_dir: Path) -> None:

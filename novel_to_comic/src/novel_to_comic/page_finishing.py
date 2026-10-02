@@ -32,6 +32,7 @@ from novel_to_comic.models.page import ComicPage
 from novel_to_comic.models.validation import InvariantFailure
 from novel_to_comic.page_drawing import page_profile_uses_native_dimensions
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
+from novel_to_comic.workspace import series_root
 
 
 _CREATIVE_FAILURES = {
@@ -344,8 +345,12 @@ def _reusable_packages(
 
 
 def source_credit_info(project_dir: Path) -> dict | None:
-    """Return the mandatory attribution for a share-alike sample, if present."""
-    source_path = project_dir / "sample_source.json"
+    """Return the mandatory attribution for a share-alike sample, if present.
+
+    The attribution describes the uploaded source, so it lives at the series
+    root and applies to every part's book.
+    """
+    source_path = series_root(project_dir) / "sample_source.json"
     if not source_path.exists():
         return None
     source = json.loads(source_path.read_text(encoding="utf-8"))

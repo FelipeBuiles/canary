@@ -83,7 +83,8 @@ def test_auto_chain_stops_at_brief_review_and_before_draw() -> None:
 @pytest.mark.parametrize(
     ("rerun", "reset"),
     [
-        ("extract", set(TARGET_STAGES)),
+        # Re-extracting a part resets only that part; Style and Cast are series-wide.
+        ("extract", set(TARGET_STAGES) - {"style", "cast"}),
         ("brief", {"brief", "adapt", "plan", "draw", "finish"}),
         ("style", {"style", "cast", "adapt", "plan", "draw", "finish"}),
         ("cast", {"cast", "adapt", "plan", "draw", "finish"}),

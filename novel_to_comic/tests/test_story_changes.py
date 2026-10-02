@@ -211,7 +211,7 @@ def test_editorial_get_exposes_findings_with_source_beat_links(tmp_path: Path):
     project_dir, state = _story_project(tmp_path)
     client = _client(tmp_path, project_dir, state)
 
-    res = client.get("/api/projects/test_project/editorial")
+    res = client.get("/api/projects/test_project/parts/part_0001/editorial")
     assert res.status_code == 200
     body = res.json()
     assert body["revision"].startswith("adapt=1:")
@@ -232,14 +232,14 @@ def test_source_excerpts_validate_ids(tmp_path: Path):
     client = _client(tmp_path, project_dir, state)
     first = TargetArtifacts(project_dir).read_source().units[0]
 
-    res = client.get(f"/api/projects/test_project/editorial/source?ids={first.id}")
+    res = client.get(f"/api/projects/test_project/parts/part_0001/editorial/source?ids={first.id}")
     assert res.status_code == 200
     assert res.json() == {"units": [{"id": first.id, "text": first.text}]}
 
-    res = client.get("/api/projects/test_project/editorial/source?ids=nope_000")
+    res = client.get("/api/projects/test_project/parts/part_0001/editorial/source?ids=nope_000")
     assert res.status_code == 404
 
-    res = client.get("/api/projects/test_project/editorial/source?ids=,,")
+    res = client.get("/api/projects/test_project/parts/part_0001/editorial/source?ids=,,")
     assert res.status_code == 400
 
 
@@ -248,9 +248,9 @@ def test_keep_decision_applies_then_changed_evidence_resurfaces(tmp_path: Path):
     client = _client(tmp_path, project_dir, state)
     target = TargetArtifacts(project_dir)
 
-    revision = client.get("/api/projects/test_project/editorial").json()["revision"]
+    revision = client.get("/api/projects/test_project/parts/part_0001/editorial").json()["revision"]
     res = client.post(
-        "/api/projects/test_project/editorial/decisions",
+        "/api/projects/test_project/parts/part_0001/editorial/decisions",
         json={
             "expected_revision": revision,
             "issue_ids": ["adapt_issue_001"],
@@ -275,7 +275,7 @@ def test_keep_decision_applies_then_changed_evidence_resurfaces(tmp_path: Path):
             update={"content_sha256": "", "editorial_issues": (reworded,)}
         )
     )
-    body = client.get("/api/projects/test_project/editorial").json()
+    body = client.get("/api/projects/test_project/parts/part_0001/editorial").json()
     assert body["revision"] != revision
     resurfaced = {
         item["issue_id"]: item for item in body["decisions"]
@@ -284,7 +284,7 @@ def test_keep_decision_applies_then_changed_evidence_resurfaces(tmp_path: Path):
 
     # The stale view can no longer record decisions.
     res = client.post(
-        "/api/projects/test_project/editorial/decisions",
+        "/api/projects/test_project/parts/part_0001/editorial/decisions",
         json={
             "expected_revision": revision,
             "issue_ids": ["adapt_issue_001"],
@@ -303,7 +303,7 @@ def test_preview_is_persistent_nondestructive_and_truthful(tmp_path: Path):
     before_plan = target.plan_path.read_bytes()
 
     res = client.post(
-        "/api/projects/test_project/story-changes/preview",
+        "/api/projects/test_project/parts/part_0001/story-changes/preview",
         json={
             "instruction": "Restore the omitted aftermath as captions.",
             "stage": "adapt",
@@ -321,19 +321,19 @@ def test_preview_is_persistent_nondestructive_and_truthful(tmp_path: Path):
     assert proposal["estimate_credits"] >= 0
 
     # Reload retrieves the stored proposal; canonical artifacts are untouched.
-    body = client.get("/api/projects/test_project/editorial").json()
+    body = client.get("/api/projects/test_project/parts/part_0001/editorial").json()
     assert [p["id"] for p in body["story_changes"]] == [proposal["id"]]
     assert target.adaptation_path.read_bytes() == before_adaptation
     assert target.plan_path.read_bytes() == before_plan
 
     # Blank instructions and stale beat references are rejected, not trimmed.
     res = client.post(
-        "/api/projects/test_project/story-changes/preview",
+        "/api/projects/test_project/parts/part_0001/story-changes/preview",
         json={"instruction": "   ", "stage": "plan"},
     )
     assert res.status_code == 400
     res = client.post(
-        "/api/projects/test_project/story-changes/preview",
+        "/api/projects/test_project/parts/part_0001/story-changes/preview",
         json={
             "instruction": "Repace page one.",
             "stage": "plan",
@@ -391,7 +391,7 @@ def test_plan_preview_subset_reports_all_pages_with_focus_retained(
     )
 
     res = client.post(
-        "/api/projects/test_project/story-changes/preview",
+        "/api/projects/test_project/parts/part_0001/story-changes/preview",
         json={
             "instruction": "Give page two a splash reveal.",
             "stage": "plan",
@@ -416,18 +416,18 @@ def test_apply_guards_unknown_stale_applied_and_busy(tmp_path: Path):
     )
     target = TargetArtifacts(project_dir)
     res = client.post(
-        "/api/projects/test_project/story-changes/nope/apply",
+        "/api/projects/test_project/parts/part_0001/story-changes/nope/apply",
         json={"expected_revision": "1"},
     )
     assert res.status_code == 404
 
     preview = client.post(
-        "/api/projects/test_project/story-changes/preview",
+        "/api/projects/test_project/parts/part_0001/story-changes/preview",
         json={"instruction": "Slow the pacing.", "stage": "plan"},
     ).json()
 
     res = client.post(
-        f"/api/projects/test_project/story-changes/{preview['id']}/apply",
+        f"/api/projects/test_project/parts/part_0001/story-changes/{preview['id']}/apply",
         json={"expected_revision": "0"},
     )
     assert res.status_code == 409
@@ -443,7 +443,7 @@ def test_apply_guards_unknown_stale_applied_and_busy(tmp_path: Path):
         )
     )
     res = client.post(
-        f"/api/projects/test_project/story-changes/{preview['id']}/apply",
+        f"/api/projects/test_project/parts/part_0001/story-changes/{preview['id']}/apply",
         json={"expected_revision": preview["revision"]},
     )
     assert res.status_code == 409
@@ -456,14 +456,14 @@ def test_apply_guards_unknown_stale_applied_and_busy(tmp_path: Path):
         )
     )
     res = client.post(
-        f"/api/projects/test_project/story-changes/{preview['id']}/apply",
+        f"/api/projects/test_project/parts/part_0001/story-changes/{preview['id']}/apply",
         json={"expected_revision": preview["revision"]},
     )
     assert res.status_code == 409
 
     # A running stage blocks apply without touching the proposal.
     fresh = client.post(
-        "/api/projects/test_project/story-changes/preview",
+        "/api/projects/test_project/parts/part_0001/story-changes/preview",
         json={"instruction": "Slow the pacing.", "stage": "plan"},
     ).json()
     loop = asyncio.new_event_loop()
@@ -471,7 +471,7 @@ def test_apply_guards_unknown_stale_applied_and_busy(tmp_path: Path):
     app.state.running_tasks["test-user:test_project"] = pending
     try:
         res = client.post(
-            f"/api/projects/test_project/story-changes/{fresh['id']}/apply",
+            f"/api/projects/test_project/parts/part_0001/story-changes/{fresh['id']}/apply",
             json={"expected_revision": fresh["revision"]},
         )
     finally:
@@ -481,7 +481,7 @@ def test_apply_guards_unknown_stale_applied_and_busy(tmp_path: Path):
     assert res.status_code == 409
     by_id = {
         item["id"]: item
-        for item in client.get("/api/projects/test_project/editorial").json()[
+        for item in client.get("/api/projects/test_project/parts/part_0001/editorial").json()[
             "story_changes"
         ]
     }
@@ -495,7 +495,7 @@ def test_apply_starts_owning_stage_with_directive_and_discloses_chain(
     client = _client(tmp_path, project_dir, state)
     target = TargetArtifacts(project_dir)
     preview = client.post(
-        "/api/projects/test_project/story-changes/preview",
+        "/api/projects/test_project/parts/part_0001/story-changes/preview",
         json={"instruction": "Slow the pacing.", "stage": "plan"},
     ).json()
 
@@ -513,7 +513,7 @@ def test_apply_starts_owning_stage_with_directive_and_discloses_chain(
         ),
     ):
         res = client.post(
-            f"/api/projects/test_project/story-changes/{preview['id']}/apply",
+            f"/api/projects/test_project/parts/part_0001/story-changes/{preview['id']}/apply",
             json={"expected_revision": preview["revision"]},
         )
     assert res.status_code == 200
@@ -546,7 +546,7 @@ def test_directive_load_validates_before_any_paid_call(tmp_path: Path):
     client = _client(tmp_path, project_dir, state)
     target = TargetArtifacts(project_dir)
     preview = client.post(
-        "/api/projects/test_project/story-changes/preview",
+        "/api/projects/test_project/parts/part_0001/story-changes/preview",
         json={"instruction": "Slow the pacing.", "stage": "adapt"},
     ).json()
     assert target.peek_story_directive("adapt") is None
@@ -589,7 +589,7 @@ def test_failed_generation_retains_directive_for_explicit_retry(tmp_path: Path):
     client = _client(tmp_path, project_dir, state)
     target = TargetArtifacts(project_dir)
     preview = client.post(
-        "/api/projects/test_project/story-changes/preview",
+        "/api/projects/test_project/parts/part_0001/story-changes/preview",
         json={"instruction": "Restore the aftermath.", "stage": "adapt"},
     ).json()
     _write_directive(target, preview)
@@ -621,7 +621,7 @@ def test_successful_run_clears_directive_and_marks_applied(tmp_path: Path):
     client = _client(tmp_path, project_dir, state)
     target = TargetArtifacts(project_dir)
     preview = client.post(
-        "/api/projects/test_project/story-changes/preview",
+        "/api/projects/test_project/parts/part_0001/story-changes/preview",
         json={"instruction": "Restore the aftermath.", "stage": "adapt"},
     ).json()
     _write_directive(target, preview)
@@ -648,7 +648,7 @@ def test_plan_run_consumes_directive_persists_plan_without_draw(
     client = _client(tmp_path, project_dir, state)
     target = TargetArtifacts(project_dir)
     preview = client.post(
-        "/api/projects/test_project/story-changes/preview",
+        "/api/projects/test_project/parts/part_0001/story-changes/preview",
         json={"instruction": "Slow the pacing.", "stage": "plan"},
     ).json()
     _write_directive(target, preview)
@@ -711,9 +711,9 @@ def test_proposal_revision_is_the_preview_time_fingerprint(tmp_path: Path):
     project_dir, state = _story_project(tmp_path)
     client = _client(tmp_path, project_dir, state)
 
-    revision = client.get("/api/projects/test_project/editorial").json()["revision"]
+    revision = client.get("/api/projects/test_project/parts/part_0001/editorial").json()["revision"]
     proposal = client.post(
-        "/api/projects/test_project/story-changes/preview",
+        "/api/projects/test_project/parts/part_0001/story-changes/preview",
         json={"instruction": "Slow the pacing.", "stage": "plan"},
     ).json()
     # No constant tokens: the proposal carries the exact fingerprint it was
@@ -727,12 +727,12 @@ def test_corrupt_editorial_files_fail_explicitly_not_500(tmp_path: Path):
     client = _client(tmp_path, project_dir, state)
     target = TargetArtifacts(project_dir)
     preview = client.post(
-        "/api/projects/test_project/story-changes/preview",
+        "/api/projects/test_project/parts/part_0001/story-changes/preview",
         json={"instruction": "Slow the pacing.", "stage": "plan"},
     ).json()
 
     target.story_change_path(preview["id"]).write_text("{not valid json")
-    res = client.get("/api/projects/test_project/editorial")
+    res = client.get("/api/projects/test_project/parts/part_0001/editorial")
     assert res.status_code == 409
     # FastAPI nests dict details under "detail", matching the repo's 402/409
     # convention: the human message stays a plain string beside file/revision.
@@ -741,7 +741,7 @@ def test_corrupt_editorial_files_fail_explicitly_not_500(tmp_path: Path):
     assert body["file"].startswith("proposal_")
     assert body["revision"].startswith("adapt=1:")
     res = client.post(
-        f"/api/projects/test_project/story-changes/{preview['id']}/apply",
+        f"/api/projects/test_project/parts/part_0001/story-changes/{preview['id']}/apply",
         json={"expected_revision": preview["revision"]},
     )
     assert res.status_code == 409
@@ -749,7 +749,7 @@ def test_corrupt_editorial_files_fail_explicitly_not_500(tmp_path: Path):
     target.story_change_path(preview["id"]).unlink()
     target.editorial_decisions_path.parent.mkdir(parents=True, exist_ok=True)
     target.editorial_decisions_path.write_text("[broken")
-    res = client.get("/api/projects/test_project/editorial")
+    res = client.get("/api/projects/test_project/parts/part_0001/editorial")
     assert res.status_code == 409
 
 
@@ -757,7 +757,7 @@ def test_apply_gates_summed_chain_reservation_not_owning_stage(tmp_path: Path):
     project_dir, state = _story_project(tmp_path)
     client = _client(tmp_path, project_dir, state)
     preview = client.post(
-        "/api/projects/test_project/story-changes/preview",
+        "/api/projects/test_project/parts/part_0001/story-changes/preview",
         json={"instruction": "Restore the aftermath.", "stage": "adapt"},
     ).json()
 
@@ -782,7 +782,7 @@ def test_apply_gates_summed_chain_reservation_not_owning_stage(tmp_path: Path):
         ),
     ):
         res = client.post(
-            f"/api/projects/test_project/story-changes/{preview['id']}/apply",
+            f"/api/projects/test_project/parts/part_0001/story-changes/{preview['id']}/apply",
             json={"expected_revision": preview["revision"]},
         )
     assert res.status_code == 200
@@ -794,22 +794,22 @@ def test_apply_gates_summed_chain_reservation_not_owning_stage(tmp_path: Path):
 def test_schema_violations_are_422_not_400(tmp_path: Path):
     project_dir, state = _story_project(tmp_path)
     client = _client(tmp_path, project_dir, state)
-    revision = client.get("/api/projects/test_project/editorial").json()["revision"]
+    revision = client.get("/api/projects/test_project/parts/part_0001/editorial").json()["revision"]
 
     # Empty (not merely blank) input and off-contract enums never reach the
     # handlers: FastAPI body validation answers 422.
     res = client.post(
-        "/api/projects/test_project/story-changes/preview",
+        "/api/projects/test_project/parts/part_0001/story-changes/preview",
         json={"instruction": "", "stage": "plan"},
     )
     assert res.status_code == 422
     res = client.post(
-        "/api/projects/test_project/story-changes/preview",
+        "/api/projects/test_project/parts/part_0001/story-changes/preview",
         json={"instruction": "Slow down.", "stage": "draw"},
     )
     assert res.status_code == 422
     res = client.post(
-        "/api/projects/test_project/editorial/decisions",
+        "/api/projects/test_project/parts/part_0001/editorial/decisions",
         json={
             "expected_revision": revision,
             "issue_ids": ["adapt_issue_001"],
@@ -820,7 +820,7 @@ def test_schema_violations_are_422_not_400(tmp_path: Path):
     # Whitespace-only instructions and unknown immutable references are
     # semantic rejections from the handlers: 400.
     res = client.post(
-        "/api/projects/test_project/story-changes/preview",
+        "/api/projects/test_project/parts/part_0001/story-changes/preview",
         json={"instruction": "   ", "stage": "plan"},
     )
     assert res.status_code == 400

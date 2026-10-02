@@ -9,7 +9,8 @@ import shutil
 import time
 import traceback
 import uuid
-from typing import Optional
+from pathlib import Path
+from typing import NamedTuple, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
@@ -18,15 +19,22 @@ from novel_to_comic.briefing import approve_brief, require_approved_brief
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.stages import REGISTRY
 from novel_to_comic.state import (
+    PART_STAGES,
     STAGE_NAMES,
+    PipelineState,
     StageState,
     StageStatus,
     approve_stage,
     fail_stage,
+    is_series_stage,
+    load_series_state,
+    load_state,
     reset_stale_stages,
     save_state,
 )
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
+from novel_to_comic.series import cast_inventory_keys, reopen_cast_for_new_inventory
+from novel_to_comic.workspace import part_id_for_path, part_workspaces, series_root
 
 from ..auth import get_current_user
 from ..credited_job import CreditReservationDenied, run_credited_stage
@@ -39,8 +47,8 @@ from ..credits import (
     estimate_stage_credit_reservation,
 )
 from ..db import get_db
-from ..deps import get_project, project_key
-from ..generation_jobs import generation_job_payload
+from ..deps import event_key, get_project, project_key
+from ..generation_jobs import generation_job_payload, job_part_id
 from ..admission import project_busy
 from ..event_channel import EventChannel
 from ..metrics import increment, observe
@@ -61,7 +69,8 @@ STAGE_AUTO_CHAIN: dict[str, list[str]] = {
 }
 
 STATE_INVALIDATION: dict[str, tuple[str, ...]] = {
-    "extract": tuple(STAGE_NAMES),
+    # Re-extracting a part resets only that part; Style and Cast are series-wide.
+    "extract": PART_STAGES,
     "brief": ("brief", "adapt", "plan", "draw", "finish"),
     "style": ("style", "cast", "adapt", "plan", "draw", "finish"),
     "cast": ("cast", "adapt", "plan", "draw", "finish"),
@@ -70,6 +79,78 @@ STATE_INVALIDATION: dict[str, tuple[str, ...]] = {
     "draw": ("draw", "finish"),
     "finish": ("finish",),
 }
+
+
+class StageScope(NamedTuple):
+    """Where a stage runs, the state it mutates, and the view that gates it."""
+
+    directory: Path
+    config: object
+    state: PipelineState
+    gate: PipelineState
+    part_dir: Path | None
+
+
+def route_part_id(request) -> str | None:
+    """The part a request addresses; direct callers without a route have none."""
+    path_params = getattr(request, "path_params", None) or {}
+    return path_params.get("part_id")
+
+
+def _first_part_dir(root: Path) -> Path | None:
+    workspaces = part_workspaces(root)
+    return workspaces[0] if workspaces else None
+
+
+def stage_scope(request: Request, project, stage: str) -> StageScope:
+    """Series stages act on the series root; part stages need a part route.
+
+    The gate view overlays the series stages on a part's own stages, so a
+    series stage reached from the series route is gated by the first part.
+    """
+    directory, config, state = project
+    root = series_root(directory)
+    on_part_route = route_part_id(request) is not None or directory != root
+    if directory == root and not part_workspaces(root):
+        # A single-directory project is its own series and its only part.
+        return StageScope(directory, config, state, state, directory)
+    if is_series_stage(stage):
+        first = None if on_part_route else _first_part_dir(root)
+        gate = state if on_part_route else (load_state(first) if first else state)
+        part_dir = directory if on_part_route else first
+        return StageScope(root, config, load_series_state(root), gate, part_dir)
+    if not on_part_route:
+        raise HTTPException(409, {
+            "code": "part_required",
+            "message": f"The {stage} stage runs for one part. Choose a part first.",
+        })
+    return StageScope(directory, config, state, state, directory)
+
+
+def _previous_part_dir(part_dir: Path) -> Path | None:
+    identifier = part_id_for_path(part_dir)
+    if identifier is None:
+        return None
+    workspaces = part_workspaces(series_root(part_dir))
+    index = next((i for i, item in enumerate(workspaces) if item.name == identifier), 0)
+    return workspaces[index - 1] if index > 0 else None
+
+
+def part_order_blocker(part_dir: Path | None, stage: str) -> str | None:
+    """Parts extract and adapt in reading order; later stages are independent.
+
+    Extraction needs the earlier parts' registry, and adaptation uses the
+    previous part's adapted ending as continuity context.
+    """
+    if part_dir is None or stage not in {"extract", "adapt"}:
+        return None
+    previous = _previous_part_dir(part_dir)
+    if previous is None:
+        return None
+    if load_state(previous).stages[stage].status != StageStatus.COMPLETE:
+        label = "extracted" if stage == "extract" else "adapted"
+        return f"The previous part must be {label} before this part."
+    return None
 
 
 def _wrap_on_event(queue: asyncio.Queue):
@@ -195,6 +276,9 @@ async def _run_stage_with_credits(
     run_id = context_fields().get("operation_id") or str(uuid.uuid4())
     attempt_id = str(uuid.uuid4())
     app = request.app if request is not None else None
+    inventory_before = (
+        cast_inventory_keys(series_root(project_dir)) if stage == "extract" else None
+    )
 
     def correlate():
         current = state.stages[stage]
@@ -286,6 +370,8 @@ async def _run_stage_with_credits(
         raise
 
     current = state.stages[stage]
+    if inventory_before is not None and current.status == StageStatus.COMPLETE:
+        reopen_cast_for_new_inventory(series_root(project_dir), inventory_before)
     outcome = (
         "failed"
         if current.status == StageStatus.FAILED
@@ -371,6 +457,7 @@ async def _run_job(
     user_id: str,
     request: Request,
     job,
+    channel_key: str | None = None,
 ) -> None:
     try:
         from ..generation_jobs import user_generation_semaphore
@@ -378,7 +465,7 @@ async def _run_job(
         async with user_generation_semaphore(request.app, user_id):
             await job
     finally:
-        queue = request.app.state.event_queues.get(pkey)
+        queue = request.app.state.event_queues.get(channel_key or pkey)
         if queue is not None:
             queue.put_nowait({"type": "pipeline_done"})
         request.app.state.running_tasks.pop(pkey, None)
@@ -396,6 +483,11 @@ def _clear_outputs_for_rerun(project_dir, stage: str) -> None:
         if stage in {"adapt", "plan"}:
             TargetArtifacts(project_dir).archive_stage_work(stage)
             return
+        if stage == "extract":
+            from novel_to_comic.series import withdraw_for_reextraction
+
+            # A part re-extracts by withdrawing only its own additions.
+            withdraw_for_reextraction(project_dir)
         stage_obj = REGISTRY.get(stage)
         if stage_obj is None:
             return
@@ -404,6 +496,14 @@ def _clear_outputs_for_rerun(project_dir, stage: str) -> None:
                 shutil.rmtree(path)
             elif path.exists():
                 path.unlink()
+
+
+def _any_part_adapted(project_dir: Path) -> bool:
+    return any(
+        TargetArtifacts(workspace).adaptation_path.exists()
+        or load_state(workspace).stages["adapt"].status == StageStatus.RUNNING
+        for workspace in part_workspaces(series_root(project_dir))
+    )
 
 
 def _require_previous_stage(state, stage: str) -> None:
@@ -436,7 +536,9 @@ async def estimate_stage_cost(
 ):
     if stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}. Valid: {STAGE_NAMES}")
-    project_dir, config, state = project
+    scope = stage_scope(request, project, stage)
+    project_dir, config, state = scope.directory, scope.config, scope.state
+    project = (project_dir, config, state)
     funding = admit_stage_action(config, stage)
     if stage == "adapt" and rerun:
         return {"stage": stage, **estimate_adaptation_restart(config, project_dir, state)}
@@ -480,11 +582,12 @@ async def _start_stage(
     queue_pages: bool = False,
     confirmed_archive_pages: int | None = None,
 ):
-    project_dir, config, state = project
     if stage is None:
         raise HTTPException(400, "stage parameter is required")
     if stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}. Valid: {STAGE_NAMES}")
+    scope = stage_scope(request, project, stage)
+    project_dir, config, state = scope.directory, scope.config, scope.state
     admit_stage_action(config, stage)
     if stage == "draw":
         from .pages import prepare_undrawn_pages
@@ -498,8 +601,16 @@ async def _start_stage(
                 "code": "draw_preflight_rejected", "message": str(exc),
             }) from exc
     pkey = project_key(user_id, project_id)
-    if project_busy(request.app, pkey):
+    # Another part's drawing never blocks this part's (or the series') work.
+    if project_busy(request.app, pkey, part_id_for_path(project_dir), series=is_series_stage(stage)):
         raise HTTPException(409, "Wait for all project jobs to finish before running a stage.")
+
+    if rerun and is_series_stage(stage) and _any_part_adapted(project_dir):
+        raise HTTPException(409, {
+            "code": "series_look_locked",
+            "message": (f"{stage.title()} can't be redone from scratch once a part has an "
+                        "adaptation; correct individual references in Cast instead."),
+        })
 
     if stage == "plan" and rerun:
         count = TargetArtifacts(project_dir).drawn_page_count()
@@ -509,8 +620,18 @@ async def _start_stage(
     if stage == "adapt":
         _require_adaptation_brief(project_dir)
 
+    order_blocker = part_order_blocker(scope.part_dir if not is_series_stage(stage) else None, stage)
+    if order_blocker:
+        raise HTTPException(409, {"code": "part_order", "message": order_blocker})
+    if stage == "extract" and rerun and part_id_for_path(project_dir) is not None:
+        from novel_to_comic.series import edit_blocker
+
+        locked = edit_blocker(project_dir, part_id_for_path(project_dir))
+        if locked:
+            raise HTTPException(409, {"code": "part_locked", "message": locked})
+
     if not rerun or stage == "adapt":
-        _require_previous_stage(state, stage)
+        _require_previous_stage(scope.gate, stage)
 
     if stage in {"cast", "adapt", "plan", "draw", "finish"}:
         from .styles import is_style_selected
@@ -525,7 +646,7 @@ async def _start_stage(
             required = estimate_stage_credit_reservation(config, project_dir, state, stage)
         assert_sufficient_credits(get_db(), user_id, required, stage=stage)
     queue = EventChannel()
-    request.app.state.event_queues[pkey] = queue
+    request.app.state.event_queues[event_key(pkey, project_dir)] = queue
     if getattr(request.app.state, "durable_queue_required", False) is True:
         admitted = _enqueue_pipeline(request.app, pkey, user_id, project_id, project_dir,
                                      config, stage, rerun=rerun, queue_pages=queue_pages)
@@ -542,7 +663,7 @@ async def _start_stage(
         request=request,
         queue_draw_pages=stage == "draw" and queue_pages,
     )
-    task = asyncio.create_task(_run_job(pkey, user_id, request, job))
+    task = asyncio.create_task(_run_job(pkey, user_id, request, job, event_key(pkey, project_dir)))
     request.app.state.running_tasks[pkey] = task
     return {"status": "started", "stage": stage}
 
@@ -609,26 +730,41 @@ async def event_stream(
     user_id: str = Depends(get_current_user),
 ):
     pkey = project_key(user_id, project_id)
-    channel = request.app.state.event_queues.get(pkey)
-    if channel is None:
+    own_key = event_key(pkey, part_id=route_part_id(request))
+    # A part's view also follows series work (Style, Cast) on the series stream.
+    keys = [own_key] if own_key == pkey else [own_key, pkey]
+    channels = {key: request.app.state.event_queues.get(key) for key in keys}
+    channels = {key: channel for key, channel in channels.items() if channel is not None}
+    if not channels:
         raise HTTPException(404, "No active run for this project; reload project status.")
-    queue = channel.subscribe()
+    queues = {key: channel.subscribe() for key, channel in channels.items()}
 
     async def generator():
+        waiting: dict[asyncio.Future, str] = {}
         try:
             while True:
                 if await request.is_disconnected():
                     break
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=30)
-                except asyncio.TimeoutError:
+                for key, queue in queues.items():
+                    if key not in waiting.values():
+                        waiting[asyncio.ensure_future(queue.get())] = key
+                done, _ = await asyncio.wait(waiting, timeout=30, return_when=asyncio.FIRST_COMPLETED)
+                if not done:
                     yield ": keepalive\n\n"
                     continue
-                yield f"data: {json.dumps(event)}\n\n"
-                if event.get("type") == "pipeline_done":
+                finished = False
+                for future in done:
+                    key = waiting.pop(future)
+                    event = future.result()
+                    yield f"data: {json.dumps(event)}\n\n"
+                    finished = finished or (event.get("type") == "pipeline_done" and (key == own_key or len(queues) == 1))
+                if finished:
                     break
         finally:
-            channel.unsubscribe(queue)
+            for future in waiting:
+                future.cancel()
+            for key, queue in queues.items():
+                channels[key].unsubscribe(queue)
 
     return StreamingResponse(generator(), media_type="text/event-stream")
 
@@ -660,17 +796,25 @@ def get_generation_jobs(
     user_id: str = Depends(get_current_user),
 ):
     pkey = project_key(user_id, project_id)
+    # A part sees its own jobs plus series work (Style, Cast); the series
+    # route sees every job in the project.
+    part = route_part_id(request)
+
+    def visible(job_part: str | None) -> bool:
+        return part is None or job_part in {None, part}
+
     jobs = [
         job
         for job in request.app.state.generation_jobs.values()
         if job.project_name == pkey and (ids is None or job.id in ids)
+        and visible(job_part_id(job))
     ]
     jobs.sort(key=lambda job: job.sequence)
     from ..generation_jobs import recovered_generation_jobs
 
     recovered = [
         job for job in recovered_generation_jobs(request.app, pkey)
-        if ids is None or job["id"] in ids
+        if (ids is None or job["id"] in ids) and visible(job.get("part_id"))
     ]
     payloads = recovered + [generation_job_payload(request.app, job) for job in jobs]
     _mark_current_page_jobs(TargetArtifacts(project[0]), payloads, {
@@ -729,6 +873,41 @@ def _mark_current_page_jobs(
             job["is_current_page"] = payload.get("request_sha256") in current_requests[page_number]
 
 
+def _ready_for_adapt(
+    part_dir: Path, part_state: PipelineState | None = None, *, approving: str | None = None,
+) -> bool:
+    """Whether a part can start Adapt once the ``approving`` stage is approved."""
+    part_state = part_state or load_state(part_dir)
+    approved = {
+        name: approving == name or part_state.stages[name].status == StageStatus.COMPLETE
+        for name in ("brief", "cast")
+    }
+    return (
+        approved["brief"]
+        and approved["cast"]
+        and part_state.stages["adapt"].status == StageStatus.PENDING
+        and part_order_blocker(part_dir, "adapt") is None
+    )
+
+
+def _part_to_adapt_after(scope: StageScope, stage: str) -> Path | None:
+    """The part whose Adapt this approval unblocks, if any.
+
+    Approving a part's Brief starts its Adapt when Cast is already approved.
+    Approving Cast starts the addressed part, or else the earliest part that
+    is waiting, so parts keep adapting in reading order.
+    """
+    if stage == "brief" and scope.part_dir is not None:
+        ready = _ready_for_adapt(scope.part_dir, scope.gate, approving=stage)
+        return scope.part_dir if ready else None
+    if stage == "cast":
+        if scope.part_dir is not None and _ready_for_adapt(scope.part_dir, scope.gate, approving=stage):
+            return scope.part_dir
+        return next((part for part in part_workspaces(scope.directory)
+                     if part != scope.part_dir and _ready_for_adapt(part, approving=stage)), None)
+    return None
+
+
 @router.post("/approve/{stage}")
 async def approve(
     stage: str,
@@ -737,9 +916,10 @@ async def approve(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    project_dir, config, state = project
     if stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}")
+    scope = stage_scope(request, project, stage)
+    project_dir, config, state = scope.directory, scope.config, scope.state
     if stage == "cast":
         from novel_to_comic.stages.s3_cast import cast_approval_blocker
         blocker = cast_approval_blocker(config, project_dir, state.stages["cast"])
@@ -772,17 +952,8 @@ async def approve(
                     "issue_ids": summary.blocking_issue_ids,
                 },
             )
-    should_start_adapt = (
-        state.stages["adapt"].status == StageStatus.PENDING
-        and (
-            stage == "cast"
-            or (
-                stage == "brief"
-                and state.stages["cast"].status == StageStatus.COMPLETE
-            )
-        )
-    )
-    if should_start_adapt:
+    adapt_part = _part_to_adapt_after(scope, stage)
+    if adapt_part is not None:
         admit_stage_action(config, "adapt")
     try:
         if stage == "brief":
@@ -792,7 +963,9 @@ async def approve(
                 approve_brief(brief, expected_revision=brief.revision)
             )
         elif stage == "cast":
-            require_approved_brief(TargetArtifacts(project_dir).read_brief())
+            if scope.part_dir is None:
+                raise ValueError("Approve a part's Brief before approving Cast.")
+            require_approved_brief(TargetArtifacts(scope.part_dir).read_brief())
         approve_stage(state, stage)
     except (ArtifactMissing, ValueError, FileNotFoundError) as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -810,28 +983,29 @@ async def approve(
                           properties={"stage": "draw", "scope": "edition", "run_id": current.run_id,
                                       "attempt_id": current.attempt_id})
     response = {"status": "approved", "stage": stage}
-    if should_start_adapt:
+    if adapt_part is not None:
         pkey = project_key(user_id, project_id)
         running = request.app.state.running_tasks.get(pkey)
         if running is not None and not running.done():
             raise HTTPException(409, "A stage is already running for this project")
         queue = EventChannel()
-        request.app.state.event_queues[pkey] = queue
+        request.app.state.event_queues[event_key(pkey, adapt_part)] = queue
         if getattr(request.app.state, "durable_queue_required", False) is True:
-            _enqueue_pipeline(request.app, pkey, user_id, project_id, project_dir, config, "adapt")
+            _enqueue_pipeline(request.app, pkey, user_id, project_id, adapt_part, config, "adapt")
         else:
             job = _run_stage_with_credits(
                 "adapt",
                 config,
-                project_dir,
-                state,
+                adapt_part,
+                load_state(adapt_part),
                 queue,
                 user_id,
                 project_id,
             )
-            task = asyncio.create_task(_run_job(pkey, user_id, request, job))
+            task = asyncio.create_task(_run_job(pkey, user_id, request, job, event_key(pkey, adapt_part)))
             request.app.state.running_tasks[pkey] = task
         response["auto_started"] = "adapt"
+        response["auto_started_part"] = adapt_part.name
     return response
 
 
@@ -841,10 +1015,12 @@ def reset_stage(
     project_id: str,
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
+    request: Request = None,
 ):
-    project_dir, _config, state = project
     if stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}")
+    scope = stage_scope(request, project, stage)
+    project_dir, state = scope.directory, scope.state
     if state.stages[stage].status != StageStatus.FAILED:
         raise HTTPException(409, f"Stage '{stage}' is not failed.")
     reset = [stage]
@@ -859,10 +1035,11 @@ def get_stage_error(
     stage: str,
     project_id: str,
     project=Depends(get_project),
+    request: Request = None,
 ):
-    _project_dir, _config, state = project
     if stage not in STAGE_NAMES:
         raise HTTPException(400, f"Unknown stage: {stage}")
+    state = stage_scope(request, project, stage).state
     stage_state = state.stages[stage]
     if stage_state.status != StageStatus.FAILED:
         raise HTTPException(404, f"Stage '{stage}' is not failed.")

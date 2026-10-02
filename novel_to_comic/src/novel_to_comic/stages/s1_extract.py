@@ -21,7 +21,8 @@ from novel_to_comic.clients.structured_call import (
     generate_validated_json,
 )
 from novel_to_comic.config import Config
-from novel_to_comic.extraction_sections import estimate_sections, extract_sections
+from novel_to_comic.extraction_delta import compute_delta
+from novel_to_comic.extraction_sections import apply_exclusions, estimate_sections, extract_sections
 from novel_to_comic.input_limits import read_source
 from novel_to_comic.models.story_bible import StoryBible
 from novel_to_comic.source_extraction import (
@@ -30,8 +31,10 @@ from novel_to_comic.source_extraction import (
     produce_source_document,
 )
 from novel_to_comic.stage_runtime import StageRuntime
+from novel_to_comic.series import next_unit_ordinal, write_extraction_delta
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.text_utils import clean, has_offscreen_marker
+from novel_to_comic.workspace import FIRST_PART_ID, part_ordinal, workspace_part_id
 from novel_to_comic.usage import ApiResult, estimate_text_cost, estimate_token_count
 
 console = Console()
@@ -649,18 +652,38 @@ async def _extract_with_retry(
     )
 
 
+def _part_source(project_dir: Path, state) -> tuple[str | None, int, str | bytes]:
+    """The part being extracted, its number, and its exact source text.
+
+    A part workspace reads its own recorded text; a single-directory project
+    reads the uploaded novel as before.
+    """
+    part = workspace_part_id(project_dir)
+    target = TargetArtifacts(project_dir)
+    if part is not None and target.part_manifest_path.exists():
+        return part, part_ordinal(part), target.read_part_text(part)
+    novel_path = Path(state.novel_path)
+    if not novel_path.is_absolute():
+        novel_path = project_dir / novel_path
+    console.print(f"[bold]Reading novel:[/bold] {novel_path}")
+    return part, part_ordinal(part) if part else 1, _read_novel(novel_path)
+
+
 async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBible:
-    """Execute Stage 1: Extract Story Bible from the novel."""
+    """Execute Stage 1: Extract one part's Story Bible additions.
+
+    The first part creates the Story Bible. A later part starts from the
+    series Story Bible, so recurring characters, places and props keep their
+    identities; its scenes, acts and new entities are appended and recorded
+    as the part's extraction delta.
+    """
     with ctx.execute(total=4):
-        novel_path = Path(ctx.state.novel_path)
-        if not novel_path.is_absolute():
-            novel_path = project_dir / novel_path
-        console.print(f"[bold]Reading novel:[/bold] {novel_path}")
         # SSE logs are rendered directly in the production UI. Keep the
         # resolved path in server diagnostics above, but never expose the
         # host machine's filesystem layout to the user.
         ctx.log("Reading source text...")
-        novel_text = _read_novel(novel_path)
+        part, part_number, novel_text = _part_source(project_dir, ctx.state)
+        part_key = part or FIRST_PART_ID
         if isinstance(novel_text, bytes):
             raise ValueError(
                 "Image-based (scanned) PDFs are not supported. The LiteLLM gateway does not "
@@ -674,8 +697,13 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
 
         system_prompt = PROMPT_PATH.read_text()
         content_for_cost = novel_text if isinstance(novel_text, str) else ""
-        sectioned = len(novel_text) > config.extraction_chunk_chars
-        estimated = estimate_sections(config, novel_text, system_prompt) if sectioned else estimate_text_cost(
+        registry = artifacts.read_story_bible(project_dir) if part_number > 1 else None
+        first_ordinal = next_unit_ordinal(project_dir) if part_number > 1 else 1
+        # A later part always extracts against the series registry.
+        sectioned = registry is not None or len(novel_text) > config.extraction_chunk_chars
+        estimated = estimate_sections(
+            config, novel_text, system_prompt, registry=registry,
+        ) if sectioned else estimate_text_cost(
             config.effective_extraction_model(),
             system_prompt + "\n" + content_for_cost,
             output_chars=estimate_story_bible_output_chars(content_for_cost),
@@ -687,11 +715,18 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
         ctx.log(f"Calling {config.effective_extraction_model()}...")
         extract_result = None
         if sectioned:
-            story_bible = await extract_sections(config, project_dir, ctx, novel_text, system_prompt)
+            story_bible = await extract_sections(
+                config, project_dir, ctx, novel_text, system_prompt,
+                registry=registry, part_id=part_key, part_number=part_number,
+                first_ordinal=first_ordinal,
+            )
         else:
             extract_result = await _extract_with_retry(config, system_prompt, novel_text)
             story_bible = extract_result.value
-        unresolved = align_scene_anchors(story_bible, novel_text)
+        # Only this part's scenes are anchored in this part's text.
+        unresolved = align_scene_openings(
+            [scene for scene in story_bible.scenes if scene.part_id == part_key], novel_text,
+        )
         if sectioned and unresolved:
             raise ValueError("Section source boundaries failed validation: " + ", ".join(unresolved))
         if unresolved:
@@ -721,13 +756,24 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
             ctx.save()
             ctx.progress(3, 4)
 
+        story_bible, suppressed = apply_exclusions(story_bible, registry)
+        if suppressed:
+            ctx.log("Left out previously removed: " + ", ".join(suppressed), level="dim")
         story_bible = _text_only_damage_states(story_bible)
+        if registry is not None:
+            story_bible.revision = registry.revision + 1
         artifacts.write_story_bible(project_dir, story_bible)
         produce_source_document(
             TargetArtifacts(project_dir),
             novel_text,
             story_bible,
+            part_id=part_key if part else None,
+            first_ordinal=first_ordinal,
         )
+        if part is not None:
+            write_extraction_delta(project_dir, compute_delta(
+                registry, story_bible, part_key, suppressed_names=suppressed,
+            ))
 
         if extract_result is not None:
             for retry_usage in extract_result.additional_usage:
@@ -746,21 +792,30 @@ from novel_to_comic.state import PipelineState  # noqa: E402
 
 
 def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> float:
-    novel_path = Path(state.novel_path)
-    if not novel_path.is_absolute():
-        novel_path = project_dir / novel_path
     try:
-        novel_text = read_source(novel_path)
+        _part, part_number, novel_text = _part_source(project_dir, state)
     except Exception:
+        part_number, novel_text = 1, ""
+    if not isinstance(novel_text, str):
         novel_text = ""
-    if len(novel_text) > config.extraction_chunk_chars:
-        return estimate_sections(config, novel_text, PROMPT_PATH.read_text())
+    registry = artifacts.read_story_bible_safe(project_dir) if part_number > 1 else None
+    if registry is not None or len(novel_text) > config.extraction_chunk_chars:
+        return estimate_sections(config, novel_text, PROMPT_PATH.read_text(), registry=registry)
     input_payload: str | int = PROMPT_PATH.read_text() + "\n" + novel_text
     return estimate_text_cost(
         config.effective_extraction_model(),
         input_payload,
         output_chars=estimate_story_bible_output_chars(novel_text),
     )
+
+
+def _clean_paths(directory: Path) -> list[Path]:
+    # A part's Story Bible additions are withdrawn through its extraction
+    # delta (see series.withdraw_for_reextraction); the series Story Bible
+    # itself is never deleted from a part.
+    if workspace_part_id(directory) is not None:
+        return clean_cascade(directory, "source")
+    return [artifacts.story_bible_path(directory), *clean_cascade(directory, "source")]
 
 
 STAGE = Stage(
@@ -770,9 +825,6 @@ STAGE = Stage(
         artifacts.story_bible_path(d),
         d / "source" / "source.json",
     ],
-    clean_paths=lambda d: [
-        artifacts.story_bible_path(d),
-        *clean_cascade(d, "source"),
-    ],
+    clean_paths=_clean_paths,
     estimate_cost=estimate_cost,
 )

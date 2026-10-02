@@ -46,7 +46,7 @@ def test_design_staleness_is_explicit(tmp_path, change):
         config.style_template += " new style"
     else:
         bible.characters[0].visual_anchor += ", red hair"
-    with pytest.raises(ValueError, match="stale"):
+    with pytest.raises(ValueError, match="missing for Gustaf"):
         design.read_design(config, tmp_path, bible)
 
 
@@ -346,3 +346,46 @@ def test_missing_cast_source_is_a_blocker_not_a_status_read_failure(tmp_path):
     from novel_to_comic.config import Config
     from novel_to_comic.state import StageState
     assert "source artifacts" in s3_cast.cast_approval_blocker(Config(), tmp_path, StageState())
+
+
+def test_a_new_character_is_designed_beside_the_established_cast(tmp_path):
+    config, bible, plan = _cast(tmp_path)
+    bible.characters.append(bible.characters[0].model_copy(update={
+        "id": "cook", "name": "Cook", "visual_anchor": "adult female, red apron"}))
+    requests = []
+
+    async def respond(**kwargs):
+        requests.append(json.loads(kwargs["user_content"]))
+        return ApiResult(value={"characters": [{
+            "character_id": "cook", "face": "round face", "hair": "bun", "silhouette": "short",
+            "posture": "busy", "wardrobe": "apron", "contrast": "Unlike Gustaf and the Doctor"}]})
+
+    with patch.object(design.text, "generate_json", side_effect=respond):
+        updated = asyncio.run(design.ensure_design(config, tmp_path, bible, MagicMock()))
+
+    assert [c["character_id"] for c in requests[0]["characters"]] == ["cook"]
+    assert {d["character_id"] for d in requests[0]["established"]} == {"sailor", "doctor"}
+    assert updated.characters[:2] == plan.characters
+    assert updated.fingerprints["sailor"] == plan.fingerprints["sailor"]
+    assert design.read_design(config, tmp_path, bible).characters[2].face == "round face"
+
+
+def test_renaming_or_relating_a_character_keeps_its_design(tmp_path):
+    config, bible, plan = _cast(tmp_path)
+    bible.characters[0].name = "Gustaf the Elder"
+    bible.characters[0].relationships = [{"character_id": "doctor", "relationship": "friend"}]
+    assert design.read_design(config, tmp_path, bible).characters == plan.characters
+
+
+def test_a_current_whole_roster_plan_is_converted_once_without_changing_designs(tmp_path):
+    config, bible, plan = _cast(tmp_path)
+    path = TargetArtifacts(tmp_path).cast_design_path
+    earlier = {"schema_version": 1, "source_sha256": design._digest(design.design_context(config, bible)),
+               "characters": [c.model_dump() for c in plan.characters]}
+    path.write_text(json.dumps(earlier))
+
+    assert design.read_design(config, tmp_path, bible).characters == plan.characters
+    assert json.loads(path.read_text())["schema_version"] == 2
+
+    path.write_text(json.dumps({**earlier, "source_sha256": "0" * 64}))
+    assert design.current_designs(config, tmp_path, bible) == {}

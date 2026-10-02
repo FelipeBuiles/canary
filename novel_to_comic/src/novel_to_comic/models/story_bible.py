@@ -201,3 +201,27 @@ def story_bible_context(bible: StoryBible) -> dict:
     """
 
     return bible.model_dump(mode="json", exclude=_EDITOR_BOOKKEEPING)
+
+
+def part_story_bible(bible: StoryBible, part_id: str) -> StoryBible:
+    """The Story Bible as one part's adaptation sees it.
+
+    Only the part's scenes and acts, the characters on its rosters and the
+    places it uses are in view, so a part never adapts another part's scenes
+    or stages a character who is only mentioned. Props stay available, and
+    entities keep their full appearance catalogs and timelines so states
+    carried in from earlier parts remain visible.
+    """
+
+    scenes = [scene for scene in bible.scenes if scene.part_id == part_id]
+    rostered = {cid for scene in scenes for cid in scene.character_ids}
+    places = {scene.location_id for scene in scenes}
+    view = bible.model_copy(deep=True)
+    view.scenes = [scene.model_copy(deep=True) for scene in scenes]
+    view.total_scenes = len(scenes)
+    view.narrative_arcs = [arc for arc in view.narrative_arcs if arc.part_id == part_id]
+    view.characters = [c for c in view.characters if c.id in rostered]
+    for character in view.characters:
+        character.relationships = [rel for rel in character.relationships if rel.character_id in rostered]
+    view.locations = [loc for loc in view.locations if loc.id in places]
+    return view

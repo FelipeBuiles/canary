@@ -248,13 +248,13 @@ def test_start_draw_packs_references_for_both_entry_paths(tmp_path, monkeypatch,
     monkeypatch.setattr(TargetArtifacts, "read_plan", lambda self: SimpleNamespace(pages=[page]))
     monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
     monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
-    monkeypatch.setattr(pipeline, "project_busy", lambda *args: False)
+    monkeypatch.setattr(pipeline, "project_busy", lambda *args, **kwargs: False)
     monkeypatch.setattr(pipeline, "_require_previous_stage", lambda *args: None)
     monkeypatch.setattr(styles, "is_style_selected", lambda *args: True)
     run_stage = AsyncMock()
     monkeypatch.setattr(pipeline, "_run_stage_with_credits", run_stage)
 
-    async def run_job(pkey, user_id, request, job):
+    async def run_job(pkey, user_id, request, job, channel=None):
         await job
 
     monkeypatch.setattr(pipeline, "_run_job", run_job)

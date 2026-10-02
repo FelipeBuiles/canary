@@ -148,7 +148,7 @@ def test_a_page_render_revalidates_across_edition_restarts(tmp_path: Path):
     render.parent.mkdir(parents=True)
     render.write_bytes(b"page-one-render")
 
-    response = client.get("/api/projects/demo/pages/1/renders/1")
+    response = client.get("/api/projects/demo/parts/part_0001/pages/1/renders/1")
 
     assert response.status_code == 200
     assert response.content == b"page-one-render"
@@ -165,7 +165,7 @@ def test_a_page_render_preview_is_a_small_revalidated_webp(tmp_path: Path):
     Image.new("RGB", (1696, 2528), "navy").save(source, "PNG")
     render.write_bytes(source.getvalue())
 
-    response = client.get("/api/projects/demo/pages/1/renders/1/preview/thumbnail")
+    response = client.get("/api/projects/demo/parts/part_0001/pages/1/renders/1/preview/thumbnail")
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/webp"
@@ -183,7 +183,7 @@ def test_named_project_routes_are_not_shadowed_by_the_asset_reader(tmp_path: Pat
     # that route unreachable. `pages` has no artifacts here, so a 404 from the
     # pages handler (not the file reader) is the signal we want.
     client, _project_dir = _client(tmp_path)
-    response = client.get("/api/projects/demo/pages")
+    response = client.get("/api/projects/demo/parts/part_0001/pages")
     assert response.json()["detail"] != "File not found"
 
 
@@ -240,7 +240,7 @@ def test_pages_route_rejects_legacy_hash_and_requests_replanning(
         )
     )
 
-    response = client.get("/api/projects/demo/pages")
+    response = client.get("/api/projects/demo/parts/part_0001/pages")
 
     assert response.status_code == 409
     assert "Rerun Plan" in response.text
@@ -251,7 +251,7 @@ def test_restarted_edition_serves_new_art_at_reused_revision(tmp_path: Path):
 
     client, project_dir = _client(tmp_path)
     target = TargetArtifacts(project_dir)
-    url = "/api/projects/demo/pages/1/renders/1/preview/thumbnail?delivery=2"
+    url = "/api/projects/demo/parts/part_0001/pages/1/renders/1/preview/thumbnail?delivery=2"
 
     def write_image(color):
         render = target.render_path(1, 1)

@@ -523,7 +523,7 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
         return exception_snapshot(app)
 
     # Routers
-    app.include_router(publications.router, prefix="/api/projects/{project_id}", tags=["publications"])
+    app.include_router(publications.router, prefix="/api/projects/{project_id}/parts/{part_id}", tags=["publications"])
     app.include_router(publications.public_router, prefix="/api/public/books", tags=["publications"])
     app.include_router(publications.ops_router, prefix="/api/ops/publications", tags=["publications"])
     app.include_router(account_models.router, prefix="/api/account", tags=["account"])
@@ -543,35 +543,24 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app.include_router(feedback.router, prefix="/api/feedback", tags=["feedback"])
     app.include_router(events.router, prefix="/api/events", tags=["analytics"])
     app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
-    app.include_router(
-        pipeline.router,
-        prefix="/api/projects/{project_id}",
-        tags=["pipeline"],
-    )
-    app.include_router(
-        pages.router,
-        prefix="/api/projects/{project_id}",
-        tags=["pages"],
-    )
-    app.include_router(
-        export.router,
-        prefix="/api/projects/{project_id}/export",
-        tags=["export"],
-    )
+    from .routers import parts as parts_router
+    from .routers import story_bible as story_bible_router
+    app.include_router(parts_router.router, prefix="/api/projects/{project_id}", tags=["parts"])
+    app.include_router(story_bible_router.router, prefix="/api/projects/{project_id}", tags=["story-bible"])
+    # Page work belongs to a part workspace; Look work to the series root.
+    # Pipeline, stage artifacts and files serve both: series routes act on the
+    # root (Style, Cast, Story Bible), part routes on one part's workspace.
+    part_prefix = "/api/projects/{project_id}/parts/{part_id}"
+    for prefix in ("/api/projects/{project_id}", part_prefix):
+        app.include_router(pipeline.router, prefix=prefix, tags=["pipeline"])
+        app.include_router(stages.router, prefix=prefix, tags=["stages"])
+    app.include_router(pages.router, prefix=part_prefix, tags=["pages"])
+    app.include_router(export.router, prefix=f"{part_prefix}/export", tags=["export"])
+    app.include_router(editorial.router, prefix=part_prefix, tags=["stages"])
     app.include_router(
         config.router,
         prefix="/api/projects/{project_id}/config",
         tags=["config"],
-    )
-    app.include_router(
-        stages.router,
-        prefix="/api/projects/{project_id}",
-        tags=["stages"],
-    )
-    app.include_router(
-        editorial.router,
-        prefix="/api/projects/{project_id}",
-        tags=["stages"],
     )
     app.include_router(
         styles.router,
@@ -585,6 +574,7 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     )
     # Registered last: the asset reader owns a greedy `{file_path:path}` route,
     # so every named project route must be matched before it is considered.
+    app.include_router(files.router, prefix=part_prefix, tags=["files"])
     app.include_router(
         files.router,
         prefix="/api/projects/{project_id}",

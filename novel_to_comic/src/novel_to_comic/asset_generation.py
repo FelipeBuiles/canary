@@ -346,15 +346,41 @@ def held_asset_failure(output_path: Path, request: NonPanelRequest) -> dict[str,
 
 
 def asset_matches_request(output_path: Path, request: NonPanelRequest) -> bool:
-    """Return true only when an existing result has the same frozen identity."""
+    """Return true when an existing result has the same frozen identity.
+
+    The author can also explicitly keep an image after editing its entity's
+    description; that acceptance is recorded beside the provenance (never in
+    place of it) and counts as current for exactly the accepted request.
+    """
     if not output_path.exists():
         return False
     try:
         meta = artifacts.read_asset_meta(output_path)
     except Exception:
         return False
-    provenance = meta.get("provenance") if isinstance(meta, dict) else None
-    return isinstance(provenance, dict) and provenance.get("execution_fingerprint") == request.wire.execution_fingerprint
+    if not isinstance(meta, dict):
+        return False
+    fingerprint = request.wire.execution_fingerprint
+    provenance = meta.get("provenance")
+    if isinstance(provenance, dict) and provenance.get("execution_fingerprint") == fingerprint:
+        return True
+    return any(isinstance(item, dict) and item.get("execution_fingerprint") == fingerprint
+               for item in meta.get("accepted_requests", ()))
+
+
+def accept_existing_asset(output_path: Path, request: NonPanelRequest, *, reason: str) -> None:
+    """Record the author's decision to keep an image for a changed request."""
+    from datetime import UTC, datetime
+
+    meta = artifacts.read_asset_meta(output_path)
+    accepted = [item for item in meta.get("accepted_requests", ())
+                if item.get("execution_fingerprint") != request.wire.execution_fingerprint]
+    accepted.append({
+        "execution_fingerprint": request.wire.execution_fingerprint,
+        "accepted_at": datetime.now(UTC).isoformat(),
+        "reason": reason,
+    })
+    artifacts.write_asset_meta(output_path, {**meta, "accepted_requests": accepted})
 
 
 def persist_non_panel_provenance(
