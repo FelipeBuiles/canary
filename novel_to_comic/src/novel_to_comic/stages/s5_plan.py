@@ -15,7 +15,7 @@ from novel_to_comic.page_planning import (
     estimate_book_plan_cost,
     produce_book_plan,
 )
-from novel_to_comic.models.story_bible import require_visual_anchors
+from novel_to_comic.models.story_bible import MissingVisualAnchor, blank_visual_anchors
 from novel_to_comic.page_drawing import ApprovedReferenceFile
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.state import PipelineState
@@ -38,7 +38,8 @@ def reference_id(entity_id: str, appearance_state_id: str | None = None) -> str:
 
 def approved_visual_inventory(project_dir: Path) -> ApprovedVisualReferenceInventory:
     bible = artifacts.read_story_bible(project_dir)
-    require_visual_anchors(bible)
+    if blank := blank_visual_anchors(bible):
+        raise MissingVisualAnchor(blank)
     references = []
     kinds = (("character", bible.characters), ("location", bible.locations), ("prop", bible.props))
     for kind, entities in kinds:
