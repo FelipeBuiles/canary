@@ -30,9 +30,24 @@ def _load_verifier() -> ModuleType:
     return module
 
 
-
-def test_verifier_accepts_matching_healthy_release(monkeypatch, capsys) -> None:
+@pytest.fixture
+def healthy_verifier(monkeypatch):
     verifier = _load_verifier()
+    monkeypatch.setenv("SCENEWRIGHT_APP_URL", "https://example.test")
+    monkeypatch.setenv("EXPECTED_CANARY_VERSION", "release-sha")
+    monkeypatch.setenv("CANARY_OPS_TOKEN", "operator-secret")
+    monkeypatch.setattr(verifier, "_ops_json", lambda *_args: {"draining": False})
+    monkeypatch.setattr(verifier, "_get_json", lambda _origin, path: {
+        "/api/version": ({"git_sha": "release-sha", "build_timestamp": "2026-10-01T00:00:00Z"}, {}),
+        "/api/health": ({"status": "ok"}, {name: "present" for name in verifier.REQUIRED_SECURITY_HEADERS}),
+        "/api/health/ready": (_production_readiness(), {}),
+    }[path])
+    return verifier
+
+
+
+def test_verifier_accepts_matching_healthy_release(monkeypatch, capsys, healthy_verifier) -> None:
+    verifier = healthy_verifier
     headers = {name: "present" for name in verifier.REQUIRED_SECURITY_HEADERS}
     responses = iter(
         [
@@ -57,6 +72,89 @@ def test_verifier_accepts_matching_healthy_release(monkeypatch, capsys) -> None:
     evidence = json.loads(capsys.readouterr().out)
     assert evidence["status"] == "passed"
     assert evidence["security_headers"]["missing"] == []
+    assert evidence["admission"]["draining"] is False
+
+
+@pytest.mark.parametrize("admission", [{"draining": True}, {}])
+def test_verifier_rejects_paused_or_unknown_admission(monkeypatch, capsys, healthy_verifier, admission):
+    monkeypatch.setattr(healthy_verifier, "_ops_json", lambda *_args: admission)
+    assert healthy_verifier.main() == 1
+    assert "generation admission is still paused" in capsys.readouterr().out
+
+
+def test_resume_verifies_release_before_reopening_and_checks_admission(monkeypatch, healthy_verifier):
+    calls = []
+    public = healthy_verifier._get_json
+
+    def get_json(origin, path):
+        calls.append((path, "GET"))
+        return public(origin, path)
+
+    def ops_json(origin, path, token, method="GET"):
+        assert token == "operator-secret"
+        calls.append((path, method))
+        return {"draining": False}
+
+    monkeypatch.setattr(healthy_verifier, "_get_json", get_json)
+    monkeypatch.setattr(healthy_verifier, "_ops_json", ops_json)
+    assert healthy_verifier.main(resume=True) == 0
+    assert calls == [
+        ("/api/version", "GET"), ("/api/health", "GET"),
+        ("/api/health/ready", "GET"), ("/api/health", "GET"),
+        ("/api/ops/resume", "POST"), ("/api/ops/deployment-status", "GET"),
+    ]
+
+
+@pytest.mark.parametrize("failure", ["wrong_release", "dependency", "security_headers", "missing_sha", "missing_token"])
+def test_resume_never_runs_when_release_checks_fail(monkeypatch, healthy_verifier, failure):
+    public = healthy_verifier._get_json
+
+    def get_json(origin, path):
+        payload, headers = public(origin, path)
+        if failure == "wrong_release" and path == "/api/version":
+            payload = {**payload, "git_sha": "old-release"}
+        if failure == "dependency" and path == "/api/health/ready":
+            payload = {**payload, "checks": {}}
+        if failure == "security_headers":
+            headers = {}
+        return payload, headers
+
+    def no_ops(*_args):
+        pytest.fail("Failed verification must not reopen admission")
+
+    monkeypatch.setattr(healthy_verifier, "_get_json", get_json)
+    monkeypatch.setattr(healthy_verifier, "_ops_json", no_ops)
+    if failure == "missing_sha":
+        monkeypatch.delenv("EXPECTED_CANARY_VERSION")
+    if failure == "missing_token":
+        monkeypatch.delenv("CANARY_OPS_TOKEN")
+    assert healthy_verifier.main(resume=True) == 1
+
+
+@pytest.mark.parametrize("failure", ["resume_denied", "still_draining", "resume_not_confirmed"])
+def test_resume_failure_cannot_report_success(monkeypatch, healthy_verifier, failure):
+    def ops_json(origin, path, token, method="GET"):
+        if failure == "resume_denied":
+            raise healthy_verifier.urllib.error.HTTPError(origin + path, 503, "Not ready", {}, None)
+        return {"draining": failure == "resume_not_confirmed" or path.endswith("deployment-status")}
+
+    monkeypatch.setattr(healthy_verifier, "_ops_json", ops_json)
+    assert healthy_verifier.main(resume=True) == 1
+
+
+def test_ci_verifies_then_resumes_with_the_expected_release_and_ops_auth():
+    import yaml
+
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text())
+    steps = workflow["jobs"]["deploy"]["steps"]
+    deploy = next(i for i, step in enumerate(steps) if step.get("name") == "Deploy exact release image")
+    verify = next(i for i, step in enumerate(steps) if step.get("name") == "Verify deployed release")
+    record = next(i for i, step in enumerate(steps) if step.get("name") == "Record deployed release")
+    assert deploy < verify < record
+    assert steps[verify]["run"] == "python scripts/verify_deployment.py --resume"
+    assert steps[verify]["env"]["EXPECTED_CANARY_VERSION"] == "${{ github.sha }}"
+    assert steps[verify]["env"]["CANARY_OPS_TOKEN"] == "${{ secrets.CANARY_OPS_TOKEN }}"
+    assert "if" not in steps[verify]
 
 
 def test_verifier_rejects_wrong_release_and_missing_headers(

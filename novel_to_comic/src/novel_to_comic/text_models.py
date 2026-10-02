@@ -62,6 +62,13 @@ TEXT_MODELS = (
               token_limit_field="max_tokens"),
     TextModel("deepseek-v4.1-flash", "DeepSeek V4.1 Flash", "Together AI", "together_ai",
               token_limit_field="max_tokens"),
+    # Gemini API route. Thinking cannot be disabled and shares maxOutputTokens;
+    # LiteLLM maps effort to thinkingLevel (medium only for 3.x Flash and 3.1
+    # Pro, otherwise high). Gemini 3 guidance is to leave temperature at default.
+    TextModel("gemini-3.8-flash", "Gemini 3.8 Flash", "Google", "gemini",
+              temperature=False, effort="medium",
+              thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
+              max_output_tokens=65_536),
 )
 TEXT_MODEL_BY_ID = {model.id: model for model in TEXT_MODELS}
 # Mock and test aliases outside the catalog get the plain OpenAI shape.

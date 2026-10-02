@@ -25,7 +25,9 @@ def test_extract_estimate_for_typical_project_stays_in_sane_range(
 
     estimate = estimate_stage_credit_breakdown(config, tmp_path, state, "extract")
 
-    assert estimate["estimate_credits"] in range(6, 61)
+    # Gemini 3.8 Flash thinking cannot be disabled; its 4K-token thinking
+    # allowance per call lifts this from ~60 to ~88 credits.
+    assert estimate["estimate_credits"] in range(6, 101)
 
 
 def test_credit_packages_match_recommended_pricing():

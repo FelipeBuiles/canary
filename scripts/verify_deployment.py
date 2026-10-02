@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import urllib.error
@@ -31,13 +32,28 @@ def _get_json(origin: str, path: str) -> tuple[dict[str, Any], Any]:
         return payload, response.headers
 
 
-def main() -> int:
+def _ops_json(origin: str, path: str, token: str, method: str = "GET") -> dict[str, Any]:
+    request = urllib.request.Request(
+        f"{origin}{path}",
+        headers={
+            "User-Agent": DEPLOYMENT_VERIFIER_USER_AGENT,
+            "X-Canary-Ops-Token": token,
+        },
+        method=method,
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return json.load(response)
+
+
+def main(*, resume: bool = False) -> int:
     origin = os.environ.get(
         "SCENEWRIGHT_APP_URL", "https://canary-web.fly.dev"
     ).rstrip("/")
     expected_sha = os.environ.get("EXPECTED_CANARY_VERSION", "").strip()
     failures: list[str] = []
     evidence: dict[str, Any] = {"origin": origin}
+    if resume and not expected_sha:
+        failures.append("EXPECTED_CANARY_VERSION is required before resuming generation")
 
     try:
         version, _ = _get_json(origin, "/api/version")
@@ -87,6 +103,23 @@ def main() -> int:
             failures.append(
                 "required security headers missing: " + ", ".join(missing_headers)
             )
+        # A persisted deployment drain survives replacement of the process.
+        # Reopen only after the exact release and all public checks pass; never
+        # run this as unconditional cleanup for a failed/cancelled deployment.
+        if not failures:
+            token = os.environ.get("CANARY_OPS_TOKEN", "").strip()
+            if not token:
+                failures.append("CANARY_OPS_TOKEN is required to verify generation admission")
+            else:
+                if resume:
+                    resumed = _ops_json(origin, "/api/ops/resume", token, "POST")
+                    evidence["resume"] = resumed
+                    if resumed.get("draining") is not False:
+                        failures.append("deployment resume did not reopen generation admission")
+                admission = _ops_json(origin, "/api/ops/deployment-status", token)
+                evidence["admission"] = admission
+                if admission.get("draining") is not False:
+                    failures.append("generation admission is still paused for deployment")
     except (OSError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
         failures.append(f"public verification request failed: {exc}")
 
@@ -97,4 +130,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="Explicitly reopen generation after release verification succeeds.",
+    )
+    raise SystemExit(main(resume=parser.parse_args().resume))

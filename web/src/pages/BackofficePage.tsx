@@ -1,3 +1,4 @@
+import { TesterTracker } from "../components/TesterTracker";
 import { FeedbackInbox } from "../components/FeedbackInbox";
 import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
@@ -71,6 +72,7 @@ const NAV_ITEMS: Array<{ key: BackofficeView; label: string; icon: LucideIcon; s
   { key: "users", label: "Users", icon: UsersRound, shortcut: "⌘ 2" },
   { key: "support", label: "Support queue", icon: LifeBuoy, shortcut: "⌘ 3" },
   { key: "analytics", label: "Analytics", icon: BarChart3, shortcut: "⌘ 4" },
+  { key: "testers", label: "Tester sessions", icon: UserCheck, shortcut: "⌘ 6" },
   { key: "models", label: "Stage models", icon: Settings2, shortcut: "⌘ 5" },
 ];
 
@@ -95,6 +97,7 @@ const VIEW_META: Record<BackofficeView, { kicker: string; title: string; descrip
     title: "Analytics",
     description: "See where the press is busy, where creators pause, and what the run is costing.",
   },
+  testers: { kicker: "Launch learning", title: "Tester sessions", description: "Recruit writers, capture sessions, and act on evidence." },
   models: {
     kicker: "Generation settings",
     title: "Stage models",
@@ -992,10 +995,11 @@ export function BackofficePage() {
       <BackofficeSidebar activeView={activeView} open={mobileNavOpen} onNavigate={navigate} onClose={() => setMobileNavOpen(false)} environment={snapshot.environment} />
       <div className="flex min-h-dvh min-w-0 flex-1 flex-col lg:ml-0">
         <BackofficeHeader activeView={activeView} range={range} onOpenMenu={() => setMobileNavOpen(true)} onRefresh={refresh} onRangeChange={setRange} environment={snapshot.environment} onDisconnect={disconnect} />
-        <main id="backoffice-content" className="backoffice-main flex-1 px-4 py-6 md:px-6 md:py-8 xl:px-9 xl:py-10">
-          <div className="mx-auto w-full max-w-[1480px] backoffice-enter">
+        <main id="backoffice-content" className={cn("backoffice-main flex-1", activeView === "testers" ? "flex min-w-0" : "px-4 py-6 md:px-6 md:py-8 xl:px-9 xl:py-10")}>
+          <div className={cn("w-full backoffice-enter", activeView === "testers" ? "flex min-w-0 flex-1" : "mx-auto max-w-[1480px]")}>
             {activeView === "overview" && <OverviewView range={range} onRangeChange={setRange} onViewChange={navigate} onRefresh={refresh} users={users} tickets={tickets} snapshot={snapshot} />}
             {activeView === "users" && <UsersView users={users} onOpenUser={setSelectedUserId} onInvite={() => showNotice("Invite flow is read-only; no email was sent.", "blue")} />}
+            {activeView === "testers" && <TesterTracker connection={connection} />}
             {activeView === "support" && <FeedbackInbox connection={connection} />}
             {activeView === "analytics" && <AnalyticsView onExport={exportReport} snapshot={snapshot} />}
             {activeView === "models" && <Suspense fallback={<p role="status">Loading stage models…</p>}><OperatorModelPanel connection={connection} /></Suspense>}

@@ -1,0 +1,785 @@
+<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'"><meta name="referrer" content="no-referrer"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anybody:wght@400;500;600;700;800;900&amp;family=Be+Vietnam+Pro:wght@400;500;600;700&amp;family=Lexend:wght@400;500;600;700&amp;display=swap"><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Scenewright Tester Log</title>
+
+
+<style>
+/* Layout: a working studio log. A tab bar sits on top; the session tab splits into script (left) and capture (right) while a call is running. */
+:root {
+  color-scheme: light;
+  /* Fallbacks mirror index.css; the operator host supplies current design tokens. */
+  --color-hero-red: #b51822; --color-pulp-paper: #fcfaed; --color-bristol: #ffffff;
+  --color-ink-black: #1b1c15; --color-ink-muted: #514f46; --color-ink-soft: #6b685e;
+  --color-surface-container: #f0eee1; --color-narrator-gold: #fae361; --color-ghost-shadow: #dcdace;
+  --color-secondary-container: #d3e4ff; --color-on-secondary-container: #152b4d;
+  --color-ready: #3d694a; --color-on-gold: #625300; --color-warn-orange: #c9650a;
+  --font-display: "Anybody", sans-serif; --font-body: "Be Vietnam Pro", sans-serif; --font-meta: "Lexend", sans-serif;
+  --bg: var(--color-pulp-paper); --surface: var(--color-bristol); --sunk: var(--color-surface-container);
+  --ink: var(--color-ink-black); --muted: var(--color-ink-muted); --line: color-mix(in srgb, var(--ink) 16%, transparent);
+  --accent: var(--color-hero-red); --accent-soft: #f4d2d3; --on-accent: var(--color-bristol);
+  --k-friction: var(--color-hero-red); --k-bug: #934900; --k-delight: var(--color-ready);
+  --k-request: var(--color-on-secondary-container); --k-quote: var(--color-ink-muted);
+  --k-assist: var(--color-on-gold); --k-observe: var(--color-ink-soft);
+  --display: var(--font-display); --body: var(--font-body); --meta: var(--font-meta);
+  --mono: ui-monospace, Menlo, monospace; --r: 2px;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 var(--body); margin: 0; }
+.wrap { max-width: 1240px; margin: 0 auto; padding-inline: 16px; padding-block: 0 64px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; }
+h2 { font-size: 1.35rem; font-weight: 800; letter-spacing: -0.01em; }
+h3 { font-size: 1rem; font-weight: 600; }
+p { margin: 0; }
+.muted { color: var(--muted); }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.eyebrow { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+
+header.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+.topin { max-width: 1240px; margin: 0 auto; padding: 12px 16px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.brand { font-family: var(--display); font-weight: 800; font-size: 1.15rem; letter-spacing: -0.02em; }
+.brand span { color: var(--accent); }
+nav.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+nav.tabs button { background: none; border: 0; padding: 7px 12px; border-radius: 999px; font: 500 0.92rem var(--body); color: var(--muted); cursor: pointer; }
+nav.tabs button[aria-current="true"] { background: var(--ink); color: var(--bg); }
+.status-dot { margin-left: auto; font-size: 0.8rem; color: var(--muted); }
+
+button, .btn { font: 500 0.9rem var(--body); border-radius: var(--r); border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 7px 12px; cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+button.ghost { background: none; border-color: transparent; color: var(--muted); }
+button:hover { border-color: var(--muted); }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input, select, textarea { font: 0.92rem var(--body); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 2px; padding: 10px 12px; width: 100%; }
+textarea { resize: vertical; min-height: 64px; line-height: 1.45; }
+label.f { display: grid; gap: 4px; font-size: 0.8rem; color: var(--muted); font-weight: 500; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+
+section.view { padding-top: 24px; display: grid; gap: 20px; }
+.bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: space-between; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 2px; padding: 20px; box-shadow: 4px 4px 0 var(--color-ghost-shadow); min-width: 0; }
+
+/* Participants */
+.lanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; align-items: start; }
+.lane h3 { display: flex; gap: 8px; align-items: baseline; margin-bottom: 8px; }
+.lane h3 .n { font-family: var(--mono); font-size: 0.8rem; color: var(--muted); }
+.lane .list { display: grid; gap: 8px; }
+.pcard { text-align: left; display: grid; gap: 6px; padding: 12px 14px; border-radius: 2px; width: 100%; }
+.pcard .h { font-weight: 600; }
+.pcard .ctx { color: var(--muted); font-size: 0.85rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pcard .next { font-size: 0.85rem; border-top: 1px dashed var(--line); padding-top: 6px; }
+.pcard .due { font-family: var(--mono); font-size: 0.78rem; color: var(--accent); }
+.pcard .due.late { color: var(--k-friction); }
+.empty { border: 1px dashed var(--line); border-radius: 2px; padding: 20px; color: var(--muted); font-size: 0.9rem; }
+
+/* Modal */
+.scrim { position: fixed; inset: 0; background: rgb(10 12 18 / 0.45); display: grid; place-items: start center; padding: 40px 16px; overflow-y: auto; z-index: 20; }
+.modal { background: var(--surface); border-radius: 2px; border: 2px solid var(--ink); box-shadow: 6px 6px 0 var(--ink); width: min(720px, 100%); padding: 22px; display: grid; gap: 14px; }
+
+/* Session */
+.sesspick { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.sesspick select { width: auto; min-width: 240px; max-width: 100%; }
+.split { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 20px; align-items: start; }
+@media (max-width: 880px) { .split { grid-template-columns: 1fr; } }
+.phase { border-top: 1px solid var(--line); padding-block: 12px; }
+.phase:first-of-type { border-top: 0; padding-top: 0; }
+.phase summary { cursor: pointer; display: flex; gap: 10px; align-items: baseline; list-style: none; }
+.phase summary::-webkit-details-marker { display: none; }
+.phase summary .t { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); min-width: 64px; }
+.phase summary h3 { flex: 1; }
+.phase .intent { font-size: 0.85rem; color: var(--muted); margin: 6px 0 8px 74px; }
+.prompt { display: grid; grid-template-columns: 22px 1fr; gap: 8px; padding: 6px 0 6px 52px; align-items: start; }
+.prompt input { width: 16px; height: 16px; margin-top: 3px; accent-color: var(--accent); }
+.prompt .q { line-height: 1.4; }
+.prompt .q small { display: block; color: var(--muted); font-size: 0.8rem; margin-top: 2px; }
+.prompt.done .q { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line); }
+@media (max-width: 560px) { .prompt { padding-left: 0; } .phase .intent { margin-left: 0; } }
+
+.capture { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 72px); display: grid; gap: 14px; }
+.timer { display: flex; align-items: center; gap: 12px; }
+.timer .clock { font-family: var(--mono); font-size: 1.6rem; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border-radius: 999px; padding: 4px 10px; font-size: 0.82rem; border: 1px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer; }
+.chip[aria-pressed="true"] { color: var(--on-accent); background: var(--kc, var(--accent)); border-color: var(--kc, var(--accent)); }
+.chip kbd { font-family: var(--mono); font-size: 0.7rem; opacity: 0.7; margin-left: 4px; }
+.k-friction { --kc: var(--k-friction); } .k-bug { --kc: var(--k-bug); } .k-delight { --kc: var(--k-delight); }
+.k-request { --kc: var(--k-request); } .k-quote { --kc: var(--k-quote); } .k-assist { --kc: var(--k-assist); } .k-observe { --kc: var(--k-observe); }
+.notes { display: grid; gap: 0; max-height: 46vh; overflow-y: auto; border-top: 1px solid var(--line); }
+.note { display: grid; grid-template-columns: 44px 1fr auto; gap: 10px; padding: 9px 2px; border-bottom: 1px solid var(--line); align-items: start; }
+.note .m { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); padding-top: 2px; }
+.note .tx { min-width: 0; overflow-wrap: anywhere; }
+.note .tags { display: flex; gap: 6px; margin-bottom: 2px; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.note .tags .kind { color: var(--kc); }
+.note .tags .area { color: var(--muted); }
+.note.quote .tx p { font-style: italic; }
+.note .x { opacity: 0.5; padding: 2px 6px; }
+.note .x:hover { opacity: 1; }
+.hint { font-size: 0.78rem; color: var(--muted); }
+.debrief { display: grid; gap: 14px; }
+.scale { display: flex; gap: 6px; flex-wrap: wrap; }
+.scale button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+
+/* Insights */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 2px; padding: 16px; box-shadow: 4px 4px 0 var(--color-ghost-shadow); display: grid; gap: 4px; }
+.stat .v { font-family: var(--display); font-weight: 800; font-size: 1.5rem; }
+.stat .s { font-size: 0.8rem; color: var(--muted); }
+.matrix-wrap { overflow-x: auto; }
+table.matrix { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 0.85rem; }
+.matrix th { font-weight: 600; text-align: left; padding: 6px 8px; color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.matrix th.k { color: var(--kc); }
+.matrix td { padding: 3px; }
+.matrix td button { width: 100%; min-height: 34px; border-radius: 6px; border: 1px solid transparent; background: var(--sunk); font-family: var(--mono); font-size: 0.82rem; color: var(--muted); padding: 4px; }
+.matrix td button.has { background: color-mix(in srgb, var(--kc) calc(var(--w) * 1%), var(--surface)); color: var(--ink); border-color: color-mix(in srgb, var(--kc) 40%, transparent); }
+.matrix td button[aria-pressed="true"] { outline: 2px solid var(--ink); }
+.matrix td button.zero { cursor: default; }
+.finding { border-top: 1px solid var(--line); padding-block: 14px; display: grid; gap: 10px; }
+.finding:first-of-type { border-top: 0; }
+.finding .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.finding .row input { flex: 1; min-width: 200px; font-weight: 600; }
+.finding .row select { width: auto; }
+.pill { font-size: 0.72rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--sunk); color: var(--muted); white-space: nowrap; }
+.pill.warn { background: var(--accent-soft); color: var(--accent); }
+.ev { font-size: 0.85rem; display: grid; gap: 4px; padding-left: 12px; border-left: 2px solid var(--line); }
+.ev .who { color: var(--muted); font-family: var(--mono); font-size: 0.76rem; }
+.filterbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* Playbook */
+.book { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 28px; align-items: start; }
+@media (max-width: 880px) { .book { grid-template-columns: 1fr; } }
+.prose { max-width: 68ch; display: grid; gap: 14px; }
+.prose h2 { margin-top: 18px; }
+.prose ul, .prose ol { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; }
+.prose .q { font-weight: 500; }
+.prose .callout { background: var(--accent-soft); border-radius: 2px; border-left: 4px solid var(--accent); padding: 16px; }
+.prose table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+.prose td, .prose th { border-bottom: 1px solid var(--line); padding: 7px 8px; text-align: left; vertical-align: top; }
+.toc { position: sticky; top: 90px; display: grid; gap: 6px; font-size: 0.88rem; }
+.toc a { color: var(--muted); text-decoration: none; }
+.toc a:hover { color: var(--accent); }
+.toast { position: fixed; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 0.88rem; z-index: 30; }
+@media (prefers-reduced-motion: no-preference) { .note.fresh { animation: fresh 1.2s ease-out; } @keyframes fresh { from { background: var(--accent-soft); } to { background: transparent; } } }
+/* Scenewright's printed-paper surfaces and press controls. */
+body { font-size: 13px; -webkit-font-smoothing: antialiased; }
+::selection { background: var(--color-narrator-gold); color: var(--ink); }
+.wrap { max-width: none; padding-inline: 24px; }
+h2 { font-weight: 900; font-size: 1.75rem; letter-spacing: -0.045em; line-height: 1.08; }
+h3 { font-weight: 800; letter-spacing: -0.02em; }
+.eyebrow, .note .tags, .matrix th, label.f { font-family: var(--meta); }
+.eyebrow { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.14em; }
+header.top { border-bottom: 2px solid var(--ink); }
+.topin { max-width: none; padding: 16px 24px; gap: 20px; }
+.brand { font-size: 1rem; font-weight: 900; letter-spacing: -0.045em; }
+nav.tabs { gap: 6px; }
+nav.tabs button { min-height: 44px; border-radius: 2px; border: 1px solid transparent; font: 600 0.72rem var(--meta); padding: 8px 14px; }
+nav.tabs button:hover { border-color: var(--line); color: var(--ink); }
+nav.tabs button[aria-current="true"] { background: var(--color-narrator-gold); color: var(--ink); border: 2px solid var(--ink); box-shadow: 2px 2px 0 var(--ink); }
+.status-dot { font: 500 0.65rem var(--meta); }
+button, .btn { min-height: 44px; font: 600 0.72rem var(--meta); border-radius: 2px; padding: 10px 14px; touch-action: manipulation; }
+button.primary { border: 2px solid var(--ink); box-shadow: 4px 4px 0 var(--ink); }
+button.primary:hover { background: #94141c; border-color: var(--ink); }
+button.primary:active { box-shadow: none; transform: translate(2px, 2px); }
+button.ghost { box-shadow: none; }
+input, select, textarea { min-height: 44px; font-size: 0.82rem; background: var(--bg); border-color: var(--line); }
+input:focus, select:focus, textarea:focus { background: var(--surface); }
+label.f { font-size: 0.65rem; font-weight: 600; gap: 6px; }
+.panel, .stat { border: 2px solid var(--ink); }
+.pcard { border: 1px solid var(--line); background: var(--surface); padding: 16px; }
+.pcard:hover { border-color: var(--ink); box-shadow: 3px 3px 0 var(--color-ghost-shadow); }
+.pcard .h { font-family: var(--display); font-weight: 800; font-size: 1rem; letter-spacing: -0.035em; }
+.pcard .ctx, .pcard .next { font: 400 0.78rem/1.65 var(--body); }
+.lane { background: var(--sunk); padding: 16px; border-top: 3px solid var(--ink); }
+.lane h3 { padding-bottom: 8px; }
+.chip { min-height: 36px; font-size: 0.65rem; padding: 6px 10px; border-radius: 2px; }
+.pill { border-radius: 2px; font-family: var(--meta); font-size: 0.6rem; letter-spacing: 0.04em; }
+.scale button { border: 1px solid var(--ink); min-width: 44px; }
+.scale button[aria-pressed="true"] { background: var(--color-narrator-gold); color: var(--ink); border-color: var(--ink); }
+.stat .v { font-size: 2rem; font-weight: 900; letter-spacing: -0.055em; }
+.matrix td button { border-radius: 2px; }
+.toast { border-radius: 2px; border: 2px solid var(--ink); box-shadow: 4px 4px 0 var(--color-narrator-gold); }
+@media (max-width: 560px) { .wrap { padding-inline: 16px; } .topin { padding: 12px 16px; gap: 12px; } .status-dot { width: 100%; margin-left: 0; } .panel { padding: 16px; } .timer { flex-wrap: wrap; } .capture { position: static; } }
+
+</style>
+
+<header class="top"><div class="topin">
+  <div class="brand">Scenewright <span>tester log</span></div>
+  <nav class="tabs" aria-label="Sections">
+    <button data-tab="people" aria-current="true">Testers</button>
+    <button data-tab="session">Session</button>
+    <button data-tab="insights">Insights</button>
+    <button data-tab="playbook">Playbook</button>
+  </nav>
+  <div class="status-dot" id="conn">Connecting…</div>
+</div></header>
+
+<div class="wrap">
+  <section class="view" id="v-people"></section>
+  <section class="view" id="v-session" hidden></section>
+  <section class="view" id="v-insights" hidden></section>
+  <section class="view" id="v-playbook" hidden></section>
+</div>
+<div id="modal-root"></div>
+
+<script>
+/* ---------- Reference data ---------- */
+const KINDS = [
+  { id: 'friction', label: 'Friction', key: 'f' },
+  { id: 'bug', label: 'Bug', key: 'b' },
+  { id: 'delight', label: 'Delight', key: 'd' },
+  { id: 'request', label: 'Request', key: 'r' },
+  { id: 'quote', label: 'Quote', key: 'q' },
+  { id: 'assist', label: 'I helped', key: 'a' },
+  { id: 'observe', label: 'Observation', key: 'o' },
+];
+const AREAS = ['Signup', 'Upload', 'Story', 'Look', 'Cast', 'Pages', 'Lettering', 'Book', 'Credits', 'Waiting', 'Their world'];
+const PSTATUS = [
+  { id: 'lead', label: 'Interested' },
+  { id: 'talking', label: 'Scheduling' },
+  { id: 'booked', label: 'Booked' },
+  { id: 'done', label: 'Session done' },
+  { id: 'checked', label: 'Checked in' },
+  { id: 'dropped', label: 'Dropped' },
+];
+const VARIANTS = { first: 'First run', compare: 'Has a prototype', return: 'Return visit' };
+const FSTATUS = [
+  { id: 'signal', label: 'Signal (one person)' },
+  { id: 'pattern', label: 'Pattern (2+ people)' },
+  { id: 'acting', label: 'Acting on it' },
+  { id: 'shipped', label: 'Fix shipped' },
+  { id: 'parked', label: 'Parked' },
+];
+const PHASES = [
+  { id: 'before', t: 'Day before', title: 'Set it up', intent: 'Everything here happens by message, so the call itself is all product.', prompts: [
+    { id: 'b1', q: 'Confirm the time in their time zone and send the link.' },
+    { id: 'b2', q: 'Ask them to pick a scene they wrote: 500–1,500 words, one location, 2–4 characters.', s: 'A small scene is fine. The goal is a finished page they can judge.' },
+    { id: 'b3', q: 'Ask them to bring anything visual they already have: sketches, a moodboard, a prototype page.' },
+    { id: 'b4', q: 'Check they can sign in. Grant credits and write the amount on this session.' },
+    { id: 'b5', q: 'Ask in writing whether you can record. Notes only is a fine answer.' },
+  ]},
+  { id: 'open', t: '0–5 min', title: 'Their world first', intent: 'Learn what they are trying to do before they touch the product. Their answer to the last question is the yardstick for the whole session.', prompts: [
+    { id: 'o1', q: '“Is it okay if I record? Notes only is completely fine.”' },
+    { id: 'o2', q: '“Tell me about the book. Where is it right now?”' },
+    { id: 'o3', q: '“What have you tried so far to see it as a comic?”', s: 'Dig into the last real attempt: “When was that? What happened? What did it cost you?”' },
+    { id: 'o4', v: 'compare', q: '“Show me what you made before. What do you love about it? What bugs you?”', s: 'Have them share it now, before they see anything from Scenewright.' },
+    { id: 'o5', q: '“If the next 40 minutes go really well, what do you walk away with?”', s: 'Write their exact words in “Their goal”.' },
+  ]},
+  { id: 'drive', t: '5–30 min', title: 'They drive, you watch', intent: 'Say “Start the way you would at home and think out loud. I’m testing the product, not you.” Then stay quiet. When they get stuck, ask what they expected before you help, and log every bit of help as “I helped”.', prompts: [
+    { id: 'd1', q: 'Story: “Is this your story? Is anything wrong or missing?”' },
+    { id: 'd2', q: 'Look: “Which of these is closest to what you picture? What’s off about it?”' },
+    { id: 'd3', q: 'Cast: “Who looks right? Who doesn’t, and how would you describe them?”' },
+    { id: 'd4', q: 'While it draws: “How do you picture your scenes today? Sketches, Pinterest, nothing at all?”', s: 'Use generation waits for interview questions. Notice whether they leave the tab.' },
+    { id: 'd5', q: 'While it draws: “Have you ever paid for art for your writing? What did you get, and what did it cost?”' },
+    { id: 'd6', q: 'Pages: “Read this page to me the way a reader would.”' },
+    { id: 'd7', q: 'Pages: “Which panel would you show someone? Which would you redo first?”' },
+  ]},
+  { id: 'debrief', t: '30–42 min', title: 'Debrief', intent: 'Ask the scored questions exactly as written so answers compare across people. Ask “why” after every score.', prompts: [
+    { id: 'q1', q: '“From 1 to 5, how close are these pages to what you had in your head?” Then: “What’s the gap?”' },
+    { id: 'q2', q: '“What was the most frustrating moment?”' },
+    { id: 'q3', q: '“What would you actually do with these pages?”', s: 'Push for a real plan: post them, pitch with them, a Kickstarter, keep them private.' },
+    { id: 'q4', q: '“How would you feel if you could no longer use Scenewright? Very disappointed, somewhat disappointed, or not disappointed?”' },
+    { id: 'q5', q: '“Would you run your next scene on your own this week? Can I check in with you on [date]?”', s: 'Record their actual answer and the date. A yes with a date is a commitment. “Sure, maybe” is not.' },
+    { id: 'q6', q: '“Who else should I talk to?”' },
+  ]},
+  { id: 'after', t: 'Same day', title: 'Close the loop', intent: 'Ten minutes while it is fresh. Notes you leave for tomorrow lose most of their value.', prompts: [
+    { id: 'a1', q: 'Write the top three takeaways and the next action below.' },
+    { id: 'a2', q: 'Tag any untagged notes, then add the recurring ones to findings in Insights.' },
+    { id: 'a3', q: 'Send thanks, their pages, and the check-in date you agreed.' },
+    { id: 'a4', q: 'On day 7, check the app data for a return before you message them. Then ask what they tried, or what stopped them.' },
+  ]},
+];
+
+/* ---------- State ---------- */
+const S = { people: [], sessions: [], notes: [], findings: [], ready: false };
+let db = null, tab = 'people', curSession = null, kind = 'observe', area = 'Story', filt = null, pendingRender = {};
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const byId = (arr, id) => arr.find(x => x.id === id);
+const person = (id) => byId(S.people, id);
+const handle = (id) => person(id)?.handle || 'Unknown';
+const today = () => new Date().toISOString().slice(0, 10);
+const kindOf = (id) => KINDS.find(k => k.id === id) || KINDS[6];
+function toast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.append(t); setTimeout(() => t.remove(), 2200); }
+function fmtDate(d) { if (!d) return ''; const x = new Date(d.length <= 10 ? d + 'T12:00' : d); return isNaN(x) ? d : x.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + (d.length > 10 ? ' ' + x.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : ''); }
+
+/* One write at a time per document. */
+const queues = {};
+function write(path, data, mode = 'update') {
+  if (!db) { toast('Not connected, so this change was not saved.'); return Promise.reject(new Error('Tracker is not connected')); }
+  const run = () => (mode === 'set' ? db.doc(path).set(data) : mode === 'delete' ? db.doc(path).delete() : db.doc(path).update(data))
+    .catch(e => { toast('Could not save: ' + e.message); throw e; });
+  queues[path] = (queues[path] || Promise.resolve()).catch(() => {}).then(run);
+  return queues[path];
+}
+async function create(col, data) {
+  const ref = db.collection(col).doc();
+  await write(ref.path, { ...data, createdAt: new Date().toISOString() }, 'set');
+  return ref.id;
+}
+
+/* ---------- Tabs ---------- */
+function setTab(t) {
+  tab = t;
+  document.querySelectorAll('nav.tabs button').forEach(b => b.setAttribute('aria-current', String(b.dataset.tab === t)));
+  for (const v of ['people', 'session', 'insights', 'playbook']) $('#v-' + v).hidden = v !== t;
+  render();
+  try { localStorage.setItem('tab', t); } catch {}
+}
+document.querySelector('nav.tabs').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) setTab(b.dataset.tab); });
+
+/* Don't redraw a view while someone types in it; redraw on blur instead. */
+function render() {
+  const el = $('#v-' + tab);
+  const a = document.activeElement;
+  if (tab !== 'session' && a && el.contains(a) && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) { pendingRender[tab] = true; return; }
+  ({ people: renderPeople, session: renderSession, insights: renderInsights, playbook: renderPlaybook })[tab]();
+}
+document.addEventListener('focusout', () => setTimeout(() => { if (pendingRender[tab]) { pendingRender[tab] = false; render(); } }, 0));
+
+/* ---------- Testers ---------- */
+function renderPeople() {
+  const el = $('#v-people');
+  const now = today();
+  const lanes = PSTATUS.map(st => {
+    const ps = S.people.filter(p => (p.status || 'lead') === st.id).sort((a, b) => (a.nextDate || '9').localeCompare(b.nextDate || '9'));
+    if (st.id === 'dropped' && !ps.length) return '';
+    return `<div class="lane"><h3>${st.label} <span class="n">${ps.length}</span></h3><div class="list">${ps.length ? ps.map(p => `
+      <button class="pcard" data-person="${esc(p.id)}">
+        <span class="h">${esc(p.handle)}</span>
+        ${p.project ? `<span class="ctx">${esc(p.project)}</span>` : ''}
+        ${p.nextStep ? `<span class="next">${esc(p.nextStep)}${p.nextDate ? ` <span class="due ${p.nextDate < now ? 'late' : ''}">· ${fmtDate(p.nextDate)}</span>` : ''}</span>` : ''}
+      </button>`).join('') : `<div class="empty">Nobody here yet.</div>`}</div></div>`;
+  }).join('');
+  el.innerHTML = `
+    <div class="bar"><div><h2>Testers</h2><p class="muted">Who you are talking to, and the next thing you owe each of them.</p></div>
+      <button class="primary" id="add-person" ${S.ready ? '' : 'disabled'}>Add tester</button></div>
+    ${S.ready && !S.people.length ? `<div class="empty">No testers yet. Add the first person who said they would try Scenewright.</div>` : ''}
+    <div class="lanes">${lanes}</div>`;
+  $('#add-person').onclick = () => openPerson(null);
+  el.querySelectorAll('[data-person]').forEach(b => b.onclick = () => openPerson(b.dataset.person));
+}
+
+function openPerson(id) {
+  const p = id ? person(id) : { status: 'lead', source: 'Reddit' };
+  const sess = S.sessions.filter(s => s.participantId === id).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const root = $('#modal-root');
+  root.innerHTML = `<div class="scrim" id="scrim"><form class="modal" id="pform">
+    <div class="bar"><h2>${id ? esc(p.handle) : 'New tester'}</h2><button type="button" class="ghost" id="pclose">Close</button></div>
+    <div class="grid2">
+      <label class="f">Handle or name<input id="p-handle" name="handle" required value="${esc(p.handle)}"></label>
+      <label class="f">Status<select id="p-status" name="status">${PSTATUS.map(s => `<option value="${s.id}" ${s.id === p.status ? 'selected' : ''}>${s.label}</option>`).join('')}</select></label>
+      <label class="f">Where they came from<input id="p-source" name="source" value="${esc(p.source)}" placeholder="Reddit r/…, Discord, friend"></label>
+      <label class="f">Link to the thread<input id="p-sourceUrl" name="sourceUrl" value="${esc(p.sourceUrl)}" placeholder="https://"></label>
+      <label class="f">Time zone<input id="p-tz" name="tz" value="${esc(p.tz)}" placeholder="America/Toronto"></label>
+      <label class="f">Credits granted<input id="p-credits" name="credits" type="number" min="0" value="${esc(p.credits)}"></label>
+    </div>
+    <label class="f">What they are writing<textarea id="p-project" name="project">${esc(p.project)}</textarea></label>
+    <label class="f">Context and plan for their session<textarea id="p-context" name="context" rows="4">${esc(p.context)}</textarea></label>
+    <div class="grid2">
+      <label class="f">Next step (what you owe them)<input id="p-next" name="nextStep" value="${esc(p.nextStep)}"></label>
+      <label class="f">By when<input id="p-nextDate" name="nextDate" type="date" value="${esc(p.nextDate)}"></label>
+      <label class="f">Recording<select id="p-rec" name="recording">${['Not asked', 'Yes', 'Notes only'].map(o => `<option ${o === p.recording ? 'selected' : ''}>${o}</option>`).join('')}</select></label>
+      <label class="f">Quoting them publicly<select id="p-quotes" name="quotes">${['Not asked', 'No', 'Anonymous only', 'With their handle'].map(o => `<option ${o === p.quotes ? 'selected' : ''}>${o}</option>`).join('')}</select></label>
+    </div>
+    ${id ? `<div><div class="eyebrow">Sessions</div><div style="display:grid;gap:6px;margin-top:6px">${sess.length ? sess.map(s => `<button type="button" class="btn" style="text-align:left" data-open-session="${esc(s.id)}">${fmtDate(s.date) || 'No date'} · ${esc(VARIANTS[s.variant] || '')} · ${esc(s.status || 'planned')}</button>`).join('') : '<span class="muted">None yet.</span>'}</div></div>` : ''}
+    <div class="bar">
+      ${id ? `<button type="button" class="ghost" id="pdel">Delete tester</button>` : '<span></span>'}
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${id ? `<button type="button" id="pnewsess">Plan a session</button>` : ''}<button class="primary">Save</button></div>
+    </div>
+  </form></div>`;
+  const close = () => { root.innerHTML = ''; render(); };
+  $('#pclose').onclick = close;
+  $('#scrim').addEventListener('mousedown', e => { if (e.target.id === 'scrim') close(); });
+  const collect = () => Object.fromEntries([...new FormData($('#pform'))].map(([k, v]) => [k, k === 'credits' ? (v === '' ? null : Number(v)) : v]));
+  $('#pform').onsubmit = async e => {
+    e.preventDefault();
+    const form = $('#pform'), button = form.querySelector('button.primary');
+    let error = form.querySelector('[role="alert"]');
+    if (error) error.remove();
+    button.disabled = true; button.textContent = 'Saving…';
+    try {
+      const data = collect();
+      if (id) await write('people/' + id, data); else await create('people', data);
+      toast('Saved'); close();
+    } catch (failure) {
+      error = document.createElement('p'); error.setAttribute('role', 'alert');
+      error.textContent = 'Not saved: ' + failure.message; form.append(error);
+    } finally { button.disabled = false; button.textContent = 'Save'; }
+  };
+  if (id) {
+    $('#pnewsess').onclick = async () => { await write('people/' + id, collect()); const sid = await create('sessions', { participantId: id, variant: 'first', status: 'planned', date: '', asked: [] }); curSession = sid; root.innerHTML = ''; setTab('session'); };
+    root.querySelectorAll('[data-open-session]').forEach(b => b.onclick = () => { curSession = b.dataset.openSession; root.innerHTML = ''; setTab('session'); });
+    $('#pdel').onclick = async () => {
+      const b = $('#pdel');
+      if (b.dataset.armed) { await write('people/' + id, {}, 'delete'); toast('Tester deleted. Their sessions and notes are kept.'); close(); }
+      else { b.dataset.armed = 1; b.textContent = 'Click again to delete'; }
+    };
+  }
+}
+
+/* ---------- Session ---------- */
+let timerTick = null, builtFor = null;
+function sess() { return byId(S.sessions, curSession); }
+function elapsed(s) { if (!s) return 0; let t = s.timerAccum || 0; if (s.timerStart) t += (Date.now() - Date.parse(s.timerStart)) / 1000; return t; }
+const clock = (sec) => { sec = Math.floor(sec); return String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0'); };
+
+function renderSession() {
+  const el = $('#v-session');
+  const list = [...S.sessions].sort((a, b) => (b.date || b.createdAt || '').localeCompare(a.date || a.createdAt || ''));
+  if (!curSession || !sess()) curSession = (list.find(s => s.status === 'live') || list[0])?.id || null;
+  const s = sess();
+  if (!s) {
+    builtFor = null;
+    el.innerHTML = `<div><h2>Session</h2><p class="muted">Plan a session from a tester’s card. During the call, this tab holds the script on the left and fast note-taking on the right.</p></div>
+      <div class="empty">No sessions yet. Open a tester and choose <strong>Plan a session</strong>.</div>`;
+    return;
+  }
+  if (builtFor !== s.id) buildSession(el, s, list);
+  syncSession(s, list);
+}
+
+function field(id, label, type = 'text', extra = '') {
+  return type === 'textarea' ? `<label class="f">${label}<textarea id="s-${id}" data-f="${id}" ${extra}></textarea></label>`
+    : `<label class="f">${label}<input id="s-${id}" data-f="${id}" type="${type}" ${extra}></label>`;
+}
+function buildSession(el, s, list) {
+  builtFor = s.id;
+  el.innerHTML = `
+    <div class="bar">
+      <div class="sesspick"><label class="f" style="flex-direction:row">Session<select id="s-pick"></select></label></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><button id="s-md">Copy as Markdown</button><button class="ghost" id="s-del">Delete session</button></div>
+    </div>
+    <div class="panel"><div class="grid2">
+      <label class="f">Tester<select id="s-participantId" data-f="participantId"></select></label>
+      ${field('date', 'When', 'datetime-local')}
+      <label class="f">Kind of session<select id="s-variant" data-f="variant">${Object.entries(VARIANTS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
+      <label class="f">Status<select id="s-status" data-f="status">${['planned', 'live', 'done', 'no-show'].map(v => `<option>${v}</option>`).join('')}</select></label>
+    </div>
+    <div class="grid2" style="margin-top:12px">
+      ${field('scene', 'Scene they brought', 'textarea', 'rows="2"')}
+      ${field('goal', 'Their goal, in their words', 'textarea', 'rows="2" placeholder="Answer to: what do you walk away with?"')}
+    </div>
+    <details style="margin-top:12px"><summary class="hint" style="cursor:pointer">Links and credits</summary><div class="grid2" style="margin-top:10px">
+      ${field('link', 'Meeting link', 'url')}${field('recordingUrl', 'Recording or replay link', 'url')}
+      ${field('creditsGranted', 'Credits granted', 'number', 'min="0"')}${field('creditsUsed', 'Credits used', 'number', 'min="0"')}
+    </div></details></div>
+    <div class="split">
+      <div class="panel" id="s-guide"></div>
+      <div class="capture">
+        <div class="panel" style="display:grid;gap:12px">
+          <div class="timer"><span class="clock" id="s-clock">00:00</span><button id="s-timer" class="primary">Start call</button><button class="ghost" id="s-reset">Reset</button>
+            <span class="hint" style="margin-left:auto" id="s-counts"></span></div>
+          <div class="chips" id="s-kinds">${KINDS.map(k => `<button class="chip k-${k.id}" data-kind="${k.id}">${k.label}<kbd>/${k.key}</kbd></button>`).join('')}</div>
+          <div class="chips" id="s-areas">${AREAS.map(a => `<button class="chip" data-area="${a}">${a}</button>`).join('')}</div>
+          <textarea id="s-note" rows="3" placeholder="What happened, or what they said. Enter saves. Start with /f, /b, /d, /r, /q, /a or /o to set the type."></textarea>
+          <p class="hint">One thought per note. Put quotes in their exact words. Shift+Enter adds a new line.</p>
+          <div class="notes" id="s-notes"></div>
+        </div>
+        <div class="panel debrief">
+          <h3>Debrief</h3>
+          <div><div class="eyebrow">How close to what they pictured</div><div class="scale" id="s-close" style="margin-top:6px">${[1, 2, 3, 4, 5].map(n => `<button data-close="${n}">${n}</button>`).join('')}</div></div>
+          ${field('gap', 'The gap, in their words', 'textarea', 'rows="2"')}
+          ${field('frustrating', 'Most frustrating moment', 'textarea', 'rows="2"')}
+          ${field('useFor', 'What they would do with the pages', 'textarea', 'rows="2"')}
+          <div class="grid2">
+            <label class="f">If they couldn’t use it anymore<select id="s-disappointed" data-f="disappointed"><option value="">Not asked</option><option>Very disappointed</option><option>Somewhat disappointed</option><option>Not disappointed</option></select></label>
+            <label class="f">Next scene on their own?<select id="s-commit" data-f="commit"><option value="">Not asked</option><option>Yes, with a date</option><option>Maybe</option><option>No</option></select></label>
+            ${field('checkinDate', 'Check-in date', 'date')}
+            ${field('paidBefore', 'Paid for art before?', 'text', 'placeholder="What, and how much"')}
+          </div>
+          ${field('referrals', 'People they suggested', 'text')}
+          ${field('takeaways', 'Your top three takeaways', 'textarea', 'rows="3"')}
+          ${field('nextAction', 'Next action', 'text')}
+          <div><div class="eyebrow">Day 7 check-in</div><div class="grid2" style="margin-top:6px">
+            <label class="f">Did they come back?<select id="s-returned" data-f="returned"><option value="">Not checked yet</option><option>Yes, seen in the app</option><option>Yes, they told me</option><option>No</option><option>No reply</option></select></label>
+            ${field('returnNote', 'What they tried, or what stopped them', 'text')}
+          </div></div>
+        </div>
+      </div>
+    </div>`;
+
+  $('#s-pick').onchange = e => { curSession = e.target.value; builtFor = null; renderSession(); };
+  el.querySelectorAll('[data-f]').forEach(inp => inp.addEventListener('change', () => {
+    let v = inp.value; if (inp.type === 'number') v = v === '' ? null : Number(v);
+    write('sessions/' + curSession, { [inp.dataset.f]: v });
+    if (inp.dataset.f === 'status' && v === 'done') { const s = sess(); const p = s && person(s.participantId); if (p && ['lead', 'talking', 'booked'].includes(p.status)) write('people/' + p.id, { status: 'done' }); }
+  }));
+  $('#s-close').onclick = e => { const b = e.target.closest('[data-close]'); if (b) write('sessions/' + curSession, { closeness: Number(b.dataset.close) }); };
+  $('#s-timer').onclick = () => {
+    const s = sess(); if (!s) return;
+    if (s.timerStart) write('sessions/' + s.id, { timerStart: null, timerAccum: elapsed(s) });
+    else write('sessions/' + s.id, { timerStart: new Date().toISOString(), status: s.status === 'planned' ? 'live' : s.status });
+  };
+  $('#s-reset').onclick = () => write('sessions/' + curSession, { timerStart: null, timerAccum: 0 });
+  $('#s-kinds').onclick = e => { const b = e.target.closest('[data-kind]'); if (b) { kind = b.dataset.kind; syncChips(); $('#s-note').focus(); } };
+  $('#s-areas').onclick = e => { const b = e.target.closest('[data-area]'); if (b) { area = b.dataset.area; syncChips(); $('#s-note').focus(); } };
+  const note = $('#s-note');
+  note.addEventListener('input', () => {
+    const m = note.value.match(/^\/([a-z])\s/i);
+    if (m) { const k = KINDS.find(k => k.key === m[1].toLowerCase()); if (k) { kind = k.id; note.value = note.value.slice(3); syncChips(); } }
+  });
+  note.addEventListener('keydown', async e => {
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+    e.preventDefault();
+    const text = note.value.trim(); if (!text) return;
+    const s = sess();
+    await create('notes', { sessionId: s.id, participantId: s.participantId, kind, area, text, min: Math.floor(elapsed(s) / 60) });
+    if (note.value.trim() === text) note.value = '';
+  });
+  $('#s-notes').onclick = e => {
+    const b = e.target.closest('[data-del]'); if (!b) return;
+    if (b.dataset.armed) write('notes/' + b.dataset.del, null, 'delete'); else { b.dataset.armed = 1; b.textContent = 'Delete?'; }
+  };
+  $('#s-guide').onchange = e => {
+    const c = e.target.closest('[data-ask]'); if (!c) return;
+    const s = sess(); const asked = new Set(s.asked || []);
+    c.checked ? asked.add(c.dataset.ask) : asked.delete(c.dataset.ask);
+    write('sessions/' + s.id, { asked: [...asked] });
+  };
+  $('#s-md').onclick = () => {
+    const md = sessionMarkdown(sess());
+    (navigator.clipboard?.writeText(md) || Promise.reject(new Error('Clipboard unavailable'))).then(() => toast('Copied as Markdown'), () => { const t = $('#s-note'); t.value = md; t.select(); toast('Copy blocked. The text is selected in the note box.'); });
+  };
+  $('#s-del').onclick = async () => {
+    const b = $('#s-del');
+    if (!b.dataset.armed) { b.dataset.armed = 1; b.textContent = 'Click again to delete'; return; }
+    const id = curSession;
+    for (const n of S.notes.filter(n => n.sessionId === id)) await write('notes/' + n.id, {}, 'delete');
+    await write('sessions/' + id, {}, 'delete'); curSession = null; builtFor = null; toast('Session deleted');
+  };
+  clearInterval(timerTick);
+  timerTick = setInterval(() => { const s = sess(); if (s && tab === 'session') $('#s-clock') && ($('#s-clock').textContent = clock(elapsed(s))); }, 1000);
+}
+
+function syncChips() {
+  document.querySelectorAll('#s-kinds [data-kind]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.kind === kind)));
+  document.querySelectorAll('#s-areas [data-area]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.area === area)));
+}
+function syncSession(s, list) {
+  const a = document.activeElement;
+  const setv = (el, v) => { if (el && el !== a) el.value = v ?? ''; };
+  $('#s-pick').innerHTML = list.map(x => `<option value="${esc(x.id)}" ${x.id === s.id ? 'selected' : ''}>${esc(handle(x.participantId))} · ${x.date ? fmtDate(x.date) : 'no date'} · ${esc(x.status || 'planned')}</option>`).join('');
+  const ps = $('#s-participantId'); if (ps !== a) ps.innerHTML = S.people.map(p => `<option value="${esc(p.id)}" ${p.id === s.participantId ? 'selected' : ''}>${esc(p.handle)}</option>`).join('');
+  document.querySelectorAll('#v-session [data-f]').forEach(el => { if (el.id !== 's-participantId') setv(el, s[el.dataset.f]); });
+  document.querySelectorAll('#s-close [data-close]').forEach(b => b.setAttribute('aria-pressed', String(Number(b.dataset.close) === s.closeness)));
+  $('#s-timer').textContent = s.timerStart ? 'Pause' : (elapsed(s) > 0 ? 'Resume' : 'Start call');
+  $('#s-clock').textContent = clock(elapsed(s));
+  syncChips();
+  // Script
+  const asked = new Set(s.asked || []);
+  const open = new Set([...document.querySelectorAll('#s-guide details[open]')].map(d => d.dataset.phase));
+  const fresh = !$('#s-guide').children.length;
+  $('#s-guide').innerHTML = `<div class="bar" style="margin-bottom:10px"><h3>Script</h3><span class="hint">About 45 minutes</span></div>` + PHASES.map(ph => {
+    const prompts = ph.prompts.filter(p => !p.v || p.v === s.variant);
+    const doneN = prompts.filter(p => asked.has(p.id)).length;
+    const isOpen = fresh ? (s.status === 'planned' ? ph.id === 'before' : ['open', 'drive', 'debrief'].includes(ph.id)) : open.has(ph.id);
+    return `<details class="phase" data-phase="${ph.id}" ${isOpen ? 'open' : ''}><summary><span class="t">${ph.t}</span><h3>${ph.title}</h3><span class="hint mono">${doneN}/${prompts.length}</span></summary>
+      <p class="intent">${ph.intent}</p>
+      ${prompts.map(p => `<label class="prompt ${asked.has(p.id) ? 'done' : ''}"><input type="checkbox" data-ask="${p.id}" ${asked.has(p.id) ? 'checked' : ''}><span class="q">${p.q}${p.s ? `<small>${p.s}</small>` : ''}</span></label>`).join('')}
+    </details>`;
+  }).join('');
+  if (s.variant === 'compare') { /* prototype prompt shown */ }
+  // Notes
+  const notes = S.notes.filter(n => n.sessionId === s.id).sort((x, y) => (y.createdAt || '').localeCompare(x.createdAt || ''));
+  const prev = new Set([...document.querySelectorAll('#s-notes .note')].map(n => n.dataset.id));
+  const hadAny = prev.size > 0;
+  $('#s-notes').innerHTML = notes.length ? notes.map(n => noteRow(n, hadAny && !prev.has(n.id))).join('') : `<p class="hint" style="padding:12px 0">Notes appear here, newest first, with the minute of the call.</p>`;
+  const counts = KINDS.map(k => [k, notes.filter(n => n.kind === k.id).length]).filter(([, c]) => c);
+  $('#s-counts').textContent = counts.map(([k, c]) => `${c} ${k.label.toLowerCase()}`).join(' · ');
+}
+function noteRow(n, isFresh) {
+  const k = kindOf(n.kind);
+  return `<div class="note k-${k.id} ${k.id === 'quote' ? 'quote' : ''} ${isFresh ? 'fresh' : ''}" data-id="${esc(n.id)}">
+    <span class="m">${n.min != null ? String(n.min).padStart(2, '0') + '′' : ''}</span>
+    <div class="tx"><div class="tags"><span class="kind">${k.label}</span><span class="area">${esc(n.area)}</span></div><p>${esc(n.text)}</p></div>
+    <button class="ghost x" data-del="${esc(n.id)}" aria-label="Delete note">✕</button></div>`;
+}
+function sessionMarkdown(s) {
+  const notes = S.notes.filter(n => n.sessionId === s.id).sort((x, y) => (x.createdAt || '').localeCompare(y.createdAt || ''));
+  const L = [`# ${handle(s.participantId)} · ${s.date ? fmtDate(s.date) : 'undated'} · ${VARIANTS[s.variant] || ''}`, ''];
+  if (s.scene) L.push(`**Scene:** ${s.scene}`); if (s.goal) L.push(`**Their goal:** ${s.goal}`);
+  L.push('', '## Debrief', `- Closeness to vision: ${s.closeness ? s.closeness + '/5' : 'not asked'}`);
+  [['gap', 'Gap'], ['frustrating', 'Most frustrating'], ['useFor', 'Would use pages for'], ['disappointed', 'If it went away'], ['commit', 'Next scene on their own'], ['checkinDate', 'Check-in'], ['paidBefore', 'Paid for art before'], ['returned', 'Came back'], ['returnNote', 'Return detail']]
+    .forEach(([k, l]) => s[k] && L.push(`- ${l}: ${s[k]}`));
+  if (s.takeaways) L.push('', '## Takeaways', s.takeaways);
+  if (s.nextAction) L.push('', `**Next action:** ${s.nextAction}`);
+  L.push('', '## Notes');
+  notes.forEach(n => L.push(`- \`${String(n.min ?? '').padStart(2, '0')}′\` **${kindOf(n.kind).label}** · ${n.area}: ${n.text}`));
+  return L.join('\n');
+}
+
+/* ---------- Insights ---------- */
+function renderInsights() {
+  const el = $('#v-insights');
+  const done = S.sessions.filter(s => s.status === 'done');
+  const testers = new Set(done.map(s => s.participantId));
+  const scored = done.filter(s => s.closeness);
+  const dis = ['Very disappointed', 'Somewhat disappointed', 'Not disappointed'].map(l => [l, done.filter(s => s.disappointed === l).length]);
+  const returned = done.filter(s => (s.returned || '').startsWith('Yes')).length;
+  const checked = done.filter(s => s.returned).length;
+  const assists = S.notes.filter(n => n.kind === 'assist' && done.some(s => s.id === n.sessionId)).length;
+
+  const cell = (a, k) => { const ns = S.notes.filter(n => n.area === a && n.kind === k.id); return { n: ns.length, p: new Set(ns.map(n => n.participantId)).size }; };
+  const maxP = Math.max(1, testers.size);
+  const matrix = `<table class="matrix"><thead><tr><th>Area</th>${KINDS.map(k => `<th class="k k-${k.id}">${k.label}</th>`).join('')}</tr></thead><tbody>${AREAS.map(a => `<tr><th>${a}</th>${KINDS.map(k => {
+    const c = cell(a, k); const on = filt && filt.area === a && filt.kind === k.id;
+    return `<td><button class="k-${k.id} ${c.n ? 'has' : 'zero'}" style="--w:${Math.round(12 + 50 * c.p / maxP)}" data-cell="${a}|${k.id}" aria-pressed="${on}" ${c.n ? '' : 'tabindex="-1"'} aria-label="${a}, ${k.label}: ${c.p} people, ${c.n} notes">${c.n ? `${c.p}<span class="muted">·${c.n}</span>` : '·'}</button></td>`;
+  }).join('')}</tr>`).join('')}</tbody></table>`;
+
+  const list = S.notes.filter(n => !filt || (n.area === filt.area && n.kind === filt.kind)).sort((x, y) => (y.createdAt || '').localeCompare(x.createdAt || '')).slice(0, filt ? 200 : 40);
+  const fOpts = S.findings.map(f => `<option value="${esc(f.id)}">${esc(f.title || 'Untitled finding')}</option>`).join('');
+
+  const findings = [...S.findings].sort((a, b) => FSTATUS.findIndex(x => x.id === a.status) - FSTATUS.findIndex(x => x.id === b.status)).map(f => {
+    const ev = (f.noteIds || []).map(id => byId(S.notes, id)).filter(Boolean);
+    const ppl = new Set(ev.map(n => n.participantId));
+    const suggest = f.status === 'signal' && ppl.size >= 2;
+    return `<div class="finding" data-finding="${esc(f.id)}">
+      <div class="row"><input data-ff="title" value="${esc(f.title)}" placeholder="Name the problem or the win" aria-label="Finding">
+        <select data-ff="status" aria-label="Status">${FSTATUS.map(s => `<option value="${s.id}" ${s.id === f.status ? 'selected' : ''}>${s.label}</option>`).join('')}</select>
+        <span class="pill ${suggest ? 'warn' : ''}">${ppl.size} ${ppl.size === 1 ? 'person' : 'people'} · ${ev.length} notes${suggest ? ' · looks like a pattern' : ''}</span></div>
+      <div class="ev">${ev.map(n => `<div><span class="who">${esc(handle(n.participantId))} ${n.min != null ? n.min + '′' : ''} · ${kindOf(n.kind).label}</span> ${esc(n.text)} <button class="ghost" style="padding:0 4px" data-unlink="${esc(n.id)}" aria-label="Remove evidence">✕</button></div>`).join('') || '<span class="muted">No evidence linked yet. Add notes from the list below.</span>'}</div>
+      <div class="row"><input data-ff="action" value="${esc(f.action)}" placeholder="What you will do, or what you decided" aria-label="Action" style="font-weight:400">
+        <button class="ghost" data-fdel="${esc(f.id)}">Delete</button></div>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div><h2>Insights</h2><p class="muted">With a handful of testers these are stories, not statistics. Counts show how many different people hit something.</p></div>
+    <div class="stats">
+      <div class="stat"><span class="eyebrow">Sessions done</span><span class="v mono">${done.length}</span><span class="s">${testers.size} testers · ${S.sessions.filter(s => s.status === 'planned').length} planned</span></div>
+      <div class="stat"><span class="eyebrow">Closeness to vision</span><span class="v mono">${scored.length ? scored.map(s => s.closeness).join(' ') : '–'}</span><span class="s">One score per session, out of 5</span></div>
+      <div class="stat"><span class="eyebrow">Very disappointed</span><span class="v mono">${dis[0][1]}<span class="muted" style="font-size:1rem"> / ${dis.reduce((t, [, c]) => t + c, 0)}</span></span><span class="s">${dis.slice(1).map(([l, c]) => `${c} ${l.split(' ')[0].toLowerCase()}`).join(' · ')}</span></div>
+      <div class="stat"><span class="eyebrow">Came back in 7 days</span><span class="v mono">${returned}<span class="muted" style="font-size:1rem"> / ${checked}</span></span><span class="s">Checked so far. No reply counts as unknown.</span></div>
+      <div class="stat"><span class="eyebrow">Times you helped</span><span class="v mono">${assists}</span><span class="s">Each one is a place the product didn’t explain itself</span></div>
+    </div>
+    <div class="panel"><div class="bar" style="margin-bottom:10px"><h3>Where it happened</h3><span class="hint">People · notes. Click a cell to see its notes.</span></div><div class="matrix-wrap">${matrix}</div></div>
+    <div class="panel"><div class="bar" style="margin-bottom:6px"><h3>Findings</h3><button class="primary" id="f-add" ${S.ready ? '' : 'disabled'}>New finding</button></div>
+      <p class="hint">Something one person hit is a signal. It becomes a pattern when a second person hits it on their own.</p>
+      ${findings || '<div class="empty" style="margin-top:10px">No findings yet. After a session, start one from a note below.</div>'}</div>
+    <div class="panel"><div class="bar" style="margin-bottom:6px"><h3>${filt ? `${esc(filt.area)} · ${kindOf(filt.kind).label}` : 'Latest notes'}</h3>${filt ? '<button id="f-clear">Show all notes</button>' : ''}</div>
+      <div class="notes" style="max-height:none">${list.map(n => `<div class="note k-${kindOf(n.kind).id}"><span class="m">${n.min != null ? String(n.min).padStart(2, '0') + '′' : ''}</span>
+        <div class="tx"><div class="tags"><span class="kind">${kindOf(n.kind).label}</span><span class="area">${esc(n.area)} · ${esc(handle(n.participantId))}</span></div><p>${esc(n.text)}</p></div>
+        <select data-link="${esc(n.id)}" aria-label="Add to finding" style="width:auto;max-width:150px;font-size:0.8rem"><option value="">Add to…</option><option value="__new">New finding</option>${fOpts}</select></div>`).join('') || '<p class="hint" style="padding:12px 0">No notes yet. They come from the Session tab.</p>'}</div></div>`;
+
+  el.querySelectorAll('[data-cell]').forEach(b => b.onclick = () => { const [a, k] = b.dataset.cell.split('|'); filt = filt && filt.area === a && filt.kind === k ? null : { area: a, kind: k }; renderInsights(); });
+  $('#f-clear') && ($('#f-clear').onclick = () => { filt = null; renderInsights(); });
+  $('#f-add').onclick = () => create('findings', { title: '', status: 'signal', noteIds: [], action: '' });
+  el.querySelectorAll('[data-link]').forEach(sel => sel.onchange = async () => {
+    const nid = sel.dataset.link, v = sel.value; sel.blur();
+    if (v === '__new') await create('findings', { title: byId(S.notes, nid)?.text.slice(0, 80) || '', status: 'signal', noteIds: [nid], action: '' });
+    else if (v) { const f = byId(S.findings, v); if (!(f.noteIds || []).includes(nid)) await write('findings/' + v, { noteIds: [...(f.noteIds || []), nid] }); }
+    toast('Added to finding');
+  });
+  el.querySelectorAll('[data-finding]').forEach(box => {
+    const fid = box.dataset.finding;
+    box.querySelectorAll('[data-ff]').forEach(inp => inp.onchange = () => write('findings/' + fid, { [inp.dataset.ff]: inp.value }));
+    box.querySelectorAll('[data-unlink]').forEach(b => b.onclick = () => { const f = byId(S.findings, fid); write('findings/' + fid, { noteIds: (f.noteIds || []).filter(x => x !== b.dataset.unlink) }); });
+    box.querySelector('[data-fdel]').onclick = (e) => { const b = e.currentTarget; if (b.dataset.armed) write('findings/' + fid, null, 'delete'); else { b.dataset.armed = 1; b.textContent = 'Click again'; } };
+  });
+}
+
+/* ---------- Playbook ---------- */
+function renderPlaybook() {
+  const el = $('#v-playbook');
+  if (el.dataset.built) return; el.dataset.built = 1;
+  el.innerHTML = `<div class="book"><article class="prose">
+    <div><div class="eyebrow">How to run this round</div><h2 style="font-size:1.8rem;margin-top:4px">Early tester playbook</h2></div>
+    <p>Each session should answer one question: can a writer turn a scene into pages they would show someone, without you helping? Everything else on this page supports that question.</p>
+
+    <h2 id="pb-goals">What this round has to answer</h2>
+    <table><thead><tr><th>Question</th><th>Evidence that answers it</th></tr></thead><tbody>
+      <tr><td>Do the pages match what they pictured?</td><td>The 1–5 closeness score, the gap in their words, and what they say they would do with the pages.</td></tr>
+      <tr><td>Where does the product stop explaining itself?</td><td>Friction notes and every “I helped” note, grouped by area in Insights.</td></tr>
+      <tr><td>Do they want it badly enough to come back?</td><td>Whether they come back within 7 days, checked in the app before you ask. Also the “very disappointed” answer.</td></tr>
+    </tbody></table>
+    <div class="callout"><strong>Before the first call, decide what would change your plan.</strong> For example: if two of three testers rate closeness 2 or lower, work on Look and Cast before anything else. If nobody comes back on their own, the problem is the value of the output, not how easy it is to use.</div>
+
+    <h2 id="pb-format">Session format</h2>
+    <ul>
+      <li><strong>45 minutes on a video call.</strong> They share their screen and use their own account. Generation takes real time, so 20 minutes is too short to reach a finished page.</li>
+      <li><strong>Their scene, not yours.</strong> Writers judge pages of their own work far more sharply than a demo. Ask for 500–1,500 words, one location, and 2–4 characters.</li>
+      <li><strong>Use generation waits for interview questions.</strong> The script puts questions about their current process in those gaps. Waiting is data too: note if they leave the tab.</li>
+      <li><strong>If drawing runs past the slot,</strong> run the debrief anyway. Send them the pages afterwards and ask the closeness question by message.</li>
+      <li><strong>Three kinds of session.</strong> A first run is the default. If they bring a prototype, look at it before Scenewright so their reaction is not anchored by what they just saw. A return visit is someone who came back on their own: watch what they do without the script.</li>
+    </ul>
+
+    <h2 id="pb-asking">How to ask</h2>
+    <ul>
+      <li><strong>Ask about what they did, not what they would do.</strong> “When did you last try to get art for your book?” tells you more than “Would you use a tool like this?”</li>
+      <li><strong>Don’t pitch, explain or defend.</strong> If they misunderstand something, that is the finding. Write it down before you correct it.</li>
+      <li><strong>Answer a question with a question.</strong> “What do you think it does?” Then wait. Count to ten before you help.</li>
+      <li><strong>Log every time you help</strong> as “I helped”. Each one marks a place the product needs to explain itself.</li>
+      <li><strong>Treat compliments as noise and commitments as signal.</strong> “This is cool” is not data. Agreeing to run another scene by a set date is.</li>
+      <li><strong>Avoid these:</strong> “Do you like it?”, “Would you pay for this?”, “Is this easy?” Ask instead what they paid for art before, what was hardest, and what they would do with the pages.</li>
+    </ul>
+
+    <h2 id="pb-script">The script</h2>
+    <p class="muted">The same prompts appear as a checklist in the Session tab.</p>
+    ${PHASES.map(ph => `<div><h3>${ph.t} · ${ph.title}</h3><p class="muted" style="margin:4px 0 8px">${ph.intent}</p><ul>${ph.prompts.map(p => `<li class="q">${p.q}${p.v ? ' <span class="pill">prototype sessions</span>' : ''}${p.s ? `<br><span class="muted" style="font-weight:400">${p.s}</span>` : ''}</li>`).join('')}</ul></div>`).join('')}
+
+    <h2 id="pb-notes">Taking notes</h2>
+    <ul>
+      <li>One thought per note. The minute of the call is added for you, so you can find the moment in a recording.</li>
+      <li>Tag each note with a type and an area. Type the shortcut at the start of a note to set the type without the mouse: <span class="mono">/f</span> friction, <span class="mono">/b</span> bug, <span class="mono">/d</span> delight, <span class="mono">/r</span> request, <span class="mono">/q</span> quote, <span class="mono">/a</span> I helped, <span class="mono">/o</span> observation.</li>
+      <li>Keep what you saw separate from what they said. “Clicked Regenerate three times” is an observation. “I didn’t know it would cost credits” is a quote.</li>
+    </ul>
+
+    <h2 id="pb-sense">Making sense of it</h2>
+    <ul>
+      <li><strong>Within the hour:</strong> write three takeaways and one next action, then link notes to findings.</li>
+      <li><strong>After every three sessions:</strong> read the Insights grid. A finding is a <em>signal</em> when one person hits it and a <em>pattern</em> when two or more hit it on their own. Rank patterns by severity: it blocked them, they needed help, it slowed them down, or it was a preference.</li>
+      <li><strong>Fix patterns between sessions.</strong> When a fix ships, the next tester tells you whether it worked. That is the main advantage of small rounds.</li>
+      <li><strong>Copy as Markdown</strong> on a session gives you a summary to paste into a GitHub issue or share with me.</li>
+    </ul>
+
+    <h2 id="pb-care">Consent and credits</h2>
+    <ul>
+      <li>Ask about recording in writing before the call and again on the call. Notes only is always fine.</li>
+      <li>Joining a session does not let you publish their manuscript, pages or quotes. Ask separately, and record the answer on their card.</li>
+      <li>Grant credits before the call so a balance problem doesn’t eat the session. Record what you granted and what they used. Your earlier draft suggested ~600 credits with a top-up of up to 200. That amount has not been approved yet.</li>
+      <li>Check in on day 7 only if they agreed. Look for a return in the app first. If they don’t reply, the answer is unknown, not no.</li>
+    </ul>
+  </article>
+  <nav class="toc" aria-label="Playbook sections"><span class="eyebrow">On this page</span>
+    <a href="#pb-goals">What this round answers</a><a href="#pb-format">Session format</a><a href="#pb-asking">How to ask</a><a href="#pb-script">The script</a><a href="#pb-notes">Taking notes</a><a href="#pb-sense">Making sense of it</a><a href="#pb-care">Consent and credits</a></nav></div>`;
+}
+
+/* Backoffice transport: no credentials or network access in this sandbox. */
+const pending = new Map(); let serial = 0;
+function request(payload) {
+  return new Promise((resolve, reject) => {
+    const id = ++serial;
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error('Save not confirmed. Reload before retrying.')); }, 30000);
+    pending.set(id, { resolve, reject, timer });
+    parent.postMessage({ tracker: true, id, ...payload }, '*');
+  });
+}
+window.addEventListener('message', e => {
+  if (e.source !== parent || !e.data?.tracker) return;
+  const p = pending.get(e.data.id); if (!p) return;
+  clearTimeout(p.timer); pending.delete(e.data.id);
+  for (const [key, value] of Object.entries(e.data.theme || {})) {
+    if (/^--(color|font)-[a-z-]+$/.test(key) && typeof value === 'string' && value) document.documentElement.style.setProperty(key, value);
+  }
+  if (e.data.error) { $('#conn').textContent = 'Not saved: ' + e.data.error; p.reject(new Error(e.data.error)); }
+  else p.resolve(e.data.result);
+});
+const listeners = {};
+function notify(col) { listeners[col]?.({ docs: S[col].map(row => ({ id: row.id, data: () => row })) }); }
+let transportQueue = Promise.resolve();
+function documentRef(path) {
+  const [col, id] = path.split('/');
+  const save = (mode, data = {}) => {
+    const task = transportQueue.catch(() => {}).then(async () => {
+      $('#conn').textContent = 'Saving…';
+      const result = await request({ action: 'write', collection: col, recordId: id, mode, data });
+      S[col] = result[col]; render(); $('#conn').textContent = 'Saved to backoffice';
+    });
+    transportQueue = task; return task;
+  };
+  return { id, path, set: data => save('set', data), update: data => save('update', data), delete: () => save('delete') };
+}
+render();
+request({ action: 'load' }).then(data => {
+  for (const col of ['people', 'sessions', 'notes', 'findings']) S[col] = data[col];
+  db = { doc: documentRef, collection: col => ({ doc: () => documentRef(col + '/' + crypto.randomUUID()), onSnapshot: callback => { listeners[col] = callback; notify(col); } }) };
+  S.ready = true; $('#conn').textContent = 'Saved to backoffice'; render();
+}).catch(e => { $('#conn').textContent = 'Tracker unavailable: ' + e.message; });
+</script></body></html>

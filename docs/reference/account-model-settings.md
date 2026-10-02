@@ -33,10 +33,11 @@ operator connection used by its other views.
 | Visual review | GPT-6 Luna | Visual consistency checks |
 
 Text and vision choices are `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`,
-`claude-opus-5-5`, `claude-sonnet-5-5`, `mimo-v2.6-pro`, and
-`deepseek-v4.1-flash`.
+`claude-opus-5-5`, `claude-sonnet-5-5`, `mimo-v2.6-pro`,
+`deepseek-v4.1-flash`, and `gemini-3.8-flash`.
 Image and Draw choices are `image-sunburst` only. The gateway maps the text
-choices to OpenAI, Anthropic, OpenRouter/Xiaomi, and Together AI respectively.
+choices to OpenAI, Anthropic, OpenRouter/Xiaomi, Together AI, and the Gemini API
+(an AI Studio `GEMINI_API_KEY`, not Vertex) respectively.
 `image-sunburst` runs on OpenAI first with one FAL attempt as backup, for
 Style/Cast images and Draw pages alike; model pickers label it "OpenAI, FAL
 backup". There is no route-priority setting.
@@ -46,10 +47,10 @@ gateway so Sunburst images settle at FAL's billed charge; without it they settle
 at a labelled request estimate (see [stage contracts](stage-contracts.md)).
 `novel_to_comic/src/novel_to_comic/text_models.py` lists the selectable text aliases and the
 request fields each accepts; every alias needs a gateway route and a pricing
-alias. GPT and Claude text routes default to medium reasoning effort.
+alias. GPT, Claude, and Gemini text routes default to medium reasoning effort.
 Backoffice offers a reasoning selector beside each text-stage model: Extract,
 Brief, shared Style/Cast text, Adapt, Plan, lettering checks, and visual review.
-GPT and Claude accept low, medium, or high. MiMo and DeepSeek accept Off or On
+GPT, Claude, and Gemini accept low, medium, or high. MiMo and DeepSeek accept Off or On
 (`none` or `enabled`), using their routes' native reasoning toggles.
 PATCH accepts a partial `reasoning_efforts` mapping, for example
 `{"reasoning_efforts": {"adapt": "high", "plan": "low"}}`, or a model and
@@ -57,12 +58,12 @@ reasoning change together:
 `{"selections": {"adapt": "mimo-v2.6-pro"}, "reasoning_efforts": {"adapt": "enabled"}}`.
 Incompatible model/setting combinations are rejected before saving. Switching
 models resets an incompatible saved reasoning choice to the new model's default:
-medium for GPT/Claude, Off for MiMo/DeepSeek. Image generation has no text
+medium for GPT/Claude/Gemini, Off for MiMo/DeepSeek. Image generation has no text
 reasoning setting.
 
 Settings are saved atomically with operator model defaults and snapshotted for
-new jobs. Changes do not affect running jobs. GPT requests send
-`reasoning_effort`; Claude sends `output_config.effort`; open-model requests send
+new jobs. Changes do not affect running jobs. GPT and Gemini requests send
+`reasoning_effort` (the gateway maps it to Gemini's `thinkingLevel`); Claude sends `output_config.effort`; open-model requests send
 `extra_body.reasoning.enabled`. OpenRouter requests preserve
 `provider.require_parameters`. Enabling reasoning on the open routes adds 16K
 completion-token headroom and a 4K thinking-token allowance to the request's cost
