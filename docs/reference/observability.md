@@ -39,6 +39,10 @@ reducing the Fly machine size.
   bounded structural roles/types/geometry and route templates survive. Replay
   event packing is disabled so this boundary can inspect the DOM; transport
   compression remains available. This intentionally reduces replay visual fidelity.
+  The SDK reads its remote config, which enables recording, from the regional
+  `*-assets.i.posthog.com` host. The production CSP `connect-src` must allow it
+  alongside the ingestion host; blocking it keeps events flowing but silently
+  disables replay (no production replays were captured before 2026-10-02).
   Autocapture retains known HTML tag chains without classes, text or attributes. `scrubEvent`
   in `web/src/telemetry.ts` enforces these limits; the Privacy page states them.
 - Browser events retain the configured public ingestion token (required by
