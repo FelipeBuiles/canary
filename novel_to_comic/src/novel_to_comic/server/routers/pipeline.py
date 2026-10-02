@@ -264,7 +264,9 @@ async def _run_stage_with_credits(
                 fresh_adaptation=rerun and stage == "adapt",
             )
     except CreditReservationDenied as denied:
-        capture_server_event("credit_blocked", user_id=user_id, project_id=project_id, properties={"stage": stage})
+        # Estimation defects share this boundary; only a balance shortfall is a credit block.
+        if denied.insufficient_credits:
+            capture_server_event("credit_blocked", user_id=user_id, project_id=project_id, properties={"stage": stage})
         if not rerun:
             fail_stage(state, stage, denied.message, detail=denied.detail)
             save_state(state, project_dir)
@@ -277,7 +279,8 @@ async def _run_stage_with_credits(
             event.update(denied.detail)
         queue.put_nowait(event)
         capture_lifecycle(app, "stage_failed", attempt_id, user_id=user_id, project_id=project_id,
-                          properties={"stage": stage, "outcome": "blocked", "error_type": "insufficient_credits",
+                          properties={"stage": stage, "outcome": "blocked" if denied.insufficient_credits else "failed",
+                                      "error_type": denied.error_type,
                                       "run_id": run_id, "attempt_id": attempt_id})
         return
     except Exception as exc:
