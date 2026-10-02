@@ -23,7 +23,7 @@ from novel_to_comic.clients.structured_call import (
 from novel_to_comic.config import Config
 from novel_to_comic.extraction_sections import estimate_sections, extract_sections
 from novel_to_comic.input_limits import read_source
-from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.models.story_bible import StoryBible, blank_visual_anchors
 from novel_to_comic.source_extraction import (
     align_scene_anchors,
     align_scene_openings,
@@ -508,7 +508,13 @@ def _parse_extraction(raw: object, novel_text: str) -> StoryBible:
                     )
                 positions.add(position)
     _check_character_looks(result.get("characters", []))
-    return StoryBible.model_validate(result)
+    bible = StoryBible.model_validate(result)
+    if blank := blank_visual_anchors(bible):
+        raise ValueError(
+            "Every character, location, prop, and appearance state requires a nonempty "
+            "visual_anchor. Blank visual_anchor for: " + ", ".join(blank)
+        )
+    return bible
 
 
 def _text_only_damage_states(bible: StoryBible) -> StoryBible:
