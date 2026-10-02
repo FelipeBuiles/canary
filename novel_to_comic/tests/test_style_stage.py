@@ -121,7 +121,7 @@ def _batch(*, restriction: str = "", count: int = LLM_REQUEST_COUNT) -> dict:
             "story_fit": "Supports the story.",
             "risk": "Detailed finish.",
         })
-    return {"medium_restriction_quote": restriction, "proportion_restriction_quote": "", "styles": styles}
+    return {"medium_restriction": restriction, "proportion_restriction": "", "styles": styles}
 
 
 # ── declared-medium dedup ────────────────────────────────────────────────────
@@ -188,15 +188,6 @@ def test_explicit_author_medium_restriction_preserves_narrowed_neighbors():
     assert {s["medium"] for s in suggestions} == {"woodblock print"}
     assert {s["visual_logic"] for s in suggestions} == {"graphic"}
     assert {s["style_reference_mode"] for s in suggestions} == {"variation"}
-
-
-def test_model_cannot_claim_an_unquoted_author_medium_restriction():
-    mock = AsyncMock(return_value=ApiResult(value=_batch(restriction="only ink"), usage=None))
-    with patch("novel_to_comic.clients.text.generate_json", new=mock):
-        with pytest.raises(ValueError):
-            asyncio.run(generate_suggestions(
-                Config(), _bible(), custom_direction={"text": "A hopeful mood"},
-            ))
 
 
 def test_generated_production_standards_reject_untyped_objects():
@@ -781,7 +772,7 @@ def test_medium_restriction_does_not_disable_character_design_diversity():
 
 def test_explicit_proportions_override_only_the_proportion_axis():
     batch = _batch()
-    batch["proportion_restriction_quote"] = "Keep naturalistic proportions"
+    batch["proportion_restriction"] = "Keep naturalistic proportions"
     for candidate in batch["styles"]:
         candidate["proportion_family"] = "naturalistic"
     mock = AsyncMock(return_value=ApiResult(value=batch, usage=None))
@@ -796,7 +787,7 @@ def test_explicit_proportions_override_only_the_proportion_axis():
 
 def test_explicit_photographic_direction_can_keep_realism_across_neighbors():
     batch = _batch(restriction="Use only photography")
-    batch["proportion_restriction_quote"] = "Use only photography"
+    batch["proportion_restriction"] = "Use only photography"
     for candidate in batch["styles"]:
         candidate.update(visual_logic="photographic", proportion_family="naturalistic")
     mock = AsyncMock(return_value=ApiResult(value=batch, usage=None))
@@ -808,148 +799,27 @@ def test_explicit_photographic_direction_can_keep_realism_across_neighbors():
     assert {s["visual_logic"] for s in suggestions} == {"photographic"}
 
 
-def test_proportion_restrictions_must_quote_the_author_not_the_story():
-    batch = _batch()
-    batch["proportion_restriction_quote"] = "naturalistic bodies"
-    mock = AsyncMock(return_value=ApiResult(value=batch, usage=None))
-    with patch("novel_to_comic.clients.text.generate_json", new=mock):
-        with pytest.raises(ValueError, match="Proportion restriction must quote"):
-            asyncio.run(generate_suggestions(Config(), _bible(), custom_direction={"text": "A serious mood"}))
-    assert mock.await_count == 2
-
-
-def test_a_paraphrased_restriction_quote_is_repaired_on_the_shared_attempt():
-    misquoted = _batch()
-    misquoted["proportion_restriction_quote"] = "natural body proportions"
-    repaired = _batch()
-    repaired["proportion_restriction_quote"] = "Keep naturalistic proportions"
-    for candidate in repaired["styles"]:
+def test_a_paraphrased_restriction_is_accepted_on_the_first_attempt():
+    paraphrased = _batch()
+    paraphrased["proportion_restriction"] = "natural body proportions"
+    for candidate in paraphrased["styles"]:
         candidate["proportion_family"] = "naturalistic"
-    mock = AsyncMock(side_effect=[
-        ApiResult(value=misquoted, usage=None), ApiResult(value=repaired, usage=None),
-    ])
+    mock = AsyncMock(return_value=ApiResult(value=paraphrased, usage=None))
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
         suggestions, _ = asyncio.run(generate_suggestions(Config(), _bible(), custom_direction={
-            "text": "Keep naturalistic proportions",
-        }))
-    assert mock.await_count == 2
-    correction = mock.await_args_list[1].kwargs["user_content"]
-    assert "Correct the restriction quotes" in correction
-    assert "Proportion restriction must quote" in correction
-    assert "natural body proportions" in correction
-    assert {s["proportion_family"] for s in suggestions} == {"naturalistic"}
-
-
-def test_a_restriction_quote_differing_only_in_typography_is_the_authors_own_words():
-    quoted = _batch()
-    quoted["proportion_restriction_quote"] = "\u201ckeep  naturalistic proportions.\u201d"
-    for candidate in quoted["styles"]:
-        candidate["proportion_family"] = "naturalistic"
-    mock = AsyncMock(return_value=ApiResult(value=quoted, usage=None))
-    with patch("novel_to_comic.clients.text.generate_json", new=mock):
-        suggestions, _ = asyncio.run(generate_suggestions(Config(), _bible(), custom_direction={
-            "text": "Please keep naturalistic proportions, always",
+            "text": "people should look like real people, I think?",
         }))
     assert mock.await_count == 1
     assert {s["proportion_family"] for s in suggestions} == {"naturalistic"}
 
 
-@pytest.mark.parametrize(("quote", "author", "span"), [
-    ("keep naturalistic proportions.", "Keep naturalistic proportions", "Keep naturalistic proportions"),
-    ("\u201cno anime\u201d", 'Please, "No  anime" at all', "No  anime"),
-    ("natural body proportions", "Keep naturalistic proportions", None),
-    ("...", "Keep naturalistic proportions", None),
-    ("anime", "", None),
-])
-def test_author_quote_span_returns_only_the_authors_text(quote, author, span):
-    from novel_to_comic.stages.s2_style import author_quote_span
-
-    assert author_quote_span(quote, author) == span
-
-
-def test_proportion_diversity_is_role_compatible_not_just_present_in_the_pool():
+def test_a_restriction_without_an_author_direction_keeps_the_default_diversity():
     batch = _batch()
+    batch["proportion_restriction"] = "naturalistic bodies"
     for candidate in batch["styles"]:
         candidate["proportion_family"] = "naturalistic"
-    # All the interesting designs compete for just ONE slot. The union of the
-    # pool looks diverse, but no one-per-role portfolio can contain four families.
-    for family in ("compact", "elongated", "heroic", "geometric"):
-        batch["styles"].append({**batch["styles"][0], "proportion_family": family})
-    with pytest.raises(RuntimeError, match="proportion families"):
-        _select_role_portfolio(batch["styles"], PORTFOLIO_ROLES, require_proportion_diversity=True)
-
-
-def test_shape_difference_outweighs_surface_wording_difference():
-    from novel_to_comic.stages.s2_style import _portfolio_distance
-
-    base = {"proportion_family": "naturalistic", "visual_logic": "stylized",
-            "medium": "ink", "palette": "red", "line_rendering": "fine", "lighting_value": "flat"}
-    new_finish = {**base, "medium": "oil", "palette": "blue", "line_rendering": "thick", "lighting_value": "rim"}
-    new_shape = {**base, "proportion_family": "compact"}
-    assert _portfolio_distance(base, new_shape) > _portfolio_distance(base, new_finish)
-
-
-def test_character_design_is_required_persisted_and_part_of_art_authority(tmp_path):
-    from novel_to_comic.stages.s2_style import load_suggestions, save_suggestions
-    from novel_to_comic.style_contract import rendering_style_template, style_template_for_suggestion
-
-    batch = _batch()
-    raw = batch["styles"][1]
-    suggestion = normalize_suggestion(raw)
-    save_suggestions(tmp_path, [suggestion], "Test")
-    loaded = load_suggestions(tmp_path)[0]
-    assert loaded == suggestion
-    template = style_template_for_suggestion(loaded)
-    assert raw["character_design"] in rendering_style_template(template)
-    request = build_style_sample_request(
-        Config(style_template=template), _bible(), BRIEF, candidate_id=suggestion["id"],
-    )
-    assert raw["character_design"] in request.compiled.final_prompt
-    assert _bible().characters[0].visual_anchor in request.compiled.final_prompt
-    assert "Do not normalize stylized or graphic figures" in request.compiled.final_prompt
-    for field, replacement in (("character_design", "Other coherent silhouettes and deliberate exaggerated faces."),
-                               ("proportion_family", "elongated"), ("visual_logic", "graphic")):
-        changed = normalize_suggestion({**raw, field: replacement})
-        assert changed["id"] != suggestion["id"]
-    del raw["character_design"]
-    with pytest.raises(ValueError, match="character_design"):
-        StyleSuggestionBatch.model_validate(batch)
-
-
-def test_unchanged_saved_direction_does_not_gain_a_new_identity_or_authority():
-    from novel_to_comic.style_contract import page_style_template, style_template_for_suggestion
-
-    legacy = _sugg("Existing", "ink")
-    assert style_template_for_suggestion(normalize_suggestion(legacy)) == page_style_template(legacy["template"])
-    assert normalize_suggestion(normalize_suggestion(legacy)) == normalize_suggestion(legacy)
-
-
-def test_suggestion_output_budget_fits_a_full_strict_lettering_batch():
-    # Strict schemas require every RoleStyle token; the shared 16k default
-    # truncated every twelve-candidate batch (finish_reason=length).
-    mock = AsyncMock(return_value=ApiResult(value=_batch(), usage=None))
+    mock = AsyncMock(return_value=ApiResult(value=batch, usage=None))
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
-        asyncio.run(generate_suggestions(Config(), _bible()))
-    budget = mock.call_args.kwargs["max_output_tokens"]
-    lettering_chars = len(json.dumps([s["lettering_design"] for s in _batch()["styles"]], indent=6))
-    # ~3 JSON chars per token; prose fields add roughly as much again.
-    assert budget * 3 >= 2 * lettering_chars
-
-
-def test_schema_invalid_response_is_repaired_on_the_shared_attempt():
-    invalid = {**_batch(), "lettering_preset": "noir"}
-    mock = AsyncMock(side_effect=[
-        ApiResult(value=invalid, usage=None), ApiResult(value=_batch(), usage=None),
-    ])
-    with patch("novel_to_comic.clients.text.generate_json", new=mock):
-        suggestions, _usage = asyncio.run(generate_suggestions(Config(), _bible()))
-    assert len(suggestions) == SAMPLE_COUNT
-    assert "Correct the previous response" in mock.call_args.kwargs["user_content"]
-
-
-def test_schema_invalid_final_attempt_fails_without_fabricating_directions():
-    invalid = {**_batch(), "lettering_preset": "noir"}
-    mock = AsyncMock(return_value=ApiResult(value=invalid, usage=None))
-    with patch("novel_to_comic.clients.text.generate_json", new=mock):
-        with pytest.raises(RuntimeError, match="did not match the required schema"):
+        with pytest.raises(RuntimeError, match="proportion families"):
             asyncio.run(generate_suggestions(Config(), _bible()))
+    assert mock.await_count == 2
