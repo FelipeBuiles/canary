@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "../../api/client";
 import { useI18n } from "../../i18n";
 import { Button } from "../ui/Button";
+import { projectPath } from "../../api/projectScope";
 
 interface Archive {
   id: string;
@@ -16,7 +17,7 @@ export function ArchivedArtwork({ project }: { project: string }) {
   const [open, setOpen] = useState(false);
   const archives = useQuery({
     queryKey: ["project", project, "restart-archives"],
-    queryFn: () => apiFetch<{ archives: Archive[] }>(`/projects/${encodeURIComponent(project)}/restart-archives`),
+    queryFn: () => apiFetch<{ archives: Archive[] }>(`${projectPath(project)}/restart-archives`),
     enabled: open,
   });
   return <details className="my-4 border-y border-ink-black/20 py-2" onToggle={(event) => setOpen(event.currentTarget.open)}>
@@ -31,7 +32,7 @@ export function ArchivedArtwork({ project }: { project: string }) {
         <ul className="max-h-96 space-y-2 overflow-auto py-2">
           {archive.files.map((file) => <li key={file} className="[overflow-wrap:anywhere]">
             <a className="inline-block min-h-11 py-3 underline underline-offset-4" target="_blank" rel="noreferrer"
-              href={`/api/projects/${encodeURIComponent(project)}/restart-archives/${archive.id}/file?path=${encodeURIComponent(file)}`}>
+              href={`/api${projectPath(project)}/restart-archives/${archive.id}/file?path=${encodeURIComponent(file)}`}>
               {file}
             </a>
           </li>)}

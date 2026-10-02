@@ -5,6 +5,7 @@ import { ApiError } from "../../api/client";
 import { ConfirmDrawer } from "../composites";
 import { Button } from "../ui/Button";
 import { useI18n } from "../../i18n";
+import { invalidateProject } from "../../api/projectScope";
 
 /** One calm line for pages drawn without a page read (older books, or a read that failed).
  * New pages are read automatically as they are drawn. */
@@ -49,9 +50,9 @@ export function PageCheckRecovery({ project, unchecked, editable = true, onRecov
       } else {
         setInterrupted(false);
       }
-      await client.invalidateQueries({ queryKey: ["project", project] });
+      await invalidateProject(client, project);
       await runFinishPreflight(project);
-      await client.invalidateQueries({ queryKey: ["project", project] });
+      await invalidateProject(client, project);
       onRecovered?.();
       if (!approved && result.pages.some((page) => page.status === "requires_ocr")) {
         setEstimate(await getPageCheckEstimate(project));

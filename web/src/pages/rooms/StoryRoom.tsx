@@ -1,6 +1,6 @@
 import { accountIdentity } from "../../lib/accountEpoch";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   useApproveStage,
   useProjectStatus,
@@ -19,6 +19,7 @@ import { Button } from "../../components/ui/Button";
 import { FieldLabel, TextAreaField, TextField } from "../../components/ui/Field";
 import { BriefSection } from "../../components/composites/BriefSection";
 import { StoryExplorer } from "../../components/composites/StoryExplorer";
+import { StoryBibleEditor, type EntityFocus } from "../../components/story/StoryBibleEditor";
 import { ArrowDownRight, BookOpen, ChevronRight } from "lucide-react";
 import { useI18n } from "../../i18n";
 import type { AdaptationBrief, StoryDecision } from "../../types/api";
@@ -27,9 +28,23 @@ function splitLines(value: string): string[] {
   return value.split("\n");
 }
 
+/** `?edit=characters:char_001` opens that entry's editor (Cast's "Edit details"). */
+function useEntityFocus(): [EntityFocus | null, () => void] {
+  const [params, setParams] = useSearchParams();
+  const [kind, id] = (params.get("edit") ?? "").split(":");
+  const focus: EntityFocus | null = (kind === "characters" || kind === "locations" || kind === "props") && id
+    ? { kind, id } : null;
+  return [focus, () => {
+    const next = new URLSearchParams(params);
+    next.delete("edit");
+    setParams(next, { replace: true });
+  }];
+}
+
 export function StoryRoom() {
   const { id } = useParams<{ id: string }>();
   const { t } = useI18n();
+  const [focus, clearFocus] = useEntityFocus();
   const { data: status, isLoading: statusLoading, error: statusError } = useProjectStatus(id);
   const activeJobs = status?.active_jobs;
   const extract = status?.stages.extract;
@@ -96,10 +111,12 @@ export function StoryRoom() {
           loadError={errorMessage}
           allowPendingStart
         />
+        {/* The shared Story Bible stays editable while this part waits for extraction. */}
+        {id && <StoryBibleEditor project={id} focus={focus} onFocusClosed={clearFocus} />}
       </RoomShell>
     );
   }
-  return <StoryEditor key={id} id={id} data={data} brief={brief} stageStatus={stageStatus} />;
+  return <StoryEditor key={id} id={id} data={data} brief={brief} stageStatus={stageStatus} focus={focus} onFocusClosed={clearFocus} />;
 }
 
 interface StoredBriefDraft {
@@ -116,11 +133,13 @@ const BRIEF_FIELD_LABELS: Partial<Record<keyof AdaptationBrief, string>> = {
   target_page_min: "Page target: from", target_page_max: "Page target: to",
 };
 
-function StoryEditor({ id, data, brief, stageStatus }: {
+function StoryEditor({ id, data, brief, stageStatus, focus, onFocusClosed }: {
   id: string;
   data: StoryDecision;
   brief: AdaptationBrief;
   stageStatus: string;
+  focus: EntityFocus | null;
+  onFocusClosed: () => void;
 }) {
   const { t } = useI18n();
   const navigate = useNavigate();
@@ -374,6 +393,7 @@ function StoryEditor({ id, data, brief, stageStatus }: {
         </fieldset>
       </form>
       <StoryExplorer story={data.story_bible} />
+      <StoryBibleEditor project={id} focus={focus} onFocusClosed={onFocusClosed} />
 
       <ApprovalBar
         next={t("Choose the visual direction for every complete page")}

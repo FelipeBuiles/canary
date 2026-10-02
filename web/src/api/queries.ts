@@ -3,7 +3,7 @@ import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tansta
 import { isNotFoundError } from "./client";
 import { listProjects, getProjectStatus, createProject, renameProject, deleteProject, fetchProjectCoverEstimate, generateProjectCover, listShortStories, importStory } from "./projects";
 import { runPipeline, approveStage, regenRef, regenStateRef, regenLocationState, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, cancelQueuedPageJobs, regenExtract, resetStale, fetchStageEstimate, fetchAssetRegenEstimate, getCastAssetVersions, restoreCastAssetVersion } from "./pipeline";
-import type { AdaptationBrief, ConfigOverrides, StoryBible, ProjectStatus, ProjectSummary } from "../types/api";
+import type { AdaptationBrief, ConfigOverrides, ProjectStatus, ProjectSummary } from "../types/api";
 import { reconcileStatusPoll } from "../lib/stageProgress";
 import { getBalance, getCreditHistory, getPricingReference } from "./credits";
 import { getPackages, createCheckout } from "./billing";
@@ -11,7 +11,6 @@ import {
   getStoryBible,
   getStory,
   updateBrief,
-  updateStoryBible,
   getImageGenerationMeta,
   getPrimaryRefs,
   setPrimaryRef,
@@ -36,6 +35,7 @@ import {
 } from "./pages";
 import { createStyleDirection, generateStyleValidation, getStyles, suggestStyles, fetchStyleDirectionEstimate, fetchSuggestStylesEstimate, fetchStyleSampleEstimate, generateStyleSamples, setActiveStyle, updateStylePresentation } from "./styles";
 import { getProjectConfig, updateProjectConfig } from "./config";
+import { invalidateProject, splitProjectKey } from "./projectScope";
 import {
   listLabsProjects,
   getImageCompareOptions,
@@ -145,7 +145,9 @@ export function useDeleteProject() {
   return useMutation({
     mutationFn: ({ id }: { id: string }) => deleteProject(id),
     onSuccess: (_data, { id }) => {
-      qc.removeQueries({ queryKey: ["project", id] });
+      const project = splitProjectKey(id).id;
+      qc.removeQueries({ predicate: ({ queryKey: [head, key] }) =>
+        head === "project" && typeof key === "string" && splitProjectKey(key).id === project });
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
   });
@@ -163,14 +165,14 @@ export function useRenameProject() {
         qc.cancelQueries({ queryKey: statusKey, exact: true }),
       ]);
       qc.setQueryData<ProjectSummary[]>(projectsKey, (projects) => projects?.map((project) =>
-        project.id === id ? { ...project, project_name: data.project_name } : project
+        project.id === splitProjectKey(id).id ? { ...project, project_name: data.project_name } : project
       ));
       qc.setQueryData<ProjectStatus>(statusKey, (status) =>
         status ? { ...status, project_name: data.project_name } : status
       );
       await Promise.all([
         qc.invalidateQueries({ queryKey: projectsKey, exact: true }),
-        qc.invalidateQueries({ queryKey: statusKey, exact: true }),
+        invalidateProject(qc, id, "status"),
       ]);
     },
   });
@@ -191,7 +193,7 @@ export function useUpdateProjectConfig() {
       updateProjectConfig(project, data),
     onSuccess: async (data, { project }) => {
       qc.setQueryData(["project", project, "config"], data);
-      await qc.invalidateQueries({ queryKey: ["project", project] });
+      await invalidateProject(qc, project);
     },
   });
 }
@@ -207,7 +209,7 @@ export function useRunPipeline() {
     // mounted so its pending state and rejection remain visible; only server
     // status/SSE may switch the room to running.
     onSettled: (_data, _err, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+      invalidateProject(qc, project, "status");
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
   });
@@ -218,8 +220,8 @@ export function useCancelQueuedPageJobs() {
   return useMutation({
     mutationFn: (project: string) => cancelQueuedPageJobs(project),
     onSuccess: (_result, project) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "generation-jobs"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+      invalidateProject(qc, project, "generation-jobs");
+      invalidateProject(qc, project, "status");
     },
   });
 }
@@ -235,7 +237,7 @@ export function useApproveStage() {
       stage: string;
     }) => approveStage(project, stage),
     onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+      invalidateProject(qc, project, "status");
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
   });
@@ -272,8 +274,8 @@ export function useRegenExtract() {
     mutationFn: ({ project }: { project: string }) =>
       regenExtract(project),
     onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "story-bible"] });
+      invalidateProject(qc, project, "status");
+      invalidateProject(qc, project, "story-bible");
     },
   });
 }
@@ -283,7 +285,7 @@ export function useResetStale() {
   return useMutation({
     mutationFn: ({ project }: { project: string }) => resetStale(project),
     onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+      invalidateProject(qc, project, "status");
       qc.invalidateQueries({ queryKey: ["projects"] });
     },
   });
@@ -422,8 +424,8 @@ export function useUpdateBrief() {
       changes: Partial<AdaptationBrief>;
     }) => updateBrief(project, expectedRevision, changes),
     onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "story"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+      invalidateProject(qc, project, "story");
+      invalidateProject(qc, project, "status");
     },
   });
 }
@@ -433,17 +435,6 @@ export function useStoryBible(project: string | undefined, enabled = true) {
     queryKey: ["project", project, "story-bible"],
     queryFn: () => getStoryBible(project!),
     enabled: !!project && enabled,
-  });
-}
-
-export function useUpdateStoryBible() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ project, data }: { project: string; data: StoryBible }) =>
-      updateStoryBible(project, data),
-    onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "story-bible"] });
-    },
   });
 }
 
@@ -478,8 +469,8 @@ export function useRestoreCastAssetVersion() {
       project: string; assetType: "character" | "location"; assetId: string; version: number; stateId?: string;
     }) => restoreCastAssetVersion(project, assetType, assetId, version, stateId),
     onSuccess: (_data, { project, assetType, assetId, stateId }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, `${assetType === "character" ? "character-ref" : "location-plate"}-versions`, assetId, stateId ?? null] });
-      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+      invalidateProject(qc, project, `${assetType === "character" ? "character-ref" : "location-plate"}-versions`, assetId, stateId ?? null);
+      invalidateProject(qc, project, "status");
     },
   });
 }
@@ -498,7 +489,7 @@ export function useSetPrimaryRef() {
     mutationFn: ({ project, charId, pose }: { project: string; charId: string; pose: string | null }) =>
       setPrimaryRef(project, charId, pose),
     onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "primary-refs"] });
+      invalidateProject(qc, project, "primary-refs");
     },
   });
 }
@@ -599,13 +590,13 @@ export function usePageAnalysisEstimate(
 }
 
 function invalidatePageReview(qc: ReturnType<typeof useQueryClient>, project: string, pageNumber?: number) {
-  qc.invalidateQueries({ queryKey: ["project", project, "complete-pages"] });
+  invalidateProject(qc, project, "complete-pages");
   if (pageNumber != null) {
-    qc.invalidateQueries({ queryKey: ["project", project, "complete-pages", pageNumber] });
+    invalidateProject(qc, project, "complete-pages", pageNumber);
   }
-  qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+  invalidateProject(qc, project, "status");
   qc.invalidateQueries({ queryKey: ["credits", "history"] });
-  qc.invalidateQueries({ queryKey: ["project", project, "generation-jobs"] });
+  invalidateProject(qc, project, "generation-jobs");
 }
 
 export function useGenerateCompletePage() {
@@ -671,7 +662,7 @@ export function useFinishPreflight(project: string | undefined, enabled = true) 
         // A missing artifact means one of Finish's inputs changed (or this is
         // the first Book visit), so run the provider-free preflight once.
         const result = await runFinishPreflight(project!);
-        qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+        invalidateProject(qc, project, "status");
         return result.preflight;
       }
     },
@@ -686,7 +677,7 @@ export function useRunFinishPreflight() {
     mutationFn: ({ project }: { project: string }) => runFinishPreflight(project),
     onSuccess: (result, { project }) => {
       qc.setQueryData(["project", project, "finish-preflight"], result.preflight);
-      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+      invalidateProject(qc, project, "status");
     },
   });
 }
@@ -700,12 +691,12 @@ export function useExport() {
       if (result.preflight) {
         qc.setQueryData(["project", project, "finish-preflight"], result.preflight);
       }
-      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+      invalidateProject(qc, project, "status");
     },
     onError: (_error, { project }) => {
       // Packaging can invalidate old files before a later format fails.
-      qc.invalidateQueries({ queryKey: ["project", project, "finish-preflight"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+      invalidateProject(qc, project, "finish-preflight");
+      invalidateProject(qc, project, "status");
     },
   });
 }
@@ -726,7 +717,7 @@ export function useSuggestStyles() {
   return useMutation({
     mutationFn: ({ project, directionId }: { project: string; directionId?: string }) => suggestStyles(project, directionId),
     onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "styles"] });
+      invalidateProject(qc, project, "styles");
     },
   });
 }
@@ -737,8 +728,8 @@ export function useCreateStyleDirection() {
     mutationFn: ({ project, direction, image, withNeighbors }: { project: string; direction: string; image: File | null; withNeighbors: boolean }) =>
       createStyleDirection(project, { direction, image, withNeighbors }),
     onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "styles"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+      invalidateProject(qc, project, "styles");
+      invalidateProject(qc, project, "status");
     },
   });
 }
@@ -776,7 +767,7 @@ export function useGenerateStyleSamples() {
     mutationFn: ({ project, ids }: { project: string; ids: string[] }) =>
       generateStyleSamples(project, ids),
     onSettled: (_data, _error, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "styles"] });
+      invalidateProject(qc, project, "styles");
     },
   });
 }
@@ -787,7 +778,7 @@ export function useGenerateStyleValidation() {
     mutationFn: ({ project, id }: { project: string; id: string }) =>
       generateStyleValidation(project, id),
     onSettled: (_data, _error, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "styles"] });
+      invalidateProject(qc, project, "styles");
     },
   });
 }
@@ -798,7 +789,7 @@ export function useUpdateStylePresentation() {
     mutationFn: ({ project, id, changes }: { project: string; id: string; changes: { display_label?: string; hidden?: boolean } }) =>
       updateStylePresentation(project, id, changes),
     onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "styles"] });
+      invalidateProject(qc, project, "styles");
     },
   });
 }
@@ -809,8 +800,8 @@ export function useSetActiveStyle() {
     mutationFn: ({ project, id }: { project: string; id: string }) =>
       setActiveStyle(project, id),
     onSuccess: (_data, { project }) => {
-      qc.invalidateQueries({ queryKey: ["project", project, "styles"] });
-      qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+      invalidateProject(qc, project, "styles");
+      invalidateProject(qc, project, "status");
       qc.invalidateQueries({ queryKey: ["book-lettering-style", project] });
       qc.invalidateQueries({ queryKey: ["lettering-presets", project] });
     },

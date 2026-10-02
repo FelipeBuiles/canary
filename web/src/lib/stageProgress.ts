@@ -17,6 +17,7 @@ import { completedStageArtifactQueryKeys } from "./pipelineArtifacts";
 import { applyStageEventToProjectStatus } from "./pipelineStatusEvents";
 import { applyStageActivityEvent } from "./stageActivity";
 import type { PipelineEvent, ProjectStatus } from "../types/api";
+import { invalidateProject } from "../api/projectScope";
 
 export function statusQueryKey(projectId: string) {
   return ["project", projectId, "status"] as const;
@@ -83,6 +84,6 @@ export function applyPipelineEvent(
   applyStatusPatch(queryClient, projectId, event);
   applyStageActivityEvent(queryClient, projectId, event);
   if (event.stage === "draw" && event.type === "page_done") {
-    void queryClient.invalidateQueries({ queryKey: ["project", projectId, "complete-pages"] });
+    void invalidateProject(queryClient, projectId, "complete-pages");
   }
 }

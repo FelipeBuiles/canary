@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "../../api/client";
 import { useI18n } from "../../i18n";
 import { Button } from "../ui/Button";
+import { seriesPath } from "../../api/projectScope";
 
 type Review = {
   status: "missing" | "stale" | "current";
@@ -24,7 +25,7 @@ export function CastIdentityReview({ projectId, characters, onShowCharacter, onR
   const { t } = useI18n();
   const { data, isError } = useQuery({
     queryKey: ["cast-review", projectId],
-    queryFn: () => apiFetch<Review>(`/projects/${encodeURIComponent(projectId)}/cast/review`),
+    queryFn: () => apiFetch<Review>(`${seriesPath(projectId)}/cast/review`),
     refetchInterval: 10000,
   });
   const names = new Map(characters.map((character) => [character.id, character.name]));

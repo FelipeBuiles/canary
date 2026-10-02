@@ -5,6 +5,7 @@ import { pageRenderPreviewUrl, selectPageRender } from "../../api/pages";
 import { useI18n } from "../../i18n";
 import { Button } from "../ui/Button";
 import { PageArtwork } from "./PageArtwork";
+import { invalidateProject } from "../../api/projectScope";
 
 export function PageVersions({ project, pageNumber, activeRevision, disabled, onSelected }: {
   project: string;
@@ -23,7 +24,7 @@ export function PageVersions({ project, pageNumber, activeRevision, disabled, on
   const select = useMutation({
     mutationFn: (chosen: number) => selectPageRender(project, pageNumber, chosen, activeRevision!),
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ["project", project] });
+      await invalidateProject(qc, project);
       onSelected();
     },
   });

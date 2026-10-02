@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutationState, useQueryClient } from "@tanstack/react-query";
 import { useGenerationJobs } from "../api/queries";
 import type { CastReferenceInput, GenerationJob } from "../types/api";
+import { invalidateProject } from "../api/projectScope";
 
 export function useReferenceJob(project: string, identity: "char_id" | "loc_id" | "prop_id", entityId: string, stateId?: string) {
   const qc = useQueryClient();
@@ -60,24 +61,24 @@ export function useReferenceJob(project: string, identity: "char_id" | "loc_id" 
 
   const admittedJobId = admittedJob?.id;
   useEffect(() => {
-    if (admittedJobId) void qc.invalidateQueries({ queryKey: ["project", project, "generation-jobs"] });
+    if (admittedJobId) void invalidateProject(qc, project, "generation-jobs");
   }, [admittedJobId, project, qc]);
 
   useEffect(() => {
     if (!terminalId || observed.current === terminalId) return;
     observed.current = terminalId;
-    void qc.invalidateQueries({ queryKey: ["project", project, "image-generation-meta"] });
-    void qc.invalidateQueries({ queryKey: ["project", project, "asset-regen-estimate"] });
-    void qc.invalidateQueries({ queryKey: ["project", project, "character-ref-versions"] });
-    void qc.invalidateQueries({ queryKey: ["project", project, "location-plate-versions"] });
-    void qc.invalidateQueries({ queryKey: ["project", project, "status"] });
-    void qc.invalidateQueries({ queryKey: ["project", project, "story-bible"] });
+    void invalidateProject(qc, project, "image-generation-meta");
+    void invalidateProject(qc, project, "asset-regen-estimate");
+    void invalidateProject(qc, project, "character-ref-versions");
+    void invalidateProject(qc, project, "location-plate-versions");
+    void invalidateProject(qc, project, "status");
+    void invalidateProject(qc, project, "story-bible");
   }, [terminalId, project, qc]);
 
   const setActiveJob = useCallback((job: GenerationJob | null) => {
     setSubmitted(job);
     setLocalError(null);
-    void qc.invalidateQueries({ queryKey: ["project", project, "generation-jobs"] });
+    void invalidateProject(qc, project, "generation-jobs");
   }, [project, qc, setSubmitted, setLocalError]);
 
   return { activeJob, setActiveJob, isSubmitting, instructionDraft, referenceDraft, regenError, setRegenError, timestamp: refreshToken, setTimestamp, imgFailed, setImgFailed };

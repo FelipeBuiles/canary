@@ -1,4 +1,5 @@
 import { apiFetch, isNotFoundError } from "./client";
+import { projectPath, seriesPath } from "./projectScope";
 import type {
   BookAdaptation,
   BookPlan,
@@ -12,7 +13,6 @@ import type {
   StageValidation,
 } from "../types/api";
 
-const projectPath = (project: string) => `/projects/${encodeURIComponent(project)}`;
 
 export function getAdaptation(project: string): Promise<BookAdaptation> {
   return apiFetch(`${projectPath(project)}/adaptation`);
@@ -189,7 +189,7 @@ export interface PageCorrectionReference {
 /** Project-relative reference bytes served by the generic files route. */
 export function referenceFileUrl(project: string, imagePath: string): string {
   const segments = imagePath.split("/").map((segment) => encodeURIComponent(segment));
-  return `/api${projectPath(project)}/files/${segments.join("/")}`;
+  return `/api${seriesPath(project)}/files/${segments.join("/")}`;
 }
 
 /** Exact submitted correction frozen into the render's generation request. */

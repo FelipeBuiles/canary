@@ -5,10 +5,12 @@ import { STAGE_ORDER } from "../types/api";
 import { getBackendStageUiLabel, getUiCompletedCount, UI_STAGES } from "../lib/uiStages";
 import { getCachedBranding } from "../lib/legal";
 import { SupportLink } from "../components/SupportLink";
+import { splitProjectKey } from "../api/projectScope";
 
 export function Footer() {
-  const { id } = useParams();
-  const { data: status } = useProjectStatus(id);
+  const { id: projectKey } = useParams();
+  const id = projectKey ? splitProjectKey(projectKey).id : undefined;
+  const { data: status } = useProjectStatus(projectKey);
   const branding = getCachedBranding();
 
   const completedStages = status

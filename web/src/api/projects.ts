@@ -1,4 +1,5 @@
 import { apiFetch } from "./client";
+import { projectPath, seriesPath } from "./projectScope";
 import type { CostEstimate, GenerationJob, ProjectSummary, ProjectStatus, ConfigOverrides, ShortStory } from "../types/api";
 
 export function listProjects(): Promise<ProjectSummary[]> {
@@ -6,11 +7,11 @@ export function listProjects(): Promise<ProjectSummary[]> {
 }
 
 export function getProjectStatus(id: string): Promise<ProjectStatus> {
-  return apiFetch<ProjectStatus>(`/projects/${encodeURIComponent(id)}/status`);
+  return apiFetch<ProjectStatus>(`${projectPath(id)}/status`);
 }
 
 export function renameProject(id: string, name: string): Promise<{ id: string; project_name: string }> {
-  return apiFetch(`/projects/${encodeURIComponent(id)}`, {
+  return apiFetch(seriesPath(id), {
     method: "PATCH",
     body: JSON.stringify({ name }),
   });
@@ -35,7 +36,7 @@ export function createProject(
 }
 
 export function deleteProject(id: string): Promise<void> {
-  return apiFetch(`/projects/${encodeURIComponent(id)}`, {
+  return apiFetch(seriesPath(id), {
     method: "DELETE",
   });
 }
@@ -43,13 +44,13 @@ export function deleteProject(id: string): Promise<void> {
 export function generateProjectCover(
   projectId: string,
 ): Promise<{ status: string; path: string; job: GenerationJob | null }> {
-  return apiFetch(`/projects/${encodeURIComponent(projectId)}/cover`, {
+  return apiFetch(`${projectPath(projectId)}/cover`, {
     method: "POST",
   });
 }
 
 export function fetchProjectCoverEstimate(projectId: string): Promise<CostEstimate> {
-  return apiFetch(`/projects/${encodeURIComponent(projectId)}/cover-estimate`);
+  return apiFetch(`${projectPath(projectId)}/cover-estimate`);
 }
 
 export function listShortStories(): Promise<ShortStory[]> {

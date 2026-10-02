@@ -170,11 +170,34 @@ export interface ProjectSummary {
   is_running: boolean;
   has_cover: boolean;
   cover_job: GenerationJob | null;
+  /** The part whose cover the card shows. */
+  cover_part_id?: string | null;
   incompatible?: boolean;
   incompatibility_reason?: string | null;
 }
 
+/** One part of a series: its own issue with its own text, Brief and pages. */
+export interface PartSummary {
+  id: string;
+  ordinal: number;
+  title: string;
+  characters: number;
+  created_at: string;
+  origin: string;
+  stages: Record<string, StageStatus>;
+  page_count: number;
+  has_cover: boolean;
+  /** Only the newest part's text changes, and only until its Adapt starts. */
+  text_editable: boolean;
+  text_locked_reason: string | null;
+  /** Advisory: an earlier part was re-adapted after this one. */
+  earlier_part_changed: boolean;
+}
+
 export interface ProjectStatus {
+  /** The part this status describes; page work belongs to it. */
+  part_id?: string | null;
+  parts?: PartSummary[];
   active_jobs?: GenerationJob[];
   id: string;
   project_name: string;
@@ -366,7 +389,12 @@ export interface AppearanceState {
   visual_anchor: string;
   baseline_affect: string | null;
   visually_significant: boolean;
+  canonical_equivalent?: boolean;
+  continuity_guard?: string | null;
 }
+
+/** Extracted from the source, or added by the author in the Story editor. */
+export type EntityOrigin = "extracted" | "author";
 
 export interface Character {
   id: string;
@@ -380,6 +408,8 @@ export interface Character {
   relationships: CharacterRelationship[];
   first_appearance_scene: string;
   appearance_states: AppearanceState[];
+  aliases?: string[];
+  origin?: EntityOrigin;
 }
 
 export interface Location {
@@ -389,10 +419,14 @@ export interface Location {
   time_of_day: string | null;
   mood: string;
   appearance_states: AppearanceState[];
+  aliases?: string[];
+  origin?: EntityOrigin;
 }
 
 export interface Scene {
   id: string;
+  /** The part whose text holds this scene. */
+  part_id?: string;
   chapter: number;
   title: string;
   location_id: string;
@@ -415,9 +449,22 @@ export interface Prop {
   name: string;
   visual_anchor: string;
   first_appearance_scene: string | null;
+  appearance_states?: AppearanceState[];
+  aliases?: string[];
+  origin?: EntityOrigin;
+}
+
+/** A name the author removed; later extraction won't recreate it. */
+export interface ExcludedEntity {
+  kind: "character" | "location" | "prop";
+  name: string;
+  aliases: string[];
 }
 
 export interface StoryBible {
+  /** Bumped by every author edit; edits carry the revision they read. */
+  revision?: number;
+  excluded_entities?: ExcludedEntity[];
   title: string;
   author: string;
   total_scenes: number;

@@ -1,4 +1,5 @@
 import { apiFetch } from "./client";
+import { seriesPath } from "./projectScope";
 import type { ConfigOverrides } from "../types/api";
 
 export interface ProjectConfig extends ConfigOverrides {
@@ -6,14 +7,14 @@ export interface ProjectConfig extends ConfigOverrides {
 }
 
 export function getProjectConfig(project: string): Promise<ProjectConfig> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/config/`);
+  return apiFetch(`${seriesPath(project)}/config/`);
 }
 
 export function updateProjectConfig(
   project: string,
   data: Partial<ProjectConfig>,
 ): Promise<ProjectConfig> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/config/`, {
+  return apiFetch(`${seriesPath(project)}/config/`, {
     method: "PATCH",
     body: JSON.stringify(data),
   });

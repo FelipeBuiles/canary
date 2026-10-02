@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { accountIdentity } from "../lib/accountEpoch";
 import { getGenerationJobs } from "./pipeline";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { invalidateProject } from "./projectScope";
 import {
   getPageRenderCorrection,
   getPageVisualReview,
@@ -45,13 +46,13 @@ export function useSubmittedCorrectionJob(project: string, jobId: string | null)
 }
 
 function invalidatePageReview(qc: ReturnType<typeof useQueryClient>, project: string, pageNumber?: number) {
-  qc.invalidateQueries({ queryKey: ["project", project, "complete-pages"] });
+  invalidateProject(qc, project, "complete-pages");
   if (pageNumber != null) {
-    qc.invalidateQueries({ queryKey: ["project", project, "complete-pages", pageNumber] });
-    qc.invalidateQueries({ queryKey: ["project", project, "page-visual-review", pageNumber] });
+    invalidateProject(qc, project, "complete-pages", pageNumber);
+    invalidateProject(qc, project, "page-visual-review", pageNumber);
   }
-  qc.invalidateQueries({ queryKey: ["project", project, "status"] });
-  qc.invalidateQueries({ queryKey: ["project", project, "generation-jobs"] });
+  invalidateProject(qc, project, "status");
+  invalidateProject(qc, project, "generation-jobs");
   qc.invalidateQueries({ queryKey: ["credits", "history"] });
 }
 

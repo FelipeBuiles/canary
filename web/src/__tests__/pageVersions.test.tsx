@@ -31,7 +31,12 @@ it("previews without mutation, then selects with the expected active revision an
   fireEvent.click(screen.getByRole("button", { name: "Use this version" }));
   await waitFor(() => expect(selected).toHaveBeenCalledOnce());
   expect(api.select).toHaveBeenCalledWith("demo", 6, 3, 4);
-  expect(invalidate).toHaveBeenCalledWith({ queryKey: ["project", "demo"] });
+  // Every part of the project refreshes; other projects don't.
+  expect(invalidate).toHaveBeenCalledWith({ predicate: expect.any(Function) });
+  const { predicate } = invalidate.mock.calls[0][0] as unknown as { predicate: (query: { queryKey: unknown[] }) => boolean };
+  expect(predicate({ queryKey: ["project", "demo", "complete-pages"] })).toBe(true);
+  expect(predicate({ queryKey: ["project", "demo~part_0002", "status"] })).toBe(true);
+  expect(predicate({ queryKey: ["project", "other", "status"] })).toBe(false);
 });
 it("allows inspection but prevents selection while drawing", () => {
   setup(true);

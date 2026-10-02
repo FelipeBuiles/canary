@@ -72,9 +72,9 @@ export async function apiFetch<T>(
   const method = options?.method?.toUpperCase() ?? "GET";
   // Provider-free Finish checks are safe to recompute after an interruption.
   // Do not retain a paid-action receipt that would block an explicit retry.
-  const isFinishCheck = method === "POST" && /^\/projects\/[^/]+\/export\/preflight(?:\?|$)/.test(path);
+  const isFinishCheck = method === "POST" && /^\/projects\/[^/]+(?:\/parts\/[^/]+)?\/export\/preflight(?:\?|$)/.test(path);
   let isCachedPageCheck = false;
-  if (method === "POST" && /^\/projects\/[^/]+\/pages\/checks\/recover(?:\?|$)/.test(path)
+  if (method === "POST" && /^\/projects\/[^/]+(?:\/parts\/[^/]+)?\/pages\/checks\/recover(?:\?|$)/.test(path)
     && typeof options?.body === "string") {
     try { isCachedPageCheck = JSON.parse(options.body)?.allow_paid === false; } catch { /* Server validates malformed bodies. */ }
   }
@@ -122,13 +122,13 @@ export async function apiFetch<T>(
     // user approved the brief. A subsequent explicit click is a new action.
     // Do not generalize this to other conflicts: they may follow side effects.
     if (res.status === 409 && method === "POST"
-      && /^\/projects\/[^/]+\/run(?:\?|$)/.test(path)
+      && /^\/projects\/[^/]+(?:\/parts\/[^/]+)?\/run(?:\?|$)/.test(path)
       && detail === "Adapt requires an approved adaptation brief") {
       action?.complete();
     }
     // Cast readiness gates precede approval and job dispatch. A corrected
     // prerequisite is a new explicit action, including an older saved 409.
-    const isCastApproval = method === "POST" && /^\/projects\/[^/]+\/approve\/cast$/.test(path);
+    const isCastApproval = method === "POST" && /^\/projects\/[^/]+(?:\/parts\/[^/]+)?\/approve\/cast$/.test(path);
     const castRejected = (typeof detail === "object" && detail !== null
       && (detail as { code?: unknown }).code === "cast_approval_rejected")
       || detail === "Compare the current character references before approving Cast. Resume Cast to run its visual review.";
@@ -140,7 +140,7 @@ export async function apiFetch<T>(
     // Draw preflight precedes edition creation, holds, and job dispatch.
     // Recognize the exact historical rejection too, so saved receipts recover.
     // Unknown conflicts still retain their keys to prevent duplicate submissions.
-    const isDrawStart = /^\/projects\/[^/]+\/run(?:\?|$)/.test(path)
+    const isDrawStart = /^\/projects\/[^/]+(?:\/parts\/[^/]+)?\/run(?:\?|$)/.test(path)
       && new URLSearchParams(path.split("?")[1]).get("stage") === "draw";
     const definiteDrawRejection = typeof detail === "object" && detail !== null
       && (detail as { code?: unknown }).code === "draw_preflight_rejected";

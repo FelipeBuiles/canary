@@ -35,6 +35,8 @@ import { groupRunsByDay } from "../../lib/creditsHistory";
 import { useShowDevContent } from "../../lib/devContent";
 import { groupEditionFindings } from "../../lib/editionChecks";
 import type { FinishPreflight } from "../../types/api";
+import { invalidateProject, projectPath, splitProjectKey } from "../../api/projectScope";
+import { CombinedExport } from "../../components/parts/CombinedExport";
 
 type FinishFindingGroup = {
   key: string;
@@ -173,7 +175,7 @@ export function BookRoom() {
       <section aria-label={t("Read your book")} className="grid gap-8 bg-ink-black p-6 text-bristol shadow-paper md:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] md:items-center md:p-9">
         {bookPages.length > 0 && <button type="button" onClick={() => setReaderOpen(true)} aria-label={t("Open the book reader")} className="mx-auto aspect-[2/3] w-full max-w-[15rem] overflow-hidden bg-surface-container text-ink-black shadow-[6px_6px_0_0_var(--color-narrator-gold)] transition-transform hover:-translate-y-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-narrator-gold motion-reduce:transition-none">
           {status?.has_cover
-            ? <img src={`/api/projects/${encodeURIComponent(id)}/files/cover/cover.png`} alt={t("Book cover")} className="h-full w-full object-cover" decoding="async" />
+            ? <img src={`/api${projectPath(id)}/files/cover/cover.png`} alt={t("Book cover")} className="h-full w-full object-cover" decoding="async" />
             : <PageThumbnail reveal={false} onRevealEnd={() => {}} src={(bookPages[0].hybrid ? pageCompositePreviewUrl(id, bookPages[0].pageNumber, bookPages[0].revision, "reader", bookPages[0].letteringRevision) : pageRenderPreviewUrl(id, bookPages[0].pageNumber, bookPages[0].revision, "reader"))} alt={t("First page of the book")} />}
         </button>}
         <div className="min-w-0">
@@ -241,7 +243,7 @@ export function BookRoom() {
                 {finding.copy?.replannable && finding.ownerStage === "plan" && finding.pageNumbers.map((pageNumber) => (
                   <ReplanPageAction key={pageNumber} project={id} pageNumber={pageNumber}
                     disabled={isFetching || retryPreflight.isPending}
-                    onReplanned={() => { void refetch(); void queryClient.invalidateQueries({ queryKey: ["project", id] }); }} />
+                    onReplanned={() => { void refetch(); void invalidateProject(queryClient, id); }} />
                 ))}
                 {finding.pageNumbers.length > 0 ? (
                   <PageLinks pages={finding.pageNumbers}
@@ -354,12 +356,14 @@ export function BookRoom() {
         </section>
       ) : null}
 
+      {status?.parts && <CombinedExport project={id} parts={status.parts} />}
+
       <section id="book-credit-history" className="scroll-mt-6">
         <SectionHeader
           variant="underline"
           title={t("CREDIT HISTORY")}
           description={t("Credits used by this book across every edition and revision. Open an activity to see its hold, final charge, and released credits.")}
-          actions={<Link to={`/credits?project=${encodeURIComponent(id)}`} className="inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4">{t("View all credit history")}</Link>}
+          actions={<Link to={`/credits?project=${encodeURIComponent(splitProjectKey(id).id)}`} className="inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4">{t("View all credit history")}</Link>}
         />
         <p className="mb-4 font-body text-sm leading-6 text-ink-muted">{t("Open holds are still reserved. They are separate from final charges.")}</p>
         {creditHistoryError && (

@@ -40,6 +40,7 @@ import { usePipelineStore } from "../../store/pipeline";
 import { isAuthorDirection, styleName, type StyleSuggestion } from "../../api/styles";
 import type { CostEstimate, StoryBible } from "../../types/api";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
+import { seriesPath, splitProjectKey } from "../../api/projectScope";
 
 function buildFallbackStyleSamplePrompt(suggestion: StyleSuggestion, storyBible: StoryBible | undefined): string {
   const charDesc =
@@ -133,7 +134,7 @@ export function StyleRoom() {
   const castStarted = status?.stages.cast?.status != null && status.stages.cast.status !== "pending";
   const castReady = ["complete", "awaiting_review"].includes(status?.stages.cast.status ?? "");
   const { data: projectSummaries } = useProjects();
-  const projectSummary = projectSummaries?.find((project) => project.id === id);
+  const projectSummary = projectSummaries?.find((project) => project.id === splitProjectKey(id ?? "").id);
   const coverJobActive = projectSummary?.cover_job?.status === "queued"
     || projectSummary?.cover_job?.status === "running";
   const needsCover = !!status && !status.has_cover && !projectSummary?.has_cover && !coverJobActive;
@@ -624,7 +625,7 @@ export function StyleRoom() {
                     <LazyImage
                       src={comparingAction
                         ? suggestion.validation_url!
-                        : suggestion.sample_preview_url ?? `/api/projects/${encodeURIComponent(id)}/files/samples/style_${suggestion.index}.png`}
+                        : suggestion.sample_preview_url ?? `/api${seriesPath(id)}/files/samples/style_${suggestion.index}.png`}
                       alt={proofName(suggestion)}
                       width={320}
                       height={400}

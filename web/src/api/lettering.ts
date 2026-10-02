@@ -1,4 +1,5 @@
 import type { LetteringLocale, LanguageCode } from "../locales/languages";
+import { projectPath } from "./projectScope";
 import { apiFetch } from "./client";
 import type { LetteringStyle, PageLettering, PageReadHead, PageReadMark, Point, Rect } from "@lettering-engine";
 import type { CostEstimate, GenerationJob } from "../types/api";
@@ -47,7 +48,7 @@ export type LetteringResponse = HybridLetteringResponse | {
   mode: "baked";
   message: string;
 };
-const root = (project: string) => `/projects/${encodeURIComponent(project)}`;
+const root = (project: string) => projectPath(project);
 const path = (project: string, page: number) => `${root(project)}/pages/${page}/lettering`;
 export const getPageLettering = (project: string, page: number) => apiFetch<LetteringResponse>(path(project, page));
 export function putPageLettering(project: string, page: number, state: PageLettering, base: HybridLetteringResponse, markReviewed = false) {

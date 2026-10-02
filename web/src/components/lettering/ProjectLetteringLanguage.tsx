@@ -10,6 +10,7 @@ import { ConfirmDrawer } from "../composites/ConfirmDrawer";
 import { Button } from "../ui/Button";
 import { CreditAmount } from "../ui/CreditAmount";
 import { FieldLabel, SelectField } from "../ui/Field";
+import { invalidateProject } from "../../api/projectScope";
 
 interface ProjectLetteringLanguageProps {
   project: string;
@@ -43,14 +44,14 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
     mutationFn: (request: LetteringTranslationRequest) => translateProjectLettering(project, request),
     retry: false,
     onSettled: () => {
-      void qc.invalidateQueries({ queryKey: ["project", project, "generation-jobs"] });
-      void qc.invalidateQueries({ queryKey: ["project", project, "status"] });
+      void invalidateProject(qc, project, "generation-jobs");
+      void invalidateProject(qc, project, "status");
       void qc.invalidateQueries({ queryKey: ["credits"] });
     },
     onError: (error) => {
       maybeShowInsufficientCredits(error, { actionLabel: t("Translate project") });
       if (!isUnknownSubmission(error)) {
-        void qc.invalidateQueries({ queryKey: ["project", project, "lettering-translation-estimate"] });
+        void invalidateProject(qc, project, "lettering-translation-estimate");
       }
     },
   });
@@ -88,7 +89,7 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
       await onApplied();
     },
     onError: () => {
-      void qc.invalidateQueries({ queryKey: ["project", project, "lettering-languages"] });
+      void invalidateProject(qc, project, "lettering-languages");
     },
   });
   const busy = !!active || submitting || unknown || refreshing || switchLocale.isPending;

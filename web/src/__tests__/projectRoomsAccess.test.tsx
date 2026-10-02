@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectStatus } from "../types/api";
 import { I18nProvider } from "../i18n";
@@ -54,6 +54,15 @@ describe("ProjectRooms access boundary", () => {
     view.rerender(tree());
     expect(screen.queryByText("Room content")).toBeNull();
     expect(screen.getByText("Review and approve your story brief.")).toBeTruthy();
+  });
+
+  it("opens the part the server suggests when the URL names only the project", () => {
+    mocks.status = { part_id: "part_0002", style_selected: true, stages: Object.fromEntries(["extract", "brief", "style", "cast"].map((stage) => [stage, { status: "complete", approved: true }])) } as ProjectStatus;
+    function Where() { return <p>{useLocation().pathname}</p>; }
+    render(<I18nProvider><MemoryRouter initialEntries={["/project/demo/pages?page=3"]}><Routes>
+      <Route path="/project/:id" element={<ProjectRooms />}><Route path="pages" element={<Where />} /></Route>
+    </Routes></MemoryRouter></I18nProvider>);
+    expect(screen.getByText("/project/demo~part_0002/pages")).toBeTruthy();
   });
 
   it("keeps settings available during a status failure", () => {

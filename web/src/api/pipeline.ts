@@ -1,5 +1,6 @@
 import type { CastReferenceInput } from "../types/api";
 import { apiFetch, isNotFoundError } from "./client";
+import { projectPath, seriesPath } from "./projectScope";
 import type {
   CharacterRefVersionsResponse,
   GenerationJob,
@@ -25,7 +26,7 @@ export function runPipeline(
   if (queuePages) params.set("queue_pages", "1");
   if (confirmedArchivePages !== undefined) params.set("confirmed_archive_pages", String(confirmedArchivePages));
   const query = params.toString();
-  return apiFetch(`/projects/${encodeURIComponent(project)}/run${query ? `?${query}` : ""}`, {
+  return apiFetch(`${projectPath(project)}/run${query ? `?${query}` : ""}`, {
     method: "POST",
   });
 }
@@ -36,12 +37,12 @@ export function getGenerationJobs(
 ): Promise<{ jobs: GenerationJob[] }> {
   const params = ids.map((id) => `ids=${encodeURIComponent(id)}`).join("&");
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/jobs${params ? `?${params}` : ""}`,
+    `${projectPath(project)}/jobs${params ? `?${params}` : ""}`,
   );
 }
 
 export function cancelQueuedPageJobs(project: string): Promise<{ cancelled_job_ids: string[] }> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/jobs/cancel-queued-pages`, {
+  return apiFetch(`${projectPath(project)}/jobs/cancel-queued-pages`, {
     method: "POST",
   });
 }
@@ -51,7 +52,7 @@ export function regenRef(
   charId: string,
 ): Promise<{ status: string; job: GenerationJob; char_id: string }> {
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/regen-ref?char_id=${encodeURIComponent(charId)}`,
+    `${seriesPath(project)}/regen-ref?char_id=${encodeURIComponent(charId)}`,
     { method: "POST" },
   );
 }
@@ -62,7 +63,7 @@ export function regenStateRef(
   stateId: string,
 ): Promise<{ status: string; job: GenerationJob; char_id: string }> {
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/regen-state-ref?char_id=${encodeURIComponent(charId)}&state_id=${encodeURIComponent(stateId)}`,
+    `${seriesPath(project)}/regen-state-ref?char_id=${encodeURIComponent(charId)}&state_id=${encodeURIComponent(stateId)}`,
     { method: "POST" },
   );
 }
@@ -73,7 +74,7 @@ export function regenLocationState(
   stateId: string,
 ): Promise<{ status: string; job: GenerationJob; loc_id: string }> {
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/locations/${encodeURIComponent(locId)}/states/${encodeURIComponent(stateId)}/regenerate`,
+    `${seriesPath(project)}/locations/${encodeURIComponent(locId)}/states/${encodeURIComponent(stateId)}/regenerate`,
     { method: "POST" },
   );
 }
@@ -86,7 +87,7 @@ export function getCharacterRefVersions(
   const params = new URLSearchParams({ char_id: charId });
   if (stateId) params.set("state_id", stateId);
   return apiFetch<CharacterRefVersionsResponse>(
-    `/projects/${encodeURIComponent(project)}/character-ref-versions?${params.toString()}`,
+    `${seriesPath(project)}/character-ref-versions?${params.toString()}`,
   ).catch((err) => {
     if (isNotFoundError(err)) {
       return { char_id: charId, state_id: stateId ?? null, has_history: false, versions: [] };
@@ -104,7 +105,7 @@ export function restoreCharacterRefVersion(
   const params = new URLSearchParams({ char_id: charId, version: String(version) });
   if (stateId) params.set("state_id", stateId);
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/character-ref-versions/restore?${params.toString()}`,
+    `${seriesPath(project)}/character-ref-versions/restore?${params.toString()}`,
     { method: "POST" },
   );
 }
@@ -115,7 +116,7 @@ export function getCastAssetVersions(
   if (assetType === "character") return getCharacterRefVersions(project, assetId, stateId);
   const params = new URLSearchParams({ loc_id: assetId });
   if (stateId) params.set("state_id", stateId);
-  return apiFetch(`/projects/${encodeURIComponent(project)}/location-plate-versions?${params}`);
+  return apiFetch(`${seriesPath(project)}/location-plate-versions?${params}`);
 }
 
 export function restoreCastAssetVersion(
@@ -124,7 +125,7 @@ export function restoreCastAssetVersion(
   if (assetType === "character") return restoreCharacterRefVersion(project, assetId, version, stateId);
   const params = new URLSearchParams({ loc_id: assetId, version: String(version) });
   if (stateId) params.set("state_id", stateId);
-  return apiFetch(`/projects/${encodeURIComponent(project)}/location-plate-versions/restore?${params}`, { method: "POST" });
+  return apiFetch(`${seriesPath(project)}/location-plate-versions/restore?${params}`, { method: "POST" });
 }
 
 export function regenPlate(
@@ -132,7 +133,7 @@ export function regenPlate(
   locId: string,
 ): Promise<{ status: string; job: GenerationJob; loc_id: string }> {
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/regen-plate?loc_id=${encodeURIComponent(locId)}`,
+    `${seriesPath(project)}/regen-plate?loc_id=${encodeURIComponent(locId)}`,
     { method: "POST" },
   );
 }
@@ -145,7 +146,7 @@ export function regenRefWithInstruction(
   stateId?: string,
 ): Promise<InstructedRefRegenResponse> {
   return apiFetch(
-    stateId ? `/projects/${encodeURIComponent(project)}/characters/${encodeURIComponent(charId)}/states/${encodeURIComponent(stateId)}/regenerate-instructed` : `/projects/${encodeURIComponent(project)}/regen-ref-instructed`,
+    stateId ? `${seriesPath(project)}/characters/${encodeURIComponent(charId)}/states/${encodeURIComponent(stateId)}/regenerate-instructed` : `${seriesPath(project)}/regen-ref-instructed`,
     {
       method: "POST",
       body: JSON.stringify({ ...(stateId ? {} : { char_id: charId }), instruction, reference_assets: referenceAssets }),
@@ -161,7 +162,7 @@ export function regenPlateWithInstruction(
   stateId?: string,
 ): Promise<InstructedPlateRegenResponse> {
   return apiFetch(
-    stateId ? `/projects/${encodeURIComponent(project)}/locations/${encodeURIComponent(locId)}/states/${encodeURIComponent(stateId)}/regenerate-instructed` : `/projects/${encodeURIComponent(project)}/regen-plate-instructed`,
+    stateId ? `${seriesPath(project)}/locations/${encodeURIComponent(locId)}/states/${encodeURIComponent(stateId)}/regenerate-instructed` : `${seriesPath(project)}/regen-plate-instructed`,
     {
       method: "POST",
       body: JSON.stringify({ ...(stateId ? {} : { loc_id: locId }), instruction, reference_assets: referenceAssets }),
@@ -174,7 +175,7 @@ export function regenProp(
   propId: string,
 ): Promise<{ status: string; job: GenerationJob; prop_id: string }> {
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/regen-prop?prop_id=${encodeURIComponent(propId)}`,
+    `${seriesPath(project)}/regen-prop?prop_id=${encodeURIComponent(propId)}`,
     { method: "POST" },
   );
 }
@@ -187,7 +188,7 @@ export function regenPropWithInstruction(
   stateId?: string,
 ): Promise<InstructedPropRegenResponse> {
   return apiFetch(
-    stateId ? `/projects/${encodeURIComponent(project)}/props/${encodeURIComponent(propId)}/states/${encodeURIComponent(stateId)}/regenerate-instructed` : `/projects/${encodeURIComponent(project)}/regen-prop-instructed`,
+    stateId ? `${seriesPath(project)}/props/${encodeURIComponent(propId)}/states/${encodeURIComponent(stateId)}/regenerate-instructed` : `${seriesPath(project)}/regen-prop-instructed`,
     {
       method: "POST",
       body: JSON.stringify({ ...(stateId ? {} : { prop_id: propId }), instruction, reference_assets: referenceAssets }),
@@ -196,7 +197,7 @@ export function regenPropWithInstruction(
 }
 
 export function resetStale(project: string): Promise<{ status: string; reset: string[]; message: string }> {
-  return apiFetch(`/projects/${encodeURIComponent(project)}/reset-stale`, {
+  return apiFetch(`${projectPath(project)}/reset-stale`, {
     method: "POST",
   });
 }
@@ -206,7 +207,7 @@ export function approveStage(
   stage: string,
 ): Promise<{ status: string; stage: string }> {
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/approve/${encodeURIComponent(stage)}`,
+    `${projectPath(project)}/approve/${encodeURIComponent(stage)}`,
     { method: "POST" },
   );
 }
@@ -215,7 +216,7 @@ export function regenExtract(
   project: string,
 ): Promise<{ status: string; stage: string }> {
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/regen-extract`,
+    `${projectPath(project)}/regen-extract`,
     { method: "POST" },
   );
 }
@@ -226,7 +227,7 @@ export function fetchStageEstimate(
   rerun = false,
 ): Promise<StageCostEstimate> {
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/estimate?stage=${encodeURIComponent(stage)}${rerun ? "&rerun=true" : ""}`,
+    `${projectPath(project)}/estimate?stage=${encodeURIComponent(stage)}${rerun ? "&rerun=true" : ""}`,
   );
 }
 
@@ -244,6 +245,6 @@ export function fetchAssetRegenEstimate(
   if (stateId) params.set("state_id", stateId);
   if (referenceCount !== undefined) params.set("reference_count", String(referenceCount));
   return apiFetch(
-    `/projects/${encodeURIComponent(project)}/asset-regen-estimate?${params.toString()}`,
+    `${seriesPath(project)}/asset-regen-estimate?${params.toString()}`,
   );
 }

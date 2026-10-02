@@ -10,6 +10,7 @@ import { GenerationDetailsModal } from "../ui/GenerationDetailsModal";
 import { LazyImage } from "../ui/LazyImage";
 import { Loupe } from "../ui/Loupe";
 import { Stamp, usePress } from "../ui/motion";
+import { seriesPath } from "../../api/projectScope";
 
 const ROLE_LABELS: Record<string, string> = {
   story_fit_primary: "BEST FIT",
@@ -70,7 +71,7 @@ export function StyleProofCard({
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState(name);
   const [presentationError, setPresentationError] = useState<string | null>(null);
-  const artUrl = `/api/projects/${encodeURIComponent(projectName)}/files/samples/style_${suggestion.index}.png`;
+  const artUrl = `/api${seriesPath(projectName)}/files/samples/style_${suggestion.index}.png`;
   const sampleUrl = suggestion.sample_preview_url ?? artUrl;
   const [imgFailed, setImgFailed] = useState(!suggestion.has_sample);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
