@@ -64,6 +64,7 @@ services:
       FAL_ADMIN_KEY: ${FAL_ADMIN_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       # ─── Web app ─────────────────────────────────────────────────────────
       CANARY_ENV: ${CANARY_ENV:-development}
       CANARY_VERSION: ${CANARY_VERSION:-local}
@@ -113,6 +114,7 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       FAL_KEY: ${FAL_KEY:-}
       FAL_ADMIN_KEY: ${FAL_ADMIN_KEY:-}
       # Gateway metrics share the app's PostHog project; unset disables them.
@@ -121,6 +123,9 @@ services:
       PYTHONPATH: /app:/app/litellm_handlers
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
+      # Keep callbacks in sync with the mounted config, including older images.
+      - ./litellm/canary_metrics.py:/app/canary_metrics.py:ro
+      - ./litellm/canary_metrics_callback.py:/app/canary_metrics_callback.py:ro
       - ./litellm_handlers:/app/litellm_handlers:ro
     depends_on:
       litellm-db:

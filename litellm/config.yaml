@@ -173,6 +173,28 @@ model_list:
     input_cost_per_token: 3.0e-07
     cache_read_input_token_cost: 6.0e-09
     output_cost_per_token: 1.2e-06
+- model_name: gemini-3.8-flash
+  litellm_params:
+    # Gemini API (AI Studio key), not Vertex: no GCP project or service account.
+    model: gemini/gemini-3.8-flash
+    api_key: os.environ/GEMINI_API_KEY
+  # https://ai.google.dev/gemini-api/docs/pricing (2026-10-01). Thinking cannot
+  # be disabled and bills against maxOutputTokens with the answer.
+  # Promotional rates end 2026-12-31; from 2027-01-01 Google charges double
+  # ($1.50 in, $7.50 out, $0.15 cache read per 1M). Update before then.
+  model_info:
+    mode: chat
+    supports_reasoning: true
+    supports_response_schema: true
+    supports_system_messages: true
+    supports_vision: true
+    supports_native_streaming: true
+    supports_prompt_caching: true
+    max_input_tokens: 1048576
+    max_output_tokens: 65536
+    input_cost_per_token: 7.5e-07
+    cache_read_input_token_cost: 7.5e-08
+    output_cost_per_token: 3.75e-06
 - model_name: image-sunburst
   litellm_params:
     model: fal-queue/openai/gpt-image-2.5/sunburst

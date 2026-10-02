@@ -16,6 +16,7 @@ _MODELS = frozenset({
     "claude-sonnet-5-5",
     "mimo-v2.6-pro",
     "deepseek-v4.1-flash",
+    "gemini-3.8-flash",
     "image-sunburst",
     "image-sunburst-openai",
 })
@@ -24,6 +25,7 @@ _PROVIDERS = frozenset({
     "anthropic",
     "openrouter",
     "together_ai",
+    "gemini",
     "fal-queue",
     "openai-stream",
 })
