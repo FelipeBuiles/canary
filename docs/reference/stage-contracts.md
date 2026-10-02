@@ -498,9 +498,10 @@ and its identity/fingerprint; they are not picker-only metadata.
 An author-directed set is one unchanged faithful proof plus **five** neighbors.
 Neighbor curation uses five roles, at least three stylized/graphic options, and
 the same shape-diversity requirement. Explicit author restrictions override
-only the constrained axis: `medium_restriction_quote` covers medium/rendering,
-and `proportion_restriction_quote` covers proportions. Each must quote the author
-verbatim. Explicit photographic-only directions may constrain both; a dark mood,
+only the constrained axis: `medium_restriction` covers medium/rendering,
+and `proportion_restriction` covers proportions. Each is the model's reading of
+the author direction and may paraphrase or interpret vague wording; without an
+author direction, restrictions are ignored. Explicit photographic-only directions may constrain both; a dark mood,
 identity anchor or an ink-only medium does not mandate naturalistic proportions.
 Contrast and wildcard directions honor the same restrictions.
 
