@@ -123,12 +123,14 @@ class StyleSuggestion(BaseModel):
 class StyleSuggestionBatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    medium_restriction_quote: str = Field(
-        description="Exact author wording explicitly narrowing medium or rendering realism; empty if absent."
+    medium_restriction: str = Field(
+        description="The author direction's limit on medium or rendering realism, in your own "
+        "words; empty if absent."
     )
-    proportion_restriction_quote: str = Field(
-        description="Exact author wording explicitly fixing character proportions or shape language; "
-        "empty if absent. A medium, mood, genre or physical identity alone does not fix proportions."
+    proportion_restriction: str = Field(
+        description="The author direction's limit on character proportions or shape language, in "
+        "your own words; empty if absent. A medium, mood, genre or physical identity alone does "
+        "not fix proportions."
     )
     styles: list[StyleSuggestion] = Field(max_length=LLM_REQUEST_COUNT)
 
@@ -179,13 +181,13 @@ _SYSTEM_PROMPT = (
     "on the same realistically proportioned cast do not count as different designs. "
     "Ensure these families can survive choosing one candidate per required role.\n"
     "- Explicit author constraints take precedence ONLY on the axis they constrain. "
-    "Quote a medium/realism restriction in medium_restriction_quote, and a shape or "
-    "proportion restriction in proportion_restriction_quote. Leave either empty when "
-    "not explicitly constrained. Woodblock-only still permits different proportions; "
+    "Interpret the author's intent freely, even when it is vague, and state a medium/realism "
+    "restriction in medium_restriction and a shape or proportion restriction in "
+    "proportion_restriction. Leave either empty when the author does not limit that axis. Woodblock-only still permits different proportions; "
     "naturalistic proportions still permit different illustrative media. Never invent "
     "a restriction from the story's identity anchors or mood. An explicit photographic-only "
-    "or photorealistic direction may constrain both axes: quote the same author phrase "
-    "for both when it requires naturalistic bodies.\n"
+    "or photorealistic direction may constrain both axes: state it for both when it "
+    "requires naturalistic bodies.\n"
     "- At least 4 candidates should match the mood; at least 1 should productively contrast it.\n\n"
 
     "3) WRITE. Anchor every template in a concrete medium, technique, era, movement or region. "
@@ -226,9 +228,9 @@ _SYSTEM_PROMPT = (
     "on every page or full bleed on every page — plus one panel-border and gutter treatment. "
     "Never alternate systems by page and never use scribbled borders unless that exact "
     "border treatment is the declared invariant.\n\n"
-    "Output a JSON object with EXACTLY THREE root keys: medium_restriction_quote, "
-    "proportion_restriction_quote, and styles. Each quote must be verbatim author "
-    "wording explicitly limiting that axis, or empty. Every style needs label, medium, "
+    "Output a JSON object with EXACTLY THREE root keys: medium_restriction, "
+    "proportion_restriction, and styles. Each restriction is your reading of the author "
+    "direction's limit on that axis, or empty. Every style needs label, medium, "
     "visual_logic (photographic, realistic_illustration, stylized, or graphic), "
     "proportion_family (naturalistic, heroic, elongated, compact, caricatured, or geometric), "
     "character_design (concrete silhouette, head/body and limb proportions, face and shape "
@@ -529,11 +531,12 @@ async def generate_suggestions(
     """Curate an illustration-first portfolio with distinct character designs.
 
     Schema repair, missing roles, and missing diversity share two text attempts.
+    Restrictions are the model's reading of the author direction and may paraphrase it.
     No image is submitted until a valid portfolio exists; never invent fallback styles.
     """
     first_usage = None
-    medium_restriction_quote = ""
-    proportion_restriction_quote = ""
+    medium_restriction = ""
+    proportion_restriction = ""
     curation_error: RuntimeError | None = None
     invalid_response: dict | None = None
     validation_error: ValidationError | None = None
@@ -541,7 +544,7 @@ async def generate_suggestions(
     async def _call_llm(
         avoid_pool: list[dict], *, required_roles: tuple[str, ...] = (),
     ) -> list[dict] | ValidationError:
-        nonlocal first_usage, medium_restriction_quote, proportion_restriction_quote
+        nonlocal first_usage, medium_restriction, proportion_restriction
         nonlocal invalid_response, validation_error
         role_gap = (
             "\n\nThe prior response was missing these required portfolio roles: "
@@ -593,18 +596,13 @@ async def generate_suggestions(
             invalid_response, validation_error = api_result.value, exc
             logger.warning("Style suggestion response failed schema validation: %s", exc)
             return exc
-        invalid_response, validation_error = None, None
-        author_text = str((custom_direction or {}).get("text") or "")
-        for axis, quote in (
-            ("Medium", result.medium_restriction_quote.strip()),
-            ("Proportion", result.proportion_restriction_quote.strip()),
-        ):
-            if quote and (not author_text or quote not in author_text):
-                raise ValueError(f"{axis} restriction must quote the author direction verbatim.")
-        # A valid explicit restriction is not lost when a completion response
-        # omits its quote. Neither axis is inferred from genre or identity anchors.
-        medium_restriction_quote = medium_restriction_quote or result.medium_restriction_quote.strip()
-        proportion_restriction_quote = proportion_restriction_quote or result.proportion_restriction_quote.strip()
+        validation_error = None
+        if custom_direction:
+            # Only an author direction can narrow the portfolio; without one the
+            # default diversity rules always apply. A valid restriction is not
+            # lost when a completion response omits it.
+            medium_restriction = medium_restriction or result.medium_restriction.strip()
+            proportion_restriction = proportion_restriction or result.proportion_restriction.strip()
         return [style.model_dump() for style in result.styles]
 
     portfolio_roles = NEIGHBOR_ROLES if custom_direction else PORTFOLIO_ROLES
@@ -614,7 +612,7 @@ async def generate_suggestions(
     required_count = len(portfolio_roles)
     # Returned rather than read back from the nonlocal, so the final check
     # reflects the last attempt (and type narrowing sees the assignment).
-    schema_error: ValidationError | None = None
+    repair_error: ValidationError | None = None
     # A numerically complete pool can still be all realism or the same anatomy.
     # Validate the actual role-compatible selection on EVERY text attempt.
     for attempt in range(_GENERATION_MAX_ATTEMPTS):
@@ -624,27 +622,27 @@ async def generate_suggestions(
             retry_pool, required_roles=missing_roles if attempt else (),
         )
         if isinstance(candidates, ValidationError):
-            schema_error = candidates
+            repair_error = candidates
             continue
-        schema_error = None
+        repair_error = None
         suggestions.extend(_dedupe_suggestions(candidates, retry_pool))
         try:
             selected = _select_role_portfolio(
                 suggestions, portfolio_roles,
-                require_illustration_balance=not bool(medium_restriction_quote),
-                require_proportion_diversity=not bool(proportion_restriction_quote),
+                require_illustration_balance=not bool(medium_restriction),
+                require_proportion_diversity=not bool(proportion_restriction),
             )
         except RuntimeError as exc:
             curation_error = exc
         else:
             break
 
-    if schema_error is not None:
+    if repair_error is not None:
         raise RuntimeError(
             f"Style suggestions did not match the required schema after "
             f"{_GENERATION_MAX_ATTEMPTS} attempts. Retry style suggestions. "
-            f"{schema_error}"
-        ) from schema_error
+            f"{repair_error}"
+        ) from repair_error
     if len(suggestions) < required_count:
         raise RuntimeError(
             f"Style curation produced {len(suggestions)} usable directions; "

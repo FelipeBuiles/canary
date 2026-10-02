@@ -24,7 +24,7 @@ from novel_to_comic.config import Config
 from novel_to_comic.extraction_delta import compute_delta
 from novel_to_comic.extraction_sections import apply_exclusions, estimate_sections, extract_sections
 from novel_to_comic.input_limits import read_source
-from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.models.story_bible import MissingVisualAnchor, StoryBible, blank_visual_anchors
 from novel_to_comic.source_extraction import (
     align_scene_anchors,
     align_scene_openings,
@@ -511,7 +511,23 @@ def _parse_extraction(raw: object, novel_text: str) -> StoryBible:
                     )
                 positions.add(position)
     _check_character_looks(result.get("characters", []))
-    return StoryBible.model_validate(result)
+    bible = StoryBible.model_validate(result)
+    if blank := blank_visual_anchors(bible):
+        raise ValueError(
+            "Every character, location, prop, and appearance state requires a nonempty "
+            "visual_anchor. Blank visual_anchor for: " + ", ".join(blank)
+        )
+    return bible
+
+
+def _require_anchored_registry(registry: StoryBible | None) -> None:
+    """Refuse a later part before any spend when a known entry has no anchor.
+
+    Each section receives known entries verbatim and must preserve their
+    anchors, so a blank one would fail every extraction attempt.
+    """
+    if registry is not None and (blank := blank_visual_anchors(registry)):
+        raise MissingVisualAnchor(blank)
 
 
 def _text_only_damage_states(bible: StoryBible) -> StoryBible:
@@ -698,6 +714,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
         system_prompt = PROMPT_PATH.read_text()
         content_for_cost = novel_text if isinstance(novel_text, str) else ""
         registry = artifacts.read_story_bible(project_dir) if part_number > 1 else None
+        _require_anchored_registry(registry)
         first_ordinal = next_unit_ordinal(project_dir) if part_number > 1 else 1
         # A later part always extracts against the series registry.
         sectioned = registry is not None or len(novel_text) > config.extraction_chunk_chars
@@ -799,6 +816,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     if not isinstance(novel_text, str):
         novel_text = ""
     registry = artifacts.read_story_bible_safe(project_dir) if part_number > 1 else None
+    _require_anchored_registry(registry)
     if registry is not None or len(novel_text) > config.extraction_chunk_chars:
         return estimate_sections(config, novel_text, PROMPT_PATH.read_text(), registry=registry)
     input_payload: str | int = PROMPT_PATH.read_text() + "\n" + novel_text

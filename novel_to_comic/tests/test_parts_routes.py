@@ -9,7 +9,9 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from novel_to_comic import artifacts
 from novel_to_comic.config import Config, save_config
+from novel_to_comic.models.story_bible import Prop, StoryBible
 from novel_to_comic.server import deps
 from tests.queue_fixtures import create_app
 from novel_to_comic.server.auth import get_current_user
@@ -117,6 +119,29 @@ def test_part_stages_need_a_part_route_and_parts_extract_in_order(client) -> Non
     out_of_order = test_client.post("/api/projects/pid/parts/part_0002/run?stage=extract")
     assert out_of_order.status_code == 409
     assert out_of_order.json()["detail"]["code"] == "part_order"
+
+
+def test_a_later_part_waits_for_blank_anchors_before_extracting(client) -> None:
+    test_client, root = client
+    test_client.get("/api/projects/pid/status")
+    test_client.post("/api/projects/pid/parts", data={"text": BODY})
+    first = part_workspace(root, "part_0001")
+    state = load_state(first)
+    state.stages["extract"].status = StageStatus.COMPLETE
+    save_state(state, first)
+    # An extraction from before anchors were required can leave one blank.
+    artifacts.write_story_bible(root, StoryBible(
+        title="Lighthouse", author="A. Writer", total_scenes=0, scenes=[], characters=[], locations=[],
+        narrative_arcs=[], props=[Prop(id="lamp", name="Lamp", visual_anchor=" ")],
+    ))
+
+    for response in (test_client.get("/api/projects/pid/parts/part_0002/estimate?stage=extract"),
+                     test_client.post("/api/projects/pid/parts/part_0002/run?stage=extract")):
+        assert response.status_code == 409
+        assert response.json()["detail"] == (
+            "These Story Bible entries have no visual anchor: Lamp (lamp). "
+            "Add the missing descriptions in the Cast station or the Story Bible."
+        )
 
 
 def test_page_routes_live_under_a_part(client) -> None:

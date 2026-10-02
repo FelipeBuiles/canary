@@ -90,6 +90,9 @@ and is refused when the Bible changed since.
   references over. Drawn pages whose frozen references differ from the current
   Bible or Cast are flagged and never redrawn automatically.
 - The whole-Bible replacement route is removed.
+- Every entry keeps a written look. No edit blanks a visual anchor; a blank
+  one left by an older extraction is filled in place without resetting any
+  stage, and a later part's extraction waits until none is blank.
 
 ## Consequences
 

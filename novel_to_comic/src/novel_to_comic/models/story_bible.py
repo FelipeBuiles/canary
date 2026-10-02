@@ -225,3 +225,29 @@ def part_story_bible(bible: StoryBible, part_id: str) -> StoryBible:
         character.relationships = [rel for rel in character.relationships if rel.character_id in rostered]
     view.locations = [loc for loc in view.locations if loc.id in places]
     return view
+
+
+class MissingVisualAnchor(ValueError):
+    """A persisted Story Bible entry has no visual anchor for Plan to use."""
+
+    def __init__(self, entries: list[str]):
+        # Rerunning Extract is no remedy: an adapted part's extraction is final.
+        super().__init__(
+            "These Story Bible entries have no visual anchor: "
+            + ", ".join(entries)
+            + ". Add the missing descriptions in the Cast station or the Story Bible."
+        )
+
+
+def blank_visual_anchors(bible: StoryBible) -> list[str]:
+    """Characters, locations, props, and appearance states with a blank anchor."""
+    blank = []
+    for entity in (*bible.characters, *bible.locations, *bible.props):
+        if not entity.visual_anchor.strip():
+            blank.append(f"{entity.name} ({entity.id})")
+        blank.extend(
+            f"{entity.name} ({entity.id}:{state.id})"
+            for state in entity.appearance_states
+            if not state.visual_anchor.strip()
+        )
+    return blank

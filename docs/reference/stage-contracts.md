@@ -107,6 +107,14 @@ is refused (409 `stale_story_bible`) when the Bible changed since.
 - `GET /parts/{part_id}/page-flags` lists drawn pages whose frozen references
   differ from the current Story Bible or Cast. Pages are never redrawn
   automatically.
+- Every entry keeps a written look: no edit may blank a visual anchor (422).
+  A blank anchor left by an extraction from before anchors were required is
+  filled in place with `POST /story-bible/visual-anchor` (the Cast station
+  form). It writes only a blank anchor (409 for an existing one), advances the
+  revision, resets no stage and waits for running Style or Cast work. Plan,
+  Cast approval and a later part's Extract refuse while any anchor is blank
+  (409, naming the entries); Extract refuses before any spend, because
+  sections must keep known anchors verbatim.
 
 `TargetArtifacts` owns the active source, brief, adaptation, plan, Draw,
 lettering, and Finish paths. `artifacts.py` owns Story Bible and Cast reference paths. Never
@@ -585,9 +593,10 @@ and its identity/fingerprint; they are not picker-only metadata.
 An author-directed set is one unchanged faithful proof plus **five** neighbors.
 Neighbor curation uses five roles, at least three stylized/graphic options, and
 the same shape-diversity requirement. Explicit author restrictions override
-only the constrained axis: `medium_restriction_quote` covers medium/rendering,
-and `proportion_restriction_quote` covers proportions. Each must quote the author
-verbatim. Explicit photographic-only directions may constrain both; a dark mood,
+only the constrained axis: `medium_restriction` covers medium/rendering,
+and `proportion_restriction` covers proportions. Each is the model's reading of
+the author direction and may paraphrase or interpret vague wording; without an
+author direction, restrictions are ignored. Explicit photographic-only directions may constrain both; a dark mood,
 identity anchor or an ink-only medium does not mandate naturalistic proportions.
 Contrast and wildcard directions honor the same restrictions.
 

@@ -16,8 +16,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, ValidationError
 
 from novel_to_comic import artifacts
-from novel_to_comic.models.story_bible import StoryBible
+from novel_to_comic.models.story_bible import StoryBible, blank_visual_anchors
+from novel_to_comic.state import StageStatus
 from novel_to_comic.story_bible_edits import (
+    AnchorAlreadySet,
     EditRejected,
     EntityCited,
     StaleStoryBible,
@@ -28,6 +30,7 @@ from novel_to_comic.story_bible_edits import (
     edit_entity,
     edit_state,
     editable_scene_ids,
+    fill_blank_anchor,
     merge_entities,
     refuse_if_cited,
     remove_entity,
@@ -70,6 +73,12 @@ class StateEdit(Revisioned):
     changes: dict[str, Any]
 
 
+class VisualAnchorFill(BaseModel):
+    entity_id: str = Field(min_length=1)
+    appearance_state_id: str | None = None
+    visual_anchor: str = Field(min_length=1, max_length=2000)
+
+
 class DraftRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     aliases: list[str] = Field(default=[], max_length=10)
@@ -84,6 +93,8 @@ def _edit_errors():
         raise HTTPException(409, {"code": "stale_story_bible", "message": str(exc)}) from exc
     except EntityCited as exc:
         raise HTTPException(409, {"code": "entity_cited", "message": str(exc), "parts": exc.parts}) from exc
+    except AnchorAlreadySet as exc:
+        raise HTTPException(409, str(exc)) from exc
     except EditRejected as exc:
         raise HTTPException(422, str(exc)) from exc
     except ValidationError as exc:
@@ -133,6 +144,23 @@ def story_bible_editor(project=Depends(get_project)):
         "state_citations": state_citations,
         "references": reference_freshness(config, root),
     }
+
+
+@router.post("/story-bible/visual-anchor")
+def fill_visual_anchor(body: VisualAnchorFill, project=Depends(get_project)):
+    """Add a missing visual anchor without resetting any stage.
+
+    Existing anchors stay verbatim: only a blank one can be filled. An entry
+    with no written look cannot reach Plan, so no page was drawn from it; an
+    existing Cast image of it turns out of date for the author to keep or redo.
+    Admission already holds this behind a running Extract.
+    """
+    root, _config, state = project
+    if any(stage.status == StageStatus.RUNNING for stage in state.stages.values()):
+        raise HTTPException(409, "Wait for the running stage to finish before adding a visual anchor.")
+    with _edit_errors():
+        bible = fill_blank_anchor(root, body.entity_id, body.appearance_state_id, body.visual_anchor)
+    return _saved(bible, missing_visual_anchors=blank_visual_anchors(bible))
 
 
 @router.patch("/story-bible/{kind}/{entity_id}")

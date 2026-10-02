@@ -17,7 +17,9 @@ from novel_to_comic.generation_input import GenerationPromptInput
 from novel_to_comic.image_ref_strategy import RefStrategy
 from novel_to_comic.events import make_progress
 from novel_to_comic.models.generation import PromptAnchor, PromptSubject
-from novel_to_comic.models.story_bible import Character, Prop, StoryBible
+from novel_to_comic.models.story_bible import (
+    Character, MissingVisualAnchor, Prop, StoryBible, blank_visual_anchors,
+)
 from novel_to_comic.asset_versions import record_asset_version
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.workspace import series_root
@@ -1353,6 +1355,8 @@ def cast_approval_blocker(config: Config, project_dir: Path, stage_state) -> str
     bible = artifacts.read_story_bible_safe(project_dir)
     if bible is None:
         return "Cast source artifacts are missing or invalid. Restore the Story Bible before resuming Cast."
+    if blank := blank_visual_anchors(bible):
+        return str(MissingVisualAnchor(blank))
     paths = []
     for char in bible.characters:
         paths.append(artifacts.character_ref_sheet_path(project_dir, char.id))
