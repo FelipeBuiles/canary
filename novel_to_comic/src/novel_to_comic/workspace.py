@@ -66,6 +66,15 @@ def workspace_part_id(path: Path) -> str | None:
     return identifier
 
 
+def part_id_for_path(path: Path | str) -> str | None:
+    """The part a workspace path belongs to, from its location alone (no IO)."""
+
+    path = Path(path)
+    if path.parent.name == PARTS_DIRNAME and _PART_ID.fullmatch(path.name):
+        return path.name
+    return None
+
+
 def part_workspace(root: Path, identifier: str) -> Path:
     """Path of a part workspace under ``root``; validates the identifier."""
 

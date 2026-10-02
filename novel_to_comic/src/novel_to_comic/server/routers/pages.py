@@ -21,7 +21,7 @@ from novel_to_comic.models.draw import (
 )
 from novel_to_comic.page_drawing import (
     complete_page_adapter,
-    current_page_capability_profile,
+    initial_page_profile,
     select_book_edition,
     analyze_complete_page,
     compile_page_generation_request,
@@ -54,7 +54,7 @@ from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, Ta
 from ..auth import get_current_user
 from novel_to_comic.codex_dev import classify_operations
 from ..codex_admission import draw_operations, page_check_operations
-from ..deps import get_project, project_key
+from ..deps import event_key, get_project, project_key
 from ..generation_jobs import generation_job_payload
 
 
@@ -142,14 +142,6 @@ def _analysis_recovery(target: TargetArtifacts, page_number: int) -> dict:
     ))
     return {"status": "cached_evidence" if cached else "requires_ocr",
             "requires_paid_call": not cached}
-
-
-def _producing_request(target: TargetArtifacts, render):
-    for revision in reversed(target.request_revisions(render.page_number)):
-        request = target.read_request(render.page_number, revision)
-        if request.request_sha256 == render.request_sha256:
-            return request
-    raise ValueError("Saved render lacks its producing request")
 
 
 def _page_failure(target: TargetArtifacts, page_number: int):
@@ -320,7 +312,7 @@ def _draw_success_callback(
                         "run_id": payload.get("run_id") or operation_id, "attempt_id": operation_id,
                         "stage_attempt_id": payload.get("stage_attempt_id")})
         _sync_draw_progress(project_dir, request.app)
-        queue = request.app.state.event_queues.get(pkey)
+        queue = request.app.state.event_queues.get(event_key(pkey, project_dir))
         if queue is not None:
             queue.put_nowait(
                 {
@@ -348,7 +340,7 @@ def prepare_undrawn_pages(*, project_dir, config, rerun: bool = False):
         ensure_current_page_edition(target, target.read_book_edition(), config)
         if target.book_edition_path.exists()
         else select_book_edition(
-            edition_id="book-edition-001", profile=current_page_capability_profile(config),
+            edition_id="book-edition-001", profile=initial_page_profile(project_dir, config),
         )
     )
     inventory = approved_visual_inventory(project_dir)
@@ -389,7 +381,7 @@ async def enqueue_all_undrawn_pages(
     ensure_current_page_edition(target, target.read_book_edition(), config)
     # No reservation or publication occurs until the entire batch is prepared.
     pkey = project_key(user_id, project_id)
-    queue = request.app.state.event_queues.get(pkey)
+    queue = request.app.state.event_queues.get(event_key(pkey, project_dir))
     jobs = []
 
     for page_number, page, compiled in prepared:
@@ -781,7 +773,7 @@ def generate_page(
     )
     adapter = complete_page_adapter(config, request=compiled.request)
     pkey = project_key(user_id, project_id)
-    queue = request.app.state.event_queues.get(pkey)
+    queue = request.app.state.event_queues.get(event_key(pkey, project_dir))
     if queue is not None:
         queue.put_nowait(
             {"type": "page_start", "stage": "draw", "page_number": page_number}
@@ -1051,7 +1043,10 @@ def _reference_entries(project_dir, references) -> list[dict]:
         files = approved_reference_files(project_dir)
     except Exception:
         files = {}
-    root = _Path(project_dir).resolve()
+    # Cast references live in the series root, beside every part.
+    from novel_to_comic.workspace import series_root
+
+    root = series_root(_Path(project_dir)).resolve()
     images: dict[str, str | None] = {}
     for reference_id, source in files.items():
         try:
@@ -1329,7 +1324,7 @@ def submit_page_correction(
                 raise
             primary_issue = None
     adapter = complete_page_adapter(config, request=compiled.request)
-    queue = request.app.state.event_queues.get(pkey)
+    queue = request.app.state.event_queues.get(event_key(pkey, project_dir))
     if queue is not None:
         queue.put_nowait(
             {"type": "page_start", "stage": "draw", "page_number": page_number}
@@ -1416,7 +1411,7 @@ async def visual_review_page(page_number: int, project_id: str,
             operations=visual_review_operations(config),
             work=lambda: review_page_visuals(config=config, page=page, render=active.render,
                 image=target.read_render(page_number, active.render.revision), compiled=compiled, artifacts=target,
-                producing_request=_producing_request(target, active.render)),
+                producing_request=target.producing_request(active.render)),
         )
         return result.value
     except ArtifactInvalid as exc:
@@ -1467,7 +1462,7 @@ def read_saved_visual_review(page_number: int, project=Depends(get_project)):
             report = validated_saved_visual_review(
                 page=page, render=active.render, image=image, compiled=compiled,
                 config=config, artifacts=target,
-                producing_request=_producing_request(target, active.render),
+                producing_request=target.producing_request(active.render),
             )
         except ValueError:
             # Inputs no longer reproduce any saved digest: nothing is current.

@@ -167,7 +167,10 @@ def test_page_dispatch_has_three_locks_without_changing_other_account_work(tmp_p
     locks = [dispatch_lock("queue", page) for page in pages]
     assert len(set(locks[:3])) == 3
     assert locks[0] == locks[3]
-    assert dispatch_lock("queue", SimpleNamespace(user_id="account", kind="pipeline_stage", command=None)) == "queue:account:account"
+    assert dispatch_lock("queue", SimpleNamespace(user_id="account", kind="pipeline_stage", payload={}, command=None)) == "queue:account:account"
+    # Text stages take the light lane so another part's Extract runs beside page work.
+    extract = SimpleNamespace(user_id="account", kind="pipeline_stage", payload={"stage": "extract"}, command=None)
+    assert dispatch_lock("queue", extract) == "queue:account:account:light"
 
 
 def test_cancel_queued_pages_preserves_running_work_and_survives_restore(tmp_path):

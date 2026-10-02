@@ -12,10 +12,20 @@ from novel_to_comic.book_adaptation import (
 )
 from novel_to_comic.clients.text import generate_json
 from novel_to_comic.config import Config
+from novel_to_comic.continuity import continuity_context, write_continuity_record
+from novel_to_comic.models.story_bible import StoryBible, part_story_bible
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.state import PipelineState
 from novel_to_comic.target_artifacts import TargetArtifacts
+from novel_to_comic.workspace import workspace_part_id
 from novel_to_comic.stages import Stage, clean_cascade
+
+
+def adaptation_story_bible(project_dir: Path) -> StoryBible:
+    """The series Story Bible, narrowed to the part being adapted."""
+    bible = artifacts.read_story_bible(project_dir)
+    part = workspace_part_id(project_dir)
+    return part_story_bible(bible, part) if part is not None else bible
 
 
 async def run(config: Config, project_dir: Path, ctx: StageRuntime):
@@ -50,7 +60,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
 
     result = await produce_book_adaptation(
         target.read_source(),
-        artifacts.read_story_bible(project_dir),
+        adaptation_story_bible(project_dir),
         target.read_brief(),
         artifacts=target,
         ctx=ctx,
@@ -59,7 +69,10 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
         max_generation_calls=config.narrative_max_calls,
         story_instruction=instruction,
         concurrency=config.effective_text_concurrency(),
+        continuity=continuity_context(project_dir),
     )
+    if workspace_part_id(project_dir) is not None:
+        write_continuity_record(project_dir)
     if directive is not None:
         target.clear_story_directive("adapt")
         mark_story_change_applied(target, directive.proposal_id)
@@ -79,7 +92,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState, *, fr
         return 0.0
     source = target.read_source()
     brief = target.read_brief()
-    bible = artifacts.read_story_bible(project_dir)
+    bible = adaptation_story_bible(project_dir)
     directive = target.peek_story_directive("adapt")
     return estimate_book_adaptation_cost(
         source,
@@ -88,6 +101,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState, *, fr
         model=config.effective_adapt_model(),
         artifacts=None if fresh else target,
         story_instruction=directive.instruction if directive is not None else "",
+        continuity=continuity_context(project_dir),
     )
 
 
@@ -108,7 +122,7 @@ def published_adaptation_needs_repair(project_dir: Path) -> bool:
     try:
         return bool(published_adaptation_contract_failures(
             target.read_source(),
-            artifacts.read_story_bible(project_dir),
+            adaptation_story_bible(project_dir),
             target.read_brief(),
             target.read_adaptation(),
         ))

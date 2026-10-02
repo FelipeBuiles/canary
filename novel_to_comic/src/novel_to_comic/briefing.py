@@ -40,11 +40,73 @@ def recommended_page_envelope(
 def story_page_envelope(
     source: SourceDocument,
     story_bible: StoryBible,
+    *,
+    part_id: str | None = None,
 ) -> tuple[int, int]:
+    """The recommended page range for one part's source (or a whole book)."""
+    scenes = [scene for scene in story_bible.scenes if part_id is None or scene.part_id == part_id]
     return recommended_page_envelope(
         word_count=len(source.text.split()),
-        scene_count=len(story_bible.scenes),
+        scene_count=len(scenes),
     )
+
+
+#: Decided once for the series; each later part's Brief inherits them from the
+#: nearest earlier approved Brief instead of inferring them again.
+SERIES_BRIEF_FIELDS = (
+    "themes", "point_of_view", "narrator_treatment", "tone", "motifs", "transformation_level",
+)
+
+
+def inherited_brief_fields(brief: AdaptationBrief) -> dict[str, Any]:
+    return {field: getattr(brief, field) for field in SERIES_BRIEF_FIELDS}
+
+
+def part_story_view(story_bible: StoryBible, part_id: str) -> dict[str, Any]:
+    """The Story Bible as one part's Brief sees it: its own scenes and acts and
+    the characters and places in them. Later parts never leak into a Brief."""
+    context = story_bible_context(story_bible)
+    scenes = [scene for scene in context["scenes"] if scene["part_id"] == part_id]
+    characters = {cid for scene in scenes for cid in scene["character_ids"]}
+    locations = {scene["location_id"] for scene in scenes}
+    context.update(
+        scenes=scenes,
+        total_scenes=len(scenes),
+        characters=[c for c in context["characters"] if c["id"] in characters],
+        locations=[loc for loc in context["locations"] if loc["id"] in locations],
+        narrative_arcs=[arc for arc in context["narrative_arcs"] if arc["part_id"] == part_id],
+    )
+    return context
+
+
+def story_so_far(story_bible: StoryBible, part_id: str) -> dict[str, Any]:
+    """Compact continuity from earlier parts: their acts and the previous part's scenes."""
+    from novel_to_comic.workspace import part_id as part_identifier, part_ordinal
+
+    ordinal = part_ordinal(part_id)
+    earlier = {part_identifier(number) for number in range(1, ordinal)}
+    previous = part_identifier(ordinal - 1) if ordinal > 1 else None
+    return {
+        "earlier_acts": [
+            {"part_id": arc.part_id, "act": arc.act, "title": arc.title,
+             "turning_point": arc.turning_point}
+            for arc in story_bible.narrative_arcs if arc.part_id in earlier
+        ],
+        "previous_part_scenes": [
+            {"title": scene.title, "summary": scene.summary}
+            for scene in story_bible.scenes if scene.part_id == previous
+        ],
+    }
+
+
+_SERIES_INSTRUCTIONS = (
+    "This source is one part of a longer series. series_direction holds the series' "
+    "approved tone, point of view, narrator treatment, themes, motifs and transformation "
+    "level: repeat them unchanged. story_so_far summarizes earlier parts for continuity "
+    "only. Infer story_promises, ambiguities, protected_language, essential_events, "
+    "character_turns, desired_emphasis and the page range from THIS part's source units; "
+    "do not list earlier parts' events as this part's essential events. "
+)
 
 
 class StoryDecision(BaseModel):
@@ -59,10 +121,17 @@ class StoryDecision(BaseModel):
 def build_brief_inference_prompt(
     source: SourceDocument,
     story_bible: StoryBible,
+    *,
+    part_id: str | None = None,
+    previous_brief: AdaptationBrief | None = None,
 ) -> str:
-    """Compile the target Brief inference contract from canonical Story inputs."""
+    """Compile the target Brief inference contract from canonical Story inputs.
 
-    page_minimum, page_maximum = story_page_envelope(source, story_bible)
+    A part sees only its own scenes; a later part also receives the inherited
+    series direction and a compact summary of the story so far.
+    """
+
+    page_minimum, page_maximum = story_page_envelope(source, story_bible, part_id=part_id)
     context = {
         "source_sha256": source.source_sha256,
         "recommended_page_envelope": {
@@ -77,10 +146,17 @@ def build_brief_inference_prompt(
             scene.model_dump(mode="json")
             for scene in source.scenes
         ],
-        "story_bible": story_bible_context(story_bible),
+        "story_bible": (story_bible_context(story_bible) if part_id is None
+                        else part_story_view(story_bible, part_id)),
     }
+    series = ""
+    if previous_brief is not None and part_id is not None:
+        context["series_direction"] = inherited_brief_fields(previous_brief)
+        context["story_so_far"] = story_so_far(story_bible, part_id)
+        series = _SERIES_INSTRUCTIONS
     return (
-        "Infer an adaptation brief from the canonical source units and Story Bible. "
+        series
+        + "Infer an adaptation brief from the canonical source units and Story Bible. "
         "Return one JSON object containing story_promises, themes, point_of_view, "
         "narrator_treatment, tone, ambiguities, motifs, protected_language, "
         "essential_events, character_turns, transformation_level, "
@@ -226,8 +302,12 @@ def propose_brief(
     /,
     *,
     page_envelope: tuple[int, int] | None = None,
+    inherited: Mapping[str, Any] | None = None,
 ) -> AdaptationBrief:
-    """Parse inferred adaptation intent without allowing inference to approve it."""
+    """Parse inferred adaptation intent without allowing inference to approve it.
+
+    ``inherited`` series fields replace whatever the model returned for them.
+    """
 
     return AdaptationBrief.model_validate(
         {
@@ -235,6 +315,7 @@ def propose_brief(
                 inferred_content,
                 page_envelope=page_envelope,
             ),
+            **(inherited or {}),
             "revision": 1,
             "status": "draft",
             "content_sha256": "",
@@ -352,6 +433,27 @@ def approve_story(
             expected_revision=expected_revision,
         ),
     )
+
+
+def series_brief(project_dir) -> AdaptationBrief | None:
+    """The nearest earlier part's approved Brief, which a later part inherits."""
+    from novel_to_comic.workspace import (
+        part_id as part_identifier, part_ordinal, part_workspace, series_root, workspace_part_id,
+    )
+    from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing
+
+    identifier = workspace_part_id(project_dir)
+    if identifier is None:
+        return None
+    root = series_root(project_dir)
+    for number in range(part_ordinal(identifier) - 1, 0, -1):
+        try:
+            brief = TargetArtifacts(part_workspace(root, part_identifier(number))).read_brief()
+        except (ArtifactMissing, ArtifactInvalid):
+            continue
+        if brief.status == "approved":
+            return brief
+    return None
 
 
 def require_approved_brief(brief: AdaptationBrief, /) -> AdaptationBrief:

@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from novel_to_comic.config import Config
+from novel_to_comic.series_migration import migrate_to_series
 from novel_to_comic.server import deps
 from novel_to_comic.server.auth import get_current_user
 from novel_to_comic.server.routers import projects
@@ -87,6 +88,13 @@ async def test_rename_persists_display_name_without_changing_identity_or_artifac
         path = project_dir / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
+    # A project predating parts is moved into a one-part series when opened;
+    # renaming must then leave every file of that series layout untouched.
+    assert migrate_to_series(project_dir)
+    retained = {
+        ("parts/part_0001/" + name if name.split("/")[0] in {"cover", "exports"} else name): content
+        for name, content in retained.items()
+    }
     before = load_state(project_dir).model_dump()
     original_row = row.copy()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:

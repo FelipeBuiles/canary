@@ -33,8 +33,14 @@ async def execute_command(app, job):
     spec = job.command
     directory = Path(spec.project_dir)
     from .project_paths import project_directory
-    if directory != project_directory(app.state.projects_dir, spec.user_id, directory.name):
+    from novel_to_comic.workspace import is_part_workspace, part_id_for_path, part_workspace
+    # A part operation addresses its workspace inside the project root.
+    part = part_id_for_path(directory)
+    root = directory.parent.parent if part else directory
+    if root != project_directory(app.state.projects_dir, spec.user_id, root.name):
         raise ValueError("Operation project is outside its account volume")
+    if part and (directory != part_workspace(root, part) or not is_part_workspace(directory)):
+        raise ValueError("Operation part is outside its project")
     if not (directory / "state.json").exists():
         raise ValueError("Operation project no longer exists")
     config = Config.model_validate(spec.config)
@@ -153,7 +159,8 @@ async def _pipeline(app, job, directory, config):
     from .event_channel import EventChannel
     from novel_to_comic.state import StageStatus
     spec = job.command
-    channel = app.state.event_queues.setdefault(job.project_name, EventChannel())
+    from .deps import event_key
+    channel = app.state.event_queues.setdefault(event_key(job.project_name, directory), EventChannel())
     state = load_state(directory)
     try:
         await _run_stage_with_credits(spec.stage, config, directory, state, channel,

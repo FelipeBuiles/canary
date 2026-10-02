@@ -61,7 +61,7 @@ def test_archive_failure_rolls_back_every_move(tmp_path, monkeypatch):
 @pytest.mark.parametrize("confirmed", [None, 0, 2])
 def test_plan_restart_requires_current_page_count_before_spend(tmp_path, monkeypatch, confirmed):
     files = old_book(tmp_path)
-    monkeypatch.setattr(pipeline, "project_busy", lambda *args: False)
+    monkeypatch.setattr(pipeline, "project_busy", lambda *args, **kwargs: False)
     monkeypatch.setattr(pipeline, "admit_stage_action", lambda *args: None)
     with pytest.raises(HTTPException) as caught:
         asyncio.run(pipeline._start_stage(SimpleNamespace(app=None), "book", "plan", True,

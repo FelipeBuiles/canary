@@ -642,6 +642,12 @@ class TargetArtifacts:
     def write_lettering_style(self, style: LetteringStyle) -> None:
         self._write_model(self.lettering_style_path, style)
         self.invalidate_finish()
+        # The book style is series-wide: every part's packages used it.
+        from novel_to_comic.workspace import part_workspaces
+
+        for workspace in part_workspaces(self.series_dir):
+            if workspace.resolve() != self.project_dir.resolve():
+                TargetArtifacts(workspace).invalidate_finish()
 
     def read_lettering(self, page_number: int) -> PageLettering:
         return self._read_model("page_lettering", self.lettering_path(page_number), PageLettering)
@@ -811,6 +817,14 @@ class TargetArtifacts:
         return self._read_model(
             "page_generation_request", path, FrozenPageGenerationRequest
         )
+
+    def producing_request(self, render) -> FrozenPageGenerationRequest:
+        """The frozen request that produced one saved render."""
+        for revision in reversed(self.request_revisions(render.page_number)):
+            request = self.read_request(render.page_number, revision)
+            if request.request_sha256 == render.request_sha256:
+                return request
+        raise ValueError("Saved render lacks its producing request")
 
     @locked_mutation
     def write_render(

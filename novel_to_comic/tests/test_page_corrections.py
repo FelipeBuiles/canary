@@ -1124,7 +1124,7 @@ def test_preview_route_accepts_real_frontend_wire_body(tmp_path: Path, other_pag
         )
 
     res = client.post(
-        "/api/projects/test_project/pages/1/corrections/preview",
+        "/api/projects/test_project/parts/part_0001/pages/1/corrections/preview",
         json={
             "comic_page_revision": 1,
             "parent_render_revision": 1,
@@ -1193,7 +1193,7 @@ def test_preview_with_two_linked_issues_and_manual_change_keeps_full_identity(tm
     }
     history_before = [(issue.id, issue.status) for issue in artifacts.read_issues(1)]
 
-    res = client.post("/api/projects/test_project/pages/1/corrections/preview", json=body)
+    res = client.post("/api/projects/test_project/parts/part_0001/pages/1/corrections/preview", json=body)
     assert res.status_code == 200, res.text
     payload = res.json()
     manual_id = deterministic_manual_issue_id(page_number=1, parent_revision=1, change_id="c-shadow")
@@ -1205,7 +1205,7 @@ def test_preview_with_two_linked_issues_and_manual_change_keeps_full_identity(tm
     ]
     assert payload["pending_manual_change_ids"] == ["c-shadow"]
 
-    again = client.post("/api/projects/test_project/pages/1/corrections/preview", json=body)
+    again = client.post("/api/projects/test_project/parts/part_0001/pages/1/corrections/preview", json=body)
     assert again.status_code == 200, again.text
     assert again.json()["request_sha256"] == payload["request_sha256"]
     assert again.json()["selected_issue_ids"] == payload["selected_issue_ids"]
@@ -1242,7 +1242,7 @@ def test_saved_review_cold_read_returns_null_without_spending(tmp_path: Path) ->
     _write_empty_story_bible(project_dir)
     client = _api_client(tmp_path, project_dir)
 
-    res = client.get("/api/projects/test_project/pages/1/visual-review")
+    res = client.get("/api/projects/test_project/parts/part_0001/pages/1/visual-review")
 
     assert res.status_code == 200, res.text
     payload = res.json()
@@ -1266,7 +1266,7 @@ def test_visual_review_estimate_is_no_spend_and_needs_render(tmp_path: Path, mon
     monkeypatch.setattr(visual_review_module, "review_page_visuals", _fail_review)
     before = {p for p in project_dir.rglob("*") if p.is_file()}
 
-    res = client.get("/api/projects/test_project/pages/1/visual-review/estimate")
+    res = client.get("/api/projects/test_project/parts/part_0001/pages/1/visual-review/estimate")
 
     assert res.status_code == 200, res.text
     payload = res.json()
@@ -1282,7 +1282,7 @@ def test_visual_review_estimate_is_no_spend_and_needs_render(tmp_path: Path, mon
     _write_empty_story_bible(bare_dir)
     bare_client = _api_client(tmp_path, bare_dir)
 
-    missing = bare_client.get("/api/projects/test_project/pages/1/visual-review/estimate")
+    missing = bare_client.get("/api/projects/test_project/parts/part_0001/pages/1/visual-review/estimate")
 
     assert missing.status_code == 409, missing.text
 
@@ -1362,8 +1362,8 @@ def test_reviewing_existing_art_never_requires_todays_draw_profile(tmp_path: Pat
 
     monkeypatch.setattr(pages, "complete_page_adapter", lambda _config, *_args, **_kwargs: RetiredDrawProfile())
 
-    assert client.get("/api/projects/test_project/pages/1/visual-review/estimate").status_code == 200
-    saved = client.get("/api/projects/test_project/pages/1/visual-review")
+    assert client.get("/api/projects/test_project/parts/part_0001/pages/1/visual-review/estimate").status_code == 200
+    saved = client.get("/api/projects/test_project/parts/part_0001/pages/1/visual-review")
     assert saved.status_code == 200, saved.text
     assert saved.json()["report"] is None
 
@@ -1381,8 +1381,8 @@ def test_correction_preview_uses_selected_older_parent(tmp_path):
     client = _api_client(tmp_path, project_dir)
     body = {"comic_page_revision": page.revision, "parent_render_revision": 1,
             "changes": [{"id": "direction", "instruction": "Bare tip right; cloth head left. Only panel 3."}]}
-    response = client.post("/api/projects/test_project/pages/1/corrections/preview", json=body)
+    response = client.post("/api/projects/test_project/parts/part_0001/pages/1/corrections/preview", json=body)
     assert response.status_code == 200, response.text
     assert response.json()["parent_render_revision"] == 1
     body["parent_render_revision"] = 2
-    assert client.post("/api/projects/test_project/pages/1/corrections/preview", json=body).status_code == 409
+    assert client.post("/api/projects/test_project/parts/part_0001/pages/1/corrections/preview", json=body).status_code == 409

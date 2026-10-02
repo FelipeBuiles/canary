@@ -9,6 +9,7 @@ an earlier version — without re-running the stage.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
@@ -47,6 +48,56 @@ def cast_review(project_id: str, project=Depends(get_project),
     from novel_to_comic.cast_design import review_status
     project_dir, config, _state = project
     return review_status(config, project_dir)
+
+
+@router.get("/cast/freshness")
+def cast_reference_freshness(project=Depends(get_project)):
+    """Each reference: current, outdated (its entity was edited) or missing."""
+    from novel_to_comic.stages.s3_cast import reference_freshness
+
+    project_dir, config, _state = project
+    return {"references": reference_freshness(config, project_dir)}
+
+
+class KeepReferenceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["characters", "locations", "props"]
+    entity_id: str = Field(min_length=1)
+    state_id: str | None = None
+
+
+@router.post("/cast/references/keep")
+def keep_cast_reference(body: KeepReferenceRequest, project=Depends(get_project)):
+    """Keep an out-of-date reference as it is after its entity was edited."""
+    from novel_to_comic.stages.s3_cast import keep_current_reference, reference_freshness
+
+    project_dir, config, _state = project
+    try:
+        keep_current_reference(config, project_dir, body.kind, body.entity_id, body.state_id)
+    except KeyError as exc:
+        raise HTTPException(404, f"Not in the Story Bible: {exc.args[0]}") from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"references": reference_freshness(config, project_dir)}
+
+
+@router.post("/cast/reopen")
+def reopen_cast(project=Depends(get_project)):
+    """Reopen an approved Cast so it regenerates out-of-date or missing references.
+
+    Nothing is deleted: Cast redesigns only edited characters and regenerates
+    only references that are not current, then returns to its checkpoint.
+    """
+    from novel_to_comic.series import reopen_cast
+    from novel_to_comic.stages.s3_cast import reference_freshness
+
+    project_dir, config, _state = project
+    pending = [item for item in reference_freshness(config, project_dir) if item["status"] != "current"]
+    if not pending:
+        raise HTTPException(409, "Every Cast reference is current.")
+    if not reopen_cast(project_dir):
+        raise HTTPException(409, "Cast is not approved yet; resume it from Cast.")
+    return {"reopened": True, "references": pending}
 
 
 class CastInstructionRequest(BaseModel):

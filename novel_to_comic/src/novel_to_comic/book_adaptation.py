@@ -1472,12 +1472,26 @@ def _treatment_view(treatment: NarrativeTreatment) -> dict[str, Any]:
     )
 
 
+_CONTINUITY_CONTRACT = (
+    "This source continues a series. story_so_far summarizes how the earlier parts were "
+    "adapted and gives the previous part's closing beats with their exact lettering. "
+    "Continue directly from that ending: established characters, relationships and "
+    "appearance states carry over, so do not introduce them again or repeat events the "
+    "earlier parts already showed. story_so_far is read-only context, not source to adapt. "
+)
+
+
 def build_narrative_treatment_prompt(
     source: SourceDocument,
     story_bible: StoryBible,
     brief: AdaptationBrief,
+    *,
+    continuity: dict | None = None,
 ) -> str:
-    """Compile the book-wide editorial treatment prompt from canonical inputs."""
+    """Compile the book-wide editorial treatment prompt from canonical inputs.
+
+    A later part's treatment also receives ``continuity`` from earlier parts.
+    """
 
     context = {
         "source_units": _source_units_view(
@@ -1498,8 +1512,13 @@ def build_narrative_treatment_prompt(
         "approved_adaptation_brief": _brief_view(brief),
         "approved_requirement_registry": _requirement_registry(brief),
     }
+    series = ""
+    if continuity:
+        context["story_so_far"] = continuity
+        series = _CONTINUITY_CONTRACT
     return (
-        "Create one book-wide narrative treatment for the complete adaptation. "
+        series
+        + "Create one book-wide narrative treatment for the complete adaptation. "
         "Write a finished editorial story outline for the comic's creative team. "
         "Each field describes the fictional story: its events, character arcs, "
         "and presentation. Return the editorial deliverable only, without an "
@@ -1993,6 +2012,7 @@ def estimate_book_adaptation_cost(
     treatment: NarrativeTreatment | None = None,
     story_instruction: str = "",
     artifacts: TargetArtifacts | None = None,
+    continuity: dict | None = None,
 ) -> float:
     """Estimate remaining clean work, two potential repair scenarios and re-review.
 
@@ -2015,7 +2035,9 @@ def estimate_book_adaptation_cost(
         source, story_bible, brief, artifacts=artifacts, model=model, instruction=story_instruction,
     ) if artifacts is not None else None)
     instruction_suffix = story_instruction_section(story_instruction, stage="adapt")
-    treatment_prompt = build_narrative_treatment_prompt(source, story_bible, brief) + instruction_suffix
+    treatment_prompt = build_narrative_treatment_prompt(
+        source, story_bible, brief, continuity=continuity,
+    ) + instruction_suffix
     cached_treatment = None
     if artifacts is not None:
         cached_treatment = _read_checkpoint(
@@ -3687,8 +3709,12 @@ async def produce_book_adaptation(
     story_instruction: str = "",
     max_generation_calls: int | None = None,
     concurrency: int = _ADAPT_MAX_CONCURRENCY,
+    continuity: dict | None = None,
 ) -> BookAdaptation:
-    """Generate, validate, cost, and persist Adapt's one canonical artifact."""
+    """Generate, validate, cost, and persist Adapt's one canonical artifact.
+
+    ``continuity`` carries a later part's context from the parts before it.
+    """
 
     from novel_to_comic.ai.transport import text_transport_limits
 
@@ -3777,12 +3803,14 @@ async def produce_book_adaptation(
         source,
         story_bible,
         brief,
+        continuity=continuity,
     ) + instruction_suffix
     initial_estimate = estimate_book_adaptation_cost(
         source,
         story_bible,
         brief,
         model=model,
+        continuity=continuity,
         artifacts=artifacts,
         story_instruction=story_instruction,
     )

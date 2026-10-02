@@ -346,6 +346,31 @@ def spendable_page_profiles(config: Config | None = None) -> tuple[PageCapabilit
     return (current, _integrated_page_profile(retained) if current.exact_visible_lettering else retained)
 
 
+def initial_page_profile(project_dir, config: Config | None = None) -> PageCapabilityProfile:
+    """The profile a part's first edition binds to.
+
+    Parts of a series keep one look: a new part inherits the previous part's
+    profile while this project can still spend on it, and otherwise uses the
+    current profile. Existing editions never change profile either way.
+    """
+    from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
+    from novel_to_comic.workspace import part_id, part_ordinal, part_workspace, series_root, workspace_part_id
+
+    spendable = spendable_page_profiles(config)
+    identifier = workspace_part_id(project_dir)
+    if identifier is not None:
+        root = series_root(project_dir)
+        for number in range(part_ordinal(identifier) - 1, 0, -1):
+            try:
+                edition = TargetArtifacts(part_workspace(root, part_id(number))).read_book_edition()
+            except (ArtifactMissing, ArtifactInvalid):
+                continue
+            if edition.capability_profile in spendable:
+                return edition.capability_profile
+            break
+    return current_page_capability_profile(config)
+
+
 def request_page_profile(config: Config, request: FrozenPageGenerationRequest) -> PageCapabilityProfile:
     """The spendable profile a frozen request was compiled against."""
     for profile in spendable_page_profiles(config):

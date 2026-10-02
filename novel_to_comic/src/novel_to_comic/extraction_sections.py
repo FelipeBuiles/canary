@@ -21,6 +21,7 @@ from novel_to_comic.models.story_bible import NarrativeArc, StoryBible
 from novel_to_comic.source_extraction import source_units
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import estimate_text_cost
+from novel_to_comic.workspace import FIRST_PART_ID
 
 # Reasoning models spend part of this cap before emitting JSON; 16k truncated
 # (finish_reason=length) a section in production. Billing follows actual usage.
@@ -66,6 +67,11 @@ Start a scene at the first source unit in this section, even if it continues a
 scene in the previous section; downstream adaptation can combine these segments.
 Keep summaries concise and omit empty optional arrays. Cover every event through
 the final source unit. Do not copy the registry's inactive entities into output.
+"""
+# Sent only when the author has removed entities from the Story Bible.
+EXCLUSION_INSTRUCTIONS = """
+The author removed the entities listed in excluded_entities. Never create a new
+entity for any of those names or aliases; leave such mentions out of rosters.
 """
 ARC_PROMPT = """Organize these ordered scene summaries into exactly three narrative acts.
 Return JSON with title, author, style_notes (string or null), and narrative_arcs.
@@ -129,7 +135,7 @@ def registry_context(bible: StoryBible | None) -> dict:
     for kind in ("characters", "locations", "props"):
         entries = []
         for entity in getattr(bible, kind):
-            entry = entity.model_dump(exclude={"appearance_timeline"})
+            entry = entity.model_dump(exclude={"appearance_timeline", "origin"})
             # The last activation carries the current look across section boundaries.
             entry["carried_state_id"] = (
                 entity.appearance_timeline[-1].state_id
@@ -137,6 +143,10 @@ def registry_context(bible: StoryBible | None) -> dict:
             )
             entries.append(entry)
         registry[kind] = entries
+    if bible.excluded_entities:
+        registry["excluded_entities"] = [
+            entity.model_dump(mode="json") for entity in bible.excluded_entities
+        ]
     return registry
 
 
@@ -211,7 +221,8 @@ def merge_section(previous: StoryBible | None, section: StoryBible, prefix: str)
         if len({e.id for e in incoming}) != len(incoming):
             raise ValueError(f"Duplicate {kind} IDs in section")
         targets = {e.id: e for e in getattr(merged, kind)}
-        names = {e.name.casefold().strip(): e.id for e in existing.values()}
+        names = {name.casefold().strip(): e.id for e in existing.values()
+                 for name in (e.name, *getattr(e, "aliases", ()))}
         for entity in incoming:
             if entity.id not in existing:
                 if not entity.id.startswith(prefix):
@@ -239,7 +250,9 @@ def merge_section(previous: StoryBible | None, section: StoryBible, prefix: str)
                 if activation.at.scene_id not in local_ids:
                     raise ValueError(f"{entity.id} must emit only local timeline activations")
     merged.total_scenes = len(merged.scenes)
-    merged.narrative_arcs = []
+    if previous is None:
+        # Acts are organized after all sections; earlier parts keep theirs.
+        merged.narrative_arcs = []
     validate_references(merged)
     return merged
 
@@ -280,20 +293,42 @@ def validate_references(bible: StoryBible) -> None:
                 raise ValueError(f"Appearance timeline must be ordered and unique for {entity.id}")
 
 
-def organization_content(bible: StoryBible, heading: str) -> str:
+def organization_content(bible: StoryBible, heading: str, part_id: str | None = None) -> str:
+    scenes = [s for s in bible.scenes if part_id is None or s.part_id == part_id]
     return json.dumps({
         "source_heading": heading,
         "title": bible.title, "author": bible.author,
-        "scenes": [{"id": s.id, "title": s.title, "summary": s.summary} for s in bible.scenes],
+        "scenes": [{"id": s.id, "title": s.title, "summary": s.summary} for s in scenes],
     }, ensure_ascii=False)
 
 
-async def extract_sections(config, project_dir, ctx, novel_text, system_prompt) -> StoryBible:
+def section_instructions(registry: StoryBible | None) -> str:
+    """Section rules, plus the removed-entities rule when the author removed any."""
+    if registry is not None and registry.excluded_entities:
+        return SECTION_INSTRUCTIONS + EXCLUSION_INSTRUCTIONS
+    return SECTION_INSTRUCTIONS
+
+
+def section_prefix(part_number: int, index: int) -> str:
+    """New-ID prefix for a section; later parts never reuse part 1's prefixes."""
+    return f"part{index:04d}_" if part_number == 1 else f"p{part_number:04d}s{index:04d}_"
+
+
+async def extract_sections(
+    config, project_dir, ctx, novel_text, system_prompt, *,
+    registry: StoryBible | None = None, part_id: str = FIRST_PART_ID,
+    part_number: int = 1, first_ordinal: int = 1,
+) -> StoryBible:
+    """Extract one part's text in sections, continuing ``registry`` when given.
+
+    A later part starts from the series Story Bible: recurring entities keep
+    their IDs and the part's scenes, acts and new entities are appended.
+    """
     # Local import keeps the existing extraction boundary authoritative.
     from novel_to_comic.stages.s1_extract import _extract_with_retry
 
     sections = split_source(novel_text, config.extraction_chunk_chars)
-    units = source_units(novel_text)
+    units = source_units(novel_text, first_ordinal=first_ordinal)
     ctx.set_progress_total(len(sections) + 2)  # sections, organization, publication
 
     async def recorded_generate(*, execution_mode, **kwargs):
@@ -311,11 +346,11 @@ async def extract_sections(config, project_dir, ctx, novel_text, system_prompt) 
 
     async def generate(*, config, **kwargs):
         return await cached_generate(execution_mode="mock" if config.mock_mode else "live", **kwargs)
-    bible = None
+    bible = registry.model_copy(deep=True) if registry is not None else None
     section_offset = 0
     for index, section in enumerate(sections, 1):
         started = time.monotonic()
-        prefix = f"part{index:04d}_"
+        prefix = section_prefix(part_number, index)
         ctx.log(f"Extracting source section {index}/{len(sections)} ({len(section):,} characters)...")
         ctx.activity(detail=f"Source section {index}/{len(sections)}", force=True)
         content = json.dumps({
@@ -336,7 +371,7 @@ async def extract_sections(config, project_dir, ctx, novel_text, system_prompt) 
                       if section_offset <= unit.start_offset < section_offset + len(section))
         with ai_source_context(f"section_{index:04d}", scope):
             result = await _extract_with_retry(
-                config, system_prompt + SECTION_INSTRUCTIONS, section,
+                config, system_prompt + section_instructions(bible), section,
                 user_content=content, generate=generate, validate=validate,
                 prepare=lambda raw: hydrate_section(raw, bible),
                 max_output_tokens=SECTION_OUTPUT_TOKENS,
@@ -347,6 +382,7 @@ async def extract_sections(config, project_dir, ctx, novel_text, system_prompt) 
         for scene in result.value.scenes:
             position = section.index(scene.source_start_quote, search_from)
             scene.source_start_offset = section_offset + position
+            scene.part_id = part_id
             search_from = position + len(scene.source_start_quote)
         bible = merge_section(bible, result.value, prefix)
         section_offset += len(section)
@@ -355,7 +391,7 @@ async def extract_sections(config, project_dir, ctx, novel_text, system_prompt) 
         ctx.log(f"Source section {index}/{len(sections)} ready in {time.monotonic() - started:.1f}s.")
 
     assert bible is not None
-    expected = [s.id for s in bible.scenes]
+    expected = [s.id for s in bible.scenes if s.part_id == part_id]
 
     def parse_organization(raw):
         value = BookOrganization.model_validate(raw)
@@ -365,7 +401,7 @@ async def extract_sections(config, project_dir, ctx, novel_text, system_prompt) 
             raise ValueError(f"Acts 1, 2, 3 must partition all scenes exactly once in order; missing={missing}")
         return value
 
-    content = organization_content(bible, novel_text[:1000])
+    content = organization_content(bible, novel_text[:1000], part_id)
     ctx.log("Organizing book-wide narrative arcs...")
     outcome = await generate_validated_json(
         config, model=config.effective_extraction_model(), system_prompt=ARC_PROMPT,
@@ -374,28 +410,74 @@ async def extract_sections(config, project_dir, ctx, novel_text, system_prompt) 
         label="Extraction narrative arcs", feature="extract.narrative_arcs",
         max_output_tokens=8000, generate=generate,
     )
-    bible.title = outcome.value.title
-    bible.author = outcome.value.author
-    bible.style_notes = outcome.value.style_notes
-    bible.narrative_arcs = outcome.value.narrative_arcs
+    if registry is None:
+        bible.title = outcome.value.title
+        bible.author = outcome.value.author
+        bible.style_notes = outcome.value.style_notes
+    # The series keeps the title and author established by its first part.
+    bible.narrative_arcs = [arc for arc in bible.narrative_arcs if arc.part_id != part_id] + [
+        arc.model_copy(update={"part_id": part_id}) for arc in outcome.value.narrative_arcs
+    ]
     ctx.record_item_done()
     ctx.progress(len(sections) + 1, len(sections) + 2)
     return bible
 
 
-def estimate_sections(config, novel_text: str, system_prompt: str) -> float:
+def estimate_sections(
+    config, novel_text: str, system_prompt: str, *, registry: StoryBible | None = None,
+) -> float:
     """Price the clean call graph, including growing continuity context.
 
     Future registries and summaries are unknown at admission; explicit allowances
     keep their repeated inputs in the estimate rather than quoting one request.
+    A later part also repeats the series registry it starts from in every call.
     """
     sections = split_source(novel_text, config.extraction_chunk_chars)
     model = config.effective_extraction_model()
+    starting_registry = len(json.dumps(registry_context(registry), ensure_ascii=False)) if registry else 0
     cost = 0.0
     for index, section in enumerate(sections):
         cost += estimate_text_cost(
-            model, len(system_prompt + SECTION_INSTRUCTIONS + section) + 1200 + index * 6000,
+            model,
+            len(system_prompt + section_instructions(registry) + section) + 1200 + index * 6000 + starting_registry,
             output_chars=24000,
         )
     return cost + estimate_text_cost(model, len(ARC_PROMPT) + 1200 + len(sections) * 3000,
                                      output_chars=4000 + len(sections) * 200)
+
+
+def _names(entity) -> set[str]:
+    return {name.casefold().strip() for name in (entity.name, *getattr(entity, "aliases", ())) if name}
+
+
+def apply_exclusions(bible: StoryBible, registry: StoryBible | None) -> tuple[StoryBible, tuple[str, ...]]:
+    """Drop new characters and props the author removed earlier.
+
+    Only entities this extraction introduced are considered: an entity already
+    in the registry is the author's to keep. Locations stay, because a scene
+    needs one; the author can merge a returning location instead.
+    """
+    excluded = {
+        kind: set().union(*(_names(entry) for entry in bible.excluded_entities if entry.kind == kind))
+        for kind in ("character", "prop")
+    }
+    if not any(excluded.values()):
+        return bible, ()
+    known = {entity.id for kind in ("characters", "props") for entity in getattr(registry, kind)} if registry else set()
+    result = bible.model_copy(deep=True)
+    suppressed: list[str] = []
+    removed: set[str] = set()
+    for kind, field in (("character", "characters"), ("prop", "props")):
+        kept = []
+        for entity in getattr(result, field):
+            if entity.id not in known and _names(entity) & excluded[kind]:
+                suppressed.append(entity.name)
+                removed.add(entity.id)
+                continue
+            kept.append(entity)
+        setattr(result, field, kept)
+    for scene in result.scenes:
+        scene.character_ids = [cid for cid in scene.character_ids if cid not in removed]
+    for character in result.characters:
+        character.relationships = [rel for rel in character.relationships if rel.character_id not in removed]
+    return result, tuple(suppressed)

@@ -54,11 +54,11 @@ from novel_to_comic.state import (
     STAGE_NAMES,
     StageState,
     StageStatus,
-    create_initial_state,
     is_stale,
     load_state,
     save_state,
 )
+from novel_to_comic.series import initialize_series
 from novel_to_comic.usage import estimate_image_cost
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 
@@ -70,7 +70,7 @@ from ..credits import (
 from novel_to_comic.codex_dev import classify_operations, is_subscription
 from ..codex_admission import image_operations
 from ..db import get_db
-from ..deps import get_project, get_project_dir, get_projects_dir, project_key
+from ..deps import _ensure_series_layout, get_project, get_project_dir, get_projects_dir, project_key
 from ..project_paths import project_directory
 from ..ratelimit import cost_limit, create_limit, limiter
 from ..product_events import capture_server_event
@@ -221,53 +221,81 @@ def _cover_path(project_dir: Path) -> Path:
     return project_dir / "cover" / "cover.png"
 
 
-def _latest_project_cover_job(request: Request, pkey: str):
-    jobs = [
+def _cover_jobs(request: Request, pkey: str, project_dir: Path):
+    """Cover jobs for the part that ``project_dir`` addresses (each part has one)."""
+    from novel_to_comic.workspace import part_id_for_path
+    from ..generation_jobs import job_part_id
+
+    part = part_id_for_path(project_dir)
+    return [
         job
         for job in request.app.state.generation_jobs.values()
-        if job.project_name == pkey and job.kind == "project_cover"
+        if job.project_name == pkey and job.kind == "project_cover" and job_part_id(job) == part
     ]
+
+
+def _recovered_cover_jobs(request: Request, pkey: str, project_dir: Path) -> list[dict]:
+    from novel_to_comic.workspace import part_id_for_path
+
+    part = part_id_for_path(project_dir)
+    return [job for job in recovered_generation_jobs(request.app, pkey)
+            if job["kind"] == "project_cover" and job.get("part_id") == part]
+
+
+def _latest_project_cover_job(request: Request, pkey: str, project_dir: Path):
+    jobs = _cover_jobs(request, pkey, project_dir)
     if not jobs:
         return None
     return max(jobs, key=lambda job: job.sequence)
 
 
-def _active_project_cover_job(request: Request, pkey: str):
-    for job in request.app.state.generation_jobs.values():
-        if (
-            job.project_name == pkey
-            and job.kind == "project_cover"
-            and job.status in ("queued", "running")
-        ):
-            return job
-    return None
+def _active_project_cover_job(request: Request, pkey: str, project_dir: Path):
+    return next((job for job in _cover_jobs(request, pkey, project_dir)
+                 if job.status in ("queued", "running")), None)
 
 
 def needs_initial_project_cover(request: Request, pkey: str, project_dir: Path) -> bool:
     """Auto-create once; prior attempts require an explicit user retry."""
     return (
         not _cover_path(project_dir).exists()
-        and _latest_project_cover_job(request, pkey) is None
-        and not any(
-            job["kind"] == "project_cover"
-            for job in recovered_generation_jobs(request.app, pkey)
-        )
+        and _latest_project_cover_job(request, pkey, project_dir) is None
+        and not _recovered_cover_jobs(request, pkey, project_dir)
     )
 
 
-def _project_cover_job_payload(request: Request, pkey: str) -> dict | None:
-    job = _latest_project_cover_job(request, pkey)
+def _project_cover_job_payload(request: Request, pkey: str, project_dir: Path) -> dict | None:
+    job = _latest_project_cover_job(request, pkey, project_dir)
     if job is not None:
         return generation_job_payload(request.app, job)
     return max(
-        (job for job in recovered_generation_jobs(request.app, pkey) if job["kind"] == "project_cover"),
+        _recovered_cover_jobs(request, pkey, project_dir),
         key=lambda job: job["queued_at"],
         default=None,
     )
 
 
+def _cover_characters(bible: StoryBible, project_dir: Path, limit: int = 3) -> list:
+    """The characters most present in this part's scenes, in story order."""
+    from novel_to_comic.workspace import part_id_for_path
+
+    part = part_id_for_path(project_dir)
+    if part is None:
+        return bible.characters[:limit]
+    counts: dict[str, int] = {}
+    for scene in bible.scenes:
+        if scene.part_id == part:
+            for character_id in scene.character_ids:
+                counts[character_id] = counts.get(character_id, 0) + 1
+    order = {character.id: index for index, character in enumerate(bible.characters)}
+    ranked = sorted(counts, key=lambda cid: (-counts[cid], order.get(cid, len(order))))
+    by_id = {character.id: character for character in bible.characters}
+    return [by_id[cid] for cid in ranked if cid in by_id][:limit] or bible.characters[:limit]
+
+
 def _story_bible_author(project_dir: Path) -> str | None:
-    bible_path = project_dir / "story_bible.json"
+    from novel_to_comic import artifacts
+
+    bible_path = artifacts.story_bible_path(project_dir)
     if not bible_path.exists():
         return None
     try:
@@ -308,6 +336,9 @@ def _incompatible_project_summary(row: dict, project_dir: Path) -> dict:
 
 
 def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
+    from novel_to_comic.workspace import series_root
+
+    project_dir = series_root(project_dir)
     suggestions_path = project_dir / "samples" / "style_suggestions.json"
     if suggestions_path.exists():
         try:
@@ -353,16 +384,17 @@ async def _generate_project_cover(
     user_id: str,
     project_id: str | None,
 ):
+    from novel_to_comic import artifacts as story_artifacts
     from novel_to_comic.state import load_state, record_misc_usage, save_state
 
-    bible_path = project_dir / "story_bible.json"
+    bible_path = story_artifacts.story_bible_path(project_dir)
     if not bible_path.exists():
         raise FileNotFoundError("Story bible not found")
 
     bible = StoryBible.model_validate_json(bible_path.read_text())
     output_path = _cover_path(project_dir)
     style_ref = _find_style_ref(project_dir, config.style_template)
-    cover_cast = bible.characters[:3]
+    cover_cast = _cover_characters(bible, project_dir)
     anchors = tuple(
         PromptAnchor(kind="location", entity_id=loc.id, name=loc.name, text=loc.visual_anchor)
         for loc in bible.locations[:2]
@@ -563,7 +595,7 @@ async def create_project(
     staged_source = staging_dir / safe_filename
     try:
         _save_upload_capped(file, staged_source)
-        read_source(staged_source)
+        source_text = read_source(staged_source)
     except InputLimitError as exc:
         shutil.rmtree(staging_dir, ignore_errors=True)
         raise HTTPException(exc.status_code, str(exc)) from exc
@@ -580,30 +612,15 @@ async def create_project(
         shutil.rmtree(staging_dir, ignore_errors=True)
         raise HTTPException(409, f"Project '{slug}' already exists") from None
 
-    for subdir in [
-        "input",
-        "source",
-        "brief",
-        "samples",
-        "refs",
-        "plates",
-        "adapt",
-        "plan",
-        "draw",
-        "finish",
-        "exports",
-        "cover",
-    ]:
-        (project_dir / subdir).mkdir()
-
+    (project_dir / "input").mkdir()
     dst = project_dir / "input" / safe_filename
     shutil.move(str(staged_source), dst)
     shutil.rmtree(staging_dir, ignore_errors=True)
     save_config(config, project_dir)
-
-    # Create state
-    state = create_initial_state(name, str(dst))
-    save_state(state, project_dir)
+    initialize_series(
+        project_dir, project_name=name, novel_path=dst, text=source_text,
+        origin=safe_filename,
+    )
 
     # .env.example
     (project_dir / ".env.example").write_text(
@@ -670,23 +687,31 @@ def list_projects(
         if not d.is_dir() or not state_file.exists():
             continue  # orphaned DB row — directory missing, skip silently
         try:
-            state = load_state(d)
-        except (ValidationError, JSONDecodeError, UnicodeDecodeError):
+            load_state(d)
+            _ensure_series_layout(d)
+            part_dir = current_part_dir(d)
+            state = load_state(part_dir)
+        except (ValidationError, JSONDecodeError, UnicodeDecodeError, HTTPException):
             logger.warning(
                 "Project %s has state data from an incompatible pipeline version",
                 row["id"],
             )
             results.append(_incompatible_project_summary(row, d))
             continue
+        from novel_to_comic.workspace import part_id_for_path, part_workspaces
+
+        workspaces = part_workspaces(d) or [d]
+        cover_dir = workspaces[0]
         pkey = project_key(user_id, row["id"])
-        cover_job = _project_cover_job_payload(request, pkey)
+        cover_job = _project_cover_job_payload(request, pkey, cover_dir)
         furthest = None
         for name in STAGE_NAMES:
-            if _stage_payload(d, name, state)["status"] in (
+            if _stage_payload(part_dir, name, state)["status"] in (
                 "complete",
                 "awaiting_review",
             ):
                 furthest = name
+        total_cost, _misc = _series_cost_usd(d)
         results.append(
             {
                 "id": row["id"],
@@ -694,13 +719,16 @@ def list_projects(
                 "project_name": state.project_name,
                 "author": _story_bible_author(d),
                 "created_at": state.created_at.isoformat(),
-                "total_cost_credits": provider_usd_to_credits(state.total_cost_usd),
+                "total_cost_credits": provider_usd_to_credits(total_cost),
                 "furthest_stage": furthest,
                 "is_running": _is_project_running(user_id, row["id"], request),
-                "has_cover": _cover_path(d).exists(),
-                "page_count": _target_page_count(d),
-                "page_issue_summary": _target_issue_summary(d),
-                "finish_ready": _finish_ready(d),
+                "has_cover": _cover_path(cover_dir).exists(),
+                "cover_part_id": part_id_for_path(cover_dir),
+                "current_part_id": part_id_for_path(part_dir),
+                "part_count": len(workspaces),
+                "page_count": sum(_target_page_count(workspace) for workspace in workspaces),
+                "page_issue_summary": _target_issue_summary(part_dir),
+                "finish_ready": _finish_ready(part_dir),
                 "cover_job": cover_job,
                 "incompatible": False,
                 "incompatibility_reason": None,
@@ -731,48 +759,95 @@ def rename_project(
     return {"id": project_id, "project_name": name}
 
 
-@router.get("/{project_id}/status")
-def project_status(
-    request: Request,
-    project_id: str,
-    project=Depends(get_project),
-    user_id: str = Depends(get_current_user),
-):
-    project_dir, config, state = project
-    running = _is_project_running(user_id, project_id, request)
+def current_part_dir(root: Path) -> Path:
+    """The part a project opens on: the first unfinished part, else the last."""
+    from novel_to_comic.workspace import part_workspaces
 
-    state_changed = not running and _reopen_unapproved_brief(project_dir, state)
-    style_selected = is_style_selected(project_dir, config)
-    if style_selected and clear_style_failures_after_selection(state):
-        state_changed = True
+    workspaces = part_workspaces(root)
+    if not workspaces:
+        # A project that could not be migrated keeps its single-book layout.
+        return root
+    for workspace in workspaces:
+        if load_state(workspace).stages["finish"].status != StageStatus.COMPLETE:
+            return workspace
+    return workspaces[-1]
+
+
+def _series_cost_usd(root: Path, series=None) -> tuple[float, float]:
+    """Total and miscellaneous provider cost across the series and its parts."""
+    from novel_to_comic.state import load_series_state
+    from novel_to_comic.workspace import part_workspaces
+
+    series = series or load_series_state(root)
+    total, misc = series.total_cost_usd, series.misc_cost_usd
+    for workspace in part_workspaces(root):
+        try:
+            part = json.loads((workspace / "state.json").read_text())
+        except (OSError, JSONDecodeError):
+            continue
+        total += float(part.get("total_cost_usd") or 0.0)
+        misc += float(part.get("misc_cost_usd") or 0.0)
+    return total, misc
+
+
+def _reconcile_series_stages(root: Path, config: Config, running: bool, series) -> bool:
+    """Style selection and ready Cast references settle the series stages.
+
+    Returns whether ``series`` (the root's state) changed and was saved.
+    """
+    changed = False
+    style_selected = is_style_selected(root, config)
+    if style_selected and clear_style_failures_after_selection(series):
+        changed = True
     if (
         not running
         and style_selected
-        and state.stages["style"].status == StageStatus.COMPLETE
-        and state.stages["cast"].status == StageStatus.PENDING
+        and series.stages["style"].status == StageStatus.COMPLETE
+        and series.stages["cast"].status == StageStatus.PENDING
     ):
         from novel_to_comic.stages.s3_cast import ready_asset_count
         from novel_to_comic.state import complete_stage, hash_style_template
 
-        count = ready_asset_count(config, project_dir)
+        count = ready_asset_count(config, root)
         if count is not None:
-            state.stages["cast"].items_done = count
-            state.stages["cast"].items_total = count
-            state.style_template_hash = hash_style_template(config.style_template)
-            complete_stage(state, "cast")
-            state_changed = True
-    if state_changed:
-        save_state(state, project_dir)
+            series.stages["cast"].items_done = count
+            series.stages["cast"].items_total = count
+            series.style_template_hash = hash_style_template(config.style_template)
+            complete_stage(series, "cast")
+            changed = True
+    if changed:
+        save_state(series, root)
+    return changed
+
+
+def _project_status_payload(
+    request: Request, project_id: str, root: Path, part_dir: Path, config: Config, user_id: str,
+    *, series_state, part_state,
+) -> dict:
+    """One part's view of the project; for a single-book project root == part_dir."""
+    from novel_to_comic.workspace import part_id_for_path
+    from ..generation_jobs import job_part_id
+    from .parts import part_summaries
+
+    running = _is_project_running(user_id, project_id, request)
+    if _reconcile_series_stages(root, config, running, series_state) and part_dir != root:
+        part_state = load_state(part_dir)
+    state = series_state if part_dir == root else part_state
+    if not running and _reopen_unapproved_brief(part_dir, state):
+        save_state(state, part_dir)
+    style_selected = is_style_selected(root, config)
+    part = part_id_for_path(part_dir)
 
     active_jobs = [generation_job_payload(request.app, job)
                    for job in request.app.state.generation_jobs.values()
                    if job.project_name == project_key(user_id, project_id)
-                   and job.status in {"queued", "running"}]
+                   and job.status in {"queued", "running"}
+                   and job_part_id(job) in {None, part}]
     active_stages = {job["stage"] for job in active_jobs}
     stages = {}
     for name in STAGE_NAMES:
         stages[name] = _stage_payload(
-            project_dir, name, state, is_task_alive=name in active_stages
+            part_dir, name, state, is_task_alive=name in active_stages
         )
     stages["cast"]["approval_blocker"] = None
     stages["cast"]["failures"] = []
@@ -780,9 +855,10 @@ def project_status(
         StageStatus.AWAITING_REVIEW, StageStatus.COMPLETE, StageStatus.FAILED,
     }:
         from novel_to_comic.stages.s3_cast import cast_approval_blocker, cast_failure_details
-        stages["cast"]["approval_blocker"] = cast_approval_blocker(config, project_dir, state.stages["cast"])
-        stages["cast"]["failures"] = cast_failure_details(project_dir, state.stages["cast"])
+        stages["cast"]["approval_blocker"] = cast_approval_blocker(config, root, state.stages["cast"])
+        stages["cast"]["failures"] = cast_failure_details(root, state.stages["cast"])
     total_estimated = sum(state.stages[n].estimated_cost_usd for n in STAGE_NAMES)
+    total_cost, misc_cost = _series_cost_usd(root, series_state)
     db_row = (
         get_db()
         .table("projects")
@@ -798,23 +874,61 @@ def project_status(
         "id": project_id,
         "project_name": state.project_name,
         "created_at": state.created_at.isoformat(),
-        "total_cost_credits": provider_usd_to_credits(state.total_cost_usd),
-        "misc_cost_credits": provider_usd_to_credits(state.misc_cost_usd),
+        "total_cost_credits": provider_usd_to_credits(total_cost),
+        "misc_cost_credits": provider_usd_to_credits(misc_cost),
         "total_estimated_cost_credits": provider_usd_to_credits(total_estimated),
         "is_running": running,
         "active_jobs": active_jobs,
-        "has_cover": _cover_path(project_dir).exists(),
+        "has_cover": _cover_path(part_dir).exists(),
         "style_selected": style_selected,
         "is_public": share_info.get("is_public", False),
         "share_token": share_info.get("share_token"),
         "stages": stages,
-        "page_count": _target_page_count(project_dir),
-        "page_issue_summary": _target_issue_summary(project_dir),
-        "finish_ready": _finish_ready(project_dir),
+        "page_count": _target_page_count(part_dir),
+        "page_issue_summary": _target_issue_summary(part_dir),
+        "finish_ready": _finish_ready(part_dir),
+        "part_id": part,
+        "parts": part_summaries(root),
     }
 
 
-@router.get("/{project_id}/cover-estimate")
+@router.get("/{project_id}/status")
+def project_status(
+    request: Request,
+    project_id: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    """The project opened on its current part (see ``current_part_dir``)."""
+    root, config, state = project
+    part_dir = current_part_dir(root)
+    return _project_status_payload(
+        request, project_id, root, part_dir, config, user_id,
+        series_state=state, part_state=state if part_dir == root else load_state(part_dir),
+    )
+
+
+@router.get("/{project_id}/parts/{part_id}/status")
+def part_status(
+    request: Request,
+    project_id: str,
+    part_id: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    part_dir, config, state = project
+    from novel_to_comic.state import load_series_state
+    from novel_to_comic.workspace import series_root
+
+    root = series_root(part_dir)
+    series_state = state if root == part_dir else load_series_state(root)
+    return _project_status_payload(
+        request, project_id, root, part_dir, config, user_id,
+        series_state=series_state, part_state=state,
+    )
+
+
+@router.get("/{project_id}/parts/{part_id}/cover-estimate")
 def project_cover_estimate(
     project_id: str,
     project=Depends(get_project),
@@ -825,7 +939,7 @@ def project_cover_estimate(
     return _project_cover_credit_estimate(config)
 
 
-@router.post("/{project_id}/cover")
+@router.post("/{project_id}/parts/{part_id}/cover")
 @limiter.limit(cost_limit)
 async def generate_cover(
     request: Request,
@@ -844,14 +958,17 @@ def enqueue_project_cover(request: Request, project_id: str, project, user_id: s
     project_dir, config, state = project
     pkey = project_key(user_id, project_id)
 
+    from novel_to_comic import artifacts as story_artifacts
+
     cover_path = _cover_path(project_dir)
     if cover_path.exists() and not force:
         return {"status": "exists", "path": "cover/cover.png", "job": None}
 
-    if not (project_dir / "story_bible.json").exists():
+    bible_path = story_artifacts.story_bible_path(project_dir)
+    if not bible_path.exists():
         raise HTTPException(404, "Story bible not found — run extract first.")
 
-    existing = _active_project_cover_job(request, pkey)
+    existing = _active_project_cover_job(request, pkey, project_dir)
     if existing:
         return {
             "status": "queued",
@@ -860,9 +977,9 @@ def enqueue_project_cover(request: Request, project_id: str, project, user_id: s
         }
 
     # Reject missing inputs before publishing a paid job or reserving credits.
-    bible = StoryBible.model_validate_json((project_dir / "story_bible.json").read_text())
+    bible = StoryBible.model_validate_json(bible_path.read_text())
     missing = [
-        char.name for char in bible.characters[:3]
+        char.name for char in _cover_characters(bible, project_dir)
         if not character_ref_sheet_path(project_dir, char.id).exists()
     ]
     if missing:
@@ -1020,29 +1137,15 @@ async def import_short_story(
         raise HTTPException(409, f"Project '{slug}' already exists")
 
     project_dir.mkdir(parents=True)
-    for subdir in [
-        "input",
-        "source",
-        "brief",
-        "samples",
-        "refs",
-        "plates",
-        "adapt",
-        "plan",
-        "draw",
-        "finish",
-        "exports",
-        "cover",
-    ]:
-        (project_dir / subdir).mkdir()
-
+    (project_dir / "input").mkdir()
     dst = project_dir / "input" / f"{story_code}.txt"
     dst.write_text(story_text, encoding="utf-8")
 
     save_config(config, project_dir)
-
-    state = create_initial_state(payload.name, str(dst))
-    save_state(state, project_dir)
+    initialize_series(
+        project_dir, project_name=payload.name, novel_path=dst,
+        text=read_source(dst), origin=dst.name,
+    )
     if bundled or archive_entry:
         entry = bundled[0] if bundled else archive_entry
         assert entry is not None

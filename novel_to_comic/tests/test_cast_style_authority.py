@@ -18,12 +18,13 @@ from novel_to_comic.usage import ApiResult
 
 
 def _save_design(config, project_dir, bible):
-    from novel_to_comic.cast_design import CastDesignPlan, CharacterDesign, _digest, design_context
+    from novel_to_comic.cast_design import CastDesignPlan, CharacterDesign, character_fingerprint
     from novel_to_comic.target_artifacts import TargetArtifacts
-    plan = CastDesignPlan(source_sha256=_digest(design_context(config, bible)), characters=[
+    plan = CastDesignPlan(characters=[
         CharacterDesign(character_id=c.id, face=f"{c.id} facial landmarks", hair="source hair",
                         silhouette="source anatomy", posture="resting", wardrobe="source wardrobe",
-                        contrast="Distinct from the rest of the cast") for c in bible.characters])
+                        contrast="Distinct from the rest of the cast") for c in bible.characters],
+        fingerprints={c.id: character_fingerprint(config, c) for c in bible.characters})
     TargetArtifacts(project_dir).write_cast_design(plan)
     return plan
 

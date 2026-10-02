@@ -8,7 +8,9 @@ from pathlib import Path
 from novel_to_comic import artifacts
 from novel_to_comic.briefing import (
     build_brief_inference_prompt,
+    inherited_brief_fields,
     propose_brief,
+    series_brief,
     story_page_envelope,
 )
 from novel_to_comic.clients.structured_call import (
@@ -21,21 +23,32 @@ from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.state import PipelineState
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import estimate_text_cost
+from novel_to_comic.workspace import workspace_part_id
 
 from novel_to_comic.stages import Stage
 
 
-async def run(config: Config, project_dir: Path, ctx: StageRuntime):
+def _inference_prompt(project_dir: Path):
+    """The part's source, its Brief prompt, page envelope and inherited fields."""
     target = TargetArtifacts(project_dir)
     source = target.read_source()
     story_bible = artifacts.read_story_bible(project_dir)
-    prompt = build_brief_inference_prompt(source, story_bible)
-    page_envelope = story_page_envelope(source, story_bible)
+    part = workspace_part_id(project_dir)
+    previous = series_brief(project_dir)
+    prompt = build_brief_inference_prompt(source, story_bible, part_id=part, previous_brief=previous)
+    page_envelope = story_page_envelope(source, story_bible, part_id=part)
+    inherited = inherited_brief_fields(previous) if previous is not None else None
+    return prompt, page_envelope, inherited
+
+
+async def run(config: Config, project_dir: Path, ctx: StageRuntime):
+    target = TargetArtifacts(project_dir)
+    prompt, page_envelope, inherited = _inference_prompt(project_dir)
     model = config.effective_brief_model()
     estimate = estimate_text_cost(model, prompt, output_chars=8_000)
 
     def parse(raw: object):
-        return propose_brief(raw, page_envelope=page_envelope)
+        return propose_brief(raw, page_envelope=page_envelope, inherited=inherited)
 
     def correction(raw: object, error: Exception) -> str:
         # Provider traces can truncate before the validation feedback. Keep the
@@ -90,10 +103,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     target = TargetArtifacts(project_dir)
     if not target.source_path.exists() or not artifacts.story_bible_path(project_dir).exists():
         return 0.0
-    prompt = build_brief_inference_prompt(
-        target.read_source(),
-        artifacts.read_story_bible(project_dir),
-    )
+    prompt, _envelope, _inherited = _inference_prompt(project_dir)
     return estimate_text_cost(
         config.effective_brief_model(),
         prompt,

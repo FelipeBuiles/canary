@@ -519,30 +519,39 @@ def page_operation_lock(project_dir: Path, page_number: int) -> asyncio.Lock:
     return _PAGE_CHECK_LOCKS.setdefault(key, asyncio.Lock())
 
 
+async def run_credited_call(*, user_id: str, project_id: str, project_dir: Path, stage: str,
+                            estimated_cost_usd: float, work: Callable[[], Awaitable[Any]],
+                            operations: Operations, **context: Any) -> Any:
+    """Run one synchronous model call under a releasable credit hold."""
+    from .credits import credit_estimate_for_provider_cost
+
+    funding = classify_operations(operations)
+    db = get_db()
+    estimate = credit_estimate_for_provider_cost(estimated_cost_usd, stage, reserve=True, funding=funding)
+    reservation, job_id = reserve_credits(db, user_id, project_id, stage, estimate["reserved_credits"] or 0)
+    try:
+        assert_reservation_active(db, reservation)
+        with ai_request_context(user_id=user_id, project_id=project_id,
+                                project_name=project_dir.name, stage=stage, job_id=job_id, **context):
+            return await work()
+    finally:
+        if reservation:
+            release_reservation(db, reservation)
+
+
 async def run_credited_page_check(*, user_id: str, project_id: str, project_dir: Path,
                                   page_number: int, estimated_cost_usd: float,
                                   work: Callable[[], Awaitable[Any]],
                                   operations: Operations,
                                   cached_work: Callable[[], Any] | None = None) -> Any:
     """Run a synchronous page-check endpoint under a releasable credit hold."""
-    from .credits import credit_estimate_for_provider_cost
-
     lock = page_operation_lock(project_dir, page_number)
     async with lock:
         if cached_work is not None:
             cached = cached_work()
             if cached is not None:
                 return cached
-        funding = classify_operations(operations)
-        db = get_db()
-        estimate = credit_estimate_for_provider_cost(estimated_cost_usd, 'draw', reserve=True, funding=funding)
-        reservation, job_id = reserve_credits(db, user_id, project_id, 'draw', estimate["reserved_credits"] or 0)
-        try:
-            assert_reservation_active(db, reservation)
-            with ai_request_context(user_id=user_id, project_id=project_id,
-                                    project_name=project_dir.name, stage='draw', job_id=job_id,
-                                    page_number=page_number):
-                return await work()
-        finally:
-            if reservation:
-                release_reservation(db, reservation)
+        return await run_credited_call(
+            user_id=user_id, project_id=project_id, project_dir=project_dir, stage="draw",
+            estimated_cost_usd=estimated_cost_usd, work=work, operations=operations, page_number=page_number,
+        )

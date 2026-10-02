@@ -56,7 +56,7 @@ def test_preflight_endpoint_runs_finish_without_packaging(tmp_path: Path, monkey
     run = AsyncMock(return_value=FinishResult(preflight=preflight))
     monkeypatch.setattr(REGISTRY["finish"], "run", run)
 
-    response = _client(tmp_path).post("/api/projects/demo/export/preflight")
+    response = _client(tmp_path).post("/api/projects/demo/parts/part_0001/export/preflight")
 
     assert response.status_code == 200
     assert response.json()["preflight"]["packages"] == []
@@ -85,7 +85,7 @@ def test_get_preflight_reuses_only_the_current_validator_version(tmp_path: Path)
     target = TargetArtifacts(tmp_path / "demo")
     target.write_preflight(preflight)
 
-    stale = client.get("/api/projects/demo/export/preflight")
+    stale = client.get("/api/projects/demo/parts/part_0001/export/preflight")
 
     assert stale.status_code == 404
 
@@ -94,7 +94,7 @@ def test_get_preflight_reuses_only_the_current_validator_version(tmp_path: Path)
             update={"validator_version": FINISH_PREFLIGHT_VALIDATOR_VERSION}
         )
     )
-    current = client.get("/api/projects/demo/export/preflight")
+    current = client.get("/api/projects/demo/parts/part_0001/export/preflight")
 
     assert current.status_code == 200
     assert current.json()["validator_version"] == FINISH_PREFLIGHT_VALIDATOR_VERSION
@@ -123,15 +123,15 @@ def test_preflight_requires_available_matching_packages_without_removing_them(tm
         ),),
     )
     target.write_preflight(preflight)
-    assert client.get("/api/projects/demo/export/preflight").status_code == 200
+    assert client.get("/api/projects/demo/parts/part_0001/export/preflight").status_code == 200
 
     export.write_bytes(b"x" * len(data))
-    assert client.get("/api/projects/demo/export/preflight").status_code == 404
+    assert client.get("/api/projects/demo/parts/part_0001/export/preflight").status_code == 404
     assert export.read_bytes() == b"x" * len(data)
     assert target.read_preflight() == preflight
 
     export.unlink()
-    assert client.get("/api/projects/demo/export/preflight").status_code == 404
+    assert client.get("/api/projects/demo/parts/part_0001/export/preflight").status_code == 404
 
 
 def test_export_download_uploads_the_current_bytes_to_r2_when_configured(
@@ -153,7 +153,7 @@ def test_export_download_uploads_the_current_bytes_to_r2_when_configured(
         upload,
     )
 
-    response = client.get("/api/projects/demo/export/pdf", follow_redirects=False)
+    response = client.get("/api/projects/demo/parts/part_0001/export/pdf", follow_redirects=False)
 
     assert response.status_code == 307
     assert response.headers["location"] == "https://media.scenewright.ink/export.pdf"

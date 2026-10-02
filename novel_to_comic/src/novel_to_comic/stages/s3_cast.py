@@ -43,7 +43,8 @@ from novel_to_comic.asset_generation import (
 )
 from novel_to_comic.usage import ApiResult
 from novel_to_comic.cast_design import (
-    design_notes, ensure_design, estimate_design_review, read_design, review_cast, review_status,
+    CastDesignPlan, character_fingerprint, current_designs, design_notes, ensure_design, estimate_design_review,
+    read_design, review_cast, review_status,
 )
 
 console = Console()
@@ -207,7 +208,7 @@ def _require_shared_character_style(config: Config, style_ref: Path | None) -> N
 def require_character_inputs(config: Config, project_dir: Path, char_id: str, *, state=False) -> None:
     """Read-only preflight before admitting an individual paid correction."""
     bible = artifacts.read_story_bible(project_dir)
-    design = read_design(config, project_dir, bible)
+    design = read_design(config, project_dir, bible, character_ids=[char_id])
     style = _character_style_reference(config, project_dir, _find_style_ref(project_dir, config.style_template))
     _require_shared_character_style(config, style)
     if state:
@@ -559,7 +560,8 @@ async def regenerate_character_ref(
     _require_shared_character_style(config, style_ref)
     addendum = _read_character_ref_addendum(project_dir, char.id)
     input_data = _character_generation_input(
-        config, story_bible, char, addendum, design=read_design(config, project_dir, story_bible)
+        config, story_bible, char, addendum,
+        design=read_design(config, project_dir, story_bible, character_ids=[char.id]),
     )
     request = _compile_cast_request(
         config, project_dir, input_data, reference_plan=style_reference_plan(config, style_ref)
@@ -734,7 +736,7 @@ async def _generate_character_refs(
             "in the app before generating character references.[/yellow]"
         )
 
-    design = read_design(config, project_dir, story_bible)
+    design = read_design(config, project_dir, story_bible, character_ids=[c.id for c in chars_to_gen])
     semaphore = _cast_semaphore(config)
 
     with make_progress(ctx.on_event) as progress:
@@ -1371,79 +1373,217 @@ def cast_approval_blocker(config: Config, project_dir: Path, stage_state) -> str
     return None
 
 
+def _reference_items(bible: StoryBible):
+    """Every Cast reference image the Story Bible needs, as (kind, entity, state)."""
+    for char in bible.characters:
+        yield "characters", char, None
+        for appearance in char.appearance_states or []:
+            if appearance.visually_significant:
+                yield "characters", char, appearance
+    for loc in bible.locations:
+        yield "locations", loc, None
+        for appearance in loc.appearance_states or []:
+            yield "locations", loc, appearance
+    for prop in bible.props:
+        yield "props", prop, None
+        for appearance in prop.appearance_states:
+            if appearance.visually_significant and not appearance.canonical_equivalent:
+                yield "props", prop, appearance
+
+
+class _ReferenceRequests:
+    """Compile the request each reference would make now, as generation does.
+
+    Readiness, freshness and keeping an image all compare against the same
+    frozen requests, so changed styles, anchors, instructions and canonical
+    parents cannot promote an obsolete reference.
+    """
+
+    def __init__(self, config: Config, project_dir: Path, bible: StoryBible, design: CastDesignPlan | None):
+        self.config, self.project_dir, self.bible, self.design = config, project_dir, bible, design
+        self.style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
+        self.character_style_ref = _character_style_reference(config, project_dir, self.style_ref)
+
+    def path(self, kind: str, entity, appearance) -> Path:
+        d = self.project_dir
+        if kind == "characters":
+            return (artifacts.character_ref_sheet_path(d, entity.id) if appearance is None
+                    else artifacts.character_state_ref_sheet_path(d, entity.id, appearance.id))
+        if kind == "locations":
+            return (artifacts.location_plate_path(d, entity.id) if appearance is None
+                    else artifacts.location_state_plate_path(d, entity.id, appearance.id))
+        return (artifacts.prop_ref_path(d, entity.id) if appearance is None
+                else artifacts.prop_state_ref_path(d, entity.id, appearance.id))
+
+    def request(self, kind: str, entity, appearance):
+        from novel_to_comic.state_assets import build_prop_state_spec
+
+        config, d = self.config, self.project_dir
+        if kind == "characters":
+            if appearance is None:
+                if self.design is None:
+                    raise ValueError("Character designs are missing; resume Cast to design them.")
+                return _compile_cast_request(config, d, _character_generation_input(
+                    config, self.bible, entity, _read_character_ref_addendum(d, entity.id), design=self.design,
+                ), reference_plan=style_reference_plan(config, self.character_style_ref))
+            spec = build_character_state_spec(config, d, entity, appearance, style_path=self.character_style_ref)
+        elif kind == "locations":
+            if appearance is None:
+                return _compile_cast_request(config, d, _location_generation_input(
+                    config, entity, _read_location_plate_addendum(d, entity.id),
+                ), reference_plan=style_reference_plan(config, self.style_ref))
+            spec = build_location_state_spec(config, d, entity, appearance, style_path=self.style_ref)
+        else:
+            if appearance is None:
+                return _compile_cast_request(config, d, _prop_generation_input(
+                    config, entity, _read_prop_ref_addendum(d, entity.id),
+                ), reference_plan=style_reference_plan(config, self.style_ref))
+            spec = build_prop_state_spec(config, d, entity, appearance, style_path=self.style_ref)
+        return _compile_state_asset_wire(config, spec, d)
+
+
+def reference_freshness(config: Config, project_dir: Path) -> list[dict]:
+    """Each Cast reference: ``current``, ``outdated`` or ``missing``.
+
+    An edited entity's existing images turn ``outdated``: they still serve
+    drawing until the author regenerates them or keeps them as they are.
+    Reads only; nothing is generated.
+    """
+    bible = artifacts.read_story_bible_safe(project_dir)
+    if bible is None:
+        return []
+    try:
+        designs = current_designs(config, project_dir, bible)
+    except (OSError, ValueError):
+        designs = {}
+    builder = _ReferenceRequests(config, project_dir, bible, None)
+    report = []
+    for kind, entity, appearance in _reference_items(bible):
+        path = builder.path(kind, entity, appearance)
+        if not path.exists():
+            status = "missing"
+        elif kind == "characters" and entity.id not in designs:
+            # The facts its design answered changed; the sheet predates them.
+            status = "outdated"
+        else:
+            if kind == "characters":
+                builder.design = CastDesignPlan(
+                    characters=[designs[entity.id]],
+                    fingerprints={entity.id: character_fingerprint(config, entity)},
+                )
+            try:
+                status = "current" if asset_matches_request(path, builder.request(kind, entity, appearance)) else "outdated"
+            except (OSError, ValueError):
+                status = "outdated"
+        report.append({
+            "kind": kind, "entity_id": entity.id,
+            "state_id": appearance.id if appearance is not None else None, "status": status,
+        })
+    return report
+
+
+def keep_current_reference(
+    config: Config, project_dir: Path, kind: str, entity_id: str, state_id: str | None = None,
+) -> None:
+    """Keep an existing reference image after the author edits its entity.
+
+    Records that the author accepts the image for the request the current
+    Story Bible makes, so it counts as current. A character's design is kept
+    too, so it is not redesigned. Nothing is generated.
+    """
+    from novel_to_comic.asset_generation import accept_existing_asset
+    from novel_to_comic.cast_design import keep_design
+
+    bible = artifacts.read_story_bible(project_dir)
+    entity, appearance = None, None
+    for item_kind, item, item_state in _reference_items(bible):
+        if item_kind == kind and item.id == entity_id and (item_state.id if item_state else None) == state_id:
+            entity, appearance = item, item_state
+            break
+    if entity is None:
+        raise KeyError(state_id or entity_id)
+    builder = _ReferenceRequests(config, project_dir, bible, None)
+    path = builder.path(kind, entity, appearance)
+    if not path.exists():
+        raise ValueError("There is no image to keep yet; generate it in Cast.")
+    if kind == "characters" and appearance is None:
+        if entity_id not in current_designs(config, project_dir, bible):
+            keep_design(config, project_dir, bible, entity_id)
+        builder.design = read_design(config, project_dir, bible, character_ids=[entity_id])
+    accept_existing_asset(path, builder.request(kind, entity, appearance), reason="kept after a Story Bible edit")
+
+
+def carry_over_references(
+    config: Config, project_dir: Path, before: StoryBible, after: StoryBible, kind: str, entity_id: str,
+) -> int:
+    """Keep an entity's current references through an edit that changed no appearance.
+
+    A rename, alias, relationship or look label is part of the request text
+    but not of what the image shows, so references that matched the request
+    before the edit stay current after it. A reference whose look changed is
+    never carried over. Returns how many were carried over.
+    """
+    from novel_to_comic.asset_generation import accept_existing_asset
+    from novel_to_comic.story_bible_edits import NON_VISUAL_FIELDS
+
+    def items(bible: StoryBible) -> dict:
+        return {
+            (appearance.id if appearance is not None else None): (entity, appearance)
+            for item_kind, entity, appearance in _reference_items(bible)
+            if item_kind == kind and entity.id == entity_id
+        }
+
+    def looks(entity, appearance) -> tuple[dict, dict | None]:
+        base = entity.model_dump(exclude=set(NON_VISUAL_FIELDS) | {"appearance_states", "appearance_timeline"})
+        return base, appearance.model_dump(exclude={"label"}) if appearance is not None else None
+
+    old_items, new_items = items(before), items(after)
+    old = _ReferenceRequests(config, project_dir, before, None)
+    new = _ReferenceRequests(config, project_dir, after, None)
+    if kind == "characters":
+        try:
+            if entity_id not in current_designs(config, project_dir, before):
+                return 0
+            old.design = read_design(config, project_dir, before, character_ids=[entity_id])
+            new.design = read_design(config, project_dir, after, character_ids=[entity_id])
+        except (OSError, ValueError):
+            return 0
+    kept = 0
+    for state_id, (entity, appearance) in old_items.items():
+        if state_id not in new_items or looks(entity, appearance) != looks(*new_items[state_id]):
+            continue
+        path = old.path(kind, entity, appearance)
+        if not path.exists():
+            continue
+        try:
+            if not asset_matches_request(path, old.request(kind, entity, appearance)):
+                continue
+            updated = new.request(kind, *new_items[state_id])
+        except (OSError, ValueError):
+            continue
+        if not asset_matches_request(path, updated):
+            accept_existing_asset(path, updated, reason="kept: the edit changed no appearance details")
+        kept += 1
+    return kept
+
+
 def ready_asset_count(config: Config, project_dir: Path) -> int | None:
     """Count a complete, current Cast inventory without generating any assets.
 
     Individually generated references are sufficient for review. The optional
     calibration board is an input when present, not a required Cast output.
-    Compare the same frozen requests as generation so changed styles, anchors,
-    instructions, and canonical parents cannot promote obsolete references.
     """
-    from novel_to_comic.state_assets import build_prop_state_spec
-
     bible = artifacts.read_story_bible_safe(project_dir)
     if bible is None:
         return None
     if bible.characters and review_status(config, project_dir)["status"] != "current":
         return None
-    style_ref = _cast_asset_style_ref(config, _find_style_ref(project_dir, config.style_template))
-    character_style_ref = _character_style_reference(config, project_dir, style_ref)
     requests = []
     try:
         design = read_design(config, project_dir, bible) if bible.characters else None
-        for char in bible.characters:
-            requests.append((
-                artifacts.character_ref_sheet_path(project_dir, char.id),
-                _compile_cast_request(
-                    config, project_dir, _character_generation_input(
-                        config, bible, char, _read_character_ref_addendum(project_dir, char.id), design=design
-                    ), reference_plan=style_reference_plan(config, character_style_ref),
-                ),
-            ))
-            for appearance in char.appearance_states or []:
-                if appearance.visually_significant:
-                    spec = build_character_state_spec(
-                        config, project_dir, char, appearance, style_path=character_style_ref
-                    )
-                    requests.append((
-                        artifacts.character_state_ref_sheet_path(project_dir, char.id, appearance.id),
-                        _compile_state_asset_wire(config, spec, project_dir),
-                    ))
-        for loc in bible.locations:
-            requests.append((
-                artifacts.location_plate_path(project_dir, loc.id),
-                _compile_cast_request(
-                    config, project_dir, _location_generation_input(
-                        config, loc, _read_location_plate_addendum(project_dir, loc.id)
-                    ), reference_plan=style_reference_plan(config, style_ref),
-                ),
-            ))
-            for appearance in loc.appearance_states or []:
-                spec = build_location_state_spec(
-                    config, project_dir, loc, appearance, style_path=style_ref
-                )
-                requests.append((
-                    artifacts.location_state_plate_path(project_dir, loc.id, appearance.id),
-                    _compile_state_asset_wire(config, spec, project_dir),
-                ))
-        for prop in bible.props:
-            requests.append((
-                artifacts.prop_ref_path(project_dir, prop.id),
-                _compile_cast_request(
-                    config, project_dir, _prop_generation_input(
-                        config, prop, _read_prop_ref_addendum(project_dir, prop.id)
-                    ), reference_plan=style_reference_plan(config, style_ref),
-                ),
-            ))
-            for appearance in prop.appearance_states:
-                if appearance.visually_significant and not appearance.canonical_equivalent:
-                    spec = build_prop_state_spec(
-                        config, project_dir, prop, appearance, style_path=style_ref
-                    )
-                    requests.append((
-                        artifacts.prop_state_ref_path(project_dir, prop.id, appearance.id),
-                        _compile_state_asset_wire(config, spec, project_dir),
-                    ))
+        builder = _ReferenceRequests(config, project_dir, bible, design)
+        for kind, entity, appearance in _reference_items(bible):
+            requests.append((builder.path(kind, entity, appearance), builder.request(kind, entity, appearance)))
     except (OSError, ValueError):
         # Missing/unreadable parents and incompatible reference contracts remain
         # pending; status inspection must never turn into generation or recovery.
@@ -1475,15 +1615,17 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     character_style_ref = _character_style_reference(config, project_dir, style_ref)
     character_style_plan = style_reference_plan(config, character_style_ref or style_ref)
     try:
-        design = read_design(config, project_dir, story_bible)
+        designs = current_designs(config, project_dir, story_bible)
     except (ValueError, OSError):
-        design = None
+        designs = {}
+    # Only characters without a current design (new or changed) are redesigned.
+    design = CastDesignPlan(characters=list(designs.values()), fingerprints={})
     dirty_characters = set()
     for char in story_bible.characters:
         input_data = _character_generation_input(config, story_bible, char,
             _read_character_ref_addendum(project_dir, char.id), design=design)
         request = _compile_cast_request(config, project_dir, input_data, reference_plan=character_style_plan)
-        if design is None or character_style_ref is None or not asset_matches_request(
+        if char.id not in designs or character_style_ref is None or not asset_matches_request(
                 artifacts.character_ref_sheet_path(project_dir, char.id), request):
             dirty_characters.add(char.id)
             total += estimate_non_panel_request(

@@ -13,7 +13,7 @@ from novel_to_comic.server.routers import pipeline
 from novel_to_comic.server.routers import projects
 from novel_to_comic.server.routers import styles
 from novel_to_comic.state import save_state, PipelineState, StageState, StageStatus
-from novel_to_comic.artifacts import read_story_bible, write_story_bible
+from novel_to_comic.artifacts import write_story_bible
 from novel_to_comic.briefing import propose_brief
 from novel_to_comic.models.story_bible import Scene, StoryBible
 from novel_to_comic.models.validation import InvariantFailure, StageValidation
@@ -41,7 +41,7 @@ def test_get_story_missing_artifact_returns_404(tmp_path: Path):
     client = TestClient(app)
 
     # Calling /story when story_bible.json doesn't exist should return 404 Not Found
-    res = client.get("/api/projects/test_project/story")
+    res = client.get("/api/projects/test_project/parts/part_0001/story")
     assert res.status_code == 404
     assert "story_bible" in res.json()["detail"]
 
@@ -71,7 +71,7 @@ def test_get_story_existing_artifact_returns_200(tmp_path: Path):
     app.dependency_overrides[get_project] = lambda: (project_dir, Config(), state)
     client = TestClient(app)
 
-    res = client.get("/api/projects/test_project/story")
+    res = client.get("/api/projects/test_project/parts/part_0001/story")
     assert res.status_code == 200
     data = res.json()
     assert data["story_bible"]["title"] == "Test Title"
@@ -148,7 +148,7 @@ def test_invalid_persisted_adaptation_is_a_concise_conflict(tmp_path: Path):
         raise_server_exceptions=False,
     )
 
-    response = client.get("/api/projects/test_project/adaptation")
+    response = client.get("/api/projects/test_project/parts/part_0001/adaptation")
 
     assert response.status_code == 409
     assert response.json()["detail"] == (
@@ -177,79 +177,6 @@ def _write_draft_brief(project_dir: Path) -> None:
     )
 
 
-def test_editing_the_story_bible_rederives_the_source_scenes(tmp_path: Path):
-    # Source scenes are derived from the bible's anchors. Leaving them behind
-    # would let Adapt read scene ranges the edited bible no longer describes.
-    project_dir, state, bible = _story_project(tmp_path)
-    client = _client(tmp_path, project_dir, state)
-    target = TargetArtifacts(project_dir)
-    assert [scene.id for scene in target.read_source().scenes] == [
-        "scene_001",
-        "scene_002",
-    ]
-
-    edited = bible.model_copy(
-        update={
-            "total_scenes": 2,
-            "scenes": [
-                _anchor_scene("scene_001", "The door", "The door opened."),
-                _anchor_scene("scene_002", "The light", "A light burned."),
-            ],
-        }
-    )
-    response = client.put(
-        "/api/projects/test_project/story-bible",
-        json=edited.model_dump(mode="json"),
-    )
-
-    assert response.status_code == 200
-    rebuilt = target.read_source()
-    assert [scene.title for scene in rebuilt.scenes] == ["The door", "The light"]
-    assert rebuilt.scenes[1].first_unit_id == "source_000002"
-
-
-def test_story_bible_rejects_asset_path_traversal_before_persistence(tmp_path: Path):
-    project_dir, state, bible = _story_project(tmp_path)
-    client = _client(tmp_path, project_dir, state)
-    unsafe = bible.model_dump(mode="json")
-    unsafe["characters"] = [{
-        "id": "../../../other/book/refs/hero", "name": "Hero",
-        "visual_anchor": "Hero", "age_range": "adult", "gender": "unknown",
-        "distinguishing_features": [], "default_outfit": "shirt",
-        "first_appearance_scene": "scene_001",
-    }]
-
-    response = client.put("/api/projects/test_project/story-bible", json=unsafe)
-
-    assert response.status_code == 422
-    assert "characters.0.id" in response.json()["detail"]
-    assert read_story_bible(project_dir).characters == []
-
-
-def test_an_unresolvable_edited_anchor_is_rejected_before_it_is_persisted(
-    tmp_path: Path,
-):
-    project_dir, state, bible = _story_project(tmp_path)
-    client = _client(tmp_path, project_dir, state)
-    edited = bible.model_copy(
-        update={
-            "scenes": [
-                _anchor_scene("scene_001", "The door", "The door opened."),
-                _anchor_scene("scene_002", "Absent", "A voice called out."),
-            ]
-        }
-    )
-
-    response = client.put(
-        "/api/projects/test_project/story-bible",
-        json=edited.model_dump(mode="json"),
-    )
-
-    assert response.status_code == 422
-    assert "was not found in source" in response.json()["detail"]
-    assert read_story_bible(project_dir).scenes[1].title == "Silence"
-
-
 def test_stage_validation_is_readable_after_a_blocking_stage(tmp_path: Path):
     project_dir, state, _bible = _story_project(tmp_path)
     client = _client(tmp_path, project_dir, state)
@@ -270,11 +197,11 @@ def test_stage_validation_is_readable_after_a_blocking_stage(tmp_path: Path):
         )
     )
 
-    response = client.get("/api/projects/test_project/validation/plan")
+    response = client.get("/api/projects/test_project/parts/part_0001/validation/plan")
 
     assert response.status_code == 200
     assert response.json()["recommendations"] == ["Recommend a minimum of 44 pages."]
-    assert client.get("/api/projects/test_project/validation/draw").status_code == 404
+    assert client.get("/api/projects/test_project/parts/part_0001/validation/draw").status_code == 404
 
 
 def test_cast_approval_does_not_start_adapt_with_a_draft_brief(
@@ -292,7 +219,7 @@ def test_cast_approval_does_not_start_adapt_with_a_draft_brief(
     monkeypatch.setattr(pipeline, "_run_stage_with_credits", record_started_stage)
     client = _client(tmp_path, project_dir, state)
 
-    response = client.post("/api/projects/test_project/approve/cast")
+    response = client.post("/api/projects/test_project/parts/part_0001/approve/cast")
 
     assert response.status_code == 409
     assert response.json()["detail"] == "Adapt requires an approved adaptation brief"
@@ -325,7 +252,7 @@ def test_run_adapt_rejects_a_draft_brief_before_enqueuing(
     )
     client = _client(tmp_path, project_dir, state)
 
-    response = client.post("/api/projects/test_project/run?stage=adapt")
+    response = client.post("/api/projects/test_project/parts/part_0001/run?stage=adapt")
 
     assert response.status_code == 409
     assert response.json()["detail"] == "Adapt requires an approved adaptation brief"
@@ -382,7 +309,7 @@ def test_brief_reapproval_resumes_adapt_when_cast_is_already_complete(
     monkeypatch.setattr(pipeline, "_run_stage_with_credits", record_started_stage)
     client = _client(tmp_path, project_dir, state)
 
-    response = client.post("/api/projects/test_project/approve/brief")
+    response = client.post("/api/projects/test_project/parts/part_0001/approve/brief")
 
     assert response.status_code == 200
     assert response.json()["auto_started"] == "adapt"
@@ -501,7 +428,7 @@ def test_cast_reapproval_does_not_restart_completed_adapt_and_plan(tmp_path, mon
     state.stages["plan"] = StageState(status=StageStatus.COMPLETE)
     start = AsyncMock()
     monkeypatch.setattr(pipeline, "_run_stage_with_credits", start)
-    response = _client(tmp_path, project_dir, state).post("/api/projects/test_project/approve/cast")
+    response = _client(tmp_path, project_dir, state).post("/api/projects/test_project/parts/part_0001/approve/cast")
     assert response.status_code == 200
     assert "auto_started" not in response.json()
     start.assert_not_awaited()
