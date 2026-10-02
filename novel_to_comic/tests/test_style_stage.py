@@ -820,7 +820,7 @@ def test_proportion_restrictions_must_quote_the_author_not_the_story():
 
 def test_a_paraphrased_restriction_quote_is_repaired_on_the_shared_attempt():
     misquoted = _batch()
-    misquoted["proportion_restriction_quote"] = "keep naturalistic proportions."
+    misquoted["proportion_restriction_quote"] = "natural body proportions"
     repaired = _batch()
     repaired["proportion_restriction_quote"] = "Keep naturalistic proportions"
     for candidate in repaired["styles"]:
@@ -836,8 +836,35 @@ def test_a_paraphrased_restriction_quote_is_repaired_on_the_shared_attempt():
     correction = mock.await_args_list[1].kwargs["user_content"]
     assert "Correct the restriction quotes" in correction
     assert "Proportion restriction must quote" in correction
-    assert "keep naturalistic proportions." in correction
+    assert "natural body proportions" in correction
     assert {s["proportion_family"] for s in suggestions} == {"naturalistic"}
+
+
+def test_a_restriction_quote_differing_only_in_typography_is_the_authors_own_words():
+    quoted = _batch()
+    quoted["proportion_restriction_quote"] = "\u201ckeep  naturalistic proportions.\u201d"
+    for candidate in quoted["styles"]:
+        candidate["proportion_family"] = "naturalistic"
+    mock = AsyncMock(return_value=ApiResult(value=quoted, usage=None))
+    with patch("novel_to_comic.clients.text.generate_json", new=mock):
+        suggestions, _ = asyncio.run(generate_suggestions(Config(), _bible(), custom_direction={
+            "text": "Please keep naturalistic proportions, always",
+        }))
+    assert mock.await_count == 1
+    assert {s["proportion_family"] for s in suggestions} == {"naturalistic"}
+
+
+@pytest.mark.parametrize(("quote", "author", "span"), [
+    ("keep naturalistic proportions.", "Keep naturalistic proportions", "Keep naturalistic proportions"),
+    ("\u201cno anime\u201d", 'Please, "No  anime" at all', "No  anime"),
+    ("natural body proportions", "Keep naturalistic proportions", None),
+    ("...", "Keep naturalistic proportions", None),
+    ("anime", "", None),
+])
+def test_author_quote_span_returns_only_the_authors_text(quote, author, span):
+    from novel_to_comic.stages.s2_style import author_quote_span
+
+    assert author_quote_span(quote, author) == span
 
 
 def test_proportion_diversity_is_role_compatible_not_just_present_in_the_pool():

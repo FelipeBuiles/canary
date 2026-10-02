@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import re
+import unicodedata
 from pathlib import Path
 from itertools import product
 from typing import Literal
@@ -519,6 +520,43 @@ def _suggestion_story_context(story_bible: StoryBible, custom_direction: dict | 
     )
 
 
+_QUOTE_MARKS = str.maketrans({"‘": "'", "’": "'", "‚": "'", "‛": "'",
+                              "“": '"', "”": '"', "„": '"', "‟": '"'})
+_QUOTE_EDGE = " .,;:!?\"'()[]"
+
+
+def _normalized_index(text: str) -> tuple[str, list[int]]:
+    """Casefolded text with typographic quotes and whitespace runs unified, plus source offsets."""
+    chars: list[str] = []
+    offsets: list[int] = []
+    for index, char in enumerate(text):
+        folded = unicodedata.normalize("NFKC", char.translate(_QUOTE_MARKS)).casefold()
+        if folded.isspace():
+            if not chars or chars[-1] == " ":
+                continue
+            folded = " "
+        for part in folded:
+            chars.append(part)
+            offsets.append(index)
+    return "".join(chars), offsets
+
+
+def author_quote_span(quote: str, author_text: str) -> str | None:
+    """The author's own words a restriction quote cites, or None when they are not the author's.
+
+    Only typography, letter case, spacing, and edge punctuation may differ. The
+    returned span is always copied from ``author_text``, never from the model.
+    """
+    needle = _normalized_index(quote)[0].strip(_QUOTE_EDGE)
+    if not needle:
+        return None
+    haystack, offsets = _normalized_index(author_text)
+    start = haystack.find(needle)
+    if start < 0:
+        return None
+    return author_text[offsets[start]:offsets[start + len(needle) - 1] + 1]
+
+
 async def generate_suggestions(
     config: Config,
     story_bible: StoryBible,
@@ -609,14 +647,18 @@ async def generate_suggestions(
             logger.warning("Style suggestion response failed schema validation: %s", exc)
             return exc
         validation_error = None
-        mismatches = [
-            f"{axis} restriction must quote the author direction verbatim; "
-            f"{json.dumps(quote, ensure_ascii=False)} is not in it."
+        spans = {
+            axis: (quote, author_quote_span(quote, author_text) if quote else "")
             for axis, quote in (
                 ("Medium", result.medium_restriction_quote.strip()),
                 ("Proportion", result.proportion_restriction_quote.strip()),
             )
-            if quote and (not author_text or quote not in author_text)
+        }
+        mismatches = [
+            f"{axis} restriction must quote the author direction verbatim; "
+            f"{json.dumps(quote, ensure_ascii=False)} is not in it."
+            for axis, (quote, span) in spans.items()
+            if quote and span is None
         ]
         if mismatches:
             # An invented restriction is never accepted, but a misquote gets the
@@ -627,8 +669,8 @@ async def generate_suggestions(
         invalid_response, quote_error = None, None
         # A valid explicit restriction is not lost when a completion response
         # omits its quote. Neither axis is inferred from genre or identity anchors.
-        medium_restriction_quote = medium_restriction_quote or result.medium_restriction_quote.strip()
-        proportion_restriction_quote = proportion_restriction_quote or result.proportion_restriction_quote.strip()
+        medium_restriction_quote = medium_restriction_quote or spans["Medium"][1] or ""
+        proportion_restriction_quote = proportion_restriction_quote or spans["Proportion"][1] or ""
         return [style.model_dump() for style in result.styles]
 
     portfolio_roles = NEIGHBOR_ROLES if custom_direction else PORTFOLIO_ROLES
