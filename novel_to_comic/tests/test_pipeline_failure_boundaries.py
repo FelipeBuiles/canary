@@ -313,3 +313,32 @@ async def test_stage_exception_reaches_error_tracking_with_its_stage(tmp_path, m
     await pipeline._run_stage("plan", Config(), tmp_path, state, EventChannel(), user_id="account")
     assert state.stages["plan"].status == StageStatus.FAILED
     assert captured == [(error, {"user_id": "account", "stage": "plan"})]
+
+
+@run_async
+async def test_plan_estimate_rejects_a_blank_visual_anchor_with_a_rerun_instruction(tmp_path, monkeypatch):
+    from novel_to_comic.artifacts import write_story_bible
+    from novel_to_comic.models.story_bible import Character, StoryBible
+    from novel_to_comic.stages.s5_plan import approved_visual_inventory
+
+    state, _ = existing_project(tmp_path)
+    write_story_bible(tmp_path, StoryBible(
+        title="Book", author="Author", total_scenes=0, scenes=[], locations=[], narrative_arcs=[],
+        characters=[Character(
+            id="char_001", name="Ari", visual_anchor="", age_range="adult", gender="male",
+            distinguishing_features=[], default_outfit="coat", first_appearance_scene="scene_001",
+        )],
+    ))
+    monkeypatch.setattr(
+        pipeline.UnifiedCostResolver, "estimate_stage_cost",
+        lambda config, project_dir, active_state, stage: approved_visual_inventory(project_dir),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await pipeline.estimate_stage_cost(None, "book", stage="plan", project=(tmp_path, Config(), state), user_id="account")
+
+    assert error.value.status_code == 409
+    assert error.value.detail == (
+        "These Story Bible entries have no visual anchor: Ari (char_001). "
+        "Rerun Extract to regenerate the Story Bible."
+    )

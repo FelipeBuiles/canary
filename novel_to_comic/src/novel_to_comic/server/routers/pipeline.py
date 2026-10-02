@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
 from novel_to_comic.briefing import approve_brief, require_approved_brief
+from novel_to_comic.models.story_bible import MissingVisualAnchor
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.stages import REGISTRY
 from novel_to_comic.state import (
@@ -445,15 +446,18 @@ async def estimate_stage_cost(
 
         return {"stage": stage, **estimate_remaining_page_generation(project, request, project_id, user_id)}
     chain = [stage, *STAGE_AUTO_CHAIN.get(stage, ())]
-    parts = [
-        UnifiedCostResolver.estimate_stage_cost(
-            config,
-            project_dir,
-            state,
-            name,
-        )
-        for name in chain
-    ]
+    try:
+        parts = [
+            UnifiedCostResolver.estimate_stage_cost(
+                config,
+                project_dir,
+                state,
+                name,
+            )
+            for name in chain
+        ]
+    except MissingVisualAnchor as exc:
+        raise HTTPException(409, str(exc)) from exc
     return {
         "stage": stage,
         **({"archived_page_count": TargetArtifacts(project_dir).drawn_page_count()}

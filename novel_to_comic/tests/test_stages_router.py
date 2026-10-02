@@ -15,7 +15,7 @@ from novel_to_comic.server.routers import styles
 from novel_to_comic.state import save_state, PipelineState, StageState, StageStatus
 from novel_to_comic.artifacts import read_story_bible, write_story_bible
 from novel_to_comic.briefing import propose_brief
-from novel_to_comic.models.story_bible import Scene, StoryBible
+from novel_to_comic.models.story_bible import Character, Scene, StoryBible
 from novel_to_comic.models.validation import InvariantFailure, StageValidation
 from novel_to_comic.source_extraction import produce_source_document
 from novel_to_comic.target_artifacts import TargetArtifacts
@@ -506,3 +506,41 @@ def test_cast_reapproval_does_not_restart_completed_adapt_and_plan(tmp_path, mon
     assert "auto_started" not in response.json()
     start.assert_not_awaited()
     assert state.stages["adapt"].status == state.stages["plan"].status == StageStatus.COMPLETE
+
+
+def _blank_anchor_hero() -> dict:
+    return {
+        "id": "hero", "name": "Hero", "visual_anchor": " ", "age_range": "adult",
+        "gender": "unknown", "distinguishing_features": [], "default_outfit": "shirt",
+        "first_appearance_scene": "scene_001",
+    }
+
+
+def test_story_bible_edit_rejects_a_blank_visual_anchor(tmp_path: Path):
+    project_dir, state, bible = _story_project(tmp_path)
+    client = _client(tmp_path, project_dir, state)
+    edited = bible.model_dump(mode="json")
+    edited["characters"] = [_blank_anchor_hero()]
+
+    response = client.put("/api/projects/test_project/story-bible", json=edited)
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Add a visual anchor for: Hero (hero)"
+    assert read_story_bible(project_dir).characters == []
+
+
+def test_cast_approval_rejects_a_blank_visual_anchor_before_adapt(tmp_path: Path):
+    project_dir, state, bible = _story_project(tmp_path)
+    write_story_bible(project_dir, bible.model_copy(update={"characters": [Character.model_validate(_blank_anchor_hero())]}))
+    state.stages["cast"].status = StageStatus.AWAITING_REVIEW
+    client = _client(tmp_path, project_dir, state)
+
+    response = client.post("/api/projects/test_project/approve/cast")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "cast_approval_rejected",
+        "message": "These Story Bible entries have no visual anchor: Hero (hero). "
+        "Rerun Extract to regenerate the Story Bible.",
+    }
+    assert state.stages["cast"].status == StageStatus.AWAITING_REVIEW
