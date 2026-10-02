@@ -815,6 +815,29 @@ def test_proportion_restrictions_must_quote_the_author_not_the_story():
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
         with pytest.raises(ValueError, match="Proportion restriction must quote"):
             asyncio.run(generate_suggestions(Config(), _bible(), custom_direction={"text": "A serious mood"}))
+    assert mock.await_count == 2
+
+
+def test_a_paraphrased_restriction_quote_is_repaired_on_the_shared_attempt():
+    misquoted = _batch()
+    misquoted["proportion_restriction_quote"] = "keep naturalistic proportions."
+    repaired = _batch()
+    repaired["proportion_restriction_quote"] = "Keep naturalistic proportions"
+    for candidate in repaired["styles"]:
+        candidate["proportion_family"] = "naturalistic"
+    mock = AsyncMock(side_effect=[
+        ApiResult(value=misquoted, usage=None), ApiResult(value=repaired, usage=None),
+    ])
+    with patch("novel_to_comic.clients.text.generate_json", new=mock):
+        suggestions, _ = asyncio.run(generate_suggestions(Config(), _bible(), custom_direction={
+            "text": "Keep naturalistic proportions",
+        }))
+    assert mock.await_count == 2
+    correction = mock.await_args_list[1].kwargs["user_content"]
+    assert "Correct the restriction quotes" in correction
+    assert "Proportion restriction must quote" in correction
+    assert "keep naturalistic proportions." in correction
+    assert {s["proportion_family"] for s in suggestions} == {"naturalistic"}
 
 
 def test_proportion_diversity_is_role_compatible_not_just_present_in_the_pool():
