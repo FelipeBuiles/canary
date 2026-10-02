@@ -3,6 +3,8 @@
 **Status:** Accepted  
 **Date:** 2026-07-25
 
+Amended by [ADR 0023](0023-series-parts-and-author-owned-story-bible.md): each part of a series has its own Brief and adaptation.
+
 ## Decision
 
 Canary's `adapt` stage owns book-wide adaptation reasoning and one ordered,

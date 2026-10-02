@@ -69,7 +69,19 @@ author copy or generate or correct artwork.
 _Avoid_: Compose stage
 
 **Story Bible** — The shared story understanding used by later pipeline work:
-characters, locations, scenes, arcs, and props.
+characters, locations, scenes, arcs, and props. One Story Bible serves every
+part of a series. Extraction proposes it; the author owns it and may edit, add,
+remove, or merge its entries. Each edit is checked against the revision the
+author saw.
+
+**Removed name** — A character, place, or prop name the author removed from the
+Story Bible. Later extraction does not recreate it until the author restores it.
+
+**Alias** — Another name for a Story Bible entry, such as the name of a
+duplicate merged into it. Extraction recognizes aliases as the same entry.
+
+**Cited entry** — A Story Bible entry or appearance state that an adapted
+part's script or pages name. It can be edited but not removed or merged away.
 
 **Source unit** — A stable, sentence-aligned passage of the source novel used
 to account for adaptation coverage. It retains exact offsets into the immutable
@@ -79,11 +91,12 @@ source and is never recreated by slicing scene text.
 range of source-unit IDs. It does not own a copied or independently sliced
 version of the novel's prose.
 
-**Adaptation brief** — The project-level statement of what the adaptation must
+**Adaptation brief** — The part-level statement of what the adaptation must
 preserve or may transform, including story promises, themes, point of view,
 tone, motifs, essential facts, protected language, and a target page range.
 Canary may infer a draft, but it becomes authoritative only after the user
-approves or edits it.
+approves or edits it. A later part's draft takes the series-wide fields from the
+nearest earlier approved brief.
 
 **Narrative treatment** — The book-wide adaptation contract owned by the Adapt
 stage. It describes the causal spine, character and emotional arcs, reveals,
@@ -95,7 +108,7 @@ adaptation disposition and connecting retained material to adapted beats.
 
 **Book adaptation** — Adapt's single ordered sequence of visual beats,
 complete dialogue and caption wording, transitions, and source provenance
-under the narrative treatment. It describes story content before that content
+for one part, under the narrative treatment. It describes story content before that content
 is allocated to canonical pages. Chapter or scene shards are storage only, not
 independent creative artifacts.
 
@@ -197,6 +210,23 @@ support consistent depiction.
 ## Project and generation concepts
 
 **Project** — One comic production workspace, from source novel through export.
+A project is a series of one or more parts.
+
+**Series** — The parts of one project and what they share: the Story Bible,
+the style, and the Cast references.
+_Avoid_: Saga, collection
+
+**Part** — One issue of a series: its own source text, adaptation brief, book
+adaptation, pages, cover, and export. Parts follow reading order; only the
+newest part's text can change, and only until its adaptation starts.
+_Avoid_: Chapter (a part may hold many chapters), episode
+
+**Combined export** — One PDF or CBZ made from the finished pages of
+consecutive parts, without redrawing anything.
+
+**Out-of-date reference** — A Cast reference whose Story Bible entry changed
+after the image was made. It keeps serving pages until the author keeps it as
+it is or regenerates it.
 
 **Style template** — The project's active visual direction.
 

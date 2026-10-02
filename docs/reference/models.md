@@ -785,6 +785,26 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `rhythm_summary` | `str` |  |
 | `pages` | `tuple[ComicPage, ...]` | `Field(min_length=1)` |
 
+## PartRecord _(parts.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(min_length=1)` |
+| `ordinal` | `int` | `Field(ge=1)` |
+| `title` | `str` | `Field(min_length=1, max_length=200)` |
+| `text_sha256` | `str` | `Field(pattern='^[0-9a-f]{64}$')` |
+| `characters` | `int` | `Field(ge=1)` |
+| `created_at` | `str` | `Field(min_length=1)` |
+| `origin` | `str` | `''` |
+
+## PartManifest _(parts.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `version` | `Literal[1]` | `1` |
+| `revision` | `int` | `Field(default=1, ge=1)` |
+| `parts` | `tuple[PartRecord, ...]` | `Field(min_length=1)` |
+
 ## SourceUnit _(source.py)_
 
 | Field | Type | Default |
@@ -844,6 +864,8 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `first_appearance_scene` | `str` |  |
 | `appearance_states` | `list[AppearanceState]` | `[]` |
 | `appearance_timeline` | `list[StateActivation]` | `[]` |
+| `aliases` | `list[str]` | `[]` |
+| `origin` | `EntityOrigin` | `'extracted'` |
 
 ## Location _(story_bible.py)_
 
@@ -856,6 +878,8 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `mood` | `str` |  |
 | `appearance_states` | `list[AppearanceState]` | `[]` |
 | `appearance_timeline` | `list[StateActivation]` | `[]` |
+| `aliases` | `list[str]` | `[]` |
+| `origin` | `EntityOrigin` | `'extracted'` |
 
 ## TransientObject _(story_bible.py)_
 
@@ -871,6 +895,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | Field | Type | Default |
 |-------|------|---------|
 | `id` | `str` |  |
+| `part_id` | `str` | `FIRST_PART_ID` |
 | `chapter` | `int` |  |
 | `title` | `str` |  |
 | `location_id` | `str` |  |
@@ -886,6 +911,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 
 | Field | Type | Default |
 |-------|------|---------|
+| `part_id` | `str` | `FIRST_PART_ID` |
 | `act` | `int` |  |
 | `title` | `str` |  |
 | `scenes` | `list[str]` |  |
@@ -901,11 +927,22 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `first_appearance_scene` | `Optional[str]` | `None` |
 | `appearance_states` | `list[AppearanceState]` | `[]` |
 | `appearance_timeline` | `list[StateActivation]` | `[]` |
+| `aliases` | `list[str]` | `[]` |
+| `origin` | `EntityOrigin` | `'extracted'` |
+
+## ExcludedEntity _(story_bible.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `kind` | `Literal['character', 'location', 'prop']` |  |
+| `name` | `str` |  |
+| `aliases` | `list[str]` | `[]` |
 
 ## StoryBible _(story_bible.py)_
 
 | Field | Type | Default |
 |-------|------|---------|
+| `revision` | `int` | `Field(default=1, ge=1)` |
 | `title` | `str` |  |
 | `author` | `str` |  |
 | `total_scenes` | `int` |  |
@@ -915,6 +952,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `narrative_arcs` | `list[NarrativeArc]` |  |
 | `style_notes` | `Optional[str]` | `None` |
 | `props` | `list[Prop]` | `[]` |
+| `excluded_entities` | `list[ExcludedEntity]` | `[]` |
 
 ## _ValidationResult _(validation.py)_
 
