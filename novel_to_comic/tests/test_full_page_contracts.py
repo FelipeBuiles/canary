@@ -24,7 +24,7 @@ from novel_to_comic.models.source import (
     _follows_title_abbreviation,
     sentence_end_offsets,
 )
-from novel_to_comic.models.story_bible import Scene, StoryBible, story_bible_context
+from novel_to_comic.models.story_bible import Scene, StoryBible
 from novel_to_comic.models.page import (
     BookPlan,
     ComicPage,
@@ -724,7 +724,7 @@ def _story_bible() -> StoryBible:
         characters=[],
         locations=[],
         scenes=[],
-        narrative_arcs=[],
+        sequences=[],
     )
 
 
@@ -918,18 +918,18 @@ def test_brief_inference_uses_source_units_and_story_bible_without_approval() ->
     )
 
     assert proposed.status == "draft"
-    assert '"id":"source_000001"' in prompts[0]
-    assert '"text":"The door opened. "' in prompts[0]
+    assert '"id":"scene_001"' in prompts[0]
     assert '"title":"The Door"' in prompts[0]
     assert '"recommended_page_envelope":{"maximum":4,"minimum":2}' in prompts[0]
     assert "Do not equate source units, sentences, paragraphs, or prose pages" in prompts[0]
     context = json.loads(prompts[0].split("\n", 1)[1])
     source = _source_document()
-    assert context["source_units"] == [
-        {"id": unit.id, "text": unit.text} for unit in source.units
-    ]
-    assert "".join(unit["text"] for unit in context["source_units"]) == source.text
-    assert context["story_bible"] == story_bible_context(_story_bible())
+    assert "source_units" not in context
+    assert "".join(scene["text"] for scene in context["source_scenes"]) == source.text
+    assert context["story_bible"]["title"] == _story_bible().title
+    assert all("appearance_timeline" not in entity
+               for field in ("characters", "locations", "props")
+               for entity in context["story_bible"][field])
     assert "plain strings, never objects" in prompts[0]
     assert "'faithful', 'medium_specific', or 'transformative'" in prompts[0]
 

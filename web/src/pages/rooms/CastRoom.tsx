@@ -3,7 +3,8 @@ import { CastIdentityReview } from "../../components/composites/CastIdentityRevi
 import { ArrowUpRight, Search, Users, MapPin, Box, LoaderCircle, ImagePlus, Expand } from "lucide-react";
 import { FieldLabel, TextField } from "../../components/ui/Field";
 import { useReferenceJob } from "../../hooks/useReferenceJob";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { castCharacters } from "../../lib/castRoster";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   useApproveStage,
@@ -1162,7 +1163,9 @@ export function CastRoom() {
   const [actionError, setActionError] = useState<string | null>(null);
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { data: bible, isLoading } = useStoryBible(id);
+  const { data: sourceBible, isLoading } = useStoryBible(id);
+  const bible = useMemo(() => sourceBible
+    ? { ...sourceBible, characters: castCharacters(sourceBible) } : undefined, [sourceBible]);
   const { data: status } = useProjectStatus(id);
   const approveStage = useApproveStage();
   const { mutate: resetStale, isPending: isResetting, error: resetError } = useResetStale();

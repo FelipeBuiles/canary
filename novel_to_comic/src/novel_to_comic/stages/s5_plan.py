@@ -21,6 +21,7 @@ from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.state import PipelineState
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic import artifacts
+from novel_to_comic.cast_roster import cast_character_ids
 
 from novel_to_comic.stages import Stage, clean_cascade
 
@@ -41,6 +42,7 @@ def approved_visual_inventory(project_dir: Path) -> ApprovedVisualReferenceInven
     if blank := blank_visual_anchors(bible):
         raise MissingVisualAnchor(blank)
     references = []
+    recurring = cast_character_ids(bible, project_dir)
     kinds = (("character", bible.characters), ("location", bible.locations), ("prop", bible.props))
     for kind, entities in kinds:
         for entity in entities:
@@ -51,6 +53,7 @@ def approved_visual_inventory(project_dir: Path) -> ApprovedVisualReferenceInven
                     visual_anchor=entity.visual_anchor,
                     label=entity.name,
                     kind=kind,
+                    requires_image=kind != "character" or entity.id in recurring,
                 )
             )
             for appearance in getattr(entity, "appearance_states", ()):
@@ -63,6 +66,7 @@ def approved_visual_inventory(project_dir: Path) -> ApprovedVisualReferenceInven
                         label=entity.name,
                         continuity_guard=appearance.continuity_guard or "",
                         kind=kind,
+                        requires_image=kind != "character" or entity.id in recurring,
                     )
                 )
     return ApprovedVisualReferenceInventory(references=references)
@@ -74,7 +78,35 @@ def approved_reference_files(
     bible = artifacts.read_story_bible(project_dir)
     selected_poses = artifacts.read_primary_refs(project_dir)
     files: dict[str, ApprovedReferenceFile] = {}
+    recurring = cast_character_ids(bible, project_dir)
+
+    def image_states(entity) -> dict[str, str | None]:
+        """Minor changes inherit the carried visual design, not an earlier outfit.
+
+        Use only explicit chronology and catalog flags. A reusable minor state
+        with different declared ancestors keeps the canonical reference; its
+        self-contained anchor remains authoritative for every request.
+        """
+        states = {state.id: state for state in entity.appearance_states}
+        order = {scene.id: index for index, scene in enumerate(bible.scenes)}
+        carried = None
+        parents: dict[str, set[str | None]] = {}
+        for activation in sorted(entity.appearance_timeline,
+                                 key=lambda item: (order[item.at.scene_id], item.at.beat or 0)):
+            state = states[activation.state_id]
+            if state.canonical_equivalent:
+                carried = None
+            elif state.visually_significant:
+                carried = state.id
+            else:
+                parents.setdefault(state.id, set()).add(carried)
+        return {state.id: (None if state.canonical_equivalent else state.id if state.visually_significant
+                          else next(iter(parents[state.id])) if len(parents.get(state.id, ())) == 1 else None)
+                for state in entity.appearance_states}
+
     for character in bible.characters:
+        if character.id not in recurring:
+            continue
         pose = selected_poses.get(character.id)
         path = (
             artifacts.character_ref_pose_path(project_dir, character.id, pose)
@@ -87,16 +119,17 @@ def approved_reference_files(
             media_type="image/png",
             metadata_path=artifacts.asset_meta_path(artifacts.character_ref_sheet_path(project_dir, character.id)),
         )
+        inherited_images = image_states(character)
         for appearance in character.appearance_states:
             state_reference = reference_id(character.id, appearance.id)
+            image_state = inherited_images[appearance.id]
             appearance_path = (
                 path
-                if appearance.canonical_equivalent
-                or not appearance.visually_significant
+                if image_state is None
                 else artifacts.character_state_ref_sheet_path(
                     project_dir,
                     character.id,
-                    appearance.id,
+                    image_state,
                 )
             )
             files[state_reference] = ApprovedReferenceFile(
@@ -105,7 +138,7 @@ def approved_reference_files(
                 media_type="image/png",
                 metadata_path=artifacts.asset_meta_path(
                     artifacts.character_ref_sheet_path(project_dir, character.id)
-                    if appearance.canonical_equivalent or not appearance.visually_significant
+                    if image_state is None
                     else appearance_path
                 ),
             )
@@ -115,16 +148,17 @@ def approved_reference_files(
             path=artifacts.location_plate_path(project_dir, location.id),
             media_type="image/png",
         )
+        inherited_images = image_states(location)
         for appearance in location.appearance_states:
             state_reference = reference_id(location.id, appearance.id)
+            image_state = inherited_images[appearance.id]
             appearance_path = (
                 artifacts.location_plate_path(project_dir, location.id)
-                if appearance.canonical_equivalent
-                or not appearance.visually_significant
+                if image_state is None
                 else artifacts.location_state_plate_path(
                     project_dir,
                     location.id,
-                    appearance.id,
+                    image_state,
                 )
             )
             files[state_reference] = ApprovedReferenceFile(
@@ -138,13 +172,15 @@ def approved_reference_files(
             path=artifacts.prop_ref_path(project_dir, prop.id),
             media_type="image/png",
         )
+        inherited_images = image_states(prop)
         for appearance in prop.appearance_states:
             state_reference = reference_id(prop.id, appearance.id)
+            image_state = inherited_images[appearance.id]
             files[state_reference] = ApprovedReferenceFile(
                 reference_id=state_reference,
                 path=(artifacts.prop_ref_path(project_dir, prop.id)
-                      if appearance.canonical_equivalent or not appearance.visually_significant
-                      else artifacts.prop_state_ref_path(project_dir, prop.id, appearance.id)),
+                      if image_state is None
+                      else artifacts.prop_state_ref_path(project_dir, prop.id, image_state)),
                 media_type="image/png",
             )
     return files

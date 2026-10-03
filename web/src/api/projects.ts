@@ -21,7 +21,7 @@ export function createProject(
   file: File,
   name: string,
   configOverrides?: Partial<ConfigOverrides>,
-): Promise<{ id: string; name: string; project_name: string; status: string }> {
+): Promise<{ id: string; name: string; project_name: string; status: string; part_id: string }> {
   const form = new FormData();
   form.append("file", file);
   form.append("name", name);

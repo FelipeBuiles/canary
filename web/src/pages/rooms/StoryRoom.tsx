@@ -1,4 +1,5 @@
 import { accountIdentity } from "../../lib/accountEpoch";
+import { castCharacters } from "../../lib/castRoster";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
@@ -20,9 +21,12 @@ import { FieldLabel, TextAreaField, TextField } from "../../components/ui/Field"
 import { BriefSection } from "../../components/composites/BriefSection";
 import { StoryExplorer } from "../../components/composites/StoryExplorer";
 import { StoryBibleEditor, type EntityFocus } from "../../components/story/StoryBibleEditor";
-import { ArrowDownRight, BookOpen, ChevronRight } from "lucide-react";
+import { BookStrip, BookStripPanel } from "../../components/parts/BookStrip";
+import { partStartDescription } from "../../lib/partProgress";
+import { splitProjectKey } from "../../api/projectScope";
+import { ArrowDownRight, ChevronRight } from "lucide-react";
 import { useI18n } from "../../i18n";
-import type { AdaptationBrief, StoryDecision } from "../../types/api";
+import type { AdaptationBrief, PartSummary, StoryDecision } from "../../types/api";
 
 function splitLines(value: string): string[] {
   return value.split("\n");
@@ -60,6 +64,9 @@ export function StoryRoom() {
   const error = storyReady ? storyQueryError : (statusError ?? null);
   const isLoading = statusLoading || (storyReady && storyLoading);
   const brief = data?.brief;
+  const parts = status?.parts ?? [];
+  const contents = parts.length > 1 && id ? <BookStripPanel project={id} parts={parts} /> : null;
+  const startDescription = id ? partStartDescription(id, parts, t) : undefined;
 
   if (isLoading) {
     // Keep the status observer in StagePlaceholder mounted when loading ends.
@@ -67,6 +74,7 @@ export function StoryRoom() {
     if (stageStatus === "pending" || stageStatus === "running" || stageStatus === "failed") {
       return (
         <RoomShell project={id ?? ""}>
+          {contents}
           <StagePlaceholder project={id ?? ""} stage="brief" status={stageStatus} activeJobs={status?.active_jobs} />
         </RoomShell>
       );
@@ -99,6 +107,7 @@ export function StoryRoom() {
       : undefined;
     return (
       <RoomShell project={id ?? ""}>
+        {contents}
         <StagePlaceholder
           activeJobs={activeJobs}
           project={id ?? ""}
@@ -110,13 +119,14 @@ export function StoryRoom() {
           errorCode={stageInfo?.error_code}
           loadError={errorMessage}
           allowPendingStart
+          startDescription={startDescription}
         />
         {/* The shared Story Bible stays editable while this part waits for extraction. */}
         {id && <StoryBibleEditor project={id} focus={focus} onFocusClosed={clearFocus} />}
       </RoomShell>
     );
   }
-  return <StoryEditor key={id} id={id} data={data} brief={brief} stageStatus={stageStatus} focus={focus} onFocusClosed={clearFocus} />;
+  return <StoryEditor key={id} id={id} data={data} brief={brief} parts={parts} stageStatus={stageStatus} focus={focus} onFocusClosed={clearFocus} />;
 }
 
 interface StoredBriefDraft {
@@ -133,16 +143,19 @@ const BRIEF_FIELD_LABELS: Partial<Record<keyof AdaptationBrief, string>> = {
   target_page_min: "Page target: from", target_page_max: "Page target: to",
 };
 
-function StoryEditor({ id, data, brief, stageStatus, focus, onFocusClosed }: {
+function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed }: {
   id: string;
   data: StoryDecision;
   brief: AdaptationBrief;
+  parts: PartSummary[];
   stageStatus: string;
   focus: EntityFocus | null;
   onFocusClosed: () => void;
 }) {
   const { t } = useI18n();
   const navigate = useNavigate();
+  const currentPart = parts.find((part) => part.id === splitProjectKey(id).part);
+  const multipart = parts.length > 1;
   const updateBrief = useUpdateBrief();
   const approveBrief = useApproveStage();
   const [savedBrief, setSavedBrief] = useState(brief);
@@ -281,15 +294,16 @@ function StoryEditor({ id, data, brief, stageStatus, focus, onFocusClosed }: {
         lead={t("Review what Scenewright found and set the promises that every page must keep.")}
       />
 
-      <section className="relative overflow-hidden bg-ink-black p-6 text-pulp-paper shadow-paper md:p-10" aria-label={t("SOURCE MANUSCRIPT")}>
-        <div className="flex items-center gap-3 font-meta text-xs tracking-[0.1em] text-narrator-gold">
-          <BookOpen size={20} aria-hidden="true" /> {t("SOURCE MANUSCRIPT")}
-        </div>
-        <h2 className="mt-6 max-w-[20ch] break-words font-display text-4xl font-black uppercase leading-[1.02] tracking-[-0.035em] sm:text-5xl xl:text-6xl">{data.story_bible.title}</h2>
-        <div className="mt-7 flex flex-wrap items-end justify-between gap-6">
+      <section className={`relative overflow-hidden bg-ink-black p-6 text-pulp-paper shadow-paper ${multipart ? "md:px-8 md:py-7" : "md:p-10"}`} aria-label={t("SOURCE MANUSCRIPT")}>
+        {multipart && currentPart && <p className="font-meta text-xs font-bold uppercase tracking-[0.12em] text-narrator-gold">
+          {t("Part {number} of {count}", { number: currentPart.ordinal, count: parts.length })} · {currentPart.title}
+        </p>}
+        <h2 className={`break-words font-display font-black uppercase leading-[1.02] tracking-[-0.035em] ${multipart ? "mt-2 text-3xl sm:text-4xl" : "max-w-[20ch] text-4xl sm:text-5xl xl:text-6xl"}`}>{data.story_bible.title}</h2>
+        <div className={`flex flex-wrap items-end justify-between gap-x-6 ${multipart ? "mt-3 gap-y-2" : "mt-7 gap-y-6"}`}>
           <p className="font-body text-sm">{t("BY")} {data.story_bible.author}</p>
-          <a href="#story-source" className="inline-flex min-h-11 items-center gap-3 font-meta text-xs leading-6 text-pulp-paper underline decoration-narrator-gold underline-offset-8 hover:text-narrator-gold" aria-label={t("Explore extracted story")}>{data.story_bible.total_scenes} {t("scenes")} · {data.story_bible.characters.length} {t("characters")} · {data.story_bible.locations.length} {t("places")}<ArrowDownRight size={18} aria-hidden="true" /></a>
+          <a href="#story-source" className="inline-flex min-h-11 items-center gap-3 font-meta text-xs leading-6 text-pulp-paper underline decoration-narrator-gold underline-offset-8 hover:text-narrator-gold" aria-label={t("Explore extracted story")}>{data.story_bible.total_scenes} {t("scenes")} · {castCharacters(data.story_bible).length} {t("characters")} · {data.story_bible.locations.length} {t("places")}<ArrowDownRight size={18} aria-hidden="true" /></a>
         </div>
+        {multipart && <div className="mt-6"><BookStrip project={id} parts={parts} tone="ink" /></div>}
       </section>
       {earlierDrafts.length > 0 && (
         <section className="space-y-4" aria-label={t("Earlier unsaved drafts")}>
@@ -336,7 +350,9 @@ function StoryEditor({ id, data, brief, stageStatus, focus, onFocusClosed }: {
         <SectionHeader
           variant="underline"
           title={t("ADAPTATION BRIEF")}
-          description={t("Make this story yours. Review the direction below, then edit anything you want your comic to keep.")}
+          description={multipart && currentPart
+            ? t("This brief covers Part {number}: {title}. Review its direction, then edit anything you want your comic to keep.", { number: currentPart.ordinal, title: currentPart.title })
+            : t("Make this story yours. Review the direction below, then edit anything you want your comic to keep.")}
           actions={<>
             <p role="status" className="font-meta text-xs text-ink-muted">
               {busy ? t("Saving brief…") : dirty ? restored ? t("Restored unsaved draft") : t("Unsaved changes") : t("All changes saved")}

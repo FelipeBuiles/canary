@@ -212,7 +212,7 @@ def test_cast_location_state_missing_parent_is_recorded_not_stage_fatal(
         _generate_location_plates(
             Config(), tmp_path, StoryBible(
                 title="T", author="A", total_scenes=1,
-                characters=[], locations=[loc], props=[], scenes=[], narrative_arcs=[],
+                characters=[], locations=[loc], props=[], scenes=[], sequences=[],
             ), ctx,
         )
     )

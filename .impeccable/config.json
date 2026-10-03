@@ -39,6 +39,24 @@
         ],
         "createdAt": "2026-09-29T20:25:37.887Z",
         "reason": "Agent review: the only detected stripe is .ui-field[aria-invalid=\"true\"], a bottom inset validation indicator on input/select/textarea controls used by Field.tsx, not a decorative card side accent. Preserve the existing error-state affordance."
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "web/src/components/composites/StoryExplorer.tsx"
+        ],
+        "createdAt": "2026-10-02T22:45:46.404Z",
+        "reason": "Agent: existing committed turning-point paragraph is an editorial narrative callout, not a card; its narrator-gold marker matches the act label and the Story station gold metadata guidance."
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "web/src/pages/rooms/CastRoom.tsx"
+        ],
+        "createdAt": "2026-10-02T23:33:13.926Z",
+        "reason": "Agent: the only side border in this file marks the existing conditional LAST ATTEMPT FAILED role=alert paragraph, confirmed in HEAD. It communicates an actionable generation error rather than decorating a card; preserve the error indicator."
       }
     ]
   }

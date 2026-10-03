@@ -31,7 +31,7 @@ def test_canonical_equivalent_state_reuses_base_character_reference(tmp_path):
         ],
         locations=[],
         scenes=[],
-        narrative_arcs=[],
+        sequences=[],
     )
     artifacts.write_story_bible(tmp_path, bible)
 

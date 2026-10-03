@@ -21,7 +21,7 @@ def _upload(data: bytes, name: str = "novel.txt") -> UploadFile:
 
 def test_max_upload_bytes_default(monkeypatch):
     monkeypatch.delenv("CANARY_MAX_UPLOAD_MB", raising=False)
-    assert projects._max_upload_bytes() == 10 * 1024 * 1024
+    assert projects._max_upload_bytes() == 50 * 1024 * 1024
 
 
 def test_max_upload_bytes_env(monkeypatch):

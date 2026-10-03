@@ -46,6 +46,9 @@ TEXT_MODELS = (
     TextModel("gpt-6.1-sol", "GPT-6.1 Sol", "OpenAI", "openai", temperature=False, effort="medium"),
     TextModel("gpt-6-sol", "GPT-6 Sol", "OpenAI", "openai", temperature=False, effort="medium"),
     TextModel("gpt-6-luna", "GPT-6 Luna", "OpenAI", "openai", temperature=False, effort="medium"),
+    TextModel("gemini-3.8-flash", "Gemini 3.8 Flash", "Google Vertex AI", "vertex_ai",
+              temperature=False, effort="medium", thinking_headroom_tokens=16_384,
+              estimated_thinking_tokens=4_096, max_output_tokens=65_536),
     # Text routes default to medium effort; Claude defaults (``high`` on Sonnet,
     # ``medium`` on Opus 5.5) are never left implicit.
     # Thinking is always on (disabling it is a 400 at every effort).

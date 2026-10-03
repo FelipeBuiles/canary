@@ -92,7 +92,7 @@ def _bible() -> StoryBible:
                 source_start_quote="The door opened.",
             )
         ],
-        narrative_arcs=[],
+        sequences=[],
         props=[Prop(id="prop_001", name="Iron key", visual_anchor="black iron key")],
     )
 

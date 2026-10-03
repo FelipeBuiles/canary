@@ -184,6 +184,37 @@ def test_generate_structured_object_returns_dict_and_usage(monkeypatch, _patch_e
     assert _patch_events[-1][1]["status"] == "succeeded"
 
 
+def test_extract_request_reaches_the_gateway_as_a_strict_schema(monkeypatch, _patch_events):
+    from novel_to_comic.stages.s1_extract import _extract_with_retry, PROMPT_PATH, WHOLE_SOURCE_INSTRUCTIONS
+
+    raw = {
+        'title': 'Rain', 'author': 'Unknown', 'characters': [], 'props': [],
+        'character_participation': [],
+        'locations': [{'id': 'loc_001', 'name': 'Road', 'visual_anchor': 'outdoors, road', 'mood': 'quiet'}],
+        'scenes': [{'id': 'scene_001', 'chapter': 1, 'title': 'Rain', 'location_id': 'loc_001',
+                    'character_ids': [], 'summary': 'Rain falls on the road.', 'scene_type': 'transition',
+                    'narrative_beat': 'resolution', 'source_start_quote': 'Rain fell on the road.'}],
+        'sequences': [{'number': act, 'title': 'Rain', 'scenes': ['scene_001'] if act == 1 else []}
+                           for act in (1, 2, 3)],
+    }
+    _patch_http(monkeypatch, {
+        'model': 'gpt-6-sol', 'choices': [{'message': {'content': json.dumps(raw)}}],
+        'usage': {'prompt_tokens': 10, 'completion_tokens': 3},
+    })
+    result = asyncio.run(_extract_with_retry(
+        Config(extraction_model='gpt-6-sol'), PROMPT_PATH.read_text() + WHOLE_SOURCE_INSTRUCTIONS,
+        'Rain fell on the road.'))
+    assert result.value.total_scenes == 1
+    wire = _FakeAsyncClient.last_request['json']['response_format']
+    assert wire['type'] == 'json_schema'
+    assert wire['json_schema']['strict'] is True
+    schema = wire['json_schema']['schema']
+    assert schema['additionalProperties'] is False
+    assert {'revision', 'total_scenes', 'excluded_entities'}.isdisjoint(schema['properties'])
+    assert 'character_participation' in schema['required']
+    assert _patch_events[-1][1]['status'] == 'succeeded'
+
+
 @pytest.mark.parametrize("stream", ["0", "1"])
 def test_gateway_normalizes_narrative_treatment_schema(monkeypatch, _patch_events, stream):
     from copy import deepcopy
@@ -1896,6 +1927,41 @@ def test_claude_text_models_default_to_medium_effort():
     assert {model.id: model.effort for model in claude} == {model.id: "medium" for model in claude}
 
 
+@pytest.mark.parametrize("answer_limit, billed_limit", [(4096, 20480), (65536, 65536)])
+def test_vertex_json_stream_caps_thinking_budget_and_records_vertex_cost(
+    monkeypatch, _patch_events, answer_limit, billed_limit,
+):
+    _patch_http(monkeypatch, {
+        "model": "gemini-3.8-flash",
+        "choices": [{"message": {"content": '{"ok":true}'}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1000, "completion_tokens": 1000,
+                  "prompt_tokens_details": {"cached_tokens": 250},
+                  "completion_tokens_details": {"reasoning_tokens": 200}},
+    })
+    result = asyncio.run(client.generate_structured_object(
+        config=Config(), model="gemini-3.8-flash", system_prompt="Return JSON.",
+        user_content="Check.", max_output_tokens=answer_limit,
+        json_schema={"type": "object", "properties": {"ok": {"type": "boolean"}},
+                     "required": ["ok"], "additionalProperties": False},
+    ))
+    sent = _FakeAsyncClient.last_request["json"]
+    assert sent["stream"] and sent["stream_options"]["include_usage"]
+    assert sent["max_completion_tokens"] == billed_limit
+    assert sent["reasoning_effort"] == "medium"
+    assert "temperature" not in sent
+    assert sent["response_format"]["type"] == "json_schema"
+    assert result.value == {"ok": True}
+    assert result.usage.provider == "vertex_ai"
+    assert result.usage.output_tokens == 1000
+    # Without a gateway charge, fallback pricing counts all input and billed
+    # output (including thinking); Cloud trial credits do not make it free.
+    from novel_to_comic.usage import calculate_cost_breakdown
+
+    assert result.usage.cost_usd is None  # The fixture reports tokens, not a charge.
+    assert calculate_cost_breakdown(result.usage).cost_usd == pytest.approx(0.0045)
+    assert _patch_events[-1][1]["status"] == "succeeded"
+
+
 @pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-sonnet-5-5"])
 def test_claude_5_5_sends_effort_without_schema_and_caps_thinking_headroom(
     monkeypatch, _patch_events, model,
@@ -2099,7 +2165,7 @@ def test_fal_style_image_settles_billed_charge_or_labelled_request_estimate(
     assert finalized["usage"] == result.usage
     assert result.provider_request_id == "fal-req-7"
 
-@pytest.mark.parametrize("model", ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "claude-opus-5-5", "claude-sonnet-5-5"])
+@pytest.mark.parametrize("model", ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gemini-3.8-flash", "claude-opus-5-5", "claude-sonnet-5-5"])
 @pytest.mark.parametrize("effort", ["low", "medium", "high"])
 def test_text_effort_override_reaches_provider_payload(monkeypatch, _patch_events, model, effort):
     monkeypatch.setenv("CANARY_AI_STREAM_TEXT", "0")

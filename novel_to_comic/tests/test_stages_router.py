@@ -63,7 +63,7 @@ def test_get_story_existing_artifact_returns_200(tmp_path: Path):
         characters=[],
         locations=[],
         scenes=[],
-        narrative_arcs=[],
+        sequences=[],
     )
     write_story_bible(project_dir, bible)
 
@@ -104,7 +104,7 @@ def _story_project(tmp_path: Path) -> tuple[Path, PipelineState, StoryBible]:
         total_scenes=2,
         characters=[],
         locations=[],
-        narrative_arcs=[],
+        sequences=[],
         scenes=[
             _anchor_scene("scene_001", "The door", "The door opened."),
             _anchor_scene("scene_002", "Silence", "Nothing moved."),
@@ -364,6 +364,8 @@ def test_brief_stage_repairs_an_invalid_inference_with_one_retry(
     prompts: list[str] = []
 
     async def fake_generate_json(**kwargs):
+        assert kwargs['json_schema']['properties']['character_turns']['items']['type'] == 'string'
+        assert {'revision', 'status', 'content_sha256'}.isdisjoint(kwargs['json_schema']['properties'])
         prompts.append(kwargs["user_content"])
         return ApiResult(
             value=responses[len(prompts) - 1],

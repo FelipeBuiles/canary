@@ -78,7 +78,7 @@ def _bible() -> StoryBible:
             _scene("scene_002", "part_0001", "loc_001", ["char_001"]),
             _scene("scene_003", "part_0002", "loc_002", ["char_003"]),
         ],
-        narrative_arcs=[],
+        sequences=[],
     )
 
 
@@ -291,6 +291,25 @@ def test_no_edit_can_blank_a_visual_anchor(series) -> None:
     assert artifacts.read_story_bible(root).revision == 1
 
 
+def test_cast_override_promotes_an_incidental_identity_and_reopens_cast(series) -> None:
+    client, root = series
+    from novel_to_comic.cast_roster import cast_character_ids
+    state = load_state(root)
+    state.stages["style"].status = StageStatus.COMPLETE
+    state.stages["cast"].status = StageStatus.COMPLETE
+    save_state(state, root)
+    assert "char_003" not in cast_character_ids(artifacts.read_story_bible(root), root)
+
+    saved = client.patch("/api/projects/pid/story-bible/characters/char_003", json={
+        "expected_revision": 1, "changes": {"cast_required": True},
+    })
+
+    assert saved.status_code == 200 and saved.json()["revision"] == 2
+    assert "char_003" in cast_character_ids(artifacts.read_story_bible(root), root)
+    assert load_state(root).stages["cast"].status == StageStatus.PENDING
+    assert artifacts.read_story_bible(root).characters[2].visual_anchor == "long red hair, freckles"
+
+
 def test_a_blank_anchor_is_filled_once_in_the_series_bible(series) -> None:
     client, root = series
     bible = artifacts.read_story_bible(root)
@@ -478,6 +497,7 @@ def test_pages_drawn_before_an_edit_are_flagged(tmp_path, monkeypatch) -> None:
     import hashlib
 
     from novel_to_comic.models.draw import PageReference
+    from novel_to_comic.models.page import ApprovedVisualReference
     from novel_to_comic.stages import s5_plan
     from novel_to_comic.story_bible_edits import pages_drawn_before_edits
 
@@ -491,17 +511,23 @@ def test_pages_drawn_before_an_edit_are_flagged(tmp_path, monkeypatch) -> None:
 
     requests = {
         1: SimpleNamespace(references=(frozen("ref:mara", "short black hair", new_digest, "char_001"),
-                                       frozen("ref:key", "small brass key", new_digest, "prop_001"))),
-        2: SimpleNamespace(references=(frozen("ref:mara", "short black hair", old_digest, "char_001"),)),
+                                       frozen("ref:key", "small brass key", new_digest, "prop_001")),
+                           written_identities=()),
+        2: SimpleNamespace(references=(frozen("ref:mara", "short black hair", old_digest, "char_001"),),
+                           written_identities=()),
+        4: SimpleNamespace(references=(), written_identities=(ApprovedVisualReference(
+            id="ref:visitor", entity_id="visitor", kind="character", requires_image=False,
+            visual_anchor="long white hair", label="Visitor"),)),
     }
     monkeypatch.setattr(TargetArtifacts, "read_plan", lambda self: SimpleNamespace(
-        pages=[SimpleNamespace(page_number=1), SimpleNamespace(page_number=2), SimpleNamespace(page_number=3)]))
+        pages=[SimpleNamespace(page_number=n) for n in range(1, 5)]))
     monkeypatch.setattr(TargetArtifacts, "active_render_revision", lambda self, n: None if n == 3 else 4)
     monkeypatch.setattr(TargetArtifacts, "read_provenance", lambda self, n, r: SimpleNamespace(render=n))
     monkeypatch.setattr(TargetArtifacts, "producing_request", lambda self, render: requests[render])
     monkeypatch.setattr(s5_plan, "approved_visual_inventory", lambda root: SimpleNamespace(references=[
         SimpleNamespace(id="ref:mara", visual_anchor="short black hair", continuity_guard="", label="Mara"),
         SimpleNamespace(id="ref:key", visual_anchor="large iron key", continuity_guard="", label="Key"),
+        SimpleNamespace(id="ref:visitor", visual_anchor="short white hair", continuity_guard="", label="Visitor"),
     ]))
     monkeypatch.setattr(s5_plan, "approved_reference_files", lambda root: {
         "ref:mara": SimpleNamespace(path=sheet), "ref:key": SimpleNamespace(path=sheet),
@@ -513,5 +539,8 @@ def test_pages_drawn_before_an_edit_are_flagged(tmp_path, monkeypatch) -> None:
         ]},
         {"page_number": 2, "render_revision": 4, "changes": [
             {"entity_id": "char_001", "appearance_state_id": None, "label": "Mara", "reasons": ["reference image"]},
+        ]},
+        {"page_number": 4, "render_revision": 4, "changes": [
+            {"entity_id": "visitor", "appearance_state_id": None, "label": "Visitor", "reasons": ["description"]},
         ]},
     ]

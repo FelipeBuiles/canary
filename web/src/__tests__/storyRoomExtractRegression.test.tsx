@@ -104,7 +104,7 @@ const storyFixture: StoryDecision = {
       narrative_beat: "The forbidden ledger reveals the investigation's next lead.",
       source_start_quote: "Elena opened the locked shelf.",
     }],
-    narrative_arcs: [],
+    sequences: [],
     style_notes: null,
     props: [],
   },

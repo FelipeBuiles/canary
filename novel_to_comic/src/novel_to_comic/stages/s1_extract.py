@@ -9,20 +9,28 @@ import re
 from collections.abc import Awaitable, Callable
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from rich.console import Console
 
 from novel_to_comic import artifacts
+from novel_to_comic.book_map import ensure_book_map, estimate_book_map, promote_recurring_cast
 from novel_to_comic.clients.structured_call import (
     StructuredCallError,
     generate_validated_json,
 )
+from novel_to_comic.clients.text import generate_json
 from novel_to_comic.config import Config
 from novel_to_comic.extraction_delta import compute_delta
-from novel_to_comic.extraction_sections import apply_exclusions, estimate_sections, extract_sections
+from novel_to_comic.extraction_schema import ExtractionParticipation as _ExtractionParticipation, extraction_schema
+from novel_to_comic.generation_checkpoints import checkpointed_generator
+from novel_to_comic.extraction_review import ExtractionReview, SOURCE_REVIEW_INSTRUCTIONS, apply_source_review
+from novel_to_comic.extraction_sections import (
+    RegistryAnchorConflict, apply_exclusions, estimate_sections, extract_sections, hydrate_section, resolve_correction_references,
+    validate_references,
+)
 from novel_to_comic.input_limits import read_source
 from novel_to_comic.models.story_bible import MissingVisualAnchor, StoryBible, blank_visual_anchors
 from novel_to_comic.source_extraction import (
@@ -44,18 +52,16 @@ EXTRACT_MAX_OUTPUT_TOKENS = 65536
 ESTIMATED_STORY_BIBLE_MIN_OUTPUT_TOKENS = 12000
 ESTIMATED_STORY_BIBLE_MAX_OUTPUT_TOKENS = 24000
 
-class _CharacterParticipation(BaseModel):
-    """Source evidence consumed only at the extraction boundary."""
-
-    model_config = ConfigDict(extra="forbid")
-    character_id: str
-    scene_id: str
-    classification: Literal["direct_action", "staged_recollection", "background_only"]
-    source_quote: str = Field(min_length=1)
-
-
-class _ExtractionParticipation(BaseModel):
-    character_participation: list[_CharacterParticipation]
+WHOLE_SOURCE_INSTRUCTIONS = """
+Extract the entire supplied source from beginning to end. Infer title and author
+only from the source; use Unknown when unstated. Group the narrative scenes into
+ordered sequences: consecutive runs that pursue one goal, conflict or situation
+and end on a turn, as many as the source supports. Each narrative scene ID occurs
+exactly once, in source order; every sequence has at least one scene and a turn
+(what has changed when it ends). Use char_, loc_, prop_ and
+scene_ prefixes for new entities and scenes. Code supplies total_scenes.
+Use audit_ as review_id_prefix for source_review additions.
+""" + SOURCE_REVIEW_INSTRUCTIONS
 
 
 class _ParticipationQuoteMismatch(ValueError):
@@ -90,8 +96,41 @@ class _UnresolvedSceneOpenings(ValueError):
         )
 
 
+class _UnclassifiedCharacters(ValueError):
+    """Candidate definitions with neither a scene roster nor participation evidence."""
+
+    def __init__(self, characters: list[dict]) -> None:
+        self.characters = tuple(
+            (character["id"], character.get("name"), character.get("first_appearance_scene"))
+            for character in characters
+        )
+        super().__init__(
+            "Every candidate character requires participation evidence. "
+            "Candidates absent from every scene roster and participation entry: "
+            + ", ".join(f"{cid} ({name!r})" for cid, name, _ in self.characters)
+        )
+
+
 def _participation_quote_correction(error: Exception) -> str:
     """Return targeted repair guidance without exposing source text in stage errors."""
+    if isinstance(error, _UnclassifiedCharacters):
+        candidates = "\n".join(
+            f"- character_id={cid!r}, name={name!r}, first_appearance_scene={scene!r}"
+            for cid, name, scene in error.characters
+        )
+        return (
+            "\nThe candidates below have definitions but occur in no scene roster or "
+            "character_participation entry. Classify each against the supplied SOURCE SECTION "
+            "(or NOVEL TEXT). For a physically staged individual, supply its local scene_id, "
+            "direct_action or staged_recollection classification, and a nonempty verbatim "
+            "source_quote. For a mention or background group, remove its Character entry "
+            "and relationship references, keeping relevant facts in scene summaries; you may "
+            "also supply background_only evidence for a mentioned individual. Never invent "
+            "an action, scene, physical identity, or roster membership to justify eligibility. "
+            "Keep the other entries and return the entire corrected Story Bible JSON object, "
+            "including character_participation.\n"
+            f"UNCLASSIFIED CHARACTERS:\n{candidates}\n"
+        )
     if isinstance(error, _UnresolvedSceneOpenings):
         invalid_openings = "\n".join(
             f"- scene_id={scene_id!r}, source_start_quote={quote!r}"
@@ -122,7 +161,7 @@ def _participation_quote_correction(error: Exception) -> str:
         "source fragment so it can be copied exactly. Use exact_source_replacement verbatim when it is supplied. "
         "Do not reconstruct, normalize, or paraphrase it. Keep every other entry from YOUR PREVIOUS JSON. "
         "Return the entire corrected Story Bible JSON object, including title, author, characters, locations, scenes, "
-        "narrative_arcs, props, and character_participation; never return a character_participation entry or field by itself.\n"
+        "sequences, props, and character_participation; never return a character_participation entry or field by itself.\n"
         f"INVALID PARTICIPATION EVIDENCE:\n{invalid_evidence}\n"
     )
 
@@ -209,55 +248,60 @@ def _read_novel(novel_path: Path) -> str:
     return read_source(novel_path)
 
 
-def _normalize_narrative_arcs(arcs: list[dict]) -> list[dict]:
-    """Normalize narrative arc dicts to match the NarrativeArc schema.
+def _normalize_sequences(sequences: list[dict]) -> list[dict]:
+    """Normalize sequence dicts to the StorySequence schema.
 
-    LLMs sometimes return variations like:
-      - act: "Act 1" instead of 1
-      - "description" instead of "title"
-      - "scene_ids" / "scene_list" instead of "scenes"
-      - "climax_scene_id" (a single id) instead of a list
+    Models sometimes rename fields ("name" for title, "scene_ids" for scenes)
+    or return one scene ID as a string. Reading order is the authority, so
+    numbering is assigned here.
     """
     normalized = []
-    for i, arc in enumerate(arcs, start=1):
-        fixed = dict(arc)
-
-        # Normalize title: try common alternative field names
-        if "title" not in fixed or not fixed["title"]:
+    for number, sequence in enumerate(sequences, start=1):
+        fixed = dict(sequence)
+        if not fixed.get("title"):
             for alt in ("name", "description", "summary", "label"):
-                if alt in fixed and fixed[alt]:
+                if fixed.get(alt):
                     fixed["title"] = fixed.pop(alt)
                     break
             else:
-                fixed["title"] = f"Act {i}"
-
-        # Normalize scenes list: try common alternative field names
-        if "scenes" not in fixed or not fixed["scenes"]:
-            for alt in ("scene_ids", "scene_list", "scene_numbers", "scene_id_list"):
-                if alt in fixed and fixed[alt]:
+                fixed["title"] = f"Sequence {number}"
+        if not fixed.get("scenes"):
+            for alt in ("scene_ids", "scene_list", "scene_id_list"):
+                if fixed.get(alt):
                     fixed["scenes"] = fixed.pop(alt)
                     break
-            else:
-                # Last resort: collect any value that looks like a scene id
-                scene_candidates = [
-                    v for k, v in fixed.items()
-                    if isinstance(v, str) and v.startswith("scene_")
-                ]
-                fixed["scenes"] = scene_candidates
-
-        # Ensure scenes is a list
         if isinstance(fixed.get("scenes"), str):
             fixed["scenes"] = [fixed["scenes"]]
-
+        fixed["number"] = number
         normalized.append(fixed)
     return normalized
 
 
+def _check_whole_source_sequences(bible: StoryBible) -> None:
+    """A whole-source extraction's sequences partition its narrative scenes."""
+    from novel_to_comic.extraction_sections import check_sequences
+
+    validate_references(bible)
+    excluded = {scene.id for scene in bible.scenes if scene.scene_type == "non_narrative"}
+    for sequence in bible.sequences:
+        sequence.scenes = [sid for sid in sequence.scenes if sid not in excluded]
+    bible.sequences = [sequence.model_copy(update={"number": number}) for number, sequence
+                       in enumerate((s for s in bible.sequences if s.scenes), 1)]
+    check_sequences(bible.sequences, [scene.id for scene in bible.scenes if scene.id not in excluded])
+
+
 def _looks_adult(age_range: str, visual_anchor: str) -> bool:
-    text = f"{age_range} {visual_anchor}".lower()
+    age = age_range.lower()
+    if any(word in age for word in ("child", "girl", "boy", "teen", "adolescent")):
+        return False
+    ages = re.findall(r"\d+", age)
+    if ages:
+        return all(int(value) >= 18 for value in ages)
+    text = f"{age} {visual_anchor}".lower()
     if any(word in text for word in ("adult", "mature", "middle-aged", "middle aged", "elderly")):
         return True
-    return any(int(match) >= 18 for match in re.findall(r"\d+", text))
+    # Height, weight, pet counts and clothing numbers are not ages.
+    return False
 
 
 def _normalize_character_anchor_tags(characters: list[dict]) -> list[dict]:
@@ -269,6 +313,17 @@ def _normalize_character_anchor_tags(characters: list[dict]) -> list[dict]:
 
         gender = str(character.get("gender", "")).lower()
         tags = [tag.strip() for tag in anchor.split(",")]
+        age = str(character.get("age_range", "")).lower()
+        ages = re.findall(r"\d+", age)
+        young = bool(re.search(r"\b(?:child|girl|boy|teen(?:s|age|ager)?|adolescent)\b", age)) or (
+            bool(ages) and all(int(value) < 18 for value in ages))
+        if young:
+            # Correct a contradictory provisional adult label from the model's
+            # explicit age, without deriving age from height/weight/counts.
+            replacements = {"1woman": "1girl", "woman": "girl", "adult female": "girl",
+                            "1man": "1boy", "man": "boy", "adult male": "boy", "adult": "child"}
+            tags = [replacements.get(tag.lower(), tag) for tag in tags]
+            character["visual_anchor"] = ", ".join(tags)
         if not tags or tags[0].lower() not in {"1man", "1woman", "1boy", "1girl", "1other"}:
             continue
 
@@ -320,7 +375,8 @@ def _is_offscreen_character(character: dict) -> bool:
     return has_offscreen_marker(f"{text} {features_text}")
 
 
-def _remove_offscreen_characters(result: dict, excluded_ids: set[str] | None = None) -> dict:
+def _remove_offscreen_characters(result: dict, excluded_ids: set[str] | None = None, *,
+                                preserved_ids: frozenset[str] = frozenset()) -> dict:
     """Drop excluded visual subjects and clean their roster/relationship references."""
     characters = result.get("characters")
     if not isinstance(characters, list):
@@ -332,6 +388,7 @@ def _remove_offscreen_characters(result: dict, excluded_ids: set[str] | None = N
         if isinstance(character, dict) and _is_offscreen_character(character)
     }
     removed_ids.discard(None)
+    removed_ids -= preserved_ids
     if not removed_ids:
         return result
 
@@ -361,28 +418,78 @@ def _remove_offscreen_characters(result: dict, excluded_ids: set[str] | None = N
     return result
 
 
-def _normalize_result(result: dict) -> dict:
+def _normalize_result(result: dict, *, known_character_ids: frozenset[str] = frozenset()) -> dict:
     """Apply light normalization to the raw LLM output before Pydantic validation."""
-    if "narrative_arcs" in result and isinstance(result["narrative_arcs"], list):
-        result["narrative_arcs"] = _normalize_narrative_arcs(result["narrative_arcs"])
-    result = _remove_offscreen_characters(result)
+    if "sequences" in result and isinstance(result["sequences"], list):
+        result["sequences"] = _normalize_sequences(result["sequences"])
+    result = _remove_offscreen_characters(result, preserved_ids=known_character_ids)
     if "characters" in result and isinstance(result["characters"], list):
-        result["characters"] = _normalize_character_anchor_tags(result["characters"])
+        _normalize_character_anchor_tags([character for character in result["characters"]
+                                          if character.get("id") not in known_character_ids])
     return result
 
 
-def _parse_extraction(raw: object, novel_text: str) -> StoryBible:
+_NON_NARRATIVE_SCENE_TYPES = frozenset({
+    "non_narrative", "paratext", "front_matter", "back_matter",
+    "promotional", "promotional_material", "promotional_front_matter", "promotional_back_matter",
+    "acknowledgments", "acknowledgements", "credits", "copyright", "dedication", "table_of_contents",
+})
+
+
+def _normalize_non_narrative_spans(result: dict) -> None:
+    """Keep explicit non-story spans without inventing physical entities.
+
+    The model's classification is the authority. Empty rosters and transient
+    objects confirm that no embodied event is being discarded. Real unknown
+    location references in narrative scenes remain visible to validation.
+    """
+    scene_locations = set()
+    cleared_locations = set()
+    for scene in result.get("scenes", []):
+        if not isinstance(scene, dict) or not isinstance(scene.get("scene_type"), str):
+            continue
+        kind = re.sub(r"[\s-]+", "_", scene["scene_type"].casefold().strip())
+        if (kind in _NON_NARRATIVE_SCENE_TYPES and not scene.get("character_ids")
+                and not scene.get("transient_objects")):
+            cleared_locations.add(scene.get("location_id"))
+            scene["location_id"] = None
+            scene["scene_type"] = "non_narrative"
+        else:
+            scene_locations.add(scene.get("location_id"))
+    # A failed correction may have supplied an empty placeholder definition.
+    # Remove it only when its sole references were explicitly non-narrative;
+    # never remove an established anchor, state, or narrative setting.
+    locations = result.get("locations", [])
+    if isinstance(locations, list):
+        result["locations"] = [location for location in locations if not (
+            isinstance(location, dict) and location.get("id") in cleared_locations - scene_locations
+            and isinstance(location.get("visual_anchor"), str) and not location["visual_anchor"].strip()
+            and not location.get("appearance_states") and not location.get("appearance_timeline")
+        )]
+
+
+def _parse_extraction(raw: object, novel_text: str, *, registry: StoryBible | None = None,
+                      whole_source: bool = False) -> StoryBible:
     result = raw[0] if isinstance(raw, list) else raw
     participation = _ExtractionParticipation.model_validate(result).character_participation
     # Work on a separate payload so schema-correction feedback retains the evidence.
     result = json.loads(json.dumps(result))
+    review = ExtractionReview.model_validate(result.pop("source_review", {}))
+    known = frozenset(character.id for character in registry.characters) if registry else frozenset()
+    _normalize_non_narrative_spans(result)
     defined_characters = {
         character.get("id") for character in result.get("characters", [])
         if isinstance(character, dict)
     }
+    undefined_background_ids = {
+        evidence.character_id for evidence in participation
+        if evidence.character_id not in defined_characters
+        and evidence.classification == "background_only"
+    }
     # Background-only evidence for an undefined character carries no visual
-    # decision: such a character would be excluded anyway. Dropping it saves a
-    # full correction round trip; staged evidence for one still fails below.
+    # decision: such a character would be excluded anyway. Retain its ID so
+    # relationship references are removed along with that evidence. Staged
+    # evidence for an undefined character still fails below.
     participation = [
         evidence for evidence in participation
         if evidence.character_id in defined_characters
@@ -481,17 +588,21 @@ def _parse_extraction(raw: object, novel_text: str) -> StoryBible:
             # classification. Make it authoritative when the model omitted a
             # directly staged participant from the redundant scene roster.
             scenes[scene_id]["character_ids"].append(character_id)
-    if characters - {character_id for character_id, _ in classified}:
-        raise ValueError("Every candidate character requires participation evidence")
-    excluded = characters - {character_id for character_id, _ in visible}
-    result = _remove_offscreen_characters(result, excluded)
+    unclassified = characters - {character_id for character_id, _ in classified} - known
+    if unclassified:
+        raise _UnclassifiedCharacters([
+            character for character in result["characters"] if character["id"] in unclassified
+        ])
+    excluded = characters - {character_id for character_id, _ in visible} - known
+    result = _remove_offscreen_characters(result, excluded | undefined_background_ids, preserved_ids=known)
     for character in result["characters"]:
-        character["first_appearance_scene"] = next(
-            scene["id"] for scene in scenes.values()
-            if character["id"] in scene["character_ids"]
-        )
+        if character["id"] not in known:
+            character["first_appearance_scene"] = next(
+                scene["id"] for scene in scenes.values()
+                if character["id"] in scene["character_ids"]
+            )
     result.pop("character_participation", None)
-    result = _normalize_result(result)
+    result = _normalize_result(result, known_character_ids=known)
     for kind in ("characters", "locations", "props"):
         for entity in result.get(kind, []):
             for appearance in entity.get("appearance_states", []):
@@ -512,12 +623,16 @@ def _parse_extraction(raw: object, novel_text: str) -> StoryBible:
                 positions.add(position)
     _check_character_looks(result.get("characters", []))
     bible = StoryBible.model_validate(result)
+    if any(scene.scene_type == "non_narrative" and (scene.character_ids or scene.transient_objects)
+           for scene in bible.scenes):
+        raise ValueError("Non-narrative source spans cannot contain physically staged character participation or objects")
     if blank := blank_visual_anchors(bible):
         raise ValueError(
             "Every character, location, prop, and appearance state requires a nonempty "
             "visual_anchor. Blank visual_anchor for: " + ", ".join(blank)
         )
-    return bible
+    return apply_source_review(bible, review, novel_text, part_id=FIRST_PART_ID,
+                               protected_character_ids=known, require_end_looks=whole_source)
 
 
 def _require_anchored_registry(registry: StoryBible | None) -> None:
@@ -546,7 +661,7 @@ def _text_only_damage_states(bible: StoryBible) -> StoryBible:
     return bible
 
 
-# A Character renders as one body; a plural name signals a merged group.
+# An individual identity must not accidentally absorb distinct staged people.
 _GROUP_NAME = re.compile(
     r"^(?:the\s+)?(?:two|three|four|five|six|several|many|both|pair\s+of|group\s+of|couple\s+of)\b"
     r"|^(?:the\s+)?(?:\w+\s+)?(?:twins|officers|policemen|guards|soldiers)$",
@@ -562,15 +677,16 @@ def _tag_set(anchor: str) -> frozenset[str]:
 
 
 def _check_character_looks(characters: list[dict]) -> None:
-    """Reject merged groups, explicit anatomy tags and duplicate state looks."""
+    """Reject accidental individual merges, explicit anatomy and duplicate looks."""
     errors = []
     for character in characters:
         cid, name = character.get("id"), str(character.get("name", ""))
-        if _GROUP_NAME.search(name.strip()):
+        if character.get("identity_kind", "individual") != "group" and _GROUP_NAME.search(name.strip()):
             errors.append(
                 f"{cid} '{name}' names a group. Each character is one individual: give each "
                 "individually staged member its own singular entry, or keep interchangeable "
-                "members as background figures in scene summaries."
+                "human members as background figures in scene summaries. Collective acting "
+                "creatures use identity_kind='group' with one shared visual design."
             )
         base = str(character.get("visual_anchor", ""))
         looks = [("base", base, None)] + [
@@ -600,6 +716,25 @@ def _check_character_looks(characters: list[dict]) -> None:
         raise ValueError("Character look errors: " + " ".join(errors))
 
 
+def _recording_generator(config: Config, project_dir: Path, ctx: StageRuntime):
+    """A checkpointed text generator that records each provider event once."""
+
+    async def recorded(*, execution_mode, **kwargs):
+        result = await generate_json(config=config, **kwargs)
+        for usage in (*result.additional_usage, result.usage):
+            if usage is not None:
+                ctx.record_api_usage(usage)
+        return result
+
+    cached = checkpointed_generator(recorded, artifacts=TargetArtifacts(project_dir), stage="extract",
+                                    model=config.effective_extraction_model())
+
+    async def generate(*, config: Config, **kwargs):
+        return await cached(execution_mode="mock" if config.mock_mode else "live", **kwargs)
+
+    return generate
+
+
 async def _extract_with_retry(
     config: Config,
     system_prompt: str,
@@ -610,12 +745,18 @@ async def _extract_with_retry(
     generate: Callable[..., Awaitable[ApiResult[Any]]] | None = None,
     validate: Callable[[StoryBible], None] | None = None,
     prepare: Callable[[Any], Any] | None = None,
+    on_validation_failure: Callable[[], None] | None = None,
     max_output_tokens: int = EXTRACT_MAX_OUTPUT_TOKENS,
+    json_schema: dict | None = None,
+    registry: StoryBible | None = None,
 ) -> ApiResult[StoryBible]:
     """Call the extraction model, normalize, validate, and retry on schema errors."""
+    previous_response: object = None
+    attempt = 0
 
-    def parse(raw: object) -> StoryBible:
-        bible = _parse_extraction(prepare(raw) if prepare else raw, novel_text)
+    def validate_response(prepared: object) -> StoryBible:
+        # Sections are prepared against a registry; only a whole source is a finished part.
+        bible = _parse_extraction(prepared, novel_text, registry=registry, whole_source=prepare is None)
         aligned = bible.model_copy(deep=True)
         unresolved = set(align_scene_anchors(aligned, novel_text))
         if unresolved:
@@ -625,7 +766,27 @@ async def _extract_with_retry(
             )
         if validate is not None:
             validate(aligned)
+        else:
+            validate_references(aligned)
         return aligned
+
+    def parse(raw: object) -> StoryBible:
+        nonlocal previous_response, attempt
+        attempt += 1
+        prepared = prepare(raw) if prepare else hydrate_section(raw, None)
+        prior = previous_response
+        previous_response = json.loads(json.dumps(prepared))
+        try:
+            return validate_response(prepared)
+        except Exception:
+            # Preserve accepted responses and successful cached correction chains.
+            # Only reconcile a rejected final attempt, without another submission.
+            if attempt != max_retries + 1:
+                raise
+            reconciled = resolve_correction_references(prepared, prior)
+            if reconciled is prepared:
+                raise
+            return validate_response(reconciled)
 
     def correction(raw: object, error: Exception) -> str:
         result = raw[0] if isinstance(raw, list) else raw
@@ -653,11 +814,16 @@ async def _extract_with_retry(
             label="Story Bible extraction",
             feature="extract.story_bible",
             max_output_tokens=max_output_tokens,
+            json_schema=json_schema if json_schema is not None else extraction_schema(),
             generate=generate,
             retries=max_retries,
             temperatures=(0.4,),
         )
     except StructuredCallError as exc:
+        if on_validation_failure is not None:
+            on_validation_failure()
+        if isinstance(exc.last_error, RegistryAnchorConflict):
+            raise ValueError(exc.last_error.diagnostic()) from exc
         raise exc.last_error from exc
 
     usage = outcome.usage_records[-1] if outcome.usage_records else None
@@ -690,7 +856,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
 
     The first part creates the Story Bible. A later part starts from the
     series Story Bible, so recurring characters, places and props keep their
-    identities; its scenes, acts and new entities are appended and recorded
+    identities; its scenes, sequences and new entities are appended and recorded
     as the part's extraction delta.
     """
     with ctx.execute(total=4):
@@ -722,11 +888,17 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
             config, novel_text, system_prompt, registry=registry,
         ) if sectioned else estimate_text_cost(
             config.effective_extraction_model(),
-            system_prompt + "\n" + content_for_cost,
+            system_prompt + WHOLE_SOURCE_INSTRUCTIONS + "\n" + content_for_cost
+            + json.dumps(extraction_schema()),
             output_chars=estimate_story_bible_output_chars(content_for_cost),
         )
+        estimated += estimate_book_map(config, project_dir) if part is not None else 0.0
         ctx.set_estimated_cost(estimated)
         ctx.progress(2, 4)
+        # A part of a longer book first learns where it sits in it. The map
+        # is shared by the series and only rebuilt when the saved parts change.
+        book_map = (await ensure_book_map(config, project_dir, ctx, generate=_recording_generator(
+            config, project_dir, ctx)) if part is not None else None)
 
         console.print(f"[bold]Calling {config.effective_extraction_model()}...[/bold]")
         ctx.log(f"Calling {config.effective_extraction_model()}...")
@@ -738,7 +910,10 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
                 first_ordinal=first_ordinal,
             )
         else:
-            extract_result = await _extract_with_retry(config, system_prompt, novel_text)
+            extract_result = await _extract_with_retry(
+                config, system_prompt + WHOLE_SOURCE_INSTRUCTIONS, novel_text,
+                validate=_check_whole_source_sequences,
+            )
             story_bible = extract_result.value
         # Only this part's scenes are anchored in this part's text.
         unresolved = align_scene_openings(
@@ -777,6 +952,9 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime) -> StoryBibl
         if suppressed:
             ctx.log("Left out previously removed: " + ", ".join(suppressed), level="dim")
         story_bible = _text_only_damage_states(story_bible)
+        if book_map is not None:
+            if promoted := promote_recurring_cast(story_bible, book_map, part_key):
+                ctx.log("Recurring across the book, so Cast will design: " + ", ".join(promoted), level="dim")
         if registry is not None:
             story_bible.revision = registry.revision + 1
         artifacts.write_story_bible(project_dir, story_bible)
@@ -817,10 +995,11 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
         novel_text = ""
     registry = artifacts.read_story_bible_safe(project_dir) if part_number > 1 else None
     _require_anchored_registry(registry)
+    book_map = estimate_book_map(config, project_dir) if workspace_part_id(project_dir) else 0.0
     if registry is not None or len(novel_text) > config.extraction_chunk_chars:
-        return estimate_sections(config, novel_text, PROMPT_PATH.read_text(), registry=registry)
+        return book_map + estimate_sections(config, novel_text, PROMPT_PATH.read_text(), registry=registry)
     input_payload: str | int = PROMPT_PATH.read_text() + "\n" + novel_text
-    return estimate_text_cost(
+    return book_map + estimate_text_cost(
         config.effective_extraction_model(),
         input_payload,
         output_chars=estimate_story_bible_output_chars(novel_text),

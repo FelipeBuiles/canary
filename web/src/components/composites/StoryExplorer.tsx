@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import { MapPin, Users } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { readableAnchor } from "../../lib/visualAnchor";
+import { castCharacters } from "../../lib/castRoster";
 import type { Scene, StoryDecision } from "../../types/api";
 import { RoomTabs } from "./RoomTabs";
 
@@ -24,37 +25,40 @@ export function StoryExplorer({ story }: StoryExplorerProps) {
   const { t } = useI18n();
   const headingId = useId();
   const [view, setView] = useState<"scenes" | "characters" | "places">("scenes");
+  const narrativeScenes = story.scenes.filter((scene) => scene.scene_type !== "non_narrative");
+  const excludedSourceMatter = narrativeScenes.length < story.scenes.length;
+  const recurring = castCharacters(story);
   const characters = new Map(story.characters.map((character) => [character.id, character.name]));
   const locations = new Map(story.locations.map((location) => [location.id, location.name]));
-  const sceneNumbers = new Map(story.scenes.map((scene, index) => [scene.id, String(index + 1).padStart(2, "0")]));
-  const multipleChapters = new Set(story.scenes.map((scene) => scene.chapter)).size > 1;
+  const sceneNumbers = new Map(narrativeScenes.map((scene, index) => [scene.id, String(index + 1).padStart(2, "0")]));
+  const multipleChapters = new Set(narrativeScenes.map((scene) => scene.chapter)).size > 1;
   const tabs = [
-    { key: "scenes" as const, label: t("Scenes"), count: story.scenes.length },
-    { key: "characters" as const, label: t("Characters"), count: story.characters.length },
+    { key: "scenes" as const, label: t("Scenes"), count: narrativeScenes.length },
+    { key: "characters" as const, label: t("Characters"), count: recurring.length },
     { key: "places" as const, label: t("Places"), count: story.locations.length },
   ];
 
-  // Acts group the scene list when Extract found them; any scene an arc does
-  // not claim still appears, after the acts, so nothing is hidden.
-  const byId = new Map(story.scenes.map((scene) => [scene.id, scene]));
-  const arcs = [...(story.narrative_arcs ?? [])].sort((a, b) => a.act - b.act);
+  // Sequences group the scene list in reading order; any scene a sequence
+  // does not claim still appears, after them. Non-story source ranges remain
+  // in the citation index but aren't story action to display or adapt.
+  const byId = new Map(narrativeScenes.map((scene) => [scene.id, scene]));
   const claimed = new Set<string>();
-  const groups = arcs.map((arc) => {
-    const scenes = arc.scenes.flatMap((id) => {
+  const groups = (story.sequences ?? []).map((sequence) => {
+    const scenes = sequence.scenes.flatMap((id) => {
       const scene = byId.get(id);
       if (!scene || claimed.has(id)) return [];
       claimed.add(id);
       return [scene];
     });
-    return { key: `act-${arc.act}`, act: arc.act, title: arc.title, turningPoint: arc.turning_point, scenes };
+    return { key: `${sequence.part_id}-${sequence.number}`, number: sequence.number, title: sequence.title, turn: sequence.turn, scenes };
   }).filter((group) => group.scenes.length > 0);
-  const unclaimed = story.scenes.filter((scene) => !claimed.has(scene.id));
+  const unclaimed = narrativeScenes.filter((scene) => !claimed.has(scene.id));
   const grouped = groups.length > 0;
-  if (unclaimed.length) groups.push({ key: "more", act: 0, title: grouped ? t("More scenes") : "", turningPoint: null, scenes: unclaimed });
+  if (unclaimed.length) groups.push({ key: "more", number: 0, title: grouped ? t("More scenes") : "", turn: null, scenes: unclaimed });
 
   function sceneRow(scene: Scene, index: number, scenes: Scene[]) {
     const number = sceneNumbers.get(scene.id) ?? "";
-    const location = locations.get(scene.location_id);
+    const location = scene.location_id === null ? undefined : locations.get(scene.location_id);
     const cast = scene.character_ids.flatMap((id) => characters.get(id) ?? []);
     // A beat marks where the story moves; repeating it on every scene is noise.
     const beat = scene.narrative_beat === scenes[index - 1]?.narrative_beat ? "" : readablePhrase(scene.narrative_beat);
@@ -98,23 +102,24 @@ export function StoryExplorer({ story }: StoryExplorerProps) {
       />
 
       {view === "scenes" ? (
-        story.scenes.length ? (
+        narrativeScenes.length ? (
           <div className="space-y-10">
+            {excludedSourceMatter && <p className="text-sm text-ink-muted">{t("Author notes and other non-story material are excluded from adaptation.")}</p>}
             {groups.map((group) => (
               <section key={group.key} aria-label={group.title || undefined}>
                 {group.title && (
                   <header className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b-2 border-ink-black pb-3">
-                    {group.act > 0 && <span className="bg-narrator-gold px-2 py-1 font-meta text-[0.6rem] font-bold uppercase tracking-[0.12em] text-ink-black">{t("Act")} {group.act}</span>}
+                    {group.number > 0 && <span className="bg-narrator-gold px-2 py-1 font-meta text-[0.6rem] font-bold uppercase tracking-[0.12em] text-ink-black">{t("Sequence {number}", { number: group.number })}</span>}
                     <h3 className="font-display text-xl font-black uppercase leading-tight tracking-[-0.02em] md:text-2xl">{group.title}</h3>
                   </header>
                 )}
                 <ol className="divide-y divide-ink-black/15 border-b border-ink-black/15">
                   {group.scenes.map(sceneRow)}
                 </ol>
-                {group.turningPoint && (
+                {group.turn && (
                   <p className="mt-4 border-l-4 border-narrator-gold py-1 pl-4 text-sm leading-6 text-ink-black md:ml-[5.5rem]">
-                    <span className="mr-2 font-meta text-[0.65rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("Turning point")}</span>
-                    {group.turningPoint}
+                    <span className="mr-2 font-meta text-[0.65rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("Turn")}</span>
+                    {group.turn}
                   </p>
                 )}
               </section>
@@ -122,9 +127,9 @@ export function StoryExplorer({ story }: StoryExplorerProps) {
           </div>
         ) : <p className="py-8 text-sm text-ink-muted">{t("No scenes were extracted from this manuscript.")}</p>
       ) : view === "characters" ? (
-        story.characters.length ? (
+        recurring.length ? (
           <div className="grid gap-x-10 md:grid-cols-2">
-            {story.characters.map((character) => {
+            {recurring.map((character) => {
               const meta = [character.age_range, character.gender].filter(known);
               const affect = readablePhrase(character.baseline_affect);
               const firstScene = byId.get(character.first_appearance_scene);

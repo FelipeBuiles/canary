@@ -13,6 +13,23 @@ requirement was explicitly relaxed for built-in tools, live probes and
 ## Local developer configuration
 
 The optional SDK is lazy-loaded; API-only startup does not require it.
+All Codex text/vision and image-launching calls use
+[Fast mode](https://learn.chatgpt.com/docs/agent-configuration/speed#fast-mode).
+The adapter pins `service_tier="priority"` (Codex's canonical Fast request value)
+in its isolated configuration, thread and turn, and enables `features.fast_mode`.
+The selected model must advertise the priority tier before any turn is submitted;
+an unsupported tier or effective configuration/thread mismatch fails before
+generation. Requested and effective tiers remain in diagnostic usage metadata.
+Included subscription limits are consumed at 2.5× the Standard rate; purchased
+Codex credits and Enterprise pay-as-you-go usage are billed at 2×. Canary's
+subscription funding contract remains unchanged. This setting prioritizes the
+reasoning model; a speedup of the separate image tool has not been established.
+On October 2, 2026, read-only catalog and restricted ephemeral-thread preflight
+confirmed the priority tier for GPT-6.1 Sol, GPT-6 Sol, GPT-6 Luna, and the
+GPT-5.5 image reasoner, retaining the exact models and empty instruction sources.
+No generation turns were submitted; throughput and image rendering speed remain
+unverified. Restart the backend manually to load the changed adapter.
+
 Before using the default development launcher, explicitly install the optional
 SDK and bundled CLI into the existing backend environment, both pinned to 0.159.0:
 
@@ -141,8 +158,8 @@ action. There is no public provider selector. The first edition binds the reques
 `gpt-image-2` source selector, image reasoning selector and restricted runtime
 execution fingerprint; changing those controls cannot mix models into that edition.
 An existing edition requires its original execution profile, including its runtime
-fingerprint: runtime v6 does not silently upgrade an edition frozen under an older
-runtime. An existing production edition rejects Codex selection without rewriting
+fingerprint: runtime v7 binds Fast mode and does not silently upgrade an edition
+frozen under an older runtime. An existing production edition rejects Codex selection without rewriting
 it. This change provides no edition reset or migration action.
 
 All required approved authorities remain verbatim and ordered; none are dropped
@@ -213,6 +230,10 @@ internal `image_specification`. Only the native tool arguments are instructions
 for the built-in image call; internal specification fields must not be copied
 into that call as unsupported parameters. This is a clean runtime/provider-wire
 v3 cutover, not an old-wire compatibility shim.
+Runtime v7 retains those tool arguments and adds the priority service tier to
+the execution fingerprint and frozen image controls. Existing editions remain
+readable and exportable, but new pages/corrections require their original
+execution profile; use a new project for an incompatible edition.
 
 Canonical references use `reference_mode=fresh-thread-user-images`: only the
 supplied ordered image attachments enter a fresh thread. With references,
@@ -266,6 +287,13 @@ error**. In the older missing-image path, the diagnostic was lost with the
 ephemeral thread. Native parameter rejection can precede an image event, so an
 absent image event proves neither that no tool call was attempted nor that no
 allowance was consumed.
+
+SDK execution failures also retain `exception_type`. Typed SDK JSON-RPC
+rejections retain their RPC code and bounded, redacted message in
+`provider_error`, including after usage metadata compaction. Untyped exception
+messages and raw RPC data remain excluded. An older generic
+`sdk_execution_failed` record cannot establish its underlying cause if those
+details were discarded; request size alone is not proof of a transport limit.
 
 Failed image-tool items retain `image_tool_status` and `image_tool_error` in
 the usage event's `metadata_json.codex_runtime`. The latter records the result's

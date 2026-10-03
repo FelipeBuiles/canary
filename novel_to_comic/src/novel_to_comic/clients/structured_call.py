@@ -105,6 +105,7 @@ async def generate_validated_json(
     label: str,
     feature: str,
     max_output_tokens: int | None = None,
+    json_schema: dict | None = None,
     retries: int = 2,
     temperatures: Sequence[float] = (0.4,),
     validate: Callable[[T], None] | None = None,
@@ -132,6 +133,7 @@ async def generate_validated_json(
                 temperature=temperature,
                 max_output_tokens=max_output_tokens,
                 feature=feature,
+                **({"json_schema": json_schema} if json_schema is not None else {}),
             )
         except AIStructuredResponseError as exc:
             raise AIStructuredResponseError(

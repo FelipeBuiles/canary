@@ -54,7 +54,7 @@ function NewProjectModal({ isOpen, onClose, initialStoryCode }: { isOpen: boolea
           onSuccess: (data) => {
             queryClient.removeQueries({ queryKey: ["project", data.id] });
             onClose();
-            navigate(`/project/${encodeURIComponent(data.id)}/story`);
+            navigate(`/project/${encodeURIComponent(partProjectKey(data.id, data.part_id))}/story`);
           },
         },
       );

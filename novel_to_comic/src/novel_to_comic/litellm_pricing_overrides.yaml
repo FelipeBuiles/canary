@@ -6,6 +6,7 @@ aliases:
   gpt-6.1-sol: openai/gpt-6.1-sol
   gpt-6-sol: openai/gpt-6-sol
   gpt-6-luna: openai/gpt-6-luna
+  gemini-3.8-flash: vertex_ai/gemini-3.8-flash
   claude-opus-5-5: anthropic/claude-opus-5-5
   claude-sonnet-5-5: anthropic/claude-sonnet-5-5
   deepseek-v4.1-flash: together_ai/deepseek-ai/DeepSeek-V4.1-Flash
@@ -13,6 +14,17 @@ aliases:
   image-sunburst: openai/gpt-image-2.5/sunburst
   image-sunburst-openai: openai/gpt-image-2.5-sunburst
 model_overrides:
+  # https://cloud.google.com/vertex-ai/generative-ai/pricing (2026-10-02).
+  # Global introductory USD rates through 2026-12-31; review before 2027.
+  # Bare key also covers the model name Vertex returns in usage responses.
+  gemini-3.8-flash:
+    input_cost_per_token: 7.5e-07
+    cache_read_input_token_cost: 7.5e-08
+    output_cost_per_token: 3.75e-06
+    output_cost_per_reasoning_token: 3.75e-06
+    mode: chat
+    max_input_tokens: 1048576
+    max_output_tokens: 65536
   # https://developers.openai.com/api/docs/models/gpt-6.1-sol (2026-09-29)
   # Shared by the production API route and Labs Codex subscription usage.
   gpt-6.1-sol:

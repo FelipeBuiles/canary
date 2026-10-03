@@ -15,6 +15,12 @@ from typing import Any
 
 _MAX_MESSAGE = 2_000
 _MAX_TRACEBACK = 12_000
+# Runtime evidence fields that explain a failure without request content.
+_RUNTIME_EVIDENCE = (
+    "timeout_seconds", "timeout_owner", "submitted", "indeterminate", "model", "service_tier",
+    "thread_id", "turn_id", "input_tokens", "output_tokens", "last_notification_elapsed_seconds",
+    "execution_elapsed_seconds", "events", "provider_error",
+)
 
 
 def local_diagnostics_enabled() -> bool:
@@ -78,6 +84,13 @@ def record_diagnostic(
         record["traceback"] = detail[-_MAX_TRACEBACK:]
     if error is not None:
         record["error_type"] = type(error).__name__
+        metadata = getattr(error, "metadata", None)
+        if isinstance(metadata, dict):
+            evidence = {key: metadata[key] for key in _RUNTIME_EVIDENCE if key in metadata}
+            if isinstance(evidence.get("events"), list):
+                evidence["events"] = evidence["events"][-20:]
+            if evidence:
+                record["runtime_evidence"] = evidence
     if extra:
         record["details"] = extra
 

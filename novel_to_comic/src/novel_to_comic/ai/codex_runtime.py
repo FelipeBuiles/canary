@@ -28,7 +28,8 @@ from novel_to_comic.ai.errors import AIRefusalError
 
 SDK_VERSION = "0.159.0"
 RUNTIME_VERSION = "0.159.0"
-EXECUTION_VERSION = "canary-codex-subprocess-v6-image-tool-arguments"
+EXECUTION_VERSION = "canary-codex-subprocess-v7-fast-service-tier"
+SERVICE_TIER = "priority"  # Codex's canonical request value for Fast mode.
 IMAGE_SOURCE_SELECTOR = "gpt-image-2"
 PROVIDER = "canary_codex_subscription"
 TIMEOUT_SECONDS = 300
@@ -40,7 +41,7 @@ CHILD_CLEANUP_SECONDS = 15
 MAX_IMAGE_BYTES = 32 * 1024 * 1024
 MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 EXECUTION_FINGERPRINT = hashlib.sha256(
-    f"{EXECUTION_VERSION}:{SDK_VERSION}:{RUNTIME_VERSION}:gpt-image-2:retries0".encode()
+    f"{EXECUTION_VERSION}:{SDK_VERSION}:{RUNTIME_VERSION}:{SERVICE_TIER}:gpt-image-2:retries0".encode()
 ).hexdigest()
 _ENV_KEYS = ("HOME", "LANG", "LC_ALL", "SYSTEMROOT", "WINDIR")
 _LOCK = asyncio.Lock()
@@ -56,6 +57,7 @@ def image_execution_controls() -> tuple[tuple[str, str], ...]:
     return (
         ("sdk_version", SDK_VERSION), ("runtime_version", RUNTIME_VERSION),
         ("adapter_version", EXECUTION_VERSION), ("execution_fingerprint", EXECUTION_FINGERPRINT),
+        ("service_tier", SERVICE_TIER),
         ("source_image_selector", IMAGE_SOURCE_SELECTOR), ("actual_image_model", "unknown"),
         ("transport_retries", "0"), ("reference_limit", "5"),
         ("reference_mode", "fresh-thread-user-images"),
@@ -116,10 +118,20 @@ class CodexRuntimeError(RuntimeError):
         reason = provider.get("message") if isinstance(provider, dict) else None
         if code == "runtime_capacity":
             reason = "Selected model is temporarily at capacity. Retry the same model later."
+        if code == "fast_mode_unsupported":
+            reason = "Selected Codex model does not advertise Fast mode. Choose a model with the priority service tier."
         if code == "image_tool_failed":
             reason = _image_tool_failure_reason(self.metadata) or reason
         if code == "runtime_timeout" and self.metadata.get("timeout_seconds"):
             message = f"{code}: Canary stopped the request after {self.metadata['timeout_seconds']} seconds without a completed result."
+            # Distinguish a model still working from a stalled connection.
+            last = self.metadata.get("last_notification_elapsed_seconds")
+            if isinstance(last, (int, float)):
+                message += f" Model activity until {last:.0f}s"
+                output = self.metadata.get("output_tokens")
+                message += f" ({output} output tokens)." if isinstance(output, int) else "."
+            elif self.metadata.get("submitted"):
+                message += " The model sent no activity after the request was submitted."
             if reason:
                 message += f" Last connection status: {reason}"
             super().__init__(message)
@@ -305,6 +317,18 @@ def _diagnostic_message(message: Any, request: dict[str, Any]) -> str | None:
     message = re.sub(r"https?://\S+", "[REDACTED URL]", message)
     message = " ".join("".join(char for char in message if char.isprintable()).split())
     return (message[:509] + "..." if len(message) > 512 else message) or None
+
+
+def _sdk_failure_diagnostic(error: BaseException, request: dict[str, Any]) -> dict[str, Any]:
+    """Retain typed RPC rejection reasons without SDK payloads or transcripts."""
+    from openai_codex.errors import JsonRpcError
+
+    if not isinstance(error, JsonRpcError):
+        return {}
+    diagnostic = {"rpc_code": error.code}
+    if message := _diagnostic_message(error.message, request):
+        diagnostic["message"] = message
+    return diagnostic
 
 
 def validate_image_bytes(data: bytes, mime: str | None = None) -> dict[str, Any]:
@@ -593,6 +617,7 @@ def _config(root: Path, request: dict[str, Any], profile: str) -> dict[str, Any]
     return {
         **({"model_reasoning_effort": request["effort"]} if request.get("effort") else {}),
         "model_provider": PROVIDER,
+        "service_tier": SERVICE_TIER,
         "forced_login_method": "chatgpt", "approval_policy": "never",
         "approvals_reviewer": "user", "web_search": "disabled", "notify": [],
         "project_doc_max_bytes": 0, "project_doc_fallback_filenames": [],
@@ -600,6 +625,7 @@ def _config(root: Path, request: dict[str, Any], profile: str) -> dict[str, Any]
         "skills": {"include_instructions": False, "bundled": {"enabled": False}},
         "orchestrator": {"mcp": {"enabled": False}, "skills": {"enabled": False}},
         "features": {**{key: False for key in _DISABLED_FEATURES},
+                     "fast_mode": True,
                      "image_generation": request["kind"] == "image"},
         "agents": {"enabled": False}, "memories": {"use_memories": False},
         "analytics": {"enabled": False},
@@ -697,6 +723,7 @@ async def _execute(root: Path, request: dict[str, Any], evidence: dict[str, Any]
         request_id=request.get("request_id"),
         prompt_sha256=hashlib.sha256(request["prompt"].encode("utf-8")).hexdigest(),
         transport_profile=PROVIDER,
+        requested_service_tier=SERVICE_TIER,
         usage_scope="reasoning_thread_only",
         image_tool_usage_available=False,
     )
@@ -745,6 +772,8 @@ async def _execute(root: Path, request: dict[str, Any], evidence: dict[str, Any]
         selected = next((model for model in models.data if model.model == request["model"]), None)
         if selected is None:
             raise CodexRuntimeError("model_not_selectable")
+        if not any(tier.id == SERVICE_TIER for tier in selected.service_tiers or ()):
+            raise CodexRuntimeError("fast_mode_unsupported")
         if (request["kind"] == "image" or request["references"]) and not any(
             getattr(modality, "value", modality) == "image" for modality in selected.input_modalities or ()
         ):
@@ -795,12 +824,15 @@ async def _execute(root: Path, request: dict[str, Any], evidence: dict[str, Any]
         inputs.insert(0, {"type": "text", "text": prompt, "text_elements": []})
         thread = await client.thread_start({
             "model": request["model"], "modelProvider": PROVIDER, "cwd": str(workspace),
+            "serviceTier": SERVICE_TIER,
             "approvalPolicy": "never", "ephemeral": True,
             "baseInstructions": instructions, "developerInstructions": "",
         })
+        evidence["service_tier"] = thread.service_tier
         evidence["thread_checks"] = {
             "model_matches": thread.model == request["model"],
             "provider_matches": thread.model_provider == PROVIDER,
+            "service_tier_matches": thread.service_tier == SERVICE_TIER,
             "instruction_sources_count": len(thread.instruction_sources or ()),
             "instruction_source_kinds": [
                 "workspace" if Path(str(source.root)).is_relative_to(workspace) else
@@ -814,6 +846,8 @@ async def _execute(root: Path, request: dict[str, Any], evidence: dict[str, Any]
             raise CodexRuntimeError("effective_thread_model_conflict")
         if thread.model_provider != PROVIDER:
             raise CodexRuntimeError("effective_thread_provider_conflict")
+        if thread.service_tier != SERVICE_TIER:
+            raise CodexRuntimeError("effective_thread_service_tier_conflict")
         if thread.instruction_sources:
             raise CodexRuntimeError("effective_thread_instructions_conflict")
         if thread.sandbox.root.type != "readOnly" or thread.sandbox.root.network_access:
@@ -857,8 +891,10 @@ async def _execute(root: Path, request: dict[str, Any], evidence: dict[str, Any]
             return {"model": thread.model, "metadata": evidence}
         evidence.update(submitted=None, indeterminate=True)
         _save_evidence(root, evidence)
-        started = await client.turn_start(thread.thread.id, inputs,
-                                          {"outputSchema": request.get("schema")} if request.get("schema") else {})
+        started = await client.turn_start(thread.thread.id, inputs, {
+            "serviceTier": SERVICE_TIER,
+            **({"outputSchema": request["schema"]} if request.get("schema") else {}),
+        })
         evidence.update(turn_id=started.turn.id, submitted=True)
         turn_started = asyncio.get_running_loop().time()
         _save_evidence(root, evidence)
@@ -992,6 +1028,7 @@ async def _child(root: Path) -> None:
 
     lock_fd = None
     parent_watch = None
+    request = {}
     task = asyncio.current_task()
     asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, task.cancel)
     _save_evidence(root, evidence)
@@ -1020,6 +1057,12 @@ async def _child(root: Path) -> None:
             # Keep the failure class for local diagnostics without recording SDK
             # exception text, which may include a response or request payload.
             evidence["exception_type"] = type(exc).__name__
+            try:
+                diagnostic = _sdk_failure_diagnostic(exc, request)
+            except ImportError:
+                diagnostic = {}
+            if diagnostic:
+                evidence["provider_error"] = diagnostic
         code = exc.code if isinstance(exc, CodexRuntimeError) else (
             "runtime_timeout" if isinstance(exc, asyncio.TimeoutError) else
             "runtime_cancelled" if isinstance(exc, asyncio.CancelledError) else

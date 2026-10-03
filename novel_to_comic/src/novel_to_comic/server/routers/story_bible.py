@@ -122,6 +122,7 @@ def _saved(bible: StoryBible, **extra) -> dict:
 def story_bible_editor(project=Depends(get_project)):
     """The Story Bible with what the editor needs to keep edits safe."""
     from novel_to_comic.stages.s3_cast import reference_freshness
+    from novel_to_comic.cast_roster import story_bible_api_view
 
     root, config, _state = project
     with _edit_errors():
@@ -136,7 +137,7 @@ def story_bible_editor(project=Depends(get_project)):
     for (entity_id, state_id), titles in states.items():
         state_citations.setdefault(entity_id, {})[state_id] = titles
     return {
-        "story_bible": bible,
+        "story_bible": story_bible_api_view(bible, root),
         "revision": bible.revision,
         "parts": parts,
         "editable_scene_ids": sorted(editable_scene_ids(root, bible)),

@@ -1,6 +1,7 @@
 import type { CostEstimate } from "../../types/api";
 import { CreditAmount } from "../ui/CreditAmount";
 import { useI18n } from "../../i18n";
+import { fundingLabel } from "../../modelFunding";
 import {
   CONFIDENCE_LABELS,
   ESTIMATE_ONLY_HELPER,
@@ -24,7 +25,9 @@ export function CostBreakdown({ cost }: CostBreakdownProps) {
     return (
       <div className="mt-4 border-[2px] border-narrator-gold/35 bg-chip-gold/20 p-4">
         <p className="font-meta text-xs leading-5 tracking-[0.04em] text-ink-muted">
-          {t(ZERO_COST_COPY)}
+          {cost.funding && cost.funding !== "api"
+            ? t("Included in your {plan}", { plan: t(fundingLabel(cost.funding)) })
+            : t(ZERO_COST_COPY)}
         </p>
       </div>
     );

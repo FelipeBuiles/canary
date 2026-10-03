@@ -13,6 +13,8 @@ from novel_to_comic.narrative_instructions import BRIEF_DEPICTION_GUIDANCE
 from novel_to_comic.models.adaptation import AdaptationBrief
 from novel_to_comic.models.source import SourceDocument
 from novel_to_comic.models.story_bible import StoryBible, story_bible_context
+from novel_to_comic.cast_roster import cast_character_ids
+from novel_to_comic.book_context import book_context_instructions
 from novel_to_comic.target_artifacts import TargetArtifacts
 
 logger = logging.getLogger("canary.briefing")
@@ -44,9 +46,15 @@ def story_page_envelope(
     part_id: str | None = None,
 ) -> tuple[int, int]:
     """The recommended page range for one part's source (or a whole book)."""
-    scenes = [scene for scene in story_bible.scenes if part_id is None or scene.part_id == part_id]
+    scenes = [scene for scene in story_bible.scenes if scene.scene_type != "non_narrative"
+              and (part_id is None or scene.part_id == part_id)]
+    narrative_ids = {scene.id for scene in scenes}
+    units = {unit.id: unit for unit in source.units}
+    narrative_text = "".join(source.text[units[scene.first_unit_id].start_offset:
+                                         units[scene.last_unit_id].end_offset]
+                             for scene in source.scenes if scene.id in narrative_ids)
     return recommended_page_envelope(
-        word_count=len(source.text.split()),
+        word_count=len(narrative_text.split()),
         scene_count=len(scenes),
     )
 
@@ -62,9 +70,18 @@ def inherited_brief_fields(brief: AdaptationBrief) -> dict[str, Any]:
     return {field: getattr(brief, field) for field in SERIES_BRIEF_FIELDS}
 
 
+def brief_inference_schema(*, inherited: Mapping[str, Any] | None = None) -> dict:
+    """Request only inferred story direction; code owns approval and inheritance."""
+    schema = AdaptationBrief.model_json_schema()
+    owned = {"revision", "content_sha256", "status", *(inherited or {})}
+    schema["properties"] = {name: value for name, value in schema["properties"].items() if name not in owned}
+    schema["required"] = [name for name in schema.get("required", []) if name not in owned]
+    return schema
+
+
 def part_story_view(story_bible: StoryBible, part_id: str) -> dict[str, Any]:
-    """The Story Bible as one part's Brief sees it: its own scenes and acts and
-    the characters and places in them. Later parts never leak into a Brief."""
+    """The Story Bible as one part's Brief sees it: its own scenes and sequences
+    and the characters and places in them. Later parts never leak into a Brief."""
     context = story_bible_context(story_bible)
     scenes = [scene for scene in context["scenes"] if scene["part_id"] == part_id]
     characters = {cid for scene in scenes for cid in scene["character_ids"]}
@@ -74,24 +91,21 @@ def part_story_view(story_bible: StoryBible, part_id: str) -> dict[str, Any]:
         total_scenes=len(scenes),
         characters=[c for c in context["characters"] if c["id"] in characters],
         locations=[loc for loc in context["locations"] if loc["id"] in locations],
-        narrative_arcs=[arc for arc in context["narrative_arcs"] if arc["part_id"] == part_id],
+        sequences=[sequence for sequence in context["sequences"] if sequence["part_id"] == part_id],
     )
     return context
 
 
 def story_so_far(story_bible: StoryBible, part_id: str) -> dict[str, Any]:
-    """Compact continuity from earlier parts: their acts and the previous part's scenes."""
+    """The previous part's scenes, for direct continuity.
+
+    Earlier parts reach a Brief through the book map's bounded slice instead.
+    """
     from novel_to_comic.workspace import part_id as part_identifier, part_ordinal
 
     ordinal = part_ordinal(part_id)
-    earlier = {part_identifier(number) for number in range(1, ordinal)}
     previous = part_identifier(ordinal - 1) if ordinal > 1 else None
     return {
-        "earlier_acts": [
-            {"part_id": arc.part_id, "act": arc.act, "title": arc.title,
-             "turning_point": arc.turning_point}
-            for arc in story_bible.narrative_arcs if arc.part_id in earlier
-        ],
         "previous_part_scenes": [
             {"title": scene.title, "summary": scene.summary}
             for scene in story_bible.scenes if scene.part_id == previous
@@ -102,8 +116,8 @@ def story_so_far(story_bible: StoryBible, part_id: str) -> dict[str, Any]:
 _SERIES_INSTRUCTIONS = (
     "This source is one part of a longer series. series_direction holds the series' "
     "approved tone, point of view, narrator treatment, themes, motifs and transformation "
-    "level: repeat them unchanged. story_so_far summarizes earlier parts for continuity "
-    "only. Infer story_promises, ambiguities, protected_language, essential_events, "
+    "level: code inherits them unchanged; do not return these fields. story_so_far gives the "
+    "previous part's scenes for continuity only. Infer story_promises, ambiguities, protected_language, essential_events, "
     "character_turns, desired_emphasis and the page range from THIS part's source units; "
     "do not list earlier parts' events as this part's essential events. "
 )
@@ -124,50 +138,106 @@ def build_brief_inference_prompt(
     *,
     part_id: str | None = None,
     previous_brief: AdaptationBrief | None = None,
+    book: dict[str, Any] | None = None,
 ) -> str:
     """Compile the target Brief inference contract from canonical Story inputs.
 
     A part sees only its own scenes; a later part also receives the inherited
-    series direction and a compact summary of the story so far.
+    series direction and the previous part's scenes. ``book`` places a part of
+    a multi-part book: its position and, when mapped, the book's slice for it.
     """
 
     page_minimum, page_maximum = story_page_envelope(source, story_bible, part_id=part_id)
+    # Brief returns editorial direction, not unit citations or visual assets.
+    # Materialize each primary scene range once instead of wrapping every
+    # sentence in JSON or repeating the appearance catalogs needed by Cast.
+    units = {unit.id: unit for unit in source.units}
+    story = (story_bible_context(story_bible) if part_id is None
+             else part_story_view(story_bible, part_id))
+    fields = {
+        'characters': {'id', 'name', 'aliases', 'age_range', 'gender', 'relationships',
+                       'identity_kind', 'visual_anchor', 'distinguishing_features', 'default_outfit'},
+        'locations': {'id', 'name', 'aliases', 'visual_anchor'},
+        'props': {'id', 'name', 'aliases', 'visual_anchor'},
+    }
+    local_scenes = {scene['id'] for scene in story['scenes']}
+    scene_order = {scene.id: index for index, scene in enumerate(story_bible.scenes)}
+    first_local = min((scene_order[sid] for sid in local_scenes), default=len(scene_order))
+    continuity = {}
+    for field in fields:
+        for entity in story[field]:
+            activations = [activation for activation in entity['appearance_timeline']
+                           if activation['at']['scene_id'] in local_scenes]
+            previous = [activation for activation in entity['appearance_timeline']
+                        if scene_order[activation['at']['scene_id']] < first_local]
+            carried = previous[-1]['state_id'] if previous else None
+            active_ids = {activation['state_id'] for activation in activations} | {carried}
+            states = [{key: state[key] for key in ('id', 'label', 'visual_anchor', 'continuity_guard')}
+                      for state in entity['appearance_states'] if state['id'] in active_ids]
+            if states:
+                continuity[entity['id']] = {'carried_state_id': carried, 'states': states,
+                    'activations': [{'state_id': activation['state_id'], 'at': activation['at']}
+                                    for activation in activations]}
+    for field, included in fields.items():
+        story[field] = [{key: value for key, value in entity.items() if key in included}
+                        for entity in story[field]]
+    scene_fields = {'id', 'part_id', 'chapter', 'title', 'location_id',
+                    'character_ids', 'scene_type', 'narrative_beat'}
+    story['scenes'] = [{key: value for key, value in scene.items() if key in scene_fields}
+                       for scene in story['scenes']]
+    story['cast_character_ids'] = sorted(cast_character_ids(story_bible)
+                                         & {character['id'] for character in story['characters']})
+    story['visual_continuity'] = continuity
+    scene_types = {scene['id']: scene['scene_type'] for scene in story['scenes']}
     context = {
         "source_sha256": source.source_sha256,
         "recommended_page_envelope": {
             "minimum": page_minimum,
             "maximum": page_maximum,
         },
-        "source_units": [
-            unit.model_dump(mode="json", include={"id", "text"})
-            for unit in source.units
-        ],
         "source_scenes": [
-            scene.model_dump(mode="json")
+            {"id": scene.id, "scene_type": scene_types.get(scene.id), "text": source.text[
+                units[scene.first_unit_id].start_offset:units[scene.last_unit_id].end_offset]}
             for scene in source.scenes
         ],
-        "story_bible": (story_bible_context(story_bible) if part_id is None
-                        else part_story_view(story_bible, part_id)),
+        "story_bible": story,
     }
     series = ""
     if previous_brief is not None and part_id is not None:
         context["series_direction"] = inherited_brief_fields(previous_brief)
         context["story_so_far"] = story_so_far(story_bible, part_id)
         series = _SERIES_INSTRUCTIONS
+    if book:
+        context["book_context"] = book
+        series = book_context_instructions(book, stage="brief") + series
+    fields = brief_inference_schema(inherited=context.get("series_direction"))["properties"]
+    transformation = (
+        "transformation_level is exactly one of 'faithful', 'medium_specific', or 'transformative'. "
+        if "transformation_level" in fields else ""
+    )
     return (
         series
-        + "Infer an adaptation brief from the canonical source units and Story Bible. "
-        "Return one JSON object containing story_promises, themes, point_of_view, "
-        "narrator_treatment, tone, ambiguities, motifs, protected_language, "
-        "essential_events, character_turns, transformation_level, "
-        "desired_emphasis, target_page_min, and target_page_max. "
-        "story_promises, themes, ambiguities, motifs, protected_language, "
-        "essential_events, character_turns, and desired_emphasis are arrays of "
+        + "Infer an adaptation brief from the complete canonical source and Story Bible. "
+        "source_scenes partitions the full, verbatim source text in reading order; "
+        "no text is omitted or repeated. Each passage is a derived view of immutable source units. "
+        "Prioritize the recurring and author-selected cast_character_ids for ongoing character "
+        "arcs; infrequent participants can matter to individual events without needing an arc. "
+        "Keep principal bosses, on-page creatures and named companions in essential events "
+        "even when they appear briefly. identity_kind='group' is one shared design; source "
+        "passages and summaries retain the number of members and their actions. "
+        "Read stated physical facts and visual_continuity when interpreting identities and "
+        "motifs. Persistent equipped objects stay present through later looks until removed; "
+        "a crown motif must agree with its wearer's equipped states. Never upgrade a stated "
+        "child to an adult, invent unstated physical detail, or substitute an occupation for "
+        "anatomy. Record specific unresolved source/catalog contradictions in ambiguities; "
+        "a reading that resolves on reflection is not one (the small hours of a day belong "
+        "to the night before). "
+        + f"Return one JSON object containing {', '.join(fields)}. "
+        "Use plain strings for text fields; list fields are arrays of "
         "plain strings, never objects. Write character_turns as sentences naming "
-        "the character and their change. point_of_view, narrator_treatment, and "
-        "tone are plain strings. transformation_level is exactly one of "
-        "'faithful', 'medium_specific', or 'transformative'. target_page_min and "
-        "target_page_max are positive integers, with min <= max. "
+        "the character and their change. "
+        + transformation
+        + "target_page_min and target_page_max are positive integers, with min <= max. "
         "The context contains a calibrated recommended_page_envelope. Both "
         "target_page_min and target_page_max MUST remain inside that envelope. "
         "Choose a useful editorial range within it; it is an editable narrative "
@@ -175,6 +245,9 @@ def build_brief_inference_prompt(
         "source units, sentences, paragraphs, or prose pages with comic pages, "
         "and do not assign one page per source unit. "
         "Do not return approval status or revision metadata. "
+        "Scenes with scene_type non_narrative retain source matter such as credits "
+        "or recommendations; do not turn them into story promises, character turns "
+        "or essential events. "
         + BRIEF_DEPICTION_GUIDANCE
         + "\n"
         + json.dumps(

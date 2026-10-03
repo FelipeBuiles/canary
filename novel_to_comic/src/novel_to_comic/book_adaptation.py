@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from novel_to_comic.narrative_instructions import ADAPT_DEPICTION_GUIDANCE
 from novel_to_comic.ai.context import ai_source_context, execution_observer, stream_observer
+from novel_to_comic.book_context import book_context_instructions
 from novel_to_comic.briefing import require_approved_brief
 from novel_to_comic.model_costs import get_pricing_resolver
 from novel_to_comic.models.adaptation import (
@@ -1428,8 +1429,8 @@ def _story_bible_view(
             }
             for scene in scenes
         ],
-        "narrative_arcs": [
-            arc.model_dump(mode="json") for arc in story_bible.narrative_arcs
+        "sequences": [
+            sequence.model_dump(mode="json") for sequence in story_bible.sequences
         ],
     }
 
@@ -1459,7 +1460,7 @@ def _scene_obligations(
             ),
         }
         for scene in story_bible.scenes
-        if scene_ids is None or scene.id in scene_ids
+        if (scene_ids is None or scene.id in scene_ids) and scene.scene_type != "non_narrative"
     ]
 
 
@@ -1490,7 +1491,8 @@ def build_narrative_treatment_prompt(
 ) -> str:
     """Compile the book-wide editorial treatment prompt from canonical inputs.
 
-    A later part's treatment also receives ``continuity`` from earlier parts.
+    A part of a multi-part book receives ``continuity``: its place in the book
+    and, for a later part, what the earlier parts' adaptations established.
     """
 
     context = {
@@ -1513,13 +1515,19 @@ def build_narrative_treatment_prompt(
         "approved_requirement_registry": _requirement_registry(brief),
     }
     series = ""
-    if continuity:
-        context["story_so_far"] = continuity
+    book = (continuity or {}).get("book_context")
+    earlier = {key: value for key, value in (continuity or {}).items() if key != "book_context"}
+    if earlier:
+        context["story_so_far"] = earlier
         series = _CONTINUITY_CONTRACT
+    if book:
+        context["book_context"] = book
+        series = book_context_instructions(book, stage="adapt") + series
     return (
         series
-        + "Create one book-wide narrative treatment for the complete adaptation. "
-        "Write a finished editorial story outline for the comic's creative team. "
+        + ("Create one narrative treatment for this part's adaptation. " if book
+           else "Create one book-wide narrative treatment for the complete adaptation. ")
+        + "Write a finished editorial story outline for the comic's creative team. "
         "Each field describes the fictional story: its events, character arcs, "
         "and presentation. Return the editorial deliverable only, without an "
         "account of your internal deliberations or hidden reasoning. "
@@ -1537,6 +1545,9 @@ def build_narrative_treatment_prompt(
         "speak. Distinguish an event's first mention, testimony or recollection, "
         "and its enacted occurrence; specify that presentation in the treatment "
         "so local authors do not dramatize it anew each time it is referenced. "
+        "Non-narrative source spans (credits, acknowledgements, promotional matter) "
+        "are not fictional events or required dramatic scenes. Keep them out of "
+        "essential events and character arcs; retain their source accounting. "
         "Return only the "
         "narrative-treatment JSON object. "
         + ADAPT_DEPICTION_GUIDANCE
@@ -1574,6 +1585,10 @@ _SCENE_SCOPE_CONTRACT = (
     "visualizing a recollection, make its entry and return clear to the reader. "
     "Carry consequential reactions and causal links where supported, but do not "
     "invent a separate reaction, ominous pause, or recap for every fact or fragment. "
+    "A scene_type of non_narrative identifies source matter such as credits or "
+    "promotional recommendations, not required story action. Account for it with "
+    "explicit intentional-omission ledger exceptions and reasons instead of "
+    "inventing characters, settings or dramatic beats. "
 )
 
 

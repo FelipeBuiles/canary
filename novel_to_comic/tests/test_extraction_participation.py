@@ -5,6 +5,7 @@ import pytest
 from novel_to_comic.stages.s1_extract import (
     _ParticipationQuoteMismatch,
     _UnresolvedSceneOpenings,
+    _UnclassifiedCharacters,
     _parse_extraction,
     _participation_quote_correction,
 )
@@ -40,7 +41,7 @@ def _payload():
     return {
         "title": "Crossing", "author": "Unknown", "total_scenes": 3,
         "characters": characters, "locations": [], "scenes": scenes,
-        "narrative_arcs": [], "props": [],
+        "sequences": [], "props": [],
         "character_participation": [
             {"character_id": character_id, "scene_id": scene_id,
              "classification": classification, "source_quote": quote}
@@ -129,6 +130,31 @@ def test_extraction_recovers_missing_evidence_for_a_rostered_participant():
     assert now.character_ids == ["Ari"]
 
 
+def test_unclassified_candidates_are_named_for_one_targeted_correction():
+    payload = _payload()
+    for cid, name in [("residents", "Elderly residents"), ("stranger", "Unseen stranger")]:
+        payload["characters"].append({**payload["characters"][0], "id": cid, "name": name})
+
+    with pytest.raises(_UnclassifiedCharacters) as error:
+        _parse_extraction(payload, SOURCE)
+
+    assert error.value.characters == (
+        ("residents", "Elderly residents", "now"), ("stranger", "Unseen stranger", "now"),
+    )
+    assert "residents ('Elderly residents')" in str(error.value)
+    assert "stranger ('Unseen stranger')" in str(error.value)
+    correction = _participation_quote_correction(error.value)
+    assert "character_id='residents', name='Elderly residents', first_appearance_scene='now'" in correction
+    assert "direct_action or staged_recollection" in correction
+    assert "remove its Character entry" in correction
+    assert "Never invent" in correction
+    assert "entire corrected Story Bible JSON object" in correction
+    # The rejected payload stays intact for the model; no classification or
+    # visual membership was inferred from a character definition alone.
+    assert len(payload["characters"]) == 6
+    assert all("residents" not in scene["character_ids"] for scene in payload["scenes"])
+
+
 def test_ungrounded_evidence_reports_its_unresolved_scene_opening():
     payload = _payload()
     payload["scenes"][0]["source_start_quote"] = "Not a source sentence."
@@ -189,6 +215,36 @@ def test_background_evidence_for_an_undefined_character_is_dropped_locally():
     assert "stranger" not in {character.id for character in bible.characters}
     payload["character_participation"][-1]["classification"] = "direct_action"
     with pytest.raises(ValueError, match="Undefined character IDs: \\['stranger'\\]"):
+        _parse_extraction(payload, SOURCE)
+
+
+def test_undefined_background_character_relationships_are_removed_with_its_evidence():
+    payload = _payload()
+    payload["characters"] = [character for character in payload["characters"] if character["id"] != "Jo"]
+    payload["scenes"][0]["character_ids"].remove("Jo")
+    payload["characters"][1]["relationships"] = [{"character_id": "Jo", "relationship": "friend"}]
+
+    bible = _parse_extraction(payload, SOURCE)
+
+    assert [character.id for character in bible.characters] == ["Ari", "Ren", "keeper"]
+    assert all(not character.relationships for character in bible.characters)
+    assert [scene.character_ids for scene in bible.scenes] == [["Ari"], ["Ren"], ["keeper"]]
+    assert "Jo is in a photo" in bible.scenes[0].summary
+    # Keep the provider response intact for checkpoint replay and correction.
+    assert payload["characters"][0]["relationships"][0]["character_id"] == "Jo"
+    assert any(evidence["character_id"] == "Jo" for evidence in payload["character_participation"])
+
+
+def test_background_evidence_never_hides_undefined_staged_participation():
+    payload = _payload()
+    payload["characters"] = [character for character in payload["characters"] if character["id"] != "Jo"]
+    payload["scenes"][0]["character_ids"].remove("Jo")
+    payload["character_participation"].append({
+        "character_id": "Jo", "scene_id": "memory",
+        "classification": "staged_recollection", "source_quote": "Ren pulled the injured sailor aboard",
+    })
+
+    with pytest.raises(ValueError, match="Undefined character IDs: \\['Jo'\\]"):
         _parse_extraction(payload, SOURCE)
 
 

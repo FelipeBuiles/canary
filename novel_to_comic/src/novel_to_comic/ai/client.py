@@ -692,6 +692,8 @@ def _metadata(
 def _provider_from_model(model: str | None) -> str:
     if not model:
         return "litellm"
+    if provider := text_wire(model).provider_key:
+        return provider
     lower = model.lower()
     if "/" in lower:
         return lower.split("/", 1)[0]

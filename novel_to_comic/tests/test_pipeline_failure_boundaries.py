@@ -349,7 +349,7 @@ async def test_plan_estimate_rejects_a_blank_visual_anchor_with_an_instruction(t
 
     state, _ = existing_project(tmp_path)
     write_story_bible(tmp_path, StoryBible(
-        title="Book", author="Author", total_scenes=0, scenes=[], locations=[], narrative_arcs=[],
+        title="Book", author="Author", total_scenes=0, scenes=[], locations=[], sequences=[],
         characters=[Character(
             id="char_001", name="Ari", visual_anchor="", age_range="adult", gender="male",
             distinguishing_features=[], default_outfit="coat", first_appearance_scene="scene_001",

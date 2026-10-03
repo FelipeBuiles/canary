@@ -125,6 +125,7 @@ def test_production_profile_and_old_serialized_hashes_remain_compatible(monkeypa
 def test_profile_binds_reasoner_and_runtime_and_cannot_rewrite_an_edition(tmp_path, monkeypatch, dev_routes):
     profile = page_drawing.current_page_capability_profile(_codex_config())
     assert (profile.provider, profile.model, profile.max_attempts) == ("codex-dev", "gpt-image-2", 1)
+    assert dict(codex_runtime.image_execution_controls())["service_tier"] == "priority"
     assert page_drawing.page_profile_uses_native_dimensions(profile)
     artifacts = TargetArtifacts(tmp_path)
     production = BookEdition(revision=1, id="production", capability_profile=page_drawing.production_page_capability_profile())
@@ -139,7 +140,8 @@ def test_profile_binds_reasoner_and_runtime_and_cannot_rewrite_an_edition(tmp_pa
     with pytest.raises(ValueError):
         page_drawing.select_book_edition(edition_id=edition.id, profile=other_reasoner, existing=edition)
     controls = codex_runtime.image_execution_controls()
-    monkeypatch.setattr(codex_runtime, "image_execution_controls", lambda: (*controls, ("changed-runtime-control", "enabled")))
+    monkeypatch.setattr(codex_runtime, "image_execution_controls", lambda: tuple(
+        (key, "default" if key == "service_tier" else value) for key, value in controls))
     assert page_drawing.current_page_capability_profile(_codex_config()).id != profile.id
     with pytest.raises(ValueError):
         page_drawing.select_book_edition(edition_id=edition.id, profile=profile, existing=edition)
@@ -380,6 +382,7 @@ def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(
         metadata={
             "turn_id": "native-turn", "tool_id": "native-image-tool",
             "execution_fingerprint": "restricted",
+            "requested_service_tier": "priority", "service_tier": "priority",
             "usage_scope": "reasoning_thread_only", "image_tool_usage_available": False,
             "references": [
                 {"index": index, "sha256": digest, "mime": "image/png",
@@ -442,6 +445,8 @@ def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(
     assert provenance.response_metadata["tool_id"] == "native-image-tool"
     assert provenance.response_metadata["usage_scope"] == "reasoning_thread_only"
     assert provenance.response_metadata["image_tool_usage_available"] is False
+    assert provenance.response_metadata["requested_service_tier"] == "priority"
+    assert provenance.response_metadata["service_tier"] == "priority"
     reference_evidence = provenance.response_metadata["references"]
     assert [(ref["index"], ref["sha256"]) for ref in reference_evidence] == list(enumerate(reference_digests))
     assert all("path" not in ref for ref in reference_evidence)

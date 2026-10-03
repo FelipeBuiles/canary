@@ -82,7 +82,7 @@ def _story_project(tmp_path: Path) -> tuple[Path, PipelineState]:
         total_scenes=2,
         characters=[],
         locations=[],
-        narrative_arcs=[],
+        sequences=[],
         scenes=[
             _anchor_scene("scene_001", "The door", "The door opened."),
             _anchor_scene("scene_002", "Silence", "Nothing moved."),

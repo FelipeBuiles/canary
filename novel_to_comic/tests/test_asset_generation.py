@@ -204,7 +204,7 @@ def test_character_requests_preserve_nonhuman_canonical_anatomy():
     )
     bible = StoryBible(
         title="Test", author="Test", total_scenes=0, characters=[cat],
-        locations=[], scenes=[], narrative_arcs=[],
+        locations=[], scenes=[], sequences=[],
     )
     for input_data in (_character_generation_input(config, bible, cat),):
         request = compile_non_panel_request(config, input_data)

@@ -36,7 +36,7 @@ def _project(tmp_path, model):
         id="sailor", name="Gustaf", visual_anchor="adult male, yellow hair, sailor",
         age_range="30s", gender="male", distinguishing_features=["yellow hair"],
         default_outfit="seaman's working clothes", first_appearance_scene="scene_1",
-    )], locations=[], scenes=[], narrative_arcs=[])
+    )], locations=[], scenes=[], sequences=[])
     (tmp_path / "story_bible.json").write_text(bible.model_dump_json())
     (tmp_path / "samples").mkdir()
     (tmp_path / "samples/style_suggestions.json").write_text(json.dumps({"suggestions": [suggestion]}))

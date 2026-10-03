@@ -8,7 +8,7 @@ import pytest
 
 from novel_to_comic import artifacts
 from novel_to_comic.extraction_delta import compute_delta, remove_delta, removal_conflicts
-from novel_to_comic.models.story_bible import Character, Location, NarrativeArc, Scene, StoryBible
+from novel_to_comic.models.story_bible import Character, Location, StorySequence, Scene, StoryBible
 from novel_to_comic.series import (
     PartEditRejected,
     append_parts,
@@ -62,6 +62,25 @@ def test_appended_parts_get_workspaces_text_and_default_titles(tmp_path) -> None
 
     with pytest.raises(PartEditRejected):
         append_parts(root, [(None, "   ")])
+
+
+def test_initial_upload_can_group_chapters_into_pending_parts(tmp_path) -> None:
+    text = "Title\n\n" + "".join(
+        f"Chapter {number}\n" + BODY * 90 + "\n\n" for number in range(1, 8)
+    )
+    first = initialize_series(tmp_path, project_name="Rain", novel_path=tmp_path / "input" / "book.pdf",
+                              text=text, origin="book.pdf", auto_split=True)
+    target = TargetArtifacts(tmp_path)
+    manifest = target.read_part_manifest()
+
+    assert first == part_workspace(tmp_path, "part_0001")
+    assert len(manifest.parts) == 3
+    assert "".join(target.read_part_text(part.id) for part in manifest.parts) == text
+    for part in manifest.parts:
+        state = load_state(part_workspace(tmp_path, part.id))
+        assert state.stages["extract"].status == StageStatus.PENDING
+        assert state.novel_path == str(target.part_text_path(part.id))
+        assert part.origin == "book.pdf"
 
 
 def test_rename_is_always_allowed(tmp_path) -> None:
@@ -125,7 +144,7 @@ def _bible(*scenes: Scene, characters=(), locations=()) -> StoryBible:
     return StoryBible(
         title="Rain", author="A. Writer", total_scenes=len(scenes),
         characters=list(characters), locations=list(locations), scenes=list(scenes),
-        narrative_arcs=[NarrativeArc(act=1, title="One", scenes=[scenes[0].id])],
+        sequences=[StorySequence(number=1, title="One", scenes=[scenes[0].id])],
     )
 
 
@@ -154,7 +173,7 @@ def test_replacing_an_extracted_part_withdraws_exactly_its_additions(tmp_path) -
     after = before.model_copy(deep=True)
     after.scenes.append(_scene("p0002s0001_scene_001", "part_0002", ["char_001", "p0002s0001_char_001"]))
     after.characters.append(_character("p0002s0001_char_001", "p0002s0001_scene_001", "Newcomer"))
-    after.narrative_arcs.append(NarrativeArc(part_id="part_0002", act=1, title="Two",
+    after.sequences.append(StorySequence(part_id="part_0002", number=1, title="Two",
                                              scenes=["p0002s0001_scene_001"]))
     delta = compute_delta(before, after, "part_0002")
     assert delta.scene_ids == ("p0002s0001_scene_001",)
@@ -174,7 +193,7 @@ def test_replacing_an_extracted_part_withdraws_exactly_its_additions(tmp_path) -
     bible = artifacts.read_story_bible(root)
     assert [scene.id for scene in bible.scenes] == ["scene_001"]
     assert [character.name for character in bible.characters] == ["Renamed by author"]
-    assert [arc.part_id for arc in bible.narrative_arcs] == ["part_0001"]
+    assert [arc.part_id for arc in bible.sequences] == ["part_0001"]
     assert bible.revision == edited.revision + 1
     assert load_state(workspace).stages["extract"].status == StageStatus.PENDING
     assert not (workspace / "source" / "source.json").exists()

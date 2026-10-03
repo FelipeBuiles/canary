@@ -40,11 +40,11 @@ class InputLimits:
     @classmethod
     def from_env(cls) -> "InputLimits":
         return cls(
-            upload_bytes=_positive_env("CANARY_MAX_UPLOAD_MB", 10) * 1024 * 1024,
-            pdf_pages=_positive_env("CANARY_MAX_PDF_PAGES", 300),
+            upload_bytes=_positive_env("CANARY_MAX_UPLOAD_MB", 50) * 1024 * 1024,
+            pdf_pages=_positive_env("CANARY_MAX_PDF_PAGES", 2000),
             epub_documents=_positive_env("CANARY_MAX_EPUB_DOCUMENTS", 500),
             extracted_characters=_positive_env(
-                "CANARY_MAX_EXTRACTED_CHARACTERS", 2_000_000
+                "CANARY_MAX_EXTRACTED_CHARACTERS", 5_000_000
             ),
             remote_compressed_bytes=_positive_env(
                 "CANARY_MAX_REMOTE_COMPRESSED_MB", 5
@@ -54,7 +54,7 @@ class InputLimits:
             remote_decompressed_characters=_positive_env(
                 "CANARY_MAX_REMOTE_DECOMPRESSED_CHARACTERS", 2_000_000
             ),
-            extraction_seconds=_positive_env("CANARY_MAX_EXTRACTION_SECONDS", 30),
+            extraction_seconds=_positive_env("CANARY_MAX_EXTRACTION_SECONDS", 60),
         )
 
 
@@ -112,7 +112,9 @@ def _read_pdf(path: Path, limits: InputLimits, started: float) -> str:
         raise InputLimitError(
             "This PDF could not be read. Please upload a valid, unencrypted PDF."
         ) from exc
-    result = "\n\n".join(parts)
+    from novel_to_comic.pdf_cleanup import clean_pdf_text
+
+    result = clean_pdf_text("\n\n".join(parts))
     if not result.strip():
         raise InputLimitError(
             "This PDF has no extractable text. Please use a text-based PDF, EPUB, or TXT file."
@@ -121,12 +123,36 @@ def _read_pdf(path: Path, limits: InputLimits, started: float) -> str:
 
 
 class _TextExtractor(HTMLParser):
+    _BLOCKS = {
+        "h1", "h2", "h3", "h4", "h5", "h6", "p", "div", "section",
+        "article", "br", "li", "blockquote", "pre", "tr",
+    }
+    _IGNORED = {"head", "script", "style"}
+
     def __init__(self):
         super().__init__()
         self.parts: list[str] = []
+        self.ignored_depth = 0
+
+    def _break(self) -> None:
+        if self.parts and not self.parts[-1].endswith("\n\n"):
+            self.parts.append("\n\n")
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._IGNORED:
+            self.ignored_depth += 1
+        elif not self.ignored_depth and tag in self._BLOCKS:
+            self._break()
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._IGNORED:
+            self.ignored_depth = max(0, self.ignored_depth - 1)
+        elif not self.ignored_depth and tag in self._BLOCKS:
+            self._break()
 
     def handle_data(self, data: str) -> None:
-        self.parts.append(data)
+        if not self.ignored_depth:
+            self.parts.append(data)
 
 
 def _read_epub(path: Path, limits: InputLimits, started: float) -> str:
@@ -148,11 +174,18 @@ def _read_epub(path: Path, limits: InputLimits, started: float) -> str:
 
         book = epub.read_epub(str(path))
         documents = list(book.get_items_of_type(ebooklib.ITEM_DOCUMENT))
-        if len(documents) > limits.epub_documents:
+        if len(documents) > limits.epub_documents or len(book.spine) > limits.epub_documents:
             raise InputLimitError(
                 f"EPUB exceeds the {limits.epub_documents}-document limit.",
                 status_code=413,
             )
+        if not book.spine:
+            raise InputLimitError("This EPUB has no reading order. Please upload a valid EPUB, PDF, or TXT file.")
+        by_id = {item.get_id(): item for item in documents}
+        try:
+            documents = [by_id[identifier] for identifier, _linear in book.spine]
+        except KeyError as exc:
+            raise InputLimitError("This EPUB's reading order contains an unreadable chapter.") from exc
         parts: list[str] = []
         characters = 0
         for item in documents:

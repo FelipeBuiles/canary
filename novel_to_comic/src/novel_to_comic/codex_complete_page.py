@@ -24,6 +24,7 @@ def _runtime_metadata(metadata: dict) -> dict[str, object]:
         "turn_status", "execution_fingerprint", "recovered_after_timeout",
         "process_group_terminated", "reference_mode", "input_tokens", "output_tokens",
         "usage_scope", "image_tool_usage_available",
+        "requested_service_tier", "service_tier",
     )
     result: dict[str, object] = {
         key: value for key in scalar_keys

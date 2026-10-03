@@ -1105,7 +1105,7 @@ def _write_empty_story_bible(project_dir: Path) -> None:
         project_dir,
         StoryBible(
             title="Fixture", author="Fixture", total_scenes=1,
-            characters=[], locations=[], scenes=[], narrative_arcs=[],
+            characters=[], locations=[], scenes=[], sequences=[],
         ),
     )
 

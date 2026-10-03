@@ -20,6 +20,8 @@ export interface DetectedChapter {
   start_offset: number;
   end_offset: number;
   characters: number;
+  /** First-span source before its heading; it remains in this chapter's text. */
+  opening_characters?: number;
 }
 
 export type PageFlagReason = "description" | "continuity" | "reference image" | "removed";
@@ -40,6 +42,7 @@ export interface PartTextInput {
   title?: string;
   text?: string;
   file?: File | null;
+  autoSplit?: boolean;
 }
 
 export function hasPartText(value: PartTextInput): boolean {
@@ -52,13 +55,18 @@ export interface PartTextResponse {
   parts: PartSummary[];
 }
 
+export interface PartAddedResponse extends PartTextResponse {
+  created: string[];
+}
+
 const partPath = (project: string, part: string) => `${seriesPath(project)}/parts/${encodeURIComponent(part)}`;
 
-function textForm({ title, text, file }: PartTextInput): FormData {
+function textForm({ title, text, file, autoSplit }: PartTextInput): FormData {
   const form = new FormData();
   if (title?.trim()) form.append("title", title.trim());
   if (file) form.append("file", file);
   else if (text) form.append("text", text);
+  if (autoSplit !== undefined) form.append("auto_split", String(autoSplit));
   return form;
 }
 
@@ -66,7 +74,7 @@ export function listParts(project: string): Promise<{ parts: PartSummary[] }> {
   return apiFetch(`${seriesPath(project)}/parts`);
 }
 
-export function addPart(project: string, input: PartTextInput): Promise<PartTextResponse> {
+export function addPart(project: string, input: PartTextInput): Promise<PartAddedResponse> {
   return apiFetch(`${seriesPath(project)}/parts`, { method: "POST", headers: {}, body: textForm(input) });
 }
 

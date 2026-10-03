@@ -11,7 +11,7 @@ import {
 import type { PartSummary } from "../types/api";
 import type * as Client from "../api/client";
 
-const server = vi.hoisted(() => ({ calls: [] as { path: string; method: string; body: unknown }[] }));
+const server = vi.hoisted(() => ({ calls: [] as { path: string; method: string; body: unknown }[], grouped: false }));
 vi.mock("../api/client", async (original) => ({
   ...await original<typeof Client>(),
   apiFetch: async (path: string, options?: RequestInit) => {
@@ -22,6 +22,7 @@ vi.mock("../api/client", async (original) => ({
     if (method === "POST" && path === "/projects/p1/parts") {
       return {
         part: { id: "part_0003", ordinal: 3, title: "Part 3" },
+        created: server.grouped ? ["part_0003", "part_0004"] : ["part_0003"],
         chapters: [
           { index: 1, title: "Chapter 9", start_offset: 0, end_offset: 40, characters: 40 },
           { index: 2, title: "Chapter 10", start_offset: 40, end_offset: 90, characters: 50 },
@@ -46,7 +47,7 @@ const PARTS = [part("part_0001", 1, "The Lighthouse"), part("part_0002", 2, "The
   stages: { extract: "pending" }, page_count: 0, text_editable: true, text_locked_reason: null,
 })];
 
-afterEach(() => { server.calls = []; });
+afterEach(() => { server.calls = []; server.grouped = false; });
 
 function Where() {
   return <p data-testid="where">{useLocation().pathname}</p>;
@@ -114,5 +115,37 @@ describe("part switcher", () => {
     await waitFor(() => expect(server.calls.at(-1)?.path).toBe("/projects/p1/parts/part_0003/split"));
     expect(server.calls[0]).toMatchObject({ path: "/projects/p1/parts", method: "POST", body: { text: "Chapter 9 The tide turned." } });
     expect(server.calls.at(-1)?.body).toEqual({ boundaries: [40], titles: ["Part 3", "Chapter 10"] });
+  });
+
+  it("adds automatically grouped parts without another split action", async () => {
+    server.grouped = true;
+    const user = userEvent.setup();
+    renderSwitcher();
+    await user.click(screen.getByRole("button", { name: "Part" }));
+    await user.click(screen.getByRole("option", { name: "Manage parts…" }));
+    const dialog = screen.getByRole("dialog", { name: "Parts" });
+    await user.click(within(dialog).getByRole("button", { name: "Add a part" }));
+    expect((within(dialog).getByRole("checkbox", { name: "Group long manuscripts into parts at chapter boundaries" }) as HTMLInputElement).checked).toBe(true);
+    await user.upload(within(dialog).getByLabelText("Upload a manuscript file"), new File(["Full book"], "book.pdf", { type: "application/pdf" }));
+    await user.click(within(dialog).getByRole("button", { name: "Add part" }));
+
+    expect((await within(dialog).findByRole("status")).textContent).toContain("Added 2 parts grouped at chapter boundaries");
+    expect(within(dialog).queryByRole("checkbox", { name: "New part at “Chapter 10”" })).toBeNull();
+    expect(server.calls).toHaveLength(1);
+  });
+
+  it("can keep an appended manuscript together", async () => {
+    const user = userEvent.setup();
+    renderSwitcher();
+    await user.click(screen.getByRole("button", { name: "Part" }));
+    await user.click(screen.getByRole("option", { name: "Manage parts…" }));
+    const dialog = screen.getByRole("dialog", { name: "Parts" });
+    await user.click(within(dialog).getByRole("button", { name: "Add a part" }));
+    await user.click(within(dialog).getByRole("checkbox", { name: "Group long manuscripts into parts at chapter boundaries" }));
+    await user.type(within(dialog).getByLabelText("Or paste the text"), "Book text");
+    await user.click(within(dialog).getByRole("button", { name: "Add part" }));
+
+    await waitFor(() => expect(server.calls).toHaveLength(1));
+    expect(server.calls[0].body).toMatchObject({ auto_split: "false" });
   });
 });

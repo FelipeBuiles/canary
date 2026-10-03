@@ -24,6 +24,7 @@ from novel_to_comic.models.draw import (
     PageRenderCorrection,
     BookEdition,
     CompletePageProviderResult,
+    FrozenPageGenerationRequest,
     PageCapabilityProfile,
     RetryProvenance,
 )
@@ -136,6 +137,34 @@ def _inventory() -> ApprovedVisualReferenceInventory:
             ),
         ]
     )
+
+
+def test_incidental_characters_keep_written_identity_without_cast_image_uploads(tmp_path):
+    inventory = _inventory()
+    identities = tuple(ref.model_copy(update={
+        'kind': 'character', 'requires_image': False,
+        'continuity_guard': 'Keep the right-eye injury on the right.',
+    }) if ref.entity_id == 'ward' else ref for ref in inventory.references)
+    inventory = ApprovedVisualReferenceInventory(references=identities)
+    files = _reference_files(tmp_path)
+    files.pop('ward-clean-ref')
+    files.pop('ward-bloodied-ref')
+    compiled = compile_page_generation_request(
+        _page(), _edition(), inventory, files, retry=RetryProvenance(attempt=1))
+    assert [ref.entity_id for ref in compiled.request.references] == ['idol']
+    written = compiled.request.written_identities
+    assert len(written) == 1 and written[0].appearance_state_id == 'ward-bloodied'
+    assert written[0].visual_anchor in compiled.request.prompt
+    assert written[0].continuity_guard in compiled.request.prompt
+    assert 'written_identity' in compiled.request.prompt
+    assert compiled.request.estimated_cost_usd == (
+        _edition().capability_profile.price_per_page_usd + _edition().capability_profile.price_per_reference_usd)
+    assert len(compiled.reference_bytes) == 1
+    assert FrozenPageGenerationRequest.model_validate_json(compiled.request.model_dump_json()) == compiled.request
+    tampered = compiled.request.model_dump(mode='json')
+    tampered['written_identities'][0]['visual_anchor'] = 'A different identity'
+    with pytest.raises(ValueError, match='request_sha256'):
+        FrozenPageGenerationRequest.model_validate(tampered)
 
 
 def _reference_files(tmp_path: Path, *, ward_bytes: bytes = b"ward-v1") -> dict[str, ApprovedReferenceFile]:

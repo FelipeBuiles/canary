@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
+import type { PartSummary } from "../types/api";
 
 afterEach(() => sessionStorage.clear());
 
@@ -15,7 +16,7 @@ const storyDecision = {
     characters: [{ id: "char_1", name: "Elena", visual_anchor: "Silver-streaked dark hair" }],
     locations: [{ id: "loc_1", name: "The Archive", visual_anchor: "Salt-stained stone stacks" }],
     scenes: [{ id: "scene_1", chapter: 1, title: "The Locked Shelf", character_ids: ["char_1"], location_id: "loc_1", summary: "Elena finds the forbidden ledger." }],
-    narrative_arcs: [],
+    sequences: [],
     style_notes: null,
     props: [],
   },
@@ -51,12 +52,14 @@ let projectStages: Record<string, Record<string, unknown>> = {
   extract: { status: "complete" },
   brief: { status: "awaiting_review" },
 };
+let projectParts: PartSummary[] | undefined;
 
 vi.mock("../api/queries", () => ({
   useStory: () => storyState,
   useProjectStatus: () => ({
     data: {
       stages: projectStages,
+      parts: projectParts,
     },
   }),
   useUpdateBrief: () => ({ mutate: updateBrief, isPending: false }),
@@ -75,10 +78,10 @@ vi.mock("../api/seriesQueries", () => ({
 
 import { StoryRoom } from "../pages/rooms/StoryRoom";
 
-function renderRoom() {
+function renderRoom(project = "demo") {
   const view = render(<StoryRoom />, {
     wrapper: ({ children }) => (
-      <MemoryRouter initialEntries={["/project/demo/story"]}>
+      <MemoryRouter initialEntries={[`/project/${project}/story`]}>
         <I18nProvider>
           <Routes>
             <Route path="/project/:id/story" element={children} />
@@ -101,11 +104,51 @@ describe("StoryRoom", () => {
     updateBrief.mockReset();
     approveBrief.mockReset();
     runPipeline.mockReset();
+    projectParts = undefined;
     storyState = { data: storyDecision, isLoading: false, error: null };
     projectStages = {
       extract: { status: "complete" },
       brief: { status: "awaiting_review" },
     };
+  });
+
+  it("places the part and the whole book in the manuscript hero, before the brief", () => {
+    projectParts = [1, 2].map((ordinal) => ({
+      id: `part_000${ordinal}`, ordinal, title: `Chapters ${ordinal * 6 - 5}–${ordinal * 6}`,
+      characters: 98_000, synopsis: ordinal === 2 ? "Carl and Donut reach the stairwell." : null,
+      created_at: "2026-10-02", origin: "book.pdf", stages: ordinal === 1
+        ? { extract: "complete", brief: "awaiting_review" } : { extract: "pending", brief: "pending" },
+      page_count: 0, has_cover: false, text_editable: false, text_locked_reason: null, earlier_part_changed: false,
+    }));
+    renderRoom("demo~part_0001");
+
+    const position = screen.getByText("Part 1 of 2 · Chapters 1–6");
+    const brief = screen.getByRole("heading", { name: "ADAPTATION BRIEF" });
+    expect(position.compareDocumentPosition(brief) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText(/1 of 2 parts analyzed\. The rest are saved and wait until you start them\./)).toBeTruthy();
+    expect(screen.getByText(/This brief covers Part 1: Chapters 1–6/)).toBeTruthy();
+    // Part 2 is never offered while this part's brief still needs review.
+    expect(screen.queryByRole("button", { name: "Start Part 2" })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Chapters 7–12/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "All 2 parts" }));
+    expect(screen.getByRole("link", { name: /Chapters 1–6.*Viewing.*Brief to review/ }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("link", { name: /Chapters 7–12.*Carl and Donut reach the stairwell\..*Not started/ })).toBeTruthy();
+  });
+
+  it("explains on first ingestion that only the part you start is analyzed", () => {
+    projectParts = [1, 2].map((ordinal) => ({
+      id: `part_000${ordinal}`, ordinal, title: `Part ${ordinal}`, characters: 98_000,
+      created_at: "2026-10-02", origin: "book.pdf", stages: { extract: "pending", brief: "pending" },
+      page_count: 0, has_cover: false, text_editable: false, text_locked_reason: null, earlier_part_changed: false,
+    }));
+    projectStages = { extract: { status: "pending" }, brief: { status: "pending" } };
+    renderRoom("demo~part_0001");
+
+    expect(screen.getByText("Part 1 of 2")).toBeTruthy();
+    expect(screen.getByText("Your book is saved as 2 parts. Story analysis starts with Part 1; you start each later part yourself.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Start Part 2" })).toBeNull();
+    expect(runPipeline).not.toHaveBeenCalled();
   });
 
   it("reviews the Story Bible and adaptation Brief together", () => {

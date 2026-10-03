@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from novel_to_comic import artifacts
+from novel_to_comic.cast_roster import story_bible_api_view
 from novel_to_comic.briefing import revise_persisted_brief
 from novel_to_comic.stages import REGISTRY
 from novel_to_comic.state import StageState, StageStatus, save_state
@@ -39,7 +40,7 @@ def get_story(project=Depends(get_project)):
     except ArtifactMissing as exc:
         raise _not_found(exc) from exc
     return {
-        "story_bible": story_bible,
+        "story_bible": story_bible_api_view(story_bible, project_dir),
         "brief": brief,
     }
 
@@ -48,7 +49,7 @@ def get_story(project=Depends(get_project)):
 def get_story_bible(project=Depends(get_project)):
     project_dir, _config, _state = project
     try:
-        return artifacts.read_story_bible(project_dir)
+        return story_bible_api_view(artifacts.read_story_bible(project_dir), project_dir)
     except ArtifactMissing as exc:
         raise _not_found(exc) from exc
 

@@ -7,6 +7,7 @@
 *.crt
 *.p12
 litellm/gcp-credentials.json
+.vertex-gcloud/
 
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/

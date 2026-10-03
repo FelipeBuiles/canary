@@ -3,7 +3,9 @@
 **Status: Current, October 2, 2026.** Canary generates complete lettered comic
 pages from novels through an eight-stage Python/FastAPI and React application.
 A project is a series of parts that share one Story Bible, Style and Cast
-([ADR 0023](../adr/0023-series-parts-and-author-owned-story-bible.md)).
+([ADR 0023](../adr/0023-series-parts-and-author-owned-story-bible.md)). Each part
+has its own sequences, and a series book map tells every part where it sits in
+the whole book ([ADR 0024](../adr/0024-part-sequences-and-the-book-map.md)).
 
 | # | Stage | Checkpoint? |
 |---|-------|-------------|
@@ -138,8 +140,8 @@ word or page quotas. Review is metered text work and not a quality guarantee.
 - Location state plates live at `plates/{location}/states/{state}.png`;
   instructions and lineage remain location-scoped. No old-artifact migration.
 - Provider wire v3 and current profiles are a breaking cutover; local Codex uses
-  runtime v6 execution identity. No old-wire shim or generated-artifact migration
-  is provided. Re-extract/regenerate affected output, or use a new project for an
+  runtime v7 execution identity, including the Fast service tier. No old-wire shim
+  or generated-artifact migration is provided. Re-extract/regenerate affected output, or use a new project for an
   incompatible existing edition. See the adapter guide for current selectors and
   scoped evidence; a requested image alias does not identify the actual backend.
 - Plan draft continuity is folded into existing `ComicPage.layout_intent`,
@@ -162,6 +164,9 @@ word or page quotas. Review is metered text work and not a quality guarantee.
   `server/routers/cast_assets.py`.
 - `continuity.py`, `combined_export.py`, `server/routers/parts.py`: Adapt
   continuity between parts, combined exports, and the parts API.
+- `book_map.py`, `book_context.py`, `models/book_map.py`: the series book map
+  (built inside Extract) and the position and map slice each part's Brief and
+  Adapt receive.
 - `target_artifacts.py`: canonical full-page artifact storage and validation.
 - `artifacts.py`: Story Bible, style, Cast references, accepted addenda.
 - `book_adaptation.py`, `page_planning.py`: creative text generation and validation.

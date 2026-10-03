@@ -12,6 +12,7 @@ from pathlib import Path
 from rich.console import Console
 
 from novel_to_comic import artifacts
+from novel_to_comic.cast_roster import read_cast_story_bible
 from novel_to_comic.config import Config
 from novel_to_comic.generation_input import GenerationPromptInput
 from novel_to_comic.image_ref_strategy import RefStrategy
@@ -209,7 +210,7 @@ def _require_shared_character_style(config: Config, style_ref: Path | None) -> N
 
 def require_character_inputs(config: Config, project_dir: Path, char_id: str, *, state=False) -> None:
     """Read-only preflight before admitting an individual paid correction."""
-    bible = artifacts.read_story_bible(project_dir)
+    bible = read_cast_story_bible(project_dir, character_ids=[char_id])
     design = read_design(config, project_dir, bible, character_ids=[char_id])
     style = _character_style_reference(config, project_dir, _find_style_ref(project_dir, config.style_template))
     _require_shared_character_style(config, style)
@@ -547,7 +548,7 @@ async def regenerate_character_ref(
     char_id: str,
     semaphore: asyncio.Semaphore | None = None,
 ) -> ApiResult[Path]:
-    story_bible = artifacts.read_story_bible(project_dir)
+    story_bible = read_cast_story_bible(project_dir, character_ids=[char_id])
     char = next((candidate for candidate in story_bible.characters if candidate.id == char_id), None)
     if char is None:
         raise ValueError(f"Character not found: {char_id}")
@@ -596,7 +597,7 @@ async def regenerate_character_state_ref(
     anchor into refs/<char>/states/<state_id>/. Used to retry a state that
     failed during the cast batch, or to re-roll one on demand.
     """
-    story_bible = artifacts.read_story_bible(project_dir)
+    story_bible = read_cast_story_bible(project_dir, character_ids=[char_id])
     char = next((c for c in story_bible.characters if c.id == char_id), None)
     if char is None:
         raise ValueError(f"Character not found: {char_id}")
@@ -631,7 +632,7 @@ async def regenerate_prop_ref(
     prop_id: str,
     semaphore: asyncio.Semaphore | None = None,
 ) -> ApiResult[Path]:
-    story_bible = artifacts.read_story_bible(project_dir)
+    story_bible = read_cast_story_bible(project_dir)
     prop = next((p for p in story_bible.props if p.id == prop_id), None)
     if prop is None:
         raise ValueError(f"Prop not found: {prop_id}")
@@ -663,7 +664,7 @@ async def regenerate_location_plate(
     semaphore: asyncio.Semaphore | None = None,
     state_id: str | None = None,
 ) -> ApiResult[Path]:
-    story_bible = artifacts.read_story_bible(project_dir)
+    story_bible = read_cast_story_bible(project_dir)
     loc = next((candidate for candidate in story_bible.locations if candidate.id == loc_id), None)
     if loc is None:
         raise ValueError(f"Location not found: {loc_id}")
@@ -1077,7 +1078,7 @@ async def run(
     prop_ids: list[str] | None = None,
 ) -> None:
     """Execute Stage 3: generate character refs, location plates, and prop refs."""
-    story_bible = artifacts.read_story_bible(project_dir)
+    story_bible = read_cast_story_bible(project_dir, character_ids=char_ids or ())
 
     is_partial = bool(char_ids or loc_ids or prop_ids)
     should_generate_refs = not is_partial or char_ids is not None
@@ -1185,7 +1186,8 @@ def estimate_state_reference_count(
         state_is_total_transformation,
     )
 
-    story_bible = artifacts.read_story_bible(project_dir)
+    story_bible = read_cast_story_bible(
+        project_dir, character_ids=[entity_id] if asset_kind == "character" else ())
     approved_style_ref = _cast_asset_style_ref(
         config, _find_style_ref(project_dir, config.style_template)
     )
@@ -1307,7 +1309,7 @@ def cast_failure_details(project_dir: Path, stage_state) -> list[dict]:
     """
     from novel_to_comic.asset_generation import read_asset_failure
 
-    bible = artifacts.read_story_bible_safe(project_dir)
+    bible = read_cast_story_bible(project_dir, safe=True)
     details = []
     for item_id in stage_state.items_failed:
         if item_id == "cast_visual_review":
@@ -1352,7 +1354,7 @@ def cast_approval_blocker(config: Config, project_dir: Path, stage_state) -> str
         return cast_failure_summary(cast_failure_details(project_dir, stage_state))
     if stage_state.items_done < stage_state.items_total:
         return incomplete
-    bible = artifacts.read_story_bible_safe(project_dir)
+    bible = read_cast_story_bible(project_dir, safe=True)
     if bible is None:
         return "Cast source artifacts are missing or invalid. Restore the Story Bible before resuming Cast."
     if blank := blank_visual_anchors(bible):
@@ -1453,7 +1455,7 @@ def reference_freshness(config: Config, project_dir: Path) -> list[dict]:
     drawing until the author regenerates them or keeps them as they are.
     Reads only; nothing is generated.
     """
-    bible = artifacts.read_story_bible_safe(project_dir)
+    bible = read_cast_story_bible(project_dir, safe=True)
     if bible is None:
         return []
     try:
@@ -1498,7 +1500,7 @@ def keep_current_reference(
     from novel_to_comic.asset_generation import accept_existing_asset
     from novel_to_comic.cast_design import keep_design
 
-    bible = artifacts.read_story_bible(project_dir)
+    bible = read_cast_story_bible(project_dir)
     entity, appearance = None, None
     for item_kind, item, item_state in _reference_items(bible):
         if item_kind == kind and item.id == entity_id and (item_state.id if item_state else None) == state_id:
@@ -1577,7 +1579,7 @@ def ready_asset_count(config: Config, project_dir: Path) -> int | None:
     Individually generated references are sufficient for review. The optional
     calibration board is an input when present, not a required Cast output.
     """
-    bible = artifacts.read_story_bible_safe(project_dir)
+    bible = read_cast_story_bible(project_dir, safe=True)
     if bible is None:
         return None
     if bible.characters and review_status(config, project_dir)["status"] != "current":
@@ -1601,7 +1603,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     from novel_to_comic.usage import estimate_image_cost
     from novel_to_comic.asset_generation import estimate_non_panel_request
 
-    story_bible = artifacts.read_story_bible_safe(project_dir)
+    story_bible = read_cast_story_bible(project_dir, safe=True)
     if story_bible is None:
         return 0.0
 

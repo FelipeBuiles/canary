@@ -15,8 +15,10 @@ from pathlib import Path
 
 from fastapi import HTTPException, Response
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .auth import SESSION_COOKIE_NAME, get_current_user
+from .body_limit import form_part_cap_bytes
 from .deps import project_key
 
 _PROJECT = re.compile(r"^/api/projects/([^/]+)(/.*)?$")
@@ -237,7 +239,7 @@ async def admission_middleware(request, call_next):
             canonical = body
         if request.headers.get("content-type", "").startswith("multipart/form-data"):
             fields = []
-            async with request.form() as form:
+            async with request.form(max_part_size=form_part_cap_bytes(request.url.path, request.method)) as form:
                 for name, value in form.multi_items():
                     if hasattr(value, "filename"):
                         fields.append((name, value.filename, hashlib.sha256(await value.read()).hexdigest()))
@@ -303,5 +305,5 @@ async def admission_middleware(request, call_next):
                     db.execute("UPDATE requests SET status=?,body=? WHERE account=? AND route=? AND key=?", (response.status_code, content, account, route, key))
                 return Response(content, status_code=response.status_code, headers=dict(response.headers), media_type=response.media_type)
             return response
-    except HTTPException as exc:
+    except StarletteHTTPException as exc:
         return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)

@@ -109,6 +109,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
                   </button>
                   {!extOk && <p role="alert" className="mt-2 text-sm text-hero-red">{t("Unsupported file type. Accepted:")} {ACCEPTED.join(", ")}</p>}
                   <input ref={fileRef} name="novelFile" type="file" accept=".txt,.epub,.pdf" className="hidden" onChange={(e) => { const nextFile = e.target.files?.[0]; if (nextFile) chooseFile(nextFile); }} />
+                  <p className="mt-3 font-body text-sm text-ink-muted">{t("Upload the complete book. A long manuscript is split into parts at chapter breaks; Part 1 is analyzed first, and you start each later part when you're ready.")}</p>
                 </div>
               ) : (
                 <>

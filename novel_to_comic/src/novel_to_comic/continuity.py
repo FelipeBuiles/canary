@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from novel_to_comic.book_context import book_context
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
 from novel_to_comic.workspace import part_id, part_ordinal, part_workspace, series_root, workspace_part_id
 
@@ -40,14 +41,21 @@ def _earlier_adaptations(workspace: Path) -> list[tuple[str, object]]:
 
 
 def continuity_context(workspace: Path) -> dict | None:
-    """What a part's treatment needs to continue the story, or ``None``."""
+    """What a part's treatment needs to place and continue the story, or ``None``.
 
+    ``book_context`` places any part of a multi-part book, including the first;
+    the earlier parts' adapted spines are added once they exist.
+    """
+
+    context: dict = {}
+    if book := book_context(workspace):
+        context["book_context"] = book
     earlier = _earlier_adaptations(workspace)
     if not earlier:
-        return None
+        return context or None
     previous_id = part_id(part_ordinal(workspace_part_id(workspace)) - 1)
     previous = next((adaptation for pid, adaptation in earlier if pid == previous_id), None)
-    return {
+    return context | {
         "earlier_parts": [
             {
                 "part_id": pid,

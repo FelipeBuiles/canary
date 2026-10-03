@@ -102,6 +102,23 @@ describe("Library first-run (Issue #0)", () => {
     expect(screen.getByLabelText("Current route").textContent).toBe("/project/prepared-source/story");
   });
 
+  it("opens the first part after uploading a book with several parts", async () => {
+    const user = userEvent.setup();
+    projectsResult.data = [];
+    createProjectMutation.mutate.mockImplementation((_input, options) => options.onSuccess({ id: "full-book", part_id: "part_0001" }));
+    const view = renderLibrary();
+    await user.click(screen.getByRole("button", { name: "NEW PRODUCTION" }));
+    await user.click(screen.getByRole("button", { name: "UPLOAD MANUSCRIPT" }));
+    await user.upload(view.container.querySelector<HTMLInputElement>('input[type="file"]')!, new File(["Book"], "book.txt", { type: "text/plain" }));
+    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("button", { name: "CONTINUE" }));
+    await user.click(screen.getByRole("radio", { name: /Editable lettering/ }));
+    await user.click(screen.getByRole("button", { name: "CREATE PROJECT" }));
+
+    expect(runPipeline).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Current route").textContent).toBe("/project/full-book~part_0001/story");
+  });
+
   it("finds productions by title or author and recovers from an empty search", async () => {
     const user = userEvent.setup();
     projectsResult.data = [

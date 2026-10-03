@@ -13,6 +13,20 @@ to visual direction. The page leads with a dark manuscript hero: title,
 author, and scene/character/place counts. The count line is a jump link to
 the extracted-source explorer below the brief.
 
+Multi-part projects (ADR 0024) keep the Brief on the first screen. The
+manuscript hero names the part (`Part 1 of 8 · Chapters 1–6`) and carries the
+book strip: one segment per part sized by its text, analyzed parts in gold,
+the open part raised, and one sentence on how many parts are analyzed and
+that the rest wait until the author starts them. "All N parts" discloses the
+reading-order list (map synopsis or size, state, Viewing marker, Manage
+parts). While a part waits for or runs analysis, the same strip sits on its
+own sheet above the progress docket; on first ingestion its sentence says the
+book is saved as N parts and analysis starts with Part 1. "Start Part N"
+appears only after the open part's Brief is approved, for the next part in
+reading order, with no other part analyzing or failed, and opens that part's
+progress after credit review. Viewing never starts generation. Single-part
+stories retain the focused manuscript-and-Brief layout.
+
 Editorial cards show readable paragraphs or lists first. Story promises are
 featured alongside tone and target length. Themes, desired emphasis,
 essential events, and character turns stay visible. “More editorial details”

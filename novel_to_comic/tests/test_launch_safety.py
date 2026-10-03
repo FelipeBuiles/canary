@@ -592,8 +592,9 @@ def test_litellm_images_install_the_locked_gateway_environment():
     versions = {package["name"]: package["version"] for package in lock["package"]}
     assert "litellm[proxy]==1.101.0" in gateway["project"]["dependencies"]
     assert versions["litellm"] == "1.101.0"
-    # The gateway ships only the FAL queue handler; Vertex SDKs were retired.
+    # Vertex uses the REST adapter with google-auth, without the image SDK.
     assert "google-genai" not in versions
+    assert "google-auth" in versions
     for dockerfile in (production, local_gateway):
         assert "COPY litellm/pyproject.toml litellm/uv.lock" in dockerfile
         assert "uv sync --project /app/gateway --locked" in dockerfile

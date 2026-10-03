@@ -1,5 +1,6 @@
 .git
 .claude
+.vertex-gcloud
 projects
 samples
 showcase/*

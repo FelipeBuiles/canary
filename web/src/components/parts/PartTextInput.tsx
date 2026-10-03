@@ -34,6 +34,13 @@ export function PartTextInput({ value, onChange, withTitle = false, disabled = f
         <TextAreaField id={ids.text} rows={6} value={value.text ?? ""} disabled={disabled || !!value.file}
           onChange={(event) => onChange({ ...value, text: event.target.value })} />
       </div>
+      {withTitle && (
+        <label className="flex min-h-11 items-center gap-3 font-body text-sm">
+          <input type="checkbox" className="h-5 w-5" checked={value.autoSplit ?? true} disabled={disabled}
+            onChange={(event) => onChange({ ...value, autoSplit: event.target.checked })} />
+          <span>{t("Group long manuscripts into parts at chapter boundaries")}</span>
+        </label>
+      )}
     </div>
   );
 }
