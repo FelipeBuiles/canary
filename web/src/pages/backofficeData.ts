@@ -1,4 +1,4 @@
-export type BackofficeView = "overview" | "users" | "support" | "analytics" | "models";
+export type BackofficeView = "overview" | "users" | "support" | "analytics" | "models" | "testers";
 
 export type UserStatus = "active" | "trial" | "past_due" | "suspended" | "unconfirmed";
 export type UserFilter = "all" | "active" | "attention" | "trial";

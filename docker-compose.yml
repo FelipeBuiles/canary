@@ -125,6 +125,9 @@ services:
       PYTHONPATH: /app:/app/litellm_handlers
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
+      # Keep callbacks in sync with the mounted config, including older images.
+      - ./litellm/canary_metrics.py:/app/canary_metrics.py:ro
+      - ./litellm/canary_metrics_callback.py:/app/canary_metrics_callback.py:ro
       - ./litellm_handlers:/app/litellm_handlers:ro
     depends_on:
       litellm-db:

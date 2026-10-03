@@ -163,6 +163,7 @@ def component(name):
                 "tests/test_project_data_api_postgres.py",
                 "tests/test_purchase_outbox_postgres.py",
                 "tests/test_account_outbox_postgres.py",
+                "tests/test_tester_tracker_postgres.py",
             ]
         )
     elif name == "docker":

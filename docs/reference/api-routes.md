@@ -18,6 +18,8 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `POST` | `/api/ops/backoffice/users/{user_id}/credits` | `grant_credits` | `backoffice.py` |
 | `GET` | `/api/ops/backoffice/feedback` | `list_feedback` | `backoffice.py` |
 | `PATCH` | `/api/ops/backoffice/feedback/{user_id}/{feedback_id}` | `update_feedback` | `backoffice.py` |
+| `GET` | `/api/ops/backoffice/tester-tracker` | `read_tester_tracker` | `backoffice.py` |
+| `PUT` | `/api/ops/backoffice/tester-tracker/{collection}/{record_id}` | `write_tester_tracker` | `backoffice.py` |
 | `GET` | `/api/billing/packages` | `list_packages` | `billing.py` |
 | `POST` | `/api/billing/checkout` | `create_checkout` | `billing.py` |
 | `POST` | `/api/billing/webhook` | `stripe_webhook` | `billing.py` |

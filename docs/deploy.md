@@ -88,6 +88,9 @@ Two further production dependencies sit outside the container:
    (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`,
    `TOGETHER_API_KEY`, `FAL_KEY`). Only set the ones you actually use. These live as Fly
    secrets on `canary-web` now (they used to be on `litellm-gw`).
+   Gemini uses project-scoped Vertex requests and runtime ADC credentials;
+   see [Vertex setup](reference/vertex-ai.md). Its local Compose credential mount
+   does not configure credential delivery on Fly.
 
 ## Step 0 — prepare secret file (outside the repo)
 
@@ -121,6 +124,11 @@ ANTHROPIC_API_KEY=sk-ant-...
 FAL_KEY=...
 OPENROUTER_API_KEY=sk-or-...      # only if you use OpenRouter
 TOGETHER_API_KEY=...              # only if you use Together AI
+# Optional Gemini through Vertex; the ADC file must be delivered at runtime.
+VERTEXAI_PROJECT=YOUR_CREDITED_PROJECT_ID
+VERTEXAI_LOCATION=global
+GOOGLE_APPLICATION_CREDENTIALS=/run/credentials/google-adc.json
+GOOGLE_CLOUD_QUOTA_PROJECT=YOUR_CREDITED_PROJECT_ID
 
 # ─── Web app ───────────────────────────────────────────────────────────
 SUPABASE_URL=https://<project>.supabase.co
@@ -437,8 +445,17 @@ gateway, and root-tooling jobs pass for the exact SHA; it then:
    smoke image only by its production `VITE_*` build arguments.
 3. Verifies `/api/version`, liveness, the production readiness contract
    (Supabase, LiteLLM and generation queue all `ok`), and
-   required security-header presence. Signed-in behavior and policy values
-   still need their release exercises.
+   required security-header presence. Only after those checks pass,
+   `python scripts/verify_deployment.py --resume` authenticates
+   `POST /api/ops/resume` and confirms `draining: false` through deployment
+   status. Resume also checks dependency readiness on the server. Failed or
+   cancelled releases leave admission closed and require operator recovery.
+   Signed-in behavior and policy values still need their release exercises.
+
+Running `scripts/verify_deployment.py` without `--resume` checks that admission
+is open without changing it. Both modes require `CANARY_OPS_TOKEN`; `--resume`
+also requires `EXPECTED_CANARY_VERSION` so an unexpected release cannot reopen
+generation. A healthy readiness response alone does not prove admission is open.
 
 The workflow deliberately has no production database credential and cannot
 apply schema changes. If a release requires a database change, complete the
@@ -750,7 +767,9 @@ One consolidated set, since the proxy and web app share a container:
 
 - **Proxy layer:** `LITELLM_MASTER_KEY`, `LITELLM_SALT_KEY`, plus the provider
   keys you actually use (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
-  `FAL_KEY`, optionally `OPENROUTER_API_KEY` and `TOGETHER_API_KEY`). Both processes inherit the container environment, but
+  `FAL_KEY`, optionally `OPENROUTER_API_KEY` and `TOGETHER_API_KEY`). Gemini uses
+  `VERTEXAI_PROJECT`, `VERTEXAI_LOCATION`, and runtime ADC credential delivery.
+  Both processes inherit the container environment, but
   only the loopback proxy uses these keys for provider requests.
 - **Web-app layer:** `LITELLM_API_KEY` (== `LITELLM_MASTER_KEY`), `SUPABASE_URL`,
   `SUPABASE_SECRET_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,

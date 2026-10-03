@@ -188,7 +188,7 @@ function operatorUrl(baseUrl: string, path: string): string {
   return `${baseUrl.trim().replace(/\/+$/, "")}${path}`;
 }
 
-async function operatorFetch<T>(
+export async function operatorFetch<T>(
   path: string,
   connection: OperatorConnection,
   options?: RequestInit,

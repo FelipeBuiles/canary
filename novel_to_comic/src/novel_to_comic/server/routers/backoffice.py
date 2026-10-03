@@ -961,3 +961,72 @@ def update_feedback(user_id: str, feedback_id: str, body: FeedbackStatusPatch):
     if not rows:
         raise HTTPException(404, "Feedback not found")
     return rows[0]
+
+
+# Research records share the existing operator trust boundary, never customer APIs.
+class TesterRecordWrite(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: str = Field(pattern=r"^(set|update|delete)$")
+    expected_revision: int = Field(ge=0)
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+TESTER_COLLECTIONS = ("people", "sessions", "notes", "findings")
+
+
+def _validate_tester_record(collection: str, record_id: str, body: TesterRecordWrite) -> None:
+    import json
+    import re
+
+    if collection not in TESTER_COLLECTIONS or not re.fullmatch(r"[A-Za-z0-9_-]{1,120}", record_id):
+        raise HTTPException(422, "Invalid tracker collection or record ID")
+    try:
+        encoded = json.dumps(body.data, allow_nan=False)
+    except ValueError as exc:
+        raise HTTPException(422, "Tracker values must be finite") from exc
+    if len(encoded.encode("utf-8")) > 64_000:
+        raise HTTPException(422, "Tracker record exceeds 64 KB")
+    if "id" in body.data or "__proto__" in body.data:
+        raise HTTPException(422, "Reserved tracker field")
+    for key, value in body.data.items():
+        if "credits" in key.lower() and value is not None:
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0 or value > 1_000_000:
+                raise HTTPException(422, "Credits must be a nonnegative recorded amount")
+
+
+@router.get("/tester-tracker")
+def read_tester_tracker() -> dict[str, list[dict[str, Any]]]:
+    try:
+        db = get_db()
+        rows = []
+        for offset in range(0, 11000, 1000):
+            page = _rows(db.table("operator_tester_records").select("collection,id,data,revision").eq("deleted", False).order("collection").order("id").range(offset, offset + 999).execute())
+            rows.extend(page)
+            if len(page) < 1000:
+                break
+    except Exception as exc:
+        logger.warning("Tester tracker storage unavailable (%s)", type(exc).__name__)
+        raise HTTPException(503, "Tester tracker storage unavailable. Apply the tester-tracker migration before use.") from exc
+    if len(rows) > 10000:
+        raise HTTPException(503, "Tracker exceeds the load limit; archive records before continuing")
+    return {col: [{"id": row["id"], "data": row["data"], "revision": row["revision"]} for row in rows if row["collection"] == col] for col in TESTER_COLLECTIONS}
+
+
+@router.put("/tester-tracker/{collection}/{record_id}")
+def write_tester_tracker(collection: str, record_id: str, body: TesterRecordWrite) -> dict[str, Any]:
+    _validate_tester_record(collection, record_id, body)
+    try:
+        rows = _rows(get_db().rpc("write_operator_tester_record", {
+            "p_collection": collection, "p_id": record_id, "p_data": body.data,
+            "p_mode": body.mode, "p_expected_revision": body.expected_revision,
+        }).execute())
+    except Exception as exc:
+        if "tracker_revision_conflict" in str(exc):
+            raise HTTPException(409, "This record changed in another session. Reload before editing.") from exc
+        if "tracker_record_missing" in str(exc):
+            raise HTTPException(404, "Tracker record no longer exists. Reload before editing.") from exc
+        logger.warning("Tester tracker save failed (%s)", type(exc).__name__)
+        raise HTTPException(503, "Tracker save not confirmed. Reload before retrying.") from exc
+    if not rows:
+        raise HTTPException(503, "Tracker save not confirmed. Reload before retrying.")
+    return {key: rows[0][key] for key in ("id", "data", "revision")}
