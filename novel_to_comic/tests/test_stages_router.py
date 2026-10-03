@@ -157,6 +157,28 @@ def test_invalid_persisted_adaptation_is_a_concise_conflict(tmp_path: Path):
     )
 
 
+def test_invalid_persisted_story_bible_is_a_concise_conflict(tmp_path: Path):
+    project_dir, state, bible = _story_project(tmp_path)
+    stored = bible.model_dump(mode="json")
+    stored["characters"] = [{**_blank_anchor_hero(), "id": "../hero"}]
+    (project_dir / "story_bible.json").write_text(json.dumps(stored))
+    client = _client(
+        tmp_path,
+        project_dir,
+        state,
+        raise_server_exceptions=False,
+    )
+
+    for route in ("story", "story-bible"):
+        response = client.get(f"/api/projects/test_project/{route}")
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == (
+            "Stored story bible is incompatible with the current pipeline. "
+            "Rerun Extract to rebuild it."
+        )
+
+
 def _write_draft_brief(project_dir: Path) -> None:
     TargetArtifacts(project_dir).write_brief(
         propose_brief(
