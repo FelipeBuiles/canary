@@ -618,3 +618,22 @@ def test_operational_drain_requires_authentication_and_explicit_resume(tmp_path,
     assert app.state.admission.draining is True
     resumed = client.post("/api/ops/resume", headers={"X-Canary-Ops-Token": "operator-secret"})
     assert resumed.json()["draining"] is False
+
+
+def test_deployment_drain_survives_restart_until_readiness_gated_resume(tmp_path, monkeypatch):
+    from tests.queue_fixtures import create_app
+    from novel_to_comic.server.admission import Admission
+
+    monkeypatch.setenv("CANARY_OPS_TOKEN", "operator-secret")
+    headers = {"X-Canary-Ops-Token": "operator-secret"}
+    previous = create_app(tmp_path, dev=True)
+    assert TestClient(previous).post("/api/ops/drain", headers=headers).status_code == 200
+    replacement = create_app(tmp_path, dev=True)
+    client = TestClient(replacement)
+    assert replacement.state.admission.draining is True
+    monkeypatch.setattr(app_module, "_readiness_result", lambda: (False, {"litellm": "unavailable"}))
+    assert client.post("/api/ops/resume", headers=headers).status_code == 503
+    assert Admission(tmp_path).draining is True
+    monkeypatch.setattr(app_module, "_readiness_result", lambda: (True, {}))
+    assert client.post("/api/ops/resume", headers=headers).json()["draining"] is False
+    assert Admission(tmp_path).draining is False

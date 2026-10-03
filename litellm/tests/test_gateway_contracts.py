@@ -94,6 +94,8 @@ def test_real_gateway_and_only_supported_custom_handler_are_loaded():
     assert issubclass(FalQueueLLM, CustomLLM)
     assert issubclass(OpenAIImageStreamLLM, CustomLLM)
     config = yaml.safe_load((ROOT / "litellm/config.yaml").read_text())
+    aliases = [route["model_name"] for route in config["model_list"]]
+    assert len(aliases) == len(set(aliases)), "Each model alias must have exactly one route"
     assert {route["model_name"] for route in config["model_list"]} == {
         "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "claude-opus-5-5",
         "claude-sonnet-5-5", "mimo-v2.6-pro", "deepseek-v4.1-flash", "image-sunburst",
@@ -369,6 +371,8 @@ def test_text_route_keeps_controls_and_app_price_on_the_bundled_map(monkeypatch,
     else:
         payload["response_format"] = {"type": "json_schema",
                                       "json_schema": {"name": "contract", "strict": True, "schema": schema}}
+        if wire.effort:
+            payload["reasoning_effort"] = wire.effort
     if wire.provider_key == "vertex_ai":
         _vertex_adc(monkeypatch)
         params = {**route["litellm_params"], "vertex_project": "fixture-project", "vertex_location": "global"}
@@ -544,3 +548,43 @@ def test_open_model_request_overrides_gateway_reasoning_default(monkeypatch, mod
     assert sent[-1]["reasoning"]["enabled"] is enabled
     if model == "mimo-v2.6-pro":
         assert sent[-1]["provider"]["require_parameters"] is True
+
+
+def test_gemini_vertex_route_uses_adc_schema_effort_and_pinned_price(monkeypatch):
+    import json
+    import litellm
+    route = next(item for item in _gateway_config()["model_list"]
+                 if item["model_name"] == "gemini-3.8-flash")
+    assert "api_key" not in route["litellm_params"]
+    _vertex_adc(monkeypatch)
+    seen = []
+    def send(self, request, **kwargs):
+        seen.append(request)
+        return httpx.Response(200, request=request, json={
+            "candidates": [{"content": {"role": "model", "parts": [{"text": '{"a":"x"}'}]},
+                            "finishReason": "STOP"}],
+            "usageMetadata": {"promptTokenCount": 1000, "candidatesTokenCount": 100,
+                              "thoughtsTokenCount": 50, "totalTokenCount": 1150},
+        })
+    monkeypatch.setattr(httpx.Client, "send", send)
+    router = litellm.Router(model_list=[{**route, "litellm_params": {
+        **route["litellm_params"], "vertex_project": "fixture-project", "vertex_location": "global",
+    }}])
+    schema = {"type": "object", "properties": {"a": {"type": "string"}},
+              "required": ["a"], "additionalProperties": False}
+    response = router.completion(
+        model="gemini-3.8-flash", messages=[{"role": "user", "content": "Hello"}],
+        reasoning_effort="medium", max_completion_tokens=32768,
+        response_format={"type": "json_schema", "json_schema": {"name": "x", "strict": True, "schema": schema}},
+    )
+    request = seen[-1]
+    assert request.url.host == "aiplatform.googleapis.com"
+    assert "/projects/fixture-project/locations/global/" in request.url.path
+    assert request.headers["authorization"] == "Bearer fixture-token"
+    assert "x-goog-api-key" not in request.headers
+    generation = json.loads(request.content)["generationConfig"]
+    assert generation["max_output_tokens"] == 32768
+    assert generation["response_json_schema"] == schema
+    assert generation["thinkingConfig"] == {"thinkingLevel": "medium", "includeThoughts": True}
+    # Thinking bills as output: 1000 * $0.75/M + 150 * $3.75/M.
+    assert response._hidden_params["response_cost"] == pytest.approx(0.0013125)

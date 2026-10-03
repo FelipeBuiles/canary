@@ -285,7 +285,8 @@ jobs:
         env:
           EXPECTED_CANARY_VERSION: ${{ github.sha }}
           SCENEWRIGHT_APP_URL: https://scenewright.ink
-        run: python scripts/verify_deployment.py
+          CANARY_OPS_TOKEN: ${{ secrets.CANARY_OPS_TOKEN }}
+        run: python scripts/verify_deployment.py --resume
       - name: Record deployed release
         if: success()
         run: |

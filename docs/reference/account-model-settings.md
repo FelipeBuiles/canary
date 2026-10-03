@@ -48,7 +48,7 @@ gateway so Sunburst images settle at FAL's billed charge; without it they settle
 at a labelled request estimate (see [stage contracts](stage-contracts.md)).
 `novel_to_comic/src/novel_to_comic/text_models.py` lists the selectable text aliases and the
 request fields each accepts; every alias needs a gateway route and a pricing
-alias. GPT and Claude text routes default to medium reasoning effort.
+alias. GPT, Claude, and Gemini text routes default to medium reasoning effort.
 Backoffice offers a reasoning selector beside each text-stage model: Extract,
 Brief, shared Style/Cast text, Adapt, Plan, lettering checks, and visual review.
 GPT, Claude, and Gemini accept low, medium, or high. MiMo and DeepSeek accept Off or On

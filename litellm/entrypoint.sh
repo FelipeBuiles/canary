@@ -13,6 +13,7 @@
 # Provider keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY,
 # TOGETHER_API_KEY, FAL_KEY) and LITELLM_MASTER_KEY/LITELLM_SALT_KEY must
 # be set as Fly secrets on canary-web. They flow into the proxy's environment.
+# Gemini uses Vertex ADC with VERTEXAI_PROJECT and VERTEXAI_LOCATION instead.
 
 set -e
 
