@@ -39,8 +39,9 @@ def sdk(monkeypatch, tmp_path):
     state = SimpleNamespace(
         types=generated, events=[], turns=[], interrupts=[], threads=[],
         config_change=lambda config: None, chatgpt=True,
-        models=[_Record(model="exact-model", input_modalities=["text", "image"])],
-        thread_model=None, thread_provider=None, notification_reads=0,
+        models=[_Record(model="exact-model", input_modalities=["text", "image"],
+                        service_tiers=[_Record(id="priority")])],
+        thread_model=None, thread_provider=None, thread_service_tier=None, notification_reads=0,
         plan="plus", capabilities={"image_generation": True, "namespace_tools": True},
         feature_pages={None: _Record(data=[_Record(name="image_generation", enabled=True)], next_cursor=None)},
         parent_run=runtime._run,
@@ -81,6 +82,7 @@ def sdk(monkeypatch, tmp_path):
             return _Record(
                 model=state.thread_model or params["model"],
                 model_provider=state.thread_provider or params["modelProvider"],
+                service_tier=state.thread_service_tier or params["serviceTier"],
                 instruction_sources=[], thread=_Record(id="thread-1"),
                 sandbox=_Record(root=_Record(type="readOnly", network_access=False)),
             )
@@ -226,7 +228,8 @@ def test_effective_auth_model_and_tool_conflicts_never_start_turn(sdk, boundary)
     elif boundary == "namespace_capability":
         sdk.capabilities["namespace_tools"] = False
     elif boundary == "image_modality":
-        sdk.models = [_Record(model="exact-model", input_modalities=["text"])]
+        sdk.models = [_Record(model="exact-model", input_modalities=["text"],
+                              service_tiers=[_Record(id="priority")])]
     elif boundary == "model":
         sdk.models = [_Record(model="exact-model-newer", input_modalities=["image"])]
     elif boundary == "thread_model":
@@ -691,7 +694,8 @@ def test_text_result_preserves_raw_schema_failure_for_consumer(sdk):
 
 @pytest.mark.parametrize("model", ("gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"))
 def test_gpt6_text_selection_uses_exact_catalog_model(sdk, model):
-    sdk.models = [_Record(model=model, input_modalities=["text", "image"])]
+    sdk.models = [_Record(model=model, input_modalities=["text", "image"],
+                          service_tiers=[_Record(id="priority")])]
     sdk.events = [
         sdk.types.ItemCompletedNotification(item=_Record(root=sdk.types.AgentMessageThreadItem(
             id="message-1", type="agentMessage", phase=None, text="ready",
@@ -1036,6 +1040,34 @@ def test_child_text_still_has_absolute_deadline(monkeypatch, tmp_path):
         runtime._runtime_error(result['error'], result['metadata']))
 
 
+def test_sdk_rpc_rejection_keeps_its_safe_reason_through_child_and_database(monkeypatch, tmp_path):
+    from openai_codex.errors import InvalidParamsError
+    from novel_to_comic.ai.usage_payloads import compact_metadata
+
+    prompt = 'private source passage'
+    reason = 'Request rejected: text exceeds the input limit.'
+    calls = []
+    async def rejected(root, request, evidence):
+        calls.append(request)
+        evidence.update(submitted=None, indeterminate=True)
+        raise InvalidParamsError(-32602, reason + ' Authorization: Bearer sk-private-credential',
+                                 data={'prompt': prompt, 'secret': 'private-data'})
+    monkeypatch.setattr(runtime, '_execute', rejected)
+    monkeypatch.setattr(runtime.importlib.metadata, 'version', lambda _: runtime.SDK_VERSION)
+    monkeypatch.setattr(runtime.tempfile, 'gettempdir', lambda: str(tmp_path))
+    (tmp_path / 'request.json').write_text(json.dumps({'kind': 'text', 'prompt': prompt}))
+    asyncio.run(runtime._child(tmp_path))
+    result = json.loads((tmp_path / 'result.json').read_text())
+    assert result['error'] == 'sdk_execution_failed'
+    assert result['metadata']['exception_type'] == 'InvalidParamsError'
+    assert len(calls) == 1
+    assert reason in str(runtime._runtime_error(result['error'], result['metadata']))
+    stored = compact_metadata({'codex_runtime': result['metadata']})
+    assert stored['codex_runtime']['provider_error'] == {'rpc_code': -32602, 'message': reason}
+    serialized = json.dumps(result) + json.dumps(stored)
+    assert prompt not in serialized and 'sk-private' not in serialized and 'private-data' not in serialized
+
+
 @pytest.mark.parametrize('kind,deadline', [('text', 915), ('image', 315)])
 def test_parent_deadline_leaves_child_cleanup_time(monkeypatch, supported_host, kind, deadline):
     observed = []
@@ -1169,3 +1201,85 @@ def test_text_reasoning_is_pinned_in_runtime_config(sdk, effort):
     result = asyncio.run(runtime.run_text(model="exact-model", system_prompt="Reply", user_content="Hello", effort=effort))
     assert result.text == "ready"
     assert observed and all(value == effort for value in observed)
+
+
+@pytest.mark.parametrize("kind", ["text", "image"])
+def test_fast_service_tier_is_pinned_and_recorded_for_every_call(sdk, kind):
+    observed = []
+    sdk.config_change = lambda config: observed.append(
+        (config["service_tier"], config["features"]["fast_mode"]))
+    if kind == "image":
+        sdk.events = [_image_event(sdk)]
+        result = _generate()
+    else:
+        sdk.events = [sdk.types.ItemCompletedNotification(item=_Record(root=sdk.types.AgentMessageThreadItem(
+            id="message-1", type="agentMessage", phase=None, text="ready"))), _completed(sdk)]
+        result = asyncio.run(runtime.run_text(model="exact-model", system_prompt="Reply", user_content="Hello"))
+    assert observed == [("priority", True), ("priority", True)]
+    assert sdk.threads[0]["model"] == "exact-model"
+    assert sdk.threads[0]["serviceTier"] == "priority"
+    assert sdk.turns[0][2]["serviceTier"] == "priority"
+    assert result.metadata["requested_service_tier"] == "priority"
+    assert result.metadata["service_tier"] == "priority"
+    assert result.metadata["thread_checks"]["service_tier_matches"] is True
+
+
+@pytest.mark.parametrize("kind", ["text", "image"])
+@pytest.mark.parametrize("tiers", [None, [], ["default"]])
+def test_fast_service_tier_must_be_advertised_before_submission(sdk, kind, tiers):
+    sdk.models[0].service_tiers = None if tiers is None else [_Record(id=tier) for tier in tiers]
+    with pytest.raises(runtime.CodexRuntimeError, match="fast_mode_unsupported") as failure:
+        if kind == "image":
+            _generate()
+        else:
+            asyncio.run(runtime.run_text(model="exact-model", system_prompt="Reply", user_content="Hello"))
+    assert failure.value.metadata["submitted"] is False
+    assert sdk.threads == []
+    assert sdk.turns == []
+
+
+@pytest.mark.parametrize("kind", ["text", "image"])
+@pytest.mark.parametrize("boundary", ["config_tier", "fast_feature", "thread_tier"])
+def test_fast_service_tier_drift_never_starts_a_turn(sdk, kind, boundary):
+    if boundary == "config_tier":
+        sdk.config_change = lambda config: config.update(service_tier="default")
+    elif boundary == "fast_feature":
+        sdk.config_change = lambda config: config["features"].update(fast_mode=False)
+    else:
+        sdk.thread_service_tier = "default"
+    with pytest.raises(runtime.CodexRuntimeError) as failure:
+        if kind == "image":
+            _generate()
+        else:
+            asyncio.run(runtime.run_text(model="exact-model", system_prompt="Reply", user_content="Hello"))
+    assert failure.value.metadata["submitted"] is False
+    if boundary == "thread_tier":
+        assert failure.value.metadata["requested_service_tier"] == "priority"
+        assert failure.value.metadata["service_tier"] == "default"
+    assert sdk.turns == []
+
+
+@pytest.mark.parametrize('metadata, expected', [
+    ({'last_notification_elapsed_seconds': 880.4, 'output_tokens': 41000}, 'Model activity until 880s (41000 output tokens).'),
+    ({'last_notification_elapsed_seconds': 3.2}, 'Model activity until 3s.'),
+    ({'submitted': True}, 'The model sent no activity after the request was submitted.'),
+])
+def test_text_timeout_says_whether_the_model_was_still_working(metadata, expected):
+    error = runtime.CodexRuntimeError('runtime_timeout', {'timeout_seconds': 900, **metadata})
+    assert str(error).startswith('runtime_timeout: Canary stopped the request after 900 seconds')
+    assert expected in str(error)
+
+
+def test_failure_diagnostics_keep_runtime_timing_without_request_content(tmp_path, monkeypatch):
+    from novel_to_comic.server.diagnostics import record_diagnostic
+    monkeypatch.setenv('CANARY_LOCAL_DIAGNOSTICS', '1')
+    error = runtime.CodexRuntimeError('runtime_timeout', {
+        'timeout_seconds': 900, 'submitted': True, 'last_notification_elapsed_seconds': 12.5,
+        'output_tokens': 300, 'events': [{'type': 'reasoning'}] * 30,
+        'revised_prompt': 'private prompt text', 'saved_path': '/private/path.png'})
+    record_diagnostic(tmp_path, 'stage_failed', stage='extract', error=error)
+    record = json.loads((tmp_path / '.canary/diagnostics.jsonl').read_text())
+    evidence = record['runtime_evidence']
+    assert evidence['last_notification_elapsed_seconds'] == 12.5 and evidence['output_tokens'] == 300
+    assert len(evidence['events']) == 20
+    assert 'private prompt text' not in json.dumps(record) and '/private/path.png' not in json.dumps(record)

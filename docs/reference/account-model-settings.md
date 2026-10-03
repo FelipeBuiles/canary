@@ -1,6 +1,6 @@
 # Model settings
 
-**Status: Current, September 29, 2026.** Implementation, gateway configuration,
+**Status: Current, October 2, 2026.** Implementation, gateway configuration,
 and tests are authoritative.
 
 ## Production operator defaults
@@ -33,10 +33,12 @@ operator connection used by its other views.
 | Visual review | GPT-6 Luna | Visual consistency checks |
 
 Text and vision choices are `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`,
-`claude-opus-5-5`, `claude-sonnet-5-5`, `mimo-v2.6-pro`, and
-`deepseek-v4.1-flash`.
+`claude-opus-5-5`, `claude-sonnet-5-5`, `mimo-v2.6-pro`,
+`deepseek-v4.1-flash`, and `gemini-3.8-flash`.
 Image and Draw choices are `image-sunburst` only. The gateway maps the text
-choices to OpenAI, Anthropic, OpenRouter/Xiaomi, and Together AI respectively.
+choices to OpenAI, Anthropic, OpenRouter/Xiaomi, Together AI, and Google Vertex AI.
+Gemini uses project-scoped Vertex REST requests with ADC credentials and Google
+Cloud billing. See [Vertex setup](vertex-ai.md) for project/credit configuration.
 `image-sunburst` runs on OpenAI first with one FAL attempt as backup, for
 Style/Cast images and Draw pages alike; model pickers label it "OpenAI, FAL
 backup". There is no route-priority setting.
@@ -49,7 +51,7 @@ request fields each accepts; every alias needs a gateway route and a pricing
 alias. GPT and Claude text routes default to medium reasoning effort.
 Backoffice offers a reasoning selector beside each text-stage model: Extract,
 Brief, shared Style/Cast text, Adapt, Plan, lettering checks, and visual review.
-GPT and Claude accept low, medium, or high. MiMo and DeepSeek accept Off or On
+GPT, Claude, and Gemini accept low, medium, or high. MiMo and DeepSeek accept Off or On
 (`none` or `enabled`), using their routes' native reasoning toggles.
 PATCH accepts a partial `reasoning_efforts` mapping, for example
 `{"reasoning_efforts": {"adapt": "high", "plan": "low"}}`, or a model and
@@ -57,17 +59,18 @@ reasoning change together:
 `{"selections": {"adapt": "mimo-v2.6-pro"}, "reasoning_efforts": {"adapt": "enabled"}}`.
 Incompatible model/setting combinations are rejected before saving. Switching
 models resets an incompatible saved reasoning choice to the new model's default:
-medium for GPT/Claude, Off for MiMo/DeepSeek. Image generation has no text
+medium for GPT/Claude/Gemini, Off for MiMo/DeepSeek. Image generation has no text
 reasoning setting.
 
 Settings are saved atomically with operator model defaults and snapshotted for
 new jobs. Changes do not affect running jobs. GPT requests send
-`reasoning_effort`; Claude sends `output_config.effort`; open-model requests send
+`reasoning_effort`; Gemini sends the same control, which the Vertex adapter maps
+to `thinkingConfig.thinkingLevel`; Claude sends `output_config.effort`; open-model requests send
 `extra_body.reasoning.enabled`. OpenRouter requests preserve
 `provider.require_parameters`. Enabling reasoning on the open routes adds 16K
 completion-token headroom and a 4K thinking-token allowance to the request's cost
 estimate; actual usage remains provider-reported. The API's shared
-`text_reasoning_effort` default remains available for GPT/Claude; per-stage values
+`text_reasoning_effort` default remains available for GPT/Claude/Gemini; per-stage values
 are what the backoffice edits. Provider request formats follow the
 [OpenRouter reasoning API](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
 and [Together reasoning toggle](https://docs.together.ai/docs/deepseek-v4-quickstart#reducing-reasoning-overhead).
@@ -77,7 +80,7 @@ $2 input / $0.20 cached input / $10 output, and
 [Luna](https://developers.openai.com/api/docs/models/gpt-6-luna)
 $0.10 input / $0.01 cached input / $0.50 output. Canary records these in its
 pricing overrides; provider-reported cost remains authoritative for settlement.
-Provider keys belong in the gateway environment.
+Provider keys and Vertex credentials belong in the gateway environment.
 
 ## Project configuration
 
@@ -155,7 +158,7 @@ mocked providers and do not establish account access or image quality.
 
 **Labs → Stage models** compares two to six models and offers a reasoning selector for every selected model and
 stage in the chosen phases (Extract/Brief and Adapt/Plan). GPT and Claude API and
-subscription routes offer Low, Medium, and High; MiMo and DeepSeek offer Off and
+subscription routes, and Gemini on Vertex, offer Low, Medium, and High; MiMo and DeepSeek offer Off and
 On. Labs defaults to Medium for GPT/Claude and Off for the open-model routes.
 These are run-specific experiment settings, independent of backoffice defaults.
 

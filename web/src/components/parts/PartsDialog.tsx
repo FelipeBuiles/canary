@@ -31,6 +31,7 @@ interface Props {
 export function PartsDialog({ open, project, parts, onClose }: Props) {
   const { t } = useI18n();
   const [adding, setAdding] = useState(false);
+  const [addedCount, setAddedCount] = useState(0);
   const [splitting, setSplitting] = useState<{ part: PartSummary; chapters?: DetectedChapter[] } | null>(null);
   return (
     <Sheet
@@ -39,22 +40,28 @@ export function PartsDialog({ open, project, parts, onClose }: Props) {
       wide
       title={t("Parts")}
       description={t("Each part is its own issue with its own Brief, pages and export. Characters, places, props, Style and Cast are shared by every part.")}
-      footer={!adding && !splitting && <Button onClick={() => setAdding(true)}>{t("Add a part")}</Button>}
+      footer={!adding && !splitting && <Button onClick={() => { setAdding(true); setAddedCount(0); }}>{t("Add a part")}</Button>}
     >
       {splitting ? (
         <SplitPanel project={project} part={splitting.part} proposed={splitting.chapters} onDone={() => setSplitting(null)} />
       ) : adding ? (
-        <AddPartPanel project={project} onCancel={() => setAdding(false)} onAdded={(part, chapters) => {
+        <AddPartPanel project={project} onCancel={() => setAdding(false)} onAdded={(part, chapters, count) => {
           setAdding(false);
-          if (chapters.length > 1) setSplitting({ part, chapters });
+          setAddedCount(count);
+          if (count === 1 && chapters.length > 1) setSplitting({ part, chapters });
         }} parts={parts} />
       ) : (
-        <ol className="divide-y-[2px] divide-ink-black/10">
-          {parts.map((part) => (
-            <PartRow key={part.id} project={project} part={part} last={parts.length === 1}
-              onSplit={() => setSplitting({ part })} onOpen={onClose} />
-          ))}
-        </ol>
+        <>
+          {addedCount > 1 && <p role="status" className="mb-4 font-body text-sm">
+            {t("Added {count} parts grouped at chapter boundaries. Review them before starting extraction.", { count: addedCount })}
+          </p>}
+          <ol className="divide-y-[2px] divide-ink-black/10">
+            {parts.map((part) => (
+              <PartRow key={part.id} project={project} part={part} last={parts.length === 1}
+                onSplit={() => setSplitting({ part })} onOpen={onClose} />
+            ))}
+          </ol>
+        </>
       )}
     </Sheet>
   );
@@ -165,7 +172,7 @@ function PartRow({ project, part, last, onSplit, onOpen }: {
 
 function AddPartPanel({ project, parts, onAdded, onCancel }: {
   project: string; parts: PartSummary[];
-  onAdded: (part: PartSummary, chapters: DetectedChapter[]) => void; onCancel: () => void;
+  onAdded: (part: PartSummary, chapters: DetectedChapter[], count: number) => void; onCancel: () => void;
 }) {
   const { t } = useI18n();
   const add = useAddPart();
@@ -176,7 +183,7 @@ function AddPartPanel({ project, parts, onAdded, onCancel }: {
       add.mutate({ project, input: text }, {
         onSuccess: (response) => {
           const summary = response.parts.find((item) => item.id === response.part.id);
-          if (summary) onAdded(summary, response.chapters);
+          if (summary) onAdded(summary, response.chapters, response.created.length);
         },
       });
     }}>

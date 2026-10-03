@@ -1,5 +1,6 @@
 import type { LanguageCode } from "../locales/languages";
 import type { LetteringElement } from "@lettering-engine";
+import type { ModelFunding } from "../modelFunding";
 export type StageName =
   | "extract"
   | "brief"
@@ -182,6 +183,10 @@ export interface PartSummary {
   ordinal: number;
   title: string;
   characters: number;
+  /** From the book map while it still describes this part's text. */
+  synopsis?: string | null;
+  /** What this part does in the whole book's structure. */
+  book_role?: string | null;
   created_at: string;
   origin: string;
   stages: Record<string, StageStatus>;
@@ -227,6 +232,8 @@ export interface CostEstimate {
   reserved_credits: number | null;
   reservation_multiplier: number;
   confidence: CostConfidence;
+  /** Who pays: subscription-funded work costs no credits. */
+  funding?: ModelFunding;
 }
 
 export interface StageCostEstimate extends CostEstimate {
@@ -410,6 +417,7 @@ export interface Character {
   appearance_states: AppearanceState[];
   aliases?: string[];
   origin?: EntityOrigin;
+  cast_required?: boolean;
 }
 
 export interface Location {
@@ -429,7 +437,7 @@ export interface Scene {
   part_id?: string;
   chapter: number;
   title: string;
-  location_id: string;
+  location_id: string | null;
   character_ids: string[];
   summary: string;
   scene_type: string;
@@ -437,11 +445,13 @@ export interface Scene {
   source_start_quote: string;
 }
 
-export interface NarrativeArc {
-  act: number;
+/** A run of one part's scenes that pursues one goal and ends on a turn. */
+export interface StorySequence {
+  part_id: string;
+  number: number;
   title: string;
   scenes: string[];
-  turning_point: string | null;
+  turn: string | null;
 }
 
 export interface Prop {
@@ -462,6 +472,7 @@ export interface ExcludedEntity {
 }
 
 export interface StoryBible {
+  cast_character_ids?: string[];
   /** Bumped by every author edit; edits carry the revision they read. */
   revision?: number;
   excluded_entities?: ExcludedEntity[];
@@ -471,7 +482,7 @@ export interface StoryBible {
   characters: Character[];
   locations: Location[];
   scenes: Scene[];
-  narrative_arcs: NarrativeArc[];
+  sequences: StorySequence[];
   style_notes: string | null;
   props: Prop[];
 }

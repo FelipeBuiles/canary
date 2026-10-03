@@ -25,7 +25,9 @@ def test_extract_estimate_for_typical_project_stays_in_sane_range(
 
     estimate = estimate_stage_credit_breakdown(config, tmp_path, state, "extract")
 
-    assert estimate["estimate_credits"] in range(6, 61)
+    # Gemini's always-on thinking adds a per-call allowance to sectioned
+    # extraction; the quote must still fit within a tenth of the starter pack.
+    assert estimate["estimate_credits"] in range(6, 121)
 
 
 def test_credit_packages_match_recommended_pricing():

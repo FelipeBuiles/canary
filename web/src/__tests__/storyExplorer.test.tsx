@@ -34,7 +34,7 @@ const story: StoryBible = {
     scene("scene_2", "The Ledger", "inciting_incident"),
     scene("scene_3", "Epilogue", "resolution", "loc_2"),
   ],
-  narrative_arcs: [{ act: 1, title: "The Discovery", scenes: ["scene_1", "scene_2"], turning_point: "Elena reads the forbidden page." }],
+  sequences: [{ part_id: "part_0001", number: 1, title: "The Discovery", scenes: ["scene_1", "scene_2"], turn: "Elena reads the forbidden page." }],
   style_notes: null,
   props: [],
 };
@@ -44,15 +44,38 @@ function renderExplorer(value: StoryBible = story) {
 }
 
 describe("StoryExplorer", () => {
-  it("groups scenes into acts, closes each act with its turning point, and keeps unclaimed scenes", () => {
+  it("shows recurring characters while retaining other participants on scene rosters", () => {
+    renderExplorer({ ...story, cast_character_ids: ["char_1"], scenes: [
+      ...story.scenes.slice(0, 2), { ...story.scenes[2], character_ids: ["char_1", "char_2"] },
+    ] });
+    expect(screen.getByText("Elena, Mara")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Characters/ }));
+    expect(screen.getByRole("heading", { name: "Elena" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Mara" })).toBeNull();
+  });
+
+  it("excludes back matter from story action and numbering even when a sequence claims it", () => {
+    renderExplorer({ ...story, sequences: [{ ...story.sequences[0], scenes: ["scene_1", "back"] }], scenes: [story.scenes[0], {
+      ...story.scenes[0], id: "back",
+      title: "Reading recommendations", location_id: null, character_ids: [],
+      scene_type: "non_narrative", summary: "Links to reading communities.",
+    }, { ...story.scenes[1] }] });
+    expect(screen.queryByRole("heading", { name: "Reading recommendations" })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Scenes\s*2$/ })).toBeTruthy();
+    expect(screen.getByLabelText("SCENE 2")).toBeTruthy();
+    expect(screen.getByText("Author notes and other non-story material are excluded from adaptation.")).toBeTruthy();
+  });
+
+  it("groups scenes into sequences, closes each with its turn, and keeps unclaimed scenes", () => {
     renderExplorer();
 
-    const act = screen.getByRole("region", { name: "The Discovery" });
-    expect(within(act).getByText("Act 1")).toBeTruthy();
-    expect(within(act).getAllByRole("heading", { level: 4 }).map((heading) => heading.textContent)).toEqual(["The Locked Shelf", "The Ledger"]);
-    expect(within(act).getByText("Elena reads the forbidden page.")).toBeTruthy();
+    const sequence = screen.getByRole("region", { name: "The Discovery" });
+    expect(within(sequence).getByText("Sequence 1")).toBeTruthy();
+    expect(screen.queryByText(/^Act /)).toBeNull();
+    expect(within(sequence).getAllByRole("heading", { level: 4 }).map((heading) => heading.textContent)).toEqual(["The Locked Shelf", "The Ledger"]);
+    expect(within(sequence).getByText("Elena reads the forbidden page.")).toBeTruthy();
     // The beat marks where it changes, not every scene that shares it.
-    expect(within(act).getAllByText("Inciting incident")).toHaveLength(1);
+    expect(within(sequence).getAllByText("Inciting incident")).toHaveLength(1);
 
     const more = screen.getByRole("region", { name: "More scenes" });
     expect(within(more).getByRole("heading", { name: "Epilogue" })).toBeTruthy();
@@ -61,8 +84,8 @@ describe("StoryExplorer", () => {
     expect(screen.queryByText(/Chapter/)).toBeNull();
   });
 
-  it("lists scenes without act headings when Extract found no arcs", () => {
-    renderExplorer({ ...story, narrative_arcs: [] });
+  it("lists scenes without sequence headings when Extract found none", () => {
+    renderExplorer({ ...story, sequences: [] });
 
     expect(screen.queryByRole("region", { name: "More scenes" })).toBeNull();
     expect(screen.getAllByRole("heading", { level: 3 }).map((heading) => heading.textContent)).toEqual(["The Locked Shelf", "The Ledger", "Epilogue"]);

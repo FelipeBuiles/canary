@@ -69,7 +69,7 @@ author copy or generate or correct artwork.
 _Avoid_: Compose stage
 
 **Story Bible** — The shared story understanding used by later pipeline work:
-characters, locations, scenes, arcs, and props. One Story Bible serves every
+characters, locations, scenes, sequences, and props. One Story Bible serves every
 part of a series. Extraction proposes it; the author owns it and may edit, add,
 remove, or merge its entries. Each edit is checked against the revision the
 author saw.
@@ -221,6 +221,19 @@ adaptation, pages, cover, and export. Parts follow reading order; only the
 newest part's text can change, and only until its adaptation starts.
 _Avoid_: Chapter (a part may hold many chapters), episode
 
+**Sequence** — A consecutive run of one part's scenes that pursues one goal and
+ends on a turn. A part has as many as its text supports; sequences are never
+the book's acts.
+_Avoid_: Act, arc (for a part's structure)
+
+**Book map** — The series' light reading of every saved part: the book's acts,
+each part's role, through-lines with where they open and resolve, recurring
+people, themes, and motifs. Extract rebuilds it when the saved parts change.
+
+**Book context** — What one part's Brief and adaptation are told about the
+whole book: its position, that it may have no ending of its own, and a bounded
+slice of the book map. It is reference, never source to adapt.
+
 **Combined export** — One PDF or CBZ made from the finished pages of
 consecutive parts, without redrawing anything.
 
@@ -246,6 +259,9 @@ or character reference regeneration.
 and does not advance project pipeline state.
 
 ## Historical terms
+
+**Narrative arc (per part)** — Obsolete three-act grouping Extract imposed on
+every part. Parts now have sequences; the book's acts live in the book map.
 
 **Panels station** — Obsolete name for Station 03 from the panel-generation
 workflow. The current station is Pages.

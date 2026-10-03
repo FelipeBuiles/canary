@@ -11,7 +11,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from novel_to_comic.models.adaptation import LetteringItem, RevisionedArtifact
-from novel_to_comic.models.page import ComicPage
+from novel_to_comic.models.page import ApprovedVisualReference, ComicPage
 from novel_to_comic.models.validation import EditorialIssue, InvariantFailure
 from novel_to_comic.usage import UsageRecord
 
@@ -129,6 +129,7 @@ class FrozenPageGenerationRequest(BaseModel):
     prompt: str = Field(min_length=1)
     lettering: tuple[LetteringItem, ...]
     references: tuple[PageReference, ...] = ()
+    written_identities: tuple[ApprovedVisualReference, ...] = Field(default=(), exclude_if=lambda value: not value)
     output_width: int = Field(gt=0)
     output_height: int = Field(gt=0)
     output_media_type: Literal["image/png"]
@@ -148,6 +149,7 @@ class FrozenPageGenerationRequest(BaseModel):
         references: list[PageReference] | tuple[PageReference, ...],
         retry: RetryProvenance,
         correction: PageRenderCorrection | None = None,
+        written_identities: tuple[ApprovedVisualReference, ...] = (),
     ) -> "FrozenPageGenerationRequest":
         profile = edition.capability_profile
         if len(prompt) > profile.max_prompt_characters:
@@ -169,6 +171,7 @@ class FrozenPageGenerationRequest(BaseModel):
             lettering=([lettering for item in page.content for lettering in item.lettering]
                        if profile.exact_visible_lettering else []),
             references=references,
+            written_identities=written_identities,
             output_width=profile.output_width,
             output_height=profile.output_height,
             output_media_type=profile.output_media_type,
@@ -185,9 +188,11 @@ class FrozenPageGenerationRequest(BaseModel):
         orders = [reference.order for reference in self.references]
         if orders != list(range(1, len(self.references) + 1)):
             raise ValueError("page references must have consecutive upload order")
-        reference_ids = [reference.id for reference in self.references]
+        reference_ids = [reference.id for reference in (*self.references, *self.written_identities)]
         if len(reference_ids) != len(set(reference_ids)):
             raise ValueError("page reference IDs must be unique")
+        if any(reference.requires_image for reference in self.written_identities):
+            raise ValueError("Written identities cannot replace required image authorities")
         if self.correction is not None and (
             self.correction.page_number != self.page_number
             or self.correction.comic_page_revision != self.comic_page_revision

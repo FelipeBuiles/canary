@@ -115,8 +115,27 @@ def _story_bible() -> StoryBible:
         characters=[],
         locations=[],
         scenes=[],
-        narrative_arcs=[],
+        sequences=[],
     )
+
+
+def test_non_narrative_source_spans_have_no_required_dramatic_obligation():
+    from novel_to_comic.book_adaptation import _scene_obligations
+    bible = _story_bible()
+    bible.scenes = [Scene(
+        id='scene_001', chapter=1, title='Recommendations', location_id=None, character_ids=[],
+        summary='Reading communities and links.', scene_type='non_narrative',
+        narrative_beat='Community recommendations', source_start_quote='I saw the door open.')]
+    assert _scene_obligations(bible) == []
+    view = _story_bible_view(bible)
+    assert view['scenes'][0]['scene_type'] == 'non_narrative'
+    assert view['scenes'][0]['location_id'] is None
+    assert not view['locations']
+    prompt = build_adaptation_blueprint_prompt(
+        _source_document(), bible, _approved_brief(), NarrativeTreatment(causal_spine=('A witness recalls events.',)),
+        primary_source_unit_ids=tuple(unit.id for unit in _source_document().units),
+        owned_requirement_ids=(), shard_index=1, shard_count=1)
+    assert 'intentional-omission ledger exceptions' in prompt
 
 
 def test_story_bible_view_preserves_extracted_appearance_transitions():
@@ -177,7 +196,7 @@ def test_story_bible_view_preserves_extracted_appearance_transitions():
                 source_start_quote="Henry became ill.",
             )
         ],
-        narrative_arcs=[],
+        sequences=[],
     )
 
     character_view = _story_bible_view(bible)["characters"][0]
@@ -205,7 +224,7 @@ def test_adapt_rejects_appearance_changes_without_story_bible_authority():
     )
     bible = StoryBible(
         title="The Door", author="A. Witness", total_scenes=0,
-        characters=[character], locations=[], scenes=[], narrative_arcs=[],
+        characters=[character], locations=[], scenes=[], sequences=[],
     )
     adaptation = _book_adaptation().model_copy(update={
         "beats": (
@@ -3943,7 +3962,10 @@ def test_depiction_guidance_reaches_brief_and_every_adapt_pass_without_changing_
         assert DEPICTION_GUIDANCE in prompt
         # Prose instructions stay outside the canonical JSON context.
         context = json.loads(prompt.split('\n', 1)[1])
-        assert [unit['text'] for unit in context['source_units']] == [unit.text for unit in source.units]
+        if 'source_units' in context:
+            assert [unit['text'] for unit in context['source_units']] == [unit.text for unit in source.units]
+        else:
+            assert ''.join(scene['text'] for scene in context['source_scenes']) == source.text
         if 'approved_adaptation_brief' in context:
             assert context['approved_adaptation_brief']['protected_language'] == list(brief.protected_language)
     assert 'protected_language entries' in prompts[-1]

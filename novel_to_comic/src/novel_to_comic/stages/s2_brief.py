@@ -7,6 +7,7 @@ from pathlib import Path
 
 from novel_to_comic import artifacts
 from novel_to_comic.briefing import (
+    brief_inference_schema,
     build_brief_inference_prompt,
     inherited_brief_fields,
     propose_brief,
@@ -18,6 +19,7 @@ from novel_to_comic.clients.structured_call import (
     generate_validated_json,
     validation_error_summary,
 )
+from novel_to_comic.book_context import book_context
 from novel_to_comic.config import Config
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.state import PipelineState
@@ -35,7 +37,8 @@ def _inference_prompt(project_dir: Path):
     story_bible = artifacts.read_story_bible(project_dir)
     part = workspace_part_id(project_dir)
     previous = series_brief(project_dir)
-    prompt = build_brief_inference_prompt(source, story_bible, part_id=part, previous_brief=previous)
+    prompt = build_brief_inference_prompt(source, story_bible, part_id=part, previous_brief=previous,
+                                          book=book_context(project_dir))
     page_envelope = story_page_envelope(source, story_bible, part_id=part)
     inherited = inherited_brief_fields(previous) if previous is not None else None
     return prompt, page_envelope, inherited
@@ -45,7 +48,8 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
     target = TargetArtifacts(project_dir)
     prompt, page_envelope, inherited = _inference_prompt(project_dir)
     model = config.effective_brief_model()
-    estimate = estimate_text_cost(model, prompt, output_chars=8_000)
+    schema = brief_inference_schema(inherited=inherited)
+    estimate = estimate_text_cost(model, prompt + json.dumps(schema), output_chars=8_000)
 
     def parse(raw: object):
         return propose_brief(raw, page_envelope=page_envelope, inherited=inherited)
@@ -85,6 +89,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
                 correction=correction,
                 label="Adaptation brief inference",
                 feature="brief.infer",
+                json_schema=schema,
             )
         except StructuredCallError as exc:
             raise exc.last_error from exc
@@ -103,10 +108,10 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     target = TargetArtifacts(project_dir)
     if not target.source_path.exists() or not artifacts.story_bible_path(project_dir).exists():
         return 0.0
-    prompt, _envelope, _inherited = _inference_prompt(project_dir)
+    prompt, _envelope, inherited = _inference_prompt(project_dir)
     return estimate_text_cost(
         config.effective_brief_model(),
-        prompt,
+        prompt + json.dumps(brief_inference_schema(inherited=inherited)),
         output_chars=8_000,
     )
 

@@ -1,3 +1,5 @@
+import pytest
+
 from novel_to_comic.server.body_limit import _body_cap_bytes
 
 
@@ -21,6 +23,32 @@ def test_novel_upload_uses_its_larger_multipart_envelope(monkeypatch):
 
     assert _body_cap_bytes("/api/projects/", "POST") == 11 * 1024 * 1024
     assert _body_cap_bytes("/api/projects/import-story", "POST") == 2 * 1024 * 1024
+
+
+@pytest.mark.parametrize("path,method", [
+    ("/api/projects/my-book/parts", "POST"),
+    ("/api/projects/my-book/parts/", "POST"),
+    ("/api/projects/my-book/parts/part_0002/text", "PUT"),
+    ("/api/projects/my-book/parts/part_0002/text/", "PUT"),
+])
+def test_part_sources_use_the_configured_upload_envelope(monkeypatch, path, method):
+    monkeypatch.setenv("CANARY_MAX_BODY_MB", "2")
+    monkeypatch.setenv("CANARY_MAX_UPLOAD_MB", "50")
+
+    assert _body_cap_bytes(path, method) == 51 * 1024 * 1024
+
+
+@pytest.mark.parametrize("path,method", [
+    ("/api/projects/my-book/parts/export", "POST"),
+    ("/api/projects/my-book/parts/part_0002/split", "POST"),
+    ("/api/projects/my-book/parts/part_0002/text", "POST"),
+    ("/api/projects/my-book/parts", "PUT"),
+    ("/api/projects/my-book/parts/part_0002", "PATCH"),
+])
+def test_part_json_actions_keep_the_generic_cap(monkeypatch, path, method):
+    monkeypatch.setenv("CANARY_MAX_BODY_MB", "2")
+
+    assert _body_cap_bytes(path, method) == 2 * 1024 * 1024
 
 
 def test_style_direction_upload_has_preparser_multipart_envelope(monkeypatch):

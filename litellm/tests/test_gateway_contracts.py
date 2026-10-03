@@ -97,7 +97,7 @@ def test_real_gateway_and_only_supported_custom_handler_are_loaded():
     assert {route["model_name"] for route in config["model_list"]} == {
         "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "claude-opus-5-5",
         "claude-sonnet-5-5", "mimo-v2.6-pro", "deepseek-v4.1-flash", "image-sunburst",
-        "image-sunburst-openai",
+        "image-sunburst-openai", "gemini-3.8-flash",
     }
     assert config["litellm_settings"]["custom_provider_map"] == [{
         "provider": "fal-queue",
@@ -274,6 +274,27 @@ def _bundled_cost_map():
     return json.loads(resources.files("litellm").joinpath("model_prices_and_context_window_backup.json").read_text())
 
 
+def _vertex_adc(monkeypatch):
+    import google.auth
+    from google.oauth2.credentials import Credentials
+
+    credentials = Credentials(token="fixture-token")
+    monkeypatch.setattr(credentials, "refresh", lambda request: None)
+    monkeypatch.setattr(google.auth, "default", lambda **kwargs: (credentials, "fixture-project"))
+
+
+def _vertex_response():
+    return {
+        "modelVersion": "gemini-3.8-flash",
+        "candidates": [{"index": 0, "finishReason": "STOP", "content": {
+            "role": "model", "parts": [{"text": '{"ok":true}'}],
+        }}],
+        "usageMetadata": {"promptTokenCount": 1000, "candidatesTokenCount": 800,
+                          "cachedContentTokenCount": 250,
+                          "thoughtsTokenCount": 200, "totalTokenCount": 2000},
+    }
+
+
 def _app_price(alias):
     """Base token rates the app settles with when the gateway reports no cost."""
     import json
@@ -320,7 +341,9 @@ def test_text_route_keeps_controls_and_app_price_on_the_bundled_map(monkeypatch,
 
     def send(self, request, **kwargs):
         sent.append(json.loads(request.content))
-        if "anthropic" in str(request.url):
+        if "aiplatform.googleapis.com" in str(request.url):
+            body = _vertex_response()
+        elif "anthropic" in str(request.url):
             body = {"id": "m", "type": "message", "role": "assistant", "model": upstream,
                     "content": [{"type": "text", "text": '{"ok":true}'}], "stop_reason": "end_turn",
                     "usage": {"input_tokens": 1000, "output_tokens": 1000}}
@@ -346,21 +369,104 @@ def test_text_route_keeps_controls_and_app_price_on_the_bundled_map(monkeypatch,
     else:
         payload["response_format"] = {"type": "json_schema",
                                       "json_schema": {"name": "contract", "strict": True, "schema": schema}}
-    router = litellm.Router(model_list=[{
-        **route, "litellm_params": {**route["litellm_params"], "api_key": "test-key"},
-    }])
+    if wire.provider_key == "vertex_ai":
+        _vertex_adc(monkeypatch)
+        params = {**route["litellm_params"], "vertex_project": "fixture-project", "vertex_location": "global"}
+    else:
+        params = {**route["litellm_params"], "api_key": "test-key"}
+    router = litellm.Router(model_list=[{**route, "litellm_params": params}])
     response = router.completion(model=model, **payload)
 
     body = sent[-1]
     if wire.claude_native_json:
         assert body["output_config"]["effort"] == wire.effort == "medium"
     if "reasoning_effort" in route["litellm_params"]:
-        assert body["reasoning_effort"] == route["litellm_params"]["reasoning_effort"]
+        if wire.provider_key == "vertex_ai":
+            assert body["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "medium"
+        else:
+            assert body["reasoning_effort"] == route["litellm_params"]["reasoning_effort"]
     for key, value in route["litellm_params"].get("extra_body", {}).items():
         assert body[key] == value
     price = _app_price(model)
     expected = 1000 * price["input_cost_per_token"] + 1000 * price["output_cost_per_token"]
+    if wire.provider_key == "vertex_ai":
+        expected -= 250 * (price["input_cost_per_token"] - price["cache_read_input_token_cost"])
     assert response._hidden_params["response_cost"] == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("effort", ["low", "medium", "high"])
+def test_vertex_gemini_route_preserves_project_schema_vision_reasoning_and_usage(monkeypatch, stream, effort):
+    import asyncio
+    import json
+    import litellm
+
+    route = next(item for item in _gateway_config()["model_list"] if item["model_name"] == "gemini-3.8-flash")
+    assert route["litellm_params"]["model"] == "vertex_ai/gemini-3.8-flash"
+    assert "api_key" not in route["litellm_params"]
+    _vertex_adc(monkeypatch)
+    monkeypatch.setattr(litellm, "model_cost", _bundled_cost_map())
+    monkeypatch.setattr(litellm, "drop_params", False)
+    sent = []
+
+    def respond(request):
+        sent.append(request)
+        if stream:
+            return httpx.Response(200, request=request, headers={"content-type": "text/event-stream"},
+                                  content=f"data: {json.dumps(_vertex_response())}\n\n".encode())
+        return httpx.Response(200, request=request, json=_vertex_response())
+
+    def send(self, request, **kwargs):
+        return respond(request)
+
+    async def async_send(self, request, **kwargs):
+        return respond(request)
+
+    monkeypatch.setattr(httpx.Client, "send", send)
+    monkeypatch.setattr(httpx.AsyncClient, "send", async_send)
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}},
+              "required": ["ok"], "additionalProperties": False}
+    router = litellm.Router(model_list=[{**route, "litellm_params": {
+        **route["litellm_params"], "vertex_project": "credited-project", "vertex_location": "global",
+    }}], num_retries=0)
+    payload = {
+        "model": "gemini-3.8-flash", "reasoning_effort": effort, "max_completion_tokens": 20480,
+        "messages": [{"role": "system", "content": "Return JSON."}, {"role": "user", "content": [
+            {"type": "text", "text": "Read the image."},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        ]}],
+        "response_format": {"type": "json_schema", "json_schema": {
+            "name": "contract", "strict": True, "schema": schema,
+        }},
+    }
+    if stream:
+        async def collect():
+            result = await router.acompletion(**payload, stream=True, stream_options={"include_usage": True})
+            return [chunk async for chunk in result]
+        chunks = asyncio.run(collect())
+        assert ''.join(chunk.choices[0].delta.content or '' for chunk in chunks if chunk.choices) == '{"ok":true}'
+        usage = next(chunk.usage for chunk in reversed(chunks) if chunk.usage is not None)
+    else:
+        result = router.completion(**payload)
+        assert result.choices[0].message.content == '{"ok":true}'
+        usage = result.usage
+    assert len(sent) == 1
+    request = sent[0]
+    assert request.url.host == "aiplatform.googleapis.com"
+    assert "/projects/credited-project/locations/global/publishers/google/models/gemini-3.8-flash:" in request.url.path
+    assert request.headers["authorization"] == "Bearer fixture-token"
+    body = json.loads(request.content)
+    generation = body["generationConfig"]
+    assert generation["thinkingConfig"] == {"thinkingLevel": effort, "includeThoughts": True}
+    assert generation["max_output_tokens"] == 20480
+    assert generation["response_mime_type"] == "application/json"
+    assert generation.get("response_json_schema", generation.get("response_schema"))["properties"]["ok"]["type"].lower() == "boolean"
+    assert body["system_instruction"]["parts"][0]["text"] == "Return JSON."
+    assert body["contents"][0]["parts"][1]["inline_data"] == {"mime_type": "image/png", "data": "AAAA"}
+    assert usage.prompt_tokens == 1000
+    assert usage.prompt_tokens_details.cached_tokens == 250
+    assert usage.completion_tokens == 1000
+    assert usage.completion_tokens_details.reasoning_tokens == 200
 
 
 @pytest.mark.parametrize("edit", [False, True])

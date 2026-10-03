@@ -12,6 +12,7 @@ from canary_metrics import record
 _MODELS = frozenset({
     "gpt-6.1-sol", "gpt-6-sol",
     "gpt-6-luna",
+    "gemini-3.8-flash",
     "claude-opus-5-5",
     "claude-sonnet-5-5",
     "mimo-v2.6-pro",
@@ -24,6 +25,7 @@ _PROVIDERS = frozenset({
     "anthropic",
     "openrouter",
     "together_ai",
+    "vertex_ai",
     "fal-queue",
     "openai-stream",
 })

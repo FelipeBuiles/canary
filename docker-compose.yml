@@ -64,6 +64,8 @@ services:
       FAL_ADMIN_KEY: ${FAL_ADMIN_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
+      VERTEXAI_PROJECT: ${VERTEXAI_PROJECT:-}
+      VERTEXAI_LOCATION: ${VERTEXAI_LOCATION:-global}
       # ─── Web app ─────────────────────────────────────────────────────────
       CANARY_ENV: ${CANARY_ENV:-development}
       CANARY_VERSION: ${CANARY_VERSION:-local}
@@ -113,6 +115,8 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
+      VERTEXAI_PROJECT: ${VERTEXAI_PROJECT:-}
+      VERTEXAI_LOCATION: ${VERTEXAI_LOCATION:-global}
       FAL_KEY: ${FAL_KEY:-}
       FAL_ADMIN_KEY: ${FAL_ADMIN_KEY:-}
       # Gateway metrics share the app's PostHog project; unset disables them.

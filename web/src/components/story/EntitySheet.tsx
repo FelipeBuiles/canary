@@ -71,6 +71,7 @@ export function EntitySheet({ project, editor, kind, entityId, onClose }: Props)
   const [relationships, setRelationships] = useState<CharacterRelationship[]>(
     () => (entity?.relationships as CharacterRelationship[] | undefined) ?? []);
   const [scenes, setScenes] = useState<string[]>([]);
+  const [castRequired, setCastRequired] = useState(entity?.cast_required === true);
   const [error, setError] = useState<string | null>(null);
   const edit = useEditEntity();
   const add = useAddEntity();
@@ -87,11 +88,12 @@ export function EntitySheet({ project, editor, kind, entityId, onClose }: Props)
     for (const spec of specs) {
       const next = toPayload(spec, values[spec.key] ?? "");
       if (adding ? (next !== "" && next !== null && !(Array.isArray(next) && !next.length))
-        : JSON.stringify(next) !== JSON.stringify(entity?.[spec.key] ?? (spec.shape === "text" || spec.shape === "textarea" ? "" : NULLABLE.has(spec.key) ? null : []))) {
+        : JSON.stringify(next) !== JSON.stringify(entity?.[spec.key] ?? (NULLABLE.has(spec.key) ? null : spec.shape === "text" || spec.shape === "textarea" ? "" : []))) {
         result[spec.key] = next;
       }
     }
     if (kind === "characters" && !adding) {
+      if (castRequired !== (entity?.cast_required === true)) result.cast_required = castRequired;
       const cleaned = relationships.filter((rel) => rel.character_id && rel.relationship.trim())
         .map((rel) => ({ character_id: rel.character_id, relationship: rel.relationship.trim() }));
       if (JSON.stringify(cleaned) !== JSON.stringify(entity?.relationships ?? [])) result.relationships = cleaned;
@@ -154,6 +156,15 @@ export function EntitySheet({ project, editor, kind, entityId, onClose }: Props)
             </div>
           ))}
         </div>
+        {kind === "characters" && !adding && (
+          <label className="flex min-h-11 items-start gap-3 font-body text-sm">
+            <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={castRequired} disabled={busy}
+              onChange={(event) => setCastRequired(event.target.checked)} />
+            <span>{t("Include in Cast even for a brief appearance")}
+              <span className="mt-1 block text-xs text-ink-muted">{t("Recurring and author-added characters are already included.")}</span>
+            </span>
+          </label>
+        )}
         {kind === "characters" && !adding && (
           <Relationships editor={editor} self={entityId!} value={relationships} onChange={setRelationships} />
         )}
@@ -252,7 +263,7 @@ function ScenePicker({ editor, kind, value, onChange }: {
                 <span className="font-meta text-xs tabular-nums text-ink-muted">{String(index + 1).padStart(2, "0")}</span>
                 <span className="min-w-0 truncate">{scene.title}</span>
                 <span className="ml-auto shrink-0 font-meta text-[0.65rem] text-ink-muted">
-                  {[scene.part_id ? titles.get(scene.part_id) : null, kind === "locations" ? places.get(scene.location_id) : null].filter(Boolean).join(" · ")}
+                  {[scene.part_id ? titles.get(scene.part_id) : null, kind === "locations" && scene.location_id !== null ? places.get(scene.location_id) : null].filter(Boolean).join(" · ")}
                 </span>
               </label>
             </li>

@@ -123,6 +123,112 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `at` | `StoryPosition` |  |
 | `transition` | `Optional[Transition]` | `None` |
 
+## ChapterNote _(book_map.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `label` | `str` | `Field(min_length=1)` |
+| `synopsis` | `str` | `Field(min_length=1)` |
+
+## DigestCharacter _(book_map.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `name` | `str` | `Field(min_length=1)` |
+| `aliases` | `list[str]` | `[]` |
+| `role` | `str` | `Field(min_length=1)` |
+| `presence` | `Literal['central', 'supporting', 'passing']` |  |
+
+## DigestThread _(book_map.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `name` | `str` | `Field(min_length=1)` |
+| `status` | `Literal['opens', 'advances', 'resolves']` |  |
+| `note` | `str` | `Field(min_length=1)` |
+
+## PartDigest _(book_map.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `synopsis` | `str` | `Field(min_length=1)` |
+| `chapters` | `list[ChapterNote]` | `[]` |
+| `characters` | `list[DigestCharacter]` | `[]` |
+| `threads` | `list[DigestThread]` | `[]` |
+| `motifs` | `list[str]` | `[]` |
+
+## BookAct _(book_map.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `number` | `int` | `Field(ge=1)` |
+| `title` | `str` | `Field(min_length=1)` |
+| `summary` | `str` | `Field(min_length=1)` |
+| `first_part` | `str` |  |
+| `last_part` | `str` |  |
+
+## BookThread _(book_map.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `id` | `str` | `Field(pattern='^thread_\\d{3}$')` |
+| `title` | `str` | `Field(min_length=1)` |
+| `summary` | `str` | `Field(min_length=1)` |
+| `opens_in` | `str` |  |
+| `resolves_in` | `str | None` | `None` |
+
+## BookCharacter _(book_map.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `name` | `str` | `Field(min_length=1)` |
+| `aliases` | `list[str]` | `[]` |
+| `role` | `str` | `Field(min_length=1)` |
+| `prominence` | `Literal['principal', 'recurring', 'minor']` |  |
+| `first_part` | `str` |  |
+| `last_part` | `str` |  |
+
+## BookMapPart _(book_map.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `part_id` | `str` |  |
+| `text_sha256` | `str` | `Field(pattern='^[0-9a-f]{64}$')` |
+| `synopsis` | `str` | `Field(min_length=1)` |
+| `role` | `str` | `Field(min_length=1)` |
+
+## BookMap _(book_map.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `version` | `Literal[1]` | `1` |
+| `synopsis` | `str` | `Field(min_length=1)` |
+| `parts` | `list[BookMapPart]` | `Field(min_length=1)` |
+| `acts` | `list[BookAct]` | `Field(min_length=1)` |
+| `threads` | `list[BookThread]` | `[]` |
+| `characters` | `list[BookCharacter]` | `[]` |
+| `themes` | `list[str]` | `[]` |
+| `motifs` | `list[str]` | `[]` |
+
+## PartRole _(book_map.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `part_id` | `str` |  |
+| `role` | `str` | `Field(min_length=1)` |
+
+## BookSynthesis _(book_map.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `synopsis` | `str` | `Field(min_length=1)` |
+| `acts` | `list[BookAct]` | `Field(min_length=1)` |
+| `parts` | `list[PartRole]` | `Field(min_length=1)` |
+| `threads` | `list[BookThread]` | `[]` |
+| `characters` | `list[BookCharacter]` | `[]` |
+| `themes` | `list[str]` | `[]` |
+| `motifs` | `list[str]` | `[]` |
+
 ## PageCapabilityProfile _(draw.py)_
 
 | Field | Type | Default |
@@ -183,6 +289,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `prompt` | `str` | `Field(min_length=1)` |
 | `lettering` | `tuple[LetteringItem, ...]` |  |
 | `references` | `tuple[PageReference, ...]` | `()` |
+| `written_identities` | `tuple[ApprovedVisualReference, ...]` | `Field(default=(), exclude_if=lambda value: not ...` |
 | `output_width` | `int` | `Field(gt=0)` |
 | `output_height` | `int` | `Field(gt=0)` |
 | `output_media_type` | `Literal['image/png']` |  |
@@ -695,6 +802,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `label` | `str` | `''` |
 | `continuity_guard` | `str` | `''` |
 | `kind` | `Literal['character', 'location', 'prop'] | None` | `None` |
+| `requires_image` | `bool` | `True` |
 
 ## ApprovedVisualReferenceInventory _(page.py)_
 
@@ -855,9 +963,9 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `id` | `str` |  |
 | `name` | `str` |  |
 | `visual_anchor` | `str` |  |
-| `age_range` | `str` |  |
+| `age_range` | `str` | `Field(description='Stated age or source-describ...` |
 | `gender` | `str` |  |
-| `distinguishing_features` | `list[str]` |  |
+| `distinguishing_features` | `list[str]` | `Field(description='Source-stated intrinsic anat...` |
 | `baseline_affect` | `str | None` | `None` |
 | `default_outfit` | `str` |  |
 | `relationships` | `list[CharacterRelationship]` | `[]` |
@@ -866,6 +974,8 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `appearance_timeline` | `list[StateActivation]` | `[]` |
 | `aliases` | `list[str]` | `[]` |
 | `origin` | `EntityOrigin` | `'extracted'` |
+| `identity_kind` | `Literal['individual', 'interchangeable', 'group']` | `Field(default='individual', description="Indivi...` |
+| `cast_required` | `bool` | `Field(default=False, description='Needs a dedic...` |
 
 ## Location _(story_bible.py)_
 
@@ -898,7 +1008,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `part_id` | `str` | `FIRST_PART_ID` |
 | `chapter` | `int` |  |
 | `title` | `str` |  |
-| `location_id` | `str` |  |
+| `location_id` | `str | None` |  |
 | `character_ids` | `list[str]` |  |
 | `summary` | `str` |  |
 | `scene_type` | `str` |  |
@@ -907,15 +1017,15 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `source_start_offset` | `int | None` | `Field(default=None, ge=0)` |
 | `transient_objects` | `list[TransientObject]` | `[]` |
 
-## NarrativeArc _(story_bible.py)_
+## StorySequence _(story_bible.py)_
 
 | Field | Type | Default |
 |-------|------|---------|
 | `part_id` | `str` | `FIRST_PART_ID` |
-| `act` | `int` |  |
+| `number` | `int` | `Field(ge=1)` |
 | `title` | `str` |  |
 | `scenes` | `list[str]` |  |
-| `turning_point` | `Optional[str]` | `None` |
+| `turn` | `Optional[str]` | `None` |
 
 ## Prop _(story_bible.py)_
 
@@ -949,7 +1059,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `characters` | `list[Character]` |  |
 | `locations` | `list[Location]` |  |
 | `scenes` | `list[Scene]` |  |
-| `narrative_arcs` | `list[NarrativeArc]` |  |
+| `sequences` | `list[StorySequence]` |  |
 | `style_notes` | `Optional[str]` | `None` |
 | `props` | `list[Prop]` | `[]` |
 | `excluded_entities` | `list[ExcludedEntity]` | `[]` |

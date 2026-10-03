@@ -1,0 +1,25 @@
+# Optional local ADC mount. Keep credentials outside the image and read-only.
+# docker compose -f docker-compose.yml -f docker-compose.vertex.yml ...
+services:
+  litellm:
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /run/credentials/google-adc.json
+      GOOGLE_CLOUD_QUOTA_PROJECT: ${VERTEXAI_PROJECT:?Set VERTEXAI_PROJECT to your credited project}
+    volumes:
+      - type: bind
+        source: ${CANARY_VERTEX_CREDENTIALS_FILE:?Set CANARY_VERTEX_CREDENTIALS_FILE to an ADC JSON file}
+        target: /run/credentials/google-adc.json
+        read_only: true
+        bind:
+          create_host_path: false
+  canary-prod:
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /run/credentials/google-adc.json
+      GOOGLE_CLOUD_QUOTA_PROJECT: ${VERTEXAI_PROJECT:?Set VERTEXAI_PROJECT to your credited project}
+    volumes:
+      - type: bind
+        source: ${CANARY_VERTEX_CREDENTIALS_FILE:?Set CANARY_VERTEX_CREDENTIALS_FILE to an ADC JSON file}
+        target: /run/credentials/google-adc.json
+        read_only: true
+        bind:
+          create_host_path: false

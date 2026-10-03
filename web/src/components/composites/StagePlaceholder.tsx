@@ -19,6 +19,7 @@ import { useRunAction } from "../../hooks/useRunAction";
 import { Icon } from "../ui/Icon";
 import { Button } from "../ui/Button";
 import { CreditsGate } from "./CreditsGate";
+import { fundingLabel } from "../../modelFunding";
 import { useI18n } from "../../i18n";
 
 const ProjectModelControls = import.meta.env.DEV ? lazy(() => import("../wizard/ProjectModelControls")) : null;
@@ -155,6 +156,8 @@ interface StagePendingProps {
   project: string;
   stage: StageName;
   allowStart: boolean;
+  /** Replaces the start confirmation's default explanation. */
+  startDescription?: string;
 }
 
 export function StageStartAction({
@@ -166,6 +169,10 @@ export function StageStartAction({
   allowRestart = true,
   layout = "card",
   secondaryAction,
+  label,
+  description,
+  onStarted,
+  buttonVariant = "primary",
 }: {
   project: string;
   stage: StageName;
@@ -175,6 +182,11 @@ export function StageStartAction({
   allowRestart?: boolean;
   layout?: "card" | "footer";
   secondaryAction?: ReactNode;
+  label?: string;
+  description?: string;
+  onStarted?: () => void;
+  /** "onInk" when the action sits on an ink-black surface. */
+  buttonVariant?: "primary" | "onInk";
 }) {
   const { t } = useI18n();
   const { handleRun, isPending } = useRunAction();
@@ -183,11 +195,11 @@ export function StageStartAction({
   const estimate = useStageEstimate(project, stage, true, freshStart || rerun);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
-  const actionLabel = freshStart ? t("Start adaptation over") : rerun
+  const actionLabel = label ?? (freshStart ? t("Start adaptation over") : rerun
     ? t("Restart this step")
     : retry
       ? stage === "adapt" ? t("Resume adaptation") : t("Retry stage")
-      : stage === "extract" ? t("Start Story analysis") : t("Start this step");
+      : stage === "extract" ? t("Start Story analysis") : t("Start this step"));
   const unavailable = disabled || isPending || !estimate.data || estimate.isError || estimate.isFetching;
 
   function closeConfirmation() {
@@ -203,7 +215,7 @@ export function StageStartAction({
       rerun: rerun || freshStart,
       confirmedArchivePages: estimate.data?.archived_page_count,
       actionLabel,
-      onSuccess: () => { setConfirmOpen(false); setRestartOpen(false); },
+      onSuccess: () => { setConfirmOpen(false); setRestartOpen(false); onStarted?.(); },
       onError: (error) => {
         setStartError(error.message);
         setConfirmOpen(false);
@@ -223,16 +235,20 @@ export function StageStartAction({
             </Button>
           </div>
         ) : estimate.data ? (
-          <p className="font-body text-sm">
-            <CreditAmount value={estimate.data.estimate_credits} approximate label={t("credits")} />
-            {estimate.data.reserved_credits != null && (
-              <> · {t("Temporary hold")}: <CreditAmount value={estimate.data.reserved_credits} label={t("credits")} /></>
-            )}
-          </p>
+          estimate.data.estimate_credits === 0 && estimate.data.funding && estimate.data.funding !== "api" ? (
+            <p className="font-body text-sm">{t("Included in your {plan}", { plan: t(fundingLabel(estimate.data.funding)) })}</p>
+          ) : (
+            <p className="font-body text-sm">
+              <CreditAmount value={estimate.data.estimate_credits} approximate label={t("credits")} />
+              {estimate.data.reserved_credits != null && (
+                <> · {t("Temporary hold")}: <CreditAmount value={estimate.data.reserved_credits} label={t("credits")} /></>
+              )}
+            </p>
+          )
         ) : <p role="status" className="font-body text-sm">{t("Loading estimate…")}</p>}
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-3">
-        <Button size={layout === "footer" ? "sm" : "md"} disabled={unavailable} onClick={() => setConfirmOpen(true)}>
+        <Button variant={buttonVariant} size={layout === "footer" ? "sm" : "md"} disabled={unavailable} onClick={() => setConfirmOpen(true)}>
           {isPending ? t("Starting…") : restartOpen ? t("Resume adaptation") : actionLabel}
         </Button>
         {secondaryAction}
@@ -274,11 +290,11 @@ export function StageStartAction({
         <ConfirmDrawer
           open={confirmOpen}
           title={actionLabel}
-          body={stage === "extract"
+          body={description ?? (stage === "extract"
             ? t("Analyze your manuscript and prepare a story brief. You will review it before choosing a style or drawing pages.")
             : retry && stage === "adapt"
               ? t("Resume using saved work where possible, then check the script again before page planning continues.")
-              : t(STAGE_META[stage].description)}
+              : t(STAGE_META[stage].description))}
           cost={estimate.data}
           confirmLabel={actionLabel}
           busy={unavailable}
@@ -290,7 +306,7 @@ export function StageStartAction({
   );
 }
 
-export function StagePending({ project, stage, allowStart }: StagePendingProps) {
+export function StagePending({ project, stage, allowStart, startDescription }: StagePendingProps) {
   const { t } = useI18n();
   const meta = STAGE_META[stage];
   return (
@@ -312,7 +328,7 @@ export function StagePending({ project, stage, allowStart }: StagePendingProps) 
           ))}
         </div>
       </div>
-      {allowStart && <StageStartAction project={project} stage={stage} />}
+      {allowStart && <StageStartAction project={project} stage={stage} description={startDescription} />}
     </StageDocket>
   );
 }
@@ -578,6 +594,7 @@ interface StagePlaceholderProps {
   snapshot?: StageSnapshot | null;
   retryAsRerun?: boolean;
   allowPendingStart?: boolean;
+  startDescription?: string;
   error?: string | null;
   errorDetail?: string | null;
   errorCode?: string | null;
@@ -603,6 +620,7 @@ function StagePlaceholderContent({
   snapshot,
   retryAsRerun = false,
   allowPendingStart = false,
+  startDescription,
   error,
   errorDetail,
   errorCode,
@@ -647,6 +665,7 @@ function StagePlaceholderContent({
         project={project}
         stage={stage}
         allowStart={allowPendingStart}
+        startDescription={startDescription}
       />
     );
   }

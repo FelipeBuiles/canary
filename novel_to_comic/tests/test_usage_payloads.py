@@ -9,7 +9,7 @@ from novel_to_comic.usage import UsageRecord
 
 def test_params_drop_nested_content_and_fingerprint_schemas():
     params = {
-        'model': 'test-model', 'temperature': 0.2, 'quality': 'high',
+        'model': 'test-model', 'temperature': 0.2, 'quality': 'high', 'service_tier': 'priority',
         'messages': [{'content': 'private story'}],
         'metadata': {'prompt': 'private story'},
         'canary_wire_request': json.dumps({'prompt': 'private story', 'image': 'x' * 100000}),
@@ -21,6 +21,7 @@ def test_params_drop_nested_content_and_fingerprint_schemas():
     assert params == original
     assert compact['quality'] == 'high'
     assert compact['temperature'] == 0.2
+    assert compact['service_tier'] == 'priority'
     assert len(compact['response_format_summary']['sha256']) == 64
     assert compact['canary_wire_request_summary']['bytes'] > 100000
     assert 'private story' not in json.dumps(compact)
@@ -33,6 +34,7 @@ def test_metadata_preserves_accounting_dimensions_without_runtime_content():
                 'api_equivalent_cost_usd': 0.2, 'metadata': {'source_scope': 'chapter',
                 'source_unit_ids': ['source'] * 10000, 'project_name': 'private story'},
                 'codex_runtime': {'thread_id': 'thread', 'turn_status': 'completed',
+                'requested_service_tier': 'priority', 'service_tier': 'priority',
                 'indeterminate': False, 'execution_elapsed_seconds': 12.5,
                 'revised_prompt': 'private story', 'events': ['private story'] * 10000,
                 'effective_features': {'content': 'private story'}}}
@@ -42,6 +44,7 @@ def test_metadata_preserves_accounting_dimensions_without_runtime_content():
     assert compact['page_number'] == 3 and compact['is_correction'] is True
     assert compact['source_units']['count'] == 10000
     assert compact['codex_runtime'] == {'thread_id': 'thread', 'turn_status': 'completed',
+                                        'requested_service_tier': 'priority', 'service_tier': 'priority',
                                         'indeterminate': False, 'execution_elapsed_seconds': 12.5}
     assert compact['api_equivalent_cost_usd'] == 0.2
     assert 'private story' not in json.dumps(compact)

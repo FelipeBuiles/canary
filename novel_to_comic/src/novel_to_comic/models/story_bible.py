@@ -1,9 +1,8 @@
 """Pydantic models for the Story Bible — the central pipeline artifact."""
 
-import re
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from novel_to_comic.models.appearance import AppearanceState, StateActivation
 from novel_to_comic.models.asset_id import safe_asset_id
@@ -23,9 +22,13 @@ class Character(BaseModel):
     id: str  # "char_001"
     name: str  # "Elena Vasquez"
     visual_anchor: str  # Strict comma-separated physical tags. Injected verbatim at the very start of identity.
-    age_range: str  # "early 30s"
+    age_range: str = Field(description=(
+        "Stated age or source-described life stage, or an empty string when unknown. "
+        "Keep girls/boys/adolescents young; measurements and roles are not evidence of adulthood."))
     gender: str
-    distinguishing_features: list[str]  # ["jagged scar on left cheek"]
+    distinguishing_features: list[str] = Field(description=(
+        "Source-stated intrinsic anatomy, height, weight, build, hair, face and recognizable "
+        "traits. Add facts discovered later; an occupation or clothing list is not anatomy."))
     # Stable, low-intensity demeanor only (for example "guarded and watchful").
     # Scene reactions belong in page-level acting direction, never visual_anchor.
     baseline_affect: str | None = None
@@ -40,6 +43,14 @@ class Character(BaseModel):
     # here so later parts' extraction resolves it to this ID.
     aliases: list[str] = []
     origin: EntityOrigin = "extracted"
+    identity_kind: Literal["individual", "interchangeable", "group"] = Field(default="individual", description=(
+        "Individual for a named or independently tracked identity. Interchangeable for an "
+        "unnamed creature copy sharing its population's design. Prefer group for the shared "
+        "design itself; scene summaries retain counts/actions. Named companions, distinct "
+        "looks or persistent states, and a member with its own role and gear remain individual."))
+    cast_required: bool = Field(default=False, description=(
+        "Needs a dedicated Cast reference even with few appearances: a principal "
+        "antagonist, companion or plot-critical creature. False for incidental copies."))
 
     _safe_id = field_validator("id")(safe_asset_id)
     # Ordered transitions into the states above. The look before the first
@@ -78,11 +89,11 @@ class Location(BaseModel):
 class TransientObject(BaseModel):
     """A story-critical visual element that appears in only one scene.
 
-    Distinct from Prop (recurring across 3+ scenes). Transient objects are
+    Distinct from recurring or plot-critical detachable Props. Transient objects are
     things like a severed head visible for one beat, a floating alien text
     overlay, a single cigarette. They carry visual_anchor identity but are
     scoped to one scene so the planner does not over-promote them into
-    every panel.
+    every panel. Acting creatures and animals are Characters, never objects.
     """
     id: str  # "trans_001"
     name: str  # "Mrs. Parsons's severed head"
@@ -97,7 +108,9 @@ class Scene(BaseModel):
     part_id: str = FIRST_PART_ID
     chapter: int
     title: str
-    location_id: str
+    # Source spans can be abstract or non-narrative (credits, recommendations,
+    # front/back matter) without establishing a physical setting.
+    location_id: str | None
     character_ids: list[str]
     summary: str  # 2-3 sentence summary
     scene_type: str  # "action", "dialogue", "emotional", "transition"
@@ -112,30 +125,23 @@ class Scene(BaseModel):
     # Story-critical visual elements scoped to this scene only.
 
 
-class NarrativeArc(BaseModel):
-    # Acts are organized per part: each part has its own three acts.
-    part_id: str = FIRST_PART_ID
-    act: int  # 1, 2, 3
-    title: str
-    scenes: list[str]  # Scene IDs in this act
-    turning_point: Optional[str] = None
+class StorySequence(BaseModel):
+    """A run of one part's scenes that pursues one goal and ends on a turn.
 
-    @field_validator("act", mode="before")
-    @classmethod
-    def coerce_act_to_int(cls, v: Any) -> int:
-        """Accept 'Act 1', 'act_1', 'ACT 2', etc. in place of a bare integer."""
-        if isinstance(v, int):
-            return v
-        if isinstance(v, str):
-            match = re.search(r"\d+", v)
-            if match:
-                return int(match.group())
-        return int(v)
+    Sequences belong to their part and are as many as the part has. A part is
+    usually a stretch of a longer book, so it is not shaped into acts with its
+    own climax; the book's acts live in the series book map.
+    """
+
+    part_id: str = FIRST_PART_ID
+    number: int = Field(ge=1)  # 1..n within the part, in reading order
+    title: str
+    scenes: list[str]  # Scene IDs, in source order
+    turn: Optional[str] = None  # What has changed when the sequence ends
 
     @field_validator("title", mode="before")
     @classmethod
     def default_title(cls, v: Any) -> str:
-        """Accept missing title — will be filled in by normalizer if needed."""
         return v or ""
 
     @field_validator("scenes", mode="before")
@@ -178,16 +184,28 @@ class StoryBible(BaseModel):
     characters: list[Character]
     locations: list[Location]
     scenes: list[Scene]
-    narrative_arcs: list[NarrativeArc]
+    sequences: list[StorySequence]
     style_notes: Optional[str] = None
     props: list[Prop] = []  # Key recurring objects — monkey's paw, magic ring, etc.
     excluded_entities: list[ExcludedEntity] = []
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_book_acts(cls, data: Any) -> Any:
+        # Per-part acts shaped every part as a complete story. Sequences
+        # replace them; an older extraction cannot be read, only redone.
+        if isinstance(data, dict) and "narrative_arcs" in data:
+            raise ValueError(
+                "This Story Bible was extracted before part sequences replaced acts. "
+                "Create a new project from the manuscript to analyze it again."
+            )
+        return data
 
 
 _EDITOR_BOOKKEEPING: dict = {
     "revision": True,
     "excluded_entities": True,
-    "characters": {"__all__": {"origin"}},
+    "characters": {"__all__": {"origin", "cast_required"}},
     "locations": {"__all__": {"origin"}},
     "props": {"__all__": {"origin"}},
 }
@@ -206,7 +224,7 @@ def story_bible_context(bible: StoryBible) -> dict:
 def part_story_bible(bible: StoryBible, part_id: str) -> StoryBible:
     """The Story Bible as one part's adaptation sees it.
 
-    Only the part's scenes and acts, the characters on its rosters and the
+    Only the part's scenes and sequences, the characters on its rosters and the
     places it uses are in view, so a part never adapts another part's scenes
     or stages a character who is only mentioned. Props stay available, and
     entities keep their full appearance catalogs and timelines so states
@@ -219,7 +237,7 @@ def part_story_bible(bible: StoryBible, part_id: str) -> StoryBible:
     view = bible.model_copy(deep=True)
     view.scenes = [scene.model_copy(deep=True) for scene in scenes]
     view.total_scenes = len(scenes)
-    view.narrative_arcs = [arc for arc in view.narrative_arcs if arc.part_id == part_id]
+    view.sequences = [sequence for sequence in view.sequences if sequence.part_id == part_id]
     view.characters = [c for c in view.characters if c.id in rostered]
     for character in view.characters:
         character.relationships = [rel for rel in character.relationships if rel.character_id in rostered]

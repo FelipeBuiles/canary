@@ -9,6 +9,23 @@ from novel_to_comic.config import Config
 from novel_to_comic.usage import ApiResult, UsageRecord
 
 
+def test_declared_schema_reaches_every_attempt():
+    schema = {"type": "object", "properties": {"answer": {"type": "string"}},
+              "required": ["answer"], "additionalProperties": False}
+    calls = []
+    async def generate(**kwargs):
+        calls.append(kwargs)
+        return ApiResult(value={} if len(calls) == 1 else {"answer": "accepted"})
+    result = asyncio.run(generate_validated_json(
+        Config(), model='test', system_prompt='Return JSON', user_content='question',
+        json_schema=schema, parse=lambda value: value['answer'],
+        correction=lambda raw, error: 'Return the required answer',
+        label='Test', feature='test.schema', generate=generate))
+    assert result.value == 'accepted'
+    assert result.attempts == 2
+    assert [call['json_schema'] for call in calls] == [schema, schema]
+
+
 @pytest.mark.parametrize("fail", [False, True])
 def test_nested_attempts_keep_usage(fail):
     usages = [UsageRecord(provider="test", model="test", operation="text") for _ in range(4)]

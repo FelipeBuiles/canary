@@ -81,8 +81,9 @@ def initialize_series(
     text: str,
     origin: str = "",
     title: str | None = None,
+    auto_split: bool = False,
 ) -> Path:
-    """Create a new project as a one-part series and return part 1's workspace.
+    """Create a series and return part 1's workspace.
 
     ``root`` must already exist. The part text is the exact text Extract will
     read, so it is stored and hashed once here.
@@ -90,17 +91,23 @@ def initialize_series(
 
     if not text:
         raise ValueError("source text cannot be empty")
+    from novel_to_comic.chapter_detection import group_chapters
+
+    pieces = group_chapters(text) if auto_split else [(title, text)]
+    if title:
+        pieces[0] = (title, pieces[0][1])
     for name in SERIES_DIRECTORIES:
         (root / name).mkdir(exist_ok=True)
     save_state(create_initial_state(project_name, str(novel_path)), root)
-    workspace = create_part_workspace(root, FIRST_PART_ID)
-    for name in PART_DIRECTORIES:
-        (workspace / name).mkdir(exist_ok=True)
-    save_state(create_initial_state(project_name, str(novel_path)), workspace)
-    target = TargetArtifacts(workspace)
-    target.write_part_text(FIRST_PART_ID, text)
-    target.write_part_manifest(PartManifest(parts=(_record(1, text, title=title, origin=origin),)))
-    return workspace
+    target = TargetArtifacts(root)
+    records = []
+    for ordinal, (piece_title, piece_text) in enumerate(pieces, start=1):
+        record = _record(ordinal, piece_text, title=piece_title, origin=origin)
+        target.write_part_text(record.id, piece_text)
+        _new_workspace(root, record.id, project_name)
+        records.append(record)
+    target.write_part_manifest(PartManifest(parts=tuple(records)))
+    return part_workspace(root, FIRST_PART_ID)
 
 
 def edit_blocker(root: Path, identifier: str) -> str | None:
@@ -376,7 +383,7 @@ def cast_inventory_keys(root: Path) -> set[tuple[str, str | None]]:
         inventory = approved_visual_inventory(series_root(root))
     except Exception:
         return set()
-    return {(ref.entity_id, ref.appearance_state_id) for ref in inventory.references}
+    return {(ref.entity_id, ref.appearance_state_id) for ref in inventory.references if ref.requires_image}
 
 
 def reopen_cast(root: Path) -> bool:

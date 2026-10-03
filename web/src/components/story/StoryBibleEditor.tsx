@@ -10,6 +10,7 @@ import { FieldLabel, SelectField } from "../ui/Field";
 import { EntitySheet } from "./EntitySheet";
 import { KIND_LABELS } from "./entityKinds";
 import { isNotFoundError } from "../../api/client";
+import { castCharacters } from "../../lib/castRoster";
 import { useMergeEntity, useRemoveEntity, useRestoreExcluded, useStoryBibleEditor } from "../../api/seriesQueries";
 import type { EntityKind, StoryBibleEditor as Editor } from "../../api/storyBible";
 import type { ExcludedEntity } from "../../types/api";
@@ -35,6 +36,7 @@ export function StoryBibleEditor({ project, focus, onFocusClosed }: Props) {
   const { data: editor, error, isLoading } = useStoryBibleEditor(project);
   const [tab, setTab] = useState<Tab>(focus?.kind ?? "characters");
   const [sheet, setSheet] = useState<{ kind: EntityKind; id?: string } | null>(null);
+  const [showAllCharacters, setShowAllCharacters] = useState(false);
   const [merging, setMerging] = useState<{ kind: EntityKind; entry: Entry } | null>(null);
   const [removing, setRemoving] = useState<{ kind: EntityKind; entry: Entry } | null>(null);
   const remove = useRemoveEntity();
@@ -44,7 +46,9 @@ export function StoryBibleEditor({ project, focus, onFocusClosed }: Props) {
   if (!editor) return null;
   const open = sheet ?? (focus ? { kind: focus.kind, id: focus.id } : null);
   const excluded = editor.story_bible.excluded_entities ?? [];
-  const entries = (kind: EntityKind) => editor.story_bible[kind] as unknown as Entry[];
+  const recurring = castCharacters(editor.story_bible);
+  const entries = (kind: EntityKind) => (kind === "characters" && !showAllCharacters
+    ? recurring : editor.story_bible[kind]) as unknown as Entry[];
   const tabs = (["characters", "locations", "props", "removed"] as Tab[]).map((key) => ({
     key, label: t(TAB_LABELS[key]), count: key === "removed" ? excluded.length : entries(key).length,
     active: tab === key, onClick: () => setTab(key),
@@ -59,6 +63,11 @@ export function StoryBibleEditor({ project, focus, onFocusClosed }: Props) {
         actions={tab !== "removed" && <Button size="sm" variant="outline" onClick={() => setSheet({ kind: tab })}>{t(KIND_LABELS[tab].add)}</Button>}
       />
       <RoomTabs ariaLabel={t("Story Bible sections")} tabs={tabs} />
+      {tab === "characters" && recurring.length < editor.story_bible.characters.length && (
+        <Button size="sm" variant="outline" onClick={() => setShowAllCharacters(!showAllCharacters)}>
+          {showAllCharacters ? t("Show recurring characters only") : t("Show all source participants")}
+        </Button>
+      )}
       {tab === "removed" ? (
         <RemovedNames editor={editor} busy={restore.isPending} error={restore.error?.message}
           onRestore={(entry) => restore.mutate({ project, kind: EXCLUDED_KIND[entry.kind], name: entry.name, revision: editor.revision })} />

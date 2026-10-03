@@ -761,7 +761,7 @@ def test_regenerate_character_state_persists_conditioned_metadata(tmp_path: Path
     artifacts.write_story_bible(tmp_path, StoryBible(
         title="T", author="A", total_scenes=1,
         characters=[char], locations=[], props=[],
-        scenes=[], narrative_arcs=[],
+        scenes=[], sequences=[],
     ))
     config = Config()
     save_config(config, tmp_path)
@@ -804,7 +804,7 @@ def test_generate_location_state_persists_conditioned_metadata(tmp_path: Path, m
     artifacts.write_story_bible(tmp_path, StoryBible(
         title="T", author="A", total_scenes=1,
         characters=[], locations=[loc], props=[],
-        scenes=[], narrative_arcs=[],
+        scenes=[], sequences=[],
     ))
     config = Config()
     save_config(config, tmp_path)
@@ -922,7 +922,7 @@ def test_cast_estimate_uses_final_state_reference_count(tmp_path: Path, monkeypa
     char.appearance_states = [state]
     artifacts.write_story_bible(tmp_path, StoryBible(
         title="T", author="A", total_scenes=1,
-        characters=[char], locations=[], props=[], scenes=[], narrative_arcs=[],
+        characters=[char], locations=[], props=[], scenes=[], sequences=[],
     ))
     _write_parent(artifacts.character_ref_sheet_path(tmp_path, char.id))
     style_path, _ = _write_style(tmp_path)
@@ -953,7 +953,7 @@ def test_state_only_first_run_estimate_omits_missing_parent_reference(tmp_path: 
     char.appearance_states = [state]
     artifacts.write_story_bible(tmp_path, StoryBible(
         title="T", author="A", total_scenes=1,
-        characters=[char], locations=[], props=[], scenes=[], narrative_arcs=[],
+        characters=[char], locations=[], props=[], scenes=[], sequences=[],
     ))
 
     assert s3_cast.estimate_state_reference_count(
@@ -996,7 +996,7 @@ def test_state_estimate_counts_gpt_image_location_reference(tmp_path: Path):
     loc.appearance_states = [state]
     artifacts.write_story_bible(tmp_path, StoryBible(
         title="T", author="A", total_scenes=1,
-        characters=[], locations=[loc], props=[], scenes=[], narrative_arcs=[],
+        characters=[], locations=[loc], props=[], scenes=[], sequences=[],
     ))
     _write_parent(artifacts.location_plate_path(tmp_path, loc.id))
 

@@ -44,8 +44,36 @@ Cast belong to the series.
 - **Migration.** Opening a project created before parts moves it once into a
   one-part series (`series_migration.migrate_to_series`); the manifest write is
   the commit point. Artifact schemas and contents are unchanged.
-- **Text.** Parts are appended by upload or paste (`POST /parts`), and the
-  response proposes detected chapters as splits (`POST /parts/{part_id}/split`).
+- **Text.** Initial uploads and appended manuscripts (`POST /parts`) group
+  consecutive detected chapters into parts with a target of 100,000 characters.
+  Every source character is preserved, including front matter; oversized
+  chapters and sources without recognizable headings stay intact. Short inputs
+  remain one part. Appending accepts `auto_split=false` to keep the upload
+  together, and returns the first `part`, its `chapters`, and every `created`
+  part ID. New projects open the returned `part_id` (part 1). Manual splits
+  remain available (`POST /parts/{part_id}/split`). Replacing a part's text
+  replaces only that part and never automatically splits it.
+  Detection recognizes named, bare-number and decorated-number headings such
+  as `[ 1 ]` and `(XII)`. Manual splitting requires Extract to be pending;
+  completed extraction is not silently repartitioned or invalidated.
+  Chapter responses expose `opening_characters`: source before the first
+  detected heading remains in the first span. Grouped parts are titled by
+  chapter range (`Chapters 1–6`, `Chapter 44 – Epilogue`); decorated or bare
+  numerals read as `Chapter N`. Titles stay author-editable.
+  EPUB ingestion follows the spine's reading order and preserves heading and
+  paragraph breaks for chapter detection.
+  Initial uploads, appends and replacements share the source upload budget
+  (defaults: 50 MB, 2,000 PDF pages, 5,000,000 extracted characters, 60 seconds
+  to read the source); the pre-parser multipart cap adds 1 MB of form overhead.
+  Other request bodies keep their independent limit.
+  PDF text is cleaned before parts, hashes and immutable source units are
+  created: standalone OceanofPDF watermarks and stray controls are removed,
+  split small capitals and line-wrapped words are joined, and the final
+  standalone `ABOUT THE AUTHOR` section and following back matter are trimmed.
+  Hard hyphens are retained unless an unbroken occurrence establishes the word;
+  normal uppercase phrases such as `I SAID` and `A HOUSE` stay separate.
+  The uploaded original remains on disk. Existing saved source text and citation
+  units are never silently cleaned or repartitioned.
   Only the newest part's text can be replaced, split or deleted, and only until
   its Adapt starts; once a later part's extraction has started, earlier text is
   final (`series.edit_blocker`). Renaming is always allowed.
@@ -53,20 +81,70 @@ Cast belong to the series.
   for the previous part's Extract to complete, and its Adapt for the previous
   part's Adapt (`part_order_blocker`). Brief, Plan, Draw and Finish are
   independent of other parts.
+- **Discovery.** Multi-part Story screens carry a book strip in the manuscript
+  hero (or on its own sheet while the part waits for or runs analysis): one
+  segment per part sized by its text, analyzed parts filled, the open part
+  raised, and one sentence saying how many parts are analyzed and that the
+  rest wait until the author starts them. The full part list, with each
+  part's book-map synopsis (or its size) and state, is one disclosure away.
+  Viewing a part never starts generation. The next part is offered only after
+  the open part's Brief is approved, when it is the next in reading order and
+  no part is analyzing or failed; the offer uses the existing stage estimate,
+  credit review and run admission, then opens that part's Story progress.
+  Subscription-funded estimates read "Included in your … subscription"
+  rather than zero credits. Initial ingestion analyzes only part 1.
+- **Book map.** A multi-part series has a book map (`book_map.py`, stored
+  under the series root's `book_map/`). Extract builds it before a part's
+  extraction when the saved parts changed: each part is digested once on its
+  own (cached by its exact text), then one call combines the digests into the
+  book's acts (spanning parts, any number), the parts' roles, through-lines
+  with the parts that open and resolve them, recurring people, themes and
+  motifs. The map is part of Extract's estimate, checkpoints and model choice.
+  A map that no longer matches the saved parts is never used; unchanged parts
+  keep their digests, so a rebuild costs only new text plus one combining
+  call. Part summaries carry a part's `synopsis` and `book_role` while its
+  map entry still matches its text. Single-part projects have no map.
+- **Book context.** Every part of a multi-part series is told its position
+  (`book_context.py`): part *k* of *N*, that a part before the last has no
+  ending of its own and must not be given a climax or resolution the text does
+  not contain, and that a later part opens mid-story. With a fresh map it also
+  receives a bounded slice: the book synopsis, its role, the acts that touch
+  it, up to five earlier parts' synopses, the through-lines active in it
+  (opening, continuing or resolving here), the principal and recurring people
+  present, and the book's themes and motifs. Brief and Adapt receive it as
+  reference, never as source; part 1's Brief bases the series-wide themes and
+  motifs on the book's. A part's Extract requires Cast references for rostered
+  characters the map names as principal or recurring (exact name or alias),
+  never demoting one.
 - **Extract.** A part extracts only its own text against the shared registry.
   Source-unit ordinals continue across parts; offsets are relative to the
   part's text. The extraction delta records what the part added, so replacing
   or deleting an unadapted part withdraws exactly that.
 - **Brief.** A later part's draft takes `themes`, `point_of_view`,
   `narrator_treatment`, `tone`, `motifs` and `transformation_level` from the
-  nearest earlier approved Brief; the author can still edit them.
+  nearest earlier approved Brief; the author can still edit them. Its
+  `story_so_far` is the previous part's scenes; earlier parts reach it through
+  the book context.
 - **Cast.** Cast is a series checkpoint. It reopens only when the reference
   inventory grows (a part's extraction or an author's addition) and designs
-  only characters without a current per-character fingerprint.
-- **Adapt.** A later part's Adapt receives continuity from earlier parts'
-  adapted scripts and records which scripts it read. When an earlier part's
-  adaptation changes afterwards, the later part reports an advisory
-  `earlier_part_changed` flag. Nothing re-runs.
+  only characters without a current per-character fingerprint. Automatic
+  character work includes participants in at least three narrative scenes
+  across the series, author-added characters, retained main Cast sheets, and
+  characters explicitly marked `cast_required` (principal antagonists,
+  companions and plot-critical creatures even with few appearances). The Story
+  Bible editor exposes this override; promoting an identity reopens Cast.
+  Sources with fewer than three narrative scenes keep their participants.
+  Explicit character requests can include an incidental participant. All source
+  identities, relationships, scene rosters and citation IDs remain canonical;
+  recurrence changes only the derived Cast worklist. Later appearances promote
+  the same ID into image reference work. API Story Bible views expose the
+  derived `cast_character_ids`; the editor can show all source participants.
+- **Adapt.** Every part of a multi-part series writes a treatment for its
+  own stretch of the book, with its book context. A later part also receives
+  continuity from earlier parts' adapted scripts (the last three causal spines
+  and the previous part's closing beats) and records which scripts it read.
+  When an earlier part's adaptation changes afterwards, the later part reports
+  an advisory `earlier_part_changed` flag. Nothing re-runs.
 - **Draw.** A part's first edition inherits the previous part's profile while
   the project can spend on it, and otherwise binds the current profile.
 - **Concurrency.** Admission, busy checks and event streams are per part. A
@@ -119,7 +197,7 @@ is refused (409 `stale_story_bible`) when the Bible changed since.
 `TargetArtifacts` owns the active source, brief, adaptation, plan, Draw,
 lettering, and Finish paths. `artifacts.py` owns Story Bible and Cast reference paths. Never
 introduce alternate readers for legacy output shapes. Provider wire v3 is a
-breaking cutover; current profiles and the local Codex runtime v6 execution
+breaking cutover; current profiles and the local Codex runtime v7 Fast-mode execution
 fingerprint reject incompatible saved requests rather than translating old wire.
 Re-extract/regenerate affected output, or use a new project when an existing
 edition is incompatible. There is no generated-artifact migration. Known retained baked-lettering
@@ -202,47 +280,188 @@ establish that the resulting designs are visually distinct; that requires review
 ### Extraction participation
 
 Sources longer than `Config.extraction_chunk_chars` (16,000 characters by
-default) use sequential, sentence-aligned extraction sections. No source
-characters are removed or duplicated. A single unit exceeding the limit fails
+default) use sequential, sentence-aligned extraction sections. Each section's
+first scene starts at its first unit, so a cut is a scene boundary: within a
+quarter-share of each equal share, the cut moves to a chapter heading or
+scene-break ornament, then a paragraph end, before falling back to a sentence.
+When a later section still opens mid-scene, the model sets
+`continues_previous_scene` and code folds that opening scene into the previous
+one, shifting its beats after the previous scene's last referenced beat so every
+appearance activation keeps its order. Code assigns each scene's chapter from the
+detected heading that precedes it (or opens its first sentence); a heading's stated
+number is kept and an unnumbered heading continues the book-wide count. Text with
+no headings keeps the extraction's own chapter numbers.
+No source characters are removed or duplicated. A single unit exceeding the limit fails
 before generation with a source-formatting/configuration instruction. Shorter
 sources retain the single-call path.
+Extract sends a typed response schema on the initial call and every correction,
+for whole-source extraction, section deltas and the final source review and sequence organization.
+Review evidence must begin in the scene it names and may run past that
+scene's last sentence; a rejected quote's correction names the scene that holds
+it and the named scene's first and last sentences. Shared
+instructions describe source fidelity and visual continuity; whole-source and
+section scope rules are separate. Scene counts, panel counts and description
+tag counts are not extraction quotas. Code derives scene counts and owns source
+provenance and editor metadata rather than asking the model to reproduce them.
+
 Section extraction also saves deterministic `source_start_offset` provenance
 on each scene, so repeated opening sentences cannot relocate a section's
 boundary to an earlier occurrence. Supplied offsets are validated against the
 exact complete source unit; invalid offsets never fall back to fuzzy matching.
+Requests supply the exact first source unit as
+`required_first_scene_source_start_quote`; validation feedback repeats it if
+the model skips the opening. Front matter belongs to the first story scene's
+source span without requiring an invented comic scene for a title or copyright page.
+
+Scene ranges also retain explicitly classified non-narrative source matter,
+such as credits and promotional recommendations. A span with no staged
+characters or objects is normalized to `scene_type: non_narrative` and
+`location_id: null`; it requires no invented physical setting. Only an empty,
+unreferenced placeholder location supplied for that span is removed. Existing
+anchors, appearance states and settings used by narrative scenes remain intact.
+The exact text and source-unit coverage remain complete. Brief and Adapt keep
+these spans out of essential story action; Adapt accounts for them through
+explicit intentional-omission ledger decisions and reasons. Narrative scenes
+with unknown non-null entity references still fail with the offending IDs.
+Story Explorer omits these ranges from scene action and numbering and explains
+that non-story material is excluded; the source audit retains their coverage.
 
 Each section receives the established entity registry and carried appearance
 states. New IDs use a section prefix; recurring entities reuse their original
-IDs. Merging preserves existing base anchors, state definitions, and first
-appearances; it validates references and ordered timelines. Disappearance and
-absence are not appearance states: states describe visible
+IDs. Existing first-part IDs such as `part0006_...` identify extraction section
+six, not series part six; later-part prefixes include both part and section.
+Saved IDs remain stable. Merging preserves existing base anchors, state
+definitions and first appearances; it validates references and ordered timelines.
+Disappearance and absence are not appearance states: states describe visible
 physical looks, and activations reference the same entity's declared catalog.
 The model does not retype established entities: recurring entries may
-contain only their ID and new states, activations, or relationships. Extract
-hydrates omitted identity fields and known states from the registry verbatim;
+contain only their ID and new states, activations, or relationships. The response
+can also add stable physical facts to `distinguishing_features` when a later
+section first states them, record newly revealed names in `aliases`, and promote
+an important identity with `cast_required`. A known identity's new facts do not
+require local visual participation: a letter, description or background mention
+can refine the registry without inventing an on-page actor. Its anchor and first
+appearance stay unchanged. New identities still require staged participation.
+These additions never rewrite established anchors, invent a physical transition
+or demote required Cast work. Acting creatures, bosses, mounts and pets are
+Characters; collective creatures use a group identity rather than a transient
+object or one reference per interchangeable member. Persistent equipped
+accessories remain in subsequent self-contained appearance states until removed.
+`identity_kind` distinguishes independently tracked `individual` identities,
+temporary `interchangeable` creature members and a shared `group` design. Matching
+descriptions alone never authorize merging named people or companions.
+The response schema constrains known-ID branches to those fields; complete new identities
+and all new scene references use the current section prefix. Known IDs are
+defined once in the schema and reused by citations. Large registries use exact
+ID regex alternatives when needed to stay within provider enum budgets;
+no identity is dropped. Section responses omit sequences, and later sections omit
+inherited title/author/style metadata. Extract hydrates omitted identity fields
+and known states from the registry verbatim;
 it also resolves known character IDs cited by participation or scene rosters,
 and known location IDs cited by scenes, when their local definitions are
-omitted entirely. Only referenced entities are loaded; previous scene definitions
+omitted entirely. A repeated entity declared with a new ID is resolved locally
+when its name exactly matches one registry name or alias (ignoring case and
+surrounding whitespace) and its anchor is omitted or contains only literal tags
+already in that registry anchor. The complete established anchor is preserved
+verbatim, and scene, participation, and relationship references use the established
+ID. Matching is scoped to entity kind; ambiguous names, conflicting physical
+tags, blank anchors, conflicting duplicate deltas, and changed state definitions still fail.
+Exact repeated entity entries and empty known-ID echoes accompanying a real
+delta are coalesced before hydration, preserving all distinct facts and the raw
+response. Empty unused known-entity deltas do not become new visual candidates.
+Duplicate-name feedback identifies the incoming ID and matching registry IDs and
+anchors so a correction can reuse the right authority without inventing identity.
+On a rejected final attempt within one section's schema-repair chain, a dangling
+character reference is reconciled when the preceding and current responses each declare exactly one
+character with the same name and verbatim base anchor, but different IDs. Scene
+rosters, private participation evidence, and relationship targets then use the
+current definition's ID. No character is created from an orphan reference;
+ambiguous identities, changed anchors, and unknown scene IDs still fail ordinary
+validation. Ordinary validation runs first, preserving already valid responses
+and existing intermediate feedback and cache keys. The raw responses remain unchanged.
+An exhausted base-anchor conflict names the registry entity and the returned
+entity with both anchors, so a misassigned known ID is visible without changing
+earlier correction prompts or overwriting established physical identity.
+Only referenced entities are loaded; previous scene definitions
 and timeline activations are never imported into the section. Unknown IDs and
 explicit conflicting values still fail validation, with the offending character,
 scene, or appearance-state IDs identified in correction feedback. Per-section elapsed time and
 AI source scope make subsequent live runs measurable. Section boundaries
 may split a narrative scene into consecutive source scenes; Adapt still owns
-book-level pacing. A final compact call assigns every extracted scene exactly
-once to the three acts without rewriting scene or entity authorities.
+book-level pacing. The existing final organization call also reads the complete
+part source once, with scene boundaries and the registry. Its typed
+`source_review` can add omitted staged creatures, important companions, stated
+physical facts, newly revealed names, plot-critical props and missing locations,
+and can move a scene to the place its action is staged. A group member with its
+own role and gear stays a separate Character. The final review must also report,
+in `part_end_looks`, the body look of every character whose look changes in the
+part or who carries a changed body look into it (`end_look_required` lists them;
+composed worn-item looks are outfit and excluded). A reported return adds an
+activation of the character's canonical-equivalent look, created once as
+`audit_base_return` when missing. Source quotes are
+validated against their exact scene passages. Only explicitly interchangeable
+creatures introduced in this part, with identical physical identity and no
+individual states, may consolidate into a group; prior parts and individual
+identities remain protected. Non-story matter stays in source coverage and is
+excluded from sequences. Sequences (`StorySequence`) belong to their part:
+as many as the source supports, each a consecutive run of scenes pursuing one
+goal and ending on a turn, together partitioning the part's narrative scenes
+in order. Code assigns their numbers. A part is never shaped into acts or
+given its own climax; the book's acts live in the book map. A Story Bible that
+still holds per-part `narrative_arcs` is rejected with an instruction to
+analyze the manuscript again.
+
+Missed persistent worn items have explicit acquisition/removal positions. Extract
+composes their tags with subsequent body/wardrobe states, including minor looks
+and returns to the base, without overwriting existing anchors or guards. A lost
+or removed garment is an interval whose `removes_tags` name exact tags of the
+look it is taken from; composed looks drop them and guard against redrawing
+them. Composed labels name the items; continuity guards require only items
+marked visually significant (prominent at full-figure size) to stay visible.
+The look a Cast-required character ends the part in is marked visually
+significant, because it carries into the next part. Declared
+absence intervals cover earlier-lived-time frames or concealment. Existing complete
+looks need no duplicate reference. New composed looks replace local activations;
+unused intermediate states from this unpublished part are text-only, while prior
+state authorities remain unchanged. Short sources emit the same selective review
+inside their single extraction response. This adds source tokens to the final
+sectioned call, without another model round trip or rewriting a saved Bible.
 
 Section and organization JSON responses, including schema-repair responses,
 are retained under `.checkpoints/extract/responses`, keyed by model and request
 inputs. Resume revalidates matching responses without another provider call or
 usage charge. Completed section usage is recorded before later work; a timeout
-fails without automatically resubmitting that request. Stage cleanup preserves
-these checkpoints. Cost estimates include all sections, estimated registry
-growth, and the final organization call; they are not a spend ceiling or a
+fails without automatically resubmitting that request. The stage log names the
+section a rerun resumes at, and the local diagnostics journal keeps the runtime's
+timing evidence (last model activity, token counts, event types; never request
+content), so a stalled connection can be told from a slow model. Stage cleanup preserves
+these checkpoints. A section or sequence-organization call that exhausts validation
+attempts archives only its rejected response chain under
+`.checkpoints/extract/rejected`, so an explicit retry can generate new output.
+Successful sections retain their entire correction chain for exact cache reuse;
+transport interruptions do not trigger this archival.
+Schema and prompt changes are new request inputs and invalidate those response
+cache keys; they do not authorize reusing a different request's output.
+Cost estimates include all sections, estimated registry
+growth, and the final source/organization call; they are not a spend ceiling or a
 measured latency/quality guarantee.
 
-Brief inference receives every source unit's exact text and ID, the scene index,
-and the complete Story Bible; redundant sentence offsets and ordinals are omitted
-from the prompt. Its first-call instructions specify string/list types and the
+Brief inference also sends its typed response schema on every attempt, excluding
+approval/revision/hash fields and any locally inherited series direction. The
+prompt requests only those inferred fields. Later-part outputs do not have to
+reproduce approved tone, point of view, themes or other series choices; code
+preserves them. Estimates for both stages include their response schemas.
+Brief inference receives the complete verbatim source once, partitioned into
+primary scene passages derived from immutable source-unit offsets. A compact
+Story Bible supplies entity IDs, names, aliases, stated physical identity,
+character relationships and narrative direction. Compact `visual_continuity`
+includes activated looks and the state carried in from earlier parts; future-part
+looks never become carried context. Unactivated catalogs, sentence JSON wrappers
+and duplicate source passages are omitted. Non-narrative matter is marked in
+the source view and excluded from the recommended page envelope. Source artifacts
+and citations do not change.
+Recurring characters are prioritized for ongoing arcs without removing
+infrequent participants from essential events. Its first-call instructions specify string/list types and the
 transformation enum. Recoverable Brief validation failures are recorded in the
 existing opt-in local diagnostic journal, so truncated provider traces do not
 hide the reason for a correction.
@@ -272,7 +491,11 @@ and participation fields disagree, a resolved scene sentence grounds the
 rostered participant or adds an explicitly staged participant to the roster.
 Scene rosters contain visual participants, not everyone mentioned;
 background-only candidates and references are removed while relevant summary
-facts remain. This evidence is discarded at the extraction boundary, not added
+facts remain. This includes relationship links to an undefined character
+explicitly classified as background-only. Links to established registry
+characters remain valid even when those characters do not participate in the
+current section; other undefined relationship targets fail with their exact IDs
+and correction guidance. This evidence is discarded at the extraction boundary, not added
 to the canonical Story Bible. `visual_anchor` remains the shared physical
 identity authority, including species/anatomy; there is no separate species DTO.
 
@@ -286,6 +509,9 @@ known, ID-only character echoes are ignored in the section while remaining in
 the book registry; new candidates or authored updates still require evidence.
 Unrecoverable missing participation pairs are reported together with their
 unresolved opening-quote cause for a single targeted correction.
+Candidates absent from every roster and participation entry are identified by
+ID and name in correction feedback. They require source-supported classification
+or removal; definitions alone never establish visual participation.
 
 ### Adaptation and state authority
 
@@ -401,6 +627,14 @@ so final validation can route concerns to their owning batch. No unknown state i
 silently dropped or mapped to a different approved appearance.
 State conditioning uses explicit `changed_facets` and `replaces_identity`.
 Preserve `visual_anchor` and `continuity_guard` verbatim through Cast and Draw.
+Plan retains incidental characters in its complete identity/state inventory
+with `requires_image: false`. Draw includes their exact appearance anchor and
+continuity guard as per-panel written identity authority, alongside acting and
+staging, without requiring or uploading a dedicated Cast sheet. These selected
+authorities are retained in `FrozenPageGenerationRequest.written_identities`
+and participate in its content hash and subsequent Story Bible edit advisories.
+Image authorities remain required for recurring and retained characters,
+locations and props; reference overflow still fails before spend.
 
 Cast character sheets are neutral five-view turnarounds (three-quarter and
 profile heads; front, three-quarter and back bodies) and carry identity only.
@@ -409,7 +643,12 @@ the changed look (two heads and one neutral full body), never the situation:
 objects touching the body, support and pose stay in the continuity guard and
 the panel, and Draw treats a state asset as evidence for surface changes only.
 Character states that change only `damage` are text-only; Extract clears their
-`visually_significant` on the merged Story Bible. Plan owns performance: every
+`visually_significant` on the merged Story Bible. Their Draw reference inherits
+the last explicitly activated significant look when chronology supplies one
+consistent image ancestor, carrying crowns and clothing through minor changes
+without another paid sheet. A canonical-equivalent activation resets that image
+ancestor to the base; ambiguous ancestry keeps the canonical image while the
+self-contained active anchor remains authoritative. Plan owns performance: every
 panel has a `camera` (shot, angle) and every visible entity whose inventory
 `kind` is `character` has one `acting` entry (screen-direction `facing`, `gaze`,
 `expression`, optional `gesture`). Missing staging, acting for props or

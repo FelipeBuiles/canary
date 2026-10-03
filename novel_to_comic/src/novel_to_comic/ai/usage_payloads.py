@@ -23,7 +23,7 @@ def compact_params(params: dict[str, Any]) -> dict[str, Any]:
     """Allowlist controls; opaque nested provider envelopes never reach SQL."""
     result = _scalars(params, "model temperature top_p max_tokens max_output_tokens max_completion_tokens "
                       "n size quality output_format background moderation response_format stream "
-                      "reasoning_effort profile_id adapter_version execution_fingerprint request_sha256 "
+                      "reasoning_effort service_tier profile_id adapter_version execution_fingerprint request_sha256 "
                       "canary_requested_width canary_requested_height canary_requested_aspect")
     for key in ("response_format", "output_config", "canary_wire_request"):
         value = params.get(key)
@@ -45,8 +45,12 @@ def compact_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     if isinstance(runtime, dict):
         result["codex_runtime"] = _scalars(runtime, "thread_id turn_id tool_id request_id "
             "turn_status funding usage_scope boundary execution_fingerprint prompt_sha256 "
+            "requested_service_tier service_tier "
             "adapter_version profile_id transport_profile submitted indeterminate image_status "
-            "completed_result_available execution_elapsed_seconds")
+            "completed_result_available execution_elapsed_seconds exception_type")
+        error = runtime.get("provider_error")
+        if isinstance(error, dict):
+            result["codex_runtime"]["provider_error"] = _scalars(error, "code rpc_code http_status_code message")
     unsupported = metadata.get("unsupported_controls")
     if isinstance(unsupported, dict):
         result["unsupported_controls"] = _scalars(unsupported, "temperature max_output_tokens")

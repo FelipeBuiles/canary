@@ -44,13 +44,13 @@ _ID_PREFIX = {"characters": "author_char", "locations": "author_loc", "props": "
 EDITABLE_FIELDS: dict[str, frozenset[str]] = {
     "characters": frozenset({
         "name", "visual_anchor", "age_range", "gender", "distinguishing_features",
-        "baseline_affect", "default_outfit", "relationships", "aliases",
+        "baseline_affect", "default_outfit", "relationships", "aliases", "cast_required",
     }),
     "locations": frozenset({"name", "visual_anchor", "time_of_day", "mood", "aliases"}),
     "props": frozenset({"name", "visual_anchor", "aliases"}),
 }
 # Details that never change what a reference image shows.
-NON_VISUAL_FIELDS = frozenset({"name", "aliases", "relationships", "baseline_affect", "label"})
+NON_VISUAL_FIELDS = frozenset({"name", "aliases", "relationships", "baseline_affect", "label", "cast_required"})
 STATE_FIELDS = frozenset({
     "label", "visual_anchor", "visually_significant", "baseline_affect", "canonical_equivalent",
     "continuity_guard", "changed_facets", "replaces_identity",
@@ -211,7 +211,7 @@ def pages_drawn_before_edits(workspace: Path) -> list[dict]:
         except (ArtifactMissing, ArtifactInvalid, ValueError):
             continue
         changes = []
-        for frozen in request.references:
+        for frozen in (*request.references, *request.written_identities):
             if frozen.entity_id is None:
                 continue
             current = inventory.get(frozen.id)
@@ -221,7 +221,7 @@ def pages_drawn_before_edits(workspace: Path) -> list[dict]:
                 reasons = [reason for reason, changed in (
                     ("description", current.visual_anchor != frozen.visual_anchor),
                     ("continuity", (current.continuity_guard or "") != frozen.continuity_guard),
-                    ("reference image", current_digest(frozen.id) not in {None, frozen.content_sha256}),
+                    ("reference image", current_digest(frozen.id) not in {None, getattr(frozen, "content_sha256", None)}),
                 ) if changed]
             if reasons:
                 changes.append({

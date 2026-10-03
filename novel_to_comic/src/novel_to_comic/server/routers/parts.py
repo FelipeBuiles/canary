@@ -18,7 +18,8 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from novel_to_comic.chapter_detection import detect_chapters
+from novel_to_comic.book_map import part_entry, read_book_map
+from novel_to_comic.chapter_detection import detect_chapters, group_chapters
 from novel_to_comic.continuity import earlier_part_changed
 from novel_to_comic.input_limits import InputLimitError, InputLimits, read_source
 from novel_to_comic.series import (
@@ -35,8 +36,9 @@ from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 from novel_to_comic.workspace import part_workspace
 
 from ..deps import get_project_dir
+from ..body_limit import SourceUploadRoute
 
-router = APIRouter()
+router = APIRouter(route_class=SourceUploadRoute)
 
 
 def _page_count(workspace: Path) -> int:
@@ -52,6 +54,8 @@ def part_summaries(root: Path) -> list[dict]:
         manifest = TargetArtifacts(root).read_part_manifest()
     except ArtifactMissing:
         return []
+    # Unchanged parts keep their map entry even when the map is being rebuilt.
+    book_map = read_book_map(root)
     summaries = []
     for record in manifest.parts:
         workspace = part_workspace(root, record.id)
@@ -62,11 +66,14 @@ def part_summaries(root: Path) -> list[dict]:
         except FileNotFoundError:
             stages = {name: "pending" for name in PART_STAGES}
             blocker = None
+        mapped = part_entry(book_map, record)
         summaries.append({
             "id": record.id,
             "ordinal": record.ordinal,
             "title": record.title,
             "characters": record.characters,
+            "synopsis": mapped.synopsis if mapped else None,
+            "book_role": mapped.role if mapped else None,
             "created_at": record.created_at,
             "origin": record.origin,
             "stages": stages,
@@ -137,15 +144,20 @@ async def add_part(
     title: str | None = Form(None),
     text: str | None = Form(None),
     file: UploadFile | None = File(None),
+    auto_split: bool = Form(True),
     project_dir: Path = Depends(get_project_dir),
 ):
-    """Append one part. The response proposes chapter splits for it."""
+    """Append a manuscript, grouping long inputs at detected chapter headings."""
     content, origin = await _submitted_text(project_dir, file, text)
+    pieces = group_chapters(content) if auto_split else [(None, content)]
+    if title:
+        pieces[0] = (title, pieces[0][1])
     try:
-        (record,) = append_parts(project_dir, [(title, content)], origin=origin)
+        records = append_parts(project_dir, pieces, origin=origin)
     except PartEditRejected as exc:
         raise HTTPException(422, str(exc)) from exc
-    return {"part": record.model_dump(), "chapters": _chapters(content),
+    return {"part": records[0].model_dump(), "chapters": _chapters(pieces[0][1]),
+            "created": [record.id for record in records],
             "parts": part_summaries(project_dir)}
 
 

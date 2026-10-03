@@ -676,7 +676,10 @@ When you're ready to drop the gating posture and open to the public:
   Before paid acquisition, decide whether to restrict public traffic to the
   Cloudflare hostname (for example Cloudflare authenticated origin pulls).
 - **Upload size:** Cloudflare's plan request-body limit must exceed
-  `CANARY_MAX_UPLOAD_MB` (10 MB by default).
+  `CANARY_MAX_UPLOAD_MB` (50 MB by default) plus the 1 MB multipart envelope.
+  Initial uploads, appended parts and replacement uploads share that budget.
+  The source defaults also allow 2,000 PDF pages and 5,000,000 extracted
+  characters; explicit environment overrides still apply.
 
 ---
 

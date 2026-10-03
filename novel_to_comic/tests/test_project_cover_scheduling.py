@@ -60,7 +60,7 @@ def test_missing_character_reference_is_rejected_before_credit_reservation(tmp_p
     bible = StoryBible(title="Book", author="Author", total_scenes=0, characters=[Character(
         id="ada", name="Ada", visual_anchor="An adult with dark curls", age_range="adult",
         gender="female", distinguishing_features=[], default_outfit="coat", first_appearance_scene="scene_1",
-    )], locations=[], scenes=[], narrative_arcs=[])
+    )], locations=[], scenes=[], sequences=[])
     (tmp_path / "story_bible.json").write_text(bible.model_dump_json())
     enqueue = Mock()
     monkeypatch.setattr(credited_job, "enqueue_credited_job", enqueue)

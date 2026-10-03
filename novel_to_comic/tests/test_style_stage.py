@@ -86,7 +86,7 @@ def _bible(character_name: str = "Carl") -> StoryBible:
                 source_start_quote="The transformation occurred",
             )
         ],
-        narrative_arcs=[],
+        sequences=[],
         props=[],
     )
 

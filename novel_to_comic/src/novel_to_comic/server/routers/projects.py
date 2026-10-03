@@ -61,6 +61,7 @@ from novel_to_comic.state import (
 from novel_to_comic.series import initialize_series
 from novel_to_comic.usage import estimate_image_cost
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
+from novel_to_comic.workspace import FIRST_PART_ID
 
 from ..auth import get_current_user
 from ..credits import (
@@ -619,7 +620,7 @@ async def create_project(
     save_config(config, project_dir)
     initialize_series(
         project_dir, project_name=name, novel_path=dst, text=source_text,
-        origin=safe_filename,
+        origin=safe_filename, auto_split=True,
     )
 
     # .env.example
@@ -658,7 +659,8 @@ async def create_project(
         properties={"source": "upload", "file_type": suffix.lstrip(".")},
     )
 
-    return {"id": project_id, "name": slug, "project_name": name, "status": "created"}
+    return {"id": project_id, "name": slug, "project_name": name, "status": "created",
+            "part_id": FIRST_PART_ID}
 
 
 @router.get("/")

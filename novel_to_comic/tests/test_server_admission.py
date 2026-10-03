@@ -30,6 +30,26 @@ def app_at(root):
     return app
 
 
+@run_async
+async def test_multipart_parser_rejections_return_a_client_error(tmp_path):
+    app = app_at(tmp_path)
+    calls = []
+    path = "/api/projects/book/pages/2/corrections"
+
+    @app.post(path)
+    async def correction():
+        calls.append(True)
+        return {"ok": True}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(path, files={"instructions": (None, "x" * (1024 * 1024 + 1))},
+                                     headers={"Idempotency-Key": "oversized-field"})
+
+    assert response.status_code == 400
+    assert "maximum size" in response.json()["detail"]
+    assert not calls
+
+
 @pytest.mark.parametrize("suffix", ["corrections/preview", "corrections"])
 @pytest.mark.parametrize("status", ["queued", "running"])
 @pytest.mark.parametrize("kind, expected", [

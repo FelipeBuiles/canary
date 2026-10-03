@@ -8,7 +8,10 @@ import { StoryBibleEditor } from "../components/story/StoryBibleEditor";
 import type { StoryBibleEditor as Editor } from "../api/storyBible";
 import type * as Client from "../api/client";
 
-const server = vi.hoisted(() => ({ calls: [] as { path: string; method: string; body: unknown }[] }));
+const server = vi.hoisted(() => ({
+  calls: [] as { path: string; method: string; body: unknown }[],
+  castIds: undefined as string[] | undefined,
+}));
 
 function editor(): Editor {
   return {
@@ -19,7 +22,8 @@ function editor(): Editor {
     state_citations: {},
     references: [{ kind: "characters", entity_id: "ines", state_id: null, status: "outdated" }],
     story_bible: {
-      revision: 4, title: "Lighthouse", author: "Test", total_scenes: 2, style_notes: null, narrative_arcs: [],
+      cast_character_ids: server.castIds,
+      revision: 4, title: "Lighthouse", author: "Test", total_scenes: 2, style_notes: null, sequences: [],
       excluded_entities: [{ kind: "character", name: "Old Tom", aliases: [] }],
       characters: [
         { id: "mara", name: "Mara", visual_anchor: "short black hair, grey coat", age_range: "adult", gender: "female",
@@ -56,12 +60,13 @@ vi.mock("../api/client", async (original) => ({
       return { details: { name: "Old Tom", visual_anchor: "white beard, oilskin coat", age_range: "70s" }, suggested_scene_ids: ["scene_002"], mentioned_scene_ids: ["scene_002"] };
     }
     if (method === "POST" && path === "/projects/p1/story-bible/characters") return { ...saved, entity_id: "author_char_001" };
+    if (method === "PATCH" && path === "/projects/p1/story-bible/characters/mara") return saved;
     if (method === "DELETE") return saved;
     throw new Error(`Unexpected fixture API: ${method} ${path}`);
   },
 }));
 
-afterEach(() => { server.calls = []; });
+afterEach(() => { server.calls = []; server.castIds = undefined; });
 
 function renderEditor() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -69,6 +74,30 @@ function renderEditor() {
     <StoryBibleEditor project="p1~part_0002" />
   </MemoryRouter></I18nProvider></QueryClientProvider>);
 }
+
+it("lets an author include a briefly appearing character in Cast against the loaded revision", async () => {
+  const user = userEvent.setup();
+  renderEditor();
+  const mara = (await screen.findByText("Mara")).closest("li")!;
+  await user.click(within(mara).getByRole("button", { name: "Edit" }));
+  const sheet = screen.getByRole("dialog", { name: "Edit Mara" });
+  await user.click(within(sheet).getByRole("checkbox", { name: /Include in Cast even for a brief appearance/ }));
+  await user.click(within(sheet).getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(server.calls.some((call) => call.method === "PATCH")).toBe(true));
+  expect(server.calls.find((call) => call.method === "PATCH")?.body).toEqual({ expected_revision: 4, changes: { cast_required: true } });
+});
+
+it("keeps the editor focused on recurring cast and lets authors inspect every source participant", async () => {
+  server.castIds = ["ines"];
+  const user = userEvent.setup();
+  renderEditor();
+  await screen.findByText("Ines");
+  expect(screen.queryByText("Mara")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Show all source participants" }));
+  expect(screen.getByText("Mara")).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Show recurring characters only" }));
+  expect(screen.queryByText("Mara")).toBeNull();
+});
 
 it("keeps what adapted parts cite and removes the rest against the loaded revision", async () => {
   const user = userEvent.setup();

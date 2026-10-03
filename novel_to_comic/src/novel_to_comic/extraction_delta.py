@@ -119,7 +119,7 @@ def remove_delta(bible: StoryBible, delta: ExtractionDelta) -> StoryBible:
     }
 
     result.scenes = [scene for scene in result.scenes if scene.id not in removed_scenes]
-    result.narrative_arcs = [arc for arc in result.narrative_arcs if arc.part_id != delta.part_id]
+    result.sequences = [sequence for sequence in result.sequences if sequence.part_id != delta.part_id]
     for kind, field in _KINDS:
         kept = []
         for entity in getattr(result, field):

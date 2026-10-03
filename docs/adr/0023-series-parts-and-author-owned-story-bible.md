@@ -46,8 +46,19 @@ Cast belong to the series and are shared by every part.
 
 ### Text freezes as the series grows
 
-Parts are added by upload or paste, with detected chapter headings proposed as
-split points. Only the newest part's text can be replaced, split or deleted,
+Initial uploads and appended manuscripts automatically group consecutive
+detected chapters into parts near 100,000 characters, preserving exact text
+and keeping oversized chapters intact. Authors can disable grouping when
+appending, or choose additional chapter splits manually. Short manuscripts
+remain one part, and replacing text never splits an existing part. A new
+project opens part 1 so extraction starts in reading order.
+Grouped parts are titled by chapter range. How a multi-part book is shown,
+and how each part learns where it sits in the whole book, is decided in
+[ADR 0024](0024-part-sequences-and-the-book-map.md).
+Detection includes decorated numeric headings such as `[ 1 ]`. A completed
+extraction is never repartitioned automatically; manual splits happen before
+Extract and keep the exact source text.
+Only the newest part's text can be replaced, split or deleted,
 and only until its Adapt starts; once a later part's extraction has started,
 earlier text is final. Extraction and adaptation run in reading order because each reads
 what the earlier parts established.
@@ -60,6 +71,19 @@ exactly its contribution. Cast is a series checkpoint that reopens only for
 new entities and looks. Character designs are fingerprinted per character
 (appearance facts and style, not name or relationships), so a new character
 is designed beside the established cast without redesigning it.
+
+The source registry retains every established participant and citation. The
+automatic Cast worklist selects characters appearing in at least three narrative
+scenes across the series, explicit author additions, retained Cast sheets and
+`cast_required` identities (principal antagonists, companions and plot-critical
+creatures even with few appearances). Authors can set this override in the
+Story Bible editor.
+Tiny stories with fewer than three narrative scenes retain their participants;
+explicit character requests can include an incidental participant. Incidental
+characters carry verbatim written appearance authority through Plan and Draw
+without a dedicated image. When later parts establish recurrence, the same ID
+enters Cast and reopens its checkpoint. This reduces reference generation and
+upload cost without deleting story facts or weakening required image authorities.
 
 ### Parts progress independently
 

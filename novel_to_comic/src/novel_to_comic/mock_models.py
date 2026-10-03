@@ -62,7 +62,17 @@ class TargetFixtureReplay:
 
     def structured(self, feature: str) -> Any:
         if feature == "extract.story_bible":
-            return _json(self.project_dir / "story_bible.json")
+            bible = _json(self.project_dir / "story_bible.json")
+            # Recorded fixtures may predate part sequences; replay their acts
+            # as sequences so a mock project can still be extracted.
+            if "narrative_arcs" in bible:
+                arcs = [arc for arc in bible.pop("narrative_arcs") if arc.get("scenes")]
+                bible["sequences"] = [
+                    {"number": number, "title": arc.get("title") or f"Sequence {number}",
+                     "scenes": arc["scenes"], "turn": arc.get("turning_point")}
+                    for number, arc in enumerate(arcs, 1)
+                ]
+            return bible
         if feature == "brief.infer":
             return _json(self.project_dir / "brief" / "adaptation_brief.json")
         if feature == "style.suggestions":

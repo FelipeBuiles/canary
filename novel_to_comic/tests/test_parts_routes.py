@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from novel_to_comic import artifacts
 from novel_to_comic.config import Config, save_config
+from novel_to_comic.models.book_map import BookAct, BookMap, BookMapPart
 from novel_to_comic.models.story_bible import Prop, StoryBible
 from novel_to_comic.server import deps
 from tests.queue_fixtures import create_app
@@ -92,6 +93,160 @@ def test_parts_can_be_appended_split_renamed_and_deleted(client) -> None:
     assert test_client.post("/api/projects/pid/parts", data={}).status_code == 422
 
 
+@pytest.mark.parametrize("method,path", [
+    ("POST", "/api/projects/pid/parts"),
+    ("PUT", "/api/projects/pid/parts/part_0001/text"),
+])
+def test_part_file_uploads_above_the_generic_body_limit_are_accepted(client, method, path) -> None:
+    test_client, root = client
+    test_client.get("/api/projects/pid/status")
+    text = "The tide turned. " * 190_000  # More than the generic 2 MB body cap.
+
+    response = test_client.request(method, path, files={"file": ("long.txt", text, "text/plain")})
+
+    assert response.status_code == 200, response.text
+    identifier = response.json()["part"]["id"]
+    assert TargetArtifacts(root).read_part_text(identifier) == text
+    assert (root / "input" / "parts" / "long.txt").read_text() == text
+    assert not list((root / "input" / "parts").glob(".incoming-*"))
+
+
+def test_appended_uploads_group_chapters_and_return_the_created_parts(client) -> None:
+    test_client, root = client
+    test_client.get("/api/projects/pid/status")
+    text = "Title\n\n" + "".join(f"Chapter {number}\n" + BODY * 90 + "\n\n" for number in range(1, 8))
+
+    response = test_client.post("/api/projects/pid/parts", files={"file": ("book.txt", text, "text/plain")})
+
+    assert response.status_code == 200, response.text
+    created = response.json()["created"]
+    assert created == ["part_0002", "part_0003", "part_0004", "part_0005"]
+    assert response.json()["part"]["id"] == created[0]
+    target = TargetArtifacts(root)
+    assert "".join(target.read_part_text(identifier) for identifier in created) == text
+    assert target.read_part_text("part_0001") == TEXT
+    first_text = target.read_part_text(created[0])
+    assert response.json()["chapters"][-1]["end_offset"] == len(first_text)
+
+
+def test_grouped_upload_replays_without_appending_duplicate_parts(client) -> None:
+    test_client, root = client
+    test_client.get("/api/projects/pid/status")
+    text = f"Chapter 1\n{BODY * 200}\nChapter 2\n{BODY * 200}"
+    headers = {"Idempotency-Key": "grouped-upload"}
+
+    first = test_client.post("/api/projects/pid/parts", files={"file": ("book.txt", text, "text/plain")}, headers=headers)
+    replay = test_client.post("/api/projects/pid/parts", files={"file": ("book.txt", text, "text/plain")}, headers=headers)
+
+    assert first.status_code == replay.status_code == 200
+    assert first.json()["created"] == ["part_0002", "part_0003"]
+    assert replay.json() == first.json()
+    assert replay.headers["Idempotency-Replayed"] == "true"
+    assert len(TargetArtifacts(root).read_part_manifest().parts) == 3
+    assert [path.name for path in (root / "input" / "parts").iterdir()] == ["book.txt"]
+
+
+def test_initial_project_upload_creates_chapter_groups_and_opens_the_first_part(client, monkeypatch) -> None:
+    from novel_to_comic.server import account_models
+
+    test_client, root = client
+    monkeypatch.setattr(projects, "_count_user_projects", lambda _user: 0)
+    monkeypatch.setattr(account_models, "creation_config", lambda *_args: Config())
+    projects.get_db().table.return_value.insert.return_value.execute.return_value = SimpleNamespace(data=[{"id": "new-project"}])
+    text = "Title\n\n" + "".join(f"Chapter {number}\n" + BODY * 90 + "\n\n" for number in range(1, 8))
+
+    response = test_client.post("/api/projects/", data={"name": "Full Book"},
+                                files={"file": ("book.txt", text, "text/plain")})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["part_id"] == "part_0001"
+    target = TargetArtifacts(root.parent / "full-book")
+    manifest = target.read_part_manifest()
+    assert len(manifest.parts) == 4
+    assert "".join(target.read_part_text(part.id) for part in manifest.parts) == text
+    assert (root.parent / "full-book" / "input" / "book.txt").read_text() == text
+
+
+def test_chapter_proposals_still_report_the_opening_before_the_first_heading(client) -> None:
+    test_client, _root = client
+    test_client.get("/api/projects/pid/status")
+    opening = "An epigraph and an unnumbered opening.\n\n"
+    text = opening + f"[ 1 ]\n{BODY}\n[ 2 ]\n{BODY}"
+
+    added = test_client.post("/api/projects/pid/parts", data={"text": text})
+
+    assert added.status_code == 200
+    assert added.json()["chapters"][0]["opening_characters"] == len(opening)
+    assert "opening_characters" not in added.json()["parts"][1]
+
+
+def test_parts_carry_their_book_map_synopsis_until_their_text_changes(client) -> None:
+    test_client, root = client
+    test_client.get("/api/projects/pid/status")
+    test_client.post("/api/projects/pid/parts", data={"text": TEXT})
+    manifest = TargetArtifacts(root).read_part_manifest()
+    book_map = BookMap(
+        synopsis="A keeper guards the light.",
+        parts=[BookMapPart(part_id=record.id, text_sha256=record.text_sha256,
+                           synopsis=f"Synopsis {record.ordinal}", role=f"Role {record.ordinal}")
+               for record in manifest.parts],
+        acts=[BookAct(number=1, title="Watch", summary="The watch.",
+                      first_part="part_0001", last_part="part_0002")],
+    )
+    (root / "book_map").mkdir()
+    (root / "book_map" / "book_map.json").write_text(book_map.model_dump_json())
+
+    listed = test_client.get("/api/projects/pid/parts").json()["parts"]
+    assert [(part["synopsis"], part["book_role"]) for part in listed] == [
+        ("Synopsis 1", "Role 1"), ("Synopsis 2", "Role 2")]
+
+    replaced = test_client.put("/api/projects/pid/parts/part_0002/text", data={"text": "New text.\n" + BODY})
+    assert replaced.status_code == 200
+    assert [part["synopsis"] for part in replaced.json()["parts"]] == ["Synopsis 1", None]
+
+
+def test_automatic_grouping_can_be_disabled_when_appending(client) -> None:
+    test_client, root = client
+    test_client.get("/api/projects/pid/status")
+    text = f"Chapter 1\n{BODY * 200}\nChapter 2\n{BODY * 200}"
+
+    response = test_client.post("/api/projects/pid/parts", data={"text": text, "auto_split": "false", "title": "Book Two"})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["created"] == ["part_0002"]
+    assert response.json()["part"]["title"] == "Book Two"
+    assert TargetArtifacts(root).read_part_text("part_0002") == text
+
+
+@pytest.mark.parametrize("method,path,identifier", [
+    ("POST", "/api/projects/pid/parts", "part_0002"),
+    ("PUT", "/api/projects/pid/parts/part_0001/text", "part_0001"),
+])
+def test_large_pasted_text_uses_the_source_character_budget(client, method, path, identifier) -> None:
+    test_client, root = client
+    test_client.get("/api/projects/pid/status")
+    text = "The tide turned. " * 190_000
+
+    response = test_client.request(method, path, files={"text": (None, text)})
+
+    assert response.status_code == 200, response.text
+    assert TargetArtifacts(root).read_part_text(identifier) == text
+
+
+def test_rejected_part_upload_cleans_staging_and_preserves_the_manifest(client, monkeypatch) -> None:
+    test_client, root = client
+    test_client.get("/api/projects/pid/status")
+    monkeypatch.setenv("CANARY_MAX_UPLOAD_MB", "2")
+    before = TargetArtifacts(root).read_part_manifest()
+
+    response = test_client.post("/api/projects/pid/parts", files={"file": ("large.txt", b"x" * (2_500_000), "text/plain")})
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "Uploaded file exceeds the 2 MB limit."
+    assert TargetArtifacts(root).read_part_manifest() == before
+    assert not list((root / "input" / "parts").iterdir())
+
+
 def test_text_edits_are_rejected_once_adaptation_starts(client) -> None:
     test_client, root = client
     test_client.get("/api/projects/pid/status")
@@ -132,7 +287,7 @@ def test_a_later_part_waits_for_blank_anchors_before_extracting(client) -> None:
     # An extraction from before anchors were required can leave one blank.
     artifacts.write_story_bible(root, StoryBible(
         title="Lighthouse", author="A. Writer", total_scenes=0, scenes=[], characters=[], locations=[],
-        narrative_arcs=[], props=[Prop(id="lamp", name="Lamp", visual_anchor=" ")],
+        sequences=[], props=[Prop(id="lamp", name="Lamp", visual_anchor=" ")],
     ))
 
     for response in (test_client.get("/api/projects/pid/parts/part_0002/estimate?stage=extract"),

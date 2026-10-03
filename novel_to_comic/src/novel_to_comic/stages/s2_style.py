@@ -507,7 +507,7 @@ def _suggestion_story_context(story_bible: StoryBible, custom_direction: dict | 
     return (
         f'Story: "{story_bible.title}" by {story_bible.author}\n'
         f"Style notes: {story_bible.style_notes or 'none'}\n"
-        f"Narrative arcs: {'; '.join(f'{a.title}: {a.turning_point or ""}' for a in story_bible.narrative_arcs) or 'not supplied'}\n"
+        f"Story sequences: {'; '.join(f'{q.title}: {q.turn or ""}' for q in story_bible.sequences[:12]) or 'not supplied'}\n"
         f"Scene range: {'; '.join(f'{s.scene_type}/{s.narrative_beat}: {s.summary}' for s in story_bible.scenes[:12])}\n"
         f"Settings: {'; '.join(f'{loc.name} — {loc.mood}: {loc.visual_anchor}' for loc in story_bible.locations[:8])}\n"
         f"Character demands: {'; '.join(f'{char.name}: {char.visual_anchor}' for char in story_bible.characters[:8])}\n"

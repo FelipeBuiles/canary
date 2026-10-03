@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Awaitable, Callable
 
+from fastapi.routing import APIRoute
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -22,9 +23,48 @@ def _max_body_bytes() -> int:
         return 2 * 1024 * 1024
 
 
+def _is_source_upload(path: str, method: str) -> bool:
+    parts = path.rstrip("/").split("/")
+    return (
+        method == "POST" and path.rstrip("/") == "/api/projects"
+    ) or (
+        parts[1:3] == ["api", "projects"]
+        and len(parts) > 3
+        and bool(parts[3])
+        and (
+            (method == "POST" and len(parts) == 5 and parts[4] == "parts")
+            or (
+                method == "PUT" and len(parts) == 7
+                and parts[4] == "parts" and bool(parts[5]) and parts[6] == "text"
+            )
+        )
+    )
+
+
+def form_part_cap_bytes(path: str, method: str) -> int:
+    """Permit UTF-8 source text fields within the extracted-character budget."""
+    if _is_source_upload(path, method):
+        return InputLimits.from_env().extracted_characters * 4
+    return 1024 * 1024
+
+
+class SourceUploadRoute(APIRoute):
+    """Use the source field budget before FastAPI's cached form parsing."""
+
+    def get_route_handler(self) -> Callable[[Request], Awaitable[Response]]:
+        original = super().get_route_handler()
+
+        async def handle(request: Request) -> Response:
+            if _is_source_upload(request.url.path, request.method):
+                await request.form(max_part_size=form_part_cap_bytes(request.url.path, request.method))
+            return await original(request)
+
+        return handle
+
+
 def _body_cap_bytes(path: str, method: str) -> int:
     """Return the pre-parser body cap for this endpoint."""
-    if method == "POST" and path.rstrip("/") == "/api/projects":
+    if _is_source_upload(path, method):
         return InputLimits.from_env().upload_bytes + _MULTIPART_ENVELOPE_BYTES
     parts = path.rstrip("/").split("/")
     if (
@@ -69,4 +109,5 @@ async def body_size_limit_middleware(request: Request, call_next: Callable[[Requ
             )
         body.extend(chunk)
     request._body = bytes(body)  # type: ignore[attr-defined]
+    del body
     return await call_next(request)

@@ -522,6 +522,7 @@ def _compile_prompt(
     exact_visible_lettering: bool = True,
     reference_bindings: Mapping[str, dict] | None = None,
     style_reference: PageReference | None = None,
+    text_authorities: tuple[ApprovedVisualReference, ...] = (),
 ) -> str:
     # Identity is independent of state labels and reference traversal order.
     entity_ids = sorted({
@@ -560,10 +561,17 @@ def _compile_prompt(
         }}
 
     def subjects(content):
+        def written_identity(entity_id):
+            authority = next((ref for ref in text_authorities if ref.entity_id == entity_id
+                              and ref.appearance_state_id == content.appearance_states.get(entity_id)), None)
+            return ({"written_identity": {"appearance": authority.label,
+                     "visual_anchor": authority.visual_anchor, "continuity_guard": authority.continuity_guard}}
+                    if authority is not None else {})
         return [
             {
                 "subject": handles[entity_id],
                 **acting(content, entity_id),
+                **written_identity(entity_id),
                 "references": [
                     {
                         "image": _off_canvas_handle("asset", (reference_bindings or {}).get(ref.id, {}).get("input_order", ref.order)),
@@ -749,6 +757,13 @@ def _compile_prompt(
                 "continuity": list(correction_context.beat_transitions),
                 "sources": list(correction_context.source_texts),
             }
+    if text_authorities:
+        payload["reference_scope"] += (
+            " Incidental participants use written_identity instead of a dedicated image. "
+            "Preserve each supplied visual_anchor and continuity_guard verbatim as appearance "
+            "authority; take acting and staging from the panel. During corrections preserve "
+            "their existing identity in the parent artwork unless the author changes it."
+        )
     if style_reference is not None:
         payload["selected_style_proof"] = {
             "image": _off_canvas_handle("asset", style_reference.order),
@@ -895,6 +910,8 @@ def compile_page_generation_request(
         ):
             raise ValueError("edit source bytes do not match correction lineage")
     authorities = _selected_authorities(page, inventory)
+    text_authorities = tuple(authority for authority in authorities if not authority.requires_image)
+    authorities = tuple(authority for authority in authorities if authority.requires_image)
     max_references = selected_edition.capability_profile.max_image_references
     if (page_profile_uses_native_dimensions(selected_edition.capability_profile) or selected_edition.capability_profile.provider in _EDIT_SOURCE_COUNTS_AS_REFERENCE) and correction is not None:
         max_references -= 1  # The parent is an input image, never an authority replacement.
@@ -997,6 +1014,7 @@ def compile_page_generation_request(
         exact_visible_lettering=profile.exact_visible_lettering,
         reference_bindings=reference_bindings,
         style_reference=style_reference,
+        text_authorities=text_authorities,
     )
     if correction is not None and correction_context is not None and len(prompt) > profile.max_prompt_characters - 1024:
         # A long book's entire beat/transition history can exceed a fixed
@@ -1028,6 +1046,7 @@ def compile_page_generation_request(
             exact_visible_lettering=profile.exact_visible_lettering,
             reference_bindings=reference_bindings,
             style_reference=style_reference,
+            text_authorities=text_authorities,
         )
     if reference_bindings:
         prompt += (
@@ -1055,6 +1074,7 @@ def compile_page_generation_request(
         references=uploaded_references,
         retry=retry,
         correction=correction,
+        written_identities=text_authorities,
     )
     return CompiledPageGeneration(
         request=request,

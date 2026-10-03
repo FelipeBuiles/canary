@@ -14,6 +14,7 @@ from PIL import Image, ImageDraw, ImageOps
 from pydantic import BaseModel, ConfigDict, Field
 
 from novel_to_comic import artifacts
+from novel_to_comic.cast_roster import read_cast_story_bible
 from novel_to_comic.clients import text
 from novel_to_comic.target_artifacts import ArtifactInvalid, TargetArtifacts
 from novel_to_comic.usage import estimate_text_cost
@@ -195,7 +196,7 @@ def current_designs(config, project_dir, bible) -> dict[str, CharacterDesign]:
 
 def read_design(config, project_dir, bible=None, *, character_ids=None) -> CastDesignPlan:
     """Current designs for ``character_ids`` (default: the whole cast)."""
-    bible = bible or artifacts.read_story_bible(project_dir)
+    bible = bible or read_cast_story_bible(project_dir)
     if not TargetArtifacts(project_dir).cast_design_path.exists():
         raise ValueError("Character designs are missing; run Cast before regenerating individual characters.")
     designs = current_designs(config, project_dir, bible)
@@ -292,7 +293,7 @@ def review_status(config, project_dir) -> dict:
     if not target.cast_review_path.exists():
         return {"status": "missing", "issues": []}
     try:
-        bible = artifacts.read_story_bible(project_dir)
+        bible = read_cast_story_bible(project_dir)
         review = target.read_cast_review()
         if review.input_sha256 != _digest(review_input(config, project_dir, bible)):
             return {"status": "stale", "issues": []}

@@ -107,6 +107,10 @@ done
 
 source "$SCRIPT_DIR/dev_environment.sh"
 report_posthog_configuration
+COMPOSE_ARGS=(-f "$REPO_ROOT/docker-compose.yml")
+if [ -n "${CANARY_VERTEX_CREDENTIALS_FILE:-}" ]; then
+  COMPOSE_ARGS+=(-f "$REPO_ROOT/docker-compose.vertex.yml")
+fi
 
 if [ "$CLAUDE_CODE" = true ] && [ "$MODE" = "mock" ]; then
   echo "[dev] --claude-code cannot be combined with --mock" >&2
@@ -204,7 +208,7 @@ compose_service_healthy() {
   local service="$1"
   local container_id
   local status
-  container_id="$(docker compose -f "$REPO_ROOT/docker-compose.yml" ps -q "$service" 2>/dev/null)"
+  container_id="$(docker compose "${COMPOSE_ARGS[@]}" ps -q "$service" 2>/dev/null)"
   [ -n "$container_id" ] || return 1
   status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_id" 2>/dev/null)"
   [ "$status" = "healthy" ] || [ "$status" = "running" ]
@@ -222,7 +226,7 @@ report_compose_service() {
 
 start_compose_services() {
   starting "Docker services: $*"
-  docker compose -f "$REPO_ROOT/docker-compose.yml" up -d --wait "$@"
+  docker compose "${COMPOSE_ARGS[@]}" up -d --wait "$@"
 }
 
 source "$SCRIPT_DIR/dev_lifecycle.sh"
