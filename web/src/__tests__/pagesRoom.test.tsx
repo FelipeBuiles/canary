@@ -6,7 +6,7 @@ import { I18nProvider } from "../i18n";
 import { SHOW_DEV_CONTENT_KEY } from "../lib/devContent";
 import { usePipelineStore } from "../store/pipeline";
 import type * as PagesApi from "../api/pages";
-import type { CostEstimate, EditorialIssue, StageStatus } from "../types/api";
+import type { CostEstimate, EditorialIssue, StageStatus, StageValidation } from "../types/api";
 
 const productEvent = vi.fn();
 vi.mock("../api/events", () => ({ trackProductEvent: (...args: unknown[]) => productEvent(...args) }));
@@ -45,6 +45,7 @@ let persistedPageFailure: Record<string, unknown> | null = null;
 let persistedRenderedFailure: Record<string, unknown> | null = null;
 let adaptationIssues: EditorialIssue[] = [];
 let planIssues: EditorialIssue[] = [];
+let adaptValidation: Pick<StageValidation, "invariant_failures" | "recommendations"> | undefined;
 let planValidation: {
   invariant_failures: Array<{
     id: string;
@@ -114,7 +115,7 @@ vi.mock("../api/queries", () => ({
     },
   }),
   useStageValidation: (_project: string | undefined, stage: string) => ({
-    data: stage === "plan" ? planValidation : undefined,
+    data: stage === "plan" ? planValidation : adaptValidation,
   }),
   useCompletePages: () => completePagesUnavailable ? ({
     data: undefined,
@@ -313,6 +314,7 @@ describe("PagesRoom", () => {
       evidence: ["Source units 80–92"],
     }];
     planIssues = [];
+    adaptValidation = undefined;
     planValidation = undefined;
     generationJobResults = [];
     generationJobsLoading = false;
@@ -559,6 +561,58 @@ describe("PagesRoom", () => {
     );
   });
 
+  it.each([false, true])("keeps Plan findings visible when the Adapt report has findings: %s", (hasAdaptFindings) => {
+    stageStatuses = {
+      adapt: { status: "failed", stale: false },
+      plan: { status: "failed", stale: false },
+      draw: { status: "pending", stale: false },
+    };
+    adaptValidation = {
+      invariant_failures: hasAdaptFindings ? [{
+        id: "adapt-story", owner_stage: "adapt", code: "missing_essential_event",
+        message: "Missing requirement essential_event_001", evidence: [],
+      }] : [],
+      recommendations: [],
+    };
+    planValidation = {
+      invariant_failures: [{
+        id: "plan-camera", owner_stage: "plan", code: "missing_panel_camera",
+        message: "Missing camera", evidence: [],
+      }],
+      recommendations: [],
+    };
+    completePagesUnavailable = true;
+
+    renderRoom();
+
+    expect(screen.getByRole("region", { name: "Page flow and staging" })).toBeTruthy();
+    expect(Boolean(screen.queryByRole("region", { name: "Story coverage" }))).toBe(hasAdaptFindings);
+    expect(screen.getByText("Resume or restart adaptation to check the script again before page planning continues.")).toBeTruthy();
+    expect(screen.queryByText("Retry page planning to check these pages again.")).toBeNull();
+    expect(runPipeline).not.toHaveBeenCalled();
+  });
+
+  it("leaves historic validation findings out of the current failure summary", () => {
+    stageStatuses.plan = { status: "failed", stale: false };
+    adaptValidation = {
+      invariant_failures: [{ id: "old-adapt", owner_stage: "adapt", code: "missing_essential_event",
+        message: "Old script failure", evidence: [] }],
+      recommendations: [],
+    };
+    planValidation = {
+      invariant_failures: [{ id: "current-plan", owner_stage: "plan", code: "missing_panel_camera",
+        message: "Current page failure", evidence: [] }],
+      recommendations: [],
+    };
+    completePagesUnavailable = true;
+
+    renderRoom();
+
+    expect(screen.getByRole("region", { name: "Page flow and staging" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Story coverage" })).toBeNull();
+    expect(screen.queryByText("Old script failure")).toBeNull();
+  });
+
   it("regenerates Adapt when Plan reports undersegmented upstream beats", () => {
     stageStatuses = {
       adapt: { status: "complete", stale: false },
@@ -581,7 +635,7 @@ describe("PagesRoom", () => {
 
     expect(screen.getByText("Adapt must split the story into enough visual beats.")).toBeTruthy();
     expect(screen.getByText("The story needs more visual moments to fill the planned pages.")).toBeTruthy();
-    expect(screen.getByText("Check details").closest("details")?.open).toBe(false);
+    expect(within(screen.getByRole("region", { name: "Page flow and staging" })).getByText("Technical details").closest("details")?.open).toBe(false);
     expect(screen.queryByText("These contract failures block the book and cannot be accepted.")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Start adaptation over" }));
     const confirmation = screen.getByRole("alertdialog");

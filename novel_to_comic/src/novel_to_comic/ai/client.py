@@ -24,7 +24,11 @@ from novel_to_comic.ai.codex_schema import strict_output_schema
 from novel_to_comic.ai.anthropic_schema import anthropic_output_schema
 from novel_to_comic.ai.context import (
     current_ai_request_context,
+    current_generation_probe,
     current_stream_observer,
+    generation_probe,
+    mark_generation_executing,
+    mark_generation_first_content,
     notify_execution_started,
 )
 from novel_to_comic.ai.errors import AIEmptyResponseError, AIRefusalError, AITransportError
@@ -35,9 +39,10 @@ from novel_to_comic.ai.finalisation import (
     finalise_image_success,
 )
 from novel_to_comic.config import Config, mock_mode_active
+from novel_to_comic.gemini_tuning import tuned_request
 from novel_to_comic.codex_dev import CodexRoute, CodexRoutingError, is_subscription, route_for
 from novel_to_comic.provider_wire import ProviderWireRequest
-from novel_to_comic.text_models import text_wire, request_reasoning
+from novel_to_comic.text_models import is_gemini_model, text_wire, request_reasoning
 from novel_to_comic.model_costs import get_pricing_resolver
 from novel_to_comic.usage import (
     ApiResult,
@@ -452,6 +457,7 @@ async def _read_chat_stream(
                                 last_progress_at - opened, stream_identity)
             if content_chars and first_content_at is None:
                 first_content_at = last_progress_at
+                mark_generation_first_content()
                 logger.info(
                     "Stream first content after %.1fs (%d reasoning events) %s",
                     first_content_at - opened, reasoning_events, stream_identity,
@@ -771,7 +777,9 @@ def _extract_usage(
     output_details = usage.get("output_tokens_details") or {}
     return UsageRecord(
         call_id=event_id,
-        provider=_provider_from_model(provider_model),
+        # Claude's returned model name can be identical across cloud providers.
+        # The explicit gateway text alias identifies the route that was selected.
+        provider=text_wire(model_alias).provider_key or _provider_from_model(provider_model),
         model=model_alias,
         provider_model=provider_model,
         operation=operation,
@@ -1216,6 +1224,10 @@ def _finalize_event(
             usage=usage, cost_usd=cost_usd, cost_source=cost.source if cost else None,
             latency_ms=latency_ms, started_at=started_at, error=error,
             funding=funding, provider=update["provider"],
+            reasoning_tokens=int(
+                (((response_data or {}).get("usage") or {}).get("completion_tokens_details") or {})
+                .get("reasoning_tokens") or 0
+            ) or None,
         )
     except Exception:
         # Export cannot alter authoritative settlement or trigger paid retries.
@@ -1619,7 +1631,12 @@ def _api_equivalent_cost(model: str, usage: UsageRecord) -> float | None:
     return None if breakdown.source == "unknown_pricing" else breakdown.cost_usd
 
 
-async def _chat_completion(
+async def _chat_completion(**kwargs: Any) -> dict[str, Any]:
+    with generation_probe():
+        return await _chat_completion_once(**kwargs)
+
+
+async def _chat_completion_once(
     *,
     config: Config,
     model: str,
@@ -1633,6 +1650,14 @@ async def _chat_completion(
     image_attachments: tuple[tuple[bytes, str], ...] = (),
     retry_transport: bool = True,
 ) -> dict[str, Any]:
+    effective_request = tuned_request(model, {
+        "system_prompt": system_prompt, "user_content": user_content,
+        "feature": feature, "json_schema": json_schema, "json_mode": json_mode,
+    })
+    system_prompt = effective_request["system_prompt"]
+    user_content = effective_request["user_content"]
+    json_schema = effective_request["json_schema"]
+    json_mode = effective_request["json_mode"]
     route = route_for("text", model)
     if config.mock_mode and (route is not None or not mock_mode_active(config)):
         raise CodexRoutingError("Mock projects cannot execute live Codex requests")
@@ -1655,17 +1680,16 @@ async def _chat_completion(
     response_format: dict[str, Any] | None
     effective_system = system_prompt
     if json_schema:
+        request_schema = json_schema
+        if route is None and not wire.claude_native_json and not is_gemini_model(model):
+            request_schema = strict_output_schema(json_schema)
         schema_name = re.sub(r"[^a-zA-Z0-9_-]", "_", feature)[:64]
         response_format = {
             "type": "json_schema",
             "json_schema": {
                 "name": schema_name,
                 "strict": True,
-                "schema": (
-                    strict_output_schema(json_schema)
-                    if route is None and not wire.claude_native_json
-                    else json_schema
-                ),
+                "schema": request_schema,
             },
         }
     elif json_mode:
@@ -1731,6 +1755,13 @@ async def _chat_completion(
     if streaming:
         payload["stream"] = True
         payload["stream_options"] = {"include_usage": True}
+    if (probe := current_generation_probe()) is not None:
+        from novel_to_comic.server.telemetry import content_capture_enabled
+
+        probe.describe(
+            system_prompt=effective_system, user_content=user_content, json_schema=json_schema,
+            stream=streaming, keep_content=content_capture_enabled(),
+        )
 
     estimated_cost_usd = (
         (estimate_text_cost(
@@ -2049,6 +2080,8 @@ async def _chat_completion(
             started_at=started_at,
         )
         raise
+    if probe is not None and probe.input_messages is not None:
+        probe.output_text = text
     # The success write runs outside the cancellation catcher: it is shielded,
     # so a cancel landing mid-write waits it out, then propagates without a
     # second terminal write overwriting the succeeded status.
@@ -2155,6 +2188,15 @@ async def generate_wire_image_on_route(
 async def _generate_wire_image_once(
     *, config: Config, wire: "ProviderWireRequest", output_path: Path, feature: str,
 ) -> ApiResult[Path]:
+    with generation_probe():
+        return await _generate_wire_image_attempt(
+            config=config, wire=wire, output_path=output_path, feature=feature,
+        )
+
+
+async def _generate_wire_image_attempt(
+    *, config: Config, wire: "ProviderWireRequest", output_path: Path, feature: str,
+) -> ApiResult[Path]:
     from novel_to_comic.ai.providers import selector
     from novel_to_comic.provider_wire import materialize_wire_references
 
@@ -2182,6 +2224,8 @@ async def _generate_wire_image_once(
             event_id=ctx.event_id, estimated_cost_usd=ctx.estimated_cost_usd,
             funding=ctx.metadata.get("funding", "api"), config=config,
         )
+        # Telemetry only: a serialized runtime marks again when its queue releases.
+        mark_generation_executing()
         raw = await provider.generate_wire(
             wire=transport_wire,
             config=config,

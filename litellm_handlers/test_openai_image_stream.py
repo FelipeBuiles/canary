@@ -43,18 +43,20 @@ def run(image=(), params=None, model="openai-stream/gpt-image-2.5-sunburst"):
     return asyncio.run(call)
 
 
-def test_streamed_edit_returns_final_image_usage_and_no_gateway_cost(monkeypatch):
+@pytest.mark.parametrize("model", ["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"])
+def test_streamed_edit_returns_final_image_usage_and_no_gateway_cost(monkeypatch, model):
     seen = use_transport(monkeypatch, lambda request: httpx.Response(
         200, headers={"content-type": "text/event-stream", "x-request-id": "req_1"},
         content=sse({"type": "image_edit.completed", "b64_json": PNG, "created_at": 7, "usage": USAGE}),
     ))
-    result = run(image=[("ref.png", b"ref-bytes", "image/png"), ("two.png", b"two", "image/png")])
+    result = run(image=[("ref.png", b"ref-bytes", "image/png"), ("two.png", b"two", "image/png")],
+                 model=f"openai-stream/{model}")
 
     request = seen[0]
     assert str(request.url) == "https://api.openai.com/v1/images/edits"
     assert request.headers["authorization"] == "Bearer sk-test"
     body = request.content
-    for field, value in (("model", "gpt-image-2.5-sunburst"), ("size", "1024x1536"), ("stream", "true"),
+    for field, value in (("model", model), ("size", "1024x1536"), ("stream", "true"),
                          ("partial_images", "0"), ("quality", "medium"), ("output_format", "png")):
         assert f'name="{field}"\r\n\r\n{value}\r\n'.encode() in body
     assert body.count(b'name="image[]"') == 2
@@ -62,21 +64,23 @@ def test_streamed_edit_returns_final_image_usage_and_no_gateway_cost(monkeypatch
     assert result.data[0].b64_json == PNG
     assert result.usage.output_tokens == 343
     assert result.usage.input_tokens_details.image_tokens == 3000
-    assert result.model == "openai/gpt-image-2.5-sunburst"
+    assert result.model == f"openai/{model}"
     assert result.provider_request_id == "req_1"
     assert result._hidden_params["response_cost"] is None
 
 
-def test_streamed_generation_sends_json(monkeypatch):
+@pytest.mark.parametrize("model", ["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"])
+def test_streamed_generation_sends_json(monkeypatch, model):
     seen = use_transport(monkeypatch, lambda request: httpx.Response(
         200, headers={"content-type": "text/event-stream"},
         content=sse({"type": "image_generation.partial_image", "b64_json": "AA==", "partial_image_index": 0},
                     {"type": "image_generation.completed", "b64_json": PNG, "usage": USAGE}),
     ))
-    result = run()
+    result = run(model=f"openai-stream/{model}")
     body = json.loads(seen[0].content)
     assert str(seen[0].url).endswith("/images/generations")
     assert body["stream"] is True and body["partial_images"] == 0 and body["n"] == 1
+    assert body["model"] == model
     assert result.data[0].b64_json == PNG
 
 

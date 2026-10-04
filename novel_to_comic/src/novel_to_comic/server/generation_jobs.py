@@ -514,6 +514,7 @@ async def _run_generation_job(app: FastAPI, job: GenerationJob) -> None:
 
 async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
     from .telemetry import (
+        ai_span,
         log_event,
         metric_count,
         metric_histogram,
@@ -525,11 +526,15 @@ async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
                         request_id=spec.request_id if spec else None,
                         project_id=spec.project_id if spec else None,
                         posthogDistinctId=job.user_id, operation=spec.operation if spec else job.kind,
-                        stage=spec.stage if spec else None) as span:
+                        stage=spec.stage if spec else None) as span, \
+            ai_span(f"job.{spec.operation if spec else job.kind}", stage=spec.stage if spec else None,
+                    page_number=job.payload.get("page_number")) as job_span:
         try:
             await _run_generation_job(app, job)
         finally:
             if job.status in {"complete", "failed", "cancelled"}:
+                job_span.set(status=job.status, run_id=job.payload.get("run_id"),
+                             stage_attempt_id=job.payload.get("stage_attempt_id"))
                 if span is not None:
                     span.set_attribute("status", job.status)
                     if job.status == "failed":

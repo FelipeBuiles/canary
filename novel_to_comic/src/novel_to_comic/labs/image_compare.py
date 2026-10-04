@@ -32,7 +32,9 @@ from pathlib import Path
 from typing import Any, Literal
 
 from novel_to_comic.ai.context import ai_request_context
+from novel_to_comic.server.telemetry import ai_span
 from novel_to_comic.config import Config, load_config
+from novel_to_comic.image_models import GATEWAY_IMAGE_FLARE, GATEWAY_IMAGE_SUNBURST
 from novel_to_comic.image_route_fallback import FAL_SUNBURST_GATEWAY_MODEL, OPENAI_SUNBURST_GATEWAY_MODEL
 from novel_to_comic.usage import UsageRecord, calculate_cost_breakdown, estimate_image_cost
 
@@ -54,9 +56,10 @@ class ImageTarget:
     provider: str
     funding: Literal["api", "codex_subscription"]
     available: bool
-    # How requests reach it: a Sunburst gateway route, or a Codex selector.
+    # How requests reach it: an image gateway route, or a Codex selector.
     gateway_model: str | None = None
     codex_selector: str | None = None
+    model_alias: str = GATEWAY_IMAGE_SUNBURST
 
 
 def image_targets() -> list[ImageTarget]:
@@ -65,6 +68,8 @@ def image_targets() -> list[ImageTarget]:
     targets = [
         ImageTarget("sunburst-openai", "GPT Image 2.5 Sunburst", "OpenAI API", "api", True,
                     gateway_model=OPENAI_SUNBURST_GATEWAY_MODEL),
+        ImageTarget("flare-openai", "GPT Image 2.5 Flare", "OpenAI API", "api", True,
+                    gateway_model=GATEWAY_IMAGE_FLARE, model_alias=GATEWAY_IMAGE_FLARE),
         ImageTarget("sunburst-fal", "GPT Image 2.5 Sunburst", "FAL API", "api", True,
                     gateway_model=FAL_SUNBURST_GATEWAY_MODEL),
     ]
@@ -94,6 +99,7 @@ class Prepared:
     missing_verbatim: list[str]
     submit: Any  # async (output_path) -> UsageRecord
     reference_sha256: tuple[str, ...] = ()
+    pricing_model: str = OPENAI_SUNBURST_GATEWAY_MODEL
 
     def fingerprint(self, target: ImageTarget) -> str:
         """Identifies the exact request: target, prompt, size and reference bytes in order."""
@@ -101,7 +107,7 @@ class Prepared:
         return hashlib.sha256(payload.encode()).hexdigest()
 
     def api_equivalent_usd(self, quality: str | None) -> float:
-        """This request priced at API rates, as settled for a completed Sunburst call.
+        """This request estimated at API rates.
 
         Uses the measured Sunburst token consumption for the requested size and
         quality, ~1,200 input tokens per reference and the prompt's estimated
@@ -111,7 +117,14 @@ class Prepared:
         in, $30 out per million tokens), so Codex cells are priced as if GPT
         Image 2 consumed as many tokens as Sunburst: an approximation. The Codex
         reasoning model's own tokens are not reported and not included.
+        Flare has no measured consumption yet, so it uses its own configured
+        allowances instead of Sunburst's measurements.
         """
+        if self.pricing_model == GATEWAY_IMAGE_FLARE:
+            return estimate_image_cost(
+                self.pricing_model, 1, quality=quality, width=self.width, height=self.height,
+                ref_count=self.references, prompt_text=self.prompt, basis="expected",
+            )
         width, height = _measured_size(quality, self.width, self.height)
 
         def cost(**kwargs: Any) -> float:
@@ -177,7 +190,8 @@ class AssetItem:
             return result.usage
 
         return Prepared(prompt, wire.width, wire.height, len(wire.references), missing, submit,
-                        tuple(ref.content_sha256 for ref in wire.references))
+                        tuple(ref.content_sha256 for ref in wire.references),
+                        target.gateway_model or OPENAI_SUNBURST_GATEWAY_MODEL)
 
     def _wire_for(self, target: ImageTarget, prompt: str, *, restructured: bool):
         references = []
@@ -211,11 +225,15 @@ class AssetItem:
                                        *codex_runtime.image_execution_controls()))),
             )
         else:
-            from novel_to_comic.image_models import describe_image_model
+            from novel_to_comic.image_models import describe_image_model, image_model_profile
 
-            sunburst = describe_image_model("image-sunburst")
-            wire = replace(wire, provider_key=sunburst.provider_key, requested_alias=target.gateway_model,
-                           configured_provider_model=sunburst.provider_model,
+            description = describe_image_model(target.model_alias)
+            profile = image_model_profile(target.model_alias)
+            if len(references) > profile.max_references:
+                raise ValueError(f"{target.label} accepts at most {profile.max_references} references; "
+                                 f"this request has {len(references)}")
+            wire = replace(wire, provider_key=description.provider_key, requested_alias=target.gateway_model,
+                           configured_provider_model=description.provider_model,
                            controls=(("quality", self.quality),))
         return replace(wire, execution_fingerprint=wire.recompute_execution_fingerprint())
 
@@ -235,13 +253,21 @@ class PageItem:
         from novel_to_comic.page_drawing import (
             compile_page_generation_request,
             current_page_capability_profile,
+            openai_page_capability_profile,
             select_book_edition,
         )
         from novel_to_comic.stages.s5_plan import approved_reference_files, approved_visual_inventory
         from novel_to_comic.style_reference import require_style_reference
         from novel_to_comic.target_artifacts import TargetArtifacts
 
-        profile = current_page_capability_profile(config)
+        if config.draw_model == GATEWAY_IMAGE_FLARE:
+            profile = openai_page_capability_profile("gpt-image-2.5-flare", quality="medium")
+            if config.lettering_mode == "integrated":
+                profile = profile.model_copy(update={
+                    "id": profile.id + "-integrated-v1", "exact_visible_lettering": True,
+                })
+        else:
+            profile = current_page_capability_profile(config)
         compiled = compile_page_generation_request(
             TargetArtifacts(self._project_dir).read_page(self.page_number),
             select_book_edition(edition_id="labs", profile=profile),
@@ -255,7 +281,7 @@ class PageItem:
         from novel_to_comic.models.draw import FrozenPageGenerationRequest
         from novel_to_comic.page_drawing import CompiledPageGeneration
 
-        config = config.model_copy(update={"draw_model": target.codex_selector or "image-sunburst"})
+        config = config.model_copy(update={"draw_model": target.codex_selector or target.model_alias})
         profile, compiled = self._compile(config)
         request = compiled.request
         production = request.prompt
@@ -271,7 +297,7 @@ class PageItem:
         async def submit(output_path: Path) -> UsageRecord:
             from novel_to_comic import page_drawing
 
-            if target.codex_selector:
+            if target.codex_selector or target.model_alias == GATEWAY_IMAGE_FLARE:
                 adapter = page_drawing.complete_page_adapter(config, profile)
                 result = await adapter.generate(adapter.prepare(compiled))
             else:
@@ -285,7 +311,8 @@ class PageItem:
 
         return Prepared(prompt, request.output_width, request.output_height, len(request.references),
                         missing, submit,
-                        tuple(hashlib.sha256(data).hexdigest() for data in compiled.reference_bytes))
+                        tuple(hashlib.sha256(data).hexdigest() for data in compiled.reference_bytes),
+                        target.gateway_model or OPENAI_SUNBURST_GATEWAY_MODEL)
 
 
 # ── Listing and running ──────────────────────────────────────────────────────
@@ -436,7 +463,8 @@ async def run_cell(user_root: Path, run_id: str, project: str, item_id: str, arm
         output = storage.run_file(user_root, run_id, f"images/{identifier}.png")
         output.parent.mkdir(parents=True, exist_ok=True)
         started = time.perf_counter()
-        with ai_request_context(stage="labs", project_name=f"labs/{run_id}"):
+        with ai_span("labs.image", experiment_id=run_id, variant=identifier), \
+                ai_request_context(stage="labs", project_name=f"labs/{run_id}"):
             usage = await prepared.submit(output)
     except Exception as exc:
         storage.write_cell(user_root, run_id, identifier, cell | {

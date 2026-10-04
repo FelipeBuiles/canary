@@ -10,6 +10,7 @@ Cells are written independently so concurrent cells never share a file.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -122,3 +123,8 @@ def delete_run(user_root: Path, run_id: str) -> bool:
         return False
     shutil.rmtree(directory)
     return True
+
+
+def fixture_id(source: str) -> str:
+    """Opaque, stable telemetry ID for a Labs source project; never its path."""
+    return "fx_" + hashlib.sha256(source.encode()).hexdigest()[:12]

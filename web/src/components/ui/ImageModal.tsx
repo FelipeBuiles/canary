@@ -3,6 +3,8 @@ import { useDialogFocus } from "../../hooks/useDialogFocus";
 import type { ReactNode } from "react";
 import { Icon } from "./Icon";
 import { LazyImage } from "./LazyImage";
+import { InspectBadge } from "./InspectButton";
+import { useImageViewer } from "../../hooks/useImageViewer";
 import { useI18n } from "../../i18n";
 
 interface ImageModalProps {
@@ -23,6 +25,7 @@ export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar,
   const { t } = useI18n();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const inspector = useImageViewer();
 
   useDialogFocus(dialogRef, { enabled: isOpen, onClose, initialFocusRef: closeButtonRef });
 
@@ -74,12 +77,21 @@ export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar,
             className="flex h-[36dvh] min-h-0 shrink-0 items-center justify-center overflow-hidden bg-ink-black lg:h-auto lg:min-h-[60vh] lg:shrink"
           >
             {imageAvailable ? (
-              <LazyImage
-                src={src}
-                alt={alt}
-                containerClassName="w-full h-full"
-                preserveAspectBox
-              />
+              <button
+                type="button"
+                onClick={() => inspector.open({ src, alt, label: title })}
+                aria-label={`${t("Zoom and inspect")} · ${alt}`}
+                title={t("Zoom and inspect")}
+                className="group relative h-full w-full cursor-zoom-in focus-visible:outline-[3px] focus-visible:-outline-offset-[3px] focus-visible:outline-narrator-gold"
+              >
+                <LazyImage
+                  src={src}
+                  alt={alt}
+                  containerClassName="w-full h-full"
+                  preserveAspectBox
+                />
+                <InspectBadge />
+              </button>
             ) : (
               <p className="px-6 text-center font-meta text-xs tracking-[0.08em] text-bristol/80">
                 {emptyLabel}
@@ -100,6 +112,7 @@ export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar,
           </div>
         )}
       </div>
+      {inspector.viewer}
     </div>
   );
 }

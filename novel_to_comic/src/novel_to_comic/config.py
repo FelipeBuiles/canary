@@ -26,6 +26,7 @@ FailedRequestBillingPolicy = Literal["provider_usage_only", "never", "estimate_a
 # Concrete gateway model IDs; no implicit quality tiers or model escalation.
 GATEWAY_SOL = "gpt-6-sol"
 GATEWAY_LUNA = "gpt-6-luna"
+GATEWAY_GEMINI_FLASH = "gemini-3.8-flash"
 
 # Compatibility inventories derived from the route-description seam.
 GPT_IMAGE_2_ALIASES: frozenset[str] = frozenset(
@@ -154,10 +155,10 @@ class Config(BaseModel):
     dev_model_selections: dict[str, str] = Field(default_factory=dict)
 
     # Model choices are overlaid from authenticated account preferences by the server.
-    extraction_model: str = GATEWAY_LUNA
+    extraction_model: str = GATEWAY_GEMINI_FLASH
     # Bound source and output work per Extract request; split on source units.
     extraction_chunk_chars: int = Field(default=16000, ge=4000, le=64000)
-    brief_model: str = GATEWAY_LUNA
+    brief_model: str = GATEWAY_GEMINI_FLASH
     adapt_model: str = GATEWAY_SOL
     plan_model: str = GATEWAY_SOL
     # Explicit override of the input-derived cumulative Adapt/Plan call limit.

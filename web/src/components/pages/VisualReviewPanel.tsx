@@ -10,6 +10,8 @@ import {
   type VisualReviewReference,
 } from "../../api/pages";
 import { Button } from "../ui/Button";
+import { InspectButton } from "../ui/InspectButton";
+import { useImageViewer } from "../../hooks/useImageViewer";
 import { SectionHeader } from "../composites";
 import { Surface } from "../ui/Surface";
 import { visualFindingIssueId, visualFindingKey } from "./visualFindings";
@@ -22,14 +24,15 @@ export interface VisualReviewDraftSeed {
   issueId?: string;
 }
 
-function ReferenceCard({ project, reference }: { project: string; reference: VisualReviewReference }) {
+function ReferenceCard({ project, reference, onInspect }: { project: string; reference: VisualReviewReference; onInspect: () => void }) {
   const { t } = useI18n();
   const label = reference.display_label ?? reference.label;
   const imageUrl = reference.image_path ? referenceFileUrl(project, reference.image_path) : undefined;
   return (
     <li className="flex min-w-0 items-center gap-3 border border-ink-black/20 bg-bristol px-2 py-2">
       {imageUrl ? (
-        <a href={imageUrl} target="_blank" rel="noopener noreferrer" className="shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-hero-red">
+        <button type="button" onClick={onInspect} aria-label={`${t("Zoom and inspect")} · ${label}`} title={t("Zoom and inspect")}
+          className="shrink-0 cursor-zoom-in focus-visible:outline focus-visible:outline-2 focus-visible:outline-hero-red">
         <img
           src={imageUrl}
           alt={label}
@@ -37,7 +40,7 @@ function ReferenceCard({ project, reference }: { project: string; reference: Vis
           decoding="async"
           className="h-36 w-36 border border-ink-black/30 object-contain"
         />
-        </a>
+        </button>
       ) : (
         <span
           aria-hidden="true"
@@ -101,7 +104,16 @@ export function VisualReviewPanel({
   const findingIssues = savedEnvelope?.finding_issues ?? [];
   const isCurrent = !!report && report.render_revision === revision;
   const added = new Set([...draftKeys, ...addedKeys]);
+  // The page and its references form one set, so the viewer flips between them.
+  const inspector = useImageViewer();
   if (!revision) return null;
+  const pageImage = {
+    src: pageRenderPreviewUrl(project, pageNumber, revision, "reader"),
+    alt: `${t("Drawn page")} ${pageNumber}, ${t("revision")} ${revision}`,
+  };
+  const inspectable = [pageImage, ...references.flatMap((reference) => reference.image_path
+    ? [{ src: referenceFileUrl(project, reference.image_path), alt: reference.display_label ?? reference.label }]
+    : [])];
 
   function seedFor(finding: VisualReviewFinding, index: number): VisualReviewDraftSeed {
     return {
@@ -132,6 +144,7 @@ export function VisualReviewPanel({
 
   return (
     <section aria-label={t("VISUAL REVIEW")} className="space-y-3">
+      {inspector.viewer}
       <SectionHeader variant="underline" title={t("VISUAL REVIEW")} />
       <h3 className="font-display text-lg font-black uppercase leading-6">
         {t("Does this page match your cast and scene?")}
@@ -145,14 +158,15 @@ export function VisualReviewPanel({
       )}
 
       <div className="grid gap-3 sm:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-        <figure>
+        <figure className="relative">
           <img
-            src={pageRenderPreviewUrl(project, pageNumber, revision, "reader")}
-            alt={`${t("Drawn page")} ${pageNumber}, ${t("revision")} ${revision}`}
+            src={pageImage.src}
+            alt={pageImage.alt}
             loading="lazy"
             decoding="async"
             className="w-full border-[2px] border-ink-black object-contain"
           />
+          <InspectButton images={inspectable} />
           <figcaption className="mt-1 font-meta text-xs font-bold text-ink-muted">
             {t("DRAWN PAGE")} · {t("Revision")} {revision}
           </figcaption>
@@ -170,7 +184,8 @@ export function VisualReviewPanel({
           ) : (
             <ul className="mt-2 grid min-w-0 grid-cols-1 gap-2">
               {references.map((reference) => (
-                <ReferenceCard key={reference.id} project={project} reference={reference} />
+                <ReferenceCard key={reference.id} project={project} reference={reference}
+                  onInspect={() => inspector.open(inspectable, inspectable.findIndex((image) => reference.image_path && image.src === referenceFileUrl(project, reference.image_path)))} />
               ))}
             </ul>
           )}

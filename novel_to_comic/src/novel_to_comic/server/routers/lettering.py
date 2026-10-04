@@ -32,6 +32,7 @@ from ..deps import get_project, project_key
 from ..auth import get_current_user
 from ..credited_job import enqueue_reserved_generation_job
 from ..generation_jobs import generation_job_payload
+from ..page_outcomes import record_page_outcome
 from novel_to_comic.localization import LetteringLocale
 from novel_to_comic.lettering.translation import (
     TargetLocale, TranslationSnapshotConflict, assert_snapshot,
@@ -87,21 +88,28 @@ def get_lettering(page_number: int, project=Depends(get_project)):
 
 @router.put("/pages/{page_number}/lettering")
 @_errors
-def put_lettering(page_number: int, body: LetteringSave, project=Depends(get_project)):
+def put_lettering(page_number: int, body: LetteringSave, request: Request, project_id: str,
+                  project=Depends(get_project), user_id: str = Depends(get_current_user)):
     target = TargetArtifacts(project[0])
     save_lettering(
         target, page_number, body.state, **body.model_dump(exclude={"state"})
     )
+    record_page_outcome(request.app, "lettering_saved", user_id=user_id, project_id=project_id,
+                        target=target, page_number=page_number,
+                        mode="reviewed" if body.mark_reviewed else "edited")
     return editor_state(target, page_number)
 
 
 @router.post("/pages/{page_number}/lettering/reset")
 @_errors
 def reset_page_lettering(
-    page_number: int, body: LetteringReset, project=Depends(get_project)
+    page_number: int, body: LetteringReset, request: Request, project_id: str,
+    project=Depends(get_project), user_id: str = Depends(get_current_user),
 ):
     target = TargetArtifacts(project[0])
     reset_lettering(target, page_number, **body.model_dump())
+    record_page_outcome(request.app, "lettering_reset", user_id=user_id, project_id=project_id,
+                        target=target, page_number=page_number)
     return editor_state(target, page_number)
 
 

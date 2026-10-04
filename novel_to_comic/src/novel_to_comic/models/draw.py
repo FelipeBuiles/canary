@@ -285,6 +285,8 @@ class PageGenerationProvenance(BaseModel):
     usage: UsageRecord
     provider_request_id: str | None = None
     response_metadata: dict[str, object] | None = None
+    # Telemetry trace that produced the render; links later author verdicts.
+    ai_trace_id: str | None = None
 
 
 class PageGenerationFailure(BaseModel):

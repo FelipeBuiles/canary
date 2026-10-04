@@ -247,6 +247,10 @@ def style_sample_brief_path(project_dir: Path) -> Path:
     return series_root(project_dir) / "samples" / "style_sample_brief.json"
 
 
+def style_proof_copy_path(project_dir: Path) -> Path:
+    return series_root(project_dir) / "samples" / "style_proof_copy.json"
+
+
 def style_direction_path(project_dir: Path, direction_id: str) -> Path:
     import re
 

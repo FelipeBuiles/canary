@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { Button } from "../ui/Button";
 import { FieldLabel, SelectField, TextAreaField, TextField } from "../ui/Field";
+import { anchorFromEdit, editableAnchor, readableAnchor } from "../../lib/visualAnchor";
 import { useAddLook, useEditLook, useRemoveLook } from "../../api/seriesQueries";
 import type { EntityKind, StoryBibleEditor } from "../../api/storyBible";
 import type { AppearanceState } from "../../types/api";
@@ -17,7 +18,7 @@ const EMPTY: LookDraft = { label: "", visual_anchor: "", continuity_guard: "", v
 
 function draftOf(look: AppearanceState): LookDraft {
   return {
-    label: look.label, visual_anchor: look.visual_anchor,
+    label: look.label, visual_anchor: editableAnchor(look.visual_anchor),
     continuity_guard: look.continuity_guard ?? "", visually_significant: look.visually_significant,
   };
 }
@@ -42,10 +43,12 @@ export function LooksEditor({ project, editor, kind, entityId }: {
   const busy = add.isPending || edit.isPending || remove.isPending;
   const onError = (err: Error) => setError(err.message);
 
-  function details(value: LookDraft) {
+  function details(value: LookDraft, original?: AppearanceState) {
     return {
-      label: value.label.trim(), visual_anchor: value.visual_anchor.trim(),
-      continuity_guard: value.continuity_guard.trim() || null, visually_significant: value.visually_significant,
+      label: value.label.trim(), visual_anchor: anchorFromEdit(value.visual_anchor, original?.visual_anchor),
+      continuity_guard: original && value.continuity_guard === (original.continuity_guard ?? "")
+        ? original.continuity_guard : value.continuity_guard.trim() || null,
+      visually_significant: value.visually_significant,
     };
   }
 
@@ -65,13 +68,13 @@ export function LooksEditor({ project, editor, kind, entityId }: {
               {editing === look.id ? (
                 <LookForm value={draft} onChange={setDraft} busy={busy}
                   onCancel={() => setEditing(null)}
-                  onSubmit={() => edit.mutate({ project, kind, id: entityId, stateId: look.id, revision: editor.revision, changes: details(draft) },
+                  onSubmit={() => edit.mutate({ project, kind, id: entityId, stateId: look.id, revision: editor.revision, changes: details(draft, look) },
                     { onSuccess: () => setEditing(null), onError })} />
               ) : (
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <p className="font-display text-base font-bold">{look.label}</p>
-                    <p className="mt-1 font-body text-sm text-ink-muted">{look.visual_anchor}</p>
+                    <p className="mt-1 font-body text-sm text-ink-muted">{readableAnchor(look.visual_anchor)}</p>
                     {usedBy.length > 0 && <p className="mt-1 font-body text-xs text-ink-muted">{t("Used in {parts}", { parts: usedBy.join(", ") })}</p>}
                   </div>
                   <div className="flex gap-2">

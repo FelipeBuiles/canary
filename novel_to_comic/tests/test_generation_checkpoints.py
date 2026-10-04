@@ -54,6 +54,26 @@ def test_corrupt_checkpoint_is_regenerated(tmp_path):
     assert len(calls) == 2
 
 
+def test_gemini_tuning_invalidates_stock_responses_and_keys_the_effective_prompt(tmp_path):
+    from novel_to_comic.gemini_tuning import ADDENDA, gemini_tuning_override
+    calls = []
+
+    async def generate(**request):
+        calls.append(request)
+        return ApiResult(value={"attempt": len(calls)})
+
+    generator = checkpointed_generator(generate, artifacts=TargetArtifacts(tmp_path), stage="extract", model="gemini-3.8-flash")
+    request = {"feature": "extract.story_bible", "user_content": "Story."}
+    with gemini_tuning_override(False):
+        assert asyncio.run(generator(**request)).value == {"attempt": 1}
+    assert asyncio.run(generator(**request)).value == {"attempt": 2}
+    assert asyncio.run(generator(**request)).usage is None
+    assert len(calls) == 2
+    saved_inputs = [json.loads(json.loads(path.read_text())["input"])["request"]["user_content"]
+                    for path in (tmp_path / ".checkpoints").rglob("*.json")]
+    assert sorted(saved_inputs) == sorted(["Story.", "Story." + ADDENDA["extract.story_bible"]])
+
+
 def test_rejected_response_can_be_replaced_without_discarding_other_batches(tmp_path):
     from novel_to_comic.generation_checkpoints import discard_checkpointed_response
     artifacts = TargetArtifacts(tmp_path)

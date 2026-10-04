@@ -4,6 +4,7 @@ import { useSetActiveStyle } from "../../api/queries";
 import { isAuthorDirection, proofImageUrl, styleName, type StyleSuggestion } from "../../api/styles";
 import { useI18n } from "../../i18n";
 import { Button } from "../ui/Button";
+import { InspectButton } from "../ui/InspectButton";
 import { usePress } from "../ui/motion";
 
 /** Deterministic tilt per proof so the stack looks hand-dropped but never jitters. */
@@ -47,6 +48,7 @@ export function ProofFlipViewer({
   };
   const yours = isAuthorDirection(current);
   const name = styleName(current);
+  const drawn = suggestions.filter((item) => item.has_sample);
   const behind = [2, 1].map((age) => suggestions[safeIndex - age]).filter((item): item is StyleSuggestion => !!item);
   const select = () => {
     setError(null);
@@ -84,6 +86,11 @@ export function ProofFlipViewer({
             onAnimationEnd={press.onAnimationEnd}
           >
             <img src={proofImageUrl(projectName, current)} alt={name} className="h-full w-full object-contain" />
+            {current.has_sample && <InspectButton
+              images={drawn.map((item) => ({ src: proofImageUrl(projectName, item), alt: styleName(item) }))}
+              index={drawn.indexOf(current)}
+              onIndexChange={(next) => onIndexChange(suggestions.indexOf(drawn[next]))}
+            />}
           </div>
           {[1, 2].map((ahead) => suggestions[safeIndex + ahead]).filter(Boolean).map((item) => (
             <link key={item!.id} rel="preload" as="image" href={proofImageUrl(projectName, item!)} />

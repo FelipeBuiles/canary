@@ -8,12 +8,12 @@ from copy import deepcopy
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from novel_to_comic.appearance_chronology import (
     CODE as CHRONOLOGY_CODE,
     appearance_chronology,
-    final_beat_carriers,
+    change_carriers,
     first_activation,
 )
 from novel_to_comic.generation_checkpoints import discard_checkpointed_response
@@ -49,6 +49,10 @@ from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.paid_shards import run_paid_shards
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
 from novel_to_comic.text_models import text_wire
+from novel_to_comic.gemini_tuning import (
+    gemini_tuning_enabled, generic_detail_schema, generic_detail_view,
+    tuned_user_content, ungeneric_detail_response,
+)
 from novel_to_comic.usage import ApiResult, estimate_text_cost
 
 
@@ -61,6 +65,10 @@ _PLAN_DETAIL_BATCH_PAGES = 8
 # within 2x of the deadline. Half-size batches keep each call far from it,
 # checkpoint twice as often, and give progress twice the resolution.
 _DEADLINE_BOUND_DETAIL_BATCH_PAGES = 4
+
+
+def _uses_two_pass_plan(adaptation: BookAdaptation, model: str) -> bool:
+    return gemini_tuning_enabled(model) or len(adaptation.beats) >= _TWO_PASS_PLAN_MIN_BEATS
 
 
 def detail_batch_pages(model: str) -> int:
@@ -156,6 +164,15 @@ class _PanelCompositionDraft(BaseModel):
     # character's performance. validate_book_plan rejects a null camera.
     camera: PanelCamera | None
     acting: tuple[CharacterActing, ...]
+
+    @field_validator("panel_role", mode="before")
+    @classmethod
+    def _unknown_role_is_standard(cls, value: object) -> object:
+        # A descriptive label for Draw, not structure. JSON-mode models
+        # (Gemini) drift to beat vocabulary ("reveal", "release"); a paid
+        # schema retry for that bought nothing on 2026-10-03.
+        roles = cls.model_fields["panel_role"].annotation.__args__
+        return value if value in roles else "standard"
 
     @model_validator(mode="after")
     def _validate_appearance_state_bindings(self) -> "_PanelCompositionDraft":
@@ -719,6 +736,7 @@ def _detail_batch_prompt(
     start: int,
     stop: int,
     concerns: tuple[InvariantFailure | EditorialIssue, ...] = (),
+    gemini: bool = False,
 ) -> str:
     target_pages = page_map.pages[start:stop]
     context_start = max(0, start - 1)
@@ -776,15 +794,18 @@ def _detail_batch_prompt(
         "Code canonicalizes page numbers, content IDs/order, and reading order. "
         + _SEMANTIC_PAGE_CONTRACT
         + "Detail response format: panels contain visual decisions only, with no lettering_ids field. "
-        "Each page has lettering_placements: an object with exactly one required key for each "
-        "of that page's locked lettering IDs. Each value has panel_number (1-based position in content), "
+        + ("Each page has lettering_placements: a list of objects, one for each of that page's locked "
+           "lettering IDs. Each object has lettering_item_id and panel_number (1-based position in content), "
+           if gemini else "Each page has lettering_placements: an object with exactly one required key for each "
+           "of that page's locked lettering IDs. Each value has panel_number (1-based position in content), ") +
         "preferred_zone, footprint and line_budget; optional bounds/speaker_entity_id/tail_target. "
         "For example lettering_A can reserve top-left standard space with line_budget=3 in panel_number=1. "
         "Multiple items may share a panel. Destinations must be nondecreasing in locked "
         "lettering order and must refer to existing panels carrying the item's beat. "
         "Choose each destination together with the matching visual moment. Code copies "
         "the locked items to those exact destinations in their established order; it "
-        "does not choose placements. A silent page has lettering_placements: {}. "
+        "does not choose placements. "
+        + ("A silent page has lettering_placements: []. " if gemini else "A silent page has lettering_placements: {}. ")
         + "Reserve one-panel pages for exceptional moments."
         + concern_text
         + " "
@@ -823,13 +844,13 @@ def estimate_book_plan_cost(
         model, adaptation.model_dump_json() * 2,
         output_chars=max(10_000, len(adaptation.beats) * 2_000),
     ) * 2
-    if len(adaptation.beats) < _TWO_PASS_PLAN_MIN_BEATS:
+    if not _uses_two_pass_plan(adaptation, model):
         prompt = build_book_plan_prompt(
             adaptation, references, target_range
         ) + instruction_suffix
         return estimate_text_cost(
             model,
-            prompt,
+            tuned_user_content(model, "plan.book", prompt),
             output_chars=max(8_000, len(adaptation.beats) * 2_000),
         ) + review_allowance
     page_count = max(
@@ -865,7 +886,7 @@ def estimate_book_plan_cost(
     ) + instruction_suffix
     total = estimate_text_cost(
         model,
-        map_prompt,
+        tuned_user_content(model, "plan.map", map_prompt),
         output_chars=max(4_000, page_count * 350),
     )
     batch_pages = detail_batch_pages(model)
@@ -873,14 +894,15 @@ def estimate_book_plan_cost(
         stop = min(start + batch_pages, page_count)
         total += estimate_text_cost(
             model,
-            _detail_batch_prompt(
+            tuned_user_content(model, "plan.detail", _detail_batch_prompt(
                 adaptation,
                 references,
                 page_map,
                 start=start,
                 stop=stop,
+                gemini=gemini_tuning_enabled(model),
             )
-            + story_instruction_section(story_instruction, stage="plan", fixed_page_map=True),
+            + story_instruction_section(story_instruction, stage="plan", fixed_page_map=True)),
             output_chars=max(4_000, (stop - start) * 1_600),
         )
     return total + review_allowance
@@ -901,7 +923,7 @@ def _draft_contract_failures(adaptation, references, draft):
     claimed = set()
     beat_by_id = {beat.id: beat for beat in adaptation.beats}
     lettering_by_id = {item.id: item for beat in adaptation.beats for item in beat.lettering}
-    final_carrier = final_beat_carriers(draft.pages)
+    carriers = change_carriers(draft.pages, beat_by_id, _draft_visible(lettering_by_id))
     acting_pages = []
     for page in draft.pages:
         acting_content = []
@@ -929,10 +951,9 @@ def _draft_contract_failures(adaptation, references, draft):
                         artifact_ids=[panel, item_id, *([owner] if owner else [])], evidence=[message],
                     ))
                 claimed.add(item_id)
-            final_beats = frozenset(b for b in content.beat_ids
-                                    if final_carrier.get(b) == (page.page_number, content.order))
             visible, _, _ = _derived_state_citations(
-                content, beat_by_id, approved_pairs, final_beats,
+                content, beat_by_id, approved_pairs,
+                _carried_here(carriers, content, page.page_number),
             )
             visible = _derived_speaker_citations(visible, tuple(
                 lettering_by_id[item] for item in content.lettering_ids if item in lettering_by_id
@@ -1443,6 +1464,7 @@ async def _generate_detail_batch(
     artifacts: TargetArtifacts | None = None,
     model: str = "",
 ) -> _BookPlanDraft:
+    gemini = gemini_tuning_enabled(model)
     base_prompt = _detail_batch_prompt(
         adaptation,
         references,
@@ -1450,9 +1472,11 @@ async def _generate_detail_batch(
         start=start,
         stop=stop,
         concerns=concerns,
+        gemini=gemini,
     ) + story_instruction_section(story_instruction, stage="plan", fixed_page_map=True)
     base_prompt += (
-        "\nLETTERING RESERVATIONS: each lettering_placements value is an OBJECT, not an integer. "
+        ("\nLETTERING RESERVATIONS: each lettering_placements item is an OBJECT with lettering_item_id. "
+         if gemini else "\nLETTERING RESERVATIONS: each lettering_placements value is an OBJECT, not an integer. ") +
         "Use panel_number (1-based), preferred_zone, footprint, line_budget; optional normalized PAGE "
         "bounds, speaker_entity_id and tail_target. Reserve visually quiet negative space and a clear "
         "tail corridor for software-added lettering; do not draw balloons or typeset the copy. "
@@ -1463,12 +1487,15 @@ async def _generate_detail_batch(
         "the full page, not the local panel. Keep all existing exact-ID and locked-order constraints."
     )
     if previous_draft is not None:
+        previous_view = _detail_response_view(previous_draft)
+        if gemini:
+            previous_view = generic_detail_view(previous_view)
         base_prompt += (
             "\n\nRepair only the cited staging/composition defects in this existing detail. "
             "Preserve unaffected panels and all fixed page allocations. If the concern "
             "requires moving lettering between pages, retain that allocation unchanged; "
             "the global-map pass owns such changes. Return the complete target batch. "
-            "\nPREVIOUS DETAIL:\n" + json.dumps(_detail_response_view(previous_draft), ensure_ascii=False)
+            "\nPREVIOUS DETAIL:\n" + json.dumps(previous_view, ensure_ascii=False)
         )
     attempt_prompt = base_prompt
     target_beat_ids = {
@@ -1484,6 +1511,12 @@ async def _generate_detail_batch(
         # A formatting slip must not consume the remaining semantic repair.
         for schema_attempt in range(1, _MAX_PLAN_ATTEMPTS + 1):
             with ai_source_context(f"pages_{start + 1}-{stop}", source_unit_ids):
+                schema = _plan_response_schema(
+                    references, page_map.pages[start:stop],
+                    shared_panel=text_wire(model).claude_native_json or gemini,
+                )
+                if gemini:
+                    schema = generic_detail_schema(schema, page_map.pages[start:stop])
                 request = dict(
                     system_prompt=(
                         "You are the local page-composition architect working under a "
@@ -1492,15 +1525,13 @@ async def _generate_detail_batch(
                     user_content=attempt_prompt,
                     feature="plan.detail",
                     max_output_tokens=_PLAN_DETAIL_MAX_OUTPUT_TOKENS,
-                    json_schema=_plan_response_schema(
-                        references, page_map.pages[start:stop],
-                        shared_panel=text_wire(model).claude_native_json,
-                    ),
+                    json_schema=schema,
                 )
                 result = await generate(**request)
             _record_plan_usage(ctx, result)
             try:
-                draft = _compile_detail_response(result.value, page_map.pages[start:stop], adaptation)
+                detail_value = ungeneric_detail_response(result.value) if gemini else result.value
+                draft = _compile_detail_response(detail_value, page_map.pages[start:stop], adaptation)
             except ValidationError as error:
                 if artifacts is not None:
                     discard_checkpointed_response(artifacts=artifacts, stage="plan", model=model, request=request)
@@ -1829,7 +1860,7 @@ def _default_plan_call_limit(
     """
     projected_pages = max(target_range.maximum, len(adaptation.beats))
     windows = (projected_pages + 11) // 12
-    if len(adaptation.beats) < _TWO_PASS_PLAN_MIN_BEATS:
+    if not _uses_two_pass_plan(adaptation, model):
         clean_calls = 1 + windows
     else:
         batch_pages = detail_batch_pages(model)
@@ -1875,7 +1906,7 @@ async def produce_book_plan(
     from novel_to_comic.generation_checkpoints import checkpointed_generator
     generate = checkpointed_generator(generate, artifacts=artifacts, stage="plan", model=model)
 
-    if len(adaptation.beats) < _TWO_PASS_PLAN_MIN_BEATS:
+    if not _uses_two_pass_plan(adaptation, model):
         return await _produce_book_plan_one_shot(
             adaptation,
             references,
@@ -2191,7 +2222,7 @@ def _derived_state_citations(
     content: "_PageContentDraft",
     beat_by_id: Mapping[str, Any],
     approved_pairs: set[tuple[str, str]],
-    final_beats: frozenset[str] = frozenset(),
+    carried_changes: frozenset[tuple[str, str]] = frozenset(),
 ) -> tuple[tuple[str, ...], dict[str, str], list[tuple[str, str, str]]]:
     """Fold each carried beat's appearance changes into the content citations.
 
@@ -2223,15 +2254,36 @@ def _derived_state_citations(
             if (change.entity_id, change.to_state_id) not in approved_pairs:
                 unapproved.append((beat_id, change.entity_id, change.to_state_id))
                 continue
-            # The change is the beat's outcome: only the beat's last panel is
-            # bound to it. Earlier panels of a split beat keep their prior
-            # state unless the planner cites the new one itself.
-            if beat_id not in final_beats:
+            # The change binds only to its carrier: the beat's last panel
+            # showing the entity (``change_carriers``). Other panels of a split
+            # beat keep the prior state unless the planner cites the new one.
+            if (beat_id, change.entity_id) not in carried_changes:
                 continue
             if change.entity_id not in entity_ids:
                 entity_ids.append(change.entity_id)
             states[change.entity_id] = change.to_state_id
     return tuple(entity_ids), states, unapproved
+
+
+def _draft_visible(lettering_by_id: dict[str, LetteringItem]):
+    """Entities a draft panel shows before derivation: cited, state-bound, or onscreen speakers."""
+
+    def visible(content: Any) -> set[str]:
+        speakers = {
+            item.speaker_entity_id for item_id in content.lettering_ids
+            if (item := lettering_by_id.get(item_id)) is not None
+            and item.delivery == "onscreen" and item.speaker_entity_id is not None
+        }
+        return {*content.entity_ids, *(b.entity_id for b in content.appearance_states), *speakers}
+
+    return visible
+
+
+def _carried_here(
+    carriers: dict[tuple[str, str], tuple[int, int]], content: Any, page_number: int,
+) -> frozenset[tuple[str, str]]:
+    return frozenset(key for key, position in carriers.items()
+                     if key[0] in content.beat_ids and position == (page_number, content.order))
 
 
 def _derived_speaker_citations(
@@ -2275,8 +2327,7 @@ def _canonical_pages(
     unapproved_changes: list[tuple[str, str, str]] = []
     claimed: set[str] = set()
     active_state_by_entity: dict[str, str] = {}
-    applied_state_change_beats: set[str] = set()
-    final_carrier = final_beat_carriers(draft.pages)
+    carriers = change_carriers(draft.pages, beat_by_id, _draft_visible(canonical_lettering))
     pages: list[ComicPage] = []
     for page in draft.pages:
         content_items: list[PageContent] = []
@@ -2368,25 +2419,20 @@ def _canonical_pages(
                 else reservation
                 for reservation, item in zip(content.lettering_reservations, lettering, strict=True)
             )
-            final_beats = frozenset(
-                beat_id for beat_id in content.beat_ids
-                if final_carrier.get(beat_id) == (page.page_number, content.order)
-            )
+            carried_changes = _carried_here(carriers, content, page.page_number)
             entity_ids, states, unapproved = _derived_state_citations(
                 content,
                 beat_by_id,
                 approved_pairs,
-                final_beats,
+                carried_changes,
             )
             entity_ids = _derived_speaker_citations(entity_ids, tuple(lettering))
             for beat_id in content.beat_ids:
                 beat = beat_by_id.get(beat_id)
-                if beat is None or beat_id in applied_state_change_beats or beat_id not in final_beats:
-                    continue
-                for change in beat.appearance_changes:
-                    if (change.entity_id, change.to_state_id) in approved_pairs:
+                for change in beat.appearance_changes if beat is not None else ():
+                    if ((beat_id, change.entity_id) in carried_changes
+                            and (change.entity_id, change.to_state_id) in approved_pairs):
                         active_state_by_entity[change.entity_id] = change.to_state_id
-                applied_state_change_beats.add(beat_id)
 
             # Appearance changes are Adapt's canonical chronology. Once a
             # state is active, later page content that depicts the entity must
@@ -2841,7 +2887,7 @@ def validate_book_plan(
     failures.extend(_reference_authority_failures(pages, references))
 
     beat_by_id = {beat.id: beat for beat in adaptation.beats}
-    final_carrier = final_beat_carriers(pages)
+    carriers = change_carriers(pages, beat_by_id)
     for page in pages:
         for content in page.content:
             # One content item has one state per entity. Beats that move the
@@ -2890,10 +2936,11 @@ def validate_book_plan(
                 )
             for beat_id in content.beat_ids:
                 beat = beat_by_id.get(beat_id)
-                if beat is None or final_carrier.get(beat_id) != (page.page_number, content.order):
+                if beat is None:
                     continue
                 for change in beat.appearance_changes:
-                    if change.entity_id in conflicted:
+                    if (change.entity_id in conflicted
+                            or carriers.get((beat_id, change.entity_id)) != (page.page_number, content.order)):
                         continue
                     if (
                         change.entity_id not in content.entity_ids

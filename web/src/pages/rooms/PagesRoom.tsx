@@ -55,7 +55,6 @@ import type {
   CompletePageSummary,
   GenerationJob,
   PageIssue,
-  StageValidation,
 } from "../../types/api";
 import {
   LetteringIssueCard,
@@ -66,6 +65,7 @@ import { isOcrIssue } from "../../components/pages/lettering";
 import { RevisionDraft } from "../../components/pages/RevisionDraft";
 import { StaleRenderRedraw } from "../../components/pages/StaleRenderRedraw";
 import { PageCheckRecovery } from "../../components/pages/PageCheckRecovery";
+import { StageFailureSummary } from "../../components/pages/StageFailureSummary";
 import { PageSourcePanel } from "../../components/pages/PageSourcePanel";
 import { VisualReviewPanel, type VisualReviewDraftSeed } from "../../components/pages/VisualReviewPanel";
 import type { DrawerKind } from "../../lib/stations";
@@ -138,40 +138,6 @@ function PageSpendConsent({
         </div>
       )}
     />
-  );
-}
-
-function BlockingFailureList({ validation }: { validation?: StageValidation }) {
-  const { t } = useI18n();
-  if (!validation || validation.invariant_failures.length === 0) return null;
-  const explanations: Record<string, string> = {
-    invalid_lettering_speaker: "Some dialogue or captions are missing who speaks them or how they should appear.",
-    trailing_clipped_display_text: "Some text may end too abruptly. It needs another check before it can appear on a page.",
-    upstream_adaptation_granularity: "The story needs more visual moments to fill the planned pages.",
-  };
-  return (
-    <section aria-label={t("What needs another check")} className="mx-auto w-full max-w-[760px] px-2 pb-8 sm:px-6">
-      <SectionHeader
-        title={t("What needs another check")}
-        description={t("These checks protect your finished pages. Try the recovery action above to address them.")}
-      />
-      <ul className="space-y-5">
-        {validation.invariant_failures.map((failure) => (
-          <li key={failure.id} className="font-body text-ink-black [overflow-wrap:anywhere]">
-            <p className="text-base font-semibold leading-7">
-              {t(explanations[failure.code] ?? "Part of the script or page plan needs another check before work can continue.")}
-            </p>
-            <details className="mt-1">
-              <summary className="min-h-11 cursor-pointer py-3 font-meta text-sm text-ink-muted">{t("Check details")}</summary>
-              <div className="space-y-2 bg-surface-container p-4 text-sm leading-6">
-                <p>{failure.message}</p>
-                {failure.evidence.map((evidence, index) => <p key={index}>{evidence}</p>)}
-              </div>
-            </details>
-          </li>
-        ))}
-      </ul>
-    </section>
   );
 }
 
@@ -522,9 +488,9 @@ export function PagesRoom() {
   const adaptFailed = status?.stages.adapt?.status === "failed";
   const { data: planValidation } = useStageValidation(id, "plan", planFailed);
   const { data: adaptValidation } = useStageValidation(id, "adapt", adaptFailed);
-  const planNeedsAdapt = planValidation?.invariant_failures.some(
+  const planNeedsAdapt = planFailed && (planValidation?.invariant_failures.some(
     (failure) => failure.owner_stage === "adapt",
-  ) ?? false;
+  ) ?? false);
   const { data, isLoading, error, refetch } = useCompletePages(id);
   const run = useRunPipeline();
   const generate = useGenerateCompletePage();
@@ -722,8 +688,10 @@ export function PagesRoom() {
           errorDetail={interruptedStageInfo?.error_detail}
           errorCode={interruptedStageInfo?.error_code}
         />
-        {id && <ArchivedArtwork project={id} />}
-        <BlockingFailureList validation={adaptValidation ?? planValidation} />
+        <StageFailureSummary recoveryStage={interruptedStage === "adapt" ? "adapt" : "plan"} failures={[
+          ...(adaptFailed ? adaptValidation?.invariant_failures ?? [] : []),
+          ...(planFailed ? planValidation?.invariant_failures ?? [] : []),
+        ]} />
         {rerunAdaptation && <BottomBarPortal>
           <footer className="flex min-h-shell-footer flex-wrap items-center justify-end gap-3 border-t-[3px] border-ink-black bg-bristol px-4 py-3 shadow-[0_-4px_0_0_var(--color-ghost-shadow)] md:pr-6">
             {planFailed && !planNeedsAdapt ? <StageStartAction
@@ -738,6 +706,7 @@ export function PagesRoom() {
             /> : rerunAdaptation}
           </footer>
         </BottomBarPortal>}
+        {id && <ArchivedArtwork project={id} />}
       </RoomShell>
     );
   }
@@ -879,7 +848,6 @@ export function PagesRoom() {
 
   return (
     <RoomShell project={id}>
-      <ArchivedArtwork project={id} />
       <RoomHeader
         kicker={t("PAGES")}
         title={t("REVIEW COMPLETE PAGES")}
@@ -1258,6 +1226,7 @@ export function PagesRoom() {
             : undefined
         }
       />}
+      <ArchivedArtwork project={id} />
     </RoomShell>
   );
 }

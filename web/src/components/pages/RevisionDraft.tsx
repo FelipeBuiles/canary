@@ -27,6 +27,7 @@ import { Surface } from "../ui/Surface";
 import { PageArtwork } from "./PageArtwork";
 import { BeforeAfterWipe } from "./BeforeAfterWipe";
 import { Loupe } from "../ui/Loupe";
+import { InspectButton } from "../ui/InspectButton";
 import { AnnotationEditor, type EditorAnnotation } from "./AnnotationEditor";
 import {
   annotationProblem,
@@ -608,10 +609,11 @@ export function RevisionDraft({
               />
             </div>
           ) : (
-            <figure ref={artRef} className="flex h-[max(12rem,calc(100dvh-20rem))] justify-center">
+            <figure ref={artRef} className="relative flex h-[max(12rem,calc(100dvh-20rem))] justify-center">
               <Loupe className="flex h-full w-full justify-center">
                 <PageArtwork src={canvasSrc} alt={canvasAlt} onLoaded={onArtworkLoaded} />
               </Loupe>
+              <InspectButton images={{ src: canvasSrc, alt: canvasAlt }} />
             </figure>
           )}
           {compareRevision != null && (
@@ -631,6 +633,15 @@ export function RevisionDraft({
                 </Button>
               </div>
               <div className="mt-3 grid items-start gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)]">
+                <div className="relative min-w-0">
+                <InspectButton
+                  images={[
+                    { src: pageRenderPreviewUrl(project, pageNumber, compareRevision, "reader"), alt: `${t("Complete page")} ${pageNumber}, ${t("previous revision")} ${compareRevision}`, label: `${t("BEFORE")} · ${t("Revision")} ${compareRevision}` },
+                    { src: canvasSrc, alt: `${t("Complete page")} ${pageNumber}, ${t("current revision")} ${parentRenderRevision}`, label: `${t("AFTER")} · ${t("Revision")} ${parentRenderRevision}` },
+                  ]}
+                  index={comparison === "before" ? 0 : 1}
+                  placement={comparison === "wipe" ? "right-2 top-10" : undefined}
+                />
                 {comparison === "wipe" ? (
                   <BeforeAfterWipe
                     beforeSrc={pageRenderPreviewUrl(project, pageNumber, compareRevision, "reader")}
@@ -656,6 +667,7 @@ export function RevisionDraft({
                   </figcaption>
                 </figure>
                 )}
+                </div>
                 <div className="space-y-3">
                   <p className="text-sm leading-6">{t("A new revision is not a confirmed fix. Compare the requested change and check for unintended differences.")}</p>
                 <SubmittedCorrection

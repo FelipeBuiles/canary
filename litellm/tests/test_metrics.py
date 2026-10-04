@@ -158,6 +158,20 @@ def test_callback_models_match_gateway_routes():
     assert _MODELS == {route["model_name"] for route in config["model_list"]}
 
 
+@pytest.mark.parametrize("model", ["bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5"])
+@pytest.mark.parametrize("provider", ["bedrock", "bedrock_converse"])
+def test_bedrock_metrics_retain_selected_model_and_provider(model, provider):
+    client = FakeClient()
+    configure_metrics(client)
+    started = datetime.now(timezone.utc)
+    asyncio.run(metrics_callback.async_log_success_event({
+        "call_type": "acompletion", "model": model,
+        "litellm_params": {"custom_llm_provider": provider},
+    }, object(), started, started + timedelta(milliseconds=125)))
+    assert client.metrics.calls[0][3]["provider"] == provider
+    assert client.metrics.calls[2][3]["model"] == model
+
+
 @pytest.mark.parametrize("dockerfile", ["Dockerfile", "litellm/Dockerfile"])
 def test_every_gateway_image_ships_the_metrics_modules(dockerfile):
     # The patched proxy imports canary_metrics and config.yaml loads the

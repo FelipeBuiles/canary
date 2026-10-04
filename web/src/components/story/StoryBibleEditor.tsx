@@ -11,6 +11,7 @@ import { EntitySheet } from "./EntitySheet";
 import { KIND_LABELS } from "./entityKinds";
 import { isNotFoundError } from "../../api/client";
 import { castCharacters } from "../../lib/castRoster";
+import { readableAnchor } from "../../lib/visualAnchor";
 import { useMergeEntity, useRemoveEntity, useRestoreExcluded, useStoryBibleEditor } from "../../api/seriesQueries";
 import type { EntityKind, StoryBibleEditor as Editor } from "../../api/storyBible";
 import type { ExcludedEntity } from "../../types/api";
@@ -126,7 +127,7 @@ function EntityRow({ editor, kind, entry, onEdit, onMerge, onRemove }: {
           )}
         </p>
         {!!entry.aliases?.length && <p className="font-body text-xs text-ink-muted">{t("Also: {names}", { names: entry.aliases.join(", ") })}</p>}
-        <p className="mt-1 line-clamp-2 font-body text-sm text-ink-muted">{entry.visual_anchor}</p>
+        <p className="mt-1 line-clamp-2 font-body text-sm text-ink-muted">{readableAnchor(entry.visual_anchor)}</p>
         {cited.length > 0 && <p className="mt-1 font-body text-xs text-ink-muted">{lockedReason}</p>}
       </div>
       <div className="flex flex-wrap gap-2">

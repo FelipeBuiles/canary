@@ -7,6 +7,7 @@ import { useI18n } from "../../i18n";
 import type { CompletePageSummary, PageSourceLettering, PageSourceSegment, PageSourceView } from "../../types/api";
 import { SectionHeader } from "../composites/SectionHeader";
 import { Surface } from "../ui/Surface";
+import { InspectButton } from "../ui/InspectButton";
 
 const metaClass = "font-meta text-[0.65rem] font-bold uppercase tracking-[0.12em] text-ink-muted";
 const markClass: Record<"lettering" | "depicted", string> = {
@@ -115,6 +116,7 @@ export function PageSourcePanel({ project, item }: { project: string; item: Comp
       {art ? <figure className="mx-auto max-w-sm lg:max-w-none">
         <div className="relative overflow-hidden border-[3px] border-ink-black bg-bristol">
           <img src={art} alt={`${t("Page")} ${pageNumber}`} className="block h-auto w-full" />
+          <InspectButton images={{ src: art, alt: `${t("Page")} ${pageNumber}` }} />
           {outlines.map(({ id, outline }) => <div
             key={id}
             data-testid={`source-lettering-${id}`}

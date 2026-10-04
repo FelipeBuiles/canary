@@ -164,9 +164,9 @@ class StageRuntime:
         self, total: int = 0, estimated_cost_usd: float = 0.0
     ) -> Generator[StageRuntime, None, None]:
         """Run one stage with bounded, metadata-only tracing."""
-        from novel_to_comic.server.telemetry import operation_span
+        from novel_to_comic.server.telemetry import ai_span, operation_span
         span_context = operation_span(f"stage.{self.name}", stage=self.name)
-        with span_context:
+        with span_context, ai_span(f"stage.{self.name}", stage=self.name):
             self.begin(total, estimated_cost_usd)
             try:
                 yield self

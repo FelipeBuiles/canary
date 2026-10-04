@@ -111,6 +111,9 @@ COMPOSE_ARGS=(-f "$REPO_ROOT/docker-compose.yml")
 if [ -n "${CANARY_VERTEX_CREDENTIALS_FILE:-}" ]; then
   COMPOSE_ARGS+=(-f "$REPO_ROOT/docker-compose.vertex.yml")
 fi
+if [ -n "${CANARY_AWS_LOGIN_CACHE_DIRECTORY:-}" ]; then
+  COMPOSE_ARGS+=(-f "$REPO_ROOT/docker-compose.aws-login.yml")
+fi
 
 if [ "$CLAUDE_CODE" = true ] && [ "$MODE" = "mock" ]; then
   echo "[dev] --claude-code cannot be combined with --mock" >&2

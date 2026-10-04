@@ -4,6 +4,7 @@ import { pageRenderPreviewUrl } from "../api/pages";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/cn";
 import { useDialogFocus } from "../hooks/useDialogFocus";
+import { useImageViewer } from "../hooks/useImageViewer";
 import {
   buildReaderViews,
   viewIndexForPage,
@@ -29,6 +30,12 @@ const WINDOW = 1;
 const PREFETCH = 2;
 
 const SWIPE_THRESHOLD_PX = 48;
+
+function readerPageUrl(project: string, page: ReaderPage) {
+  return page.imageUrl ?? (page.hybrid
+    ? pageCompositePreviewUrl(project, page.pageNumber, page.revision, "reader", page.letteringRevision)
+    : pageRenderPreviewUrl(project, page.pageNumber, page.revision, "reader"));
+}
 
 interface BookReaderProps {
   project?: string;
@@ -75,7 +82,7 @@ function ReaderImage({
         </>
       )}
       <img
-        src={(page.imageUrl ?? (page.hybrid ? pageCompositePreviewUrl(project, page.pageNumber, page.revision, "reader", page.letteringRevision) : pageRenderPreviewUrl(project, page.pageNumber, page.revision, "reader")))}
+        src={readerPageUrl(project, page)}
         alt={alt}
         decoding="async"
         onLoad={() => setLoaded(true)}
@@ -160,6 +167,7 @@ export function BookReader({ project = "", pages, initialPageNumber, onClose, ti
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   useDialogFocus(dialogRef, { onClose, initialFocusRef: closeButtonRef });
+  const inspector = useImageViewer();
 
   const views = useMemo(() => buildReaderViews(pages, layout), [pages, layout]);
   const [index, setIndex] = useState(() =>
@@ -197,7 +205,7 @@ export function BookReader({ project = "", pages, initialPageNumber, onClose, ti
       for (const step of [safeIndex + offset, safeIndex - offset]) {
         views[step]?.pages.forEach((page) => {
           const image = new Image();
-          image.src = (page.imageUrl ?? (page.hybrid ? pageCompositePreviewUrl(project, page.pageNumber, page.revision, "reader", page.letteringRevision) : pageRenderPreviewUrl(project, page.pageNumber, page.revision, "reader")));
+          image.src = readerPageUrl(project, page);
         });
       }
     }
@@ -284,6 +292,18 @@ export function BookReader({ project = "", pages, initialPageNumber, onClose, ti
         </p>
         <div className="flex flex-wrap items-center gap-2">
           {headerActions}
+          {current && !showingEnd && (
+            <button
+              type="button"
+              onClick={() => inspector.open(
+                pages.map((page) => ({ src: readerPageUrl(project, page), alt: `${t("Page")} ${page.pageNumber}` })),
+                pages.indexOf(current.pages[0]),
+              )}
+              className="flex min-h-11 items-center gap-2 border-[2px] border-bristol/40 px-3 font-meta text-xs font-bold text-bristol transition-colors hover:border-bristol"
+            >
+              <Icon name="zoom-in" size={14} />{t("ZOOM")}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => changeLayout(layout === "spreads" ? "single" : "spreads")}
@@ -403,6 +423,7 @@ export function BookReader({ project = "", pages, initialPageNumber, onClose, ti
           className="h-11 w-full max-w-xs accent-hero-red md:w-64"
         />
       </footer>
+      {inspector.viewer}
     </div>
   );
 }

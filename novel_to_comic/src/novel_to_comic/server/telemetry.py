@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextlib
 from contextvars import ContextVar
+import datetime
 import logging
 import math
 import os
@@ -15,6 +16,7 @@ import re
 import threading
 import time
 from typing import Any
+import uuid
 
 _CONTEXT: ContextVar[dict[str, Any]] = ContextVar("telemetry_context", default={})
 _client = None
@@ -35,6 +37,10 @@ _FIELDS = frozenset({
     "posthogDistinctId", "source_event_id", "event_origin",
     "acquisition_source", "acquisition_medium", "acquisition_campaign", "referring_domain",
     "referred_by_book",
+    # AI trace structure, reproducibility and comparison tags.
+    "experiment_id", "variant", "fixture_id", "prompt_sha", "schema_sha", "attempt_number",
+    "admission_ms", "execution_ms", "validation_error_count", "generation_id",
+    "fallback_reason", "attempts",
 })
 # Person properties: account lifecycle and first-touch attribution only.
 _PERSON_FIELDS = frozenset({"$internal_or_test_user", "signed_up_at", "acquisition_source",
@@ -42,7 +48,12 @@ _PERSON_FIELDS = frozenset({"$internal_or_test_user", "signed_up_at", "acquisiti
 _AI_FIELDS = frozenset({"$ai_trace_id", "$ai_span_id", "$ai_parent_id", "$ai_model", "$ai_provider",
     "$ai_latency", "$ai_input_tokens", "$ai_output_tokens", "$ai_is_error", "$ai_error",
     "$ai_cost_passthrough", "$ai_total_cost_usd", "$ai_cache_read_input_tokens",
-    "$ai_cache_creation_input_tokens", "$ai_cache_reporting_exclusive"})
+    "$ai_cache_creation_input_tokens", "$ai_cache_reporting_exclusive", "$ai_span_name",
+    "$ai_trace_name", "$ai_session_id", "$ai_metric_name", "$ai_metric_value",
+    "$ai_reasoning_tokens", "$ai_time_to_first_token", "$ai_stream"})
+# Prompt and output bodies, admitted only by content_capture_enabled().
+_AI_CONTENT_FIELDS = ("$ai_input", "$ai_output_choices")
+_CONTENT_MESSAGE_CHARS = 60_000
 
 
 def _safe_value(value: Any) -> bool:
@@ -75,6 +86,136 @@ def observation_context(**fields):
         yield
     finally:
         _CONTEXT.reset(token)
+
+
+def content_capture_enabled() -> bool:
+    """Prompt and output bodies leave the app only from local development.
+
+    On by default when ``CANARY_ENV=development``; ``CANARY_AI_CONTENT_CAPTURE=false``
+    turns it off. Production can never satisfy it.
+    """
+    if os.environ.get("CANARY_ENV", "development") != "development":
+        return False
+    return os.environ.get("CANARY_AI_CONTENT_CAPTURE", "true").strip().lower() not in {"0", "false", "no"}
+
+
+def _content_messages(value: Any) -> list[dict[str, str]] | None:
+    if not isinstance(value, list):
+        return None
+    messages = [{"role": item["role"], "content": item["content"][:_CONTENT_MESSAGE_CHARS]}
+                for item in value[:8]
+                if isinstance(item, dict) and item.get("role") in {"system", "user", "assistant"}
+                and isinstance(item.get("content"), str)]
+    return messages or None
+
+
+def _with_content(clean: dict[str, Any], event: str | None, source: dict[str, Any]) -> dict[str, Any]:
+    if event == "$ai_generation" and content_capture_enabled():
+        for key in _AI_CONTENT_FIELDS:
+            if (messages := _content_messages(source.get(key))) is not None:
+                clean[key] = messages
+    return clean
+
+
+class _AISpan:
+    """One node in the AI Observability tree; emitted only if AI work ran under it."""
+
+    __slots__ = ("trace_id", "span_id", "parent", "name", "fields", "started", "started_at", "has_ai")
+
+    def __init__(self, name: str, parent: "_AISpan | None", fields: dict[str, Any]):
+        self.parent = parent
+        self.name = name
+        self.fields = fields
+        self.span_id = str(uuid.uuid4())
+        operation = context_fields().get("operation_id")
+        # A root reuses the operation ID so generations, OTLP logs and product
+        # events of one job share the trace a reviewer opens.
+        self.trace_id = parent.trace_id if parent else (operation if operation and _ID.fullmatch(str(operation)) else self.span_id)
+        if parent is None:
+            self.span_id = self.trace_id
+        self.started = time.perf_counter()
+        self.started_at = datetime.datetime.now(datetime.UTC)
+        self.has_ai = False
+
+    def set(self, **fields) -> None:
+        self.fields.update(fields)
+
+    def mark_ai(self) -> None:
+        node: _AISpan | None = self
+        while node is not None and not node.has_ai:
+            node.has_ai = True
+            node = node.parent
+
+
+_AI_SPAN: ContextVar[_AISpan | None] = ContextVar("ai_span", default=None)
+
+
+def current_ai_trace_id() -> str | None:
+    span = _AI_SPAN.get()
+    return span.trace_id if span else None
+
+
+def _session_id(fields: dict[str, Any]) -> str | None:
+    from novel_to_comic.ai.context import current_ai_request_context
+    value = fields.get("experiment_id") or current_ai_request_context().project_id or fields.get("project_id")
+    return str(value) if value else None
+
+
+@contextlib.contextmanager
+def ai_span(name: str, **fields):
+    """Group nested AI calls under a named step of the AI Observability tree.
+
+    The outermost span is the ``$ai_trace``; nested ones are ``$ai_span``
+    events. Spans with no AI generation beneath them are never exported, so
+    wrapping provider-free work costs nothing. Callers may ``set()`` outcome
+    fields on the yielded span; the export stays metadata-only and best effort.
+    """
+    span = _AISpan(name, _AI_SPAN.get(), dict(fields))
+    token = _AI_SPAN.set(span)
+    error: BaseException | None = None
+    try:
+        with observation_context(**{k: v for k, v in fields.items() if k in {"experiment_id", "variant", "fixture_id"}}):
+            yield span
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        _AI_SPAN.reset(token)
+        if span.has_ai:
+            _emit_ai_span(span, error)
+
+
+def _emit_ai_span(span: _AISpan, error: BaseException | None) -> None:
+    try:
+        from novel_to_comic.ai.context import current_ai_request_context
+        ctx = current_ai_request_context()
+        is_error = error is not None or span.fields.get("status") == "failed"
+        fields = {**context_fields(), "project_id": ctx.project_id, "stage": ctx.stage, **span.fields,
+                  "$ai_trace_id": span.trace_id, "$ai_latency": time.perf_counter() - span.started,
+                  "$ai_is_error": is_error, "$ai_session_id": _session_id(span.fields)}
+        if error is not None:
+            fields["error_type"] = type(error).__name__
+        if span.parent is None:
+            event = "$ai_trace"
+            fields["$ai_trace_name"] = span.name
+        else:
+            event = "$ai_span"
+            fields.update({"$ai_span_id": span.span_id, "$ai_parent_id": span.parent.span_id,
+                           "$ai_span_name": span.name})
+        capture(event, user_id=ctx.user_id, properties=fields, event_id=span.span_id, timestamp=span.started_at)
+    except Exception:
+        pass
+
+
+def observe_ai_metric(name: str, value: float, *, trace_id: str | None, parent_id: str | None = None,
+                      user_id: str | None = None, **fields) -> None:
+    """Attach a score or author outcome to an existing trace, if it is known."""
+    if not trace_id or not _TOKEN.fullmatch(str(trace_id)):
+        return
+    capture("$ai_metric", user_id=user_id, properties={
+        **fields, "$ai_trace_id": trace_id, "$ai_parent_id": parent_id or trace_id,
+        "$ai_metric_name": name, "$ai_metric_value": value,
+    })
 
 
 def trace_carrier() -> dict[str, str]:
@@ -144,7 +285,7 @@ def _before_send(event):
     # SDK hooks may fail open on an exception. This hook explicitly fails closed.
     try:
         properties = event.get("properties", {})
-        clean = _with_person_fields(safe_fields(properties), properties)
+        clean = _with_content(_with_person_fields(safe_fields(properties), properties), event.get("event"), properties)
         for key in ("$exception_list",):
             if key in properties:
                 clean[key] = _exception_list(properties[key])
@@ -178,6 +319,7 @@ def capture(event: str, *, user_id: str | None = None, properties=None, event_id
     try:
         identity = user_id if user_id and _ID.fullmatch(user_id) else "canary-server"
         props = _with_person_fields(safe_fields({**context_fields(), **(properties or {})}), properties or {})
+        props = _with_content(props, event, properties or {})
         props.update(environment=os.environ.get("CANARY_ENV", "development"),
                      release=os.environ.get("CANARY_VERSION", "unknown"), schema_version=1)
         if event_id:
@@ -324,9 +466,11 @@ def shutdown_telemetry():
 
 def observe_generation(*, event_id, feature, operation, model_alias, provider_model,
                        status, usage, cost_usd, cost_source, latency_ms, started_at=None, error=None,
-                       funding=None, provider=None):
-    from novel_to_comic.ai.context import current_ai_request_context
+                       funding=None, provider=None, reasoning_tokens=None):
+    from novel_to_comic.ai.context import current_ai_request_context, current_generation_probe
     ctx = current_ai_request_context()
+    probe = current_generation_probe()
+    span = _AI_SPAN.get()
     fields = safe_fields({**context_fields(), "project_id": ctx.project_id, "job_id": ctx.job_id,
         "stage": ctx.stage, "feature": feature, "operation": operation, "model_alias": model_alias,
         "provider_model": provider_model, "status": status, "latency_ms": latency_ms,
@@ -335,11 +479,22 @@ def observe_generation(*, event_id, feature, operation, model_alias, provider_mo
         "error_type": type(error).__name__ if error else None,
         "image_count": usage.image_count if usage else None,
         "funding": usage.funding if usage else funding,
-        "provider": usage.provider if usage else provider})
-    trace_id = context_fields().get("operation_id") or ctx.job_id or event_id
+        "provider": usage.provider if usage else provider,
+        **(probe.telemetry_fields(latency_ms) if probe else {})})
+    trace_id = span.trace_id if span else (context_fields().get("operation_id") or ctx.job_id or event_id)
     fields.update({"$ai_trace_id": trace_id, "$ai_span_id": event_id,
                    "$ai_model": provider_model or model_alias, "$ai_latency": latency_ms / 1000,
                    "$ai_is_error": status != "succeeded"})
+    if span is not None:
+        span.mark_ai()
+        fields["$ai_parent_id"] = span.span_id
+        if (session := _session_id(span.fields)) is not None:
+            fields["$ai_session_id"] = session
+    elif ctx.project_id:
+        fields["$ai_session_id"] = ctx.project_id
+    if reasoning_tokens:
+        # A subset of output tokens, never added to them.
+        fields["$ai_reasoning_tokens"] = reasoning_tokens
     if cost_usd is not None:
         fields["$ai_total_cost_usd"] = cost_usd
         fields["$ai_cost_passthrough"] = True
@@ -360,6 +515,8 @@ def observe_generation(*, event_id, feature, operation, model_alias, provider_mo
         fields["$ai_provider"] = provider
     if error:
         fields["$ai_error"] = type(error).__name__
+    # Only capture() re-admits these, and only through content_capture_enabled().
+    content = probe.content_fields() if probe else {}
     metric_attributes = {
         "provider": str(fields.get("provider") or "unknown"),
         "operation": operation,
@@ -367,7 +524,7 @@ def observe_generation(*, event_id, feature, operation, model_alias, provider_mo
     }
     metric_count("ai.calls", attributes=metric_attributes)
     metric_histogram("ai.call_duration", latency_ms, unit="ms", attributes=metric_attributes)
-    capture("$ai_generation", user_id=ctx.user_id, properties=fields, event_id=event_id, timestamp=started_at)
+    capture("$ai_generation", user_id=ctx.user_id, properties={**fields, **content}, event_id=event_id, timestamp=started_at)
     log_event("ai.completed", level=logging.INFO if status == "succeeded" else logging.ERROR, **fields)
     try:
         from opentelemetry import trace

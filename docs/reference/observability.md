@@ -25,6 +25,8 @@ reducing the Fly machine size.
   known cost. Manuscripts, prompts, output text, image bodies and references are
   excluded. `cost_status` distinguishes reported, estimated and unknown amounts.
   Unknown amounts are omitted; any vendor-derived estimate is not a ledger entry.
+  Generations nest in an AI trace tree and carry version and timing fields; see
+  [AI traces and author outcomes](#ai-traces-and-author-outcomes).
 - Request → durable worker → stage → AI spans carry bounded identifiers and
   W3C trace context. Only selected `canary.observations` logs are exported.
   Generic tracing is a PostHog alpha capability; the selected project exposes its configuration with the expected
@@ -82,6 +84,69 @@ available for development. Telemetry never initiates paid retries. SDK/OTLP
 queues are bounded to 256 records and HTTP calls have finite timeouts; diagnostics
 can be dropped under load or shutdown. The application allows five seconds for
 concurrent shutdown drains; this is not a delivery guarantee.
+
+## AI traces and author outcomes
+
+AI Observability shows each job as one tree. `ai_span` (`server/telemetry.py`)
+emits a node only when an AI generation ran beneath it, so provider-free work
+exports nothing:
+
+```text
+$ai_trace  job.<operation>            trace ID = operation ID; status, run_id, stage_attempt_id
+  $ai_span   stage.<name>             one per StageRuntime.execute
+    $ai_span   structured.<feature>   outcome: accepted | accepted_after_retry | repaired | failed
+      $ai_span   attempt              attempt_number; outcome: accepted | rejected | repaired | unparseable
+        $ai_generation                attempt_number, prompt_sha, schema_sha, timing, tokens, cost
+    $ai_span   image_route            route (openai | fal-queue), fallback_reason
+      $ai_generation                  one per route attempt, including an absorbed one
+```
+
+Labs stage arms are roots named `labs.<stage>` with `experiment_id` (the run),
+`variant` (the arm) and an opaque `fixture_id`; image comparisons are
+`labs.image`. `$ai_session_id` is the experiment for Labs and the project
+otherwise, so the Sessions view groups one comic's traces.
+
+Generation fields worth comparing:
+
+- `prompt_sha`, `schema_sha`: first 16 hex digits of the SHA-256 of the
+  effective system prompt and the requested output schema. They change when a
+  template or schema changes; user content is never hashed into them.
+- `admission_ms`: from call start to provider execution (usage-row insert,
+  credit authorization, serialized Codex/Claude queue). `execution_ms`: the
+  rest of `latency_ms`. `$ai_time_to_first_token`: first streamed content after
+  execution began. A phase that was not observed is absent, never zero.
+- `$ai_reasoning_tokens`: a subset of `$ai_output_tokens`, never added to it.
+- A provider success whose output failed validation is a successful generation
+  under a `rejected` attempt. Judge task success by the `structured.*` span.
+
+Author verdicts are the primary quality signal. Each is a durable
+`page_outcome` product event with `outcome`, `page_number`, the judged
+`render_revision`, and `generation_id` (the render's `$ai_span_id`). Outcomes:
+`redraw_requested`, `correction_submitted` (`category` = issue type or
+`manual`, `mode` = correction mode), `render_selected`, `issue_reported`,
+`issue_accepted`, `issue_dismissed`, `visual_review_requested`,
+`replan_requested`, `lettering_saved` (`mode` = `edited` | `reviewed`) and
+`lettering_reset`. Renders record their `ai_trace_id` in provenance; art
+verdicts on such renders are also `$ai_metric` events named `author_<outcome>`
+on that trace, parented to the generation. Lettering verdicts never score the
+art. Renders drawn before this field existed have product events only; join
+them to generations through `generation_id`.
+
+[Canary — AI quality & decisions](https://us.posthog.com/project/630262/dashboard/2167063)
+reads these fields: author rejection rate by draw model, structured task
+outcomes by feature, calls by feature and prompt version, Labs variants, and
+weekly verdicts. Its tiles are HogQL; they fill once the instrumented backend runs.
+
+### Local content capture
+
+Local development traces are complete: text generations carry `$ai_input`
+and `$ai_output_choices` whenever `CANARY_ENV=development`. Set
+`CANARY_AI_CONTENT_CAPTURE=false` to keep local traces metadata-only. The
+environment is checked at capture and again in the send scrubber, so
+production never sends bodies. Local manuscripts therefore reach PostHog;
+PostHog keeps them for the AI events retention period (30 days by default).
+Messages are truncated to 60,000 characters. Images and references are never
+attached. Spans, metrics, logs and OTLP attributes never carry content.
 
 ## Configuration and activation
 
@@ -154,7 +219,7 @@ cohort (`$internal_or_test_user = true`):
 
 "Active author" is the **Author active** action: `project_created`,
 `stage_started`, `stage_approved`, `style_selected`, `station_viewed`,
-`panel_regenerated`, `export_download_requested`, `checkout_started`, and
+`page_outcome` (author page verdicts; replaced the never-emitted `panel_regenerated` on 2026-10-03), `export_download_requested`, `checkout_started`, and
 `feedback_submitted`. Background completions such as `page_ready` never count as
 activity. A project annotation marks the production launch on 2026-09-28.
 The earlier **Canary launch learning** dashboard and the configuration script

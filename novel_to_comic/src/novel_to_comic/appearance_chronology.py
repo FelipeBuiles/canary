@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from novel_to_comic.models.adaptation import BookAdaptation
 from novel_to_comic.models.page import ComicPage
@@ -53,6 +53,44 @@ def final_beat_carriers(pages: Iterable[Any]) -> dict[str, tuple[int, int]]:
     return final
 
 
+def _visible_entities(content: Any) -> set[str]:
+    states = content.appearance_states
+    bound = states.keys() if isinstance(states, dict) else (b.entity_id for b in states)
+    return {*content.entity_ids, *bound}
+
+
+def change_carriers(
+    pages: Iterable[Any],
+    beats: dict[str, Any],
+    visible: Callable[[Any], set[str]] = _visible_entities,
+) -> dict[tuple[str, str], tuple[int, int]]:
+    """(page number, panel order) where each (beat, entity) change takes effect.
+
+    A change lands on the last panel of its beat that shows the entity, so a
+    split beat ending on a reaction shot of someone else does not drag the
+    changed entity into that shot. Only when no panel of the beat shows the
+    entity does it fall back to the beat's last panel (``final_beat_carriers``),
+    where the change must then be depicted.
+    """
+
+    pages = tuple(pages)
+    final = final_beat_carriers(pages)
+    shown: dict[tuple[str, str], tuple[int, int]] = {}
+    for page in pages:
+        for content in page.content:
+            seen = visible(content)
+            for beat_id in content.beat_ids:
+                beat = beats.get(beat_id)
+                for change in beat.appearance_changes if beat is not None else ():
+                    if change.entity_id in seen:
+                        shown[(beat_id, change.entity_id)] = (page.page_number, content.order)
+    return {
+        (beat_id, change.entity_id): shown.get((beat_id, change.entity_id), position)
+        for beat_id, position in final.items() if beat_id in beats
+        for change in beats[beat_id].appearance_changes
+    }
+
+
 def first_activation(adaptation: BookAdaptation) -> dict[tuple[str, str], str]:
     """The beat that first moves each entity into each state."""
 
@@ -71,10 +109,9 @@ def appearance_chronology(
 
     pages = tuple(pages)
     beats = {beat.id: beat for beat in adaptation.beats}
-    final = final_beat_carriers(pages)
+    carriers = change_carriers(pages, beats)
     active: dict[str, str] = {}
     activated: dict[str, set[str]] = defaultdict(set)
-    seen_beats: set[str] = set()
     findings: dict[int, list[ChronologyFinding]] = defaultdict(list)
     for page in pages:
         for content in page.content:
@@ -88,12 +125,14 @@ def appearance_chronology(
             }
             for beat_id in content.beat_ids:
                 beat = beats.get(beat_id)
-                if beat is None or beat.id in seen_beats or final.get(beat.id) != position:
+                if beat is None:
                     continue
                 # Adjacent content items may decompose one adapted beat into
-                # several visual moments. Its state changes take effect once,
-                # on the last of them (see ``final_beat_carriers``).
+                # several visual moments. Each change takes effect once, on
+                # its carrier (see ``change_carriers``).
                 for change in beat.appearance_changes:
+                    if carriers.get((beat.id, change.entity_id)) != position:
+                        continue
                     current = active.get(change.entity_id)
                     if (
                         change.from_state_id is not None
@@ -111,7 +150,6 @@ def appearance_chronology(
                         ))
                     active[change.entity_id] = change.to_state_id
                     activated[change.entity_id].add(change.to_state_id)
-                seen_beats.add(beat.id)
             for entity_id in content.entity_ids:
                 expected = active.get(entity_id)
                 cited = ([content.appearance_states[entity_id]]

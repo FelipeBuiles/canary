@@ -22,9 +22,9 @@ Production stage models are overlaid from operator settings when a job config is
 | `mock_mode` | `bool` | `False` |  |
 | `mock_model_base_url` | `str` | `'http://127.0.0.1:4010'` |  |
 | `dev_model_selections` | `dict[str, str]` | `Field(default_factory=dict)` |  |
-| `extraction_model` | `str` | `GATEWAY_LUNA` |  |
+| `extraction_model` | `str` | `GATEWAY_GEMINI_FLASH` |  |
 | `extraction_chunk_chars` | `int` | `Field(default=16000, ge=4000, le=64000)` |  |
-| `brief_model` | `str` | `GATEWAY_LUNA` |  |
+| `brief_model` | `str` | `GATEWAY_GEMINI_FLASH` |  |
 | `adapt_model` | `str` | `GATEWAY_SOL` |  |
 | `plan_model` | `str` | `GATEWAY_SOL` |  |
 | `narrative_max_calls` | `int | None` | `Field(default=None, ge=1)` |  |

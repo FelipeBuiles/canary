@@ -9,10 +9,13 @@ aliases:
   gemini-3.8-flash: vertex_ai/gemini-3.8-flash
   claude-opus-5-5: anthropic/claude-opus-5-5
   claude-sonnet-5-5: anthropic/claude-sonnet-5-5
+  bedrock-claude-opus-5-5: bedrock/converse/global.anthropic.claude-opus-5-5
+  bedrock-claude-sonnet-5-5: bedrock/converse/global.anthropic.claude-sonnet-5-5
   deepseek-v4.1-flash: together_ai/deepseek-ai/DeepSeek-V4.1-Flash
   mimo-v2.6-pro: openrouter/xiaomi/mimo-v2.6-pro
   image-sunburst: openai/gpt-image-2.5/sunburst
   image-sunburst-openai: openai/gpt-image-2.5-sunburst
+  image-flare: openai/gpt-image-2.5-flare
 model_overrides:
   # https://cloud.google.com/vertex-ai/generative-ai/pricing (2026-10-02).
   # Global introductory USD rates through 2026-12-31; review before 2027.
@@ -74,6 +77,30 @@ model_overrides:
     mode: chat
     max_input_tokens: 1000000
     max_output_tokens: 128000
+  # Global Bedrock profiles use standard base rates (2026-10-03).
+  # https://platform.claude.com/docs/en/about-claude/pricing
+  # https://docs.litellm.ai/blog/claude_sonnet_5_5
+  # Include the gateway's Converse model name and Bedrock's returned profile ID.
+  global.anthropic.claude-opus-5-5: &bedrock_opus_5_5
+    input_cost_per_token: 4.0e-06
+    cache_read_input_token_cost: 2.0e-07
+    cache_creation_input_token_cost: 5.0e-06
+    output_cost_per_token: 2.0e-05
+    mode: chat
+    max_input_tokens: 1000000
+    max_output_tokens: 128000
+  bedrock/converse/global.anthropic.claude-opus-5-5: *bedrock_opus_5_5
+  converse/global.anthropic.claude-opus-5-5: *bedrock_opus_5_5
+  global.anthropic.claude-sonnet-5-5: &bedrock_sonnet_5_5
+    input_cost_per_token: 2.0e-06
+    cache_read_input_token_cost: 2.0e-07
+    cache_creation_input_token_cost: 2.5e-06
+    output_cost_per_token: 1.0e-05
+    mode: chat
+    max_input_tokens: 1000000
+    max_output_tokens: 128000
+  bedrock/converse/global.anthropic.claude-sonnet-5-5: *bedrock_sonnet_5_5
+  converse/global.anthropic.claude-sonnet-5-5: *bedrock_sonnet_5_5
   openrouter/xiaomi/mimo-v2.6-pro:
     input_cost_per_token: 4.35e-07
     output_cost_per_token: 8.7e-07
@@ -90,6 +117,18 @@ model_overrides:
     mode: chat
     max_input_tokens: 1048576
     max_output_tokens: 384000
+  # https://developers.openai.com/api/docs/models/gpt-image-2.5-flare (2026-10-03).
+  # Flare has its own usage, not Sunburst's measured consumption. Until measured,
+  # estimates use conservative allowances; completed calls use returned tokens.
+  gpt-image-2.5-flare:
+    input_cost_per_token: 5.0e-06
+    image_input_cost_per_token: 8.0e-06
+    cached_text_input_cost_per_token: 1.25e-06
+    cached_image_input_cost_per_token: 2.0e-06
+    output_cost_per_token: 3.0e-05
+    mode: image_generation
+    estimated_output_cost_per_image: 0.25
+    estimated_input_cost_per_reference: 0.01
   gpt-image-2.5-sunburst:
     input_cost_per_token: 5.0e-06
     image_input_cost_per_token: 8.0e-06
