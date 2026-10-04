@@ -1,6 +1,6 @@
 # Model settings
 
-**Status: Current, October 2, 2026.** Implementation, gateway configuration,
+**Status: Current, October 3, 2026.** Implementation, gateway configuration,
 and tests are authoritative.
 
 ## Production operator defaults
@@ -34,9 +34,13 @@ operator connection used by its other views.
 
 Text and vision choices are `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`,
 `claude-opus-5-5`, `claude-sonnet-5-5`, `mimo-v2.6-pro`,
-`deepseek-v4.1-flash`, and `gemini-3.8-flash`.
+`deepseek-v4.1-flash`, `gemini-3.8-flash`, `bedrock-claude-opus-5-5`, and
+`bedrock-claude-sonnet-5-5`.
 Image and Draw choices are `image-sunburst` only. The gateway maps the text
-choices to OpenAI, Anthropic, OpenRouter/Xiaomi, Together AI, and Google Vertex AI.
+choices to OpenAI, Anthropic, AWS Bedrock, OpenRouter/Xiaomi, Together AI, and Google Vertex AI.
+Claude's direct Anthropic and Bedrock routes are independent selections; the
+Bedrock labels include “· Bedrock” and the provider reads “AWS Bedrock”. Both
+models support every text stage, OCR, and visual review. See [Bedrock setup](bedrock.md).
 Gemini uses project-scoped Vertex REST requests with ADC credentials and Google
 Cloud billing. See [Vertex setup](vertex-ai.md) for project/credit configuration.
 `image-sunburst` runs on OpenAI first with one FAL attempt as backup, for
@@ -153,6 +157,25 @@ API work only. Request hashes identify input, not provider deduplication, and
 ambiguous image submissions are not retried automatically. Automated tests use
 mocked providers and do not establish account access or image quality.
 
+
+## Labs image comparisons
+
+**Labs → Image comparison** offers GPT Image 2.5 Sunburst and Flare on the
+OpenAI API. New comparisons default to those two models with the production
+prompt. Both use the same `OPENAI_API_KEY` and streaming gateway handler;
+`image-flare` is a Labs route and is not added to account or operator choices.
+Style/Cast comparisons preserve the recorded size, quality and references.
+Page comparisons use medium quality at 1024×1536 and preserve the project's
+lettering mode. Each cell submits once to its selected route, without fallback
+or automatic retry, and is operator-funded. Source projects and editions are
+not modified.
+
+Flare's published token rates are configured separately. Its estimate uses a
+conservative allowance until consumption is measured; Sunburst's measured
+token counts are not attributed to Flare. Completed OpenAI calls report their
+own token usage and cost. Automated checks do not establish image quality or
+account access. See [OpenAI's Flare model](https://developers.openai.com/api/docs/models/gpt-image-2.5-flare)
+and [image generation guide](https://developers.openai.com/api/docs/guides/image-generation).
 
 ## Labs comparison reasoning
 

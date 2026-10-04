@@ -463,6 +463,8 @@ def test_creation_endpoints_persist_dev_choices_or_reject(client, tmp_path, monk
 @pytest.mark.parametrize("model,expected_cost", [
     ("claude-opus-5-5", 0.024),
     ("claude-sonnet-5-5", 0.012),
+    ("bedrock-claude-opus-5-5", 0.024),
+    ("bedrock-claude-sonnet-5-5", 0.012),
 ])
 def test_premium_models_select_independently_with_known_pricing(client, tmp_path, model, expected_cost):
     from novel_to_comic.model_costs import PricingResolver
@@ -476,6 +478,35 @@ def test_premium_models_select_independently_with_known_pricing(client, tmp_path
     assert admit_stage_action(config, "adapt") == "api"
     cost = PricingResolver().calculate(model_alias=model, operation="text", input_tokens=1000, output_tokens=1000)
     assert cost.cost_usd == pytest.approx(expected_cost)
+
+
+def test_anthropic_and_bedrock_choices_coexist_for_every_text_and_vision_stage(client, tmp_path, monkeypatch):
+    from novel_to_comic.server.routers.backoffice import router as operator_router
+
+    client.app.include_router(operator_router, prefix="/api/ops/backoffice")
+    monkeypatch.setenv("CANARY_OPS_TOKEN", "operator-secret")
+    expected = {
+        "claude-opus-5-5": "Anthropic", "claude-sonnet-5-5": "Anthropic",
+        "bedrock-claude-opus-5-5": "AWS Bedrock", "bedrock-claude-sonnet-5-5": "AWS Bedrock",
+    }
+    for catalog in [client.get("/api/account/model-settings").json(), client.get(
+        "/api/ops/backoffice/models", headers={"X-Canary-Ops-Token": "operator-secret"},
+    ).json()]:
+        models = {model["id"]: model for model in catalog["models"]}
+        assert {model: models[model]["provider"] for model in expected} == expected
+        for stage in catalog["stages"]:
+            if stage["id"] not in {"image", "draw"}:
+                assert set(expected) <= set(stage["model_ids"])
+            else:
+                assert not set(expected) & set(stage["model_ids"])
+    assert client.patch("/api/account/model-settings", json={"selections": {
+        "adapt": "bedrock-claude-opus-5-5", "plan": "claude-sonnet-5-5",
+        "ocr": "bedrock-claude-sonnet-5-5",
+    }}).status_code == 200
+    config = account_config(Config(), tmp_path, "alice")
+    assert config.adapt_model == "bedrock-claude-opus-5-5"
+    assert config.plan_model == "claude-sonnet-5-5"
+    assert config.page_ocr_model == "bedrock-claude-sonnet-5-5"
 
 
 def test_linked_subscription_stages_can_select_different_models(client, tmp_path, monkeypatch):
@@ -631,6 +662,14 @@ def test_stage_reasoning_saved_atomically_and_snapshotted(tmp_path):
     assert (tmp_path / ".operator-model-settings.json").read_text() == before
     update_global_selections(tmp_path, {"adapt": "gpt-6-sol"})
     assert read_global_reasoning(tmp_path, read_global_selections(tmp_path))["adapt"] == "medium"
+
+
+def test_fresh_defaults_run_extract_and_brief_on_gemini_low(tmp_path):
+    resolved = account_config(Config(), tmp_path, "alice")
+    assert (resolved.extraction_model, resolved.brief_model) == ("gemini-3.8-flash", "gemini-3.8-flash")
+    assert resolved.text_reasoning_efforts["extract"] == "low"
+    assert resolved.text_reasoning_efforts["brief"] == "low"
+    assert resolved.text_reasoning_efforts["plan"] == "medium"
 
 
 @pytest.mark.parametrize("stage", ["draw", "image", "unknown"])

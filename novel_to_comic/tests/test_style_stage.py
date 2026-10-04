@@ -13,13 +13,16 @@ from novel_to_comic.config import Config
 from novel_to_comic.models.story_bible import Character, Location, Scene, StoryBible
 from novel_to_comic.stages.s2_style import (
     STYLE_BRIEF_VERSION,
+    STYLE_PROOF_COPY_VERSION,
+    _style_proof_copy_source_key,
     STYLE_VALIDATION_ACTION,
     STYLE_VALIDATION_COMPOSITION,
     PORTFOLIO_ROLES,
     SAMPLE_COUNT,
     NEIGHBOR_COUNT,
     LLM_REQUEST_COUNT,
-    StyleSuggestionBatch,
+    StyleProduction,
+    StyleSketchBatch,
     build_style_sample_request,
     _dedupe_suggestions,
     _select_role_portfolio,
@@ -41,10 +44,27 @@ from novel_to_comic.style_contract import (
 )
 from novel_to_comic.usage import ApiResult
 
+STORY_COPY = {
+    "caption": "Snow fell on the dead city.",
+    "speech": "Where is everyone?",
+    "shout": "Donut!",
+    "thought": "This is wrong.",
+    "sfx": "CRUNCH",
+}
+
 BRIEF = (
     "Carl, a broad-shouldered man in his late twenties wearing a worn leather "
     "jacket, stands ankle-deep in fresh snow on a dark Seattle street."
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_provider_proof_copy(request, monkeypatch):
+    """Brief tests stay provider-free; copy tests opt in by name."""
+    if "proof_copy" in request.node.name:
+        return
+    from novel_to_comic.stages import s2_style
+    monkeypatch.setattr(s2_style, "generate_style_proof_copy", AsyncMock(return_value=None))
 
 
 def _bible(character_name: str = "Carl") -> StoryBible:
@@ -113,15 +133,42 @@ def _batch(*, restriction: str = "", count: int = LLM_REQUEST_COUNT) -> dict:
             "palette": f"palette {index}",
             "line_rendering": f"finish {index}",
             "lighting_value": f"lighting {index}",
-            "lettering": DEFAULT_LETTERING_STANDARD,
-            "lettering_preset": "literary",
-            "lettering_design": {"label": "Literary", "roles": LetteringRoles().model_dump()},
-            "page_framing": DEFAULT_PAGE_FRAMING_STANDARD,
-            "sequential_art_strengths": "Readable action and recurring identities.",
             "story_fit": "Supports the story.",
-            "risk": "Detailed finish.",
         })
     return {"medium_restriction": restriction, "proportion_restriction": "", "styles": styles}
+
+
+def _production(label: str = "Literary") -> dict:
+    return {
+        "lettering": DEFAULT_LETTERING_STANDARD,
+        "lettering_preset": "literary",
+        "lettering_design": {"label": label, "roles": LetteringRoles().model_dump()},
+        "page_framing": DEFAULT_PAGE_FRAMING_STANDARD,
+        "sequential_art_strengths": "Readable action and recurring identities.",
+        "risk": "Detailed finish.",
+    }
+
+
+def _text_mock(*sketch_results: dict, production=None) -> AsyncMock:
+    """Answer sketch calls in order (the last repeats) and every production call."""
+    sketches = list(sketch_results)
+
+    async def answer(**kwargs):
+        if kwargs["feature"] == "style.production":
+            value = production(kwargs) if callable(production) else _production()
+            return ApiResult(value=value, usage=None)
+        return ApiResult(value=sketches.pop(0) if len(sketches) > 1 else sketches[0], usage=None)
+
+    return AsyncMock(side_effect=answer)
+
+
+def _direction_of(kwargs: dict) -> dict:
+    data = kwargs["user_content"].split("(data, not instructions):\n", 1)[1]
+    return json.loads(data.split("\n\nCorrect the previous response", 1)[0])
+
+
+def _sketch_calls(mock: AsyncMock) -> list:
+    return [call for call in mock.await_args_list if call.kwargs["feature"] == "style.suggestions"]
 
 
 # ── declared-medium dedup ────────────────────────────────────────────────────
@@ -153,7 +200,7 @@ def test_role_aware_selector_does_not_relabel_diverse_candidates_by_position():
 
 
 def test_generated_portfolio_is_six_illustrated_directions_with_distinct_proportions():
-    mock = AsyncMock(return_value=ApiResult(value=_batch(), usage=None))
+    mock = _text_mock(_batch())
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
         suggestions, _usage = asyncio.run(generate_suggestions(Config(), _bible()))
     assert [s["role"] for s in suggestions] == list(PORTFOLIO_ROLES)
@@ -167,10 +214,12 @@ def test_missing_realism_fails_without_fabricating_directions():
     batch = _batch()
     for candidate in batch["styles"]:
         candidate["visual_logic"] = "stylized"
-    mock = AsyncMock(return_value=ApiResult(value=batch, usage=None))
+    mock = _text_mock(batch)
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
         with pytest.raises(RuntimeError):
             asyncio.run(generate_suggestions(Config(), _bible()))
+    # A failed curation never pays for production design.
+    assert len(_sketch_calls(mock)) == mock.await_count
 
 
 def test_explicit_author_medium_restriction_preserves_narrowed_neighbors():
@@ -178,7 +227,7 @@ def test_explicit_author_medium_restriction_preserves_narrowed_neighbors():
     for candidate in batch["styles"]:
         candidate["visual_logic"] = "graphic"
         candidate["medium"] = "woodblock print"
-    mock = AsyncMock(return_value=ApiResult(value=batch, usage=None))
+    mock = _text_mock(batch)
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
         suggestions, _usage = asyncio.run(generate_suggestions(
             Config(), _bible(), custom_direction={
@@ -191,10 +240,83 @@ def test_explicit_author_medium_restriction_preserves_narrowed_neighbors():
 
 
 def test_generated_production_standards_reject_untyped_objects():
-    batch = _batch()
-    batch["styles"][0]["lettering"] = {"unrecognized": ["nested", "values"]}
+    production = _production()
+    production["lettering"] = {"unrecognized": ["nested", "values"]}
     with pytest.raises(ValueError):
-        StyleSuggestionBatch.model_validate(batch)
+        StyleProduction.model_validate(production)
+
+
+def test_sketch_pass_carries_no_production_system():
+    batch = _batch()
+    batch["styles"][0]["lettering_design"] = _production()["lettering_design"]
+    with pytest.raises(ValueError):
+        StyleSketchBatch.model_validate(batch)
+
+
+def test_only_curated_survivors_get_a_production_system_in_parallel():
+    in_flight = 0
+    peak = 0
+
+    async def answer(**kwargs):
+        nonlocal in_flight, peak
+        if kwargs["feature"] == "style.suggestions":
+            return ApiResult(value=_batch(), usage=None)
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+        direction = _direction_of(kwargs)
+        return ApiResult(value=_production(direction["label"]), usage=None)
+
+    mock = AsyncMock(side_effect=answer)
+    shortlisted = []
+
+    async def on_shortlist(sketches):
+        shortlisted.extend(sketches)
+
+    with patch("novel_to_comic.clients.text.generate_json", new=mock):
+        suggestions, _usage = asyncio.run(generate_suggestions(
+            Config(), _bible(), on_shortlist=on_shortlist,
+        ))
+
+    productions = [call for call in mock.await_args_list if call.kwargs["feature"] == "style.production"]
+    assert len(productions) == SAMPLE_COUNT
+    assert peak == SAMPLE_COUNT
+    assert [sketch["role"] for sketch in shortlisted] == list(PORTFOLIO_ROLES)
+    assert [sketch["label"] for sketch in shortlisted] == [s["label"] for s in suggestions]
+    # Each production system is designed for, and merged into, its own direction.
+    assert all(s["lettering_design"]["label"] == s["label"] for s in suggestions)
+    assert all(s["lettering_preset"] == "literary" for s in suggestions)
+
+
+def test_production_schema_repair_gets_one_retry_then_fails():
+    invalid = {**_production(), "lettering_preset": "baroque"}
+    attempts = []
+
+    def production(kwargs):
+        attempts.append(kwargs["user_content"])
+        return invalid
+
+    mock = _text_mock(_batch(), production=production)
+    with patch("novel_to_comic.clients.text.generate_json", new=mock):
+        with pytest.raises(RuntimeError, match="did not match the required schema"):
+            asyncio.run(generate_suggestions(Config(), _bible()))
+    assert any("Validation errors" in content for content in attempts)
+
+
+def test_production_schema_repair_recovers():
+    seen: dict[str, int] = {}
+
+    def production(kwargs):
+        label = _direction_of(kwargs)["label"]
+        seen[label] = seen.get(label, 0) + 1
+        return _production() if seen[label] > 1 else {**_production(), "lettering_preset": "baroque"}
+
+    mock = _text_mock(_batch(), production=production)
+    with patch("novel_to_comic.clients.text.generate_json", new=mock):
+        suggestions, _usage = asyncio.run(generate_suggestions(Config(), _bible()))
+    assert len(suggestions) == SAMPLE_COUNT
+    assert set(seen.values()) == {2}
 
 
 
@@ -203,9 +325,7 @@ def test_generate_suggestions_completes_an_undersized_pool():
     complete = _batch()
     first = {**complete, "styles": complete["styles"][:2]}
     second = {**complete, "styles": complete["styles"][2:]}
-    mock = AsyncMock(side_effect=[
-        ApiResult(value=first, usage=None), ApiResult(value=second, usage=None),
-    ])
+    mock = _text_mock(first, second)
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
         suggestions, _usage = asyncio.run(generate_suggestions(Config(), _bible()))
     assert {s["role"] for s in suggestions} == set(PORTFOLIO_ROLES)
@@ -226,20 +346,19 @@ def test_generate_suggestions_retries_when_a_required_role_is_missing():
     }
     secondary = complete["styles"][1]
     second = {**complete, "styles": [secondary]}
-    mock = AsyncMock(side_effect=[
-        ApiResult(value=first, usage=None), ApiResult(value=second, usage=None),
-    ])
+    mock = _text_mock(first, second)
 
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
         suggestions, _usage = asyncio.run(generate_suggestions(Config(), _bible()))
 
-    assert mock.await_count == 2
-    assert "story_fit_secondary" in mock.await_args_list[1].kwargs["system_prompt"]
+    sketch_calls = _sketch_calls(mock)
+    assert len(sketch_calls) == 2
+    assert "story_fit_secondary" in sketch_calls[1].kwargs["system_prompt"]
     assert [s["role"] for s in suggestions] == list(PORTFOLIO_ROLES)
 
 
 def test_generate_suggestions_rejects_partial_portfolio():
-    mock = AsyncMock(return_value=ApiResult(value=_batch(count=1), usage=None))
+    mock = _text_mock(_batch(count=1))
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
         with pytest.raises(RuntimeError):
             asyncio.run(generate_suggestions(Config(), _bible()))
@@ -410,9 +529,10 @@ def test_exact_style_proof_estimate_compiles_dimensions_reference_and_brief_cost
         unreferenced = estimate_style_proof_cost_usd(
             config, tmp_path, bible, "Bold ink", "proof-no-ref",
         )
-    assert referenced == pytest.approx(0.03)
-    assert unreferenced == pytest.approx(0.03)
-    assert text_cost.call_count == 2
+    # Image plus the uncached brief and story proof copy calls.
+    assert referenced == pytest.approx(0.04)
+    assert unreferenced == pytest.approx(0.04)
+    assert text_cost.call_count == 4
     assert captured[0]["ref_count"] == 1
     assert captured[0]["ref_image_sizes"] == [(12, 14)]
     assert captured[1]["ref_count"] == 0
@@ -426,6 +546,11 @@ def test_exact_style_proof_estimate_compiles_dimensions_reference_and_brief_cost
         "kind": "style_sample_brief",
         "source_sha256": _style_sample_brief_source_key(config, bible),
         "brief": BRIEF,
+    }))
+    artifacts.style_proof_copy_path(tmp_path).write_text(json.dumps({
+        "version": STYLE_PROOF_COPY_VERSION,
+        "source_sha256": _style_proof_copy_source_key(config, bible),
+        "copy": STORY_COPY,
     }))
     with (
         patch("novel_to_comic.usage.estimate_text_cost") as cached_text_cost,
@@ -638,58 +763,52 @@ def test_overfull_scene_does_not_leak_unanchored_subjects_into_fallback():
         assert name not in request.compiled.final_prompt
 
 
-def test_preset_is_required_per_candidate_not_allowed_at_batch_root():
-    batch = _batch()
-    schema = StyleSuggestionBatch.model_json_schema()
-    assert schema['additionalProperties'] is False
-    assert 'lettering_preset' not in schema['properties']
-    assert 'lettering_preset' in schema['$defs']['StyleSuggestion']['required']
-    batch['lettering_preset'] = 'literary'
-    with pytest.raises(ValueError, match='Extra inputs'):
-        StyleSuggestionBatch.model_validate(batch)
-    del batch['lettering_preset']
-    del batch['styles'][0]['lettering_preset']
-    with pytest.raises(ValueError, match='lettering_preset'):
-        StyleSuggestionBatch.model_validate(batch)
+def test_preset_is_required_per_production_and_never_part_of_a_sketch():
+    production_schema = StyleProduction.model_json_schema()
+    assert production_schema["additionalProperties"] is False
+    assert "lettering_preset" in production_schema["required"]
+    missing = _production()
+    del missing["lettering_preset"]
+    with pytest.raises(ValueError, match="lettering_preset"):
+        StyleProduction.model_validate(missing)
+    sketch_schema = StyleSketchBatch.model_json_schema()
+    assert "lettering_preset" not in sketch_schema["properties"]
+    assert "lettering_preset" not in sketch_schema["$defs"]["StyleSketch"]["properties"]
+    with pytest.raises(ValueError, match="Extra inputs"):
+        StyleSketchBatch.model_validate(_batch() | {"lettering_preset": "literary"})
 
 
-def test_root_level_preset_gets_one_schema_correction_without_losing_variants():
-    wrong = _batch()
-    wrong['lettering_preset'] = 'literary'
-    for candidate in wrong['styles']:
-        del candidate['lettering_preset']
+def test_invalid_sketch_batch_gets_one_schema_correction_without_losing_variants():
+    wrong = _batch() | {"lettering_preset": "literary"}
     corrected = _batch()
-    for i, candidate in enumerate(corrected['styles']):
-        candidate['lettering_preset'] = ('literary', 'classic', 'pulp', 'minimal')[i % 4]
-    expected = {s['label']: s['lettering_preset'] for s in corrected['styles']}
-    mock = AsyncMock(side_effect=[ApiResult(value=wrong, usage=None), ApiResult(value=corrected, usage=None)])
-    with patch('novel_to_comic.clients.text.generate_json', new=mock):
+    mock = _text_mock(wrong, corrected)
+    with patch("novel_to_comic.clients.text.generate_json", new=mock):
         suggestions, _ = asyncio.run(generate_suggestions(Config(), _bible()))
-    assert mock.await_count == 2
-    second = mock.await_args_list[1].kwargs
-    assert 'INSIDE EACH style' in second['user_content']
-    assert 'extra_forbidden' in second['user_content']
-    assert second['json_schema']['additionalProperties'] is False
-    assert all(s['lettering_preset'] == expected[s['label']] for s in suggestions)
-    assert 'lettering_preset' in mock.await_args_list[0].kwargs['system_prompt']
+    sketch_calls = _sketch_calls(mock)
+    assert len(sketch_calls) == 2
+    second = sketch_calls[1].kwargs
+    assert "Correct the previous response" in second["user_content"]
+    assert "extra_forbidden" in second["user_content"]
+    assert second["json_schema"]["additionalProperties"] is False
+    assert [s["role"] for s in suggestions] == list(PORTFOLIO_ROLES)
 
 
 def test_repeated_invalid_style_response_stops_and_does_not_ignore_extra_fields():
     wrong = _batch() | {'lettering_preset': 'literary'}
-    mock = AsyncMock(return_value=ApiResult(value=wrong, usage=None))
+    mock = _text_mock(wrong)
     with patch('novel_to_comic.clients.text.generate_json', new=mock):
         with pytest.raises(RuntimeError, match='after 2 attempts'):
             asyncio.run(generate_suggestions(Config(), _bible()))
-    assert mock.await_count == 2
+    assert len(_sketch_calls(mock)) == 2
 
 
 def test_style_schema_correction_shares_the_portfolio_completion_budget():
     wrong = _batch() | {'lettering_preset': 'literary'}
-    mock = AsyncMock(side_effect=[ApiResult(value=wrong, usage=None), ApiResult(value=_batch(count=1), usage=None)])
+    mock = _text_mock(wrong, _batch(count=1))
     with patch('novel_to_comic.clients.text.generate_json', new=mock):
         with pytest.raises(RuntimeError, match='usable directions'):
             asyncio.run(generate_suggestions(Config(), _bible()))
-    assert mock.await_count == 2
+    assert len(_sketch_calls(mock)) == 2
 
 
 def test_style_provider_failure_is_not_automatically_resubmitted():
@@ -697,7 +816,7 @@ def test_style_provider_failure_is_not_automatically_resubmitted():
     with patch('novel_to_comic.clients.text.generate_json', new=mock):
         with pytest.raises(RuntimeError, match='provider transport failure'):
             asyncio.run(generate_suggestions(Config(), _bible()))
-    assert mock.await_count == 1
+    assert len(_sketch_calls(mock)) == 1
 
 
 def test_a_complete_but_naturalistic_pool_gets_one_diversity_repair():
@@ -706,13 +825,11 @@ def test_a_complete_but_naturalistic_pool_gets_one_diversity_repair():
         candidate["proportion_family"] = "naturalistic"
         candidate["character_design"] = "Observational adult proportions, realistic limbs and faces."
     repaired = _batch()
-    mock = AsyncMock(side_effect=[
-        ApiResult(value=first, usage=None), ApiResult(value=repaired, usage=None),
-    ])
+    mock = _text_mock(first, repaired)
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
         suggestions, _ = asyncio.run(generate_suggestions(Config(), _bible()))
-    assert mock.await_count == 2
-    assert "proportion families" in mock.await_args_list[1].kwargs["system_prompt"]
+    assert len(_sketch_calls(mock)) == 2
+    assert "proportion families" in _sketch_calls(mock)[1].kwargs["system_prompt"]
     assert len({s["proportion_family"] for s in suggestions} - {"naturalistic"}) >= 3
 
 
@@ -721,13 +838,11 @@ def test_a_complete_but_realism_heavy_pool_gets_one_balance_repair():
     for candidate in first["styles"]:
         candidate["visual_logic"] = "realistic_illustration"
         candidate["template"] += " Render with observational realism."
-    mock = AsyncMock(side_effect=[
-        ApiResult(value=first, usage=None), ApiResult(value=_batch(), usage=None),
-    ])
+    mock = _text_mock(first, _batch())
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
         suggestions, _ = asyncio.run(generate_suggestions(Config(), _bible()))
-    assert mock.await_count == 2
-    assert "at least 4 stylized/graphic" in mock.await_args_list[1].kwargs["system_prompt"]
+    assert len(_sketch_calls(mock)) == 2
+    assert "at least 4 stylized/graphic" in _sketch_calls(mock)[1].kwargs["system_prompt"]
     assert sum(s["visual_logic"] in {"stylized", "graphic"} for s in suggestions) >= 4
 
 
@@ -739,10 +854,10 @@ def test_photography_is_optional_not_required():
         if photo:
             batch["styles"][-1]["visual_logic"] = "photographic"
             batch["styles"][-1]["proportion_family"] = "naturalistic"
-        mock = AsyncMock(return_value=ApiResult(value=batch, usage=None))
+        mock = _text_mock(batch)
         with patch("novel_to_comic.clients.text.generate_json", new=mock):
             suggestions, _ = asyncio.run(generate_suggestions(Config(), _bible()))
-        assert mock.await_count == 1
+        assert len(_sketch_calls(mock)) == 1
         assert sum(s["visual_logic"] == "photographic" for s in suggestions) == int(photo)
 
 
@@ -750,24 +865,24 @@ def test_persistent_anatomy_sameness_fails_within_the_shared_text_budget():
     batch = _batch()
     for candidate in batch["styles"]:
         candidate["proportion_family"] = "naturalistic"
-    mock = AsyncMock(return_value=ApiResult(value=batch, usage=None))
+    mock = _text_mock(batch)
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
         with pytest.raises(RuntimeError, match="No valid portfolio after 2 text attempts"):
             asyncio.run(generate_suggestions(Config(), _bible()))
-    assert mock.await_count == 2
+    assert len(_sketch_calls(mock)) == 2
 
 
 def test_medium_restriction_does_not_disable_character_design_diversity():
     batch = _batch(restriction="Use only woodblock prints")
     for candidate in batch["styles"]:
         candidate.update(medium="woodblock print", visual_logic="graphic", proportion_family="naturalistic")
-    mock = AsyncMock(return_value=ApiResult(value=batch, usage=None))
+    mock = _text_mock(batch)
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
         with pytest.raises(RuntimeError, match="proportion families"):
             asyncio.run(generate_suggestions(Config(), _bible(), custom_direction={
                 "text": "Use only woodblock prints",
             }))
-    assert mock.await_count == 2
+    assert len(_sketch_calls(mock)) == 2
 
 
 def test_explicit_proportions_override_only_the_proportion_axis():
@@ -775,7 +890,7 @@ def test_explicit_proportions_override_only_the_proportion_axis():
     batch["proportion_restriction"] = "Keep naturalistic proportions"
     for candidate in batch["styles"]:
         candidate["proportion_family"] = "naturalistic"
-    mock = AsyncMock(return_value=ApiResult(value=batch, usage=None))
+    mock = _text_mock(batch)
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
         suggestions, _ = asyncio.run(generate_suggestions(Config(), _bible(), custom_direction={
             "text": "Keep naturalistic proportions",
@@ -790,7 +905,7 @@ def test_explicit_photographic_direction_can_keep_realism_across_neighbors():
     batch["proportion_restriction"] = "Use only photography"
     for candidate in batch["styles"]:
         candidate.update(visual_logic="photographic", proportion_family="naturalistic")
-    mock = AsyncMock(return_value=ApiResult(value=batch, usage=None))
+    mock = _text_mock(batch)
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
         suggestions, _ = asyncio.run(generate_suggestions(Config(), _bible(), custom_direction={
             "text": "Use only photography",
@@ -804,12 +919,12 @@ def test_a_paraphrased_restriction_is_accepted_on_the_first_attempt():
     paraphrased["proportion_restriction"] = "natural body proportions"
     for candidate in paraphrased["styles"]:
         candidate["proportion_family"] = "naturalistic"
-    mock = AsyncMock(return_value=ApiResult(value=paraphrased, usage=None))
+    mock = _text_mock(paraphrased)
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
         suggestions, _ = asyncio.run(generate_suggestions(Config(), _bible(), custom_direction={
             "text": "people should look like real people, I think?",
         }))
-    assert mock.await_count == 1
+    assert len(_sketch_calls(mock)) == 1
     assert {s["proportion_family"] for s in suggestions} == {"naturalistic"}
 
 
@@ -818,8 +933,148 @@ def test_a_restriction_without_an_author_direction_keeps_the_default_diversity()
     batch["proportion_restriction"] = "naturalistic bodies"
     for candidate in batch["styles"]:
         candidate["proportion_family"] = "naturalistic"
-    mock = AsyncMock(return_value=ApiResult(value=batch, usage=None))
+    mock = _text_mock(batch)
     with patch("novel_to_comic.clients.text.generate_json", new=mock):
         with pytest.raises(RuntimeError, match="proportion families"):
             asyncio.run(generate_suggestions(Config(), _bible()))
-    assert mock.await_count == 2
+    assert len(_sketch_calls(mock)) == 2
+
+
+# ── stage run ────────────────────────────────────────────────────────────────
+
+
+def test_stage_run_authors_the_brief_while_suggestions_are_curated(tmp_path, monkeypatch):
+    from novel_to_comic.stage_runtime import StageRuntime
+    from novel_to_comic.stages import s2_style
+    from novel_to_comic.state import create_initial_state
+
+    artifacts.write_story_bible(tmp_path, _bible())
+    brief_started = asyncio.Event()
+    logs = []
+
+    async def brief(*_args):
+        brief_started.set()
+        return BRIEF
+
+    async def suggestions(config, bible, *, on_shortlist):
+        await asyncio.wait_for(brief_started.wait(), 1)
+        await on_shortlist([{"label": "Midnight ink", "role": "wildcard"}])
+        return [normalize_suggestion(_sugg("Midnight ink", "ink"))], []
+
+    async def samples(config, bible, project_dir, suggestions, indices, *, on_sample_done):
+        for index in indices:
+            await on_sample_done(index, ApiResult(value=None, usage=None))
+
+    monkeypatch.setattr(s2_style, "ensure_style_sample_brief", brief)
+    monkeypatch.setattr(s2_style, "generate_suggestions", suggestions)
+    monkeypatch.setattr(s2_style, "generate_samples_for_indices", samples)
+    ctx = StageRuntime("style", create_initial_state("test", "novel.txt"), tmp_path,
+                       on_event=lambda event: logs.append(event.get("message", "")))
+    asyncio.run(s2_style.run(Config(), tmp_path, ctx))
+    assert any("Midnight ink" in message for message in logs)
+    assert s2_style.load_suggestions(tmp_path)[0]["label"] == "Midnight ink"
+
+
+def test_failed_curation_cancels_the_early_brief(tmp_path, monkeypatch):
+    from novel_to_comic.stage_runtime import StageRuntime
+    from novel_to_comic.stages import s2_style
+    from novel_to_comic.state import create_initial_state
+
+    artifacts.write_story_bible(tmp_path, _bible())
+    cancelled = asyncio.Event()
+
+    async def brief(*_args):
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    async def suggestions(config, bible, *, on_shortlist):
+        await asyncio.sleep(0)
+        raise RuntimeError("No valid portfolio")
+
+    monkeypatch.setattr(s2_style, "ensure_style_sample_brief", brief)
+    monkeypatch.setattr(s2_style, "generate_suggestions", suggestions)
+    ctx = StageRuntime("style", create_initial_state("test", "novel.txt"), tmp_path)
+    with pytest.raises(RuntimeError, match="No valid portfolio"):
+        asyncio.run(s2_style.run(Config(), tmp_path, ctx))
+    assert cancelled.is_set()
+
+
+
+# ── story proof copy ─────────────────────────────────────────────────────────
+
+
+def _source_part(tmp_path, passage: str):
+    from novel_to_comic.source_extraction import produce_source_document
+    from novel_to_comic.target_artifacts import TargetArtifacts
+    from novel_to_comic.workspace import part_workspace
+
+    bible = _bible()
+    text = "The transformation occurred. " + passage
+    bible.scenes[0].source_start_offset = 0
+    bible.scenes[0].source_start_quote = "The transformation occurred."
+    produce_source_document(
+        TargetArtifacts(part_workspace(tmp_path, bible.scenes[0].part_id)), text, bible,
+    )
+    return bible
+
+
+def test_proof_copy_quotes_the_scene_passage_and_is_cached(tmp_path):
+    from novel_to_comic.lettering.proof import LABEL_COPY
+    from novel_to_comic.stages.s2_style import style_proof_copy
+
+    bible = _source_part(tmp_path, '"Where is everyone?" Carl asked the empty street.')
+    mock = AsyncMock(return_value=ApiResult(value={**STORY_COPY, "speech": '"Where is everyone?"'}, usage=None))
+    with patch("novel_to_comic.clients.text.generate_json", new=mock), patch(
+        "novel_to_comic.clients.text.generate_text",
+        new=AsyncMock(return_value=ApiResult(value=BRIEF, usage=None)),
+    ):
+        asyncio.run(ensure_style_sample_brief(Config(), bible, tmp_path))
+        asyncio.run(ensure_style_sample_brief(Config(), bible, tmp_path))
+    assert mock.await_count == 1
+    call = mock.await_args.kwargs
+    assert call["feature"] == "style.proof_copy"
+    assert "Where is everyone?" in call["user_content"]
+    assert "- Carl" in call["user_content"]
+    copy = style_proof_copy(Config(), bible, tmp_path)
+    assert copy != LABEL_COPY
+    assert copy.speech == "Where is everyone?"  # stray quotation marks are trimmed
+
+
+def test_overlong_or_failed_proof_copy_falls_back_to_role_labels(tmp_path):
+    from novel_to_comic.lettering.proof import LABEL_COPY
+    from novel_to_comic.stages.s2_style import style_proof_copy
+
+    for answer in (
+        AsyncMock(return_value=ApiResult(value={**STORY_COPY, "speech": "x" * 80}, usage=None)),
+        AsyncMock(side_effect=RuntimeError("gateway down")),
+    ):
+        with patch("novel_to_comic.clients.text.generate_json", new=answer), patch(
+            "novel_to_comic.clients.text.generate_text",
+            new=AsyncMock(return_value=ApiResult(value=BRIEF, usage=None)),
+        ):
+            assert asyncio.run(ensure_style_sample_brief(Config(), _bible(), tmp_path)) == BRIEF
+        assert style_proof_copy(Config(), _bible(), tmp_path) == LABEL_COPY
+        assert not artifacts.style_proof_copy_path(tmp_path).exists()
+
+
+def test_integrated_proof_letters_story_copy_once_cached(tmp_path):
+    config = Config(lettering_mode="integrated")
+    bible = _bible()
+    labelled = build_style_sample_request(config, bible, BRIEF, candidate_id="c").compiled.final_prompt
+    assert "We keep moving." not in labelled and "not dialogue" in labelled
+    artifacts.style_proof_copy_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    artifacts.style_proof_copy_path(tmp_path).write_text(json.dumps({
+        "version": STYLE_PROOF_COPY_VERSION,
+        "source_sha256": _style_proof_copy_source_key(config, bible),
+        "copy": STORY_COPY,
+    }))
+    story = build_style_sample_request(
+        config, bible, BRIEF, candidate_id="c", project_dir=tmp_path,
+    ).compiled.final_prompt
+    assert all(json.dumps(text) in story for text in STORY_COPY.values())
+    assert "listed subjects speak, shout and think" in story
+    # New story copy is new request identity: older proofs become refreshable.
+    assert story != labelled

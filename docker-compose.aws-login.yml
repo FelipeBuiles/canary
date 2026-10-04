@@ -1,0 +1,42 @@
+# Opt-in native `aws login` credentials. The profile is read-only; the login
+# cache must be writable so the SDK can refresh temporary credentials.
+# docker compose -f docker-compose.yml -f docker-compose.aws-login.yml ...
+services:
+  litellm:
+    environment:
+      AWS_PROFILE: ${AWS_PROFILE:-default}
+      # LiteLLM's explicit profile selector avoids treating empty key variables
+      # from the base Compose file as a static credential tuple.
+      AWS_PROFILE_NAME: ${AWS_PROFILE:-default}
+      AWS_CONFIG_FILE: /run/aws/config
+      AWS_LOGIN_CACHE_DIRECTORY: /run/aws/login/cache
+    volumes:
+      - type: bind
+        source: ${CANARY_AWS_CONFIG_FILE:?Set CANARY_AWS_CONFIG_FILE to your AWS config file}
+        target: /run/aws/config
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CANARY_AWS_LOGIN_CACHE_DIRECTORY:?Set CANARY_AWS_LOGIN_CACHE_DIRECTORY to your AWS login cache directory}
+        target: /run/aws/login/cache
+        bind:
+          create_host_path: false
+  canary-prod:
+    environment:
+      AWS_PROFILE: ${AWS_PROFILE:-default}
+      AWS_PROFILE_NAME: ${AWS_PROFILE:-default}
+      AWS_CONFIG_FILE: /run/aws/config
+      AWS_LOGIN_CACHE_DIRECTORY: /run/aws/login/cache
+    volumes:
+      - type: bind
+        source: ${CANARY_AWS_CONFIG_FILE:?Set CANARY_AWS_CONFIG_FILE to your AWS config file}
+        target: /run/aws/config
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CANARY_AWS_LOGIN_CACHE_DIRECTORY:?Set CANARY_AWS_LOGIN_CACHE_DIRECTORY to your AWS login cache directory}
+        target: /run/aws/login/cache
+        bind:
+          create_host_path: false

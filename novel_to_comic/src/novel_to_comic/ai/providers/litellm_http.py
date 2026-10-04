@@ -159,7 +159,7 @@ def _serialize_openai_image(wire: ProviderWireRequest) -> dict[str, Any]:
             raise ValueError("Unsupported GPT Image 2.5 quality")
         if not _valid_gpt_image_2_size(wire.width, wire.height):
             raise ValueError("Invalid GPT Image 2.5 dimensions; choose valid dimensions before generating")
-    return {
+    params = {
         "model": wire.requested_alias,
         "prompt": wire.prompt_parts[0],
         "size": _image_size(
@@ -170,6 +170,11 @@ def _serialize_openai_image(wire: ProviderWireRequest) -> dict[str, Any]:
         "n": 1,
         **dict(wire.controls),
     }
+    if wire.requested_alias in {"image-sunburst-openai", "image-flare"}:
+        # The streaming OpenAI handler needs the frozen dimensions/controls;
+        # LiteLLM removes standard Images fields for custom providers.
+        params["canary_wire_request"] = wire.to_json()
+    return params
 
 
 def _serialize_openrouter_image(wire: ProviderWireRequest) -> dict[str, Any]:

@@ -6,6 +6,7 @@ import { CreditAmount } from "../ui/CreditAmount";
 import { FieldLabel, SelectField, TextAreaField, TextField } from "../ui/Field";
 import { LooksEditor } from "./LooksEditor";
 import { KIND_LABELS } from "./entityKinds";
+import { anchorFromEdit, editableAnchor } from "../../lib/visualAnchor";
 import { useAddEntity, useDraftEntity, useDraftEstimate, useEditEntity } from "../../api/seriesQueries";
 import type { EntityKind, StoryBibleEditor } from "../../api/storyBible";
 import type { CharacterRelationship } from "../../types/api";
@@ -42,6 +43,7 @@ const NULLABLE = new Set(["baseline_affect", "time_of_day"]);
 
 function toForm(spec: FieldSpec, value: unknown): string {
   if (Array.isArray(value)) return value.join(spec.shape === "aliases" ? ", " : "\n");
+  if (spec.key === "visual_anchor") return editableAnchor(value == null ? "" : String(value));
   return value == null ? "" : String(value);
 }
 
@@ -68,6 +70,7 @@ export function EntitySheet({ project, editor, kind, entityId, onClose }: Props)
   const specs = FIELDS[kind];
   const [values, setValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(specs.map((spec) => [spec.key, toForm(spec, entity?.[spec.key])])));
+  const [originalAnchor, setOriginalAnchor] = useState(String(entity?.visual_anchor ?? ""));
   const [relationships, setRelationships] = useState<CharacterRelationship[]>(
     () => (entity?.relationships as CharacterRelationship[] | undefined) ?? []);
   const [scenes, setScenes] = useState<string[]>([]);
@@ -86,7 +89,9 @@ export function EntitySheet({ project, editor, kind, entityId, onClose }: Props)
   function payload(): Record<string, unknown> {
     const result: Record<string, unknown> = {};
     for (const spec of specs) {
-      const next = toPayload(spec, values[spec.key] ?? "");
+      const next = spec.key === "visual_anchor"
+        ? anchorFromEdit(values[spec.key] ?? "", originalAnchor)
+        : toPayload(spec, values[spec.key] ?? "");
       if (adding ? (next !== "" && next !== null && !(Array.isArray(next) && !next.length))
         : JSON.stringify(next) !== JSON.stringify(entity?.[spec.key] ?? (NULLABLE.has(spec.key) ? null : spec.shape === "text" || spec.shape === "textarea" ? "" : []))) {
         result[spec.key] = next;
@@ -136,6 +141,7 @@ export function EntitySheet({ project, editor, kind, entityId, onClose }: Props)
         {adding && <DraftFromSource project={project} kind={kind} name={values.name ?? ""}
           aliases={toPayload(specs[1], values.aliases ?? "") as string[]}
           onDraft={(details, suggested) => {
+            if (!values.visual_anchor?.trim()) setOriginalAnchor(String(details.visual_anchor ?? ""));
             setValues((current) => Object.fromEntries(specs.map((spec) => [
               spec.key, current[spec.key]?.trim() ? current[spec.key] : toForm(spec, details[spec.key]),
             ])));

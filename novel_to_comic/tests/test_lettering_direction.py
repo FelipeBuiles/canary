@@ -106,7 +106,7 @@ def test_style_proofs_render_without_holding_the_project_lock(tmp_path, monkeypa
 
     key = str(tmp_path.resolve())
     held = []
-    monkeypatch.setattr(proof, "resolve_style_proof", lambda style, w, h: None)
+    monkeypatch.setattr(proof, "resolve_style_proof", lambda style, w, h, copy=None: None)
     monkeypatch.setattr(proof, "render_lettered_page", lambda *args, **kwargs: (
         held.append(key in getattr(artifact_lock._local, "held", set())) or b"png"))
     buffer = io.BytesIO()

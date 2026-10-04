@@ -138,6 +138,7 @@ export interface StageResult {
 
 export interface StageModelCell {
   reasoning_efforts?: Record<string, string>;
+  variant?: string;
   cell_id: string;
   phase: string;
   model: string;

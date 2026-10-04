@@ -361,6 +361,68 @@ def test_style_batch_waits_for_siblings_and_preserves_concurrent_state(tmp_path,
     asyncio.run(exercise())
 
 
+def test_style_batch_overlaps_brief_and_reports_durable_phases(tmp_path, monkeypatch):
+    from novel_to_comic.server import style_jobs
+    from novel_to_comic.server.generation_jobs import GenerationJob
+    from novel_to_comic.state import StageStatus, create_initial_state, save_state
+    from tests.test_style_stage import _bible
+
+    state = create_initial_state("book", "novel.txt")
+    state.stages["style"].status = StageStatus.RUNNING
+    save_state(state, tmp_path)
+    candidates = [style_jobs.style.normalize_suggestion({"id": str(i), "label": f"Style {i}"}) for i in range(3)]
+    brief_started = asyncio.Event()
+    phases = []
+
+    async def brief_author(*_args):
+        brief_started.set()
+        return "shared scene brief"
+
+    async def suggestions(config, bible, *, existing_suggestions, custom_direction, on_shortlist):
+        # The proof brief is authored while the portfolio is still being curated.
+        await asyncio.wait_for(brief_started.wait(), 1)
+        phases.append(job.payload["style_phase"])
+        await on_shortlist([{"label": "Style 0", "medium": "ink", "role": "wildcard",
+                             "palette": "blue", "story_fit": "Fits.", "template": "unused"}])
+        phases.append(job.payload["style_phase"])
+        return candidates, []
+
+    peak = 0
+    running = 0
+
+    async def image(config, bible, output, **kwargs):
+        nonlocal peak, running
+        phases.append(job.payload["style_phase"])
+        running += 1
+        peak = max(peak, running)
+        await asyncio.sleep(0.01)
+        running -= 1
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"proof")
+
+    monkeypatch.setattr(style_jobs.style, "ensure_style_sample_brief", brief_author)
+    monkeypatch.setattr(style_jobs.style, "generate_suggestions", suggestions)
+    monkeypatch.setattr(style_jobs.style, "generate_sample_image", image)
+    config = Config(image_concurrency=3)
+    job = GenerationJob(id="batch", project_name="account:book", kind="style_suggest", label="Styles",
+        payload={}, sequence=1, runner=None, command=command("style_suggest", tmp_path, config,
+            bible=_bible().model_dump(mode="json"), lifecycle_owned=True))
+
+    async def exercise():
+        app = make_app(tmp_path)
+        app.state.generation_jobs[job.id] = job
+        await style_jobs.execute_style(app, job, tmp_path, config)
+
+    asyncio.run(exercise())
+    assert phases[:2] == ["directions", "production"]
+    assert set(phases[2:]) == {"proofs"}
+    assert peak == 3  # the configured style/cast image limit, not a hardcoded pair
+    assert job.payload["style_shortlist"] == [
+        {"label": "Style 0", "medium": "ink", "role": "wildcard", "palette": "blue", "story_fit": "Fits."},
+    ]
+    assert job.payload["style_phase_at"]
+
+
 def test_outbox_admission_rolls_back_job_when_command_insert_fails(tmp_path):
     app = make_app(tmp_path)
     queue = DurableQueue(app, "postgresql://unused")

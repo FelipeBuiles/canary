@@ -14,7 +14,7 @@ def _usage(details=None, **extra):
             'input_tokens_details': details or {'text_tokens': 200, 'image_tokens': 1000}, **extra}
 
 
-@pytest.mark.parametrize('alias', ['image-sunburst', 'image-sunburst-openai'])
+@pytest.mark.parametrize('alias', ['image-sunburst', 'image-sunburst-openai', 'image-flare'])
 def test_real_image_usage_modality_cost(alias):
     record = _extract_usage({'usage': _usage()}, 'call', alias, 'image')
     assert calculate_cost_breakdown(record).cost_usd == pytest.approx(.069)

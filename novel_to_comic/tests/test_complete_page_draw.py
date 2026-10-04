@@ -1384,11 +1384,11 @@ def test_visual_review_route_compiles_current_authority_without_redrawing(tmp_pa
          patch('novel_to_comic.server.credited_job.run_credited_page_check', side_effect=admitted), \
          patch('novel_to_comic.clients.text.generate_json', new_callable=AsyncMock,
                return_value=ApiResult(value={'findings': [], 'uncertain': []})) as generate:
-        report = asyncio.run(visual_review_page(page.page_number, 'project',
+        report = asyncio.run(visual_review_page(page.page_number, 'project', request=_bare_request(),
             project=(tmp_path, Config(), None), user_id='user'))
         assert report.render_revision == 1
         assert report.findings == ()
-        asyncio.run(visual_review_page(page.page_number, 'project',
+        asyncio.run(visual_review_page(page.page_number, 'project', request=_bare_request(),
             project=(tmp_path, Config(), None), user_id='user'))
         assert generate.await_count == 1
     assert artifacts.provenance_revisions(page.page_number) == (1,)
@@ -1842,3 +1842,10 @@ def test_editable_art_prompt_omits_placement_hints_and_copy_placeholders(tmp_pat
     assert "Do not reserve space for lettering" in request.prompt
     assert "blank boxes, empty balloons" in request.prompt
     assert page.model_dump_json() == before
+
+
+def _bare_request():
+    """A route request with no analytics journal; outcome capture stays best effort."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))

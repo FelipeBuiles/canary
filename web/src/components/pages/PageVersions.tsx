@@ -5,6 +5,7 @@ import { pageRenderPreviewUrl, selectPageRender } from "../../api/pages";
 import { useI18n } from "../../i18n";
 import { Button } from "../ui/Button";
 import { PageArtwork } from "./PageArtwork";
+import { InspectButton } from "../ui/InspectButton";
 import { invalidateProject } from "../../api/projectScope";
 
 export function PageVersions({ project, pageNumber, activeRevision, disabled, onSelected }: {
@@ -55,9 +56,17 @@ export function PageVersions({ project, pageNumber, activeRevision, disabled, on
           {stale && <p className="text-sm">{t("This version belongs to an earlier page plan.")}</p>}
           {select.error && <p role="alert" className="text-sm text-hero-red">{select.error.message}</p>}
         </div>
-        <div className="h-[75vh]">
+        <div className="relative h-[75vh]">
           <PageArtwork src={pageRenderPreviewUrl(project, pageNumber, revision, "reader")}
             alt={`${t("Page")} ${pageNumber}, ${t("Revision")} ${revision}`} />
+          <InspectButton
+            images={detail.data.renders.map(({ render: item }) => ({
+              src: pageRenderPreviewUrl(project, pageNumber, item.revision, "reader"),
+              alt: `${t("Page")} ${pageNumber}, ${t("Revision")} ${item.revision}`,
+            }))}
+            index={Math.max(0, detail.data.renders.findIndex(({ render: item }) => item.revision === revision))}
+            onIndexChange={(next) => { setPreview(detail.data.renders[next].render.revision); select.reset(); }}
+          />
         </div>
       </>}
     </>}

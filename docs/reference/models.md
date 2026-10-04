@@ -171,7 +171,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 
 | Field | Type | Default |
 |-------|------|---------|
-| `id` | `str` | `Field(pattern='^thread_\\d{3}$')` |
+| `id` | `str` | `''` |
 | `title` | `str` | `Field(min_length=1)` |
 | `summary` | `str` | `Field(min_length=1)` |
 | `opens_in` | `str` |  |
@@ -346,6 +346,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `usage` | `UsageRecord` |  |
 | `provider_request_id` | `str | None` | `None` |
 | `response_metadata` | `dict[str, object] | None` | `None` |
+| `ai_trace_id` | `str | None` | `None` |
 
 ## PageGenerationFailure _(draw.py)_
 

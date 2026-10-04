@@ -148,6 +148,26 @@ async def run_openai_first(
     Returns the result, the route that produced it, and fallback evidence for
     provenance (``None`` when OpenAI succeeded).
     """
+    from novel_to_comic.server.telemetry import ai_span
+
+    with ai_span("image_route", surface=surface) as span:
+        result, route, fallback = await _run_openai_first(
+            primary=primary, backup=backup, surface=surface, request_key=request_key,
+            estimate_openai_usd=estimate_openai_usd,
+        )
+        # The absorbed attempt keeps its own generation in the tree.
+        span.set(route=route, fallback_reason=(fallback or {}).get("reason"))
+        return result, route, fallback
+
+
+async def _run_openai_first(
+    *,
+    primary: Callable[[], Awaitable[T]],
+    backup: Callable[[], Awaitable[T]],
+    surface: Surface,
+    request_key: str,
+    estimate_openai_usd: Callable[[], float],
+) -> tuple[T, str, dict[str, object] | None]:
     if OPENAI_SUNBURST_CIRCUIT.is_open():
         increment_metric("canary_image_route_fallbacks_total", reason="circuit_open", surface=surface)
         return await backup(), "fal-queue", {"from_route": "openai", "reason": "circuit_open"}

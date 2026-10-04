@@ -16,6 +16,7 @@ const state = vi.hoisted(() => ({
 
 const targets = [
   { id: "sunburst-openai", label: "GPT Image 2.5 Sunburst", provider: "OpenAI API", funding: "api", available: true },
+  { id: "flare-openai", label: "GPT Image 2.5 Flare", provider: "OpenAI API", funding: "api", available: true },
   { id: "codex-dev/image/gpt-5.5", label: "GPT Image 2 via gpt-5.5", provider: "Codex subscription", funding: "codex_subscription", available: true },
 ];
 
@@ -82,6 +83,21 @@ describe("Labs", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /Page 1/ }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Character sheet/ }));
     expect(screen.getByRole("button", { name: "Run 4 images" })).toBeTruthy();
+  });
+
+  it("defaults to Sunburst versus Flare on OpenAI with the same production prompt", () => {
+    renderAt("/labs");
+
+    expect(screen.getByRole("button", { name: "Arm 1 model and route" }).textContent)
+      .toContain("GPT Image 2.5 Sunburst · OpenAI API");
+    expect(screen.getByRole("button", { name: "Arm 2 model and route" }).textContent)
+      .toContain("GPT Image 2.5 Flare · OpenAI API");
+    fireEvent.click(screen.getByRole("checkbox", { name: /Page 1/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Run 2 images" }));
+    expect(state.create).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "image_compare", project: "story", items: ["page:1"],
+      arms: [{ target: "sunburst-openai", prompt: "production" }, { target: "flare-openai", prompt: "production" }],
+    }), expect.anything());
   });
 
   it("hides which arm made each image until the reviewer reveals it", () => {

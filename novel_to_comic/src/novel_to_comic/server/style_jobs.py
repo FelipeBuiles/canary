@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 from novel_to_comic import artifacts
 from novel_to_comic.artifact_lock import production_lock
@@ -92,12 +93,17 @@ async def execute_style(app, job, directory, config):
                 "done": sum(p["status"] == "complete" for p in job.payload["proofs"].values()),
                 "total": len(job.payload["proofs"])})
 
+    def set_phase(phase, **fields):
+        # Durable, so a reloaded room can still explain which step is running.
+        job.payload.update(style_phase=phase, style_phase_at=datetime.now(timezone.utc).isoformat(), **fields)
+        persist_generation_job(app, job)
+
     async def batch(candidates, start):
         for offset, candidate in enumerate(candidates):
             job.payload["proofs"][str(start + offset)] = {
                 "index": start + offset, "id": candidate["id"], "status": "queued"}
-        persist_generation_job(app, job)
-        semaphore = asyncio.Semaphore(style.SAMPLE_CONCURRENCY)
+        set_phase("proofs")
+        semaphore = asyncio.Semaphore(config.effective_image_concurrency())
         async def bounded(candidate, index):
             async with semaphore:
                 await one(candidate, index)
@@ -124,8 +130,25 @@ async def execute_style(app, job, directory, config):
                     _checkpoint(directory, owned, job.payload["proofs"])
                     return
             existing = style.load_suggestions(directory)
-            suggestions, _usage = await style.generate_suggestions(config, bible,
-                existing_suggestions=existing, custom_direction=direction)
+            set_phase("directions")
+            # The proof brief needs only the Story Bible: author it meanwhile.
+            brief_task = asyncio.create_task(shared_brief())
+
+            async def shortlisted(sketches):
+                set_phase("production", style_shortlist=[
+                    {"label": sketch["label"], "medium": sketch["medium"], "role": sketch["role"],
+                     "palette": sketch["palette"], "story_fit": sketch["story_fit"]}
+                    for sketch in sketches
+                ])
+
+            try:
+                suggestions, _usages = await style.generate_suggestions(config, bible,
+                    existing_suggestions=existing, custom_direction=direction,
+                    on_shortlist=shortlisted)
+            except BaseException:
+                await style.settle_style_sample_brief(brief_task, cancel=True)
+                raise
+            await style.settle_style_sample_brief(brief_task)
             with production_lock(directory):
                 # No competing suggestion batch is admitted; selecting a proof
                 # changes config/lettering, not this candidate portfolio. Re-read

@@ -61,6 +61,16 @@ TEXT_MODELS = (
               temperature=False, claude_native_json=True, effort="medium",
               thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
               max_output_tokens=128_000),
+    # Distinct aliases preserve the selected billing/provider route in job snapshots.
+    # Converse maps the shared Claude output_config to Bedrock's native JSON format.
+    TextModel("bedrock-claude-opus-5-5", "Claude Opus 5.5 · Bedrock", "AWS Bedrock", "bedrock",
+              temperature=False, claude_native_json=True, effort="medium",
+              thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
+              max_output_tokens=128_000),
+    TextModel("bedrock-claude-sonnet-5-5", "Claude Sonnet 5.5 · Bedrock", "AWS Bedrock", "bedrock",
+              temperature=False, claude_native_json=True, effort="medium",
+              thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
+              max_output_tokens=128_000),
     TextModel("mimo-v2.6-pro", "MiMo V2.6 Pro", "OpenRouter", "openrouter",
               token_limit_field="max_tokens"),
     TextModel("deepseek-v4.1-flash", "DeepSeek V4.1 Flash", "Together AI", "together_ai",
@@ -75,7 +85,16 @@ def text_wire(model: str) -> TextModel:
     return TEXT_MODEL_BY_ID.get(model, DEFAULT_TEXT_WIRE)
 
 
+def is_gemini_model(model: str) -> bool:
+    wire = text_wire(model)
+    return wire.provider_key in {"vertex_ai", "gemini"} and wire.id.startswith("gemini-")
+
+
 TEXT_REASONING_STAGES = ("extract", "brief", "prompt", "adapt", "plan", "ocr", "visual_review")
+# Stage defaults that differ from the operator's shared effort. Gemini 3.8
+# Flash at low matched medium on blinded Extract+Brief comparisons (2026-10-03)
+# at a third of the time; saved per-stage choices still win.
+DEFAULT_STAGE_EFFORTS = {"extract": "low", "brief": "low"}
 
 
 def reasoning_options(model: str) -> tuple[str, ...]:

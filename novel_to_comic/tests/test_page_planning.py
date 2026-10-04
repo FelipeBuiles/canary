@@ -266,6 +266,89 @@ def test_producer_allocates_global_book_once_and_persists_canonical_artifacts(
     assert artifacts.page_path(1) == tmp_path / "plan" / "pages" / "page_001.json"
 
 
+@pytest.mark.parametrize("model,expected", [("gemini-3.8-flash", "two"), ("gpt-6.1-sol", "one"),
+                                           ("claude-opus-5-5", "one"), ("mimo-v2.6-pro", "one")])
+def test_short_gemini_plan_uses_two_pass_without_changing_other_models(tmp_path, monkeypatch, model, expected):
+    from novel_to_comic import page_planning
+    calls = []
+
+    async def one(*args, **kwargs):
+        calls.append("one")
+        return "one"
+
+    async def two(*args, **kwargs):
+        calls.append("two")
+        return "two"
+
+    monkeypatch.setattr(page_planning, "_produce_book_plan_one_shot", one)
+    monkeypatch.setattr(page_planning, "_produce_book_plan_two_pass", two)
+    state = PipelineState(project_name="workflow", novel_path="novel.txt", created_at=datetime.now(timezone.utc))
+    result = asyncio.run(produce_book_plan(
+        _adaptation(), _inventory(), ApprovedPageRange(minimum=1, maximum=2),
+        artifacts=TargetArtifacts(tmp_path), ctx=StageRuntime("plan", state, tmp_path), model=model, generate=one,
+    ))
+    assert result == expected and calls == [expected]
+
+
+def test_gemini_plan_estimate_includes_map_and_detail_calls(monkeypatch):
+    from novel_to_comic import page_planning
+    prompts = []
+    monkeypatch.setattr(page_planning, "estimate_text_cost", lambda model, prompt, **kwargs: prompts.append(prompt) or 1.0)
+    page_planning.estimate_book_plan_cost(_adaptation(), _inventory(), ApprovedPageRange(minimum=1, maximum=2), model="gemini-3.8-flash")
+    assert len(prompts) == 3  # Review allowance, map, and detail for this short story.
+    assert all("FINAL CHECKLIST" in prompt for prompt in prompts[1:])
+    assert "lettering_placements: a list of objects" in prompts[-1]
+
+
+def test_gemini_detail_wire_format_compiles_under_the_existing_page_map_validators(tmp_path):
+    from novel_to_comic.page_planning import _generate_detail_batch
+    from novel_to_comic.gemini_tuning import generic_detail_view
+    adaptation, mapped, raw = _two_page_detail_fixture()
+    seen = []
+
+    async def generate(**request):
+        seen.append(request)
+        return ApiResult(value=generic_detail_view(raw))
+
+    mapping = _BookPageMap(rhythm_summary="Two locked pages.", pages=mapped)
+    state = PipelineState(project_name="detail", novel_path="novel.txt", created_at=datetime.now(timezone.utc))
+    draft = asyncio.run(_generate_detail_batch(
+        adaptation, _inventory(), mapping, start=0, stop=2, model="gemini-3.8-flash", generate=generate,
+        ctx=StageRuntime("plan", state, tmp_path),
+    ))
+    assert _detail_matches_map(draft, mapped) == ()
+    schema = seen[0]["json_schema"]
+    template = schema["$defs"]["_PageDetailDraft"]
+    assert "anyOf" not in template
+    assert template["properties"]["content"]["items"] == {"$ref": "#/$defs/_PanelCompositionDraft"}
+    assert template["properties"]["lettering_placements"]["type"] == "array"
+    assert "minItems" not in schema["properties"]["pages"]
+    assert "maxItems" not in schema["properties"]["pages"]
+    assert "lettering_placements: a list of objects" in seen[0]["user_content"]
+    assert "lettering_placements: {}" not in seen[0]["user_content"]
+
+
+@pytest.mark.parametrize("defect", ["duplicate", "foreign", "wrong_page", "extra_page", "wrong_beat"])
+def test_gemini_generic_detail_cannot_relax_locked_ownership(defect):
+    from novel_to_comic.gemini_tuning import generic_detail_view, ungeneric_detail_response
+    from novel_to_comic.page_planning import _compile_detail_response
+    adaptation, mapped, raw = _two_page_detail_fixture()
+    wire = generic_detail_view(raw)
+    placement = wire["pages"][0]["lettering_placements"][0]
+    if defect == "duplicate":
+        wire["pages"][0]["lettering_placements"].append(dict(placement))
+    elif defect == "foreign":
+        placement["lettering_item_id"] = "foreign_item"
+    elif defect == "wrong_page":
+        wire["pages"][0]["page_number"] = 99
+    elif defect == "extra_page":
+        wire["pages"].append(dict(wire["pages"][0]))
+    else:
+        wire["pages"][0]["content"][0]["beat_ids"] = ["foreign_beat"]
+    with pytest.raises(ValueError):
+        _compile_detail_response(ungeneric_detail_response(wire), mapped, adaptation)
+
+
 def _long_adaptation(beat_count: int = 24) -> BookAdaptation:
     beats = [
         AdaptedBeat(
@@ -4416,6 +4499,7 @@ def _split_beat_response(first_panel: dict[str, object]) -> dict:
         "visual_intent": "Johansen steers toward the wall of spray, still dry.", **first_panel,
     }
     outcome = {**page["content"][0], "id": "page_001_content_002", "order": 2,
+               "entity_ids": ["character_johansen", "location_alert"],
                "visual_intent": "The spray breaks over Johansen."}
     page["content"] = [lead_up, outcome]
     page["reading_order"] = ["page_001_content_001", "page_001_content_002", "lettering_0001"]
@@ -4434,6 +4518,22 @@ def test_a_split_beat_takes_its_appearance_change_on_its_last_panel(tmp_path: Pa
     lead_up, outcome = artifacts.read_page(1).content
     assert lead_up.appearance_states == {}
     assert outcome.appearance_states == {"character_johansen": "johansen_soaked"}
+    assert artifacts.read_page(2).content[0].appearance_states == {"character_johansen": "johansen_soaked"}
+    assert artifacts.read_validation("plan").invariant_failures == ()
+
+
+def test_a_split_beat_ending_on_a_reaction_shot_changes_the_entity_where_it_is_shown(tmp_path: Path) -> None:
+    # Production failure (merrily, page 17): a surfacing beat ended on a
+    # tourist's reaction shot; binding the soaking to that last panel dragged
+    # the soaked characters into it without acting, and repair could not fix it.
+    response = _split_beat_response({"entity_ids": ["character_johansen", "location_alert"]})
+    response["pages"][0]["content"][1].update(entity_ids=["location_alert"], acting=[])
+    artifacts, calls, plan = _run_plan(_soaked_adaptation(), _soaked_inventory(), response, tmp_path)
+
+    assert isinstance(plan, BookPlan) and len(calls) == 1
+    surfacing, reaction = artifacts.read_page(1).content
+    assert surfacing.appearance_states == {"character_johansen": "johansen_soaked"}
+    assert "character_johansen" not in reaction.entity_ids
     assert artifacts.read_page(2).content[0].appearance_states == {"character_johansen": "johansen_soaked"}
     assert artifacts.read_validation("plan").invariant_failures == ()
 

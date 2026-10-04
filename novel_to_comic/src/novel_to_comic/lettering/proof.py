@@ -1,8 +1,10 @@
 """Provider-free Style proofs; clean reference art is never overwritten.
 
 The specimens fit the four reservations in STYLE_PROOF_ART_CONSTRAINTS;
-speech and shout share the speech reservation. This is a visual
-specimen, not Adapt copy and not evidence of image-model reservation adherence.
+speech and shout share the speech reservation. Their words are the project's
+story proof copy (lines from the proof scene), or neutral role labels when no
+story copy exists. This is a visual specimen, not Adapt copy and not evidence
+of image-model reservation adherence.
 """
 from __future__ import annotations
 
@@ -11,37 +13,61 @@ import io
 import json
 
 from PIL import Image
+from pydantic import BaseModel, ConfigDict, Field
 
 from novel_to_comic.models.lettering import LetteringElement, LetteringStyle, PageLettering
 from novel_to_comic.models.page import NormalizedPoint, PinnedGeometry
 from novel_to_comic.target_artifacts import TargetArtifacts
-from .direction import mark_emphasis, voice_style
+from .direction import voice_style
 from .renderer import ENGINE_VERSION, render_lettered_page, resolve_lettering
 
-PROOF_VERSION = "software-style-proof-v3"
-SPECIMENS = (
-    ("caption", "The night held its breath.", (.05, .04, .47, .14)),
-    ("speech", "We keep moving.", (.54, .37, .23, .13)),
-    ("shout", "Run!", (.80, .37, .14, .13)),
-    ("thought", "Did you hear that?", (.05, .53, .44, .16)),
-    ("sfx", "KRAK", (.58, .83, .36, .12)),
+PROOF_VERSION = "software-style-proof-v4"
+SPECIMEN_BOUNDS = (
+    ("caption", (.05, .04, .47, .14)),
+    ("speech", (.54, .37, .23, .13)),
+    ("shout", (.80, .37, .14, .13)),
+    ("thought", (.05, .53, .44, .16)),
+    ("sfx", (.58, .83, .36, .12)),
 )
-# Software-only showmanship: integrated proofs draw the plain specimen strings
-# above, so their requests (and paid samples) never change with this.
-_STRESS = {"speech": ("moving",)}
+# Character ceilings keep story lines near what every bundled design fits in
+# its reservation. Fitting still decides per style: see resolve_style_proof.
+SPECIMEN_MAX_CHARS = {"caption": 48, "speech": 22, "shout": 8, "thought": 30, "sfx": 9}
+
+
+class ProofCopy(BaseModel):
+    """The five specimen lines every proof of one project shares."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    caption: str = Field(min_length=1, max_length=SPECIMEN_MAX_CHARS["caption"])
+    speech: str = Field(min_length=1, max_length=SPECIMEN_MAX_CHARS["speech"])
+    shout: str = Field(min_length=1, max_length=SPECIMEN_MAX_CHARS["shout"])
+    thought: str = Field(min_length=1, max_length=SPECIMEN_MAX_CHARS["thought"])
+    sfx: str = Field(min_length=1, max_length=SPECIMEN_MAX_CHARS["sfx"])
+
+
+# Without story copy, a proof names each lettering role instead of putting
+# invented words in the author's characters' mouths.
+LABEL_COPY = ProofCopy(caption="Narration", speech="Speech", shout="Shout!", thought="Thought", sfx="SFX")
 _TAIL_BEND = {"speech": .35, "thought": -.3}
 
 
-def style_proof_state(style: LetteringStyle, width: int, height: int) -> PageLettering:
+def specimens(copy: ProofCopy = LABEL_COPY) -> tuple[tuple[str, str, tuple[float, ...]], ...]:
+    return tuple((role, getattr(copy, role), bounds) for role, bounds in SPECIMEN_BOUNDS)
+
+
+def style_proof_state(
+    style: LetteringStyle, width: int, height: int, copy: ProofCopy = LABEL_COPY,
+) -> PageLettering:
     elements = []
-    for specimen, text, bounds in SPECIMENS:
+    for specimen, text, bounds in specimens(copy):
         role = "speech" if specimen == "shout" else specimen
         placement = PinnedGeometry(**dict(zip(("x", "y", "width", "height"), bounds)))
         override = (voice_style(style.roles.speech, "speech", "shout").model_copy(update={"align": "center", "padding": 5})
                     if specimen == "shout" else None)
         elements.append(LetteringElement(
             id=f"proof-{specimen}", role=role,
-            text_by_locale={"source": mark_emphasis(text, _STRESS.get(specimen, ()))},
+            text_by_locale={"source": text},
             placement=placement, suggested_placement=placement,
             style_override=override,
         ))
@@ -52,13 +78,28 @@ def style_proof_state(style: LetteringStyle, width: int, height: int) -> PageLet
     )
 
 
-def resolve_style_proof(style: LetteringStyle, width: int, height: int) -> PageLettering:
+def _fitted_copy(style: LetteringStyle, width: int, height: int, copy: ProofCopy) -> PageLettering:
+    """Resolve story copy; a line this design cannot fit shows its role label."""
+    state = resolve_lettering(style_proof_state(style, width, height, copy), style)
+    unfit = {
+        element.id.removeprefix("proof-") for element in state.elements
+        if element.resolved is None or element.resolved.overflow or element.resolved.warnings
+    }
+    if not unfit or copy == LABEL_COPY:
+        return state
+    fallback = copy.model_copy(update={role: getattr(LABEL_COPY, role) for role in unfit})
+    return resolve_lettering(style_proof_state(style, width, height, fallback), style)
+
+
+def resolve_style_proof(
+    style: LetteringStyle, width: int, height: int, copy: ProofCopy = LABEL_COPY,
+) -> PageLettering:
     """Attach specimen pointers to fitted bodies, not the art reservations.
 
     These short pointers demonstrate typography; they do not identify speakers.
     Saved page/editor targets remain untouched.
     """
-    state = resolve_lettering(style_proof_state(style, width, height), style)
+    state = _fitted_copy(style, width, height, copy)
     elements = []
     for element in state.elements:
         if element.role in {"speech", "thought"} and element.resolved:
@@ -77,6 +118,7 @@ def resolve_style_proof(style: LetteringStyle, width: int, height: int) -> PageL
 
 def render_style_proof(
     target: TargetArtifacts, style: LetteringStyle, image: bytes,
+    copy: ProofCopy = LABEL_COPY,
 ) -> tuple[bytes, str]:
     """Return a cached derivative keyed by art, exact style, engine and specimens.
 
@@ -85,14 +127,14 @@ def render_style_proof(
     """
     identity = hashlib.sha256(json.dumps([
         hashlib.sha256(image).hexdigest(), style.content_sha256, ENGINE_VERSION,
-        PROOF_VERSION, SPECIMENS,
+        PROOF_VERSION, specimens(copy),
     ], separators=(",", ":")).encode()).hexdigest()
     path = target.lettering_proof_path(identity)
     if path.exists():
         return path.read_bytes(), identity
     with Image.open(io.BytesIO(image)) as source:
         width, height = source.size
-    state = resolve_style_proof(style, width, height)
+    state = resolve_style_proof(style, width, height, copy)
     # Invalid/oversize design tokens produce an actionable error, not silent
     # clipping or font shrinking beneath the configured floor.
     result = render_lettered_page(state, style, image, width, height)

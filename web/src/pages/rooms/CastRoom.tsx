@@ -33,6 +33,7 @@ import { useLiveStageAsset } from "../../hooks/useLiveStageAsset";
 import { Tag } from "../../components/ui/Tag";
 import { Button } from "../../components/ui/Button";
 import { ImageModal } from "../../components/ui/ImageModal";
+import { useImageViewer } from "../../hooks/useImageViewer";
 import { GenerationDetailsPanel } from "../../components/ui/GenerationDetailsModal";
 import { LazyImage } from "../../components/ui/LazyImage";
 import type { AppearanceState, CastFailure, CastReferenceInput, Character, GenerationJob, Location, Prop } from "../../types/api";
@@ -66,8 +67,13 @@ function ReferenceViews({ projectName, charId, timestamp }: { projectName: strin
   const { t } = useI18n();
   const [failed, setFailed] = useState<Record<string, boolean>>({});
 
+  const inspector = useImageViewer();
   const visiblePoses = REF_VIEWS.filter(({ pose }) => !failed[pose]);
   if (visiblePoses.length === 0) return null;
+  const poseImages = visiblePoses.map(({ pose, label }) => ({
+    src: `/api${seriesPath(projectName)}/files/refs/${encodeURIComponent(charId)}/${pose}.png?t=${encodeURIComponent(timestamp)}`,
+    alt: `${t(label)} ${t("reference")}`,
+  }));
 
   return (
     <div>
@@ -76,27 +82,28 @@ function ReferenceViews({ projectName, charId, timestamp }: { projectName: strin
         <span className="mt-1 block font-body text-sm tracking-normal text-ink-muted">{t("Selected automatically to suit each shot.")}</span>
       </div>
       <div className="flex flex-wrap gap-2">
-        {visiblePoses.map(({ pose, label }) => {
-          const src = `/api${seriesPath(projectName)}/files/refs/${encodeURIComponent(charId)}/${pose}.png?t=${encodeURIComponent(timestamp)}`;
-          return (
-            <div
-              key={pose}
-              title={`${t(label)} ${t("reference")}`}
-              className="relative w-[104px] max-w-full overflow-hidden border border-ink-black/15"
-            >
-              <img
-                src={src}
-                alt={`${t(label)} ${t("reference")}`}
-                className="aspect-square w-full object-cover"
-                onError={() => setFailed((f) => ({ ...f, [pose]: true }))}
-              />
-              <span className="block bg-ink-black/5 px-2 py-2 text-center font-meta text-xs tracking-normal text-ink-muted">
-                {t(label)}
-              </span>
-            </div>
-          );
-        })}
+        {visiblePoses.map(({ pose, label }, position) => (
+          <button
+            type="button"
+            key={pose}
+            title={t("Zoom and inspect")}
+            aria-label={`${t("Zoom and inspect")} · ${poseImages[position].alt}`}
+            onClick={() => inspector.open(poseImages, position)}
+            className="relative w-[104px] max-w-full cursor-zoom-in overflow-hidden border border-ink-black/15 transition-colors hover:border-ink-black/50 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red"
+          >
+            <img
+              src={poseImages[position].src}
+              alt={poseImages[position].alt}
+              className="aspect-square w-full object-cover"
+              onError={() => setFailed((f) => ({ ...f, [pose]: true }))}
+            />
+            <span className="block bg-ink-black/5 px-2 py-2 text-center font-meta text-xs tracking-normal text-ink-muted">
+              {t(label)}
+            </span>
+          </button>
+        ))}
       </div>
+      {inspector.viewer}
     </div>
   );
 }
@@ -338,7 +345,7 @@ function RefVersionHistory({
   );
 }
 
-/** A reference's look in reader terms, with the verbatim prompt tags one click away. */
+/** A reference's look in reader terms. Internal subject-count tags stay hidden. */
 function AnchorSection({ anchor }: { anchor: string }) {
   const { t } = useI18n();
   const readable = readableAnchor(anchor);
@@ -346,14 +353,6 @@ function AnchorSection({ anchor }: { anchor: string }) {
     <section aria-label={t("VISUAL ANCHOR")}>
       <h3 className="font-meta text-xs text-ink-muted">{t("VISUAL ANCHOR")}</h3>
       <p className="mt-1 break-words text-sm leading-6 text-ink-black">{readable}</p>
-      {readable !== anchor && (
-        <details className="mt-1">
-          <summary className="min-h-11 cursor-pointer py-3 font-meta text-xs text-ink-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hero-red">
-            {t("Prompt tags")}
-          </summary>
-          <p className="break-words font-mono text-xs leading-5 text-ink-muted">{anchor}</p>
-        </details>
-      )}
     </section>
   );
 }

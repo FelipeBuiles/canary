@@ -26,10 +26,12 @@ function editor(): Editor {
       revision: 4, title: "Lighthouse", author: "Test", total_scenes: 2, style_notes: null, sequences: [],
       excluded_entities: [{ kind: "character", name: "Old Tom", aliases: [] }],
       characters: [
-        { id: "mara", name: "Mara", visual_anchor: "short black hair, grey coat", age_range: "adult", gender: "female",
+        { id: "mara", name: "Mara", visual_anchor: "1woman, short black hair, grey coat.", age_range: "adult", gender: "female",
           distinguishing_features: [], baseline_affect: null, default_outfit: "grey coat", relationships: [],
-          first_appearance_scene: "scene_001", appearance_states: [], aliases: [], origin: "extracted" },
-        { id: "ines", name: "Ines", visual_anchor: "long red hair", age_range: "adult", gender: "female",
+          first_appearance_scene: "scene_001", appearance_states: [{ id: "storm", label: "Storm gear",
+            visual_anchor: "1woman, short black hair, yellow oilskin coat.", continuity_guard: "  The coat stays yellow.  ",
+            visually_significant: true, baseline_affect: null }], aliases: [], origin: "extracted" },
+        { id: "ines", name: "Ines", visual_anchor: "1woman, long red hair", age_range: "adult", gender: "female",
           distinguishing_features: [], baseline_affect: null, default_outfit: "", relationships: [],
           first_appearance_scene: "scene_001", appearance_states: [], aliases: ["Ines Vale"], origin: "author" },
       ],
@@ -57,10 +59,11 @@ vi.mock("../api/client", async (original) => ({
       return { mentioned: true, estimate: { estimate_credits: 2, reserved_credits: 3, reservation_multiplier: 1.5, confidence: "variable" }, mentioned_scene_ids: ["scene_002"] };
     }
     if (path === "/projects/p1/story-bible/characters/draft") {
-      return { details: { name: "Old Tom", visual_anchor: "white beard, oilskin coat", age_range: "70s" }, suggested_scene_ids: ["scene_002"], mentioned_scene_ids: ["scene_002"] };
+      return { details: { name: "Old Tom", visual_anchor: "1man, white beard, oilskin coat", age_range: "70s" }, suggested_scene_ids: ["scene_002"], mentioned_scene_ids: ["scene_002"] };
     }
     if (method === "POST" && path === "/projects/p1/story-bible/characters") return { ...saved, entity_id: "author_char_001" };
     if (method === "PATCH" && path === "/projects/p1/story-bible/characters/mara") return saved;
+    if (method === "PATCH" && path === "/projects/p1/story-bible/characters/mara/states/storm") return saved;
     if (method === "DELETE") return saved;
     throw new Error(`Unexpected fixture API: ${method} ${path}`);
   },
@@ -74,6 +77,52 @@ function renderEditor() {
     <StoryBibleEditor project="p1~part_0002" />
   </MemoryRouter></I18nProvider></QueryClientProvider>);
 }
+
+it("hides internal subject labels in Story Bible rows and description editors", async () => {
+  const user = userEvent.setup();
+  const view = renderEditor();
+  const mara = (await screen.findByText("Mara")).closest("li")!;
+  expect(within(mara).getByText("Short black hair, grey coat.")).toBeTruthy();
+  expect(screen.getByText("Long red hair.")).toBeTruthy();
+  expect(view.container.textContent).not.toMatch(/\b1woman\b/);
+
+  await user.click(within(mara).getByRole("button", { name: "Edit" }));
+  const sheet = screen.getByRole("dialog", { name: "Edit Mara" });
+  const description = within(sheet).getByLabelText("Physical description *") as HTMLTextAreaElement;
+  expect(description.value).toBe("short black hair, grey coat.");
+  expect(within(sheet).getByText("Short black hair, yellow oilskin coat.")).toBeTruthy();
+  expect(sheet.textContent).not.toMatch(/\b1woman\b/);
+
+  const look = within(sheet).getByText("Storm gear").closest("li")!;
+  await user.click(within(look).getByRole("button", { name: "Edit" }));
+  expect((within(sheet).getByLabelText("Complete description of this look *") as HTMLTextAreaElement).value)
+    .toBe("short black hair, yellow oilskin coat.");
+  await user.clear(within(sheet).getByLabelText("Label *"));
+  await user.type(within(sheet).getByLabelText("Label *"), "Rain gear");
+  await user.click(within(sheet).getByRole("button", { name: "Save look" }));
+  await waitFor(() => expect(server.calls.some((call) => call.path.endsWith("/states/storm"))).toBe(true));
+  expect(server.calls.find((call) => call.path.endsWith("/states/storm"))?.body).toEqual({
+    expected_revision: 4,
+    changes: { label: "Rain gear", visual_anchor: "1woman, short black hair, yellow oilskin coat.",
+      continuity_guard: "  The coat stays yellow.  ", visually_significant: true },
+  });
+});
+
+it("saves an intentional physical description edit without exposing model tags", async () => {
+  const user = userEvent.setup();
+  renderEditor();
+  const mara = (await screen.findByText("Mara")).closest("li")!;
+  await user.click(within(mara).getByRole("button", { name: "Edit" }));
+  const sheet = screen.getByRole("dialog", { name: "Edit Mara" });
+  const description = within(sheet).getByLabelText("Physical description *");
+  await user.clear(description);
+  await user.type(description, "short black hair, red coat");
+  await user.click(within(sheet).getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(server.calls.some((call) => call.method === "PATCH")).toBe(true));
+  expect(server.calls.find((call) => call.method === "PATCH")?.body).toEqual({
+    expected_revision: 4, changes: { visual_anchor: "short black hair, red coat" },
+  });
+});
 
 it("lets an author include a briefly appearing character in Cast against the loaded revision", async () => {
   const user = userEvent.setup();
@@ -139,6 +188,6 @@ it("adds a character drafted from the source into the scenes that can still chan
   expect(server.calls.find((call) => call.path === "/projects/p1/story-bible/characters")?.body).toEqual({
     expected_revision: 4,
     scene_ids: ["scene_002"],
-    details: { name: "Old Tom", visual_anchor: "white beard, oilskin coat", age_range: "70s" },
+    details: { name: "Old Tom", visual_anchor: "1man, white beard, oilskin coat", age_range: "70s" },
   });
 });

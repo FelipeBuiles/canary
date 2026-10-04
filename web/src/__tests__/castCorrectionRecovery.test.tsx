@@ -46,10 +46,11 @@ it("keeps canonical identity and a failed correction visible after closing and r
   let view = mount(client);
   expect(await screen.findByText(readable)).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "Open image · Companion" }));
-  // The reader-facing look, with the verbatim prompt tags kept one click away.
+  // Internal model tags never appear in the author-facing identity view.
   const identity = within(screen.getByRole("region", { name: "VISUAL ANCHOR" }));
   expect(identity.getByText(readable)).toBeTruthy();
-  expect(identity.getByText(anchor).closest("details")).toBeTruthy();
+  expect(identity.queryByText(anchor)).toBeNull();
+  expect(identity.queryByText("Prompt tags")).toBeNull();
   const draft = "Restore the canonical cat anatomy.";
   await user.type(screen.getByRole("textbox"), draft);
   await user.click(await screen.findByRole("button", { name: /REGENERATE WITH CHANGE.*credits/ }));

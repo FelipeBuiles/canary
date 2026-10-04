@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from novel_to_comic.target_artifacts import TargetArtifacts
+from novel_to_comic.gemini_tuning import tuned_request
 from novel_to_comic.usage import ApiResult
 
 
@@ -16,7 +17,7 @@ def _checkpoint_location(artifacts, stage, model, request):
     if stage not in {"extract", "adapt", "plan"}:
         raise ValueError("unsupported structured generation stage")
     encoded = json.dumps(
-        {"version": 1, "model": model, "request": request},
+        {"version": 1, "model": model, "request": tuned_request(model, request)},
         ensure_ascii=False, sort_keys=True, separators=(",", ":"),
     )
     key = hashlib.sha256(encoded.encode()).hexdigest()

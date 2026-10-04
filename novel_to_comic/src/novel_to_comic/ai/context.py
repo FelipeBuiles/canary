@@ -6,6 +6,9 @@ threading those fields through every stage function signature.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -152,6 +155,7 @@ def notify_execution_started() -> None:
     Observation must never fail the request it describes.
     """
 
+    mark_generation_executing()
     for observer in _current_execution_observers.get():
         try:
             observer()
@@ -159,3 +163,95 @@ def notify_execution_started() -> None:
             import logging
 
             logging.getLogger(__name__).exception("Execution observer failed")
+
+
+class GenerationProbe:
+    """Telemetry-only facts about one provider call, gathered where they occur.
+
+    Timings are monotonic; a phase never observed stays absent rather than
+    zero. Prompt and output bodies are kept only when the caller opted in and
+    are released to telemetry solely through its content-capture gate.
+    """
+
+    __slots__ = ("started", "executing", "first_content", "stream", "prompt_sha",
+                 "schema_sha", "input_messages", "output_text")
+
+    def __init__(self) -> None:
+        self.started = time.perf_counter()
+        self.executing: float | None = None
+        self.first_content: float | None = None
+        self.stream: bool | None = None
+        self.prompt_sha: str | None = None
+        self.schema_sha: str | None = None
+        self.input_messages: list[dict[str, str]] | None = None
+        self.output_text: str | None = None
+
+    def describe(self, *, system_prompt: str, user_content: str, json_schema: dict | None,
+                 stream: bool, keep_content: bool) -> None:
+        # The system prompt is the stage's instruction template; user content
+        # varies per input and is fingerprinted only by the usage row.
+        self.prompt_sha = _short_sha(system_prompt)
+        self.schema_sha = _short_sha(json.dumps(json_schema, sort_keys=True)) if json_schema else None
+        self.stream = stream
+        if keep_content:
+            self.input_messages = [{"role": "system", "content": system_prompt},
+                                   {"role": "user", "content": user_content}]
+
+    def telemetry_fields(self, latency_ms: int) -> dict[str, object]:
+        fields: dict[str, object] = {"prompt_sha": self.prompt_sha, "schema_sha": self.schema_sha}
+        if self.stream is not None:
+            fields["$ai_stream"] = self.stream
+        if self.executing is not None:
+            admission_ms = int((self.executing - self.started) * 1000)
+            fields["admission_ms"] = admission_ms
+            fields["execution_ms"] = max(0, latency_ms - admission_ms)
+        if self.first_content is not None:
+            fields["$ai_time_to_first_token"] = round(
+                self.first_content - (self.executing or self.started), 3)
+        return {key: value for key, value in fields.items() if value is not None}
+
+    def content_fields(self) -> dict[str, object]:
+        if self.input_messages is None:
+            return {}
+        fields: dict[str, object] = {"$ai_input": self.input_messages}
+        if self.output_text is not None:
+            fields["$ai_output_choices"] = [{"role": "assistant", "content": self.output_text}]
+        return fields
+
+
+def _short_sha(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()[:16]
+
+
+_current_generation_probe: ContextVar[GenerationProbe | None] = ContextVar(
+    "current_generation_probe",
+    default=None,
+)
+
+
+def current_generation_probe() -> GenerationProbe | None:
+    return _current_generation_probe.get()
+
+
+@contextmanager
+def generation_probe() -> Iterator[GenerationProbe]:
+    """Scope one provider call's telemetry probe."""
+
+    probe = GenerationProbe()
+    token = _current_generation_probe.set(probe)
+    try:
+        yield probe
+    finally:
+        _current_generation_probe.reset(token)
+
+
+def mark_generation_executing() -> None:
+    """The provider began work; a serialized queue may release after admission."""
+
+    if (probe := _current_generation_probe.get()) is not None:
+        probe.executing = time.perf_counter()
+
+
+def mark_generation_first_content() -> None:
+    if (probe := _current_generation_probe.get()) is not None and probe.first_content is None:
+        probe.first_content = time.perf_counter()

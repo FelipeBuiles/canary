@@ -14,6 +14,7 @@ from novel_to_comic.config import (
     GATEWAY_IMAGE_QUALITY,
     GATEWAY_IMAGE_SUNBURST,
     GATEWAY_SOL,
+    GATEWAY_GEMINI_FLASH,
     GATEWAY_LUNA,
     config_for_image_model_alias,
     image_model_aliases,
@@ -61,7 +62,8 @@ class TestConfigDefaults:
 
     def test_gateway_aliases_are_default_models(self):
         cfg = Config()
-        assert cfg.extraction_model == GATEWAY_LUNA
+        assert cfg.extraction_model == GATEWAY_GEMINI_FLASH
+        assert cfg.brief_model == GATEWAY_GEMINI_FLASH
         assert cfg.adapt_model == GATEWAY_SOL
         assert cfg.plan_model == GATEWAY_SOL
         assert cfg.prompt_model == GATEWAY_LUNA

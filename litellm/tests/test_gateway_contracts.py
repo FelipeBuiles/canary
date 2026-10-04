@@ -1,8 +1,8 @@
 """Provider-free contracts against the installed gateway, not fallback stubs."""
+import sys
 from importlib import import_module, util
 from importlib.metadata import version
 from pathlib import Path
-import sys
 
 import httpx
 import pytest
@@ -85,10 +85,11 @@ def test_http_patch_is_present_idempotent_and_fails_closed():
 
 
 def test_real_gateway_and_only_supported_custom_handler_are_loaded():
+    import yaml
     from litellm.llms.custom_llm import CustomLLM
+
     from litellm_handlers.fal_provider import FalQueueLLM
     from litellm_handlers.openai_image_stream import OpenAIImageStreamLLM
-    import yaml
 
     assert version("litellm") == "1.101.0"
     assert issubclass(FalQueueLLM, CustomLLM)
@@ -99,7 +100,8 @@ def test_real_gateway_and_only_supported_custom_handler_are_loaded():
     assert {route["model_name"] for route in config["model_list"]} == {
         "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "claude-opus-5-5",
         "claude-sonnet-5-5", "mimo-v2.6-pro", "deepseek-v4.1-flash", "image-sunburst",
-        "image-sunburst-openai", "gemini-3.8-flash",
+        "image-sunburst-openai", "image-flare", "gemini-3.8-flash",
+        "bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5",
     }
     assert config["litellm_settings"]["custom_provider_map"] == [{
         "provider": "fal-queue",
@@ -114,8 +116,10 @@ def test_real_gateway_and_only_supported_custom_handler_are_loaded():
 
 def test_together_deepseek_route_disables_thinking_and_keeps_json_schema(monkeypatch):
     import json
-    import litellm
+
     import yaml
+
+    import litellm
 
     route = next(
         item["litellm_params"]
@@ -168,8 +172,10 @@ def test_claude_5_5_route_keeps_client_effort_format_and_thinking_summaries(monk
     Runs on the bundled map with the configured drop_params, as in production.
     """
     import json
-    import litellm
+
     import yaml
+
+    import litellm
 
     route = next(
         item
@@ -224,8 +230,10 @@ def test_fal_billed_cost_and_request_id_survive_litellm_image_wrappers(monkeypat
     import asyncio
     import io
     import json
-    import litellm
+
     from litellm.utils import custom_llm_setup
+
+    import litellm
     from litellm_handlers import fal_provider
 
     async def submit(*args, **kwargs):
@@ -300,6 +308,7 @@ def _vertex_response():
 def _app_price(alias):
     """Base token rates the app settles with when the gateway reports no cost."""
     import json
+
     import yaml
 
     pricing = yaml.safe_load((ROOT / "novel_to_comic/src/novel_to_comic/litellm_pricing_overrides.yaml").read_text())
@@ -330,6 +339,7 @@ def test_text_route_keeps_controls_and_app_price_on_the_bundled_map(monkeypatch,
     loses capability-gated parameters such as effort.
     """
     import json
+
     import litellm
 
     sys.path.insert(0, str(ROOT / "novel_to_comic/src"))
@@ -343,7 +353,11 @@ def test_text_route_keeps_controls_and_app_price_on_the_bundled_map(monkeypatch,
 
     def send(self, request, **kwargs):
         sent.append(json.loads(request.content))
-        if "aiplatform.googleapis.com" in str(request.url):
+        if "bedrock-runtime" in str(request.url):
+            body = {"output": {"message": {"role": "assistant", "content": [{"text": '{"ok":true}'}]}},
+                    "stopReason": "end_turn", "usage": {"inputTokens": 1000, "outputTokens": 1000,
+                    "totalTokens": 2000}, "metrics": {"latencyMs": 1}}
+        elif "aiplatform.googleapis.com" in str(request.url):
             body = _vertex_response()
         elif "anthropic" in str(request.url):
             body = {"id": "m", "type": "message", "role": "assistant", "model": upstream,
@@ -376,13 +390,18 @@ def test_text_route_keeps_controls_and_app_price_on_the_bundled_map(monkeypatch,
     if wire.provider_key == "vertex_ai":
         _vertex_adc(monkeypatch)
         params = {**route["litellm_params"], "vertex_project": "fixture-project", "vertex_location": "global"}
+    elif wire.provider_key == "bedrock":
+        params = {**route["litellm_params"], "api_key": "test-key", "aws_region_name": "us-east-1"}
     else:
         params = {**route["litellm_params"], "api_key": "test-key"}
     router = litellm.Router(model_list=[{**route, "litellm_params": params}])
     response = router.completion(model=model, **payload)
 
     body = sent[-1]
-    if wire.claude_native_json:
+    if wire.provider_key == "bedrock":
+        assert body["additionalModelRequestFields"]["output_config"]["effort"] == wire.effort == "medium"
+        assert json.loads(body["outputConfig"]["textFormat"]["structure"]["jsonSchema"]["schema"]) == schema
+    elif wire.claude_native_json:
         assert body["output_config"]["effort"] == wire.effort == "medium"
     if "reasoning_effort" in route["litellm_params"]:
         if wire.provider_key == "vertex_ai":
@@ -403,6 +422,7 @@ def test_text_route_keeps_controls_and_app_price_on_the_bundled_map(monkeypatch,
 def test_vertex_gemini_route_preserves_project_schema_vision_reasoning_and_usage(monkeypatch, stream, effort):
     import asyncio
     import json
+
     import litellm
 
     route = next(item for item in _gateway_config()["model_list"] if item["model_name"] == "gemini-3.8-flash")
@@ -474,14 +494,20 @@ def test_vertex_gemini_route_preserves_project_schema_vision_reasoning_and_usage
 
 
 @pytest.mark.parametrize("edit", [False, True])
-def test_openai_stream_route_keeps_manifest_usage_and_reports_no_gateway_cost(monkeypatch, edit):
+@pytest.mark.parametrize("alias,model", [
+    ("image-sunburst-openai", "gpt-image-2.5-sunburst"),
+    ("image-flare", "gpt-image-2.5-flare"),
+])
+def test_openai_stream_route_keeps_manifest_usage_and_reports_no_gateway_cost(monkeypatch, edit, alias, model):
     """The Draw page transport's exact fields through the Router, as the proxy runs them."""
     import asyncio
     import base64
     import io
     import json
-    import litellm
+
     from litellm.utils import custom_llm_setup
+
+    import litellm
     from litellm_handlers import openai_image_stream
 
     png = base64.b64encode(b"\x89PNGfixture").decode()
@@ -504,20 +530,22 @@ def test_openai_stream_route_keeps_manifest_usage_and_reports_no_gateway_cost(mo
         {"provider": "openai-stream", "custom_handler": openai_image_stream.openai_image_stream_llm},
     ])
     custom_llm_setup()
-    route = next(item for item in _gateway_config()["model_list"] if item["model_name"] == "image-sunburst-openai")
+    route = next(item for item in _gateway_config()["model_list"] if item["model_name"] == alias)
     router = litellm.Router(model_list=[{**route, "litellm_params": {**route["litellm_params"], "api_key": "sk-test"}}])
     fields = {
         "prompt": "p", "size": "1024x1536", "n": 1, "quality": "medium", "output_format": "png",
         "canary_wire_request": json.dumps({"width": 1024, "height": 1536, "controls": [
             ["quality", "medium"], ["output_format", "png"], ["n", 1]]}),
     }
-    call = (router.aimage_edit(model="image-sunburst-openai", image=[io.BytesIO(b"\x89PNGref")], **fields)
-            if edit else router.aimage_generation(model="image-sunburst-openai", **fields))
+    call = (router.aimage_edit(model=alias, image=[io.BytesIO(b"\x89PNGref")], **fields)
+            if edit else router.aimage_generation(model=alias, **fields))
     response = asyncio.run(call)
 
     sent = seen[-1].content
     assert (b'name="size"\r\n\r\n1024x1536' in sent) if edit else (json.loads(sent)["size"] == "1024x1536")
+    assert (f'name="model"\r\n\r\n{model}'.encode() in sent) if edit else (json.loads(sent)["model"] == model)
     body = json.loads(response.model_dump_json())
+    assert body["model"] == f"openai/{model}"
     assert body["usage"]["output_tokens"] == 343
     assert body["usage"]["input_tokens_details"]["image_tokens"] == 3000
     assert body["provider_request_id"] == "req_9"
@@ -529,6 +557,7 @@ def test_openai_stream_route_keeps_manifest_usage_and_reports_no_gateway_cost(mo
 @pytest.mark.parametrize("enabled", [False, True])
 def test_open_model_request_overrides_gateway_reasoning_default(monkeypatch, model, enabled):
     import json
+
     import litellm
     route = next(item for item in _gateway_config()["model_list"] if item["model_name"] == model)
     sent = []
@@ -550,8 +579,10 @@ def test_open_model_request_overrides_gateway_reasoning_default(monkeypatch, mod
         assert sent[-1]["provider"]["require_parameters"] is True
 
 
-def test_gemini_vertex_route_uses_adc_schema_effort_and_pinned_price(monkeypatch):
+@pytest.mark.parametrize("constrained", [True, False])
+def test_gemini_vertex_route_uses_adc_schema_effort_and_pinned_price(monkeypatch, constrained):
     import json
+
     import litellm
     route = next(item for item in _gateway_config()["model_list"]
                  if item["model_name"] == "gemini-3.8-flash")
@@ -575,7 +606,8 @@ def test_gemini_vertex_route_uses_adc_schema_effort_and_pinned_price(monkeypatch
     response = router.completion(
         model="gemini-3.8-flash", messages=[{"role": "user", "content": "Hello"}],
         reasoning_effort="medium", max_completion_tokens=32768,
-        response_format={"type": "json_schema", "json_schema": {"name": "x", "strict": True, "schema": schema}},
+        response_format=({"type": "json_schema", "json_schema": {"name": "x", "strict": True, "schema": schema}}
+                         if constrained else {"type": "json_object"}),
     )
     request = seen[-1]
     assert request.url.host == "aiplatform.googleapis.com"
@@ -584,7 +616,12 @@ def test_gemini_vertex_route_uses_adc_schema_effort_and_pinned_price(monkeypatch
     assert "x-goog-api-key" not in request.headers
     generation = json.loads(request.content)["generationConfig"]
     assert generation["max_output_tokens"] == 32768
-    assert generation["response_json_schema"] == schema
+    assert generation["response_mime_type"] == "application/json"
+    if constrained:
+        assert generation["response_json_schema"] == schema
+    else:
+        assert "response_json_schema" not in generation
+        assert "response_schema" not in generation
     assert generation["thinkingConfig"] == {"thinkingLevel": "medium", "includeThoughts": True}
     # Thinking bills as output: 1000 * $0.75/M + 150 * $3.75/M.
     assert response._hidden_params["response_cost"] == pytest.approx(0.0013125)

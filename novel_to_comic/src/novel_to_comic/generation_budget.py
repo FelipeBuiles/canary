@@ -16,6 +16,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from novel_to_comic.ai.context import execution_observer
+from novel_to_comic.gemini_tuning import tuned_request
 from novel_to_comic.usage import calculate_cost_breakdown
 
 
@@ -83,7 +84,7 @@ def budgeted_generator(generate, *, artifacts, stage, model, inputs, max_calls, 
     async def run(**request):
         call = GenerationCall(
             id=uuid4().hex, model=model, feature=request.get("feature", stage),
-            request_sha256=hashlib.sha256(json.dumps(request, sort_keys=True,
+            request_sha256=hashlib.sha256(json.dumps(tuned_request(model, request), sort_keys=True,
                                                     ensure_ascii=False).encode()).hexdigest(),
             admitted_at=datetime.now(timezone.utc).isoformat(),
         )

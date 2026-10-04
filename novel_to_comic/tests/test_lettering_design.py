@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import io
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -15,12 +16,14 @@ from pydantic import ValidationError
 from novel_to_comic import artifacts as paths
 from novel_to_comic.config import Config, save_config
 from novel_to_comic.lettering import service
-from novel_to_comic.lettering.proof import render_style_proof, resolve_style_proof, style_proof_state
+from novel_to_comic.lettering.proof import (
+    LABEL_COPY, SPECIMEN_MAX_CHARS, ProofCopy, render_style_proof, resolve_style_proof, style_proof_state,
+)
 from novel_to_comic.models.lettering import LetteringDesign, LetteringStyle
 from novel_to_comic.models.page import PinnedGeometry
 from novel_to_comic.server.routers import lettering, pipeline, styles
 from novel_to_comic.stages.s2_style import (
-    StyleSuggestionBatch, build_style_sample_request, generate_sample_image,
+    StyleProduction, build_style_sample_request, generate_sample_image,
     normalize_suggestion, save_suggestions,
 )
 from novel_to_comic.state import create_initial_state
@@ -30,19 +33,19 @@ from novel_to_comic.style_contract import (
 )
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.usage import ApiResult
-from tests.test_style_stage import _batch, _bible
+from tests.test_style_stage import _batch, _bible, _production
 
 
 def suggestion():
-    candidate = _batch()["styles"][0]
+    candidate = _batch()["styles"][0] | _production()
     candidate["lettering_design"]["label"] = "Moonlit ink"
     candidate["lettering_design"]["roles"]["speech"].update(fill="#fff6d9", stroke="#342818")
     return normalize_suggestion(candidate)
 
 
 def test_generated_design_is_required_closed_and_retained_through_selection():
-    schema = StyleSuggestionBatch.model_json_schema()
-    assert "lettering_design" in schema["$defs"]["StyleSuggestion"]["required"]
+    schema = StyleProduction.model_json_schema()
+    assert "lettering_design" in schema["required"]
     assert set(schema["$defs"]["DesignedLetteringRoles"]["required"]) == {"caption", "speech", "thought", "sfx"}
     item = suggestion()
     assert normalize_suggestion(item)["id"] == item["id"]
@@ -51,13 +54,13 @@ def test_generated_design_is_required_closed_and_retained_through_selection():
     assert style.label == "Moonlit ink"
     assert style.roles.speech.fill == "#fff6d9"
     assert style.roles == LetteringStyle(revision=1, roles=item["lettering_design"]["roles"]).roles
-    invalid = _batch()
-    del invalid["styles"][0]["lettering_design"]
+    invalid = _production()
+    del invalid["lettering_design"]
     with pytest.raises(ValidationError, match="lettering_design"):
-        StyleSuggestionBatch.model_validate(invalid)
-    invalid = _batch() | {"lettering_design": item["lettering_design"]}
+        StyleProduction.model_validate(invalid)
+    invalid = _production() | {"lettering_designs": item["lettering_design"]}
     with pytest.raises(ValidationError, match="Extra inputs"):
-        StyleSuggestionBatch.model_validate(invalid)
+        StyleProduction.model_validate(invalid)
 
 
 @pytest.mark.parametrize("defect", ["missing_role", "font", "range", "color", "extra"])
@@ -191,6 +194,65 @@ def test_proof_tails_follow_fitted_bodies_and_specimens_do_not_overlap(size):
             assert a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1]
 
 
+_LONGEST_STORY_COPY = ProofCopy(
+    caption="The lamps of the harbor guttered out one by one.",
+    speech="Where did they all go?",
+    shout="Run now!",
+    thought="Nobody else saw the ship sink.",
+    sfx="WHOOOSHHH",
+)
+
+
+@pytest.mark.parametrize("preset", sorted(service.PRESETS))
+def test_longest_story_copy_fits_every_preset_without_overlap(preset):
+    # The ceilings in SPECIMEN_MAX_CHARS must fit every bundled design.
+    assert all(len(getattr(_LONGEST_STORY_COPY, role)) == limit for role, limit in SPECIMEN_MAX_CHARS.items())
+    state = resolve_style_proof(service.preset_style(preset), 1024, 1536, _LONGEST_STORY_COPY)
+    assert {item.id.removeprefix("proof-"): item.resolved.text for item in state.elements} == (
+        _LONGEST_STORY_COPY.model_dump())
+    boxes = []
+    for element in state.elements:
+        body = element.resolved
+        assert not body.overflow and not body.warnings
+        x, y = element.placement.x, element.placement.y
+        bottom = element.tail_target.y if element.tail_target else y + body.height
+        boxes.append((x, y, x + body.width, bottom))
+    for i, a in enumerate(boxes):
+        for b in boxes[i + 1:]:
+            assert a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1]
+
+
+def test_a_line_a_design_cannot_fit_shows_its_role_label(monkeypatch):
+    from novel_to_comic.lettering import proof
+
+    real = proof.resolve_lettering
+
+    def overflowing_speech(state, style):
+        resolved = real(state, style)
+        return resolved.model_copy(update={"elements": tuple(
+            element.model_copy(update={"resolved": element.resolved.model_copy(update={"overflow": True})})
+            if element.id == "proof-speech" and element.text_by_locale["source"] != LABEL_COPY.speech
+            else element
+            for element in resolved.elements
+        )})
+
+    monkeypatch.setattr(proof, "resolve_lettering", overflowing_speech)
+    state = resolve_style_proof(service.preset_style(), 1024, 1536, _LONGEST_STORY_COPY)
+    texts = {item.id.removeprefix("proof-"): item.resolved.text for item in state.elements}
+    assert texts["speech"] == LABEL_COPY.speech
+    assert texts["caption"] == _LONGEST_STORY_COPY.caption
+
+
+def test_story_copy_is_part_of_the_overlay_identity(tmp_path):
+    image = io.BytesIO()
+    Image.new("RGB", (1024, 1536), "#d4d0c4").save(image, "PNG")
+    target = TargetArtifacts(tmp_path)
+    style = service.preset_style()
+    _, labelled = render_style_proof(target, style, image.getvalue())
+    _, story = render_style_proof(target, style, image.getvalue(), _LONGEST_STORY_COPY)
+    assert labelled != story
+
+
 def test_old_baked_proof_is_visible_but_never_gets_a_second_overlay(tmp_path):
     item = suggestion()
     save_suggestions(tmp_path, [item], _bible().title)
@@ -257,14 +319,16 @@ def test_fresh_proofs_follow_mode_and_preserve_generated_lettering(tmp_path, mod
 
 
 def test_integrated_style_prompt_draws_all_specimens_and_preserves_lettering_direction():
-    from novel_to_comic.lettering.proof import SPECIMENS
+    from novel_to_comic.lettering.proof import LABEL_COPY, specimens
     item = suggestion()
     item["lettering"] = "Distinctive hand-painted captions, rounded speech, cloud thoughts and textured display effects."
     config = Config(lettering_mode="integrated", style_template=style_template_for_suggestion(item))
     prompt = build_style_sample_request(config, _bible(), "A quiet scene.", candidate_id="integrated").compiled.final_prompt
     assert item["lettering"] in prompt
-    for _role, text, _bounds in SPECIMENS:
-        assert text in prompt
+    # Without story copy, the proof letters role names, never invented dialogue.
+    for _role, text, _bounds in specimens(LABEL_COPY):
+        assert json.dumps(text) in prompt
+    assert "not dialogue" in prompt
     assert "Draw the lettering directly into the image" in prompt
     assert "Do not draw any lettering" not in prompt
     assert "Software adds them later" not in prompt

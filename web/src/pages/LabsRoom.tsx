@@ -34,6 +34,8 @@ import { Button } from "../components/ui/Button";
 import { Select } from "../components/ui/Select";
 import { Surface } from "../components/ui/Surface";
 import { cn } from "../lib/cn";
+import { InspectBadge } from "../components/ui/InspectButton";
+import { useImageViewer } from "../hooks/useImageViewer";
 
 /*
  * Labs is a local-development room for model experiments on the operator's own
@@ -56,7 +58,7 @@ const PROMPT_LABEL: Record<ImagePrompt, string> = {
 };
 const DEFAULT_ARMS: ImageArm[] = [
   { target: "sunburst-openai", prompt: "production" },
-  { target: "sunburst-openai", prompt: "restructured" },
+  { target: "flare-openai", prompt: "production" },
 ];
 const MAX_ITEMS = 12;
 const READY = new Set(["complete", "awaiting_review"]);
@@ -542,6 +544,7 @@ function ImageResult({ runId, cell, label, frame, blind, onRetry, retrying }: {
   onRetry: (cellId: string) => void;
   retrying: boolean;
 }) {
+  const inspector = useImageViewer();
   const image = cell?.image ? (
     <img src={labsRunFileUrl(runId, cell.image)} alt={label} className="h-full w-full object-contain" />
   ) : null;
@@ -552,9 +555,13 @@ function ImageResult({ runId, cell, label, frame, blind, onRetry, retrying }: {
         {cell && <StatusChip status={cell.status} />}
       </figcaption>
       <div className="overflow-hidden border-[2px] border-ink-black bg-pulp-paper" style={{ aspectRatio: aspect(frame) }}>
-        {image && !blind ? (
-          <a href={labsRunFileUrl(runId, cell!.image!)} target="_blank" rel="noreferrer" className="block h-full w-full">{image}</a>
-        ) : image ?? (
+        {image ? (
+          <button type="button" aria-label={`Zoom and inspect · ${label}`} title="Zoom and inspect" className="group relative block h-full w-full cursor-zoom-in"
+            onClick={() => inspector.open({ src: labsRunFileUrl(runId, cell!.image!), alt: label, downloadable: !blind })}>
+            {image}
+            <InspectBadge />
+          </button>
+        ) : (
           <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center font-body text-sm text-ink-muted">
             <span>{cell?.status === "failed" ? cell.error : "Generating…"}</span>
             {cell?.status === "failed" && (
@@ -566,6 +573,7 @@ function ImageResult({ runId, cell, label, frame, blind, onRetry, retrying }: {
           </div>
         )}
       </div>
+      {inspector.viewer}
       {cell?.status === "ok" && !blind && (
         <p className={cn(META, "mt-1")}>
           {seconds((cell.latency_ms ?? 0) / 1000)} · {costWithEquivalent(cell.cost_usd, cell.api_equivalent_usd, cell.funding)}
@@ -719,7 +727,7 @@ function StageTable({ run, stageName, cells }: { run: LabsRunDetail; stageName: 
         <thead>
           <tr className="border-b-[2px] border-ink-black">
             <th className={cn(META, "py-1.5 pr-3 text-left font-normal")}>Metric</th>
-            {cells.map((cell) => <th key={cell.cell_id} className="py-1.5 pr-3 text-left font-meta text-xs font-bold">{cell.model}</th>)}
+            {cells.map((cell) => <th key={cell.cell_id} className="py-1.5 pr-3 text-left font-meta text-xs font-bold">{cell.model}{cell.variant && ` · ${cell.variant}`}</th>)}
           </tr>
         </thead>
         <tbody>
@@ -770,7 +778,7 @@ function StageModelsRun({ run }: { run: LabsRunDetail }) {
               {phaseCells.map((cell) => (
                 <Surface key={cell.cell_id} padding="sm" shadow="none" border="soft">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-meta text-xs font-bold">{cell.model}<FundingTag funding={cell.funding} /></span>
+                    <span className="font-meta text-xs font-bold">{cell.model}{cell.variant && ` · ${cell.variant}`}<FundingTag funding={cell.funding} /></span>
                     <StatusChip status={cell.status} />
                   </div>
                   <p className="mt-1 font-body text-sm tabular-nums">

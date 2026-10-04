@@ -14,7 +14,7 @@ from pathlib import Path
 
 from novel_to_comic.codex_dev import CodexRoutingError, is_subscription_selector, process_setting, route_for, validate_local_runtime
 from novel_to_comic.config import Config
-from novel_to_comic.text_models import TEXT_REASONING_STAGES, default_reasoning, reasoning_options
+from novel_to_comic.text_models import DEFAULT_STAGE_EFFORTS, TEXT_REASONING_STAGES, default_reasoning, reasoning_options
 from novel_to_comic.model_catalog import STAGE_FIELDS, allowed_models, default_selections, validate_selections
 
 # Creation/import must not bypass the config edit API's trust boundary. These
@@ -105,7 +105,8 @@ def read_global_reasoning(root: Path, selections: dict[str, str]) -> dict[str, s
     if not isinstance(saved, dict):
         raise ValueError("Saved reasoning efforts must be a mapping")
     default_effort = read_global_effort(root)
-    result = {stage: default_reasoning(selections[stage], default_effort) for stage in TEXT_REASONING_STAGES}
+    result = {stage: default_reasoning(selections[stage], DEFAULT_STAGE_EFFORTS.get(stage, default_effort))
+              for stage in TEXT_REASONING_STAGES}
     for stage, effort in saved.items():
         if stage not in result or effort not in reasoning_options(selections[stage]):
             raise ValueError(f"Unsupported reasoning setting for {stage}: {effort}")

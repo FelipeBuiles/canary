@@ -38,6 +38,7 @@ from novel_to_comic.page_review import (
     revalidate_cached_page_render,
     record_analysis_issues,
 )
+from novel_to_comic.server.auth import get_current_user
 from novel_to_comic.server.deps import get_project
 from novel_to_comic.server.routers.lettering import router
 from novel_to_comic.usage import UsageRecord
@@ -242,6 +243,7 @@ def test_http_draft_previews_preserve_missing_translation_and_cannot_bypass_fini
         Config(),
         None,
     )
+    app.dependency_overrides[get_current_user] = lambda: "user"
     client = TestClient(app)
     root = "/api/projects/test/pages/1/composite"
     for rendition, size in (
@@ -525,6 +527,7 @@ def test_authenticated_free_routes_validate_revisions_and_serve_composites(
         Config(),
         None,
     )
+    app.dependency_overrides[get_current_user] = lambda: "user"
     client = TestClient(app)
     root = "/api/projects/test/pages/1"
     paid = AsyncMock(side_effect=AssertionError("lettering must never call providers"))
@@ -594,6 +597,7 @@ def test_saved_locale_mismatch_opens_without_writes_and_requires_guarded_save(
     app = FastAPI()
     app.include_router(router, prefix="/api/projects/{project_id}")
     app.dependency_overrides[get_project] = lambda: (artifacts.project_dir, Config(), None)
+    app.dependency_overrides[get_current_user] = lambda: "user"
     client = TestClient(app)
     root = "/api/projects/test/pages/1"
     response = client.get(root + "/lettering")
@@ -738,6 +742,7 @@ def test_page_list_flags_unreviewed_placement_without_writing_lettering(book, mo
     app = FastAPI()
     app.include_router(pages_router, prefix="/api/projects/{project_id}")
     app.dependency_overrides[get_project] = lambda: (artifacts.project_dir, Config(), None)
+    app.dependency_overrides[get_current_user] = lambda: "user"
     client = TestClient(app)
 
     def flag():
@@ -773,3 +778,27 @@ def test_engine_upgrade_composites_without_an_editor_save_but_asks_for_review(bo
     assert path.is_file() and identity
     assert artifacts.lettering_path(1).read_bytes() == before
     assert service.placement_review_needed(artifacts.read_lettering(1), render)
+
+
+def test_lettering_save_records_an_author_outcome(book, monkeypatch):
+    artifacts, _image = book
+    recorded = []
+    monkeypatch.setattr("novel_to_comic.server.routers.lettering.record_page_outcome",
+                        lambda app, outcome, **kwargs: recorded.append((outcome, kwargs)))
+    app = FastAPI()
+    app.include_router(router, prefix="/api/projects/{project_id}")
+    app.dependency_overrides[get_project] = lambda: (artifacts.project_dir, Config(), None)
+    app.dependency_overrides[get_current_user] = lambda: "user"
+    client = TestClient(app)
+    root = "/api/projects/test/pages/1"
+    data = client.get(root + "/lettering").json()
+    saved = client.put(root + "/lettering", json={
+        "state": {**data["state"], "content_sha256": ""}, "expected_revision": data["saved_revision"],
+        "expected_image_sha256": data["render_image_sha256"],
+        "expected_style_sha256": data["style"]["content_sha256"], "mark_reviewed": True,
+    })
+    assert saved.status_code == 200, saved.text
+    [(outcome, kwargs)] = recorded
+    assert outcome == "lettering_saved"
+    assert kwargs["mode"] == "reviewed" and kwargs["page_number"] == 1
+    assert kwargs["project_id"] == "test" and kwargs["user_id"] == "user"

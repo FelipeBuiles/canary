@@ -75,10 +75,22 @@ class TargetFixtureReplay:
             return bible
         if feature == "brief.infer":
             return _json(self.project_dir / "brief" / "adaptation_brief.json")
-        if feature == "style.suggestions":
-            return _json(
+        if feature in {"style.suggestions", "style.production"}:
+            from novel_to_comic.stages.s2_style import StyleProduction, StyleSketch
+
+            recorded = _json(
                 self.project_dir / "samples" / "style_suggestions.json"
             ).get("suggestions", [])
+            if feature == "style.production":
+                # Production is designed per sketch; replay the first recorded system.
+                source = next((item for item in recorded if item.get("lettering_design")), recorded[0])
+                return {key: source[key] for key in StyleProduction.model_fields if key in source}
+            styles = [
+                {key: item[key] for key in StyleSketch.model_fields if key in item}
+                | {"portfolio_role": item.get("portfolio_role") or item.get("role")}
+                for item in recorded
+            ]
+            return {"medium_restriction": "", "proportion_restriction": "", "styles": styles}
         if feature == "style.sample_brief":
             return _json(
                 self.project_dir / "samples" / "style_sample_brief.json"

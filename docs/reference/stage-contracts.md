@@ -582,7 +582,15 @@ one beat spans a batch boundary. The detail writer returns visual panels and a
 page-level `lettering_placements` object: each locked lettering ID is one required
 key with an authored object containing a 1-based `panel_number` and a
 reservation intent: zone, footprint, line budget, optional normalized bounds,
-and valid visible speaker/tail anchor. The whole-book writer carries equivalent
+and valid visible speaker/tail anchor.
+
+Gemini uses a shared detail template with `lettering_placements` as a list of
+objects carrying `lettering_item_id`; the request-specific adapter converts
+that list to the same ID-keyed local contract before validation. Gemini always
+uses the two-pass workflow, including short stories. Its page count and exact
+beat/lettering ownership remain enforced by the same local validators.
+
+The whole-book writer carries equivalent
 ordered reservation arrays (closed items, no arbitrary-key schema). Every
 canonical lettering ID has exactly one reservation in locked reading order.
 Canonicalization clears reservation speaker and tail attachments for non-onscreen
@@ -817,8 +825,11 @@ authorization to silently redraw or release a reservation.
 ### Style and reference authority
 
 Style curation generates **six** base proofs: three story fits, an adjacent
-option, a contrast, and a wildcard. Twelve typed candidates are curated one per
-role rather than taking the first six. The default portfolio has at least four
+option, a contrast, and a wildcard. Twelve typed art-direction sketches are
+curated one per role rather than taking the first six. Sketches omit the
+production system; only the curated survivors get lettering, preset, page
+framing, strengths and risk, designed in parallel (`style.production`, one
+schema-repair attempt each). The default portfolio has at least four
 `stylized`/`graphic` directions, at least one `realistic_illustration`, and at
 most one optional `photographic` direction. Photography is not mandatory.
 
@@ -839,8 +850,8 @@ author direction, restrictions are ignored. Explicit photographic-only direction
 identity anchor or an ink-only medium does not mandate naturalistic proportions.
 Contrast and wildcard directions honor the same restrictions.
 
-Schema correction, missing roles and inadequate diversity share at most two
-text attempts. A complete but unbalanced pool receives the remaining attempt;
+Sketch schema correction, missing roles and inadequate diversity share at most
+two sketch attempts. A complete but unbalanced pool receives the remaining attempt;
 no invalid portfolio is silently accepted or padded with invented directions.
 This validates declared directions, not generated pixels. Paid-image retries,
 visual verification and author selection remain explicit. Existing saved proofs
@@ -856,7 +867,12 @@ The v6 brief cache fingerprints the selected evidence, model, and prompt;
 stale cache entries are not reused. Candidate styles render the same selection.
 Concurrent sample jobs serialize shared-brief authoring and recheck the cache;
 a durable suggestion batch resolves its brief once, including a deterministic
-fallback when authoring fails.
+fallback when authoring fails. The brief depends only on the Story Bible, so a
+batch authors it while sketches are curated and cancels it if curation fails.
+Proofs run under `image_concurrency` (the shared Style/Cast image limit). A
+durable batch persists `style_phase` (`directions` → `production` → `proofs`),
+`style_phase_at`, and the curated `style_shortlist` in its job payload so the
+Look room can explain the current step after a reload.
 
 Editable full-page style samples generate art and framing only, reserving four
 natural quiet areas without words, balloons, boxes or effects. The compiler and
@@ -869,7 +885,15 @@ tokens nor post-production prose enter image-model style projections.
 Editable style cards show a separate cached software-lettered proof, composed by the same
 bundled-font SVG engine as finished pages. Raw sample bytes and their generation
 metadata remain the reference authority. `GET /styles/{suggestion_id}/proof/{kind}`
-serves the derivative, keyed by raw art, style, engine and specimen version.
+serves the derivative, keyed by raw art, style, engine and specimen copy.
+Specimen words are the project's story proof copy (`samples/style_proof_copy.json`,
+feature `style.proof_copy`): caption, speech, shout, thought and SFX lines from
+the proof scene's source passage, spoken only by its listed subjects and
+bounded by `SPECIMEN_MAX_CHARS` so every bundled design fits. It is authored
+with the shared proof brief and cached by the same scene selection; every proof
+of a project letters the same lines. Without valid copy (failure, overrun, or
+the brief pass disabled), proofs letter neutral role labels, never invented
+dialogue, and a line one design cannot fit shows that role's label.
 The speech reservation contains separate normal and shouted-speech specimens;
 the shout uses a burst variant of the speech style, distinct from free-standing
 SFX. Provisional specimen tails attach after text fitting and stay short; they
@@ -880,7 +904,8 @@ Each element/style has a deterministic silhouette shared by fitting and renderin
 moving a bubble does not change its shape. SVG font families are
 quoted so measurement and rendered text use the same bundled font.
 Integrated style proofs draw the same caption, speech, shout, thought and SFX specimen
-strings directly into the image using the candidate’s prose lettering standard.
+strings directly into the image using the candidate’s prose lettering standard;
+new story copy is new request identity, so older integrated proofs become refreshable.
 Software design tokens remain excluded from the image prompt; the endpoint serves
 the original lettered raster without an overlay. Compilation, estimates, freshness
 and delivery follow the project mode, including a retained frozen edition.

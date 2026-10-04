@@ -20,9 +20,11 @@ import {
 import { Check, ArrowDownRight, Columns2, X } from "lucide-react";
 import { BookLetteringPanel } from "../../components/lettering/BookLetteringPanel";
 import { StyleProofCard } from "../../components/style/StyleProofCard";
+import { StyleGenerationProgress } from "../../components/style/StyleGenerationProgress";
 import { ProofFlipViewer, ProofWall } from "../../components/style/ProofFlipViewer";
 import { Button } from "../../components/ui/Button";
 import { LazyImage } from "../../components/ui/LazyImage";
+import { InspectButton } from "../../components/ui/InspectButton";
 import { StateBlock } from "../../components/ui/StateBlock";
 import { Surface } from "../../components/ui/Surface";
 import { ApprovalBar, RoomHeader, ConfirmDrawer, RerunStageAction, RoomShell } from "../../components/composites";
@@ -142,6 +144,11 @@ export function StyleRoom() {
   const { data: coverEstimate } = useProjectCoverEstimate(id, styleSelected && castReady && needsCover);
 
   const latestSuggestionJob = generationJobs?.jobs.filter((job) => job.kind === "style_suggest")
+    .sort((a, b) => a.queued_at.localeCompare(b.queued_at)).at(-1);
+  // A suggestion batch, or an author direction that also curates neighbors.
+  const activeBatchJob = generationJobs?.jobs
+    .filter((job) => (job.kind === "style_suggest" || (job.kind === "style_sample" && !!job.payload.with_neighbors))
+      && (job.status === "queued" || job.status === "running"))
     .sort((a, b) => a.queued_at.localeCompare(b.queued_at)).at(-1);
   const isSuggesting = !!stylesData?.is_suggesting || latestSuggestionJob?.status === "running"
     || latestSuggestionJob?.status === "queued" || suggestionStatus === "running";
@@ -389,6 +396,12 @@ export function StyleRoom() {
   const proofName = (suggestion: StyleSuggestion) => isAuthorDirection(suggestion)
     ? `${t("Yours")} · ${styleName(suggestion)}`
     : styleName(suggestion);
+  const comparedImages = comparedSuggestions.map((suggestion) => ({
+    src: comparingAction
+      ? suggestion.validation_url!
+      : suggestion.sample_preview_url ?? `/api${seriesPath(id)}/files/samples/style_${suggestion.index}.png`,
+    alt: proofName(suggestion),
+  }));
   const shownSuggestions = suggestions.filter((suggestion) => !suggestion.hidden);
   const hiddenSuggestions = suggestions.filter((suggestion) => suggestion.hidden);
   const yoursCount = shownSuggestions.filter(isAuthorDirection).length;
@@ -466,26 +479,17 @@ export function StyleRoom() {
       {projectConfig?.lettering_mode !== "integrated" && styleSelected && !letteringOpen && <div className="mt-5"><Button variant="outline" disabled={styleActionsDisabled} onClick={() => setLetteringOpen(true)}>{t("Edit book lettering")}</Button></div>}
       {letteringOpen && <div className="mt-5"><BookLetteringPanel project={projectName} disabled={isStageGenerating} onClose={() => setLetteringOpen(false)} /></div>}
 
-      {(isSuggesting || isStageGenerating || suggestionStatus === "failed") && (
-        <div className={`mt-4 border-[2px] border-ink-black p-3 ${
-          suggestionStatus === "failed" ? "bg-hero-red text-bristol" : "bg-narrator-gold text-ink-black"
-        }`} role={suggestionStatus === "failed" ? "alert" : "status"} aria-live="polite">
-          <div className="flex items-center gap-2">
-            {(isSuggesting || isStageGenerating) && <span className="animate-press-blink h-2.5 w-2.5 bg-hero-red" />}
-            <span className="font-meta text-[0.7rem] font-bold tracking-[0.08em]">
-              {suggestionStatus === "failed"
-                ? t("STYLE SUGGESTION FAILED")
-                : isStageGenerating
-                  ? t("GENERATING STYLE OPTIONS")
-                  : t("GENERATING ADDITIONAL STYLES")}
-            </span>
-          </div>
-          <div className="mt-1 font-body text-[0.84rem] leading-relaxed">
-            {suggestionStatus === "failed"
-              ? suggestionError
-              : t("Asking the art director for visual directions and rendering one sample image per style. Samples appear as they complete.")}
-          </div>
+      {suggestionStatus === "failed" ? (
+        <div className="mt-4 border-[2px] border-ink-black bg-hero-red p-3 text-bristol" role="alert">
+          <span className="font-meta text-[0.7rem] font-bold tracking-[0.08em]">{t("STYLE SUGGESTION FAILED")}</span>
+          <div className="mt-1 font-body text-[0.84rem] leading-relaxed">{suggestionError}</div>
         </div>
+      ) : (isSuggesting || isStageGenerating) && (
+        <StyleGenerationProgress
+          job={activeBatchJob}
+          fallbackPhase={suggestions.length === 0 ? "directions" : "proofs"}
+          title={isStageGenerating ? t("GENERATING STYLE OPTIONS") : t("GENERATING ADDITIONAL STYLES")}
+        />
       )}
 
       {missingSuggestions.length > 0 && (
@@ -561,16 +565,7 @@ export function StyleRoom() {
             onCustom={setPendingCustomInput}
           />
         </div>
-      ) : suggestions.length === 0 ? (
-        <Surface padding="lg" className="mt-6">
-          <StateBlock
-            minHeight="min-h-[22vh]"
-            title={t("GENERATING STYLE OPTIONS")}
-            description={t("Six art-directed proofs are on the way. Each appears as soon as it is ready.")}
-            icon="styles"
-          />
-        </Surface>
-      ) : (
+      ) : suggestions.length === 0 ? null : (
         <>
           <section className="grid gap-6 bg-ink-black p-6 text-pulp-paper shadow-paper md:grid-cols-[minmax(0,1fr)_minmax(0,0.55fr)] md:p-8">
             <div>
@@ -620,18 +615,19 @@ export function StyleRoom() {
               </div>
               {!actionComparisonAvailable && <p className="mt-2 text-sm text-bristol/80">{t("Action comparison becomes available when each compared direction has a completed action audition.")}</p>}
               <div className={`mt-4 grid gap-4 md:grid-cols-2 ${comparedSuggestions.length === 3 ? "xl:grid-cols-3" : ""}`}>
-                {comparedSuggestions.map((suggestion) => (
+                {comparedSuggestions.map((suggestion, position) => (
                   <div key={suggestion.id} className="bg-bristol p-3 text-ink-black">
-                    <LazyImage
-                      src={comparingAction
-                        ? suggestion.validation_url!
-                        : suggestion.sample_preview_url ?? `/api${seriesPath(id)}/files/samples/style_${suggestion.index}.png`}
-                      alt={proofName(suggestion)}
-                      width={320}
-                      height={400}
-                      aspect="4 / 5"
-                      className="object-contain object-center"
-                    />
+                    <div className="relative">
+                      <LazyImage
+                        src={comparedImages[position].src}
+                        alt={proofName(suggestion)}
+                        width={320}
+                        height={400}
+                        aspect="4 / 5"
+                        className="object-contain object-center"
+                      />
+                      <InspectButton images={comparedImages} index={position} />
+                    </div>
                     <div className="mt-3 font-display text-[1.1rem] font-black uppercase tracking-[-0.025em]">{proofName(suggestion)}</div>
                     <dl className="mt-3 space-y-3 text-sm leading-6">
                       <div><dt className="font-bold">{t("Palette")}</dt><dd>{suggestion.palette}</dd></div>

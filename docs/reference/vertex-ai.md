@@ -13,6 +13,49 @@ reasoning (default Medium). The gateway's built-in `vertex_ai` adapter calls
 `aiplatform.googleapis.com` using the configured project and Application Default
 Credentials (ADC). It does not use `GEMINI_API_KEY` or the Gemini Developer API.
 
+Gemini now uses the successful medium-reasoning Labs tuning behavior:
+Extract, Brief, Adapt, and Plan receive their stage checklists after the source
+context, and Plan always uses the reviewed global map plus local detail workflow.
+Detail requests use one shared page/panel template and a list of lettering-ID
+placements; local validators still enforce exact page count, beat ownership,
+lettering ownership/order, and visual authorities. Repairs use the same format.
+Every Gemini structured call compiles its schema with `gemini_output_schema`
+and sends it as JSON-mode instructions (`schema_instructions`, both in
+`ai/gemini_schema.py`, applied by `gemini_tuning.tuned_request`). No stage or
+feature has its own Gemini transport rule. The compiled schema requires every
+declared property (declared nullable unions stay nullable), drops defaults and
+turns fixed integer enums into equal minimum/maximum bounds.
+Other providers retain their existing prompts and workflows. This does not force High reasoning:
+Medium remains the default and the selected Low/Medium/High setting is preserved.
+Checkpoint and paid-request hashes include the effective tuned inputs, so an
+older stock response cannot satisfy a tuned request. Historical Labs arms use
+a request-local override to retain their original comparison behavior.
+
+Vertex's native constrained decoding (`responseJsonSchema`, which the gateway
+passes our schema through unchanged) is not used. Direct REST probes on
+2026-10-03 found three failures:
+
+- **Optional properties are often omitted.** Four of six identical Brief
+  requests returned only the two required page-range fields, which validated
+  as an empty brief.
+- **Schemas have an unpredictable grammar budget.** Larger schemas are rejected
+  before generation with `400 INVALID_ARGUMENT` and no detail (unbilled). Cost
+  grows with properties after `$ref` expansion (one 150-property definition
+  used three times fails; 250 flat properties pass, 300 fail), nesting depth
+  (14 nested objects pass, 16 fail) and bounded arrays, which unroll their
+  items. Property kinds weigh differently, so no count predicts acceptance.
+  The whole-source Extract schema exceeds it.
+- **Accepted schemas can loop.** The registry-backed Extract section schema was
+  accepted, but Gemini repeated known entities until the output cap, with
+  fields optional or required.
+
+JSON mode with the compiled schema in the instructions returned complete Brief
+responses (3/3) and finished registry-backed section and whole-source Extract
+calls. JSON mode does not enforce the schema, so the typed validators and the
+bounded structured correction path decide acceptance, as for every provider.
+Plan detail keeps its Gemini page template (`generic_detail_schema`); it was
+introduced for the budget and is not required by JSON mode.
+
 The project in `VERTEXAI_PROJECT` determines the Google Cloud billing account
 that receives usage. Trial credits offset eligible charges on that account;
 they do not make provider usage free in Canary's cost records. Verify the

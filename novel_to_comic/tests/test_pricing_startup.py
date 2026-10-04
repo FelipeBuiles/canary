@@ -89,8 +89,12 @@ def test_pricing_overrides_cover_active_routes_and_subscription_equivalents():
     routes = yaml.safe_load((root / "litellm/config.yaml").read_text())["model_list"]
     assert set(overrides["aliases"]) == {route["model_name"] for route in routes}
     # An override may use the exact provider target or its unprefixed model id.
+    # Bedrock Converse responses also identify the underlying inference profile,
+    # without either of the route's transport prefixes.
     targets = set(overrides["aliases"].values())
     candidates = targets | {target.split("/", 1)[1] for target in targets}
+    candidates |= {target.removeprefix("bedrock/converse/") for target in targets
+                   if target.startswith("bedrock/converse/")}
     from novel_to_comic.codex_dev import _DEFAULT_MODELS
     assert set(overrides["model_overrides"]) <= candidates | set(_DEFAULT_MODELS)
     assert {key for key, value in overrides["model_overrides"].items()

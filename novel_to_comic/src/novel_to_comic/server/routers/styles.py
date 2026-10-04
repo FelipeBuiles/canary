@@ -44,6 +44,7 @@ from novel_to_comic.stages.s2_style import (
     generate_sample_image,
     generate_samples_for_indices,
     generate_suggestions,
+    style_proof_copy,
     custom_direction_candidate,
     describe_custom_direction,
     estimate_custom_direction_naming_cost_usd,
@@ -451,10 +452,11 @@ def get_style_lettering_proof(
             return Response(source.read_bytes(), media_type="image/png", headers={"Cache-Control": "private, no-cache"})
         style = _proof_style(project[0], suggestion, active=suggestion["is_active"])
         art = source.read_bytes()
+        copy = style_proof_copy(project[1], _get_bible(project[0]), project[0])
     # The overlay is a content-addressed derivative: render it outside the lock
     # so a cold proof never stalls the rest of the project (or the other proofs).
     try:
-        data, identity = render_style_proof(TargetArtifacts(project[0]), style, art)
+        data, identity = render_style_proof(TargetArtifacts(project[0]), style, art, copy)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     return Response(data, media_type="image/png", headers={

@@ -147,11 +147,15 @@ def legacy_vertex_page_capability_profile() -> PageCapabilityProfile:
     )
 
 
-def openai_page_capability_profile(model: str) -> PageCapabilityProfile:
+def openai_page_capability_profile(
+    model: str, *, quality: Literal["high", "medium"] = "high",
+) -> PageCapabilityProfile:
     if model not in {"gpt-image-2.5-sunburst", "gpt-image-2.5-flare"}:
         raise ValueError("Unsupported complete-page OpenAI model")
+    if quality not in {"high", "medium"}:
+        raise ValueError("Unsupported complete-page OpenAI quality")
     return PageCapabilityProfile(
-        id=f"{model}-complete-page-high-hybrid-v1", exact_visible_lettering=False, provider="openai", model=model,
+        id=f"{model}-complete-page-{quality}-hybrid-v1", exact_visible_lettering=False, provider="openai", model=model,
         max_image_references=16, reference_ordering="ordered",
         editing_modes=("instructed", "region_targeted"),
         output_width=1024, output_height=1536, max_prompt_characters=32_000,
@@ -202,6 +206,11 @@ _EDIT_SOURCE_COUNTS_AS_REFERENCE = frozenset({"openai", "openrouter", "fal-queue
 def page_image_quality(profile_id: str, provider: str) -> str | None:
     """The image quality an edition's profile submits, fixed by its identity."""
     if profile_id.removesuffix("-integrated-v1") in {_FAL_SUNBURST_PAGE_PROFILE_ID, _SUNBURST_FALLBACK_PAGE_PROFILE_ID}:
+        return "medium"
+    if provider == "openai" and profile_id.removesuffix("-integrated-v1") in {
+        f"{model}-complete-page-medium-hybrid-v1"
+        for model in ("gpt-image-2.5-sunburst", "gpt-image-2.5-flare")
+    }:
         return "medium"
     # Retained direct-OpenAI and FAL editions were drawn at high quality.
     if provider in {"openai", "fal-queue"}:
@@ -257,8 +266,9 @@ def _supported_page_profile(profile: PageCapabilityProfile) -> bool:
     from novel_to_comic.codex_dev import model_has_vision, selectable_models, selector_available
 
     if profile == current_page_capability_profile() or any(
-        profile == openai_page_capability_profile(model)
+        profile == openai_page_capability_profile(model, quality=quality)
         for model in ("gpt-image-2.5-sunburst", "gpt-image-2.5-flare")
+        for quality in ("high", "medium")
     ) or profile in (fal_sunburst_page_capability_profile(), _integrated_page_profile(fal_sunburst_page_capability_profile()),
                      sunburst_fallback_page_capability_profile(),
                      _integrated_page_profile(sunburst_fallback_page_capability_profile())) or profile == muse_page_capability_profile():
@@ -1618,7 +1628,9 @@ class OpenAICompletePageAdapter(GoogleVertexCompletePageTransport):
         super().__init__(config, profile)
         base = (fal_sunburst_page_capability_profile()
                 if profile.provider == "fal-queue"
-                else openai_page_capability_profile(profile.model))
+                else openai_page_capability_profile(
+                    profile.model, quality=page_image_quality(profile.id, profile.provider),
+                ))
         if profile not in (base, _integrated_page_profile(base)):
             raise ValueError("Unsupported complete-page profile")
         self._gateway_model = (
@@ -1833,11 +1845,14 @@ async def draw_complete_page(
             else Decimal(str(calculate_cost(provider_result.usage)))
         ),
     )
+    from novel_to_comic.server.telemetry import current_ai_trace_id
+
     provenance = PageGenerationProvenance(
         render=render,
         usage=provider_result.usage,
         provider_request_id=provider_result.provider_request_id,
         response_metadata=provider_result.response_metadata,
+        ai_trace_id=current_ai_trace_id(),
     )
     artifacts.persist_generated_page(provenance, provider_result.image_bytes)
     if ocr is not None:

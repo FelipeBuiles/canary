@@ -1889,7 +1889,8 @@ def test_terminal_image_refusal_releases_credit_hold(monkeypatch):
     assert not credits._unsettled_jobs
 
 
-@pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-sonnet-5-5"])
+@pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-sonnet-5-5",
+                                  "bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5"])
 def test_new_claude_models_use_native_json_schema(monkeypatch, _patch_events, model):
     monkeypatch.setenv("CANARY_AI_STREAM_TEXT", "0")
     _patch_http(monkeypatch, {
@@ -1927,6 +1928,85 @@ def test_claude_text_models_default_to_medium_effort():
     assert {model.id: model.effort for model in claude} == {model.id: "medium" for model in claude}
 
 
+@pytest.mark.parametrize("model,expected_cost", [
+    ("claude-opus-5-5", 0.024), ("bedrock-claude-opus-5-5", 0.024),
+    ("claude-sonnet-5-5", 0.012), ("bedrock-claude-sonnet-5-5", 0.012),
+])
+@pytest.mark.parametrize("returned_name", ["bare", "profile", "converse", "internal"])
+def test_claude_provider_and_fallback_cost_follow_selected_route(model, expected_cost, returned_name):
+    from novel_to_comic.model_costs import PricingResolver
+
+    bare = model.removeprefix("bedrock-")
+    profile = f"global.anthropic.{bare}"
+    provider_model = {
+        "bare": bare, "profile": profile, "converse": f"converse/{profile}",
+        "internal": f"bedrock_converse/{profile}",
+    }[returned_name] if model.startswith("bedrock-") else f"anthropic/{bare}"
+    usage = client._extract_usage({
+        "model": provider_model, "usage": {"prompt_tokens": 1000, "completion_tokens": 1000},
+    }, "fixture-call", model, "text")
+    assert usage.provider == text_wire(model).provider_key
+    assert usage.provider_model == provider_model
+    assert usage.model == model
+    assert usage.cost_usd is None
+    cost = PricingResolver().calculate(
+        model_alias=model, provider_model=provider_model, operation="text",
+        input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
+    )
+    assert cost.cost_usd == pytest.approx(expected_cost)
+
+
+@pytest.mark.parametrize("model", ["gemini-3.8-flash", "gpt-6.1-sol", "claude-opus-5-5", "mimo-v2.6-pro", "deepseek-v4.1-flash"])
+@pytest.mark.parametrize("effort", ["low", "medium"])
+def test_gemini_checklist_reaches_the_wire_without_overriding_reasoning(monkeypatch, model, effort):
+    from novel_to_comic.gemini_tuning import ADDENDA
+    selected_effort = ("none" if effort == "low" else "enabled") if text_wire(model).provider_key in {"openrouter", "together_ai"} else effort
+    _patch_http(monkeypatch, {
+        "model": model,
+        "choices": [{"message": {"content": '{"ok":true}'}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+    })
+    asyncio.run(client.generate_structured_object(
+        config=Config(text_reasoning_efforts={"extract": selected_effort}), model=model,
+        system_prompt="Return JSON.", user_content="Exact story text.", feature="extract.story_bible",
+        json_schema={"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]},
+    ))
+    sent = _FakeAsyncClient.last_request["json"]
+    expected = "Exact story text." + ADDENDA["extract.story_bible"] if model == "gemini-3.8-flash" else "Exact story text."
+    assert sent["messages"][1]["content"] == expected
+    if model == "gemini-3.8-flash":
+        assert sent["reasoning_effort"] == effort
+
+
+def test_vertex_structured_calls_send_json_mode_with_the_compiled_schema_as_instructions(monkeypatch):
+    from novel_to_comic.extraction_schema import extraction_schema
+    from novel_to_comic.ai.gemini_schema import gemini_output_schema
+    from novel_to_comic.gemini_tuning import ADDENDA, tuned_request
+    schema = extraction_schema()
+    _patch_http(monkeypatch, {
+        "model": "gemini-3.8-flash",
+        "choices": [{"message": {"content": '{}'}, "finish_reason": "stop"}],
+    })
+    asyncio.run(client.generate_structured_object(
+        config=Config(), model="gemini-3.8-flash", system_prompt="Extract source facts.",
+        user_content="Exact story.", feature="extract.story_bible", json_schema=schema,
+    ))
+    sent = _FakeAsyncClient.last_request["json"]
+    assert sent["response_format"] == {"type": "json_object"}
+    instructions = sent["messages"][0]["content"]
+    assert instructions.startswith("Extract source facts.\n\nOUTPUT CONTRACT:")
+    compiled = json.loads(instructions.split("\n")[-1])
+    assert compiled == gemini_output_schema(schema)
+    assert compiled["required"] == list(schema["properties"])
+    assert sent["messages"][1]["content"] == "Exact story." + ADDENDA["extract.story_bible"]
+    hashed = tuned_request("gemini-3.8-flash", {
+        "system_prompt": "Extract source facts.", "user_content": "Exact story.",
+        "feature": "extract.story_bible", "json_schema": schema,
+    })
+    assert hashed["system_prompt"] == instructions
+    assert hashed["json_schema"] is None and hashed["json_mode"] is True
+
+
 @pytest.mark.parametrize("answer_limit, billed_limit", [(4096, 20480), (65536, 65536)])
 def test_vertex_json_stream_caps_thinking_budget_and_records_vertex_cost(
     monkeypatch, _patch_events, answer_limit, billed_limit,
@@ -1949,7 +2029,7 @@ def test_vertex_json_stream_caps_thinking_budget_and_records_vertex_cost(
     assert sent["max_completion_tokens"] == billed_limit
     assert sent["reasoning_effort"] == "medium"
     assert "temperature" not in sent
-    assert sent["response_format"]["type"] == "json_schema"
+    assert sent["response_format"] == {"type": "json_object"}
     assert result.value == {"ok": True}
     assert result.usage.provider == "vertex_ai"
     assert result.usage.output_tokens == 1000
@@ -1962,7 +2042,8 @@ def test_vertex_json_stream_caps_thinking_budget_and_records_vertex_cost(
     assert _patch_events[-1][1]["status"] == "succeeded"
 
 
-@pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-sonnet-5-5"])
+@pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-sonnet-5-5",
+                                  "bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5"])
 def test_claude_5_5_sends_effort_without_schema_and_caps_thinking_headroom(
     monkeypatch, _patch_events, model,
 ):
@@ -2215,3 +2296,35 @@ def test_reasoning_feature_uses_own_stage(feature, stage):
     config = Config(text_reasoning_efforts={stage: "high"})
     assert request_reasoning(config, "gpt-6-sol", feature) == "high"
     assert request_reasoning(config, "gpt-6-sol", "unrelated") == "medium"
+
+
+@pytest.mark.parametrize("opted_in", [True, False])
+def test_text_call_probe_records_versions_execution_and_gated_content(monkeypatch, opted_in):
+    from novel_to_comic.ai.context import ai_request_context, current_generation_probe
+
+    seen = []
+    monkeypatch.setattr(client, "_finalize_event",
+                        lambda **kwargs: seen.append((kwargs["status"], current_generation_probe())))
+    monkeypatch.setenv("CANARY_ENV", "development")
+    monkeypatch.setenv("CANARY_AI_CONTENT_CAPTURE", "true" if opted_in else "false")
+    _patch_http(monkeypatch, {
+        "model": "openai/gpt-6-sol", "choices": [{"message": {"content": '{"ok": true}'}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 3},
+    })
+    schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
+
+    async def call():
+        with ai_request_context(project_id="fixture-project"):
+            await client.generate_structured_object(
+                config=Config(), model="gpt-6-sol", system_prompt="Return JSON.", user_content="{}",
+                feature="test.json", json_schema=schema)
+
+    asyncio.run(call())
+    status, probe = seen[-1]
+    assert status == "succeeded"
+    assert probe.prompt_sha and probe.schema_sha and probe.executing is not None
+    assert current_generation_probe() is None
+    if opted_in:
+        assert probe.content_fields()["$ai_output_choices"] == [{"role": "assistant", "content": '{"ok": true}'}]
+    else:
+        assert probe.content_fields() == {} and probe.output_text is None

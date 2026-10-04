@@ -56,6 +56,7 @@ from novel_to_comic.codex_dev import classify_operations
 from ..codex_admission import draw_operations, page_check_operations
 from ..deps import event_key, get_project, project_key
 from ..generation_jobs import generation_job_payload
+from ..page_outcomes import record_page_outcome
 
 
 router = APIRouter()
@@ -504,6 +505,8 @@ def select_page_render(
             raise HTTPException(404, str(exc)) from exc
         except (ArtifactInvalid, ValueError) as exc:
             raise HTTPException(409, str(exc)) from exc
+    record_page_outcome(request.app, "render_selected", user_id=user_id, project_id=project_id,
+                        target=target, page_number=page_number, render_revision=revision)
     return {"page_number": page_number, "active_render_revision": revision}
 
 
@@ -772,13 +775,14 @@ def generate_page(
         generation.depiction if generation is not None else "canonical",
     )
     adapter = complete_page_adapter(config, request=compiled.request)
+    replaced_revision = target.active_render_revision(page_number)
     pkey = project_key(user_id, project_id)
     queue = request.app.state.event_queues.get(event_key(pkey, project_dir))
     if queue is not None:
         queue.put_nowait(
             {"type": "page_start", "stage": "draw", "page_number": page_number}
         )
-    job, _created = enqueue_complete_page_draw(
+    job, created = enqueue_complete_page_draw(
         request.app,
         project_name=pkey,
         user_id=user_id,
@@ -796,6 +800,10 @@ def generate_page(
             project_dir=project_dir,
         ),
     )
+    if created and replaced_revision is not None:
+        record_page_outcome(request.app, "redraw_requested", user_id=user_id, project_id=project_id,
+                            target=target, page_number=page_number, render_revision=replaced_revision,
+                            identity=job.id, mode=generation.depiction if generation is not None else "canonical")
     return {"status": "queued", "job": generation_job_payload(request.app, job)}
 
 
@@ -945,7 +953,10 @@ async def analyze_page(
 def create_page_issue(
     page_number: int,
     body: PageIssueCreate,
+    request: Request,
+    project_id: str,
     project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
 ):
     project_dir, _config, _state = project
     target = TargetArtifacts(project_dir)
@@ -962,9 +973,13 @@ def create_page_issue(
                 "status": "open",
             }
         )
-        return record_page_issue(target, issue)
+        recorded = record_page_issue(target, issue)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    record_page_outcome(request.app, "issue_reported", user_id=user_id, project_id=project_id,
+                        target=target, page_number=page_number, render_revision=issue.render_revision,
+                        identity=issue.id, category=issue.issue_type)
+    return recorded
 
 
 def _find_issue(target: TargetArtifacts, page_number: int, issue_id: str) -> PageIssue:
@@ -981,28 +996,47 @@ def _find_issue(target: TargetArtifacts, page_number: int, issue_id: str) -> Pag
 def accept_page_issue(
     page_number: int,
     issue_id: str,
+    request: Request,
+    project_id: str,
     project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
 ):
     project_dir, _config, _state = project
+    target = TargetArtifacts(project_dir)
     try:
-        return accept_editorial_page_issue(
-            TargetArtifacts(project_dir),
+        result = accept_editorial_page_issue(
+            target,
             issue_id=issue_id,
             page_number=page_number,
         )
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
+    _record_issue_outcome(request, "issue_accepted", user_id=user_id, project_id=project_id,
+                          target=target, page_number=page_number, issue_id=issue_id)
+    return result
+
+
+def _record_issue_outcome(request: Request, outcome: str, *, user_id: str, project_id: str,
+                          target: TargetArtifacts, page_number: int, issue_id: str) -> None:
+    issue = next((item for item in _issues(target, page_number) if item.id == issue_id), None)
+    record_page_outcome(request.app, outcome, user_id=user_id, project_id=project_id, target=target,
+                        page_number=page_number, identity=issue_id,
+                        render_revision=issue.render_revision if issue else None,
+                        category=issue.issue_type if issue else None)
 
 
 @router.post("/pages/{page_number}/issues/{issue_id}/dismiss")
 def dismiss_recorded_page_issue(
     page_number: int,
     issue_id: str,
+    request: Request,
+    project_id: str,
     project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
 ):
     project_dir, _config, _state = project
     try:
-        return dismiss_page_issue(
+        result = dismiss_page_issue(
             TargetArtifacts(project_dir),
             issue_id=issue_id,
             page_number=page_number,
@@ -1012,6 +1046,9 @@ def dismiss_recorded_page_issue(
         )
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
+    _record_issue_outcome(request, "issue_dismissed", user_id=user_id, project_id=project_id,
+                          target=TargetArtifacts(project_dir), page_number=page_number, issue_id=issue_id)
+    return result
 
 
 class PageCorrectionCreate(BaseModel):
@@ -1329,7 +1366,7 @@ def submit_page_correction(
         queue.put_nowait(
             {"type": "page_start", "stage": "draw", "page_number": page_number}
         )
-    job, _created = enqueue_complete_page_draw(
+    job, created = enqueue_complete_page_draw(
         request.app,
         project_name=pkey,
         user_id=user_id,
@@ -1349,6 +1386,12 @@ def submit_page_correction(
             project_dir=project_dir,
         ),
     )
+    if created:
+        record_page_outcome(request.app, "correction_submitted", user_id=user_id, project_id=project_id,
+                            target=target, page_number=page_number,
+                            render_revision=correction.parent_render_revision, identity=job.id,
+                            category=primary_issue.issue_type if primary_issue else "manual",
+                            mode=correction.mode)
     return {
         "status": "queued",
         "job": generation_job_payload(request.app, job),
@@ -1384,7 +1427,7 @@ def visual_review_estimate(page_number: int, project=Depends(get_project)):
     )
 
 @router.post("/pages/{page_number}/visual-review")
-async def visual_review_page(page_number: int, project_id: str,
+async def visual_review_page(page_number: int, project_id: str, request: Request,
                              project=Depends(get_project), user_id: str = Depends(get_current_user)):
     from ..credited_job import run_credited_page_check
     from novel_to_comic.page_visual_review import review_page_visuals
@@ -1396,6 +1439,8 @@ async def visual_review_page(page_number: int, project_id: str,
     active = _latest_provenance(target, page_number)
     if active is None:
         raise HTTPException(409, "Page has no render to review")
+    record_page_outcome(request.app, "visual_review_requested", user_id=user_id, project_id=project_id,
+                        target=target, page_number=page_number, render_revision=active.render.revision)
     try:
         page = target.read_page(page_number)
         edition = ensure_current_page_edition(target, target.read_book_edition(), config, allow_retained_review=True)
@@ -1522,7 +1567,7 @@ def replan_page_estimate(page_number: int, project=Depends(get_project)):
 
 
 @router.post("/pages/{page_number}/replan")
-async def replan_one_page(page_number: int, project_id: str,
+async def replan_one_page(page_number: int, project_id: str, request: Request,
                           project=Depends(get_project), user_id: str = Depends(get_current_user)):
     """Rewrite one page's plan to clear its validation failures.
 
@@ -1537,6 +1582,8 @@ async def replan_one_page(page_number: int, project_id: str,
     project_dir, config, _state = project
     target = TargetArtifacts(project_dir)
     model = config.effective_plan_model()
+    record_page_outcome(request.app, "replan_requested", user_id=user_id, project_id=project_id,
+                        target=target, page_number=page_number)
 
     async def generate(**kwargs):
         return await generate_json(config=config, model=model, temperature=0.25, **kwargs)

@@ -240,15 +240,19 @@ def _usage_summary(state: PipelineState, stage: str) -> dict[str, Any]:
     }
 
 
-async def run_arm(user_root: Path, run_id: str, source: str, phase: str, model: str, reasoning_efforts: dict[str, str] | None = None) -> None:
+async def run_arm(user_root: Path, run_id: str, source: str, phase: str, model: str,
+                  reasoning_efforts: dict[str, str] | None = None, variant: str | None = None) -> None:
+    """Run one arm. ``variant`` names an arm of a model already in the run,
+    such as another reasoning effort or a repeat, with its own cell and workspace."""
+    from novel_to_comic.server.telemetry import ai_span
     from novel_to_comic.stage_runtime import StageRuntime
     from novel_to_comic.text_utils import clean_exception_message
 
     reasoning_efforts = resolve_reasoning([phase], [model], {model: reasoning_efforts or {}})[model]
-    cell_id = arm_id(phase, model)
+    cell_id = arm_id(phase, model) + (f".{re.sub(r'[^A-Za-z0-9._-]', '-', variant)}" if variant else "")
     workspace = storage.run_file(user_root, run_id, f"workspaces/{cell_id}")
     cell: dict[str, Any] = {"phase": phase, "model": model, "funding": _funding(model), "status": "running",
-                            "reasoning_efforts": reasoning_efforts,
+                            "reasoning_efforts": reasoning_efforts, **({"variant": variant} if variant else {}),
                             "started_at": storage.now(), "workspace": f"workspaces/{cell_id}", "stages": []}
     storage.write_cell(user_root, run_id, cell_id, cell)
     try:
@@ -267,7 +271,9 @@ async def run_arm(user_root: Path, run_id: str, source: str, phase: str, model: 
         started = time.perf_counter()
         error = None
         try:
-            with ai_request_context(stage=stage, project_name=f"labs/{run_id}/{cell_id}"):
+            # Each arm is one variant of the run's experiment on an opaque fixture ID.
+            with ai_span(f"labs.{stage}", experiment_id=run_id, variant=cell_id, fixture_id=storage.fixture_id(source)), \
+                    ai_request_context(stage=stage, project_name=f"labs/{run_id}/{cell_id}"):
                 await REGISTRY[stage].run(config, workspace, StageRuntime(stage, state, workspace))
         except Exception as exc:
             error = clean_exception_message(exc)
