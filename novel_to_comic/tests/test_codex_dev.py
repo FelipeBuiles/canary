@@ -182,6 +182,7 @@ def test_wire_client_dispatches_by_frozen_provider_key(monkeypatch, tmp_path):
     from novel_to_comic.usage import ApiResult, UsageRecord
 
     wire = SimpleNamespace(
+        schema_version=provider_wire.PROVIDER_WIRE_SCHEMA_VERSION,
         requested_alias="image-custom", configured_provider_model="custom-image",
         provider_key="custom-wire", execution_fingerprint="frozen",
         recompute_execution_fingerprint=lambda: "frozen",
@@ -226,6 +227,7 @@ def test_wire_output_write_failure_finalizes_once_with_generated_usage(monkeypat
 
     monkeypatch.setattr(codex_dev, "_IMAGES", frozenset({"image-gpt-2"}))
     wire = SimpleNamespace(
+        schema_version=provider_wire.PROVIDER_WIRE_SCHEMA_VERSION,
         requested_alias="image-gpt-2", configured_provider_model="gpt-image-2",
         provider_key="codex-dev", execution_fingerprint="frozen",
         recompute_execution_fingerprint=lambda: "frozen",
