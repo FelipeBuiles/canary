@@ -56,8 +56,7 @@ jobs:
         # PostgreSQL contracts run after schema bootstrap, below.
         run: >-
           uv run python ../scripts/run_backend_checks.py -q
-          --ignore=tests/test_credit_ledger_postgres.py
-          --ignore=tests/test_project_data_api_postgres.py
+          --ignore-glob='tests/*_postgres.py'
           -k "billing or refund or checkout or credit or auth or security_boundary"
       - name: Install disposable database client
         run: |

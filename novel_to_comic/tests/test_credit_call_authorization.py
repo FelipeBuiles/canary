@@ -93,6 +93,7 @@ def test_denied_authorization_never_reaches_image_provider(monkeypatch, tmp_path
     monkeypatch.setattr(client, "finalise_image_failure", AsyncMock())
     monkeypatch.setattr("novel_to_comic.server.db.get_db", lambda: _FakeDB(False))
     wire = SimpleNamespace(
+        schema_version=provider_wire.PROVIDER_WIRE_SCHEMA_VERSION,
         execution_fingerprint="frozen",
         recompute_execution_fingerprint=lambda: "frozen",
         references=(), requested_alias="image-sunburst",
