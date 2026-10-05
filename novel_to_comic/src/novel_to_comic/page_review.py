@@ -329,6 +329,18 @@ def _compare_lettering(
     return ordered, (), tuple(issues)
 
 
+def saved_ocr_draft(response):
+    """The saved provider answer as a page-read draft, or None when unreadable."""
+    from novel_to_comic.page_ocr import _PageOCRDraft, parse_page_ocr_text
+
+    try:
+        if response.raw_response is not None:
+            return parse_page_ocr_text(response.raw_response)
+        return _PageOCRDraft.model_validate(response.response)
+    except (ValueError, TypeError):
+        return None
+
+
 async def analyze_page_render(
     *,
     page: ComicPage,
@@ -406,15 +418,16 @@ def revalidate_cached_page_render(
                     or response.render_image_sha256 != render.image_sha256
                     or response.request_sha256 != render.request_sha256):
                 raise ValueError("saved OCR response belongs to different render lineage")
-            from novel_to_comic.page_ocr import _PageOCRDraft, build_extraction
+            draft = saved_ocr_draft(response)
+            if draft is None:
+                # An unreadable saved answer is no evidence: only a fresh read helps.
+                artifacts.retire_unreadable_ocr_response(page.page_number, render.revision)
+                raise ArtifactMissing("raw_ocr", artifacts.raw_ocr_path(page.page_number, render.revision))
+            from novel_to_comic.page_ocr import build_extraction
             raw = RawOCRObservation(
                 page_number=page.page_number, render_revision=render.revision,
                 render_image_sha256=render.image_sha256, usage=response.usage,
-                extraction=build_extraction(
-                    _PageOCRDraft.model_validate_json(response.raw_response)
-                    if response.raw_response is not None
-                    else _PageOCRDraft.model_validate(response.response)
-                ),
+                extraction=build_extraction(draft),
             )
             artifacts.write_raw_ocr(raw)
             analysis = _validate_observations(page=page, render=render, raw=raw, artifacts=artifacts)
@@ -500,10 +513,13 @@ def record_analysis_issues(
     """Record optional transcription suggestions without blocking Book."""
 
     recorded: list[PageIssue] = []
-    current_ids = {
-        f"page-issue-{result.id}"
-        for result in (*analysis.invariant_failures, *analysis.editorial_issues)
-    }
+    # An unproven order is not a defect and asks for nothing: it stays in the
+    # analysis evidence and never becomes a page finding.
+    results = tuple(
+        result for result in (*analysis.invariant_failures, *analysis.editorial_issues)
+        if result.code != "unverified_lettering_order"
+    )
+    current_ids = {f"page-issue-{result.id}" for result in results}
     prefix = f"page-issue-draw-page-{analysis.page_number:03d}-render-{analysis.render_revision:03d}-"
     try:
         prior = artifacts.read_issues(analysis.page_number)
@@ -515,7 +531,7 @@ def record_analysis_issues(
     )
     if retained != prior:
         artifacts.write_issues(analysis.page_number, retained)
-    for result in (*analysis.invariant_failures, *analysis.editorial_issues):
+    for result in results:
         issue = PageIssue(
             id=f"page-issue-{result.id}",
             issue_type=result.code,
@@ -529,9 +545,7 @@ def record_analysis_issues(
                 "Inspect this detected region on the base art. It may contain unwanted generated lettering; "
                 "dismiss a false positive or correct the artwork explicitly. Software lettering edits do not remove raster text."
                 if result.code == "unexpected_generated_lettering" else
-                "Review the page order visually if desired; no redraw is required."
-                if result.code == "unverified_lettering_order"
-                else "Possible text difference. Compare the saved artwork with the script; "
+                "Possible text difference. Compare the saved artwork with the script; "
                 "the checker may have misread it. Redraw only if the artwork needs a correction."
             ),
             lettering_item_ids=() if result.code == "unexpected_generated_lettering" else (lettering_item_ids or result.artifact_ids),
@@ -1159,7 +1173,7 @@ def dismiss_page_issue(
             if issue.status not in {"open", "revised"}:
                 raise ValueError("only an open page issue can be dismissed")
             manual = issue.issue_type == "manual_change" and issue.status == "open"
-            if not manual and not issue.id.startswith("page-issue-draw-page-"):
+            if not manual and not issue.id.startswith(("page-issue-draw-page-", "visual-review-")):
                 raise ValueError("only an automated finding or open manual request can be dismissed")
             dismissed = PageIssue.model_validate(
                 issue.model_copy(

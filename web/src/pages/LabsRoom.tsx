@@ -55,6 +55,8 @@ const KIND_LABEL: Record<LabsRunSummary["kind"], string> = {
 const PROMPT_LABEL: Record<ImagePrompt, string> = {
   production: "Production prompt",
   restructured: "Restructured prompt",
+  sheet_form: "Character sheet · form study",
+  sheet_formation: "Character sheet · formation",
 };
 const DEFAULT_ARMS: ImageArm[] = [
   { target: "sunburst-openai", prompt: "production" },

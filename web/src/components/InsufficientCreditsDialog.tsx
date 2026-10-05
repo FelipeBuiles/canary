@@ -17,6 +17,7 @@ import { useInsufficientCreditsStore } from "../store/insufficientCredits";
 import { CreditAmount } from "./ui/CreditAmount";
 import { SupportLink } from "./SupportLink";
 import { useDialogFocus } from "../hooks/useDialogFocus";
+import { useBackdropDismiss } from "../hooks/useBackdropDismiss";
 import { useI18n } from "../i18n";
 
 export function InsufficientCreditsDialog() {
@@ -64,6 +65,7 @@ function OpenInsufficientCreditsDialog() {
   );
 
   useDialogFocus(dialogRef, { onClose: close });
+  const backdrop = useBackdropDismiss(close);
 
   // While the dialog is open, refresh the balance whenever the tab regains
   // focus (so we pick up the Stripe webhook landing in the background tab).
@@ -93,7 +95,7 @@ function OpenInsufficientCreditsDialog() {
   return (
     <div
       className="fixed inset-0 z-[140] flex items-end justify-center bg-ink-black/70 sm:items-center"
-      onClick={close}
+      {...backdrop}
       role="presentation"
     >
       <div

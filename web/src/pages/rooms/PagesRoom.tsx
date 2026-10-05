@@ -3,7 +3,6 @@ import { PageVersions } from "../../components/pages/PageVersions";
 import { ArchivedArtwork } from "../../components/pages/ArchivedArtwork";
 import { createPortal } from "react-dom";
 import { ArrowUpRight, BookOpen, Layers, ChevronLeft as ReviewChevronLeft, ChevronRight as ReviewChevronRight, X as ReviewClose } from "lucide-react";
-import { TextCheckArtwork } from "../../components/pages/TextCheckArtwork";
 import { LetteringEditor } from "../../components/lettering/LetteringEditor";
 import { pageCompositePreviewUrl } from "../../api/lettering";
 import { PageThumbnail } from "../../components/pages/PageThumbnail";
@@ -13,11 +12,9 @@ import { accountIdentity } from "../../lib/accountEpoch";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
-  useAcceptPageIssue,
   useAnalyzeCompletePage,
   useApproveStage,
   useCompletePages,
-  useDismissPageIssue,
   useGenerateCompletePage,
   useGenerationJobs,
   useProjectStatus,
@@ -54,28 +51,24 @@ import { getImageFailureCopy } from "../../lib/imageFailure";
 import type {
   CompletePageSummary,
   GenerationJob,
-  PageIssue,
 } from "../../types/api";
-import {
-  LetteringIssueCard,
-  PlainIssueCard,
-  ResolvedIssueHistory,
-} from "../../components/pages/LetteringEvidence";
-import { isOcrIssue } from "../../components/pages/lettering";
 import { RevisionDraft } from "../../components/pages/RevisionDraft";
 import { StaleRenderRedraw } from "../../components/pages/StaleRenderRedraw";
 import { PageCheckRecovery } from "../../components/pages/PageCheckRecovery";
+import { OutOfDatePages } from "../../components/pages/OutOfDatePages";
 import { StageFailureSummary } from "../../components/pages/StageFailureSummary";
 import { PageSourcePanel } from "../../components/pages/PageSourcePanel";
-import { VisualReviewPanel, type VisualReviewDraftSeed } from "../../components/pages/VisualReviewPanel";
+import { PageChecks, type DraftSeed } from "../../components/pages/PageChecks";
 import type { DrawerKind } from "../../lib/stations";
 import { BottomBarPortal } from "../../layout/TopBarSlot";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
+import { useBackdropDismiss } from "../../hooks/useBackdropDismiss";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { seriesPath } from "../../api/projectScope";
 import { PartNotices } from "../../components/parts/PartNotices";
+import { describeRedrawChanges } from "../../components/pages/redrawChanges";
 
-type ReviewView = "page" | "source" | "visual" | "checks" | "lettering" | "versions";
+type ReviewView = "page" | "lettering" | "history";
 type PageFilter = "all" | "needs-review" | "drawing" | "failed";
 type PaidPageIntent =
   | { kind: "batch"; retry?: boolean }
@@ -141,91 +134,6 @@ function PageSpendConsent({
   );
 }
 
-function IssueHistory({
-  project,
-  pageNumber,
-  issues,
-}: {
-  project: string;
-  pageNumber: number;
-  issues: PageIssue[];
-}) {
-  const { t } = useI18n();
-  const accept = useAcceptPageIssue();
-  const dismiss = useDismissPageIssue();
-  const [actionError, setActionError] = useState<{ issueId: string; message: string } | null>(null);
-
-  function decide(issue: PageIssue, dismissFalsePositive = false) {
-    setActionError(null);
-    const mutation = dismissFalsePositive ? dismiss : accept;
-    mutation.mutate({ project, pageNumber, issueId: issue.id }, {
-      onError: (error) => setActionError({ issueId: issue.id, message: error.message }),
-    });
-  }
-
-  if (issues.length === 0) {
-    return <p className="font-body text-sm text-ink-muted">{t("No page issues recorded.")}</p>;
-  }
-  const active = issues.filter((issue) => issue.status === "open" || issue.status === "revised");
-  const resolved = issues.filter((issue) => issue.status !== "open" && issue.status !== "revised");
-
-  return (
-    <div className="space-y-3">
-      <ol className="space-y-3">
-        {active.map((issue) => (
-          <li key={issue.id}>
-            <Surface
-              tone={issue.classification === "invariant_failure" ? "pulp" : "bristol"}
-              border="soft"
-              shadow="none"
-              padding="md"
-            >
-              <div className="space-y-3">
-                {isOcrIssue(issue)
-                  ? <><TextCheckArtwork project={project} issue={issue} /><LetteringIssueCard issue={issue} /></>
-                  : <PlainIssueCard issue={issue} />}
-                <div className="flex flex-wrap justify-end gap-2">
-                  {issue.classification === "editorial_issue" && (
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      onClick={() => decide(issue)}
-                      disabled={accept.isPending}
-                    >
-                      {t(issue.status === "revised" ? "CONFIRM FIX" : "ACCEPT AS-IS")}
-                    </Button>
-                  )}
-                  {(issue.id.startsWith("page-issue-draw-page-") || (issue.issue_type === "manual_change" && issue.status === "open")) && (
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      onClick={() => decide(issue, true)}
-                      disabled={dismiss.isPending}
-                    >
-                      {t(issue.issue_type === "manual_change" ? "WITHDRAW REQUEST" : isOcrIssue(issue) ? "TEXT LOOKS CORRECT" : "DISMISS FALSE POSITIVE")}
-                    </Button>
-                  )}
-                </div>
-                {actionError?.issueId === issue.id && (
-                  <p role="alert" className="text-sm leading-6 text-hero-red">
-                    {actionError.message} {t("Your decision was not saved. Review this finding and try again.")}
-                  </p>
-                )}
-              </div>
-            </Surface>
-          </li>
-        ))}
-      </ol>
-      <ResolvedIssueHistory issues={resolved} />
-      {active.some((issue) => issue.correction_owner === "draw") && (
-        <p className="font-body text-xs leading-5 text-ink-black/70">
-          {t("Use Make changes on the Page tab to request draw fixes — one correction covers everything selected.")}
-        </p>
-      )}
-    </div>
-  );
-}
-
 function PageReview({
   project,
   item,
@@ -268,12 +176,15 @@ function PageReview({
   const compareRevision = item.active_render?.render.parent_revision ?? null;
   // Re-planned after drawing: the art belongs to an earlier plan revision.
   const renderStale = editSourceRevision != null && item.analysis_recovery?.status === "stale_render";
-  const [draftKeys, setDraftKeys] = useState<string[]>([]);
-  const [visualSeeds, setVisualSeeds] = useState<VisualReviewDraftSeed[]>([]);
+  // Integrated editions carry their lettering in the art; there is nothing to edit separately.
+  const editableLettering = item.lettering_mode === "hybrid";
+  const shownView: ReviewView = view === "lettering" && !editableLettering ? "page" : view;
+  const [visualSeeds, setVisualSeeds] = useState<DraftSeed[]>([]);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
   useDialogFocus(panelRef, { onClose });
+  const backdrop = useBackdropDismiss(onClose);
 
   function selectView(next: ReviewView) {
     onViewChange(next);
@@ -285,7 +196,7 @@ function PageReview({
     }
   }
 
-  function addVisualSeeds(seeds: VisualReviewDraftSeed[]) {
+  function addVisualSeeds(seeds: DraftSeed[]) {
     setVisualSeeds((current) => [...current, ...seeds]);
     // Explicit "add to changes" visibly opens the editor holding the seeds.
     selectView("page");
@@ -296,12 +207,12 @@ function PageReview({
       aria-modal="true"
       aria-label={`${t("Page")} ${item.page.page_number} ${t("review")}`}
       className="fixed inset-0 z-[120] flex justify-center bg-ink-black/75 p-0 sm:p-3 md:p-6"
-      onClick={onClose}
+      {...backdrop}
     >
       <div
         ref={panelRef}
         tabIndex={-1}
-        className={`flex max-h-full w-full ${view === "lettering" ? "max-w-[1800px]" : "max-w-6xl"} flex-col bg-pulp-paper shadow-ink focus-visible:outline-none sm:border-[3px] sm:border-ink-black`}
+        className="flex max-h-full w-full max-w-[1800px] flex-col bg-pulp-paper lg:h-full shadow-ink focus-visible:outline-none sm:border-[3px] sm:border-ink-black"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="shrink-0 bg-bristol">
@@ -336,39 +247,21 @@ function PageReview({
               {
                 key: "page",
                 label: t("Page"),
-                active: view === "page",
+                active: shownView === "page",
                 onClick: () => selectView("page"),
               },
-              {
-                key: "versions",
-                label: t("Versions"),
-                active: view === "versions",
-                onClick: () => selectView("versions"),
-              },
-              {
-                key: "source",
-                label: t("Source"),
-                active: view === "source",
-                onClick: () => selectView("source"),
-              },
-              {
+              ...(editableLettering ? [{
                 key: "lettering",
                 label: t("Lettering"),
-                active: view === "lettering",
+                active: shownView === "lettering",
                 onClick: () => selectView("lettering"),
                 disabled: editSourceRevision == null,
-              },
+              }] : []),
               {
-                key: "visual",
-                label: t("Visual review"),
-                active: view === "visual",
-                onClick: () => selectView("visual"),
-              },
-              {
-                key: "checks",
-                label: t("Text & findings"),
-                active: view === "checks",
-                onClick: () => selectView("checks"),
+                key: "history",
+                label: t("History"),
+                active: shownView === "history",
+                onClick: () => selectView("history"),
               },
             ]}
           />
@@ -377,14 +270,16 @@ function PageReview({
             </button>}
           </div>
         </div>
-        <div ref={bodyRef} className={`min-h-0 flex-1 overflow-y-auto ${view === "lettering" ? "lettering-modal-body" : ""}`}>
-          <div className="space-y-7 p-4 lg:p-6">
-            {renderStale && !pageIsDrawing && (
+        <div ref={bodyRef} className={`min-h-0 flex-1 overflow-y-auto ${shownView === "lettering" ? "lettering-modal-body" : ""}`}>
+          {/* On wide screens the page and history views fill the window and their columns scroll on their own. */}
+          <div className={`space-y-7 p-4 lg:p-6 ${shownView === "lettering" ? "" : "lg:flex lg:h-full lg:flex-col"}`}>
+            {(renderStale || !!item.redraw?.changed_references.length) && !pageIsDrawing && (
               <StaleRenderRedraw project={project} pageNumber={item.page.page_number}
+                changedLooks={renderStale || !item.redraw ? undefined : describeRedrawChanges(item.redraw.changed_references, t)}
                 onJobQueued={(jobId) => onJobQueued(jobId, item.page.page_number)} />
             )}
             {/* Revision draft stays mounted while hidden so unsaved changes survive tab switches. */}
-            <div hidden={view !== "page"} role="region" aria-label={t("Page")}>
+            <div hidden={shownView !== "page"} role="region" aria-label={t("Page")} className="lg:min-h-0 lg:flex-1">
               {editSourceRevision != null ? (
                 <RevisionDraft
                   key={`${project}:${item.page.page_number}:${comicPageRevision}:${editSourceRevision}`}
@@ -397,11 +292,10 @@ function PageReview({
                   issues={item.issues}
                   seeds={visualSeeds}
                   onSeedsConsumed={() => setVisualSeeds([])}
-                  onDraftKeysChange={setDraftKeys}
                   onJobQueued={(jobId) => onJobQueued(jobId, item.page.page_number)}
                   onArtworkLoaded={() => {
                     const key = `${project}:${item.page.page_number}:${editSourceRevision}`;
-                    if (deliberateView && view === "page" && !viewed.current.has(key)) {
+                    if (deliberateView && shownView === "page" && !viewed.current.has(key)) {
                       viewed.current.add(key);
                       void trackProductEvent("page_viewed", { projectId: project, properties: {
                         page_number: item.page.page_number, render_revision: editSourceRevision,
@@ -409,6 +303,17 @@ function PageReview({
                     }
                   }}
                   disabled={pageIsDrawing}
+                  aside={!renderStale && (
+                    <PageChecks
+                      project={project}
+                      item={item}
+                      pageIsDrawing={pageIsDrawing}
+                      onFix={addVisualSeeds}
+                      onRetryText={onCheckText}
+                      retryingText={checkingText}
+                      retryTextError={checkError ? t("Text could not be checked. Your artwork is saved and you can continue to export.") : undefined}
+                    />
+                  )}
                 />
               ) : (
                 <Surface padding="lg" border="soft" shadow="none">
@@ -417,60 +322,24 @@ function PageReview({
               )}
             </div>
 
-            {view === "versions" && <PageVersions
-              key={`${project}:${item.page.page_number}`}
-              project={project} pageNumber={item.page.page_number}
-              activeRevision={editSourceRevision} disabled={pageIsDrawing}
-              onSelected={() => selectView("page")}
-            />}
-
-            {view === "source" && (
-              <div role="region" aria-label={t("Source")}>
-                <PageSourcePanel project={project} item={item} />
-              </div>
-            )}
-
-            {view === "lettering" && editSourceRevision != null && !renderStale && <LetteringEditor project={project} pageNumber={item.page.page_number} disabled={pageIsDrawing}/>}
-
-            {view === "visual" && (
-              <div role="region" aria-label={t("Visual review")}>
-                {editSourceRevision != null ? (
-                  <VisualReviewPanel
-                    key={`${project}:${item.page.page_number}:${editSourceRevision}`}
-                    project={project}
-                    pageNumber={item.page.page_number}
-                    revision={editSourceRevision}
-                    pageIsDrawing={pageIsDrawing}
-                    issues={item.issues}
-                    draftKeys={draftKeys}
-                    onAddToDraft={addVisualSeeds}
+            {shownView === "history" && (
+              <div role="region" aria-label={t("History")}
+                className="grid gap-8 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)] lg:grid-rows-[minmax(0,1fr)]">
+                <div className="min-w-0 lg:min-h-0">
+                  <PageVersions
+                    key={`${project}:${item.page.page_number}`}
+                    project={project} pageNumber={item.page.page_number}
+                    activeRevision={editSourceRevision} disabled={pageIsDrawing}
+                    onSelected={() => selectView("page")}
                   />
-                ) : (
-                  <Surface padding="lg" border="soft" shadow="none">
-                    <p>{t("This page has not been drawn yet.")}</p>
-                  </Surface>
-                )}
+                </div>
+                <div className="min-w-0 border-t border-ink-black/15 pt-6 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
+                  <PageSourcePanel project={project} item={item} />
+                </div>
               </div>
             )}
 
-            {view === "checks" && (
-              <div role="region" aria-label={t("Checks")}>
-                <section className="space-y-4">
-                  <SectionHeader variant="underline" title={t(item.lettering_mode === "hybrid" ? "Base-art lettering check" : "Text check")}
-                    description={t(item.lettering_mode === "hybrid" ? "The artwork should not contain generated comic lettering. Inspect any detected regions; legitimate in-world signs remain separate." : "The checker can misread words. Compare suggestions with the artwork; they do not block export.")} />
-                  {editSourceRevision != null && <Button variant="outline" onClick={onCheckText} disabled={checkingText || pageIsDrawing || item.analysis_recovery?.status === "checked"}>
-                    {checkingText ? t("CHECKING TEXT…") : item.analysis_recovery?.status === "checked" ? t("TEXT CHECK COMPLETE") : t("CHECK PAGE TEXT")}
-                  </Button>}
-                  {checkError && <p role="alert" className="text-sm text-hero-red">{t("Text could not be checked. Your artwork is saved and you can continue to export.")}</p>}
-                  <SectionHeader variant="underline" title={t("ISSUE HISTORY")} />
-                  <IssueHistory
-                    project={project}
-                    pageNumber={item.page.page_number}
-                    issues={item.issues}
-                  />
-                </section>
-              </div>
-            )}
+            {shownView === "lettering" && editSourceRevision != null && !renderStale && <LetteringEditor project={project} pageNumber={item.page.page_number} disabled={pageIsDrawing}/>}
           </div>
         </div>
       </div>
@@ -502,7 +371,7 @@ export function PagesRoom() {
   const pageParam = searchParams.get("page") ?? "";
   const selected = /^[1-9]\d*$/.test(pageParam) && Number.isSafeInteger(Number(pageParam)) ? Number(pageParam) : null;
   const reviewParam = searchParams.get("review");
-  const review: ReviewView = reviewParam === "source" || reviewParam === "visual" || reviewParam === "checks" || reviewParam === "lettering" || reviewParam === "versions" ? reviewParam : "page";
+  const review: ReviewView = reviewParam === "lettering" || reviewParam === "history" ? reviewParam : "page";
   const filterParam = searchParams.get("filter");
   const filter: PageFilter = filterParam === "needs-review" || filterParam === "drawing" || filterParam === "failed" ? filterParam : "all";
   const readingParam = searchParams.get("reading");
@@ -682,6 +551,7 @@ export function PagesRoom() {
           itemsTotal={interruptedStageInfo?.items_total}
           startedAt={interruptedStageInfo?.started_at}
           snapshot={interruptedStageInfo?.snapshot}
+          firstPhase={interruptedStage === "plan" ? status?.stages.adapt : undefined}
           retryAsRerun={planNeedsAdapt}
           allowPendingStart={interruptedStage === "adapt"}
           error={interruptedStageInfo?.error}
@@ -853,13 +723,13 @@ export function PagesRoom() {
         title={t("REVIEW COMPLETE PAGES")}
         lead={t("Each thumbnail is one fully lettered page. Corrections always create a complete new revision.")}
       />
-      <PartNotices project={id} status={status} onOpenPage={(page) => updateContext({ page: String(page), review: "page" })} />
+      <PartNotices status={status} project={id} />
       <section className="grid gap-6 bg-ink-black p-6 text-pulp-paper shadow-paper md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] md:p-8">
         <div>
           <h2 className="font-display text-3xl font-black uppercase leading-tight tracking-[-0.03em] md:text-4xl">{t("Your story, page by page")}</h2>
           <p className="mt-3 font-body text-sm leading-7 text-pulp-paper/85">{t("Read the edition as it comes to life. Open a page for a closer look, review flagged findings, or shape the next revision.")}</p>
           <div className="mt-5 flex flex-wrap gap-3">
-            {unresolvedPages.length > 0 ? <Button variant="onInk" size="sm" onClick={() => updateContext({ filter: "needs-review", page: String(unresolvedPages[0].page.page_number), review: "checks" })}>{t("REVIEW FLAGGED PAGES")} ({unresolvedPages.length})<ArrowUpRight size={16} aria-hidden="true" /></Button>
+            {unresolvedPages.length > 0 ? <Button variant="onInk" size="sm" onClick={() => updateContext({ filter: "needs-review", page: String(unresolvedPages[0].page.page_number), review: "page" })}>{t("REVIEW FLAGGED PAGES")} ({unresolvedPages.length})<ArrowUpRight size={16} aria-hidden="true" /></Button>
               : drawnPages.length > 0 && <Button variant="onInk" size="sm" onClick={() => updateContext({ page: String(drawnPages[0].page.page_number), review: "page" })}><BookOpen size={16} aria-hidden="true" />{t("Start reading")}</Button>}
           </div>
         </div>
@@ -961,6 +831,15 @@ export function PagesRoom() {
             </div>
           </Surface>
         )}
+        {(data?.redraws?.length ?? 0) > 0 && (
+          <div className="mb-5">
+            <OutOfDatePages project={id} redraws={(data?.redraws ?? []).filter((page) => !drawingPages.has(page.page_number))}
+              disabled={drawingPages.size > 0 || !!status?.is_running}
+              onQueued={(jobs) => setPageJobs((current) => ({
+                ...current, ...Object.fromEntries(jobs.map(({ page_number, job }) => [job.id, page_number])),
+              }))} />
+          </div>
+        )}
         {drawingPages.size > 0 && (
           <Surface tone="pulp" border="soft" shadow="none" padding="md" className="mb-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1033,8 +912,10 @@ export function PagesRoom() {
                     <StatusPill tone="ink">{t("New revision drawing")}</StatusPill>
                   ) : revision && item.analysis_recovery?.status === "stale_render" ? (
                     <StatusPill tone="red">{t("Re-planned · redraw")}</StatusPill>
+                  ) : revision && item.redraw?.changed_references.length ? (
+                    <StatusPill tone="gold">{t("Earlier look · redraw")}</StatusPill>
                   ) : revisedIssues ? (
-                    <StatusPill tone="gold">{t("Needs visual review")}</StatusPill>
+                    <StatusPill tone="gold">{t("Confirm fix")}</StatusPill>
                   ) : openIssueCount > 0 ? (
                     <StatusPill tone="red">{openIssueCount} {t("FLAGGED")}</StatusPill>
                   ) : item.lettering_placement_review_needed ? (
@@ -1201,8 +1082,9 @@ export function PagesRoom() {
         />
       )}
       {approvalError && <p role="alert" className="text-sm text-hero-red">{approvalError}</p>}
-      {uncheckedPages.length > 0 && queuedPageJobs.length === 0 && (
-        <PageCheckRecovery project={projectId} unchecked={uncheckedPages.length} editable={uncheckedPages.some((item) => item.lettering_mode === "hybrid")} onRecovered={() => void refetch()} />
+      {/* Pages are checked as they are drawn; only offer a re-check once drawing has settled. */}
+      {uncheckedPages.length > 0 && drawingPages.size === 0 && queuedPageJobs.length === 0 && drawStatus !== "running" && (
+        <PageCheckRecovery project={projectId} unchecked={uncheckedPages.length} onRecovered={() => void refetch()} />
       )}
       {pages.every((item) => item.active_render) && unresolvedPages.length === 0 && (
         <p role="status" className="text-sm font-bold text-archive-sage">{t("No unresolved page findings. Read through the edition before export.")}</p>

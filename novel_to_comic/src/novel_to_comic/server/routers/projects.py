@@ -73,7 +73,7 @@ from ..codex_admission import image_operations
 from ..db import get_db
 from ..deps import _ensure_series_layout, get_project, get_project_dir, get_projects_dir, project_key
 from ..project_paths import project_directory
-from ..ratelimit import cost_limit, create_limit, limiter
+from ..ratelimit import cost_limit, create_limit, limiter, preview_limit
 from ..product_events import capture_server_event
 from .styles import clear_style_failures_after_selection, is_style_selected
 from ..generation_jobs import (
@@ -464,7 +464,7 @@ async def _generate_project_cover(
     return result
 
 
-_ALLOWED_EXTENSIONS = {".txt", ".epub", ".pdf"}
+_ALLOWED_EXTENSIONS = {".txt", ".md", ".markdown", ".docx", ".epub", ".pdf"}
 
 
 def _env_int(name: str, default: int) -> int:
@@ -540,6 +540,53 @@ def _slugify(name: str) -> str:
     return slug.lower() or "untitled"
 
 
+def _word_count(text: str) -> int:
+    return len(text.split())
+
+
+@router.post("/source-preview")
+@limiter.limit(preview_limit)
+async def preview_source(
+    request: Request,
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user),
+):
+    """Read a manuscript the way creation will and report how it would be split.
+
+    Nothing is stored: the staged copy is removed before responding, and the
+    parts use the same chapter grouping as project creation.
+    """
+    from novel_to_comic.chapter_detection import PART_TARGET_CHARACTERS, detect_chapters, group_chapters
+
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in _ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            400,
+            f"Unsupported file type: {suffix}. Accepted: {', '.join(sorted(_ALLOWED_EXTENSIONS))}",
+        )
+    with tempfile.TemporaryDirectory(prefix="canary-preview-") as staging:
+        staged = Path(staging) / f"source{suffix}"
+        _save_upload_capped(file, staged)
+        try:
+            text = read_source(staged)
+        except InputLimitError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
+    if not text.strip():
+        raise HTTPException(422, "This manuscript has no text.")
+    chapters = detect_chapters(text)
+    parts = group_chapters(text)
+    return {
+        "characters": len(text),
+        "words": _word_count(text),
+        "chapters": len(chapters),
+        "part_target_characters": PART_TARGET_CHARACTERS,
+        "parts": [
+            {"title": title, "characters": len(piece), "words": _word_count(piece)}
+            for title, piece in parts
+        ],
+    }
+
+
 @router.post("/")
 @limiter.limit(create_limit)
 async def create_project(
@@ -606,6 +653,9 @@ async def create_project(
     except Exception:
         shutil.rmtree(staging_dir, ignore_errors=True)
         raise
+    if not source_text.strip():
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise HTTPException(422, "This manuscript has no text.")
 
     try:
         project_dir.mkdir()

@@ -109,6 +109,11 @@ def create_limit() -> str:
     return os.environ.get("CANARY_RATE_LIMIT_CREATE", "10/minute")
 
 
+def preview_limit() -> str:
+    """Per-IP limit for reading a manuscript before creation (no storage, no spend)."""
+    return os.environ.get("CANARY_RATE_LIMIT_PREVIEW", "30/minute")
+
+
 def cost_limit() -> str:
     """Per-IP limit for credit-charged actions (run / regen)."""
     return os.environ.get("CANARY_RATE_LIMIT_COST", "60/minute")

@@ -142,7 +142,7 @@ export function BookRoom() {
   const creditDayGroups = groupRunsByDay(creditRuns);
   const creditProjectNames = new Map([[id, title]]);
   const packages = preflight?.packages ?? [];
-  const reviewUrl = (pageNumber: number, review: "page" | "checks" | "visual" | "lettering") =>
+  const reviewUrl = (pageNumber: number, review: "page" | "lettering") =>
     `/project/${encodeURIComponent(id)}/pages?page=${pageNumber}&review=${review}`;
   const uncheckedPages = completePages?.pages.filter((page) => page.active_render && page.analysis_recovery?.status !== "checked").length ?? 0;
   const pageIssues = new Map(completePages?.pages.flatMap((page) => (page.issues ?? []).map((issue) => [issue.id, issue] as const)));
@@ -248,7 +248,7 @@ export function BookRoom() {
                 {finding.pageNumbers.length > 0 ? (
                   <PageLinks pages={finding.pageNumbers}
                     label={t(finding.copy?.review === "page" ? "Open page" : finding.copy?.review === "lettering" ? "Open lettering" : "Open page checks")}
-                    href={(page) => reviewUrl(page, finding.copy?.review ?? "checks")} />
+                    href={(page) => reviewUrl(page, finding.copy?.review ?? "page")} />
                 ) : (
                   <Button size="sm" variant="outline" disabled={isFetching || retryPreflight.isPending} onClick={() => retryPreflight.mutate({ project: id })}>
                     {t("Retry edition checks")}
@@ -262,7 +262,7 @@ export function BookRoom() {
                 <CheckItem key={issueId} tone="fix" pages={[page.page_number]}
                   title={issue?.requested_correction || t("An editorial concern needs your review.")}
                   detail={issue?.status === "revised" ? t("Revised — not yet confirmed fixed") : t("Accept it as it is, or ask for a revision.")}>
-                  <Link className="inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4" to={reviewUrl(page.page_number, "visual")}>
+                  <Link className="inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4" to={reviewUrl(page.page_number, "page")}>
                     {t("Review page")} {page.page_number}
                   </Link>
                 </CheckItem>
@@ -271,12 +271,12 @@ export function BookRoom() {
             {preflight.correction_requests.map((request) => (
               <CheckItem key={request.id} tone="fix" pages={[request.page_number]} title={request.requested_correction}
                 detail={t("A correction was requested for this page and hasn’t been drawn yet.")}>
-                <Link className="inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4" to={reviewUrl(request.page_number, "checks")}>
+                <Link className="inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4" to={reviewUrl(request.page_number, "page")}>
                   {t("Open page checks")} · {t("Page")} {request.page_number}
                 </Link>
               </CheckItem>
             ))}
-            {uncheckedPages > 0 && <li><PageCheckRecovery project={id} unchecked={uncheckedPages} editable={!!completePages?.pages.some((page) => page.lettering_mode === "hybrid")} onRecovered={() => void refetch()} /></li>}
+            {uncheckedPages > 0 && <li><PageCheckRecovery project={id} unchecked={uncheckedPages} onRecovered={() => void refetch()} /></li>}
             {placementReviews.length > 0 && (
               <CheckItem tone="optional" pages={placementReviews.map((page) => page.page_number)}
                 title={t("{count, plural, one {Lettering on # page hasn’t been checked by eye} other {Lettering on # pages hasn’t been checked by eye}}", { count: placementReviews.length })}
@@ -300,7 +300,7 @@ export function BookRoom() {
             <ul className="space-y-2">
               {preflight.pages.filter((page) => page.accepted_editorial_issue_ids.length > 0).map((page) => (
                 <li key={page.page_number}>
-                  <Link className="inline-flex min-h-11 items-center font-body text-sm font-bold underline underline-offset-4" to={reviewUrl(page.page_number, "visual")}>
+                  <Link className="inline-flex min-h-11 items-center font-body text-sm font-bold underline underline-offset-4" to={reviewUrl(page.page_number, "page")}>
                     {t("Page")} {page.page_number} · {page.accepted_editorial_issue_ids.length} {t("accepted")}
                   </Link>
                 </li>

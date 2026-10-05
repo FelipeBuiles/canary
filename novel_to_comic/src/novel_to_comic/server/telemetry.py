@@ -35,10 +35,11 @@ _FIELDS = frozenset({
     "stripe_mode", "format", "cached", "station", "drawer", "mode", "schema_version",
     "feedback_id", "category", "rating", "trace_id", "span_id", "release", "environment",
     "posthogDistinctId", "source_event_id", "event_origin",
+    "browser_session_id", "error_code",
     "acquisition_source", "acquisition_medium", "acquisition_campaign", "referring_domain",
     "referred_by_book",
     # AI trace structure, reproducibility and comparison tags.
-    "experiment_id", "variant", "fixture_id", "prompt_sha", "schema_sha", "attempt_number",
+    "experiment_id", "variant", "fixture_id", "prompt_sha", "schema_sha", "request_sha", "wire_schema_version", "attempt_number", "surface",
     "admission_ms", "execution_ms", "validation_error_count", "generation_id",
     "fallback_reason", "attempts",
 })
@@ -62,7 +63,9 @@ def _safe_value(value: Any) -> bool:
 
 
 def safe_fields(fields: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in fields.items() if key in _FIELDS | _AI_FIELDS and _safe_value(value)}
+    return {key: value for key, value in fields.items() if key in _FIELDS | _AI_FIELDS and _safe_value(value)
+            and (key != "browser_session_id" or isinstance(value, str)
+                 and re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value))}
 
 
 def _with_person_fields(clean: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
@@ -261,7 +264,24 @@ def operation_span(name: str, *, carrier=None, **fields):
                 raise
 
 
-def _exception_list(items):
+def _safe_exception_message(value, kind=None, code=None):
+    messages = {
+        "insufficient_credits": "Insufficient credits",
+        "cast_approval_rejected": "Cast approval prerequisites were not met",
+        "draw_preflight_rejected": "Draw preflight prerequisites were not met",
+    }
+    if isinstance(code, str) and code in messages:
+        return messages[code]
+    if kind in {"TimeoutError", "ReadTimeout", "ConnectTimeout", "PoolTimeout"}:
+        return "Operation timed out"
+    if kind in {"ConnectionError", "ConnectError"}:
+        return "Connection failed"
+    if value == "division by zero":
+        return "division by zero"
+    return "[redacted]"
+
+
+def _exception_list(items, code=None):
     """Preserve code locations for grouping, never values, source lines or locals."""
     result = []
     for item in (items or [])[:5]:
@@ -277,7 +297,7 @@ def _exception_list(items):
                     clean[key] = value
             frames.append(clean)
         result.append({"type": kind if _TOKEN.fullmatch(kind) else "Error",
-                       "value": "[redacted]", "stacktrace": {"frames": frames}})
+                       "value": _safe_exception_message(item.get("value"), kind, code), "stacktrace": {"frames": frames}})
     return result
 
 
@@ -288,13 +308,16 @@ def _before_send(event):
         clean = _with_content(_with_person_fields(safe_fields(properties), properties), event.get("event"), properties)
         for key in ("$exception_list",):
             if key in properties:
-                clean[key] = _exception_list(properties[key])
+                clean[key] = _exception_list(properties[key], clean.get("error_code"))
         for key in ("$exception_type", "$exception_level", "$exception_personURL"):
             if key in properties and key != "$exception_personURL":
                 value = str(properties[key])
                 if _TOKEN.fullmatch(value):
                     clean[key] = value
-        clean["$exception_message"] = "[redacted]" if event.get("event") == "$exception" else None
+        clean["$exception_message"] = _safe_exception_message(properties.get("$exception_message"),
+            properties.get("$exception_type"), clean.get("error_code")) if event.get("event") == "$exception" else None
+        if clean.get("browser_session_id"):
+            clean["$session_id"] = clean["browser_session_id"]
         clean.update({"$geoip_disable": True, "$process_person_profile": True, "$is_server": True})
         for key in ("$lib", "$lib_version"):
             if key in properties and _TOKEN.fullmatch(str(properties[key])):
@@ -336,7 +359,9 @@ def capture_exception(error: BaseException, *, user_id=None, **fields):
     try:
         identity = user_id if user_id and _ID.fullmatch(user_id) else "canary-server"
         _client.capture_exception(error, distinct_id=identity,
-                                  properties=safe_fields({**context_fields(), "$ai_trace_id": context_fields().get("operation_id"), **fields}))
+                                  properties=safe_fields({**context_fields(), "$ai_trace_id": context_fields().get("operation_id"),
+                                      "http_status": getattr(error, "status_code", None),
+                                      "error_code": getattr(error, "code", None), **fields}))
     except Exception:
         pass
 

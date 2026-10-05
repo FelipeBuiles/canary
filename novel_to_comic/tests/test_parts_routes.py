@@ -167,6 +167,49 @@ def test_initial_project_upload_creates_chapter_groups_and_opens_the_first_part(
     assert (root.parent / "full-book" / "input" / "book.txt").read_text() == text
 
 
+def test_source_preview_reports_the_same_parts_creation_makes_without_storing_anything(client) -> None:
+    test_client, root = client
+    text = "Title\n\n" + "".join(f"Chapter {number}\n" + BODY * 90 + "\n\n" for number in range(1, 8))
+    before = sorted(path.name for path in root.parent.iterdir())
+
+    response = test_client.post("/api/projects/source-preview",
+                                files={"file": ("book.txt", text, "text/plain")})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["chapters"] == 7
+    assert body["words"] == len(text.split())
+    assert len(body["parts"]) == 4
+    assert body["parts"][0]["title"] == "Chapters 1–2"
+    assert sum(part["characters"] for part in body["parts"]) == len(text)
+    assert sorted(path.name for path in root.parent.iterdir()) == before
+
+
+def test_source_preview_accepts_manuscripts_above_the_generic_body_limit(client, monkeypatch) -> None:
+    test_client, _root = client
+    monkeypatch.setenv("CANARY_MAX_BODY_MB", "1")
+    text = "".join(f"Chapter {number}\n" + BODY * 1500 + "\n\n" for number in range(1, 4))
+    assert len(text.encode()) > 1024 * 1024
+
+    response = test_client.post("/api/projects/source-preview",
+                                files={"file": ("book.txt", text, "text/plain")})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["chapters"] == 3
+
+
+def test_source_preview_rejects_unreadable_and_empty_sources(client) -> None:
+    test_client, _root = client
+
+    unsupported = test_client.post("/api/projects/source-preview",
+                                   files={"file": ("book.rtf", "x", "application/rtf")})
+    empty = test_client.post("/api/projects/source-preview",
+                             files={"file": ("pasted-manuscript.txt", "  \n ", "text/plain")})
+
+    assert unsupported.status_code == 400
+    assert empty.status_code == 422
+
+
 def test_chapter_proposals_still_report_the_opening_before_the_first_heading(client) -> None:
     test_client, _root = client
     test_client.get("/api/projects/pid/status")

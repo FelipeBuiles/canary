@@ -4,54 +4,63 @@ import { describe, expect, it, vi } from 'vitest';
 import { I18nProvider } from '../i18n';
 import { LetteringChoice } from '../components/wizard/LetteringChoice';
 
-describe('lettering comparison', () => {
-  it('keeps sample exploration separate from the project choice and discloses preparation', async () => {
+async function openDetails(user: ReturnType<typeof userEvent.setup>) {
+  const details = screen.getByText('Compare in detail').closest('details')!;
+  await user.click(screen.getByText('Compare in detail'));
+  // jsdom does not toggle <details> on summary clicks; mirror the browser.
+  if (!details.open) { details.open = true; fireEvent(details, new Event('toggle')); }
+}
+
+describe('lettering choice', () => {
+  it('leads with each option’s strengths, cost and fit, and states permanence once', async () => {
     const user = userEvent.setup();
     const choose = vi.fn();
     render(<I18nProvider><LetteringChoice value={null} onChange={choose} disabled={false} /></I18nProvider>);
     expect(screen.getAllByRole('radio').every(el => !(el as HTMLInputElement).checked)).toBe(true);
-    expect(screen.getByText(/Prepared comparison:/).textContent).toContain('not an automatic conversion');
-    await user.click(screen.getByRole('button', { name: 'Two speakers' }));
-    await user.click(screen.getByRole('button', { name: 'Compare close-ups' }));
-    const links = within(screen.getByRole('region', { name: 'See the difference on a real page' })).getAllByRole('link', { name: /Open full-size sample/ });
-    expect(links.map(el => el.getAttribute('href'))).toEqual(['/lettering-comparison/cthulhu-25-integrated.webp', '/lettering-comparison/cthulhu-25-editable.webp']);
-    expect(choose).not.toHaveBeenCalled();
-    Element.prototype.scrollIntoView = vi.fn();
-    await user.click(screen.getByRole("button", { name: "Choose lettering" }));
-    expect(document.activeElement).toBe(screen.getByRole("radio", { name: /Integrated lettering/ }));
+    const editable = screen.getByRole('radio', { name: /Editable lettering/ });
+    expect(editable.getAttribute('aria-describedby')).toBe('lettering-editable-details');
+    expect(document.getElementById('lettering-editable-details')?.textContent).toContain('Every word matches your script exactly');
+    expect(document.getElementById('lettering-integrated-details')?.textContent).toContain('Changing a word means redrawing the page');
+    expect(screen.getByText('This choice is permanent for this project.')).toBeTruthy();
+    expect(screen.getByText(/Not sure\? Choose editable lettering/)).toBeTruthy();
+    // The detailed comparison stays out of the way until asked for.
+    expect(screen.queryByText('What this means for your book')).toBeNull();
     await user.click(screen.getByRole('radio', { name: /Integrated lettering/ }));
     expect(choose).toHaveBeenCalledWith('integrated');
   });
 
-  it('keeps the decision usable if a sample fails to load', () => {
-    render(<I18nProvider><LetteringChoice value='editable' onChange={vi.fn()} disabled={true} /></I18nProvider>);
-    fireEvent.error(screen.getAllByRole('img')[0]);
-    expect(screen.getByText(/This sample could not load/)).toBeTruthy();
-    expect(screen.getByText('What this means for your book')).toBeTruthy();
-    expect((screen.getByRole('radio', { name: /Editable lettering/ }) as HTMLInputElement).checked).toBe(true);
-    expect(screen.getByRole('radio', { name: /Editable lettering/ }).closest('fieldset')?.disabled).toBe(true);
+  it('shows the still editable sample until the live demo is ready', async () => {
+    render(<I18nProvider><LetteringChoice value={null} onChange={vi.fn()} disabled={false} /></I18nProvider>);
+    expect(screen.getAllByRole('img', { name: /movable speech balloon/ })[0].getAttribute('src')).toBe('/lettering-comparison/cthulhu-26-editable.webp');
   });
 
-  it('shows the DCC effects and reveals only the editable artwork without changing the choice', async () => {
+  it('keeps the full comparison available on request and discloses preparation', async () => {
     const user = userEvent.setup();
     const choose = vi.fn();
     render(<I18nProvider><LetteringChoice value='integrated' onChange={choose} disabled={false} /></I18nProvider>);
+    await openDetails(user);
+    expect(screen.getByText(/Prepared comparison:/).textContent).toContain('not an automatic conversion');
+    expect(screen.getByText('What this means for your book')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Sound & motion' }));
     const comparison = within(screen.getByRole('region', { name: 'See the difference on a real page' }));
     const sources = () => comparison.getAllByRole('img').map(image => image.getAttribute('src'));
     expect(sources()).toEqual(['/lettering-comparison/dcc-3-integrated.webp', '/lettering-comparison/dcc-3-editable.webp']);
-    expect(comparison.getByText(/The editable version uses Bangers/)).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Compare close-ups' }));
     await user.click(screen.getByRole('button', { name: 'LEAP in motion' }));
-    expect(screen.getByRole('button', { name: 'LEAP in motion' }).getAttribute('aria-pressed')).toBe('true');
     await user.click(screen.getByRole('checkbox', { name: 'Hide the editable lettering layer' }));
     expect(sources()).toEqual(['/lettering-comparison/dcc-3-integrated.webp', '/lettering-comparison/dcc-3-base.webp']);
     expect(comparison.getByRole('status').textContent).toContain('Integrated lettering cannot be switched off');
-    await user.click(screen.getByRole('button', { name: 'Narration & detail' }));
-    expect(sources()).toEqual(['/lettering-comparison/cthulhu-26-integrated.webp', '/lettering-comparison/cthulhu-26-base.webp']);
-    await user.click(screen.getByRole('checkbox', { name: 'Hide the editable lettering layer' }));
-    expect(sources()[1]).toBe('/lettering-comparison/cthulhu-26-editable.webp');
     expect(choose).not.toHaveBeenCalled();
     expect((screen.getByRole('radio', { name: /Integrated lettering/ }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('keeps the decision usable if a sample fails to load', async () => {
+    const user = userEvent.setup();
+    render(<I18nProvider><LetteringChoice value='editable' onChange={vi.fn()} disabled={true} /></I18nProvider>);
+    await openDetails(user);
+    fireEvent.error(within(screen.getByRole('region', { name: 'See the difference on a real page' })).getAllByRole('img')[0]);
+    expect(screen.getByText(/This sample could not load/)).toBeTruthy();
+    expect((screen.getByRole('radio', { name: /Editable lettering/ }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByRole('radio', { name: /Editable lettering/ }).closest('fieldset')?.disabled).toBe(true);
   });
 });

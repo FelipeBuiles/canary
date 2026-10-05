@@ -2,6 +2,8 @@ import asyncio
 import logging
 from types import SimpleNamespace
 
+import pytest
+
 from novel_to_comic.server.generation_jobs import (
     GenerationJob,
     _looks_like_timeout_cancellation,
@@ -11,6 +13,7 @@ from novel_to_comic.server.generation_jobs import (
     _account_lane,
     is_parallel_page_draw,
 )
+from novel_to_comic.server.job_execution import PipelineStageFailed
 
 
 class _OneJobQueue:
@@ -106,6 +109,38 @@ def test_generation_job_payload_classifies_provider_block():
         "caused it. Your work is unchanged. Review the whole page and try a simpler, "
         "more specific change. The provider may be reacting to existing page content, "
         "not just your note."
+    )
+    assert payload["recoverable"] is True
+
+
+@pytest.mark.parametrize("error_type", [ValueError, PipelineStageFailed])
+@pytest.mark.parametrize("message", [
+    "Cast design must cover every character exactly once; rerun Cast.",
+    "Cast design returned an invalid character roster; rerun Cast.",
+])
+def test_generation_job_payload_classifies_cast_roster_failure(message, error_type):
+    async def failing_runner():
+        raise error_type(message)
+
+    job = GenerationJob(
+        id="cast-roster-failure",
+        project_name="demo",
+        kind="pipeline_stage",
+        label="Cast",
+        payload={"stage": "cast"},
+        sequence=1,
+        runner=failing_runner,
+    )
+
+    _run_single_job_worker(job)
+
+    payload = generation_job_payload(None, job)
+    assert payload["status"] == "failed"
+    assert payload["error"] == message
+    assert payload["classification"] == "design_error"
+    assert payload["user_message"] == (
+        "Cast design returned an invalid character roster. "
+        "Resume Cast to try the design again."
     )
     assert payload["recoverable"] is True
 

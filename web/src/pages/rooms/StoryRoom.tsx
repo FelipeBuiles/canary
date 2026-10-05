@@ -19,7 +19,6 @@ import {
 import { Button } from "../../components/ui/Button";
 import { FieldLabel, TextAreaField, TextField } from "../../components/ui/Field";
 import { BriefSection } from "../../components/composites/BriefSection";
-import { StoryExplorer } from "../../components/composites/StoryExplorer";
 import { StoryBibleEditor, type EntityFocus } from "../../components/story/StoryBibleEditor";
 import { BookStrip, BookStripPanel } from "../../components/parts/BookStrip";
 import { partStartDescription } from "../../lib/partProgress";
@@ -75,7 +74,7 @@ export function StoryRoom() {
       return (
         <RoomShell project={id ?? ""}>
           {contents}
-          <StagePlaceholder project={id ?? ""} stage="brief" status={stageStatus} activeJobs={status?.active_jobs} />
+          <StagePlaceholder project={id ?? ""} stage="brief" status={stageStatus} activeJobs={status?.active_jobs} firstPhase={extract} />
         </RoomShell>
       );
     }
@@ -114,6 +113,7 @@ export function StoryRoom() {
           stage={stage}
           status={status}
           startedAt={(stage === "extract" ? extract : briefStage)?.started_at}
+          firstPhase={stage === "brief" ? extract : undefined}
           error={stageInfo?.error}
           errorDetail={stageInfo?.error_detail}
           errorCode={stageInfo?.error_code}
@@ -301,7 +301,7 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
         <h2 className={`break-words font-display font-black uppercase leading-[1.02] tracking-[-0.035em] ${multipart ? "mt-2 text-3xl sm:text-4xl" : "max-w-[20ch] text-4xl sm:text-5xl xl:text-6xl"}`}>{data.story_bible.title}</h2>
         <div className={`flex flex-wrap items-end justify-between gap-x-6 ${multipart ? "mt-3 gap-y-2" : "mt-7 gap-y-6"}`}>
           <p className="font-body text-sm">{t("BY")} {data.story_bible.author}</p>
-          <a href="#story-source" className="inline-flex min-h-11 items-center gap-3 font-meta text-xs leading-6 text-pulp-paper underline decoration-narrator-gold underline-offset-8 hover:text-narrator-gold" aria-label={t("Explore extracted story")}>{data.story_bible.total_scenes} {t("scenes")} · {castCharacters(data.story_bible).length} {t("characters")} · {data.story_bible.locations.length} {t("places")}<ArrowDownRight size={18} aria-hidden="true" /></a>
+          <a href="#story-bible" className="inline-flex min-h-11 items-center gap-3 font-meta text-xs leading-6 text-pulp-paper underline decoration-narrator-gold underline-offset-8 hover:text-narrator-gold" aria-label={t("Explore extracted story")}>{data.story_bible.total_scenes} {t("scenes")} · {castCharacters(data.story_bible).length} {t("characters")} · {data.story_bible.locations.length} {t("places")}<ArrowDownRight size={18} aria-hidden="true" /></a>
         </div>
         {multipart && <div className="mt-6"><BookStrip project={id} parts={parts} tone="ink" /></div>}
       </section>
@@ -408,8 +408,7 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
           </details>
         </fieldset>
       </form>
-      <StoryExplorer story={data.story_bible} />
-      <StoryBibleEditor project={id} focus={focus} onFocusClosed={onFocusClosed} />
+      <StoryBibleEditor project={id} story={data.story_bible} focus={focus} onFocusClosed={onFocusClosed} />
 
       <ApprovalBar
         next={t("Choose the visual direction for every complete page")}

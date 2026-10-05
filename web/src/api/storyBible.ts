@@ -12,8 +12,46 @@ export interface ReferenceFreshness {
   status: "current" | "outdated" | "missing";
 }
 
+/** One author edit, described by names so the editor can say what Undo reverses. */
+export interface StoryBibleChange {
+  action: "edit" | "add" | "remove" | "merge" | "add_look" | "edit_look" | "remove_look" | "restore";
+  kind: EntityKind;
+  entity_id?: string;
+  name: string;
+  into?: string;
+  look?: string;
+}
+
+/** Two entries that may be one found twice; a suggestion to compare, never applied. */
+export interface PossibleDuplicate {
+  kind: EntityKind;
+  ids: [string, string];
+  reason: "same_name" | "name_within";
+}
+
+/** What removing or merging an entry would change. Previews never write. */
+export interface EditImpact {
+  action: "remove" | "merge";
+  /** Why the edit can't happen, e.g. an adapted part uses the entry. */
+  blocked: string | null;
+  /** Scenes the entry leaves (remove) or that move to the kept entry (merge). */
+  scenes: { id: string; title: string; part_id: string | null }[];
+  looks: string[];
+  relationships: number;
+  /** Names that become other names for the kept entry (merge). */
+  aliases: string[];
+  /** Existing Cast images of the entry that stop being used. */
+  cast_images: number;
+  /** References Cast would need afterwards that don't exist yet. */
+  new_references: number;
+  reopens_cast: boolean;
+}
+
 export interface StoryBibleEditor {
   story_bible: StoryBible;
+  /** The newest author edit, while nothing has changed the Bible since; blocked says why it can't be undone. */
+  undo: { change: StoryBibleChange; blocked: string | null } | null;
+  possible_duplicates: PossibleDuplicate[];
   revision: number;
   parts: { id: string; title: string; ordinal: number }[];
   /** Scenes in parts whose adaptation hasn't started: new entities can join them. */
@@ -75,6 +113,18 @@ export function mergeEntity(
     method: "POST",
     body: JSON.stringify({ expected_revision: expectedRevision, into }),
   });
+}
+
+export function getEditImpact(
+  project: string, kind: EntityKind, id: string, action: "remove" | "merge", into?: string,
+): Promise<EditImpact> {
+  const params = new URLSearchParams({ action });
+  if (into) params.set("into", into);
+  return apiFetch(`${entity(project, kind, id)}/impact?${params}`);
+}
+
+export function undoLastEdit(project: string, expectedRevision: number): Promise<SavedStoryBible & { undone: StoryBibleChange }> {
+  return apiFetch(`${base(project)}/undo`, { method: "POST", body: JSON.stringify({ expected_revision: expectedRevision }) });
 }
 
 export function addLook(

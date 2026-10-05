@@ -5,7 +5,7 @@
  */
 import type { AppearanceState, FinishPreflight, InvariantFailure, StoryBible } from "../types/api";
 
-export type CheckReview = "page" | "checks" | "lettering";
+export type CheckReview = "page" | "lettering";
 
 export interface FindingCopy {
   /** What went wrong, in the author's terms. */
@@ -29,17 +29,17 @@ const COPY: Record<string, FindingCopy> = {
   adaptation_lineage: {
     title: "The page plan is older than the book adaptation",
     fix: "The adaptation changed after these pages were planned. Plan the pages again from Pages.",
-    review: "checks",
+    review: "page",
   },
   active_page_order: {
     title: "The page plan no longer includes this page version",
     fix: "Plan the pages again from Pages so the edition uses one page version.",
-    review: "checks",
+    review: "page",
   },
   render_lineage: {
     title: "The page artwork can’t be traced to its drawing",
     fix: "Redraw the page from Pages. Other pages are unaffected.",
-    review: "checks",
+    review: "page",
   },
   stale_page_render: {
     title: "The page artwork is older than its page plan",
@@ -49,27 +49,27 @@ const COPY: Record<string, FindingCopy> = {
   edition_model_mismatch: {
     title: "The page was drawn for a different page layout",
     fix: "Redraw the page from Pages.",
-    review: "checks",
+    review: "page",
   },
   corrupt_page_render: {
     title: "The page image can’t be read",
     fix: "Redraw the page from Pages.",
-    review: "checks",
+    review: "page",
   },
   page_render_dimensions: {
     title: "The page image is the wrong size",
     fix: "Redraw the page from Pages.",
-    review: "checks",
+    review: "page",
   },
   open_draw_invariant: {
     title: "The page has open drawing problems",
     fix: "Resolve them in the page’s checks.",
-    review: "checks",
+    review: "page",
   },
   open_upstream_invariant: {
     title: "The page has open story problems",
     fix: "Resolve them in the page’s checks.",
-    review: "checks",
+    review: "page",
   },
   lettering_layout: {
     title: "The lettering layout needs a fix",
@@ -79,17 +79,17 @@ const COPY: Record<string, FindingCopy> = {
   production_geometry: {
     title: "The page doesn’t fit the print size",
     fix: "Open the page’s checks to see what can’t be kept within the page.",
-    review: "checks",
+    review: "page",
   },
   production_normalization: {
     title: "The page can’t be prepared for print as drawn",
     fix: "Open the page’s checks to see what needs a creative fix.",
-    review: "checks",
+    review: "page",
   },
   page_issue_lineage: {
     title: "The page’s review history is inconsistent",
     fix: "Open the page’s checks to review its issues again.",
-    review: "checks",
+    review: "page",
   },
 };
 

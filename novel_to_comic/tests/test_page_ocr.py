@@ -331,3 +331,66 @@ def test_mock_replay_answers_page_ocr_from_the_canonical_page(
         "First in reading order.",
         "Second in reading order.",
     ]
+
+
+def test_gemini_thousandths_and_arithmetic_are_read_as_page_fractions() -> None:
+    from novel_to_comic.page_ocr import parse_page_ocr_text
+
+    draft = parse_page_ocr_text(
+        '{"lettering": ['
+        '{"text": "Whole box", "role": "comic_lettering", "box": {"x": 279, "y": 57, "width": 149, "height": 59}},'
+        '{"text": "Some fields", "role": "comic_lettering", "box": {"x": 0.403, "y": 128, "width": 0.163, "height": 0.05}},'
+        '{"text": "Arithmetic", "role": "comic_lettering", "box": {"x": 0.046, "y": 30.0 / 1000, "width": 0.383, "height": 0.075}}'
+        '], "panels": [{"x": 35, "y": 20, "width": 930, "height": 325}],'
+        '"figures": [{"subject": "unknown", "head": {"x": 86, "y": 43, "width": 169, "height": 97}}]}'
+    )
+
+    whole, some, arithmetic = draft.lettering
+    assert (whole.box.x, whole.box.y, whole.box.width) == pytest.approx((0.279, 0.057, 0.149))
+    assert (some.box.x, some.box.y) == pytest.approx((0.403, 0.128))
+    assert arithmetic.box.y == pytest.approx(0.03)
+    assert draft.panels[0].width == pytest.approx(0.93)
+    assert draft.figures[0].head.height == pytest.approx(0.097)
+
+
+def test_live_read_repairs_an_answer_the_json_client_rejected(tmp_path, monkeypatch):
+    from novel_to_comic.target_artifacts import TargetArtifacts
+    from novel_to_comic.usage import ApiResult
+    from tests.test_page_review import _render
+
+    artifacts = TargetArtifacts(tmp_path)
+    raw_text = ('{"lettering": [{"text": "Seen", "role": "comic_lettering",'
+                ' "box": {"x": 0.1, "y": 30.0 / 1000, "width": 0.3, "height": 0.1}}]}')
+    usage = UsageRecord(provider="gemini", model="gemini-3.8-flash", operation="text")
+
+    async def provider(**kwargs):
+        kwargs["response_sink"](ApiResult(value=raw_text, usage=usage))
+        json.loads(raw_text)  # the client's own parse fails here
+
+    monkeypatch.setattr("novel_to_comic.clients.text.generate_json", provider)
+    adapter = GatewayPageOCRAdapter(Config(), page_number=34)
+    adapter.bind_render(artifacts, _render())
+    read = asyncio.run(adapter.extract(b"page-34"))
+    assert [item.text for item in read.value.lettering] == ["Seen"]
+    assert read.usage == usage
+
+
+def test_unreadable_saved_answer_is_retired_and_asks_for_a_fresh_read(tmp_path):
+    from novel_to_comic.models.draw import OCRProviderResponse
+    from novel_to_comic.page_review import revalidate_cached_page_render
+    from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
+    from tests.test_page_review import _page, _render
+
+    artifacts = TargetArtifacts(tmp_path)
+    render = _render()
+    artifacts.write_ocr_response(OCRProviderResponse(
+        page_number=34, render_revision=1, render_image_sha256=render.image_sha256,
+        request_sha256=render.request_sha256, response=None, raw_response='{"lettering": [',
+        usage=UsageRecord(provider="gemini", model="gemini-3.8-flash", operation="text"),
+    ))
+    with pytest.raises(ArtifactMissing) as missing:
+        revalidate_cached_page_render(page=_page(), render=render, artifacts=artifacts)
+    assert missing.value.name == "raw_ocr"
+    path = artifacts.ocr_response_path(34, 1)
+    assert not path.exists()
+    assert path.with_name("ocr_response_001.unreadable_1.json").exists()

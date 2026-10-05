@@ -1,7 +1,7 @@
 import { useNow } from "../../hooks/useNow";
 import { Link } from "react-router-dom";
 import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
-import { type GenerationJob, type StageName, type StageSnapshot, type StageStatus } from "../../types/api";
+import { type GenerationJob, type StageInfo, type StageName, type StageSnapshot, type StageStatus } from "../../types/api";
 import { getStageQueue, type StageQueue } from "../../lib/stageQueue";
 import { Clock3, LoaderCircle } from "lucide-react";
 import { PlanProgressBoard } from "./PlanProgressBoard";
@@ -93,14 +93,108 @@ const STAGE_META: Record<StageName, StageMeta> = {
   },
 };
 
+// ── Two-phase runs ───────────────────────────────────────────────────────────
+
+/**
+ * Extract → Brief and Adapt → Plan run as one chained job. Their running view
+ * presents the pair as a single run with two phases, so the hand-off reads as
+ * progress rather than a reset: the title, timer and outputs stay put while
+ * the phase rail advances.
+ */
+interface TwoPhaseRun {
+  first: StageName;
+  second: StageName;
+  title: string;
+  description: string;
+  phases: [string, string];
+}
+
+const TWO_PHASE_RUNS: TwoPhaseRun[] = [
+  {
+    first: "extract",
+    second: "brief",
+    title: "Preparing your story",
+    description: "One run in two phases: first your manuscript is read for its characters, places and key scenes, then a story brief is drafted for your review.",
+    phases: ["Read the manuscript", "Draft the story brief"],
+  },
+  {
+    first: "adapt",
+    second: "plan",
+    title: "Scripting your book",
+    description: "One run in two phases: first your story becomes a comic script, then the script is laid out into pages.",
+    phases: ["Write the comic script", "Plan the pages"],
+  },
+];
+
+function twoPhaseRun(stage: StageName): TwoPhaseRun | undefined {
+  return TWO_PHASE_RUNS.find((run) => run.first === stage || run.second === stage);
+}
+
+/** The first phase's record, as the running view needs it once phase two starts. */
+export type FirstPhaseInfo = Pick<StageInfo, "status" | "started_at" | "finished_at" | "snapshot">;
+
+// A second phase that starts within this window of the first finishing is the
+// same chained run; anything later is a standalone retry with its own timer.
+const CHAIN_GAP_MS = 5 * 60 * 1000;
+
+function runStartedAt(startedAt: string | null | undefined, firstPhase: FirstPhaseInfo | null | undefined): string | null | undefined {
+  if (firstPhase?.status !== "complete" || !firstPhase.started_at || !firstPhase.finished_at) return startedAt;
+  const finished = Date.parse(firstPhase.finished_at);
+  const started = startedAt ? Date.parse(startedAt) : Date.now();
+  return Number.isFinite(finished) && started - finished <= CHAIN_GAP_MS ? firstPhase.started_at : startedAt;
+}
+
+function PhaseRail({ run, stage, firstPhase }: { run: TwoPhaseRun; stage: StageName; firstPhase?: FirstPhaseInfo | null }) {
+  const { t } = useI18n();
+  const current = stage === run.first ? 0 : 1;
+  const adapt = firstPhase?.snapshot?.kind === "adapt" ? firstPhase.snapshot : null;
+  const firstSummary = adapt
+    ? t("{beats} story beats · {lines} lettering lines", { beats: String(adapt.beats), lines: String(adapt.lettering) })
+    : t("Done");
+  return (
+    <ol aria-label={t("Run phases")} className="mt-5 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-stretch">
+      {run.phases.map((label, index) => {
+        const done = index < current;
+        const active = index === current;
+        return [
+          index === 1 && (
+            <li key="link" aria-hidden className="flex items-center">
+              <span className={`h-[3px] w-4 ${done || active ? "bg-ink-black" : "bg-ink-soft/40"}`} />
+            </li>
+          ),
+          <li key={label} aria-current={active ? "step" : undefined}
+            className={`flex min-w-0 flex-col gap-1 border-[2px] px-3 py-2.5 ${
+              done ? "border-ink-black bg-ink-black text-bristol"
+                : active ? "border-ink-black bg-narrator-gold text-ink-black"
+                  : "border-dashed border-ink-soft/60 bg-surface-container text-ink-soft"
+            }`}>
+            <span className="flex items-center gap-1.5 font-meta text-[0.6rem] font-bold uppercase leading-none tracking-[0.1em]">
+              <Icon name={done ? "check" : active ? "loader" : "circle"} size={12}
+                className={active ? "shrink-0 motion-safe:animate-spin" : "shrink-0"} />
+              {t("Phase {n} of 2", { n: String(index + 1) })}
+            </span>
+            <span className="font-body text-sm font-bold leading-5 [overflow-wrap:anywhere]">{t(label)}</span>
+            <span className="font-meta text-[0.66rem] font-bold leading-4 opacity-80 [overflow-wrap:anywhere]">
+              {done ? firstSummary : active ? t("In progress") : t("Starts automatically")}
+            </span>
+          </li>,
+        ];
+      })}
+    </ol>
+  );
+}
+
 function StageDocket({
   stage,
   state,
   tone,
   children,
   failureTitle,
+  run,
 }: {
   failureTitle?: string;
+  /** Presents the docket as a whole two-phase run instead of one stage. */
+  run?: TwoPhaseRun;
   stage: StageName;
   state: string;
   tone: "muted" | "running" | "failed";
@@ -116,33 +210,33 @@ function StageDocket({
       : "bg-ink-black text-bristol";
 
   return (
-    <div className="flex min-h-[50vh] items-center justify-center px-2 py-8 sm:px-6">
-      <article className="grid w-full max-w-[760px] overflow-hidden border-[3px] border-ink-black bg-bristol shadow-paper md:grid-cols-[150px_minmax(0,1fr)]">
-        <div className={`relative flex min-h-32 flex-col items-center justify-center px-5 py-6 text-center md:min-h-full ${plateClass}`}>
-          <div className="font-meta text-[0.54rem] font-bold uppercase leading-none tracking-[0.14em] opacity-70">
+    <div className="@container flex items-start justify-center studio-desktop:min-h-[50vh] studio-desktop:items-center studio-desktop:px-6 studio-desktop:py-8">
+      <article className="grid w-full max-w-[760px] overflow-hidden border-[3px] border-ink-black bg-bristol shadow-paper studio-desktop:@min-[42rem]:grid-cols-[150px_minmax(0,1fr)]">
+        <div className={`relative hidden items-center justify-center gap-3 px-5 py-3 studio-desktop:flex @min-[42rem]:min-h-full @min-[42rem]:flex-col @min-[42rem]:gap-0 @min-[42rem]:py-6 @min-[42rem]:text-center ${plateClass}`}>
+          <div className="hidden font-meta text-[0.54rem] font-bold uppercase leading-none tracking-[0.14em] opacity-70 @min-[42rem]:block">
             {t("Station")}
           </div>
-          <div className="mt-1.5 font-display text-[2.5rem] font-black leading-none tracking-[-0.03em]">
+          <div className="font-display text-lg font-black leading-none tracking-[-0.03em] @min-[42rem]:mt-1.5 @min-[42rem]:text-[2.5rem]">
             {station.number}
           </div>
-          <div className="mt-2 font-meta text-xs font-bold uppercase leading-none tracking-[0.08em]">
+          <div className="font-meta text-xs font-bold uppercase leading-none tracking-[0.08em] @min-[42rem]:mt-2">
             {t(station.label)}
           </div>
         </div>
 
-        <div className="min-w-0 p-6 sm:p-8">
+        <div className="min-w-0 p-4 studio-desktop:p-8">
           {tone !== "failed" && <div className="font-meta text-xs font-bold uppercase tracking-[0.08em] text-hero-red">
             {t(state)}
           </div>}
-          <h2 className="mt-2 font-display text-[2rem] font-black uppercase leading-[0.92] tracking-[-0.035em] text-ink-black">
-            {failureTitle ?? t(meta.title)}
+          <h2 className="mt-2 font-display text-[1.6rem] font-black uppercase leading-[0.92] tracking-[-0.035em] text-ink-black [overflow-wrap:anywhere] @min-[28rem]:text-[2rem]">
+            {failureTitle ?? t(run ? run.title : meta.title)}
           </h2>
           <p className="mt-4 font-body text-[0.9rem] font-semibold leading-7 text-ink-muted">
-            {t(meta.description)}
+            {t(run ? run.description : meta.description)}
           </p>
           {children}
           {tone !== "failed" && <p className="mt-5 font-body text-sm font-semibold leading-6 text-ink-black">
-            {t(meta.nextDecision)}
+            {t(run ? STAGE_META[run.second].nextDecision : meta.nextDecision)}
           </p>}
         </div>
       </article>
@@ -366,20 +460,24 @@ interface StageRunningProps {
   itemsTotal?: number;
   startedAt?: string | null;
   snapshot?: StageSnapshot | null;
+  /** Phase one's record while phase two of a chained run is running. */
+  firstPhase?: FirstPhaseInfo | null;
 }
 
-export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0, startedAt, snapshot }: StageRunningProps) {
+export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0, startedAt, snapshot, firstPhase }: StageRunningProps) {
   const { t } = useI18n();
   const meta = STAGE_META[stage];
-  const textWork = ["extract", "brief", "adapt", "plan"].includes(stage);
+  const run = twoPhaseRun(stage);
+  const textWork = Boolean(run);
   const hasProgress = !textWork && itemsTotal > 0;
-  const now = useNow(1000, Boolean(startedAt));
-  const started = startedAt ? Date.parse(startedAt) : NaN;
+  // A chained run keeps one clock from phase one's start, so the hand-off
+  // never snaps the timer back to 0:00.
+  const clockStart = run?.second === stage ? runStartedAt(startedAt, firstPhase) : startedAt;
+  const now = useNow(1000, Boolean(clockStart));
+  const started = clockStart ? Date.parse(clockStart) : NaN;
   const seconds = Number.isFinite(started) ? Math.max(0, Math.floor((now - started) / 1000)) : null;
   const elapsed = seconds === null ? null : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-  const steps: StageName[] = stage === "extract" || stage === "brief"
-    ? ["extract", "brief"] : ["adapt", "plan", "draw"];
-  const currentStep = steps.indexOf(stage);
+  const outputs = run ? STAGE_META[run.second].outputs : meta.outputs;
   const pct = hasProgress
     ? Math.min(100, Math.max(0, Math.round((itemsDone / itemsTotal) * 100)))
     : 0;
@@ -405,36 +503,27 @@ export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0, startedAt, 
   }, [events, stage]);
 
   return (
-    <StageDocket stage={stage} state="RUNNING" tone="running">
-        <div className="mt-7">
-          <div role="status" className="flex items-center gap-3 font-body text-sm font-semibold">
-            <Icon name="loader" size={20} className="shrink-0 motion-safe:animate-spin" />
-            <span>{t("Work in progress")}</span>
-            {elapsed && <span aria-live="off" className="ml-auto font-meta tabular-nums text-ink-muted">{t("Elapsed {time}", { time: elapsed })}</span>}
+    <StageDocket stage={stage} state="RUNNING" tone="running" run={run}>
+        {run && <PhaseRail run={run} stage={stage} firstPhase={firstPhase} />}
+        <div className={run ? "mt-5" : "mt-7"}>
+          <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-2 font-body text-sm font-semibold">
+            <span className="flex min-w-0 max-w-full items-center gap-3">
+              <Icon name="loader" size={20} className="shrink-0 motion-safe:animate-spin" />
+              <span className="[overflow-wrap:anywhere]">{t("Work in progress")}</span>
+            </span>
+            {elapsed && <span aria-live="off" className="ml-auto max-w-full font-meta tabular-nums text-ink-muted [overflow-wrap:anywhere]">{t("Elapsed {time}", { time: elapsed })}</span>}
           </div>
           {stage === "plan" && snapshot?.kind === "plan" ? (
             <PlanProgressBoard snapshot={snapshot} />
           ) : stage === "adapt" && snapshot?.kind === "adapt" ? (
             <AdaptProgressBoard snapshot={snapshot} />
           ) : textWork ? (
-            <>
-              <p className="mt-3 font-body text-sm leading-6 text-ink-muted">{t("This step can take several minutes. Results appear when the step finishes.")}</p>
-              <ol aria-label={t("Production steps")} className="mt-5 space-y-3">
-                {steps.map((step, index) => (
-                  <li key={step} aria-current={index === currentStep ? "step" : undefined}
-                    className={`flex items-center gap-3 font-body text-sm ${index === currentStep ? "font-bold text-ink-black" : "text-ink-muted"}`}>
-                    <Icon name={index < currentStep ? "check" : index === currentStep ? "loader" : "circle"} size={16} />
-                    <span>{t(STAGE_META[step].title)}</span>
-                    <span className="ml-auto font-meta text-xs">{t(index < currentStep ? "Done" : index === currentStep ? "In progress" : "Next")}</span>
-                  </li>
-                ))}
-              </ol>
-            </>
+            <p className="mt-3 font-body text-sm leading-6 text-ink-muted">{t("This step can take several minutes. Results appear when the step finishes.")}</p>
           ) : (
             <div className="mt-4">
-              <div className="mb-2 flex items-center justify-between font-meta text-xs font-bold text-ink-muted">
-                <span>{hasProgress ? `${Math.min(itemsDone, itemsTotal)} / ${itemsTotal}` : t("Working; no completed count yet.")}</span>
-                {hasProgress && <span>{pct}%</span>}
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 font-meta text-xs font-bold text-ink-muted">
+                <span className="min-w-0 [overflow-wrap:anywhere]">{hasProgress ? `${Math.min(itemsDone, itemsTotal)} / ${itemsTotal}` : t("Working; no completed count yet.")}</span>
+                {hasProgress && <span className="ml-auto shrink-0">{pct}%</span>}
               </div>
               <progress aria-label={`${t(meta.title)} ${t("progress")}`} max={100} value={hasProgress ? pct : undefined}
                 className="h-3 w-full overflow-hidden border-[2px] border-ink-black bg-pulp-paper [&::-webkit-progress-bar]:bg-pulp-paper [&::-webkit-progress-value]:bg-hero-red [&::-moz-progress-bar]:bg-hero-red" />
@@ -460,7 +549,7 @@ export function StageRunning({ stage, itemsDone = 0, itemsTotal = 0, startedAt, 
         </div>
 
         <div className="mt-6 flex flex-wrap gap-2">
-          {meta.outputs.map((output) => (
+          {outputs.map((output) => (
             <div
               key={output}
               className="bg-surface-container px-3 py-2 font-meta text-xs font-bold text-ink-muted"
@@ -592,6 +681,8 @@ interface StagePlaceholderProps {
   itemsTotal?: number;
   startedAt?: string | null;
   snapshot?: StageSnapshot | null;
+  /** Phase one's record when `stage` is phase two of a chained run. */
+  firstPhase?: FirstPhaseInfo | null;
   retryAsRerun?: boolean;
   allowPendingStart?: boolean;
   startDescription?: string;
@@ -602,6 +693,14 @@ interface StagePlaceholderProps {
 }
 
 export function StagePlaceholder(props: StagePlaceholderProps) {
+  const run = twoPhaseRun(props.stage);
+  // Between phases the chained job is still running under phase one's stage
+  // while phase two is momentarily pending. Show phase two starting rather
+  // than a pending docket with its own start action.
+  if (run?.second === props.stage && props.status === "pending" && props.firstPhase?.status === "complete"
+    && getStageQueue(run.first, props.activeJobs)?.state === "starting") {
+    return <StageRunning stage={props.stage} firstPhase={props.firstPhase} />;
+  }
   const queue = getStageQueue(props.stage, props.activeJobs);
   // Do not mount credit estimates or start/retry controls for work already
   // admitted to the queue, including a retry of a previously failed stage.
@@ -618,6 +717,7 @@ function StagePlaceholderContent({
   itemsTotal,
   startedAt,
   snapshot,
+  firstPhase,
   retryAsRerun = false,
   allowPendingStart = false,
   startDescription,
@@ -657,7 +757,7 @@ function StagePlaceholderContent({
     return <StageLoadError stage={stage} message={loadError} />;
   }
   if (status === "running" && !stale) {
-    return <StageRunning stage={stage} itemsDone={itemsDone} itemsTotal={itemsTotal} startedAt={startedAt} snapshot={snapshot} />;
+    return <StageRunning stage={stage} itemsDone={itemsDone} itemsTotal={itemsTotal} startedAt={startedAt} snapshot={snapshot} firstPhase={firstPhase} />;
   }
   if (status === "pending") {
     return (

@@ -11,11 +11,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
 from novel_to_comic import artifacts
-from novel_to_comic.cast_reference_inputs import CastReferenceInput
+from novel_to_comic.cast_reference_inputs import CastReferenceInput, store_reference_upload
 from novel_to_comic.asset_versions import list_asset_versions, restore_asset_version
 from novel_to_comic.cast_instructions import (
     ASSET_REGEN_KINDS,
@@ -29,7 +29,7 @@ from novel_to_comic.cast_instructions import (
 from ..auth import get_current_user
 from ..credited_job import enqueue_credited_job
 from ..credits import UnifiedCostResolver
-from ..codex_admission import image_operations
+from ..codex_admission import cast_asset_operations
 from novel_to_comic.codex_dev import CodexRoutingError
 from ..db import get_db
 from ..deps import get_project, project_key
@@ -47,6 +47,27 @@ def cast_review(project_id: str, project=Depends(get_project),
                 user_id: str = Depends(get_current_user)):
     from novel_to_comic.cast_design import review_status
     project_dir, config, _state = project
+    return review_status(config, project_dir)
+
+
+class DismissReviewNoteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    character_ids: list[str] = Field(min_length=1, max_length=20)
+    concern: str = Field(min_length=1, max_length=40)
+
+
+@router.post("/cast/review/dismiss")
+def dismiss_cast_review_note(body: DismissReviewNoteRequest, project=Depends(get_project),
+                             user_id: str = Depends(get_current_user)):  # noqa: ARG001 — auth gate
+    """The author judged one Character Check note fine for the current sheets."""
+    from novel_to_comic.cast_design import dismiss_review_issue, review_status
+    project_dir, config, _state = project
+    try:
+        dismiss_review_issue(config, project_dir, body.character_ids, body.concern)
+    except KeyError as exc:
+        raise HTTPException(404, exc.args[0]) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     return review_status(config, project_dir)
 
 
@@ -98,6 +119,45 @@ def reopen_cast(project=Depends(get_project)):
     if not reopen_cast(project_dir):
         raise HTTPException(409, "Cast is not approved yet; resume it from Cast.")
     return {"reopened": True, "references": pending}
+
+
+@router.post("/cast/reference-uploads")
+async def upload_cast_reference(image: UploadFile = File(...), project=Depends(get_project)):
+    """Store an author's image so a Cast correction can attach it. No spend."""
+    from novel_to_comic.uploaded_images import (
+        MAX_IMAGE_BYTES, UploadedImageError, decode_uploaded_image, image_suffix,
+    )
+
+    project_dir, _config, _state = project
+    try:
+        suffix = image_suffix(image.content_type)
+        data = await image.read(MAX_IMAGE_BYTES + 1)
+        if len(data) > MAX_IMAGE_BYTES:
+            raise HTTPException(413, "Reference images must be 10 MB or smaller.")
+        decode_uploaded_image(data, suffix)
+    except UploadedImageError as exc:
+        raise HTTPException(400, f"Reference image {exc}.") from None
+    return store_reference_upload(project_dir, data, suffix, image.filename)
+
+
+@router.get("/cast/reference-uploads/{upload_id}")
+def get_cast_reference_upload(upload_id: str, project=Depends(get_project)):
+    """Serve an uploaded attachment by id, so restored drafts can show it."""
+    from fastapi.responses import FileResponse
+    from novel_to_comic.cast_reference_inputs import UploadedReference, upload_descriptor
+    from novel_to_comic.workspace import series_root
+
+    project_dir, _config, _state = project
+    try:
+        UploadedReference(upload_id=upload_id)
+    except ValueError:
+        raise HTTPException(404, "Reference image not found") from None
+    try:
+        descriptor = upload_descriptor(project_dir, upload_id)
+    except HTTPException:
+        raise HTTPException(404, "Reference image not found") from None
+    return FileResponse(series_root(project_dir) / descriptor["image_path"],
+                        headers={"Cache-Control": "private, max-age=3600"})
 
 
 class CastInstructionRequest(BaseModel):
@@ -196,7 +256,7 @@ def _enqueue_cast_asset_regen(
         debit_description=debit_description,
         semaphore=generation_semaphore_for_config(request.app, config),
         estimate_credits=asset_estimate["estimate_credits"],
-        operations=image_operations(config),
+        operations=cast_asset_operations(config, kind, asset_id),
     )
     return {
         "status": "queued",

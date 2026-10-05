@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
+import { useBackdropDismiss } from "../../hooks/useBackdropDismiss";
 import type { ReactNode } from "react";
 import { Icon } from "./Icon";
 import { LazyImage } from "./LazyImage";
@@ -28,13 +29,14 @@ export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar,
   const inspector = useImageViewer();
 
   useDialogFocus(dialogRef, { enabled: isOpen, onClose, initialFocusRef: closeButtonRef });
+  const backdrop = useBackdropDismiss(onClose);
 
   if (!isOpen) return null;
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink-black/80 p-4"
-      onClick={onClose}
+      {...backdrop}
       role="dialog"
       aria-modal="true"
       aria-label={title ?? alt}

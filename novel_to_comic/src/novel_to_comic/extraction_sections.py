@@ -49,7 +49,9 @@ existing entity with changes, emit id, newly revealed aliases, new appearance_st
 appearance_timeline, plus new relationships and distinguishing_features for
 characters. Newly stated stable physical facts (height, build, hair or face)
 belong in distinguishing_features even when they become known after this
-character's first section. Code appends them without rewriting the established
+character's first section. A mark, scar, tattoo, brand, injury or garment the
+character gains in this section is a change: give it an appearance state from
+that point, never a distinguishing feature. Code appends them without rewriting the established
 anchor or fabricating a physical change. Set cast_required=true when this
 section establishes a principal antagonist, companion or plot-critical creature;
 use false otherwise. Code never demotes an existing required Cast identity.
@@ -257,7 +259,7 @@ def registry_context(bible: StoryBible | None) -> dict:
         registry[kind] = entries
     if bible.excluded_entities:
         registry["excluded_entities"] = [
-            entity.model_dump(mode="json") for entity in bible.excluded_entities
+            entity.model_dump(mode="json", exclude={"removed"}) for entity in bible.excluded_entities
         ]
     return registry
 

@@ -24,9 +24,12 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `POST` | `/api/billing/checkout` | `create_checkout` | `billing.py` |
 | `POST` | `/api/billing/webhook` | `stripe_webhook` | `billing.py` |
 | `GET` | `/api/projects/{project}/cast/review` | `cast_review` | `cast_assets.py` |
+| `POST` | `/api/projects/{project}/cast/review/dismiss` | `dismiss_cast_review_note` | `cast_assets.py` |
 | `GET` | `/api/projects/{project}/cast/freshness` | `cast_reference_freshness` | `cast_assets.py` |
 | `POST` | `/api/projects/{project}/cast/references/keep` | `keep_cast_reference` | `cast_assets.py` |
 | `POST` | `/api/projects/{project}/cast/reopen` | `reopen_cast` | `cast_assets.py` |
+| `POST` | `/api/projects/{project}/cast/reference-uploads` | `upload_cast_reference` | `cast_assets.py` |
+| `GET` | `/api/projects/{project}/cast/reference-uploads/{upload_id}` | `get_cast_reference_upload` | `cast_assets.py` |
 | `GET` | `/api/projects/{project}/asset-regen-estimate` | `asset_regen_estimate` | `cast_assets.py` |
 | `POST` | `/api/projects/{project}/regen-ref` | `regen_ref` | `cast_assets.py` |
 | `POST` | `/api/projects/{project}/regen-state-ref` | `regen_state_ref` | `cast_assets.py` |
@@ -94,6 +97,8 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `GET` | `/api/projects/{project}/parts/{part_id}/pages/{page_number}/renders/{revision}/correction` | `read_render_correction` | `pages.py` |
 | `GET` | `/api/projects/{project}/parts/{part_id}/pages/{page_number}/renders/{revision}/preview/{rendition}` | `get_page_render_preview` | `pages.py` |
 | `GET` | `/api/projects/{project}/parts/{part_id}/pages/generate/estimate` | `estimate_remaining_page_generation` | `pages.py` |
+| `GET` | `/api/projects/{project}/parts/{part_id}/pages/redraws/estimate` | `estimate_page_redraws` | `pages.py` |
+| `POST` | `/api/projects/{project}/parts/{part_id}/pages/redraws` | `redraw_out_of_date_pages` | `pages.py` |
 | `GET` | `/api/projects/{project}/parts/{part_id}/pages/{page_number}/generate/estimate` | `estimate_page_generation` | `pages.py` |
 | `GET` | `/api/projects/{project}/parts/{part_id}/pages/{page_number}/analyze/estimate` | `estimate_page_analysis` | `pages.py` |
 | `POST` | `/api/projects/{project}/parts/{part_id}/pages/{page_number}/generate` | `generate_page` | `pages.py` |
@@ -116,7 +121,6 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `POST` | `/api/projects/{project}/parts/{part_id}/split` | `split` | `parts.py` |
 | `PUT` | `/api/projects/{project}/parts/{part_id}/text` | `replace_text` | `parts.py` |
 | `PATCH` | `/api/projects/{project}/parts/{part_id}` | `rename` | `parts.py` |
-| `GET` | `/api/projects/{project}/parts/{part_id}/page-flags` | `part_page_flags` | `parts.py` |
 | `DELETE` | `/api/projects/{project}/parts/{part_id}` | `remove` | `parts.py` |
 | `POST` | `/api/projects/{project}/parts/export` | `export_parts` | `parts.py` |
 | `GET` | `/api/projects/{project}/parts/export/{name}` | `download_combined_export` | `parts.py` |
@@ -133,6 +137,7 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `GET` | `/api/projects/{project}/stage-error/{stage}` | `get_stage_error` | `pipeline.py` |
 | `GET` | `/api/projects/short-stories` | `list_short_stories` | `projects.py` |
 | `GET` | `/api/projects/short-stories/{code}` | `read_short_story` | `projects.py` |
+| `POST` | `/api/projects/source-preview` | `preview_source` | `projects.py` |
 | `POST` | `/api/projects` | `create_project` | `projects.py` |
 | `GET` | `/api/projects` | `list_projects` | `projects.py` |
 | `PATCH` | `/api/projects/{project_id}` | `rename_project` | `projects.py` |
@@ -165,6 +170,9 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `GET` | `/api/projects/{project}/cast/primary-refs` | `get_primary_refs` | `stages.py` |
 | `PUT` | `/api/projects/{project}/cast/{char_id}/primary-ref` | `set_primary_ref` | `stages.py` |
 | `GET` | `/api/projects/{project}/story-bible/editor` | `story_bible_editor` | `story_bible.py` |
+| `POST` | `/api/projects/{project}/story-bible/undo` | `undo_story_bible_edit` | `story_bible.py` |
+| `GET` | `/api/projects/{project}/story-bible/{kind}/draft-estimate` | `draft_estimate` | `story_bible.py` |
+| `POST` | `/api/projects/{project}/story-bible/{kind}/draft` | `draft_story_bible_entity` | `story_bible.py` |
 | `POST` | `/api/projects/{project}/story-bible/visual-anchor` | `fill_visual_anchor` | `story_bible.py` |
 | `PATCH` | `/api/projects/{project}/story-bible/{kind}/{entity_id}` | `edit_story_bible_entity` | `story_bible.py` |
 | `POST` | `/api/projects/{project}/story-bible/{kind}` | `add_story_bible_entity` | `story_bible.py` |
@@ -174,8 +182,7 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `PATCH` | `/api/projects/{project}/story-bible/{kind}/{entity_id}/states/{state_id}` | `edit_story_bible_state` | `story_bible.py` |
 | `DELETE` | `/api/projects/{project}/story-bible/{kind}/{entity_id}/states/{state_id}` | `remove_story_bible_state` | `story_bible.py` |
 | `DELETE` | `/api/projects/{project}/story-bible/excluded/{kind}/{name}` | `restore_story_bible_name` | `story_bible.py` |
-| `GET` | `/api/projects/{project}/story-bible/{kind}/draft-estimate` | `draft_estimate` | `story_bible.py` |
-| `POST` | `/api/projects/{project}/story-bible/{kind}/draft` | `draft_story_bible_entity` | `story_bible.py` |
+| `GET` | `/api/projects/{project}/story-bible/{kind}/{entity_id}/impact` | `story_bible_edit_impact` | `story_bible.py` |
 | `GET` | `/api/projects/{project}/styles` | `get_styles` | `styles.py` |
 | `GET` | `/api/projects/{project}/styles/{suggestion_id}/proof/{kind}` | `get_style_lettering_proof` | `styles.py` |
 | `GET` | `/api/projects/{project}/styles/suggest-estimate` | `suggest_estimate` | `styles.py` |

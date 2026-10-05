@@ -42,14 +42,13 @@ export function AppTopBar() {
     <header
       className={cn(
         "relative z-40 shrink-0 items-stretch border-b-[2px] border-ink-black bg-bristol text-ink-black",
-        // Mobile project navigation already carries the project and station,
-        // so the room masthead only needs a compact title/account row there.
-        inProject ? "flex h-14 md:h-shell-top" : "flex h-14",
+        // Phones share one compact project/navigation/account row.
+        // Desktop keeps the full room masthead beside the project sidebar.
+        inProject ? "flex h-14 studio-desktop:h-shell-top" : "flex h-14",
       )}
     >
       {inProject ? (
-        // In a project the sidebar owns identity; this row belongs to the
-        // room header, which portals its content into the slot below.
+        // Phone navigation and desktop room headers share this shell slot.
         <div
           ref={registerSlot}
           className="flex min-w-0 flex-1 items-stretch"

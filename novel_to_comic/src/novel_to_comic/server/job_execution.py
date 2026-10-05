@@ -78,7 +78,9 @@ async def _operate(app, job, directory, config):
     args = spec.arguments
     target = TargetArtifacts(directory)
     if spec.operation == "page_draw":
-        from novel_to_comic.page_drawing import CompiledPageGeneration, complete_page_adapter, page_draw_execution
+        from novel_to_comic.page_drawing import (
+            CompiledPageGeneration, complete_page_adapter, page_draw_execution, page_visual_check,
+        )
         from novel_to_comic.models.draw import FrozenPageGenerationRequest
         from novel_to_comic.models.page import ComicPage
         from novel_to_comic.models.draw import PageIssue
@@ -97,6 +99,7 @@ async def _operate(app, job, directory, config):
         work, settled = page_draw_execution(
             project_dir=directory, compiled=compiled, adapter=complete_page_adapter(config, request=frozen),
             artifacts=target, page=page, ocr=ocr,
+            visual_review=page_visual_check(config, directory, target, page) if ocr is not None else None,
             request_revision=args.get("request_revision"), render_revision=args.get("render_revision"),
             parent_render_revision=args.get("parent_render_revision"),
             issue=PageIssue.model_validate(args["issue"]) if args.get("issue") else None,
@@ -120,11 +123,12 @@ async def _operate(app, job, directory, config):
         _clear_repaired_cast_failure(directory, args["asset_id"])
         return result, None
     if spec.operation == "cast_instruction":
-        from novel_to_comic.cast_instructions import instructed_asset_execution, CastReferenceInput
+        from novel_to_comic.cast_instructions import instructed_asset_execution
+        from novel_to_comic.cast_reference_inputs import parse_reference_input
         from .db import get_db
         work = instructed_asset_execution(config, directory, get_db(), spec.user_id, spec.project_id,
             args["asset_type"], args["asset_id"], args["instruction"], args.get("state_id"),
-            [CastReferenceInput.model_validate(item) for item in args["attachments"]])
+            [parse_reference_input(item) for item in args["attachments"]])
         return await work(), None
     if spec.operation == "lettering_translation":
         from novel_to_comic.lettering.translation import PreparedTranslation, translate_project
@@ -165,7 +169,8 @@ async def _pipeline(app, job, directory, config):
     try:
         await _run_stage_with_credits(spec.stage, config, directory, state, channel,
             spec.user_id, spec.project_id, rerun=spec.arguments.get("rerun", False),
-            request=SimpleNamespace(app=app), queue_draw_pages=spec.arguments.get("queue_pages", False))
+            request=SimpleNamespace(app=app), queue_draw_pages=spec.arguments.get("queue_pages", False),
+            approve_part=spec.arguments.get("approve_part"))
         active_stage = job.payload.get("stage", spec.stage)
         outcome = state.stages[active_stage]
         if outcome.status == StageStatus.FAILED:

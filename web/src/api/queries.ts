@@ -1,7 +1,7 @@
 import type { CastReferenceInput } from "../types/api";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { isNotFoundError } from "./client";
-import { listProjects, getProjectStatus, createProject, renameProject, deleteProject, fetchProjectCoverEstimate, generateProjectCover, listShortStories, importStory } from "./projects";
+import { listProjects, getProjectStatus, createProject, renameProject, deleteProject, fetchProjectCoverEstimate, generateProjectCover, listShortStories, importStory, previewSource } from "./projects";
 import { runPipeline, approveStage, regenRef, regenStateRef, regenLocationState, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, cancelQueuedPageJobs, regenExtract, resetStale, fetchStageEstimate, fetchAssetRegenEstimate, getCastAssetVersions, restoreCastAssetVersion } from "./pipeline";
 import type { AdaptationBrief, ConfigOverrides, ProjectStatus, ProjectSummary } from "../types/api";
 import { reconcileStatusPoll } from "../lib/stageProgress";
@@ -109,6 +109,18 @@ export function useShortStories() {
   });
 }
 
+/** Preview a manuscript source. `revision` identifies the source, since a File is not a usable query key. */
+export function useSourcePreview(file: File | null, revision: number) {
+  return useQuery({
+    queryKey: ["source-preview", revision],
+    queryFn: ({ signal }) => previewSource(file!, signal),
+    enabled: file !== null,
+    staleTime: Infinity,
+    gcTime: 60_000,
+    retry: false,
+  });
+}
+
 export function useImportStory() {
   const qc = useQueryClient();
   return useMutation({
@@ -203,8 +215,8 @@ export function useUpdateProjectConfig() {
 export function useRunPipeline() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ project, stage, rerun, retryFailed, queuePages, confirmedArchivePages }: { project: string; stage?: string; rerun?: boolean; retryFailed?: boolean; queuePages?: boolean; confirmedArchivePages?: number }) =>
-      runPipeline(project, stage, rerun, retryFailed, queuePages, confirmedArchivePages),
+    mutationFn: ({ project, stage, rerun, retryFailed, queuePages, confirmedArchivePages, thenApprove }: { project: string; stage?: string; rerun?: boolean; retryFailed?: boolean; queuePages?: boolean; confirmedArchivePages?: number; thenApprove?: boolean }) =>
+      runPipeline(project, stage, rerun, retryFailed, queuePages, confirmedArchivePages, thenApprove),
     // Admission can fail before any work starts. Keep the initiating component
     // mounted so its pending state and rejection remain visible; only server
     // status/SSE may switch the room to running.
@@ -293,6 +305,7 @@ export function useResetStale() {
 
 export function useRegenRef() {
   return useMutation({
+    mutationKey: ["character-regen"],
     mutationFn: ({ project, charId }: { project: string; charId: string }) =>
       regenRef(project, charId),
   });
@@ -632,7 +645,7 @@ export function useAcceptPageIssue() {
   return useMutation({
     mutationFn: ({ project, pageNumber, issueId }: { project: string; pageNumber: number; issueId: string }) =>
       acceptPageIssue(project, pageNumber, issueId),
-    onSuccess: (_data, { project, pageNumber }) =>
+    onSettled: (_data, _error, { project, pageNumber }) =>
       invalidatePageReview(qc, project, pageNumber),
   });
 }
@@ -642,7 +655,8 @@ export function useDismissPageIssue() {
   return useMutation({
     mutationFn: ({ project, pageNumber, issueId }: { project: string; pageNumber: number; issueId: string }) =>
       dismissPageIssue(project, pageNumber, issueId),
-    onSuccess: (_data, { project, pageNumber }) =>
+    // Refresh on failure too: the usual cause is a finding already re-recorded or cleared.
+    onSettled: (_data, _error, { project, pageNumber }) =>
       invalidatePageReview(qc, project, pageNumber),
   });
 }
@@ -662,7 +676,9 @@ export function useFinishPreflight(project: string | undefined, enabled = true) 
         // A missing artifact means one of Finish's inputs changed (or this is
         // the first Book visit), so run the provider-free preflight once.
         const result = await runFinishPreflight(project!);
+        // Preflight re-reads each page's saved text check and re-records its findings.
         invalidateProject(qc, project, "status");
+        invalidateProject(qc, project, "complete-pages");
         return result.preflight;
       }
     },
@@ -678,6 +694,7 @@ export function useRunFinishPreflight() {
     onSuccess: (result, { project }) => {
       qc.setQueryData(["project", project, "finish-preflight"], result.preflight);
       invalidateProject(qc, project, "status");
+      invalidateProject(qc, project, "complete-pages");
     },
   });
 }
@@ -799,9 +816,20 @@ export function useSetActiveStyle() {
   return useMutation({
     mutationFn: ({ project, id }: { project: string; id: string }) =>
       setActiveStyle(project, id),
-    onSuccess: (_data, { project }) => {
-      invalidateProject(qc, project, "styles");
-      invalidateProject(qc, project, "status");
+    onSuccess: (data, { project }) => {
+      if (data.style_changed) {
+        // Correction drafts and submission errors belong to the old Cast.
+        const seriesId = splitProjectKey(project).id;
+        for (const mutation of qc.getMutationCache().findAll({ mutationKey: ["reference-instruction"] })) {
+          const variables = mutation.state.variables as { project?: string } | undefined;
+          if (mutation.state.status !== "pending" && variables?.project
+            && splitProjectKey(variables.project).id === seriesId) qc.getMutationCache().remove(mutation);
+        }
+        void invalidateProject(qc, project);
+      } else {
+        void invalidateProject(qc, project, "styles");
+        void invalidateProject(qc, project, "status");
+      }
       qc.invalidateQueries({ queryKey: ["book-lettering-style", project] });
       qc.invalidateQueries({ queryKey: ["lettering-presets", project] });
     },

@@ -6,9 +6,11 @@ page. An arm is an image target (model and route) plus a prompt variant:
 - ``production``: what Canary sends. Pages are compiled now, by today's
   compiler, for the arm's target; Style/Cast items use the recorded prompt.
 - ``restructured``: the same request restated by ``prompt_restructure``.
+- ``sheet_form`` / ``sheet_formation``: a recorded character or state sheet
+  restated by ``reference_form_variants`` for entities a turnaround misdescribes.
 
-Every arm of an item uses the same references in the same order; only the
-target and prompt differ. Each cell is one submission to exactly one route: no
+Otherwise every arm of an item uses the same references in the same order;
+only the target and prompt differ. Each cell is one submission to exactly one route: no
 fallback and no retry. Calls run without a user in the AI request context, so
 they are operator-funded (API) or use the local Codex subscription allowance.
 
@@ -38,10 +40,10 @@ from novel_to_comic.image_models import GATEWAY_IMAGE_FLARE, GATEWAY_IMAGE_SUNBU
 from novel_to_comic.image_route_fallback import FAL_SUNBURST_GATEWAY_MODEL, OPENAI_SUNBURST_GATEWAY_MODEL
 from novel_to_comic.usage import UsageRecord, calculate_cost_breakdown, estimate_image_cost
 
-from . import prompt_restructure, storage
+from . import prompt_restructure, reference_form_variants, storage
 
 KIND = "image_compare"
-PROMPTS = ("production", "restructured")
+PROMPTS = ("production", "restructured", *reference_form_variants.VARIANTS)
 _CONCURRENCY = {"api": 3, "codex_subscription": 2}
 _ASSET_LABELS = {
     "style_sample": "Style proof", "style_calibration": "Style board", "character_ref": "Character sheet",
@@ -164,6 +166,7 @@ class AssetItem:
         manifest = json.loads(path.read_text())
         self._requests_dir = path.parent.parent
         self.wire = ProviderWireRequest.from_json(json.dumps(manifest["wire_request"]))
+        self.asset_kind = manifest.get("request_context", {}).get("asset_kind")
         self.quality = dict(self.wire.controls).get("quality") or "medium"
 
     def _reference_roles(self) -> list[dict[str, Any]]:
@@ -172,11 +175,18 @@ class AssetItem:
 
     def prepare(self, config: Config, target: ImageTarget, variant: str) -> Prepared:
         recorded = self.wire.prompt_parts[0]
-        prompt = recorded if variant == "production" else prompt_restructure.restructure_asset_prompt(
-            recorded, self._reference_roles(), width=self.wire.width, height=self.wire.height,
-        )
+        if variant in reference_form_variants.VARIANTS:
+            if self.asset_kind != "character_ref":
+                raise ValueError("Sheet form variants apply only to character sheets")
+            prompt = reference_form_variants.rewrite(recorded, variant)
+        elif variant == "restructured":
+            prompt = prompt_restructure.restructure_asset_prompt(
+                recorded, self._reference_roles(), width=self.wire.width, height=self.wire.height,
+            )
+        else:
+            prompt = recorded
         missing = [text for text in prompt_restructure.required_asset_verbatim(recorded) if text not in prompt]
-        wire = self._wire_for(target, prompt, restructured=variant != "production")
+        wire = self._wire_for(target, prompt, restructured=variant == "restructured")
 
         async def submit(output_path: Path) -> UsageRecord:
             from novel_to_comic.ai.client import generate_wire_image_on_route

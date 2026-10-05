@@ -2,6 +2,7 @@ import type { PlanBatchState, PlanProgressPage, PlanProgressPhase, PlanProgressS
 import { useI18n } from "../../i18n";
 import { Icon } from "../ui/Icon";
 import { panelRows } from "../../lib/planProgress";
+import { ProgressStat, ProgressStats } from "./ProgressStats";
 
 /**
  * Plan's running view: the book taking shape as a contact sheet.
@@ -92,18 +93,6 @@ function PageTile({ page, state }: { page: PlanProgressPage; state: TileState })
   );
 }
 
-function Stat({ value, label, detail }: { value: string; label: string; detail?: string }) {
-  return (
-    <div className="min-w-0 bg-bristol px-3 py-2.5">
-      <div className="font-display text-[1.7rem] font-black leading-none tracking-[-0.03em] tabular-nums text-ink-black">
-        {value}
-      </div>
-      <div className="mt-1 font-meta text-[0.62rem] font-bold uppercase tracking-[0.08em] text-ink-muted">{label}</div>
-      {detail && <div className="mt-0.5 font-meta text-[0.62rem] text-ink-soft">{detail}</div>}
-    </div>
-  );
-}
-
 export function PlanProgressBoard({ snapshot }: { snapshot: PlanProgressSnapshot }) {
   const { t } = useI18n();
   const step = STEPS.findIndex((item) => item.phases.includes(snapshot.phase));
@@ -114,20 +103,20 @@ export function PlanProgressBoard({ snapshot }: { snapshot: PlanProgressSnapshot
     batch.first === batch.last ? String(batch.first) : `${batch.first}–${batch.last}`;
 
   return (
-    <section aria-label={t("Plan progress")} className="mt-6">
+    <section aria-label={t("Plan progress")} className="@container mt-6">
       <ol aria-label={t("Planning steps")} className="grid grid-cols-5 gap-[3px]">
         {STEPS.map((item, index) => (
           <li key={item.label} aria-current={index === step ? "step" : undefined}
-            className={`flex min-h-9 items-center justify-center gap-1.5 px-2 py-1.5 font-meta text-[0.6rem] font-bold uppercase leading-tight tracking-[0.06em] sm:min-h-12 sm:flex-col sm:items-start sm:justify-between ${
+            className={`flex min-h-9 min-w-0 items-center justify-center gap-1.5 px-2 py-1.5 font-meta text-[0.6rem] font-bold uppercase leading-tight tracking-[0.06em] @min-[28rem]:min-h-12 @min-[28rem]:flex-col @min-[28rem]:items-start @min-[28rem]:justify-between ${
               index < step || snapshot.phase === "complete"
                 ? "bg-ink-black text-bristol"
                 : index === step ? "bg-narrator-gold text-ink-black" : "bg-surface-container text-ink-soft"
             }`}>
             <Icon name={index < step || snapshot.phase === "complete" ? "check" : index === step ? "loader" : "circle"}
-              size={12} className={index === step && snapshot.phase !== "complete" ? "motion-safe:animate-spin" : undefined} />
-            {/* Phones show numbered steps; the phase line below names the current one. */}
-            <span aria-hidden className="tabular-nums sm:hidden">{index + 1}</span>
-            <span className="max-sm:sr-only">{t(item.label)}</span>
+              size={12} className={index === step && snapshot.phase !== "complete" ? "shrink-0 motion-safe:animate-spin" : "shrink-0"} />
+            {/* Narrow boards show numbered steps; the phase line below names the current one. */}
+            <span aria-hidden className="tabular-nums @min-[28rem]:hidden">{index + 1}</span>
+            <span className="sr-only @min-[28rem]:not-sr-only [overflow-wrap:anywhere]">{t(item.label)}</span>
           </li>
         ))}
       </ol>
@@ -135,23 +124,24 @@ export function PlanProgressBoard({ snapshot }: { snapshot: PlanProgressSnapshot
         {t(PHASE_LABEL[snapshot.phase])}
       </p>
 
-      <div className="mt-4 grid grid-cols-2 gap-[3px] bg-ink-black p-[3px] sm:grid-cols-4">
-        <Stat
+      <ProgressStats>
+        <ProgressStat
           value={pageCount ? String(pageCount) : "—"}
           label={t("Pages")}
           detail={t("Target {min}–{max}", { min: String(snapshot.target_pages.min), max: String(snapshot.target_pages.max) })}
         />
-        <Stat
+        <ProgressStat
           value={String(snapshot.panels)}
           label={t("Panels")}
           detail={pageCount ? t("{done} of {total} pages laid out", { done: String(snapshot.pages_laid_out), total: String(pageCount) }) : undefined}
         />
-        <Stat
-          value={`${snapshot.lettering_placed}/${snapshot.lettering_total}`}
+        <ProgressStat
+          value={String(snapshot.lettering_placed)}
+          total={String(snapshot.lettering_total)}
           label={t("Lines placed")}
         />
-        <Stat value={String(snapshot.beats)} label={t("Story beats")} />
-      </div>
+        <ProgressStat value={String(snapshot.beats)} label={t("Story beats")} />
+      </ProgressStats>
 
       {pageCount > 0 && (
         <>

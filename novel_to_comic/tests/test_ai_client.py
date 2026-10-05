@@ -2197,6 +2197,7 @@ def test_fal_style_image_settles_billed_charge_or_labelled_request_estimate(
     from PIL import Image
 
     from novel_to_comic.ai.finalisation import begin_image_call, finalise_image_success
+    from novel_to_comic.ai.context import generation_probe
     from novel_to_comic.ai.providers.base import ProviderRawResult
     from novel_to_comic.usage import estimate_image_cost
 
@@ -2217,10 +2218,13 @@ def test_fal_style_image_settles_billed_charge_or_labelled_request_estimate(
         response.update(provider_cost_usd=0.021, provider_cost_source="fal_billing_event")
 
     async def run():
-        ctx = await begin_image_call(
-            config=Config(), model="image-sunburst", feature="style.sample",
-            prompt=prompt, params=params, ref_reads=refs,
-        )
+        with generation_probe() as probe:
+            ctx = await begin_image_call(
+                config=Config(), model="image-sunburst", feature="style.sample",
+                prompt=prompt, params=params, ref_reads=refs,
+            )
+            assert probe.request_sha == client._hash_payload(prompt)
+            assert probe.prompt_sha is None  # Rendered input is not a template version.
         result = await finalise_image_success(
             ctx=ctx, config=Config(), model="image-sunburst", feature="style.sample",
             output_path=tmp_path / "out.png",

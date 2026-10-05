@@ -1,6 +1,7 @@
 import { useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
+import { useBackdropDismiss } from "../../hooks/useBackdropDismiss";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
 import { CreditAmount } from "../ui/CreditAmount";
@@ -42,13 +43,14 @@ export function RerunDrawer({
   const drawerRef = useRef<HTMLDivElement | null>(null);
 
   useDialogFocus(drawerRef, { enabled: open, onClose });
+  const backdrop = useBackdropDismiss(onClose);
 
   if (!open) return null;
 
   return createPortal(
     <div
       className="fixed inset-0 z-[120] flex items-end justify-center bg-ink-black/70"
-      onClick={onClose}
+      {...backdrop}
       role="presentation"
     >
       <div

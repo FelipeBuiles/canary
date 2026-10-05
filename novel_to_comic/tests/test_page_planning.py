@@ -4627,3 +4627,48 @@ def test_plan_compiles_explicit_setting_and_relationship_citations(visible):
     assert after["lettering_ids"] == before["lettering_ids"]
     assert after["acting"] == [], "Acting must still be authored, never synthesized."
     assert before["entity_ids"] == [], "Do not mutate the retained provider response."
+
+
+def test_detail_batch_corrects_unacted_onscreen_speaker_before_merge(tmp_path):
+    """A close-up on the listener still shows the beat's on-screen speaker."""
+    from copy import deepcopy
+    from novel_to_comic.page_planning import _generate_detail_batch
+
+    adaptation, mapped, raw = _assigned_detail_fixture()
+    speaker_line = mapped.lettering_ids[0]
+    payload = adaptation.model_dump()
+    payload["content_sha256"] = ""
+    for beat in payload["beats"]:
+        for item in beat["lettering"]:
+            if item["id"] == speaker_line:
+                item.update(kind="dialogue", delivery="onscreen", speaker="Johansen",
+                            speaker_entity_id="character_johansen")
+    adaptation = BookAdaptation.model_validate(payload)
+    inventory = _inventory().model_copy(update={"references": tuple(
+        ref.model_copy(update={"kind": "character" if ref.entity_id == "character_johansen" else "location"})
+        for ref in _inventory().references
+    )})
+    calls = []
+
+    async def generate(**request):
+        calls.append(request)
+        value = deepcopy(raw)
+        if len(calls) > 1:
+            value["pages"][0]["content"][0]["acting"] = [{
+                "entity_id": "character_johansen", "facing": "profile_left",
+                "gaze": "the chart", "expression": "jaw set against the cold", "gesture": "",
+            }]
+        return ApiResult(value=value)
+
+    draft = asyncio.run(_generate_detail_batch(
+        adaptation, inventory, _BookPageMap(rhythm_summary="Two events.", pages=(mapped,)),
+        start=0, stop=1, generate=generate,
+        ctx=StageRuntime("plan", PipelineState(project_name="speaker", novel_path="novel.txt",
+                         created_at=datetime.now(timezone.utc)), tmp_path),
+    ))
+
+    assert len(calls) == 2
+    feedback = calls[1]["user_content"].split("ERRORS:\n")[1]
+    assert "[missing_character_acting] (page_030, page_030_content_001)" in feedback
+    assert repr(speaker_line) in feedback
+    assert [a.entity_id for a in draft.pages[0].content[0].acting] == ["character_johansen"]

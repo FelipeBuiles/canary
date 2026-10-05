@@ -30,13 +30,27 @@ export function PageVersions({ project, pageNumber, activeRevision, disabled, on
     },
   });
 
-  return <section aria-label={t("Versions")} className="space-y-4">
-    <h3 className="font-display text-2xl font-black">{t("Choose your best version")}</h3>
-    <p className="max-w-prose text-sm leading-6 text-ink-muted">{t("The selected version is used for reading, export and your next correction. Every version stays saved. Choosing one costs no credits.")}</p>
+  return <section aria-label={t("Versions")} className="space-y-4 lg:flex lg:h-full lg:flex-col">
+    {/* The choice sits with the heading so the preview keeps the height. */}
+    <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+      <div className="min-w-0 max-w-prose flex-1 basis-72">
+        <h3 className="font-display text-2xl font-black">{t("Choose your best version")}</h3>
+        <p className="mt-2 text-sm leading-6 text-ink-muted">{t("The selected version is used for reading, export and your next correction. Every version stays saved. Choosing one costs no credits.")}</p>
+      </div>
+      {detail.data && revision != null && <div className="flex flex-wrap items-center gap-3">
+        <Button disabled={disabled || select.isPending || revision === activeRevision || !!stale || activeRevision == null}
+          onClick={() => select.mutate(revision)}>
+          {select.isPending ? t("Selecting…") : revision === activeRevision ? t("Selected version") : t("Use this version")}
+        </Button>
+        {stale && <p className="text-sm">{t("This version belongs to an earlier page plan.")}</p>}
+        {select.error && <p role="alert" className="text-sm text-hero-red">{select.error.message}</p>}
+      </div>}
+    </div>
     {detail.isLoading && <p role="status">{t("Loading…")}</p>}
     {detail.error && <div role="alert"><p>{t("Versions could not be loaded.")}</p><Button variant="outline" onClick={() => void detail.refetch()}>{t("Try again")}</Button></div>}
-    {detail.data && <>
-      <div className="flex gap-3 overflow-x-auto pb-3" role="group" aria-label={t("Preview a version")}>
+    {detail.data && <div className="space-y-4 lg:flex lg:min-h-0 lg:flex-1 lg:gap-6 lg:space-y-0">
+      {/* Versions run down the side on wide screens so the preview keeps the full height. */}
+      <div className="flex gap-3 overflow-x-auto pb-3 lg:w-32 lg:shrink-0 lg:flex-col lg:overflow-y-auto lg:overflow-x-visible lg:pb-0 lg:pr-1" role="group" aria-label={t("Preview a version")}>
         {detail.data.renders.map(({ render: item }) => <button
           key={item.revision} type="button" aria-pressed={revision === item.revision}
           onClick={() => { setPreview(item.revision); select.reset(); }}
@@ -47,16 +61,8 @@ export function PageVersions({ project, pageNumber, activeRevision, disabled, on
           {item.revision === activeRevision && <span className="text-xs font-bold">{t("Selected")}</span>}
         </button>)}
       </div>
-      {revision != null && <>
-        <div className="flex flex-wrap items-center gap-3">
-          <Button disabled={disabled || select.isPending || revision === activeRevision || !!stale || activeRevision == null}
-            onClick={() => select.mutate(revision)}>
-            {select.isPending ? t("Selecting…") : revision === activeRevision ? t("Selected version") : t("Use this version")}
-          </Button>
-          {stale && <p className="text-sm">{t("This version belongs to an earlier page plan.")}</p>}
-          {select.error && <p role="alert" className="text-sm text-hero-red">{select.error.message}</p>}
-        </div>
-        <div className="relative h-[75vh]">
+      {revision != null && <div className="lg:flex lg:min-w-0 lg:flex-1 lg:flex-col">
+        <div className="relative h-[75vh] lg:h-auto lg:min-h-64 lg:flex-1">
           <PageArtwork src={pageRenderPreviewUrl(project, pageNumber, revision, "reader")}
             alt={`${t("Page")} ${pageNumber}, ${t("Revision")} ${revision}`} />
           <InspectButton
@@ -68,7 +74,7 @@ export function PageVersions({ project, pageNumber, activeRevision, disabled, on
             onIndexChange={(next) => { setPreview(detail.data.renders[next].render.revision); select.reset(); }}
           />
         </div>
-      </>}
-    </>}
+      </div>}
+    </div>}
   </section>;
 }

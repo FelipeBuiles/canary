@@ -6,6 +6,7 @@ import logging
 import copy
 import json
 import os
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -281,14 +282,26 @@ def _route_template(request: Request) -> str:
 
 
 async def request_log_middleware(request: Request, call_next):
-    from .telemetry import operation_span
-    request.state.request_id = str(uuid.uuid4())
+    from .telemetry import operation_span, context_fields
+    uuid_pattern = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+    incoming_id = request.headers.get("X-Request-ID", "")
+    request.state.request_id = incoming_id if re.fullmatch(uuid_pattern, incoming_id) else str(uuid.uuid4())
+    session_id = request.headers.get("X-Canary-Session-ID", "")
+    session_id = session_id if re.fullmatch(uuid_pattern, session_id) else None
+    traceparent = request.headers.get("traceparent", "")
+    carrier = {"traceparent": traceparent} if re.fullmatch(r"00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]", traceparent) else {}
     # Do not accept arbitrary public baggage, user identity or span names.
-    if request.url.path in {"/metrics", "/api/health", "/api/health/ready"} or request.method == "GET":
+    if request.url.path in {"/metrics", "/api/health", "/api/health/ready"} or not request.url.path.startswith("/api/"):
         return await _request_log_middleware(request, call_next)
-    with operation_span("http.request", request_id=request.state.request_id, method=request.method) as span:
+    with operation_span("http.request", carrier=carrier, request_id=request.state.request_id,
+                        browser_session_id=session_id, method=request.method) as span:
         response = await _request_log_middleware(request, call_next)
+        if trace_id := context_fields().get("trace_id"):
+            response.headers["X-Trace-ID"] = trace_id
         if span is not None:
             span.set_attribute("route", _route_template(request))
             span.set_attribute("http_status", response.status_code)
+            user_id = getattr(request.state, "user_id", None)
+            if isinstance(user_id, str) and re.fullmatch(uuid_pattern, user_id):
+                span.set_attribute("posthogDistinctId", user_id)
         return response

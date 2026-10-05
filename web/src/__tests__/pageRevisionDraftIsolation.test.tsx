@@ -90,7 +90,7 @@ function renderDraft(overrides: Partial<ComponentProps<typeof RevisionDraft>> = 
           issues={[]}
           seeds={[]}
           onSeedsConsumed={vi.fn()}
-          onDraftKeysChange={vi.fn()}
+         
           onJobQueued={vi.fn()}
           {...overrides}
         />
@@ -183,6 +183,26 @@ describe("revision draft storage scoping", () => {
     expect(loadRevisionDraft(PROJECT, PAGE, target(2, 2))).toBeNull();
   });
 
+  it("never offers suggestions alone, or a sent draft a newer render replaced", () => {
+    saveRevisionDraft(storedDraft({
+      changes: [{ id: "issue:issue-9", issue_id: "issue-9", instruction: "Restore the approved face", selected: true, annotations: [] }],
+    }));
+    expect(findStaleRevisionDraft(PROJECT, PAGE, target(2, 2))).toBeNull();
+    saveRevisionDraft(storedDraft({ submittedJobId: "job-1", pendingRequest: "", note: "sent with the job" }));
+    expect(findStaleRevisionDraft(PROJECT, PAGE, target(2, 2))).toBeNull();
+    // Both were cleaned up rather than kept around.
+    expect(loadRevisionDraft(PROJECT, PAGE, target(2, 1))).toBeNull();
+  });
+
+  it("discarding removes the earlier draft for good", () => {
+    saveRevisionDraft(storedDraft({ pendingRequest: "Make the sky darker" }));
+    const first = renderDraft({ parentRenderRevision: 2 });
+    fireEvent.click(screen.getByRole("button", { name: "DISCARD" }));
+    first.unmount();
+    renderDraft({ parentRenderRevision: 2 });
+    expect(screen.queryByText("You have unsent changes from an earlier version of this page.")).toBeNull();
+  });
+
   it("clears only the targeted draft", () => {
     saveRevisionDraft(storedDraft({ note: "old render note" }));
     saveRevisionDraft(storedDraft({ parentRenderRevision: 2, note: "new render note" }));
@@ -213,19 +233,21 @@ describe("RevisionDraft across render targets", () => {
 
     const { container } = renderDraft({ issues: [FACE_ISSUE] });
 
-    // The stale-draft alert shows on the calm artwork view; requests stay closed.
-    expect(screen.getByRole("alert")).toBeTruthy();
+    // The earlier-draft notice shows beside the artwork; requests stay closed.
+    expect(screen.getByText("You have unsent changes from an earlier version of this page.")).toBeTruthy();
     expect(screen.queryByDisplayValue("Restore the approved face")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /make changes/i }));
 
     // Fresh draft: the suggestion is present but carries no inherited marks.
     expect(screen.getAllByDisplayValue("Restore the approved face")).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: /copy wording/i }));
+    fireEvent.click(screen.getByRole("button", { name: /use on this version/i }));
 
     // The copied wording arrives as a second, collapsed request: only the focused one stays editable.
     expect(screen.getAllByDisplayValue("Restore the approved face")).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: /edit request/i })).toHaveLength(1);
-    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText("You have unsent changes from an earlier version of this page.")).toBeNull();
+    // Used once, the earlier draft is gone for good.
+    expect(findStaleRevisionDraft(PROJECT, PAGE, target(2, 2))).toBeNull();
 
     // Expanding the copy shows the retained wording with no marks, excluded by default.
     fireEvent.click(screen.getByRole("button", { name: /edit request/i }));
@@ -257,13 +279,13 @@ describe("RevisionDraft across render targets", () => {
     reopened.unmount();
 
     const next = renderDraft({ parentRenderRevision: 2 });
-    expect(screen.getByRole("alert")).toBeTruthy();
+    expect(screen.getByText(pending, { selector: "li" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /make changes/i }));
     expect(screen.getByLabelText(/What would you like to change/)).toHaveProperty("value", "");
     expect(screen.queryByDisplayValue(pending)).toBeNull();
     expect(screen.queryByRole("checkbox", { name: /include fix/i })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: /copy wording/i }));
+    fireEvent.click(screen.getByRole("button", { name: /use on this version/i }));
 
     expect(screen.getByRole("checkbox", { name: `Include fix: ${pending}` })).toHaveProperty("checked", false);
     const copied = loadRevisionDraft(PROJECT, PAGE, target(2, 2));

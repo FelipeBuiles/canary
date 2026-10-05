@@ -70,6 +70,19 @@ def translated_app(book, monkeypatch):
 @run_async
 async def test_estimate_submit_job_translates_every_page_and_preserves_authored_state(translated_app):
     app, artifacts, image, reservations, releases, calls = translated_app
+    from novel_to_comic.server.generation_jobs import enqueue_generation_job, generation_job_payload
+    draws = []
+
+    @app.post("/api/projects/book/pages/1/generate")
+    async def queue_draw():
+        async def draw():
+            assert job.status == "complete", "artwork must wait for project translation"
+            draws.append("after translation")
+
+        queued = enqueue_generation_job(app, "account:book", "complete_page_draw", "Page 1",
+                                        {"page_number": 1}, draw, user_id="account")
+        return {"status": "queued", "job": generation_job_payload(app, queued)}
+
     add_page(artifacts, image)
     initial = service.ensure_lettering(artifacts, 1)
     first = initial.elements[0].model_dump()
@@ -92,8 +105,9 @@ async def test_estimate_submit_job_translates_every_page_and_preserves_authored_
         assert accepted.status_code == 200, accepted.text
         job = app.state.generation_jobs[accepted.json()["job"]["id"]]
         assert job.kind == "lettering_translation" and job.status == "queued"
-        # Even targeted generation, normally allowed alongside page jobs, is blocked.
-        assert (await client.post("/api/projects/book/pages/1/generate", headers={"Idempotency-Key": "draw"})).status_code == 409
+        drawing = await client.post("/api/projects/book/pages/1/generate", headers={"Idempotency-Key": "draw"})
+        assert drawing.status_code == 200, drawing.text
+        assert drawing.json()["job"]["status"] == "queued" and not draws
         replay = await client.post(root + "/translate", json=body, headers={"Idempotency-Key": "translate"})
         assert replay.json() == accepted.json()
         worker = asyncio.create_task(generation_worker(app))
@@ -104,6 +118,7 @@ async def test_estimate_submit_job_translates_every_page_and_preserves_authored_
             with suppress(asyncio.CancelledError):
                 await worker
         assert job.status == "complete", job.error
+        assert draws == ["after translation"]
     assert releases == ["hold"] and len(reservations) == 1
     assert calls and all(not call["retry_invalid_json"] and not call["retry_transport"] for call in calls)
     page1, page2 = artifacts.read_lettering(1), artifacts.read_lettering(2)

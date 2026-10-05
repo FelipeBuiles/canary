@@ -1,4 +1,4 @@
-import type { CastReferenceInput } from "../types/api";
+import type { CastReferenceInput, CastReferenceUpload } from "../types/api";
 import { apiFetch, isNotFoundError } from "./client";
 import { projectPath, seriesPath } from "./projectScope";
 import type {
@@ -18,6 +18,7 @@ export function runPipeline(
   retryFailed?: boolean,
   queuePages?: boolean,
   confirmedArchivePages?: number,
+  thenApprove?: boolean,
 ): Promise<{ status: string; stage: string }> {
   const params = new URLSearchParams();
   if (stage) params.set("stage", stage);
@@ -25,6 +26,8 @@ export function runPipeline(
   if (retryFailed) params.set("retry_failed", "1");
   if (queuePages) params.set("queue_pages", "1");
   if (confirmedArchivePages !== undefined) params.set("confirmed_archive_pages", String(confirmedArchivePages));
+  // Cast only: the server approves Cast and starts Adapt when the run leaves nothing to review.
+  if (thenApprove) params.set("then_approve", "1");
   const query = params.toString();
   return apiFetch(`${projectPath(project)}/run${query ? `?${query}` : ""}`, {
     method: "POST",
@@ -34,7 +37,7 @@ export function runPipeline(
 export function getGenerationJobs(
   project: string,
   ids: string[] = [],
-): Promise<{ jobs: GenerationJob[] }> {
+): Promise<{ jobs: GenerationJob[]; current_reference_style_hash: string }> {
   const params = ids.map((id) => `ids=${encodeURIComponent(id)}`).join("&");
   return apiFetch(
     `${projectPath(project)}/jobs${params ? `?${params}` : ""}`,
@@ -136,6 +139,13 @@ export function regenPlate(
     `${seriesPath(project)}/regen-plate?loc_id=${encodeURIComponent(locId)}`,
     { method: "POST" },
   );
+}
+
+/** Store an author image for a Cast correction. No spend. */
+export function uploadCastReference(project: string, image: File): Promise<CastReferenceUpload> {
+  const form = new FormData();
+  form.append("image", image);
+  return apiFetch(`${seriesPath(project)}/cast/reference-uploads`, { method: "POST", headers: {}, body: form });
 }
 
 export function regenRefWithInstruction(

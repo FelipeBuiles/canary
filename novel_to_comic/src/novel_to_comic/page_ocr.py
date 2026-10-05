@@ -8,6 +8,8 @@ falsify a render, and Draw's exact-lettering invariant would validate itself.
 from __future__ import annotations
 
 import functools
+import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -87,6 +89,26 @@ class _ObservedBox(BaseModel):
     y: float = Field(ge=0, le=1)
     width: float = Field(gt=0, le=1)
     height: float = Field(gt=0, le=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_thousandths(cls, value: Any) -> Any:
+        """Gemini often reports 0-1000 coordinates despite the 0-1 instruction,
+        sometimes for only some fields of one box. Scale those fields and keep
+        the box on the page."""
+        if not isinstance(value, dict) or not all(
+            isinstance(value.get(key), (int, float)) for key in ("x", "y", "width", "height")
+        ):
+            return value
+        if any(value[key] > 1000 for key in ("x", "y", "width", "height")):
+            return value
+        box = {key: float(item) / 1000 if isinstance(item, (int, float)) and item > 1 else item
+               for key, item in value.items()}
+        box["x"] = min(max(box["x"], 0.0), 1.0)
+        box["y"] = min(max(box["y"], 0.0), 1.0)
+        box["width"] = min(box["width"], 1.0 - box["x"])
+        box["height"] = min(box["height"], 1.0 - box["y"])
+        return box
 
     @property
     def center(self) -> tuple[float, float]:
@@ -183,8 +205,6 @@ class _ObservedHead(BaseModel):
             scale = 1000.0 if max(abs(float(item)) for item in box) > 1 else 1.0
             box = {"x": x_min / scale, "y": y_min / scale,
                    "width": (x_max - x_min) / scale, "height": (y_max - y_min) / scale}
-        if isinstance(box, dict):
-            box = {k: max(0.0, min(1.0, float(v))) if isinstance(v, (int, float)) else v for k, v in box.items()}
         normalized["head"] = box
         return normalized
 
@@ -204,6 +224,27 @@ class _PageOCRDraft(BaseModel):
         if isinstance(value, list):
             return {"lettering": value}
         return value
+
+
+_DIVISION = re.compile(r"(?<=[:\[,\s])(-?\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)(?=\s*[,}\]])")
+
+
+def parse_page_ocr_text(text: str) -> _PageOCRDraft:
+    """Validate one raw page-read answer, repairing arithmetic such as
+    ``"y": 30.0 / 1000`` that Gemini sometimes writes instead of a number."""
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.split("\n", 1)[-1].rsplit("```", 1)[0]
+    try:
+        data = json.loads(stripped)
+    except json.JSONDecodeError:
+        repaired = _DIVISION.sub(
+            lambda match: repr(float(match.group(1)) / float(match.group(2)))
+            if float(match.group(2)) else match.group(0),
+            stripped,
+        )
+        data = json.loads(repaired)
+    return _PageOCRDraft.model_validate(data)
 
 
 def _panel_order(panels: tuple[_ObservedBox, ...]) -> tuple[int, ...]:
@@ -312,6 +353,7 @@ class GatewayPageOCRAdapter:
         self._portrait_source = portraits
         self._artifacts = None
         self._render = None
+        self._last_response: ApiResult[str] | None = None
 
     @functools.cached_property
     def _portraits(self) -> tuple[CastPortrait, ...]:
@@ -324,6 +366,7 @@ class GatewayPageOCRAdapter:
         self._render = render
 
     def _persist_response(self, result: ApiResult[str]) -> None:
+        self._last_response = result
         if self._artifacts is not None and self._render is not None:
             self._artifacts.write_ocr_response(OCRProviderResponse(
                 page_number=self._page_number,
@@ -334,14 +377,40 @@ class GatewayPageOCRAdapter:
             ))
 
     async def extract(self, image: bytes) -> ApiResult[OCRExtraction]:
-        from novel_to_comic.clients.text import generate_json
-
         instruction = _INSTRUCTION
         if self._portraits:
             instruction += _SUBJECTS.format(
                 labels=", ".join(p.entity_id for p in self._portraits)
             )
-        result = await generate_json(
+        self._last_response = None
+        try:
+            result = await self._read(instruction, image)
+        except Exception as exc:
+            # The answer was paid for and saved; repair it locally before
+            # declaring the read failed.
+            answer = self._last_response
+            if answer is None:
+                raise
+            try:
+                draft = parse_page_ocr_text(answer.value)
+            except (ValueError, TypeError):
+                raise exc from None
+            return ApiResult(
+                value=build_extraction(draft, frozenset(p.entity_id for p in self._portraits)),
+                usage=answer.usage, additional_usage=answer.additional_usage,
+            )
+        return ApiResult(
+            value=build_extraction(
+                _PageOCRDraft.model_validate(result.value),
+                frozenset(p.entity_id for p in self._portraits),
+            ),
+            usage=result.usage,
+        )
+
+    async def _read(self, instruction: str, image: bytes) -> ApiResult[dict]:
+        from novel_to_comic.clients.text import generate_json
+
+        return await generate_json(
             config=self._config,
             model=self._config.effective_page_ocr_model(),
             system_prompt=_SYSTEM_PROMPT,
@@ -357,11 +426,4 @@ class GatewayPageOCRAdapter:
                 (image, "image/png"),
                 *((p.image, p.media_type) for p in self._portraits),
             ),
-        )
-        return ApiResult(
-            value=build_extraction(
-                _PageOCRDraft.model_validate(result.value),
-                frozenset(p.entity_id for p in self._portraits),
-            ),
-            usage=result.usage,
         )

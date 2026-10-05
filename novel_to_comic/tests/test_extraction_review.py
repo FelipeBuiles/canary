@@ -408,3 +408,14 @@ def test_review_moves_a_scene_to_the_place_its_action_happens():
     unused = ExtractionReview.model_validate(dict(locations=changes.model_dump()['locations']))
     with pytest.raises(ValueError, match='is no scene'):
         apply_source_review(bible(), unused, TEXT, part_id='part_0001')
+
+
+def test_extraction_rejects_a_formation_sheet_for_one_entity():
+    from novel_to_comic.stages.s1_extract import _check_character_looks
+
+    eye = {"id": "eye", "name": "Cosmic Eye", "identity_kind": "individual",
+           "reference_form": "formation", "visual_anchor": "gigantic eye", "appearance_states": []}
+    with pytest.raises(ValueError, match="reference_form 'formation' but is not identity_kind 'group'"):
+        _check_character_looks([eye])
+    _check_character_looks([{**eye, "identity_kind": "group"}])
+    _check_character_looks([{**eye, "reference_form": "form"}])

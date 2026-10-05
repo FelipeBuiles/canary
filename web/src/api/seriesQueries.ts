@@ -1,10 +1,10 @@
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { invalidateProject, splitProjectKey } from "./projectScope";
 import {
   addPart,
   deletePart,
   exportParts,
-  getPageFlags,
   getPartChapters,
   renamePart,
   replacePartText,
@@ -20,6 +20,7 @@ import {
   fillVisualAnchor,
   getCastFreshness,
   getDraftEstimate,
+  getEditImpact,
   getStoryBibleEditor,
   keepReference,
   mergeEntity,
@@ -27,6 +28,7 @@ import {
   removeEntity,
   removeLook,
   restoreExcluded,
+  undoLastEdit,
   type EntityKind,
   type SavedStoryBible,
 } from "./storyBible";
@@ -93,15 +95,6 @@ export function useDeletePart() {
   });
 }
 
-export function usePageFlags(project: string | undefined) {
-  const part = project ? splitProjectKey(project).part : null;
-  return useQuery({
-    queryKey: ["project", project, "page-flags"],
-    queryFn: () => getPageFlags(project!, part!),
-    enabled: !!project && !!part,
-  });
-}
-
 export function useExportParts() {
   return useMutation({
     mutationFn: ({ project, partIds, format }: { project: string; partIds: string[]; format: "pdf" | "cbz" }) =>
@@ -124,7 +117,7 @@ export function useStoryBibleEditor(project: string | undefined, enabled = true)
 
 /** An edit changes what every part shows: the Bible, Cast references, stage status and estimates. */
 function refreshStoryBible(qc: QueryClient, project: string) {
-  for (const resource of ["story-bible-editor", "story-bible", "story", "status", "estimate", "cast-freshness", "page-flags"]) {
+  for (const resource of ["story-bible-editor", "story-bible", "story", "status", "estimate", "cast-freshness", "complete-pages"]) {
     void invalidateProject(qc, project, resource);
   }
 }
@@ -186,18 +179,42 @@ export const useFillVisualAnchor = () => useStoryBibleMutation(
     fillVisualAnchor(project, body),
 );
 
+export const useUndoEdit = () => useStoryBibleMutation(
+  ({ project, revision }: { project: string; revision: number }) => undoLastEdit(project, revision),
+);
+
+/** Reads what a removal or merge would change; refreshed with the editor. */
+export function useEditImpact(
+  project: string, kind: EntityKind, id: string, action: "remove" | "merge", into: string | undefined, revision: number,
+) {
+  return useQuery({
+    queryKey: ["project", seriesKey(project), "story-bible-editor", "impact", kind, id, action, into, revision],
+    queryFn: () => getEditImpact(project, kind, id, action, into),
+    enabled: action === "remove" || !!into,
+  });
+}
+
 export const useRestoreExcluded = () => useStoryBibleMutation(
   ({ project, kind, name, revision }: { project: string; kind: EntityKind; name: string; revision: number }) =>
     restoreExcluded(project, kind, name, revision),
 );
 
 export function useDraftEstimate(project: string | undefined, kind: EntityKind, name: string, aliases: string[] = []) {
-  const trimmed = name.trim();
+  // Estimate once typing pauses, and keep the last answer on screen meanwhile,
+  // so the hint and the credit amount do not jump on every keystroke.
+  const typed = JSON.stringify([name.trim(), aliases]);
+  const [settled, setSettled] = useState(typed);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(typed), 400);
+    return () => clearTimeout(timer);
+  }, [typed]);
+  const [trimmed, settledAliases] = JSON.parse(settled) as [string, string[]];
   return useQuery({
-    queryKey: ["project", seriesKey(project), "draft-estimate", kind, trimmed, aliases],
-    queryFn: () => getDraftEstimate(project!, kind, trimmed, aliases),
+    queryKey: ["project", seriesKey(project), "draft-estimate", kind, trimmed, settledAliases],
+    queryFn: () => getDraftEstimate(project!, kind, trimmed, settledAliases),
     enabled: !!project && trimmed.length >= 2,
     staleTime: 60_000,
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -229,7 +246,7 @@ export function useKeepReference() {
     }) => keepReference(project, kind, entityId, stateId),
     onSuccess: (data, { project }) => {
       qc.setQueryData(["project", seriesKey(project), "cast-freshness"], data);
-      for (const resource of ["story-bible-editor", "status", "page-flags"]) void invalidateProject(qc, project, resource);
+      for (const resource of ["story-bible-editor", "status", "complete-pages"]) void invalidateProject(qc, project, resource);
     },
   });
 }

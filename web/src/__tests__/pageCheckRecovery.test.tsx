@@ -25,7 +25,7 @@ it.each([
   render(<QueryClientProvider client={new QueryClient()}><I18nProvider>
     <PageCheckRecovery project="demo" unchecked={2} />
   </I18nProvider></QueryClientProvider>);
-  fireEvent.click(screen.getByRole("button", { name: "Check pages" }));
+  fireEvent.click(screen.getByRole("button", { name: "Check again" }));
   fireEvent.click(await screen.findByRole("button", { name: "CHECK PAGES" }));
   await screen.findByText(/The earlier check was interrupted/);
   expect(api.recover.mock.calls).toEqual([

@@ -6,10 +6,15 @@ import { I18nProvider } from "../i18n";
 import { StateRefRow } from "../pages/rooms/CastRoom";
 import type * as Client from "../api/client";
 
-const server = vi.hoisted(() => ({ submit: vi.fn(), estimates: [] as string[], supportsReferences: true }));
+const server = vi.hoisted(() => ({ submit: vi.fn(), estimates: [] as string[], uploads: [] as string[], supportsReferences: true }));
 vi.mock("../api/client", async (original) => ({
   ...await original<typeof Client>(),
   apiFetch: async (path: string, options?: RequestInit) => {
+    if (options?.method === "POST" && options.body instanceof FormData) {
+      const image = options.body.get("image") as File;
+      server.uploads.push(path);
+      return { upload_id: "a".repeat(32), label: image.name, image_path: `reference_uploads/${"a".repeat(32)}.png` };
+    }
     if (options?.method === "POST") {
       server.submit(path, options.body ? JSON.parse(options.body as string) : null);
       throw new Error("Provider unavailable. Try again.");
@@ -29,22 +34,22 @@ vi.mock("../api/client", async (original) => ({
   },
 }));
 const clients: QueryClient[] = [];
-afterEach(() => { clients.forEach((c) => c.clear()); clients.length = 0; server.submit.mockClear(); server.estimates = []; server.supportsReferences = true; });
-function mount(kind: "character" | "location") {
+afterEach(() => { clients.forEach((c) => c.clear()); clients.length = 0; server.submit.mockClear(); server.estimates = []; server.uploads = []; server.supportsReferences = true; });
+function mount(kind: "character" | "location", stageRegenerating = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   clients.push(client);
   render(<QueryClientProvider client={client}><I18nProvider><StateRefRow projectName="demo" entityId="office" kind={kind}
-    stageRegenerating={false} refreshToken="current" states={[{ id: "night", label: "At night", visual_anchor: "Old furnishings, nighttime", visually_significant: true, baseline_affect: null }]} />
+    stageRegenerating={stageRegenerating} refreshToken="current" states={[{ id: "night", label: "At night", visual_anchor: "Old furnishings, nighttime", visually_significant: true, baseline_affect: null }]} />
   </I18nProvider></QueryClientProvider>);
 }
 it.each(["character", "location"] as const)("edits only the selected %s appearance and sends reference attachments after confirmation", async (kind) => {
   const user = userEvent.setup();
-  mount(kind);
+  mount(kind, true);
   await user.click(screen.getByRole("button", { name: "Open image · At night" }));
   await user.type(screen.getByRole("textbox"), "Use the attached office’s window design, keeping this room’s layout.");
   expect(screen.getByText("Add a reference").closest("details")?.open).toBe(false);
   await user.click(screen.getByText("Add a reference"));
-  const select = await screen.findByRole("combobox", { name: "Choose a reference" });
+  const select = await screen.findByRole("combobox", { name: "Or choose one from this project" });
   await screen.findByRole("option", { name: "Providence office" });
   await user.selectOptions(select, JSON.stringify(["location", "other", null]));
   // A second attachment can be added and removed without changing the request text.
@@ -68,6 +73,26 @@ it.each(["character", "location"] as const)("edits only the selected %s appearan
   await user.click(screen.getByRole("button", { name: "Open image · At night" }));
   expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("Use the attached office’s window design, keeping this room’s layout.");
   expect(within(screen.getByRole("list", { name: "Attached references" })).getByText("Providence office")).toBeTruthy();
+});
+it("uploads any image as a reference and sends it with the correction", async () => {
+  // The picker's accept filter is advisory; the handler must still reject other types.
+  const user = userEvent.setup({ applyAccept: false });
+  mount("location", true);
+  await user.click(screen.getByRole("button", { name: "Open image · At night" }));
+  await user.type(screen.getByRole("textbox"), "Use the lamp from my photo.");
+  await user.click(screen.getByText("Add a reference"));
+  const input = screen.getByRole("dialog").querySelector<HTMLInputElement>('input[type="file"]')!;
+  await user.upload(input, new File(["gif"], "lamp.gif", { type: "image/gif" }));
+  expect((await screen.findByRole("alert")).textContent).toContain("PNG, JPG, or WebP");
+  expect(server.uploads).toHaveLength(0);
+  await user.upload(input, new File(["png"], "lamp.png", { type: "image/png" }));
+  const attached = await screen.findByRole("list", { name: "Attached references" });
+  expect(within(attached).getByText("lamp.png")).toBeTruthy();
+  expect(attached.querySelector("img")?.getAttribute("src")).toBe(`/api/projects/demo/cast/reference-uploads/${"a".repeat(32)}`);
+  await user.click(await screen.findByRole("button", { name: /REGENERATE WITH CHANGE.*credits/ }));
+  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "REGENERATE WITH CHANGE" }));
+  await waitFor(() => expect(server.submit).toHaveBeenCalledTimes(1));
+  expect(server.submit.mock.calls[0][1]).toEqual({ instruction: "Use the lamp from my photo.", reference_assets: [{ upload_id: "a".repeat(32) }] });
 });
 it("opens a missing location appearance and offers a deliberate individual generation", async () => {
   const user = userEvent.setup();

@@ -10,9 +10,9 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from novel_to_comic import artifacts
+from novel_to_comic import artifacts, reference_forms
 from novel_to_comic.config import Config
-from novel_to_comic.models.appearance import AppearanceState
+from novel_to_comic.models.appearance import AppearanceState, ReferenceForm
 from novel_to_comic.models.story_bible import Character, Location
 from novel_to_comic.workspace import series_root
 from novel_to_comic.image_models import image_model_profile_for_config
@@ -95,6 +95,7 @@ class StateAssetGenerationSpec(BaseModel):
     preserved_facets: tuple[str, ...]
     overridden_facets: tuple[str, ...]
     replaces_identity: bool = False
+    reference_form: ReferenceForm = "figure"
     style_path: str | None = None
     style_sha256: str | None = None
     configured_route_model: str
@@ -169,16 +170,8 @@ def build_character_state_spec(
     direction_parts = [f"CHARACTER STATE REFERENCE SHEET — {char.name} ({state.label})."]
     if state.continuity_guard:
         prompt_parts.append(state.continuity_guard)
-    composition = (
-        "One wide appearance-state reference sheet: in the left third, a head-and-shoulders "
-        "three-quarter portrait above a head-and-shoulders side profile; in the right two "
-        "thirds, one full-body front view in a neutral design stance compatible with the "
-        "active-state anatomy. Show only how this state looks on the body, face, hair and "
-        "clothing; leave out objects that pierce, pin, bind or are held, other people, "
-        "scenery, and the situation itself, keeping only their visible marks. The selected "
-        "style owns rendering. Same active identity and appearance in all three views, each "
-        "fully contained within its own region. No text or labels."
-    )
+    form = reference_forms.reference_form(char, state)
+    composition = reference_forms.STATE_DIRECTION[form]
     prompt_parts.append(composition)
     direction_parts.append(composition)
     parent_hash = _sha256(parent)
@@ -190,7 +183,8 @@ def build_character_state_spec(
         baseline_affect=state.baseline_affect,
         canonical_parent_path=_relative(parent, project_dir) or "", canonical_parent_sha256=parent_hash,
         preserved_facets=() if state.replaces_identity else ("identity",),
-        overridden_facets=tuple(sorted(overridden)), replaces_identity=state.replaces_identity, style_path=_relative(style_path, project_dir),
+        overridden_facets=tuple(sorted(overridden)), replaces_identity=state.replaces_identity,
+        reference_form=form, style_path=_relative(style_path, project_dir),
         style_sha256=_sha256(style_path), configured_route_model=config.effective_image_model(),
         configured_route=image_model_profile_for_config(config).route.value,
         requested_shape="landscape", effective_width=state_reference_dimensions(config, "character")[0],
@@ -221,7 +215,7 @@ def build_location_state_spec(
     overridden = set(state.changed_facets)
     prompt_parts = [rendering_style_template(config.style_template), "LOCATION STATE DESIGN PLATE", state.visual_anchor]
     direction_parts = ["LOCATION STATE DESIGN PLATE"]
-    composition = "Wide environment plate. Active-state conditions win. No characters or text."
+    composition = "Location state plate at the location's true scale and enclosure. Active-state conditions win. No characters or text."
     prompt_parts.append(composition)
     direction_parts.append(composition)
     width, height = state_reference_dimensions(config, "location")
@@ -331,8 +325,21 @@ _CHARACTER_OVERRIDABLE_FACETS: dict[str, tuple[str, ...]] = {
     "face": ("face",),
     "build": ("build", "proportions", "silhouette"),
     "anatomy": ("anatomy", "build", "proportions", "silhouette"),
+    # A changed body shape (a cat splattered into a blob) need not keep a face;
+    # the anchor says whether one remains.
+    "shape": ("anatomy", "build", "proportions", "silhouette", "face"),
     "clothing": ("wardrobe",),
 }
+
+
+def edits_canonical_parent(spec: StateAssetGenerationSpec) -> bool:
+    """Whether a state is drawn as an edit of its canonical parent.
+
+    Editing keeps the parent's pixels, which suits a costume or wound but
+    carries the default body and face into a state whose shape changes.
+    Such a state uses the parent only as a reference for what remains.
+    """
+    return spec.asset_kind != "character_state_ref" or "shape" not in spec.overridden_facets
 
 #: Location identity facets the canonical plate can safely condition.
 _LOCATION_IDENTITY_FACETS: tuple[str, ...] = ("architecture", "landmarks", "materials")
@@ -765,7 +772,7 @@ __all__ = [
     "LineageMode", "LineageStatus", "STATE_ASSET_SPEC_VERSION",
     "StateAssetGenerationSpec", "StateConditioningError",
     "build_character_state_spec", "build_location_state_spec",
-    "build_state_reference_plan", "mark_dependent_states_stale",
+    "build_state_reference_plan", "edits_canonical_parent", "mark_dependent_states_stale",
     "revalidate_state_asset_lineage", "state_is_total_transformation",
 ]
 

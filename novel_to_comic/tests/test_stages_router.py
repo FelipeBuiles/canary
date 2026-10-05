@@ -494,3 +494,57 @@ def test_an_existing_visual_anchor_is_never_overwritten(tmp_path: Path):
 
     assert response.status_code == 409
     assert read_story_bible(project_dir).characters[0].visual_anchor == "tall, grey coat"
+
+
+def _continued_cast_run(tmp_path, monkeypatch, blocker):
+    """Run Cast as "Continue" does, with stage bodies replaced by status changes."""
+    import asyncio
+
+    from novel_to_comic.briefing import approve_brief
+    from novel_to_comic.stages import s3_cast
+
+    project_dir, state, _bible = _story_project(tmp_path)
+    _write_draft_brief(project_dir)
+    target = TargetArtifacts(project_dir)
+    brief = target.read_brief()
+    target.write_brief(approve_brief(brief, expected_revision=brief.revision))
+    for name in ("brief", "style"):
+        state.stages[name] = StageState(status=StageStatus.COMPLETE)
+    state.stages["cast"] = StageState(status=StageStatus.AWAITING_REVIEW)
+    save_state(state, project_dir)
+    ran: list[str] = []
+
+    async def fake_credited_stage(*, stage, state, project_dir, **_kwargs):
+        ran.append(stage)
+        state.stages[stage].status = StageStatus.AWAITING_REVIEW if stage == "cast" else StageStatus.COMPLETE
+        save_state(state, project_dir)
+
+    monkeypatch.setattr(pipeline, "run_credited_stage", fake_credited_stage)
+    monkeypatch.setattr(s3_cast, "cast_approval_blocker", lambda *_args: blocker)
+    asyncio.run(pipeline._run_stage_with_credits(
+        "cast", Config(), project_dir, state, asyncio.Queue(), "user", "test_project",
+        approve_part=str(project_dir)))
+    return state, ran
+
+
+def test_continue_after_a_clean_cast_recheck_approves_cast_and_starts_adapt(tmp_path, monkeypatch):
+    """Regression: corrections left a "re-check" step the author had to finish by
+    hand; Continue now carries a passing re-check through to Adapt and Plan."""
+    state, ran = _continued_cast_run(tmp_path, monkeypatch, blocker=None)
+    assert ran == ["cast", "adapt", "plan"]
+    assert state.stages["cast"].status == StageStatus.COMPLETE
+
+
+def test_continue_leaves_cast_for_review_when_the_recheck_finds_something(tmp_path, monkeypatch):
+    state, ran = _continued_cast_run(tmp_path, monkeypatch, blocker="Two characters look alike.")
+    assert ran == ["cast"]
+    assert state.stages["cast"].status == StageStatus.AWAITING_REVIEW
+
+
+def test_then_approve_is_only_for_cast(tmp_path, monkeypatch):
+    project_dir, state, _bible = _story_project(tmp_path)
+    monkeypatch.setattr(styles, "is_style_selected", lambda *_args: True)
+    response = _client(tmp_path, project_dir, state).post(
+        "/api/projects/test_project/parts/part_0001/run?stage=cast&rerun=true&then_approve=true")
+    assert response.status_code == 400
+    assert "Cast run only" in response.json()["detail"]

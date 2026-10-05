@@ -13,6 +13,8 @@ export interface RunStageOptions {
   rerun?: boolean;
   confirmedArchivePages?: number;
   retryFailed?: boolean;
+  /** Cast only: approve and continue to Adapt if the run leaves nothing to review. */
+  thenApprove?: boolean;
   /** Overrides the label shown in the buy-credits dialog. */
   actionLabel?: string;
   onSuccess?: () => void;
@@ -30,10 +32,10 @@ export function useRunAction() {
   const clearEvents = usePipelineStore((state) => state.clearEvents);
 
   function handleRun(project: string, stage?: string, options: RunStageOptions = {}) {
-    const { rerun = false, retryFailed, confirmedArchivePages, actionLabel, onSuccess, onError } = options;
+    const { rerun = false, retryFailed, confirmedArchivePages, thenApprove, actionLabel, onSuccess, onError } = options;
     clearEvents();
     runPipeline.mutate(
-      { project, stage, rerun, retryFailed, confirmedArchivePages },
+      { project, stage, rerun, retryFailed, confirmedArchivePages, thenApprove },
       {
         onSuccess: () => {
           connect(project);

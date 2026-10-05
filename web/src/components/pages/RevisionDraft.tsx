@@ -1,9 +1,11 @@
 import { isOcrIssue } from "./lettering";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { LoaderCircle } from "lucide-react";
 import { useI18n } from "../../i18n";
 import type { PageIssue } from "../../types/api";
 import {
   clearRevisionDraft,
+  draftHasUnsentWork,
   findStaleRevisionDraft,
   loadRevisionDraft,
   newChangeId,
@@ -36,7 +38,7 @@ import {
   MAX_CORRECTION_MARKS,
   serializeAnnotation,
 } from "./correctionValidation";
-import type { VisualReviewDraftSeed } from "./VisualReviewPanel";
+import type { DraftSeed } from "./PageChecks";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 
 interface DraftChange {
@@ -116,12 +118,13 @@ interface RevisionDraftProps {
   compareRevision: number | null;
   issues: PageIssue[];
   /** Seeds pushed from the visual review panel; consumed once merged. */
-  seeds: VisualReviewDraftSeed[];
+  seeds: DraftSeed[];
   onSeedsConsumed: () => void;
-  onDraftKeysChange: (keys: string[]) => void;
   onJobQueued: (jobId: string) => void;
   disabled?: boolean;
   onArtworkLoaded?: () => void;
+  /** Shown beside the artwork when not editing, e.g. the page's checks. */
+  aside?: ReactNode;
 }
 
 function suggestibleIssues(issues: PageIssue[]): PageIssue[] {
@@ -142,7 +145,7 @@ function changeFromIssue(issue: PageIssue): DraftChange {
   };
 }
 
-function mergeSeeds(current: DraftChange[], seeds: VisualReviewDraftSeed[]): DraftChange[] {
+function mergeSeeds(current: DraftChange[], seeds: DraftSeed[]): DraftChange[] {
   const byKey = new Map(current.map((change) => [change.id, change]));
   const byIssue = new Map(
     current.filter((change) => change.issueId).map((change) => [change.issueId!, change]),
@@ -208,10 +211,10 @@ export function RevisionDraft({
   issues,
   seeds,
   onSeedsConsumed,
-  onDraftKeysChange,
   onJobQueued,
   disabled,
   onArtworkLoaded,
+  aside,
 }: RevisionDraftProps) {
   const { t } = useI18n();
   const preview = useCorrectionPreview();
@@ -253,6 +256,10 @@ export function RevisionDraft({
 
   const completed = job?.status === "complete";
   const locked = disabled || submit.isPending || (submittedJobId != null && !canRetry && !completed);
+  // A submitted correction in flight. Its job is polled, so this is status, never a prompt to act.
+  const redraw = submittedJobId != null && !completed && !canRetry
+    ? submittedJob.error || (submittedJob.data && !job) ? "unconfirmed" : job?.status === "queued" ? "queued" : "running"
+    : null;
   const focused = changes.find((change) => change.id === focusId)
     ?? changes.find((change) => change.selected)
     ?? changes[0]
@@ -294,7 +301,7 @@ export function RevisionDraft({
   // Merge visual-review seeds once: known issues become selections, the rest new changes.
   // Own-state merge happens during render (the supported derived-state pattern);
   // parent notification stays in an effect since it sets parent state.
-  const [lastSeeds, setLastSeeds] = useState<VisualReviewDraftSeed[]>([]);
+  const [lastSeeds, setLastSeeds] = useState<DraftSeed[]>([]);
   if (seeds !== lastSeeds && seeds.length > 0) {
     setLastSeeds(seeds);
     setChanges((current) => mergeSeeds(current, seeds));
@@ -306,7 +313,19 @@ export function RevisionDraft({
 
   // Retain the exact change IDs through failure and reload, including queued work.
   useEffect(() => {
-    if (job?.status === "complete") {
+    const draft = {
+      changes: changes.map((change) => ({
+        id: change.id,
+        ...(change.issueId ? { issue_id: change.issueId } : {}),
+        instruction: change.instruction,
+        selected: change.selected,
+        annotations: change.annotations,
+      })),
+      note,
+      pendingRequest: manualInput,
+    };
+    // Keep only what the author wrote or sent; untouched suggestions are rebuilt from the findings.
+    if (job?.status === "complete" || (!submittedJobId && !draftHasUnsentWork(draft))) {
       clearRevisionDraft(project, pageNumber, target);
       return;
     }
@@ -317,15 +336,7 @@ export function RevisionDraft({
       comicPageRevision,
       parentRenderRevision,
       comicPageSha256,
-      changes: changes.map((change) => ({
-        id: change.id,
-        ...(change.issueId ? { issue_id: change.issueId } : {}),
-        instruction: change.instruction,
-        selected: change.selected,
-        annotations: change.annotations,
-      })),
-      note,
-      pendingRequest: manualInput,
+      ...draft,
       // No manual story-context selection: the backend assembles whole-book
       // context automatically. Stored passage ids from older drafts are
       // never re-submitted silently.
@@ -333,13 +344,6 @@ export function RevisionDraft({
       updatedAt: new Date().toISOString(),
     });
   }, [project, pageNumber, comicPageRevision, parentRenderRevision, comicPageSha256, changes, note, manualInput, submittedJobId, job?.status, target]);
-
-  useEffect(() => {
-    onDraftKeysChange([
-      ...changes.filter((change) => change.selected && change.issueId).map((change) => change.issueId!),
-      ...changes.filter((change) => change.selected).map((change) => change.id),
-    ]);
-  }, [changes, onDraftKeysChange]);
 
   const selectedChanges = useMemo(() => changes.filter((change) => change.selected), [changes]);
 
@@ -506,9 +510,35 @@ export function RevisionDraft({
         return next;
       });
       if (staleDraft.note && !note) setNote(staleDraft.note);
+      setEditing(true);
     }
+    // Copied or discarded, the earlier draft is done with: never offer it again.
+    clearRevisionDraft(project, pageNumber, staleDraft);
     setStaleDraft(null);
   }
+
+  const staleRequests = staleDraft
+    ? [...staleDraft.changes.filter((change) => !change.issue_id || change.annotations.length > 0).map((change) => change.instruction),
+      ...(staleDraft.pendingRequest?.trim() ? [staleDraft.pendingRequest.trim()] : [])]
+    : [];
+  const staleNotice = staleDraft && (
+    <Surface tone="pulp" border="soft" shadow="none" padding="md" role="status">
+      <p className="font-body text-sm font-bold">{t("You have unsent changes from an earlier version of this page.")}</p>
+      {staleRequests.length > 0 && (
+        <ul className="mt-2 list-disc space-y-1 pl-5 font-body text-sm leading-6">
+          {staleRequests.slice(0, 3).map((instruction, index) => <li key={index}>{instruction}</li>)}
+          {staleRequests.length > 3 && <li className="list-none text-ink-muted">{t("{count, plural, one {and # more} other {and # more}}", { count: staleRequests.length - 3 })}</li>}
+        </ul>
+      )}
+      <p className="mt-2 font-body text-xs leading-5 text-ink-muted">
+        {t("Use them on this version, or discard them. Marks drawn on the earlier version stay behind.")}
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button size="xs" onClick={() => rebaseStale(true)} disabled={locked}>{t("USE ON THIS VERSION")}</Button>
+        <Button size="xs" variant="outline" onClick={() => rebaseStale(false)}>{t("DISCARD")}</Button>
+      </div>
+    </Surface>
+  );
 
   const previewManualCount = previewResult?.pending_manual_change_ids.length ?? 0;
   const canvasSrc = pageRenderPreviewUrl(project, pageNumber, parentRenderRevision, "reader");
@@ -543,51 +573,20 @@ export function RevisionDraft({
   }
 
   return (
-    <section ref={sectionRef} aria-label={t("Page corrections")} className="space-y-4">
-      {staleDraft && (
-        <Surface tone="pulp" border="soft" shadow="none" padding="md" role="alert">
-          <p className="font-body text-sm font-bold">
-            {t("An older draft exists for page revision")} {staleDraft.comicPageRevision}
-            {t(", render")} {staleDraft.parentRenderRevision}.
-          </p>
-          <p className="mt-1 font-body text-xs leading-5">
-            {t("Marks stay with the old render and are never moved. You may copy the selections and wording only, or discard it.")}
-          </p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <Button size="xs" onClick={() => rebaseStale(true)}>{t("COPY WORDING ONLY")}</Button>
-            <Button size="xs" variant="outline" onClick={() => rebaseStale(false)}>{t("DISCARD OLD DRAFT")}</Button>
-          </div>
-        </Surface>
-      )}
+    <section ref={sectionRef} aria-label={t("Page corrections")} className="space-y-4 lg:flex lg:h-full lg:flex-col">
 
-      {submittedJobId && !completed && (
+      {submittedJobId && canRetry && (
         <Surface tone="container" border="soft" shadow="none" padding="md" role="status">
-          <p className="font-body text-sm font-bold">{t(
-            canRetry ? "The correction did not finish. Your original requests are saved."
-              : submittedJob.error || (submittedJob.data && !job) ? "We couldn’t confirm the correction’s progress."
-                : job?.status === "running" ? "Drawing your new version…"
-                  : job?.status === "queued" ? "Your correction is waiting to start."
-                    : "Checking your correction…",
-          )}</p>
+          <p className="font-body text-sm font-bold">{t("The correction did not finish. Your original requests are saved.")}</p>
           <p className="mt-1 font-body text-sm leading-6 text-ink-muted">
-            {canRetry ? t("Choose Make changes to review your saved requests and the cost before trying again.")
-              : submittedJob.error || (submittedJob.data && !job) ? t("Check progress before sending another correction. Your requests are saved.")
-                : t("You can close this page. It will update automatically when the new version is ready, and Make changes will be available again.")}
+            {t("Choose Make changes to review your saved requests and the cost before trying again.")}
           </p>
-          {!canRetry && <Button className="mt-3" size="sm" variant="outline" disabled={submittedJob.isFetching}
-            onClick={() => void submittedJob.refetch()}>{t("Check progress")}</Button>}
         </Surface>
       )}
 
-      <div className={editing ? "grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]" : "space-y-4"}>
-        <div className="min-w-0 space-y-4">
-          {!editing && (
-            <div ref={makeChangesWrapRef} className="flex justify-end">
-              <Button size="sm" variant="outline" onClick={startEditing} disabled={locked}>
-                {t("MAKE CHANGES")}
-              </Button>
-            </div>
-          )}
+      {/* Artwork left, a working rail right: the page's checks, or the change request while editing. */}
+      <div className="grid gap-6 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,30rem)] lg:grid-rows-[minmax(0,1fr)] 2xl:grid-cols-[minmax(0,1fr)_minmax(24rem,36rem)]">
+        <div className="min-w-0 space-y-4 lg:flex lg:min-h-0 lg:flex-col lg:overflow-y-auto">
           {editing && focused && (marking || focused.annotations.length > 0) ? (
             <div ref={markTopRef} className="space-y-3">
               <p className="font-body text-sm leading-6 text-ink-muted">
@@ -609,11 +608,17 @@ export function RevisionDraft({
               />
             </div>
           ) : (
-            <figure ref={artRef} className="relative flex h-[max(12rem,calc(100dvh-20rem))] justify-center">
-              <Loupe className="flex h-full w-full justify-center">
+            <figure ref={artRef} className="relative flex h-[max(12rem,calc(100dvh-20rem))] justify-center lg:h-auto lg:min-h-64 lg:flex-1">
+              <Loupe className={`flex h-full w-full justify-center transition-opacity ${redraw ? "opacity-60" : ""}`}>
                 <PageArtwork src={canvasSrc} alt={canvasAlt} onLoaded={onArtworkLoaded} />
               </Loupe>
               <InspectButton images={{ src: canvasSrc, alt: canvasAlt }} />
+              {redraw && (
+                <figcaption role="status" className="pointer-events-none absolute left-1/2 top-4 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 border-[2px] border-ink-black bg-bristol px-3 py-2 font-meta text-xs font-bold uppercase tracking-wider shadow-ink">
+                  {redraw !== "unconfirmed" && <LoaderCircle size={14} aria-hidden="true" className="shrink-0 motion-safe:animate-spin" />}
+                  {t(redraw === "queued" ? "Redraw waiting to start" : redraw === "running" ? "Redrawing this page" : "Can’t confirm the redraw yet")}
+                </figcaption>
+              )}
             </figure>
           )}
           {compareRevision != null && (
@@ -697,14 +702,34 @@ export function RevisionDraft({
           )}
         </div>
 
+        {!editing && (
+          <div className="min-w-0 space-y-6 border-t border-ink-black/15 pt-5 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+            {staleNotice}
+            <div ref={makeChangesWrapRef} className="space-y-2">
+              <Button className="w-full" size="sm" variant="outline" onClick={startEditing} disabled={locked}>
+                {t(redraw ? "REDRAWING…" : "MAKE CHANGES")}
+              </Button>
+              {redraw && (
+                <p className="font-body text-xs leading-5 text-ink-muted">
+                  {t(redraw === "unconfirmed"
+                    ? "Your requests are saved. This page keeps checking and updates once the redraw is confirmed."
+                    : "You can close this page. The new version replaces it here when ready, and you can make changes again.")}
+                </p>
+              )}
+            </div>
+            {aside}
+          </div>
+        )}
+
         {editing && (
-        <div ref={railRef} className={`min-w-0 space-y-5 border-t border-ink-black/15 pt-5 lg:order-none lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0 ${marking ? "" : "order-first"}`}>
+        <div ref={railRef} className={`min-w-0 space-y-5 border-t border-ink-black/15 pt-5 lg:order-none lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0 ${marking ? "" : "order-first"}`}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h3 className="font-display text-2xl font-black">{t("Request changes")}</h3>
             <Button size="sm" variant="outline" onClick={hideEditing}>
               {t("Back to page")}
             </Button>
           </div>
+          {staleNotice}
           <p className="font-body text-sm leading-6 text-ink-muted">
             {t("Text is enough. Optionally add a pin, area or highlight to show where. You’ll review the cost before generating.")}
           </p>

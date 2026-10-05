@@ -658,3 +658,21 @@ def test_a_replanned_page_draws_fresh_while_current_art_still_needs_a_correction
     _, _, compiled = pages._prepare_initial_generation(project, page.page_number, "canonical")
     assert compiled.request.correction is None
     assert not compiled.request.is_stale_for(page)
+
+
+def test_a_page_drawn_from_a_changed_cast_reference_draws_fresh(tmp_path, monkeypatch, dev_routes):
+    page, inventory, files = _authorities(tmp_path, 2)
+    artifacts = TargetArtifacts(tmp_path)
+    artifacts.write_page(page)
+    artifacts.write_book_edition(page_drawing.select_book_edition(
+        edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(_codex_config()),
+    ))
+    monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(TargetArtifacts, "provenance_revisions", lambda self, number: (1,))
+    monkeypatch.setattr(pages, "_latest_render_is_stale", lambda target, number, revision: False)
+    monkeypatch.setattr(pages, "_page_redraw", lambda project_dir, target, number: {
+        "plan_changed": False, "changed_references": [{"entity_id": "carl"}]})
+
+    _, _, compiled = pages._prepare_initial_generation((tmp_path, _codex_config(), None), page.page_number, "canonical")
+    assert compiled.request.correction is None

@@ -7,9 +7,23 @@ changed facets and identity replacement, never inferred prose keywords.
 
 from typing import Optional, Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from novel_to_comic.models.asset_id import safe_asset_id
+
+# How a character's Cast reference sheet lays out its views. A turnaround fits a
+# fixed anatomy with a face; it invents backs, heads and standing poses for
+# anything else, and repeats one member of a collective. See reference_forms.
+ReferenceForm = Literal["figure", "form", "formation"]
+
+REFERENCE_FORM_DESCRIPTION = (
+    "Cast reference sheet layout. figure (the default): a turnaround for any person or "
+    "animal with a fixed anatomy and a face, however unusual. form: one entity with no "
+    "fixed front, back or head, or whose identity is a material, light or motion (a "
+    "floating eye, a gas creature, a living ribbon). formation: a group whose identity "
+    "is its member count and arrangement and whose members share one design (a trio of "
+    "dancing hearts, a school of kites); only for identity_kind group. When unsure, figure."
+)
 
 
 class StoryPosition(BaseModel):
@@ -69,8 +83,18 @@ class AppearanceState(BaseModel):
         "age", "hair", "face", "build", "anatomy", "clothing", "damage",
         "weather", "light", "water_level", "architecture", "landmarks",
         "materials", "atmosphere", "shape", "contents", "color",
-    ], ...] = ()
+    ], ...] = Field(default=(), description=(
+        "Every facet this state changes from the base look. Include face when the face, eyes "
+        "or expression change, are hidden or are gone (death, unconsciousness, a mask, a body "
+        "dissolved or reshaped); otherwise reference images restore the default face. Include "
+        "shape when the body no longer has its usual form."))
     replaces_identity: bool = False
+    # Characters only: a state that changes the body plan (a person turned to
+    # mist) may need another sheet layout. None keeps the character's own form.
+    reference_form: Optional[ReferenceForm] = Field(default=None, description=(
+        "Characters only; null for locations and props. Set only when this state changes "
+        "the body plan enough to need another sheet layout; null keeps the character's. "
+        + REFERENCE_FORM_DESCRIPTION))
 
 
 

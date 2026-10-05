@@ -23,7 +23,7 @@ STYLE_PROOF_SIZE = (1024, 1280)
 STYLE_PROOF_ASPECT = 0.8  # 4:5 portrait
 
 #: Location design plates are composed as a wide landscape frame (the
-#: location-plate prompt promises a "clean wide environment design plate"). The
+#: location-plate prompt asks for a character-free location design plate). The
 #: generation dimensions must agree with that promised composition.
 LOCATION_PLATE_SIZE = (1344, 768)
 LOCATION_PLATE_ASPECT = 1.75  # 16:9-ish wide plate (1344/768 = 1.75)
@@ -110,8 +110,8 @@ def style_proof_dimensions() -> tuple[int, int]:
 def location_plate_dimensions() -> tuple[int, int]:
     """Generation dimensions for a location design plate.
 
-    The location-plate prompt promises a "clean wide environment design plate."
-    The generation dimensions must agree with that wide composition. Routes
+    Location design plates are landscape frames; the generation dimensions
+    must agree with that wide composition. Routes
     that require specific provider sizes may remap in their transport layer,
     but the compiled/preview geometry reflects this verified wide shape.
     """

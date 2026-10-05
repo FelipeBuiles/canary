@@ -1,16 +1,17 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
 
-const readiness = vi.hoisted(() => ({ documents: true }));
-beforeEach(() => { readiness.documents = true; });
+const readiness = vi.hoisted(() => ({ documents: true, parts: [] as { id: string; title: string; ordinal: number; stages: Record<string, string> }[] }));
+beforeEach(() => { readiness.documents = true; readiness.parts = []; });
 
 vi.mock("../api/queries", () => ({
   useProjectStatus: () => ({
     data: {
       is_running: false,
       style_selected: true,
+      parts: readiness.parts,
       stages: {
         extract: { status: "complete" },
         brief: { status: "complete", approved: true },
@@ -99,7 +100,42 @@ describe("SideNav locked stations", () => {
     renderNav("/project/demo/story");
     expect(screen.getByRole("button", { name: /Station 04 Book: Locked/ }).hasAttribute("disabled")).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "STATION" }));
-    expect(screen.getByRole("option", { name: /04 Book.*Locked/ }).hasAttribute("disabled")).toBe(true);
+    expect(within(screen.getByRole("dialog")).getByRole("button", { name: /Station 04 Book: Locked/ }).hasAttribute("disabled")).toBe(true);
+  });
+});
+
+describe("Mobile project navigation", () => {
+  it("opens the existing station decisions on demand and closes after navigation", () => {
+    renderNav("/project/demo/styles");
+    fireEvent.click(screen.getByRole("button", { name: "STATION" }));
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Characters & places" }));
+    expect(screen.getByTestId("location").textContent).toBe("/project/demo/cast");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("dismisses with Escape and restores focus to the navigation button", () => {
+    renderNav("/project/demo/pages");
+    const opener = screen.getByRole("button", { name: "STATION" });
+    opener.focus();
+    fireEvent.click(opener);
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("switches parts without carrying another part's page selection", () => {
+    readiness.parts = [
+      { id: "p1", title: "Chapters 1–6", ordinal: 1, stages: {} },
+      { id: "p2", title: "Chapters 7–12", ordinal: 2, stages: {} },
+    ];
+    renderNav("/project/demo~p1/pages?page=5");
+    fireEvent.click(screen.getByRole("button", { name: "STATION" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Part" }));
+    fireEvent.click(screen.getByRole("option", { name: "2. Chapters 7–12" }));
+    expect(screen.getByTestId("location").textContent).toBe("/project/demo~p2/pages");
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
 

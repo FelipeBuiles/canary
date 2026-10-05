@@ -24,20 +24,6 @@ export interface DetectedChapter {
   opening_characters?: number;
 }
 
-export type PageFlagReason = "description" | "continuity" | "reference image" | "removed";
-
-/** A drawn page whose artwork predates an edit to something on it. */
-export interface PageFlag {
-  page_number: number;
-  render_revision: number;
-  changes: {
-    entity_id: string;
-    appearance_state_id: string | null;
-    label: string;
-    reasons: PageFlagReason[];
-  }[];
-}
-
 export interface PartTextInput {
   title?: string;
   text?: string;
@@ -101,10 +87,6 @@ export function renamePart(project: string, part: string, title: string): Promis
 
 export function deletePart(project: string, part: string): Promise<{ parts: PartSummary[] }> {
   return apiFetch(partPath(project, part), { method: "DELETE" });
-}
-
-export function getPageFlags(project: string, part: string): Promise<{ pages: PageFlag[] }> {
-  return apiFetch(`${partPath(project, part)}/page-flags`);
 }
 
 export function exportParts(

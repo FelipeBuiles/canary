@@ -13,10 +13,11 @@ interface Props {
   parts: PartSummary[];
   tone?: "light" | "dark";
   className?: string;
+  onNavigate?: () => void;
 }
 
 /** Choose the part to work on, or manage the series' parts. */
-export function PartSwitcher({ project, parts, tone = "dark", className }: Props) {
+export function PartSwitcher({ project, parts, tone = "dark", className, onNavigate }: Props) {
   const { t } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
@@ -40,7 +41,10 @@ export function PartSwitcher({ project, parts, tone = "dark", className }: Props
         onValueChange={(value) => {
           if (value === MANAGE) setManaging(true);
           // Page selections belong to a part, so the new part opens fresh.
-          else if (value !== part) navigate({ pathname: withProjectKey(location.pathname, partProjectKey(id, value)) });
+          else if (value !== part) {
+            navigate({ pathname: withProjectKey(location.pathname, partProjectKey(id, value)) });
+            onNavigate?.();
+          }
         }}
       />
       {parts.length > 1 && currentPart && <p className={`mt-2 font-body text-xs ${tone === "dark" ? "text-bristol/80" : "text-ink-muted"}`}>

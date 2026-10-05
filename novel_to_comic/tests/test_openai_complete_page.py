@@ -234,7 +234,7 @@ def test_page_quote_uses_current_pricing_and_counts_correction_source(tmp_path):
         compiled.request.model, 1, quality='medium', width=1024, height=1536,
         ref_count=len(compiled.request.references), prompt_text=compiled.request.prompt,
     )
-    quote = estimate_draw_api_cost(config, compiled, ocr=False)
+    quote = estimate_draw_api_cost(config, compiled, checks=False)
     assert quote == pytest.approx(expected)
     # Medium output is quoted from its measured table, not the $0.25 allowance.
     assert quote < 0.25
@@ -242,7 +242,7 @@ def test_page_quote_uses_current_pricing_and_counts_correction_source(tmp_path):
     assert profile.price_per_page_usd == profile.price_per_reference_usd == 0
     assert compiled.request.estimated_cost_usd == 0
     correction = replace(compiled, edit_source_bytes=b'parent page')
-    assert estimate_draw_api_cost(config, correction, ocr=False) == pytest.approx(quote + .016)
+    assert estimate_draw_api_cost(config, correction, checks=False) == pytest.approx(quote + .016)
     assert correction_credit_estimate(correction, config=config, reserve=True)['estimate_credits'] > 0
     assert compiled.request.model_dump_json() == frozen
     complete_page_adapter(config).prepare(compiled)

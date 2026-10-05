@@ -112,8 +112,9 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `baseline_affect` | `Optional[str]` | `None` |
 | `canonical_equivalent` | `bool` | `False` |
 | `continuity_guard` | `Optional[str]` | `None` |
-| `changed_facets` | `tuple[Literal['age', 'hair', 'face', 'build', 'anatomy', 'clothing', 'damage', 'weather', 'light', 'water_level', 'architecture', 'landmarks', 'materials', 'atmosphere', 'shape', 'contents', 'color'], ...]` | `()` |
+| `changed_facets` | `tuple[Literal['age', 'hair', 'face', 'build', 'anatomy', 'clothing', 'damage', 'weather', 'light', 'water_level', 'architecture', 'landmarks', 'materials', 'atmosphere', 'shape', 'contents', 'color'], ...]` | `Field(default=(), description='Every facet this...` |
 | `replaces_identity` | `bool` | `False` |
+| `reference_form` | `Optional[ReferenceForm]` | `Field(default=None, description="Characters onl...` |
 
 ## StateActivation _(appearance.py)_
 
@@ -263,6 +264,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `appearance_state_id` | `str | None` | `None` |
 | `label` | `str` | `''` |
 | `continuity_guard` | `str` | `''` |
+| `identity` | `str` | `Field(default='', exclude_if=lambda value: not ...` |
 
 ## RetryProvenance _(draw.py)_
 
@@ -677,11 +679,13 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `action` | `str` | `''` |
 | `expression` | `str` | `''` |
 | `baseline_affect` | `str | None` | `None` |
+| `wardrobe` | `str` | `''` |
 | `position` | `str` | `''` |
 | `appearance_state_id` | `str | None` | `None` |
 | `appearance_state_canonical_equivalent` | `bool` | `False` |
 | `appearance_locked` | `bool` | `False` |
 | `appearance_guard` | `str | None` | `None` |
+| `reference_form` | `ReferenceForm` | `'figure'` |
 
 ## RoleStyle _(lettering.py)_
 
@@ -802,7 +806,8 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `approved` | `Literal[True]` | `True` |
 | `label` | `str` | `''` |
 | `continuity_guard` | `str` | `''` |
-| `kind` | `Literal['character', 'location', 'prop'] | None` | `None` |
+| `kind` | `Literal['character', 'location', 'prop', 'object'] | None` | `None` |
+| `identity` | `str` | `''` |
 | `requires_image` | `bool` | `True` |
 
 ## ApprovedVisualReferenceInventory _(page.py)_
@@ -966,6 +971,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `visual_anchor` | `str` |  |
 | `age_range` | `str` | `Field(description='Stated age or source-describ...` |
 | `gender` | `str` |  |
+| `stature` | `str` | `Field(default='', description="Source-stated bo...` |
 | `distinguishing_features` | `list[str]` | `Field(description='Source-stated intrinsic anat...` |
 | `baseline_affect` | `str | None` | `None` |
 | `default_outfit` | `str` |  |
@@ -977,6 +983,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `origin` | `EntityOrigin` | `'extracted'` |
 | `identity_kind` | `Literal['individual', 'interchangeable', 'group']` | `Field(default='individual', description="Indivi...` |
 | `cast_required` | `bool` | `Field(default=False, description='Needs a dedic...` |
+| `reference_form` | `ReferenceForm` | `Field(default='figure', description=REFERENCE_F...` |
 
 ## Location _(story_bible.py)_
 
@@ -984,7 +991,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 |-------|------|---------|
 | `id` | `str` |  |
 | `name` | `str` |  |
-| `visual_anchor` | `str` |  |
+| `visual_anchor` | `str` | `Field(description='Base-state physical tags, us...` |
 | `time_of_day` | `Optional[str]` | `None` |
 | `mood` | `str` |  |
 | `appearance_states` | `list[AppearanceState]` | `[]` |
@@ -1041,6 +1048,14 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `aliases` | `list[str]` | `[]` |
 | `origin` | `EntityOrigin` | `'extracted'` |
 
+## RemovedRecord _(story_bible.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `entity` | `dict[str, Any]` |  |
+| `scene_ids` | `list[str]` | `[]` |
+| `incoming` | `list[tuple[str, CharacterRelationship]]` | `[]` |
+
 ## ExcludedEntity _(story_bible.py)_
 
 | Field | Type | Default |
@@ -1048,6 +1063,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `kind` | `Literal['character', 'location', 'prop']` |  |
 | `name` | `str` |  |
 | `aliases` | `list[str]` | `[]` |
+| `removed` | `RemovedRecord | None` | `None` |
 
 ## StoryBible _(story_bible.py)_
 

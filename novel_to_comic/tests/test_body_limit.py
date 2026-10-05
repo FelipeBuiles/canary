@@ -22,6 +22,7 @@ def test_novel_upload_uses_its_larger_multipart_envelope(monkeypatch):
     monkeypatch.setenv("CANARY_MAX_UPLOAD_MB", "10")
 
     assert _body_cap_bytes("/api/projects/", "POST") == 11 * 1024 * 1024
+    assert _body_cap_bytes("/api/projects/source-preview", "POST") == 11 * 1024 * 1024
     assert _body_cap_bytes("/api/projects/import-story", "POST") == 2 * 1024 * 1024
 
 
@@ -63,3 +64,11 @@ def test_other_routes_keep_the_generic_body_cap(monkeypatch):
     monkeypatch.setenv("CANARY_MAX_BODY_MB", "2")
 
     assert _body_cap_bytes("/api/projects/my-book/styles/validation", "POST") == 2 * 1024 * 1024
+
+
+@pytest.mark.parametrize("path", ["/api/projects/my-book/styles/direction", "/api/projects/my-book/cast/reference-uploads"])
+def test_image_upload_routes_allow_one_reference_image(monkeypatch, path):
+    monkeypatch.setenv("CANARY_MAX_BODY_MB", "2")
+
+    assert _body_cap_bytes(path, "POST") == 11 * 1024 * 1024
+    assert _body_cap_bytes(path, "GET") == 2 * 1024 * 1024

@@ -48,7 +48,7 @@ function saved(annotations: PageCorrectionAnnotation[], instruction = "Make his 
 function renderDraft(openEditing = true) {
   render(<QueryClientProvider client={new QueryClient()}><I18nProvider>
     <RevisionDraft project="demo" pageNumber={1} {...target} comicPageSha256={"a".repeat(64)} compareRevision={null}
-      issues={[]} seeds={[]} onSeedsConsumed={vi.fn()} onDraftKeysChange={vi.fn()} onJobQueued={vi.fn()} />
+      issues={[]} seeds={[]} onSeedsConsumed={vi.fn()} onJobQueued={vi.fn()} />
   </I18nProvider></QueryClientProvider>);
   const edit = screen.queryByRole("button", { name: /make changes/i });
   if (edit && openEditing) fireEvent.click(edit);
@@ -103,16 +103,16 @@ describe("text-first page correction", () => {
     expect(loadRevisionDraft("demo", 1, target)?.submittedJobId).toBeUndefined();
     expect(mocks.submit).not.toHaveBeenCalled();
   });
-  it.each(["queued", "running"])("keeps Make changes visible while %s and explains that no action is needed", (status) => {
+  it.each(["queued", "running"])("shows the redraw on the artwork while %s and asks for no action", (status) => {
     mocks.jobStatus = status;
     saved([]);
     saveRevisionDraft({ ...loadRevisionDraft("demo", 1, target)!, submittedJobId: "queued-job" });
     renderDraft(false);
-    expect(screen.getByRole("button", { name: "MAKE CHANGES" })).toHaveProperty("disabled", true);
-    expect(screen.getByText(status === "queued" ? "Your correction is waiting to start." : "Drawing your new version…")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "REDRAWING…" })).toHaveProperty("disabled", true);
+    expect(screen.getByText(status === "queued" ? "Redraw waiting to start" : "Redrawing this page")).toBeTruthy();
     expect(screen.getByText(/You can close this page/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Check progress" }));
-    expect(mocks.refresh).toHaveBeenCalledOnce();
+    // Progress is polled; there is nothing to press.
+    expect(screen.queryByRole("button", { name: "Check progress" })).toBeNull();
     expect(mocks.submit).not.toHaveBeenCalled();
   });
   it.each(["missing", "error"])("does not pretend an unknown correction is queued: %s", (state) => {
@@ -121,8 +121,8 @@ describe("text-first page correction", () => {
     saved([]);
     saveRevisionDraft({ ...loadRevisionDraft("demo", 1, target)!, submittedJobId: "queued-job" });
     renderDraft(false);
-    expect(screen.getByText("We couldn’t confirm the correction’s progress.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "MAKE CHANGES" })).toHaveProperty("disabled", true);
+    expect(screen.getByText("Can’t confirm the redraw yet")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "REDRAWING…" })).toHaveProperty("disabled", true);
     expect(loadRevisionDraft("demo", 1, target)?.changes[0].id).toBe("request-1");
   });
   it("accepts the screenshot's saved marks without separate notes, preserving the full parent request", () => {

@@ -147,6 +147,21 @@ def narrative_signals(context: dict) -> list[dict]:
                         "question": "Is this sustained absence of narration/dialogue purposeful, intelligible visual action, or missing reader context/padding?",
                     }
                 )
+        if context["phase"] == "plan":
+            for page in pages:
+                for content in page.get("content", []):
+                    speakers = {item.get("speaker_entity_id") or item.get("speaker")
+                                for item in content["lettering"]
+                                if item["kind"] in {"dialogue", "thought"} and item.get("delivery") == "onscreen"}
+                    shot = (content.get("camera") or {}).get("shot")
+                    if len(speakers) >= 2 and shot in {"insert", "extreme_close_up"}:
+                        signals.append(
+                            {
+                                "id": f"faceless_exchange_{content['id']}",
+                                "artifact_ids": [f"page_{page['page_number']:03d}"],
+                                "question": f"Panel {content['id']} places an exchange between {len(speakers)} speakers in an {shot} shot. Can a reader attribute each line and read them in order, or should the speakers be visible?",
+                            }
+                        )
         counts = Counter(
             b
             for p in pages
@@ -342,7 +357,11 @@ def _prompt(context):
         "changes or lost physical relationships in aftermath panels. Compare canonical staging "
         "in layout_intent with earlier events: a room mentioned in dialogue is not a scene "
         "change, and an attached or penetrating object must retain its contact, orientation "
-        "and support until an event changes them. Do not invent missing geometry or demand "
+        "and support until an event changes them. Check that each caption agrees with the "
+        "visual_intent and layout_intent of the panel it is placed in, and with the source "
+        "for that object or place: a caption calling a figure decapitated over staging that "
+        "shows it intact, or staging that moves a source-placed object (outside above a door) "
+        "indoors, is a contradiction with repair_stage=plan. Do not invent missing geometry or demand "
         "that a close-up show the environment. Findings must cite supplied "
         "beat/page/source IDs and explain the specific contradiction or missing information "
         "and a repair. Set repair_stage to adapt when the canonical story/words need "

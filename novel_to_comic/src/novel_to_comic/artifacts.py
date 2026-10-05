@@ -274,6 +274,15 @@ def style_direction_image_path(project_dir: Path, direction_id: str, suffix: str
     return candidate
 
 
+def reference_upload_path(project_dir: Path, upload_id: str, suffix: str) -> Path:
+    """An author-uploaded Cast correction reference, content-addressed in the series root."""
+    import re
+
+    if not re.fullmatch(r"[a-f0-9]{32}", upload_id or "") or suffix not in {".png", ".jpg", ".webp", ".json"}:
+        raise ValueError("invalid reference upload")
+    return series_root(project_dir) / "reference_uploads" / f"{upload_id}{suffix}"
+
+
 def style_validation_path(project_dir: Path, suggestion_id: str) -> Path:
     import re
 

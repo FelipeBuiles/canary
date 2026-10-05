@@ -1010,14 +1010,39 @@ def _protected_speech(phrase: str) -> tuple[str, ...]:
     )
 
 
+def _lettered_in_reading_order(phrase: str, wordings: tuple[str, ...]) -> bool:
+    """Whether one balloon, or a run of consecutive ones, letters the phrase.
+
+    A comic splits a long protected speech across balloons. Each word must
+    still survive verbatim and in reading order; a balloon break reads as the
+    space between sentences.
+    """
+    if (pattern := _protected_language_pattern(phrase)) is None:
+        return False
+    keys = tuple(_protected_language_key(wording) for wording in wordings)
+    length = len(_protected_language_key(phrase))
+    for start, first in enumerate(keys):
+        run = first
+        if pattern.search(run):
+            return True
+        # Extend only while the match could still begin inside the first item;
+        # a later start covers the remaining runs.
+        for key in keys[start + 1:]:
+            if len(run) - len(first) >= length:
+                break
+            run = f"{run} {key}"
+            if pattern.search(run):
+                return True
+    return False
+
+
 def _protected_language_realized(phrase: str, wordings: Iterable[str]) -> bool:
     wordings = tuple(wordings)
-    if any(_contains_protected_language(wording, phrase) for wording in wordings):
+    if _lettered_in_reading_order(phrase, wordings):
         return True
     speech = _protected_speech(phrase)
     return bool(speech) and all(
-        any(_contains_protected_language(wording, quotation) for wording in wordings)
-        for quotation in speech
+        _lettered_in_reading_order(quotation, wordings) for quotation in speech
     )
 
 
@@ -1131,9 +1156,9 @@ def _materialize_protected_lettering(
         for beat in candidate.beats
     ]
     ledger = list(candidate.ledger)
-    existing_keys = {
+    existing_keys = [
         _protected_language_key(item.text) for beat in beats for item in beat.lettering
-    }
+    ]
     source_by_id = {unit.id: unit for unit in source.units}
     ledger_index_by_source = {
         entry.source_unit_id: index for index, entry in enumerate(ledger)
@@ -1232,7 +1257,7 @@ def _materialize_protected_lettering(
                 else (*beat.lettering, lettering)
             )}
         )
-        existing_keys.add(phrase_key)
+        existing_keys.append(phrase_key)
 
     realized_dispositions = {
         (source_unit_id, item.kind)
@@ -1426,6 +1451,7 @@ def _story_bible_view(
                 "summary": scene.summary,
                 "scene_type": scene.scene_type,
                 "narrative_beat": scene.narrative_beat,
+                "scene_objects": [{"id": item.id, "name": item.name} for item in scene.transient_objects],
             }
             for scene in scenes
         ],
@@ -1761,8 +1787,8 @@ def build_book_adaptation_prompt(
         "The target page range is not a beat-count target: "
         "derive granularity from the story rather than producing one beat per page. "
         "Each adapted beat should carry one drawable story moment. List its visible "
-        "character, location, and recurring prop IDs in entity_ids using the Story Bible; "
-        "do not invent IDs or omit props whose appearance matters. Split compound "
+        "character, location, recurring prop, and scene_objects IDs in entity_ids using the "
+        "Story Bible; do not invent IDs or omit props or scene objects whose appearance matters. Split compound "
         "action, reaction, transition, reveal, consequence, and aftermath into "
         "separate visual beats whenever each moment needs distinct visual weight; "
         "never pad by duplicating content. "
@@ -4417,7 +4443,8 @@ def validate_book_adaptation(
     failures: list[InvariantFailure] = []
     issues: list[EditorialIssue] = []
     if story_bible is not None:
-        known_entities = {entity.id for entity in (*story_bible.characters, *story_bible.locations, *story_bible.props)}
+        known_entities = {entity.id for entity in (*story_bible.characters, *story_bible.locations, *story_bible.props,
+                                                   *(item for scene in story_bible.scenes for item in scene.transient_objects))}
         unknown_entities = {entity_id for beat in adaptation.beats for entity_id in beat.entity_ids} - known_entities
         if unknown_entities:
             citing_beats = tuple(

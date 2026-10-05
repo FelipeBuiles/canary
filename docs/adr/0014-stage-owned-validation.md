@@ -87,3 +87,23 @@ fails the paid page, which stays unchecked and can be read later without
 redrawing. A new read re-places only untouched seeds (no author edit, review or
 translation); placement review stays manual. Integrated editions keep the
 explicit text check above, because its transcription findings remain unreliable.
+
+### Addendum: every draw checks its page (2026-10-05)
+
+Every draw and correction, in both lettering modes, now runs two checks inside
+the draw job and its credit estimate: the page read (text, and heads for
+editable lettering) and the visual review against the approved cast and
+setting references. Both are best effort: a failed check never fails the paid
+page. The read is retried once inside the job; Gemini answers in 0–1000
+coordinates or with arithmetic are repaired locally, and an unreadable saved
+answer is kept aside as evidence and no longer counts as free cached evidence.
+A page whose check still did not finish can be checked again without
+redrawing, and Pages offers that only after drawing has settled.
+
+Findings stay advisory and never block Draw approval or Finish. Each open
+finding asks one decision: fix it in the next revision, or mark it not a
+problem (automated text and visual findings are dismissed; editorial ones are
+accepted). An unproven reading order asks for nothing, so it stays analysis
+evidence and is not recorded as a page finding. The page review shows the
+checks with the artwork instead of in separate visual and text tabs.
+This supersedes the explicit text check for integrated editions above.

@@ -15,6 +15,7 @@ pages name it; restarting those parts' adaptation is the way to change them.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from pathlib import Path
 from typing import Any, Callable, Literal
@@ -29,6 +30,7 @@ from novel_to_comic.models.story_bible import (
     ExcludedEntity,
     Location,
     Prop,
+    RemovedRecord,
     StoryBible,
     blank_visual_anchors,
 )
@@ -43,8 +45,9 @@ _MODELS = {"characters": Character, "locations": Location, "props": Prop}
 _ID_PREFIX = {"characters": "author_char", "locations": "author_loc", "props": "author_prop"}
 EDITABLE_FIELDS: dict[str, frozenset[str]] = {
     "characters": frozenset({
-        "name", "visual_anchor", "age_range", "gender", "distinguishing_features",
+        "name", "visual_anchor", "age_range", "gender", "stature", "distinguishing_features",
         "baseline_affect", "default_outfit", "relationships", "aliases", "cast_required",
+        "reference_form",
     }),
     "locations": frozenset({"name", "visual_anchor", "time_of_day", "mood", "aliases"}),
     "props": frozenset({"name", "visual_anchor", "aliases"}),
@@ -53,7 +56,7 @@ EDITABLE_FIELDS: dict[str, frozenset[str]] = {
 NON_VISUAL_FIELDS = frozenset({"name", "aliases", "relationships", "baseline_affect", "label", "cast_required"})
 STATE_FIELDS = frozenset({
     "label", "visual_anchor", "visually_significant", "baseline_affect", "canonical_equivalent",
-    "continuity_guard", "changed_facets", "replaces_identity",
+    "continuity_guard", "changed_facets", "replaces_identity", "reference_form",
 })
 
 
@@ -172,72 +175,6 @@ def editable_scene_ids(root: Path, bible: StoryBible) -> set[str]:
     return {scene.id for scene in bible.scenes if scene.part_id not in locked}
 
 
-def pages_drawn_before_edits(workspace: Path) -> list[dict]:
-    """A part's drawn pages whose artwork predates an edit to something on them.
-
-    Each page's producing request froze the descriptions, continuity guards and
-    reference images it was drawn with; a page is flagged when the current
-    Story Bible or Cast reference differs. Advisory only: pages are never
-    redrawn automatically.
-    """
-    from novel_to_comic.stages.s5_plan import approved_reference_files, approved_visual_inventory
-
-    target = TargetArtifacts(workspace)
-    try:
-        plan = target.read_plan()
-        root = series_root(workspace)
-        inventory = {ref.id: ref for ref in approved_visual_inventory(root).references}
-        files = approved_reference_files(root)
-    except (ArtifactMissing, ArtifactInvalid, ValueError):
-        return []
-    digests: dict[str, str | None] = {}
-
-    def current_digest(reference_id: str) -> str | None:
-        if reference_id not in digests:
-            source = files.get(reference_id)
-            try:
-                digests[reference_id] = hashlib.sha256(source.path.read_bytes()).hexdigest() if source else None
-            except OSError:
-                digests[reference_id] = None
-        return digests[reference_id]
-
-    flagged = []
-    for item in plan.pages:
-        try:
-            revision = target.active_render_revision(item.page_number)
-            if revision is None:
-                continue
-            request = target.producing_request(target.read_provenance(item.page_number, revision).render)
-        except (ArtifactMissing, ArtifactInvalid, ValueError):
-            continue
-        changes = []
-        for frozen in (*request.references, *request.written_identities):
-            if frozen.entity_id is None:
-                continue
-            current = inventory.get(frozen.id)
-            if current is None:
-                reasons = ["removed"]
-            else:
-                reasons = [reason for reason, changed in (
-                    ("description", current.visual_anchor != frozen.visual_anchor),
-                    ("continuity", (current.continuity_guard or "") != frozen.continuity_guard),
-                    ("reference image", current_digest(frozen.id) not in {None, getattr(frozen, "content_sha256", None)}),
-                ) if changed]
-            if reasons:
-                changes.append({
-                    "entity_id": frozen.entity_id, "appearance_state_id": frozen.appearance_state_id,
-                    "label": current.label if current is not None else frozen.label, "reasons": reasons,
-                })
-        if changes:
-            flagged.append({"page_number": item.page_number, "render_revision": revision, "changes": changes})
-    return flagged
-
-
-# ---------------------------------------------------------------------------
-# Pure edits
-# ---------------------------------------------------------------------------
-
-
 def _entities(bible: StoryBible, kind: str) -> list:
     if kind not in _MODELS:
         raise EditRejected(f"Unknown entity kind: {kind}")
@@ -294,7 +231,10 @@ def edit_entity(bible: StoryBible, kind: str, entity_id: str, changes: dict[str,
 
 
 def _next_id(bible: StoryBible, kind: str) -> str:
-    taken = {item.id for k in _MODELS for item in getattr(bible, k)}
+    # Removed entries keep their ids: Cast images on disk still belong to them.
+    taken = {item.id for k in _MODELS for item in getattr(bible, k)} | {
+        entry.removed.entity.get("id") for entry in bible.excluded_entities if entry.removed
+    }
     number = 1
     while f"{_ID_PREFIX[kind]}_{number:03d}" in taken:
         number += 1
@@ -326,6 +266,7 @@ def add_entity(
     if kind == "characters":
         payload.setdefault("age_range", "")
         payload.setdefault("gender", "")
+        payload.setdefault("stature", "")
         payload.setdefault("default_outfit", "")
         payload.setdefault("distinguishing_features", [])
         payload["first_appearance_scene"] = chosen[0]
@@ -359,14 +300,20 @@ def remove_entity(bible: StoryBible, kind: str, entity_id: str) -> StoryBible:
     if kind == "locations" and any(scene.location_id == entity_id for scene in result.scenes):
         raise EditRejected(f"Scenes take place at {entity.name}. Merge it into another place instead.")
     _entities(result, kind).remove(entity)
+    scene_ids: list[str] = []
+    incoming: list[tuple[str, CharacterRelationship]] = []
     if kind == "characters":
         for scene in result.scenes:
-            scene.character_ids = [cid for cid in scene.character_ids if cid != entity_id]
+            if entity_id in scene.character_ids:
+                scene_ids.append(scene.id)
+                scene.character_ids = [cid for cid in scene.character_ids if cid != entity_id]
         for character in result.characters:
+            incoming += [(character.id, r) for r in character.relationships if r.character_id == entity_id]
             character.relationships = [r for r in character.relationships if r.character_id != entity_id]
-    result.excluded_entities.append(
-        ExcludedEntity(kind=KIND_NAMES[kind], name=entity.name, aliases=list(entity.aliases))
-    )
+    result.excluded_entities.append(ExcludedEntity(
+        kind=KIND_NAMES[kind], name=entity.name, aliases=list(entity.aliases),
+        removed=RemovedRecord(entity=entity.model_dump(mode="json"), scene_ids=scene_ids, incoming=incoming),
+    ))
     return result
 
 
@@ -451,6 +398,7 @@ def add_state(bible: StoryBible, kind: str, entity_id: str, details: dict[str, A
         state_id, suffix = f"{base}_{suffix}", suffix + 1
     # A look exists because it looks different, so it gets its own reference.
     state = AppearanceState.model_validate({"visually_significant": True, **details, "id": state_id})
+    _check_state_reference_form(kind, entity, state.reference_form)
     entity.appearance_states.append(state)
     if starts_at_scene:
         order = _scene_order(result)
@@ -463,6 +411,15 @@ def add_state(bible: StoryBible, kind: str, entity_id: str, details: dict[str, A
     return result, state_id
 
 
+def _check_state_reference_form(kind: str, entity, form: str | None) -> None:
+    if form is None:
+        return
+    if kind != "characters":
+        raise EditRejected("Only a character's look can change its reference sheet layout.")
+    if form == "formation" and entity.identity_kind != "group":
+        raise EditRejected("A formation sheet is only for a group whose members share one design.")
+
+
 def edit_state(bible: StoryBible, kind: str, entity_id: str, state_id: str, changes: dict[str, Any]) -> StoryBible:
     unknown = set(changes) - STATE_FIELDS
     if unknown:
@@ -473,6 +430,7 @@ def edit_state(bible: StoryBible, kind: str, entity_id: str, state_id: str, chan
     if state is None:
         raise KeyError(state_id)
     updated = AppearanceState.model_validate({**state.model_dump(), **changes, "id": state_id})
+    _check_state_reference_form(kind, entity, updated.reference_form)
     entity.appearance_states[entity.appearance_states.index(state)] = updated
     return result
 
@@ -488,15 +446,168 @@ def remove_state(bible: StoryBible, kind: str, entity_id: str, state_id: str) ->
 
 
 def restore_excluded(bible: StoryBible, kind: str, name: str) -> StoryBible:
+    """Lift a removal. An entry removed with its details comes back whole.
+
+    It returns with its id, so its Cast images apply again, rejoins the scenes
+    it left and regains the relationships that named it. A name excluded
+    without details only lets later extraction find it again.
+    """
     result = bible.model_copy(deep=True)
-    before = len(result.excluded_entities)
-    result.excluded_entities = [
-        entry for entry in result.excluded_entities
-        if not (entry.kind == KIND_NAMES.get(kind) and entry.name.casefold() == name.casefold())
-    ]
-    if len(result.excluded_entities) == before:
+    entry = next((item for item in result.excluded_entities
+                  if item.kind == KIND_NAMES.get(kind) and item.name.casefold() == name.casefold()), None)
+    if entry is None:
         raise KeyError(name)
+    result.excluded_entities.remove(entry)
+    if entry.removed is None:
+        return result
+    entity = _MODELS[kind].model_validate(entry.removed.entity)
+    taken = {item.id for k in _MODELS for item in getattr(result, k)}
+    if entity.id in taken:
+        raise EditRejected(f"{entity.name} can't come back: another entry now uses its id.")
+    names = {entity.name.casefold(), *(alias.casefold() for alias in entity.aliases)}
+    clash = next((item for item in _entities(result, kind)
+                  if names & {item.name.casefold(), *(alias.casefold() for alias in item.aliases)}), None)
+    if clash is not None:
+        raise EditRejected(f"{clash.name} already uses that name. Rename or merge it before restoring {entity.name}.")
+    scenes = {scene.id: scene for scene in result.scenes}
+    if getattr(entity, "first_appearance_scene", None) and entity.first_appearance_scene not in scenes:
+        entity.first_appearance_scene = next((sid for sid in entry.removed.scene_ids if sid in scenes), None)
+    _entities(result, kind).append(entity)
+    for scene_id in entry.removed.scene_ids:
+        scene = scenes.get(scene_id)
+        if scene is not None and kind == "characters" and entity.id not in scene.character_ids:
+            scene.character_ids.append(entity.id)
+    characters = {character.id: character for character in result.characters}
+    entity_relationships = getattr(entity, "relationships", [])
+    entity_relationships[:] = [rel for rel in entity_relationships if rel.character_id in characters]
+    for other_id, relationship in entry.removed.incoming:
+        other = characters.get(other_id)
+        if other is not None and relationship not in other.relationships:
+            other.relationships.append(relationship)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Previews: what an edit would do, before the author commits to it
+# ---------------------------------------------------------------------------
+
+
+def _reference_keys(root: Path, bible: StoryBible) -> set[tuple[str, str | None]]:
+    from novel_to_comic.stages.s5_plan import approved_visual_inventory
+
+    try:
+        inventory = approved_visual_inventory(root, bible)
+    except Exception:
+        return set()
+    return {(ref.entity_id, ref.appearance_state_id) for ref in inventory.references if ref.requires_image}
+
+
+def edit_impact(config, root: Path, kind: str, entity_id: str, *, merge_into: str | None = None) -> dict[str, Any]:
+    """What removing ``entity_id`` (or merging it into ``merge_into``) would change.
+
+    Reads only. Lists the scenes and looks that move or leave, the Cast images
+    that stop being used, and the new references Cast would then need.
+    """
+    from novel_to_comic.series import load_series_state
+    from novel_to_comic.stages.s3_cast import reference_freshness
+    from novel_to_comic.state import StageStatus
+
+    root = series_root(root)
+    bible = artifacts.read_story_bible(root)
+    entity = _find(bible, kind, entity_id)
+    target = _find(bible, kind, merge_into) if merge_into else None
+    action = "merge it away" if merge_into else "remove it"
+    blocked = None
+    after = None
+    try:
+        refuse_if_cited(root, entity_id, action=action)
+        after = (merge_entities(bible, kind, entity_id, merge_into) if merge_into
+                 else remove_entity(bible, kind, entity_id))
+    except EditRejected as exc:
+        blocked = str(exc)
+    titles = {scene.id: scene.title for scene in bible.scenes}
+    parts = {scene.id: scene.part_id for scene in bible.scenes}
+    if kind == "characters":
+        scene_ids = [scene.id for scene in bible.scenes if entity_id in scene.character_ids]
+    elif kind == "locations":
+        scene_ids = [scene.id for scene in bible.scenes if scene.location_id == entity_id]
+    else:
+        scene_ids = [entity.first_appearance_scene] if entity.first_appearance_scene in titles else []
+    if target is not None and kind == "characters":
+        # Scenes both already share don't move.
+        shared = {scene.id for scene in bible.scenes if target.id in scene.character_ids}
+        scene_ids = [sid for sid in scene_ids if sid not in shared]
+    relationships = 0
+    if kind == "characters":
+        relationships = len(entity.relationships) + sum(
+            1 for character in bible.characters for rel in character.relationships if rel.character_id == entity_id
+        )
+    looks = [state.label for state in entity.appearance_states]
+    cast_images = sum(
+        1 for ref in reference_freshness(config, root)
+        if ref["entity_id"] == entity_id and ref["status"] != "missing"
+    )
+    new_references = 0
+    reopens_cast = False
+    if after is not None:
+        added = _reference_keys(root, after) - _reference_keys(root, bible)
+        new_references = len(added)
+        try:
+            cast_status = load_series_state(root).stages["cast"].status
+        except Exception:
+            cast_status = None
+        reopens_cast = bool(added) and cast_status in {StageStatus.COMPLETE, StageStatus.AWAITING_REVIEW}
+    return {
+        "action": "merge" if merge_into else "remove",
+        "blocked": blocked,
+        "scenes": [{"id": sid, "title": titles[sid], "part_id": parts[sid]} for sid in scene_ids],
+        "looks": looks,
+        "relationships": relationships,
+        "aliases": ([entity.name, *entity.aliases] if target is not None else []),
+        "cast_images": cast_images,
+        "new_references": new_references,
+        "reopens_cast": reopens_cast,
+    }
+
+
+_ARTICLES = frozenset({"the", "a", "an"})
+_TITLES = frozenset({"mr", "mrs", "ms", "miss", "dr", "sir", "lady", "lord", "captain", "old", "young"})
+
+
+def _name_tokens(name: str) -> tuple[str, ...]:
+    words = re.findall(r"\w+", name.casefold())
+    while words and words[0] in _ARTICLES:
+        words = words[1:]
+    return tuple(words)
+
+
+def possible_duplicates(bible: StoryBible, citations: dict[str, list[str]], limit: int = 12) -> list[dict[str, Any]]:
+    """Pairs that look like one entry found twice: shared names, or one name inside the other.
+
+    A suggestion only; the author compares the two before merging. A pair
+    where adapted parts cite both entries is left out, since neither can go.
+    """
+    found: list[dict[str, Any]] = []
+    for kind in _MODELS:
+        entities = _entities(bible, kind)
+        names = {item.id: {_name_tokens(n) for n in (item.name, *item.aliases)} - {()} for item in entities}
+        for index, first in enumerate(entities):
+            for second in entities[index + 1:]:
+                if citations.get(first.id) and citations.get(second.id):
+                    continue
+                shared = names[first.id] & names[second.id]
+                contained = not shared and any(
+                    len(short) < len(long) and set(short) <= set(long)
+                    and any(len(word) >= 3 and word not in _TITLES for word in short)
+                    for a in names[first.id] for b in names[second.id]
+                    for short, long in ((a, b), (b, a))
+                )
+                if shared or contained:
+                    found.append({"kind": kind, "ids": [first.id, second.id],
+                                  "reason": "same_name" if shared else "name_within"})
+                    if len(found) >= limit:
+                        return found
+    return found
 
 
 # ---------------------------------------------------------------------------
@@ -504,14 +615,125 @@ def restore_excluded(bible: StoryBible, kind: str, name: str) -> StoryBible:
 # ---------------------------------------------------------------------------
 
 
+HISTORY_LIMIT = 20
+
+
+def content_sha(bible: StoryBible) -> str:
+    """The Bible's content, ignoring the revision counter."""
+    return hashlib.sha256(bible.model_dump_json(exclude={"revision", "total_scenes"}).encode()).hexdigest()
+
+
+def _history_dir(root: Path) -> Path:
+    return series_root(root) / "story_bible_history"
+
+
+def _history_entries(root: Path) -> list[Path]:
+    directory = _history_dir(root)
+    return sorted(directory.glob("*.json")) if directory.is_dir() else []
+
+
+def _record_history(root: Path, before: StoryBible, after: StoryBible, change: dict[str, Any]) -> None:
+    """Keep the Bible as it was before an author edit, so the edit can be undone."""
+    directory = _history_dir(root)
+    directory.mkdir(parents=True, exist_ok=True)
+    entries = _history_entries(root)
+    number = int(entries[-1].stem) + 1 if entries else 1
+    path = directory / f"{number:06d}.json"
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(json.dumps({
+        "change": change, "after_sha": content_sha(after),
+        "before": before.model_dump(mode="json"),
+    }))
+    temporary.replace(path)
+    for stale in entries[: max(0, len(entries) + 1 - HISTORY_LIMIT)]:
+        stale.unlink(missing_ok=True)
+
+
+def _undoable(root: Path, bible: StoryBible) -> tuple[Path, dict] | None:
+    """The newest recorded edit, when nothing has changed the Bible since it."""
+    entries = _history_entries(root)
+    if not entries:
+        return None
+    try:
+        record = json.loads(entries[-1].read_text())
+    except (OSError, ValueError):
+        return None
+    return (entries[-1], record) if record.get("after_sha") == content_sha(bible) else None
+
+
+def _cited_but_missing(root: Path, restored: StoryBible) -> list[str]:
+    """Names of entries or looks adapted parts cite that ``restored`` would lack."""
+    entities, states = citation_index(root)
+    present = {item.id: item for kind in _MODELS for item in getattr(restored, kind)}
+    missing = [entity_id for entity_id in entities if entity_id not in present]
+    missing += [f"{entity_id}:{state_id}" for entity_id, state_id in states
+                if entity_id in present
+                and not any(state.id == state_id for state in present[entity_id].appearance_states)]
+    return missing
+
+
+def undo_preview(root: Path, bible: StoryBible) -> dict[str, Any] | None:
+    """What Undo would reverse, and why it can't, for the editor to show."""
+    found = _undoable(root, bible)
+    if found is None:
+        return None
+    _path, record = found
+    blocked = None
+    if _cited_but_missing(root, StoryBible.model_validate(record["before"])):
+        blocked = "An adapted part now uses what this edit added, so it can't be undone."
+    return {"change": record["change"], "blocked": blocked}
+
+
+def undo_last_edit(root: Path, expected_revision: int) -> tuple[StoryBible, dict[str, Any]]:
+    """Bring back the Bible from before the newest author edit, as a new revision.
+
+    Only the newest edit can be undone, and only while nothing else (another
+    edit or an extraction) has changed the Bible since. The usual checks
+    apply: an undo never takes away what an adapted part cites.
+    """
+    from novel_to_comic.series import cast_inventory_keys, reopen_cast_for_new_inventory
+
+    root = series_root(root)
+    with production_lock(root):
+        bible = artifacts.read_story_bible(root)
+        if bible.revision != expected_revision:
+            raise StaleStoryBible(
+                f"The Story Bible changed (revision {bible.revision}); reload it and edit again."
+            )
+        found = _undoable(root, bible)
+        if found is None:
+            raise EditRejected("There is no edit to undo: the Story Bible changed after it.")
+        path, record = found
+        restored = StoryBible.model_validate(record["before"])
+        if missing := _cited_but_missing(root, restored):
+            raise EntityCited(
+                "Can't undo: an adapted part now uses what this edit added (" + ", ".join(missing) + ").",
+                [],
+            )
+        try:
+            validate_references(restored)
+        except ValueError as exc:
+            raise EditRejected(str(exc)) from exc
+        before = cast_inventory_keys(root)
+        restored.revision = bible.revision + 1
+        restored.total_scenes = len(restored.scenes)
+        artifacts.write_story_bible(root, restored)
+        path.unlink(missing_ok=True)
+        reopen_cast_for_new_inventory(root, before)
+    return restored, record["change"]
+
+
 def apply_edit(root: Path, expected_revision: int,
                edit: Callable[[StoryBible], StoryBible | tuple[StoryBible, Any]],
-               *, on_saved: Callable[[StoryBible, StoryBible], None] | None = None):
+               *, on_saved: Callable[[StoryBible, StoryBible], None] | None = None,
+               change: dict[str, Any] | Callable[[StoryBible, StoryBible], dict[str, Any]] | None = None):
     """Apply one revision-checked edit under the series lock.
 
     Returns the saved Story Bible and whatever extra value ``edit`` produced.
     New entities or states reopen Cast so they get references before use.
     ``on_saved`` runs under the same lock with the Bible before and after.
+    ``change`` describes the edit for Undo (or builds that from before and
+    after); the Bible from before is kept so the edit can be reversed.
     """
     from novel_to_comic.series import reopen_cast_for_new_inventory, cast_inventory_keys
 
@@ -535,6 +757,8 @@ def apply_edit(root: Path, expected_revision: int,
             raise EditRejected("Add a visual anchor for: " + ", ".join(introduced))
         updated.revision = bible.revision + 1
         artifacts.write_story_bible(root, updated)
+        if change is not None:
+            _record_history(root, bible, updated, change(bible, updated) if callable(change) else change)
         if on_saved is not None:
             on_saved(bible, updated)
         reopen_cast_for_new_inventory(root, before)

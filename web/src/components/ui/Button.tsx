@@ -1,5 +1,6 @@
 import type { ButtonHTMLAttributes } from "react";
 import { cn } from "../../lib/cn";
+import { safeReplayLabel } from "../../lib/replayPrivacy";
 
 type Variant = "primary" | "onInk" | "secondary" | "outline";
 type Size = "xs" | "sm" | "md" | "lg";
@@ -47,6 +48,7 @@ export function Button({
         className,
       )}
       {...props}
+      data-ph-safe-label={safeReplayLabel(props.children)}
     />
   );
 }

@@ -241,7 +241,7 @@ async def review_page_visuals(
     generate=None,
     producing_request: FrozenPageGenerationRequest | None = None,
 ) -> ApiResult[PageVisualReview]:
-    """One optional review per exact page, reference set, prompt, and model.
+    """One review per exact page, reference set, prompt, and model.
 
     Findings are editorial evidence for a person to inspect, never a claim of
     objective visual correctness. No auto-corrections or critic loop.
@@ -317,3 +317,50 @@ async def review_page_visuals(
         ):
             record_page_issue(artifacts, issue)
     return ApiResult(value=report)
+
+
+def compile_visual_review(project_dir, config: Config, artifacts: TargetArtifacts, page: ComicPage) -> CompiledPageGeneration:
+    """The current authority a review compares against.
+
+    The automatic check in Draw, the saved-result read and an explicit re-check
+    all compile it the same way, so they share one input digest and a saved
+    review is never paid for twice.
+    """
+    from novel_to_comic.models.draw import RetryProvenance
+    from novel_to_comic.page_drawing import (
+        compile_page_generation_request,
+        ensure_current_page_edition,
+        validate_review_request,
+    )
+    from novel_to_comic.stages.s5_plan import approved_reference_files, approved_visual_inventory
+    from novel_to_comic.style_reference import require_style_reference
+
+    edition = ensure_current_page_edition(
+        artifacts, artifacts.read_book_edition(), config, allow_retained_review=True,
+    )
+    compiled = compile_page_generation_request(
+        page, edition, approved_visual_inventory(project_dir), approved_reference_files(project_dir),
+        retry=RetryProvenance(attempt=1), style_template=config.style_template,
+        style_reference_path=require_style_reference(project_dir, config.style_template),
+    )
+    validate_review_request(compiled, edition)
+    return compiled
+
+
+async def review_drawn_page(
+    *,
+    config: Config,
+    project_dir,
+    artifacts: TargetArtifacts,
+    page: ComicPage,
+    render: PageRenderRevision,
+    image: bytes,
+    generate=None,
+) -> ApiResult[PageVisualReview]:
+    """Review one drawn render against its current approved references."""
+    return await review_page_visuals(
+        config=config, page=page, render=render, image=image,
+        compiled=compile_visual_review(project_dir, config, artifacts, page),
+        artifacts=artifacts, generate=generate,
+        producing_request=artifacts.producing_request(render),
+    )

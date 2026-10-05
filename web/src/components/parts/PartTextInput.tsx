@@ -25,7 +25,7 @@ export function PartTextInput({ value, onChange, withTitle = false, disabled = f
       )}
       <div>
         <FieldLabel htmlFor={ids.file}>{t("Upload a manuscript file")}</FieldLabel>
-        <input id={ids.file} type="file" accept=".txt,.epub,.pdf" disabled={disabled}
+        <input id={ids.file} type="file" accept=".txt,.md,.markdown,.docx,.epub,.pdf" disabled={disabled}
           className="block w-full font-body text-sm file:mr-4 file:min-h-11 file:border-[2px] file:border-ink-black file:bg-bristol file:px-4 file:font-meta file:text-xs"
           onChange={(event) => onChange({ ...value, file: event.target.files?.[0] ?? null })} />
       </div>

@@ -19,6 +19,7 @@ from typing import Any, Awaitable, Callable, Literal
 from fastapi import FastAPI
 
 from novel_to_comic.config import Config
+from novel_to_comic.state import hash_style_template
 from .job_commands import JobCommand
 from novel_to_comic.image_failure import (
     ImageFailureClassification,
@@ -29,6 +30,7 @@ from novel_to_comic.server.env import bool_env
 
 GenerationJobStatus = Literal["queued", "running", "complete", "failed", "cancelled"]
 GenerationJobRunner = Callable[[], Awaitable[None]]
+REFERENCE_JOB_KINDS = {"character_ref_regen", "location_plate_regen", "prop_ref_regen"}
 logger = logging.getLogger("canary.generation")
 
 
@@ -186,7 +188,7 @@ class GenerationJob:
     started_at: datetime | None = None
     finished_at: datetime | None = None
     error: str | None = None
-    classification: ImageFailureClassification | None = None
+    classification: ImageFailureClassification | Literal["analysis_error", "design_error"] | None = None
     user_message: str | None = None
     recoverable: bool | None = None
     phase: str | None = None
@@ -287,7 +289,7 @@ def generation_job_payload(app: FastAPI | None, job: GenerationJob) -> dict[str,
     stage = (job.payload.get("stage") or job.command.stage) if job.command else (
         "style" if job.kind.startswith("style_") else "draw" if job.kind == "complete_page_draw" else "cast"
     )
-    return {
+    result = {
         "id": job.id,
         "project_name": job.project_name,
         "part_id": job_part_id(job),
@@ -307,6 +309,9 @@ def generation_job_payload(app: FastAPI | None, job: GenerationJob) -> dict[str,
         "recoverable": job.recoverable,
         "phase": job.phase,
     }
+    if job.kind in REFERENCE_JOB_KINDS and job.command is not None:
+        result["reference_style_hash"] = hash_style_template(job.command.config["style_template"])
+    return result
 
 
 def job_part_id(job: GenerationJob) -> str | None:
@@ -357,6 +362,34 @@ def execution_paused(app: FastAPI, job: GenerationJob) -> bool:
     return bool(getattr(admission, "draining", False)) or not getattr(app.state, "credit_leases_ready", True)
 
 
+REVIEW_JOB_KINDS = frozenset({
+    "character_ref_regen", "location_plate_regen", "prop_ref_regen",
+    "style_sample", "style_validation", "project_cover", "complete_page_draw",
+})
+
+
+def project_work_precedes(app: FastAPI, job: GenerationJob) -> bool:
+    """Fence corrections against project writers in the independent text lane.
+
+    The account gate already serializes artwork and stages in its image lane.
+    Extract/Brief and translation use a separate lane; a correction queued
+    during them must wait too. Check both directions so a later text job cannot
+    overtake an earlier correction. Different parts retain independent work.
+    """
+    for other in list(getattr(app.state, "generation_jobs", {}).values()):
+        if (other is job or other.project_name != job.project_name
+                or other.status not in {"queued", "running"}
+                or is_light_job(other) == is_light_job(job)
+                or not ({job.kind, other.kind} & REVIEW_JOB_KINDS)):
+            continue
+        part, other_part = job_part_id(job), job_part_id(other)
+        if part is not None and other_part is not None and part != other_part:
+            continue
+        if other.status == "running" or other.sequence < job.sequence:
+            return True
+    return False
+
+
 async def _start_when_open(app: FastAPI, job: GenerationJob) -> bool:
     """Mark the job running unless cancelled; False means it must not execute.
 
@@ -366,12 +399,12 @@ async def _start_when_open(app: FastAPI, job: GenerationJob) -> bool:
     """
     lock = job_transition_lock(app, job.user_id) if job.user_id else None
     while True:
-        while execution_paused(app, job) and job.status != "cancelled":
+        while (execution_paused(app, job) or project_work_precedes(app, job)) and job.status != "cancelled":
             await asyncio.sleep(1)
         async with lock if lock is not None else _no_lock():
             if job.status == "cancelled":
                 return False
-            if execution_paused(app, job):
+            if execution_paused(app, job) or project_work_precedes(app, job):
                 continue
             job.status = "running"
             job.started_at = _now()
@@ -392,6 +425,10 @@ async def _run_generation_job(app: FastAPI, job: GenerationJob) -> None:
         timeout_seconds = max(1, int(os.getenv("CANARY_BATCH_JOB_TIMEOUT_SECONDS", "7200")))
     started = time.perf_counter()
     try:
+        # Wait before taking an account lane, so a waiting correction cannot
+        # hold the lane needed by the work it depends on.
+        while project_work_precedes(app, job) and job.status != "cancelled":
+            await asyncio.sleep(0.1)
         semaphores: list[asyncio.Semaphore] = []
         if job.semaphore is not None and job.semaphore not in semaphores:
             semaphores.append(job.semaphore)
@@ -484,6 +521,17 @@ async def _run_generation_job(app: FastAPI, job: GenerationJob) -> None:
             job.classification = "analysis_error"
             job.user_message = "Artwork saved; text checks incomplete. Recover the text check without redrawing."
             job.recoverable = True
+        # PipelineStageFailed preserves these text-model validation messages.
+        if job.error.startswith((
+            "Cast design must cover every character exactly once",
+            "Cast design returned an invalid character roster",
+        )):
+            job.classification = "design_error"
+            job.user_message = (
+                "Cast design returned an invalid character roster. "
+                "Resume Cast to try the design again."
+            )
+            job.recoverable = True
         from novel_to_comic.cast_instructions import PromptInstructionError
 
         if isinstance(exc, PromptInstructionError):
@@ -524,6 +572,7 @@ async def run_generation_job(app: FastAPI, job: GenerationJob) -> None:
     carrier = {"traceparent": spec.traceparent} if spec and spec.traceparent else {}
     with operation_span("job.execute", carrier=carrier, operation_id=job.id,
                         request_id=spec.request_id if spec else None,
+                        browser_session_id=spec.browser_session_id if spec else None,
                         project_id=spec.project_id if spec else None,
                         posthogDistinctId=job.user_id, operation=spec.operation if spec else job.kind,
                         stage=spec.stage if spec else None) as span, \
@@ -623,9 +672,18 @@ def recovered_generation_jobs(app, pkey: str) -> list[dict]:
         has_outbox = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='operation_outbox'").fetchone()
         rows = db.execute("SELECT payload FROM jobs WHERE project=?", (pkey,)).fetchall()
         durable_ids = {row[0] for row in db.execute("SELECT id FROM operation_outbox")} if has_outbox else set()
+        payloads = [json.loads(row[0]) for row in rows]
+        for payload in payloads:
+            if payload["id"] in app.state.generation_jobs or payload["kind"] not in REFERENCE_JOB_KINDS or not has_outbox:
+                continue
+            # Read only recovered reference commands; page commands can contain
+            # large frozen inputs, and live jobs already hold their own config.
+            row = db.execute("SELECT command FROM operation_outbox WHERE id=?", (payload["id"],)).fetchone()
+            if row is not None:
+                config = json.loads(row[0])["config"]
+                payload["reference_style_hash"] = hash_style_template(config["style_template"])
     recovered = []
-    for row in rows:
-        payload = json.loads(row[0])
+    for payload in payloads:
         if payload["id"] in app.state.generation_jobs:
             continue
         if payload["status"] == "queued" and payload["id"] in durable_ids:

@@ -35,16 +35,23 @@ def visual_review_operations(config: Config) -> Operations:
     return (("text", config.effective_visual_review_model()),)
 
 
-def draw_reads_pages(config: Config) -> bool:
-    """Editable-lettering draws read each page back automatically: heads place
-    the balloons and drawn-in lettering is flagged. Integrated editions keep
-    their copy check explicit (ADR 0014: its text findings are unreliable)."""
-    return config.lettering_mode == "editable"
+def is_canonical_sheet_regen(kind: str, asset_id: str) -> bool:
+    """A character's main sheet: redrawing it re-runs the Character Check."""
+    return kind == "character_ref_regen" and ":" not in asset_id
 
 
-def draw_operations(config: Config, *, ocr: bool | None = None) -> Operations:
-    ocr = draw_reads_pages(config) if ocr is None else ocr
-    return (("complete_page", config.draw_model), *(page_check_operations(config) if ocr else ()))
+def cast_asset_operations(config: Config, kind: str, asset_id: str) -> Operations:
+    image = image_operations(config)
+    return (*image, *visual_review_operations(config)) if is_canonical_sheet_regen(kind, asset_id) else image
+
+
+def draw_operations(config: Config, *, checks: bool = True) -> Operations:
+    """A draw and the page checks that run with it: the page read and the
+    visual review against approved references (ADR 0014, 2026-10-05)."""
+    return (
+        ("complete_page", config.draw_model),
+        *((*page_check_operations(config), *visual_review_operations(config)) if checks else ()),
+    )
 
 
 def stage_operations(config: Config, stage: str) -> Operations:

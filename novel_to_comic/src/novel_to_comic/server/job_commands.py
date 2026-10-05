@@ -33,11 +33,13 @@ class JobCommand(BaseModel):
     debit_description: str = "Generation"
     traceparent: str = Field(default="", pattern=r"^(?:[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2})?$")
     request_id: str = Field(default="", max_length=64)
+    browser_session_id: str = Field(default="", pattern=r"^(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})?$")
 
 
 def command(operation: str, project_dir: Path, config: Config, **arguments) -> JobCommand:
     from .telemetry import trace_carrier, context_fields
     return JobCommand(traceparent=trace_carrier().get("traceparent", ""),
+                      browser_session_id=context_fields().get("browser_session_id", ""),
                       request_id=context_fields().get("request_id", ""), operation=operation, project_dir=str(project_dir.resolve()),
                       config=config.model_dump(mode="json"), arguments=arguments,
                       one_shot_image_model_alias=config._one_shot_image_model_alias)

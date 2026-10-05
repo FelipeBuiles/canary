@@ -284,6 +284,8 @@ def _meta_payload(
         "provenance": provenance,
         "art_direction": request.input.prompt.editorial_addendum,
         "reference_assets": [
+            # Uploads are content-addressed: their id is the image hash prefix.
+            {"upload_id": asset.content_sha256[:32]} if asset.entity_id is None else
             {"asset_type": {"subject": "character", "location_plate": "location", "prop": "prop"}[asset.role],
              "asset_id": asset.entity_id, "state_id": asset.appearance_state_id}
             for asset in request.reference_plan.selected if asset.purpose == "instruction_context"

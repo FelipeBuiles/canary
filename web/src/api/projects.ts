@@ -1,6 +1,6 @@
 import { apiFetch } from "./client";
 import { projectPath, seriesPath } from "./projectScope";
-import type { CostEstimate, GenerationJob, ProjectSummary, ProjectStatus, ConfigOverrides, ShortStory } from "../types/api";
+import type { CostEstimate, GenerationJob, ProjectSummary, ProjectStatus, ConfigOverrides, ShortStory, SourcePreview } from "../types/api";
 
 export function listProjects(): Promise<ProjectSummary[]> {
   return apiFetch<ProjectSummary[]>("/projects/");
@@ -33,6 +33,13 @@ export function createProject(
     headers: {},  // let browser set Content-Type for multipart
     body: form,
   });
+}
+
+/** Read a manuscript and report its parts; nothing is stored. */
+export function previewSource(file: File, signal?: AbortSignal): Promise<SourcePreview> {
+  const form = new FormData();
+  form.append("file", file);
+  return apiFetch("/projects/source-preview", { method: "POST", headers: {}, body: form, signal });
 }
 
 export function deleteProject(id: string): Promise<void> {

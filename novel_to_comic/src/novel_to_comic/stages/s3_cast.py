@@ -11,7 +11,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from novel_to_comic import artifacts
+from novel_to_comic import artifacts, reference_forms
 from novel_to_comic.cast_roster import read_cast_story_bible
 from novel_to_comic.config import Config
 from novel_to_comic.generation_input import GenerationPromptInput
@@ -47,7 +47,7 @@ from novel_to_comic.asset_generation import (
 from novel_to_comic.usage import ApiResult
 from novel_to_comic.cast_design import (
     CastDesignPlan, character_fingerprint, current_designs, design_notes, ensure_design, estimate_design_review,
-    read_design, review_cast, review_status,
+    read_design, review_cast, review_ready, review_status, run_cast_review,
 )
 
 console = Console()
@@ -239,6 +239,12 @@ def _location_plate_dimensions(config: Config) -> tuple[int | None, int | None]:
     return RefStrategy.for_config(config).location_plate_dimensions()
 
 
+CAST_BLOCKED_MESSAGE = (
+    "The image provider declined this reference without saying why, usually because of "
+    "explicit wording such as nudity or gore. Make a less graphic version, or reword the "
+    "description; resuming Cast does not resend the same request."
+)
+
 HELD_FAILURE_GUIDANCE = (
     "Resume Cast will not resubmit the unchanged request. Change this reference's "
     "direction, or regenerate it from its card."
@@ -289,22 +295,21 @@ def _character_generation_input(
     config: Config, story_bible: StoryBible, char: Character, addendum: str = "",
     *, design=None,
 ) -> CanonicalCharacterReferenceInput:
-    direction = (
-        "Wide turnaround reference sheet: in the left third, a three-quarter head-and-"
-        "shoulders close-up above a side-profile close-up; in the right two thirds, "
-        "full-body front, three-quarter, and back views. Neutral expression in every view. "
-        "Use the natural posture and complete anatomy specified by the character's visual "
-        "anchor, on a plain background."
-    )
+    form = reference_forms.reference_form(char)
+    composition, direction = reference_forms.CANONICAL_DIRECTION[form]
     identity_details = "\n".join(filter(None, (
         f"Canonical age: {char.age_range}.",
+        f"Canonical gender: {char.gender}. Make it read clearly in face, build and silhouette "
+        "while keeping every stated physique trait." if char.gender.strip() else "",
+        f"Canonical stature: {char.stature}. Show this scale on the sheet: beside the full-body "
+        "views, draw a plain unlabeled silhouette of an ordinary adult of the setting at true "
+        "relative height; keep it featureless so it is never mistaken for another character. "
+        "That scale silhouette is the only permitted extra figure."
+        if char.stature.strip() else "",
         f"Canonical wardrobe: {char.default_outfit}." if char.default_outfit else "",
         "Canonical distinguishing details: " + "; ".join(char.distinguishing_features)
         if char.distinguishing_features else "",
-        "Design this named individual's own face and silhouette from the canonical facts. "
-        "People in a style reference are not a cast to choose from: do not copy their "
-        "faces, hair, age, or clothing. Unspecified details must remain compatible with "
-        "this individual's age, anatomy, and wardrobe.",
+        reference_forms.IDENTITY_DESIGN[form],
         design_notes(design, char.id) if design is not None else "",
     )))
     return CanonicalCharacterReferenceInput(
@@ -312,13 +317,11 @@ def _character_generation_input(
         prompt=GenerationPromptInput(
             subjects=(PromptSubject(
                 character_id=char.id, name=char.name, identity=char.visual_anchor,
+                reference_form=form,
             ),),
             visual_brief=direction,
             editorial_addendum=addendum,
-            composition=(
-                "Wide turnaround character reference sheet: two close-ups stacked in the "
-                "left third, three full-body views across the right two thirds."
-            ),
+            composition=composition,
             constraints=(
                 "Preserve active anatomy, age, and proportions in the selected style. "
                 "Each view stays fully inside its own region. No text, labels, "
@@ -347,14 +350,32 @@ def _character_style_reference(
     return _cast_asset_style_ref(config, proof)
 
 
+# A plate shows the place at the size its anchor establishes. A fixed wide
+# establishing shot let the image model invent a large room around sparse or
+# small anchors and fill it from the Style proof's scene.
+LOCATION_PLATE_COMPOSITION = (
+    "Character-free location design plate, framed at the location's true scale and enclosure."
+)
+_LOCATION_PLATE_DIRECTION = (
+    "Show the specified location at its true scale. A small or enclosed space must look "
+    "small and enclosed: frame it from inside, close to its walls, showing only the room the anchor "
+    "establishes. Where the anchor describes only objects or a work surface, frame a restrained view "
+    "around them rather than inventing a larger room. Construct architecture and spatial layout from the "
+    "location anchor. No characters."
+)
+
+
+def _location_plate_reference_plan(config: Config):
+    """Canonical plates send no image: the Style proof depicts one story scene,
+    and its room carried into other locations despite instructions to ignore it.
+    The style text alone carries the rendering language."""
+    return style_reference_plan(config, None)
+
+
 def _location_generation_input(
     config: Config, loc, addendum: str = "", anchor: str | None = None,
 ) -> CanonicalLocationPlateInput:
-    direction = (
-        "Create a new wide environment design plate of the specified location, with large "
-        "readable masses and clear silhouettes. Construct its architecture and spatial layout "
-        "from the location anchor, not from the scene depicted in rendering references. No characters."
-    )
+    direction = _LOCATION_PLATE_DIRECTION
     return CanonicalLocationPlateInput(
         asset_identity=f"location_plate:{loc.id}",
         prompt=GenerationPromptInput(
@@ -364,7 +385,7 @@ def _location_generation_input(
             ),),
             visual_brief=direction,
             editorial_addendum=addendum,
-            composition="Wide environment design plate with no characters or text.",
+            composition=LOCATION_PLATE_COMPOSITION,
             constraints="No text, noisy grain, repeated texture fields, or muddy micro-detail.",
             width=1344,
             height=768,
@@ -440,15 +461,10 @@ def _state_asset_prompt(spec: StateAssetGenerationSpec) -> GenerationPromptInput
             appearance_state_id=spec.state_id,
             appearance_locked=True,
             appearance_guard=spec.continuity_guard,
+            reference_form=spec.reference_form,
         )]
         anchors = []
-        composition = (
-            "Wide appearance-state reference sheet: a three-quarter close-up above a "
-            "side-profile close-up in the left third, and one full-body front view in a "
-            "neutral design stance in the right two thirds, using the active anchor's "
-            "anatomy. Show only the changed look, not the situation or anything touching "
-            "the body; no text or labels."
-        )
+        composition = reference_forms.STATE_COMPOSITION[spec.reference_form]
     else:
         subjects = []
         anchors = [PromptAnchor(
@@ -457,7 +473,7 @@ def _state_asset_prompt(spec: StateAssetGenerationSpec) -> GenerationPromptInput
             continuity_guard=spec.continuity_guard,
         )]
         composition = ("Single prop on a neutral background; no characters or text."
-                       if spec.asset_kind == "prop_state_ref" else "Wide environment design plate with no characters or text.")
+                       if spec.asset_kind == "prop_state_ref" else LOCATION_PLATE_COMPOSITION)
     return GenerationPromptInput(
         anchors=tuple(anchors), subjects=tuple(subjects), composition=composition,
         visual_brief=spec.state_direction or None,
@@ -488,7 +504,7 @@ def _compile_state_asset_wire(
     project_dir: Path,
 ):
     """Compile one state request and update metadata before transport/cache checks."""
-    from novel_to_comic.state_assets import build_state_reference_plan
+    from novel_to_comic.state_assets import build_state_reference_plan, edits_canonical_parent
 
     prompt = _state_asset_prompt(spec)
     from novel_to_comic.image_models import image_model_profile_for_config
@@ -505,7 +521,8 @@ def _compile_state_asset_wire(
         selected_style_text=config.style_template,
         selected_style_source_hash=spec.style_sha256,
         lineage=spec.lineage_metadata(),
-        edit_parent_indices=tuple(index for index, ref in enumerate(plan.selected) if ref.role != "style"),
+        edit_parent_indices=tuple(index for index, ref in enumerate(plan.selected) if ref.role != "style")
+        if edits_canonical_parent(spec) else (),
     )
     request = _compile_cast_request(config, project_dir, input_data, reference_plan=plan)
     spec.compiled_request_sha256 = request.compiled.compiled_request_sha256
@@ -581,7 +598,24 @@ async def regenerate_character_ref(
     assert result is not None
     await asyncio.to_thread(_crop_sheet_to_poses, output_path)
     mark_dependent_states_stale(project_dir, "character", char.id)
-    return result
+    return await _refresh_cast_review(config, project_dir, result)
+
+
+async def _refresh_cast_review(config: Config, project_dir: Path, result: ApiResult[Path]) -> ApiResult[Path]:
+    """Re-run the Character Check after a sheet changes, in the same job.
+
+    Its usage settles with the redraw. A failed or skipped review never fails
+    the redraw; the check stays out of date and Resume Cast runs it.
+    """
+    usage: list = []
+    try:
+        bible = read_cast_story_bible(project_dir)
+        if review_ready(config, project_dir, bible):
+            await run_cast_review(config, project_dir, bible, log=lambda _message: None, usage_sink=usage.append)
+    except Exception as exc:  # noqa: BLE001 — advisory follow-up only
+        console.print(f"[yellow]Character check after redraw skipped: {exc}[/yellow]")
+    # Settle any review call that ran, even when its answer was rejected.
+    return replace(result, additional_usage=(*result.additional_usage, *usage)) if usage else result
 
 
 async def regenerate_character_state_ref(
@@ -688,7 +722,7 @@ async def regenerate_location_plate(
         addendum = _read_location_plate_addendum(project_dir, loc.id)
         input_data = _location_generation_input(config, loc, addendum, anchor=anchor)
         request = _compile_cast_request(
-            config, project_dir, input_data, reference_plan=style_reference_plan(config, style_ref)
+            config, project_dir, input_data, reference_plan=_location_plate_reference_plan(config)
         )
         spec = None
 
@@ -939,7 +973,7 @@ async def _generate_location_plates(
                 addendum = _read_location_plate_addendum(project_dir, loc.id)
                 input_data = _location_generation_input(config, loc, addendum, anchor=anchor)
                 wire = _compile_cast_request(
-                    config, project_dir, input_data, reference_plan=style_reference_plan(config, style_ref)
+                    config, project_dir, input_data, reference_plan=_location_plate_reference_plan(config)
                 )
                 spec = None
             if asset_matches_request(output_path, wire):
@@ -1308,6 +1342,7 @@ def cast_failure_details(project_dir: Path, stage_state) -> list[dict]:
     only waits on the others, so it is not listed as a failure of its own.
     """
     from novel_to_comic.asset_generation import read_asset_failure
+    from novel_to_comic.content_triggers import find_content_triggers
 
     bible = read_cast_story_bible(project_dir, safe=True)
     details = []
@@ -1318,12 +1353,15 @@ def cast_failure_details(project_dir: Path, stage_state) -> list[dict]:
         failure = read_asset_failure(path) if path is not None else None
         classification = failure.get("classification") if failure else None
         attempts = failure.get("attempts") if failure else None
-        message = (failure or {}).get("user_message") or "This reference did not finish. Resume Cast to retry it."
-        if classification == "provider_blocked":
-            message += " Change its direction, or regenerate it from its card."
+        # The stored copy is written for pages; a blocked reference needs a changed request.
+        message = (CAST_BLOCKED_MESSAGE if classification == "provider_blocked"
+                   else (failure or {}).get("user_message") or "This reference did not finish. Resume Cast to retry it.")
         details.append({
             "item_id": item_id, **identity,
             "classification": classification,
+            # Likely wording behind a decline, from the request that was sent.
+            "likely_triggers": (find_content_triggers(str(failure.get("prompt") or ""))
+                                if failure and classification == "provider_blocked" else []),
             "attempts": attempts if type(attempts) is int else (1 if failure else None),
             "message": message,
         })
@@ -1437,7 +1475,7 @@ class _ReferenceRequests:
             if appearance is None:
                 return _compile_cast_request(config, d, _location_generation_input(
                     config, entity, _read_location_plate_addendum(d, entity.id),
-                ), reference_plan=style_reference_plan(config, self.style_ref))
+                ), reference_plan=_location_plate_reference_plan(config))
             spec = build_location_state_spec(config, d, entity, appearance, style_path=self.style_ref)
         else:
             if appearance is None:
@@ -1653,7 +1691,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
             if state_id is None and not (series_root(project_dir) / "plates" / f"{stem}.png").exists():
                 total += estimate_non_panel_request(
                     config, _location_generation_input(config, loc, anchor=anchor),
-                    reference_plan=style_plan,
+                    reference_plan=_location_plate_reference_plan(config),
                 ).cost_usd
     for prop in story_bible.props:
         if not artifacts.prop_ref_path(project_dir, prop.id).exists():

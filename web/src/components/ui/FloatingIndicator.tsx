@@ -2,7 +2,8 @@ import { skipToken, useQuery } from "@tanstack/react-query";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useProjectStatus } from "../../api/queries";
 import { STAGE_ORDER } from "../../types/api";
-import { BACKEND_STAGE_TO_UI_ROUTE, getBackendStageUiLabel } from "../../lib/uiStages";
+import { getBackendStageUiLabel } from "../../lib/uiStages";
+import { BACKEND_STAGE_TO_STATION_ROUTE } from "../../lib/stations";
 import {
   activityQueryKey,
   barSegments,
@@ -11,12 +12,15 @@ import {
 } from "../../lib/stageActivity";
 import { useNow } from "../../hooks/useNow";
 import { Icon } from "./Icon";
+import { styleBatchSummary } from "../style/styleBatch";
+import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
 
 export function FloatingIndicator() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useI18n();
   const { data: status } = useProjectStatus(id);
   // SSE-fed only; this observer has no network query.
   const { data: activityMap } = useQuery<StageActivityMap>({
@@ -41,15 +45,20 @@ export function FloatingIndicator() {
   }
 
   const stageInfo = status.stages[runningStage];
+  // A Style batch chooses directions and designs lettering before any proof
+  // exists, so it reports its step, and counts proofs only while painting them.
+  const styleBatch = runningStage === "style" ? styleBatchSummary(activeJob) : null;
+  const itemsDone = styleBatch ? styleBatch.proofs?.done ?? 0 : stageInfo.items_done;
+  const itemsTotal = styleBatch ? styleBatch.proofs?.total ?? 0 : stageInfo.items_total;
   const activity = activityMap?.[runningStage];
   const stalled = activity ? isStalled(activity, now) : false;
   const { donePct, inFlightPct } = barSegments(
-    stageInfo.items_done,
-    stageInfo.items_total,
-    activity,
+    itemsDone,
+    itemsTotal,
+    styleBatch ? undefined : activity,
     now,
   );
-  const route = BACKEND_STAGE_TO_UI_ROUTE[runningStage];
+  const route = BACKEND_STAGE_TO_STATION_ROUTE[runningStage];
   const stageLabel = getBackendStageUiLabel(runningStage).toUpperCase();
   const jumpPath = `/project/${encodeURIComponent(id)}/${route}`;
   const onRunningStageScreen = location.pathname === jumpPath;
@@ -81,10 +90,15 @@ export function FloatingIndicator() {
       </div>
 
       <div className="space-y-2 p-3">
-        {stageInfo.items_total > 0 && (
+        {styleBatch && (
+          <div className="font-meta text-xs text-ink-muted">
+            {t("Step {step} of {steps}", { step: styleBatch.step, steps: styleBatch.steps })} · {t(styleBatch.label)}
+          </div>
+        )}
+        {itemsTotal > 0 && (
           <>
             <div className="flex items-center justify-between font-meta text-xs tabular-nums text-ink-muted">
-              <span>{stageInfo.items_done} / {stageInfo.items_total}</span>
+              <span>{styleBatch ? `${itemsDone} / ${itemsTotal} ${t("proofs")}` : `${itemsDone} / ${itemsTotal}`}</span>
               <span>{Math.round(donePct)}%</span>
             </div>
             <div className="relative h-2 w-full overflow-hidden border border-ink-black bg-pulp-paper">

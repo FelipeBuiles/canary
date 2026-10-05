@@ -618,6 +618,22 @@ def test_style_retry_reuses_queued_job_without_another_hold(tmp_path, style_ledg
     asyncio.run(scenario())
 
 
+def test_author_direction_queues_without_restarting_a_running_style_stage(tmp_path, style_ledger):
+    async def scenario():
+        request = _request()
+        project = _project(tmp_path, StageStatus.RUNNING)
+        stage = project[2].stages["style"]
+        stage.items_total, stage.items_done = 6, 2
+        result = await _queue_style_operation(request, project, "direction")
+        assert result["status"] == "queued"
+        assert (stage.items_total, stage.items_done, stage.status) == (6, 2, StageStatus.RUNNING)
+        job = request.app.state.generation_queue.get_nowait()
+        job.on_cancel()
+        assert stage.status == StageStatus.RUNNING
+
+    asyncio.run(scenario())
+
+
 def test_default_and_directed_quotes_price_six_and_five_images(tmp_path):
     from novel_to_comic.server.routers.styles import (
         _direction_credit_estimates, _suggest_batch_credit_estimate,

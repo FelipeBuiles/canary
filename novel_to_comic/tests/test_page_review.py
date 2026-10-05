@@ -353,6 +353,12 @@ def test_ocr_sweep_order_alone_is_an_editorial_issue_not_a_blocking_failure(
         "letter-1",
         "letter-2",
     ]
+    # It asks for nothing, so it stays analysis evidence and never flags the page.
+    assert record_analysis_issues(TargetArtifacts(tmp_path), analysis) == ()
+    assert not TargetArtifacts(tmp_path).issues_path(34).exists() or all(
+        issue.issue_type != "unverified_lettering_order"
+        for issue in TargetArtifacts(tmp_path).read_issues(34)
+    )
 
 
 def test_ocr_differences_become_advisory_page_issues(
@@ -432,6 +438,23 @@ def test_automated_invariant_finding_can_be_dismissed_as_a_false_positive(
         "Verified as incidental in-world notebook writing."
     )
     assert summarize_page_issues(artifacts).can_continue is True
+
+
+def test_automatic_visual_finding_can_be_dismissed_as_not_a_problem(tmp_path: Path) -> None:
+    artifacts = TargetArtifacts(tmp_path)
+    issue = PageIssue(
+        id=f"visual-review-{'a' * 64}-1", issue_type="visual_prop",
+        classification="editorial_issue", correction_owner="draw",
+        page_number=34, render_revision=1,
+        evidence=["Panel 1: ring on the fourth finger", "Expected: third finger"],
+        requested_correction="Move the ring to the third finger.", status="open",
+    )
+    record_page_issue(artifacts, issue)
+
+    dismissed = dismiss_page_issue(artifacts, issue_id=issue.id, page_number=34,
+                                   reason="Dismissed by the author as not a problem.")
+
+    assert dismissed.status == "dismissed"
 
 
 def test_page_issues_are_reviewed_by_exception_and_copy_changes_route_to_adapt(

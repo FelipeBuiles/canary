@@ -30,6 +30,7 @@ from novel_to_comic.config import (
     COMPLETE_PAGE_PROVIDER,
     COMPLETE_PAGE_REFERENCE_COST_USD,
     PAGE_OCR_ESTIMATED_COST_USD,
+    PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD,
     GPT25_PAGE_ESTIMATED_COST_USD,
     GPT25_REFERENCE_ESTIMATED_COST_USD,
     MUSE_PAGE_ESTIMATED_COST_USD,
@@ -575,6 +576,7 @@ def _compile_prompt(
             authority = next((ref for ref in text_authorities if ref.entity_id == entity_id
                               and ref.appearance_state_id == content.appearance_states.get(entity_id)), None)
             return ({"written_identity": {"appearance": authority.label,
+                     **({"identity": authority.identity} if authority.identity else {}),
                      "visual_anchor": authority.visual_anchor, "continuity_guard": authority.continuity_guard}}
                     if authority is not None else {})
         return [
@@ -614,6 +616,11 @@ def _compile_prompt(
             "Use each subject asset only for its assigned subject and state; "
             "preserve hairstyle, age, facial structure, clothing design and recurring object "
             "features shown by that authority unless the assigned state explicitly changes them. "
+            "A subject's identity line states canonical gender, age and any unusual stature: "
+            "keep that gender and age legible in every panel, and keep a stated stature at its "
+            "true scale beside other figures, furniture and doorways in every panel, seated or "
+            "standing; never normalize it to ordinary height. A plain scale silhouette on a "
+            "reference sheet is a measuring guide, never a figure to draw. "
             "Character references establish identity and appearance, not a fixed pose, facing "
             "direction, gaze, expression or camera angle. An appearance-state asset shows how "
             "its subject looks in that state (wounds, blood, clothing, hair), never the "
@@ -641,6 +648,7 @@ def _compile_prompt(
                    if reference_bindings and reference.id in reference_bindings else {}),
                 "subject": handles[reference.entity_id],
                 "appearance": reference.label,
+                **({"identity": reference.identity} if reference.identity else {}),
                 "visual_anchor": reference.visual_anchor,
                 "continuity_guard": reference.continuity_guard,
                 **({"art_direction": cast_art_direction[reference.id]}
@@ -769,7 +777,8 @@ def _compile_prompt(
             }
     if text_authorities:
         payload["reference_scope"] += (
-            " Incidental participants use written_identity instead of a dedicated image. "
+            " Incidental participants and scene objects use written_identity instead of a "
+            "dedicated image; draw a scene object identically in every panel and page that shows it. "
             "Preserve each supplied visual_anchor and continuity_guard verbatim as appearance "
             "authority; take acting and staging from the panel. During corrections preserve "
             "their existing identity in the parent artwork unless the author changes it."
@@ -966,6 +975,7 @@ def compile_page_generation_request(
                 appearance_state_id=authority.appearance_state_id,
                 label=authority.label,
                 continuity_guard=authority.continuity_guard,
+                identity=authority.identity,
             )
         )
     # Use direction stored with the rendered image, never a newer failed draft.
@@ -1161,16 +1171,16 @@ def prepare_page_correction(
 
 
 def estimate_draw_api_cost(
-    config: Config, compiled: CompiledPageGeneration, *, ocr: bool | None = None,
+    config: Config, compiled: CompiledPageGeneration, *, checks: bool = True,
 ) -> float:
-    """Include only the API portions of a page render and its automatic readback."""
+    """Include only the API portions of a page render and its automatic checks."""
     from novel_to_comic.codex_dev import route_for
-    from novel_to_comic.server.codex_admission import draw_reads_pages
 
-    ocr = draw_reads_pages(config) if ocr is None else ocr
     total = 0.0 if route_for("complete_page", config.draw_model) else estimate_page_request_cost_usd(compiled)
-    if ocr and route_for("text", config.effective_page_ocr_model()) is None:
+    if checks and route_for("text", config.effective_page_ocr_model()) is None:
         total += float(PAGE_OCR_ESTIMATED_COST_USD)
+    if checks and route_for("text", config.effective_visual_review_model()) is None:
+        total += float(PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD)
     return total
 
 
@@ -1882,13 +1892,17 @@ def _analysis_usage(
 
 async def _read_back(*, page, render, image, ocr, artifacts) -> None:
     """Every draw's automatic page read. Best effort: the paid art is already
-    saved, so a failed read never fails the page; the page stays unchecked
-    and can be read again without redrawing."""
-    try:
-        await analyze_complete_page(page=page, render=render, image=image, ocr=ocr, artifacts=artifacts)
-    except Exception:
-        logger.warning("Page %s read-back failed; the drawn page is kept unchecked",
-                       page.page_number, exc_info=True)
+    saved, so a failed read never fails the page. A read (not an image) is
+    retried once; after that the page stays unchecked and can be read again
+    without redrawing."""
+    for attempt in (1, 2):
+        try:
+            await analyze_complete_page(page=page, render=render, image=image, ocr=ocr, artifacts=artifacts)
+            return
+        except Exception:
+            logger.warning("Page %s read-back attempt %d failed%s", page.page_number, attempt,
+                           "; retrying once" if attempt == 1 else "; the drawn page is kept unchecked",
+                           exc_info=True)
 
 
 async def analyze_complete_page(
@@ -2034,11 +2048,26 @@ async def correct_complete_page(
     return provenance
 
 
+async def _review_back(*, review, page, render, artifacts) -> tuple[UsageRecord, ...]:
+    """Every draw's automatic visual review. Best effort, like the read: the
+    paid art is kept and the page can be reviewed later without redrawing."""
+    try:
+        result = await review(render, artifacts.read_render(page.page_number, render.revision))
+    except Exception:
+        logger.warning("Page %s visual review failed; the drawn page is kept unreviewed",
+                       page.page_number, exc_info=True)
+        return ()
+    return () if result.value.usage is None else (result.value.usage,)
+
+
 def page_draw_execution(
-    *, project_dir, compiled, adapter, artifacts, page, ocr=None,
+    *, project_dir, compiled, adapter, artifacts, page, ocr=None, visual_review=None,
     request_revision=None, render_revision=None, parent_render_revision=None,
     issue=None, on_success=None,
 ):
+    """``visual_review(render, image)`` reviews the finished render; with the
+    read in ``ocr`` it makes the page's automatic checks."""
+
     async def _draw() -> ApiResult[PageGenerationProvenance]:
         try:
             if compiled.request.correction is None:
@@ -2113,12 +2142,16 @@ def page_draw_execution(
             )
             setattr(exc, "page_failure_phase", "analysis" if analysis_failed else "generation")
             raise
+        review_usage = (
+            await _review_back(review=visual_review, page=page, render=provenance.render, artifacts=artifacts)
+            if visual_review is not None else ()
+        )
         return ApiResult(
             value=provenance,
             usage=provenance.usage,
             provider_request_id=provenance.provider_request_id,
             actual_provider_model=provenance.usage.provider_model,
-            additional_usage=_analysis_usage(artifacts, provenance),
+            additional_usage=(*_analysis_usage(artifacts, provenance), *review_usage),
             response_metadata=provenance.response_metadata,
         )
 
@@ -2135,6 +2168,20 @@ def page_draw_execution(
         artifacts.mark_generation_complete(result.value)
 
     return _work, _settled
+
+
+def page_visual_check(config: Config, project_dir: Path, artifacts: TargetArtifacts, page: ComicPage):
+    """The visual review a draw job runs on its finished render."""
+
+    async def review(render: PageRenderRevision, image: bytes):
+        from novel_to_comic.page_visual_review import review_drawn_page
+
+        return await review_drawn_page(
+            config=config, project_dir=project_dir, artifacts=artifacts,
+            page=page, render=render, image=image,
+        )
+
+    return review
 
 
 def enqueue_complete_page_draw(
@@ -2166,11 +2213,12 @@ def enqueue_complete_page_draw(
     from novel_to_comic.codex_dev import classify_operations
     from novel_to_comic.server.codex_admission import draw_operations
 
-    operations = draw_operations(config, ocr=ocr is not None)
+    visual_review = page_visual_check(config, project_dir, artifacts, page)
+    operations = draw_operations(config, checks=ocr is not None)
     funding = classify_operations(operations)
 
     estimate = credit_estimate_for_provider_cost(
-        estimate_draw_api_cost(config, compiled, ocr=ocr is not None),
+        estimate_draw_api_cost(config, compiled, checks=ocr is not None),
         "draw",
         reserve=True,
         zero_cost_estimate=0,
@@ -2179,7 +2227,8 @@ def enqueue_complete_page_draw(
 
     _work, _settled = page_draw_execution(
         project_dir=project_dir, compiled=compiled, adapter=adapter, artifacts=artifacts,
-        page=page, ocr=ocr, request_revision=request_revision, render_revision=render_revision,
+        page=page, ocr=ocr, visual_review=visual_review if ocr is not None else None,
+        request_revision=request_revision, render_revision=render_revision,
         parent_render_revision=parent_render_revision, issue=issue, on_success=on_success,
     )
     from novel_to_comic.server.job_commands import command, save_blob

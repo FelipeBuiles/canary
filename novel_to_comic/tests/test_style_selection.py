@@ -34,6 +34,7 @@ def test_set_active_style_clears_completed_style_failures(tmp_path):
         "status": "updated",
         "index": 1,
         "style_template": expected_template,
+        "style_changed": True,
     }
     assert load_state(tmp_path).stages["style"].items_failed == []
     loaded_config, _env_file = load_config(tmp_path)

@@ -4,12 +4,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCreateProject, useDeleteProject, useGenerateProjectCover, useProjects, useImportStory } from "../api/queries";
 import { ProjectCard } from "../components/ProjectCard";
 import { useDialogFocus } from "../hooks/useDialogFocus";
+import { useBackdropDismiss } from "../hooks/useBackdropDismiss";
 import { Icon } from "../components/ui/Icon";
 import { Button } from "../components/ui/Button";
 import { LoadingBlock, StateBlock } from "../components/ui/StateBlock";
 import { ConfirmModal, SectionHeader } from "../components/composites";
 import { STATIONS } from "../lib/stations";
 import { UploadStep } from "../components/wizard/UploadStep";
+import { clearManuscriptDraft } from "../lib/manuscriptDraft";
 import type { ConfigOverrides, ProjectSummary } from "../types/api";
 import { useI18n } from "../i18n";
 import { maybeShowInsufficientCredits } from "../store/insufficientCredits";
@@ -53,6 +55,7 @@ function NewProjectModal({ isOpen, onClose, initialStoryCode }: { isOpen: boolea
         {
           onSuccess: (data) => {
             queryClient.removeQueries({ queryKey: ["project", data.id] });
+            clearManuscriptDraft();
             onClose();
             navigate(`/project/${encodeURIComponent(partProjectKey(data.id, data.part_id))}/story`);
           },
@@ -79,13 +82,14 @@ function NewProjectModal({ isOpen, onClose, initialStoryCode }: { isOpen: boolea
   );
 
   useDialogFocus(dialogRef, { enabled: isOpen, onClose });
+  const backdrop = useBackdropDismiss(onClose);
 
   if (!isOpen) return null;
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink-black/80 p-4"
-      onClick={onClose}
+      {...backdrop}
     >
       <div
         ref={dialogRef}

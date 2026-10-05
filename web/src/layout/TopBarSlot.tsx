@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useDesktopLayout } from "../hooks/useDesktopLayout";
 
 interface ShellSlotsContextValue {
   topEl: HTMLElement | null;
@@ -32,9 +33,10 @@ export function useTopBarSlotRegister() {
  * Renders children into the masthead slot of AppTopBar. Pages own their
  * header content (kicker, title, tabs, actions); the shell owns the bar.
  */
-export function TopBarPortal({ children }: { children: ReactNode }) {
+export function TopBarPortal({ children, inlineOnMobile = false }: { children: ReactNode; inlineOnMobile?: boolean }) {
   const ctx = useContext(ShellSlotsContext);
-  if (!ctx) return children;
+  const desktop = useDesktopLayout();
+  if (!ctx || (inlineOnMobile && !desktop)) return children;
   if (!ctx?.topEl) return null;
   return createPortal(children, ctx.topEl);
 }
@@ -46,15 +48,15 @@ export function BottomBarHost() {
 }
 
 /**
- * Renders children into the shell footer below the scroll area — the home of
- * the standing approval bar, spanning the full content column like a true
- * footer instead of floating inside the page's max-width container.
+ * Desktop actions use the standing shell footer. Phone actions stay in the
+ * page's scroll flow so review content can use the full viewport.
  */
 export function BottomBarPortal({ children }: { children: ReactNode }) {
   const ctx = useContext(ShellSlotsContext);
+  const desktop = useDesktopLayout();
   // Rooms remain independently renderable in tests, component references,
   // and embedded surfaces that do not mount the full application shell.
-  if (!ctx) return children;
+  if (!ctx || !desktop) return children;
   if (!ctx?.bottomEl) return null;
   return createPortal(children, ctx.bottomEl);
 }

@@ -62,6 +62,12 @@ CONNECT_TIMEOUT_S = 10.0
 # Controls the frozen manifest may carry; anything else is rejected, never
 # forwarded or dropped silently.
 _ALLOWED_CONTROLS = frozenset({"quality", "output_format", "n", "background"})
+# Canary adapts literature whose canonical content can include nudity on
+# artwork, injury or violence (e.g. a carved sphinx with a bare torso). OpenAI's
+# default "auto" moderation declines such references outright. "low" is the
+# least restrictive tier the Images API offers (there is no "off"); it is
+# provider policy, like Vertex's safety-off settings, not a per-request control.
+MODERATION = "low"
 
 logger = logging.getLogger(__name__)
 _URI_RE = re.compile(r"(?:data:[^\s,]+,|https?://)\S+", re.IGNORECASE)
@@ -246,6 +252,7 @@ def request_fields(model: str, prompt: str, params: dict[str, Any]) -> dict[str,
         # Partial images would add billed output tokens. The fallback treats
         # a lost request the same whether or not generation had started.
         "partial_images": "0",
+        "moderation": MODERATION,
     }
     for key, value in controls.items():
         fields[key] = str(value).lower() if isinstance(value, bool) else str(value)

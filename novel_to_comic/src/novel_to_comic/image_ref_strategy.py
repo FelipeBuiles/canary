@@ -113,9 +113,8 @@ class RefStrategy:
         return self._gpt_image_2
 
     def location_plate_dimensions(self) -> tuple[int | None, int | None]:
-        # Slice 06: location plates promise a "clean wide environment design
-        # plate." The generation dimensions must agree with that wide
-        # composition for every route — falling back to the (square) panel
+        # Slice 06: location plates are landscape design plates. The
+        # generation dimensions must agree with that wide composition for every route — falling back to the (square) panel
         # config dimensions produced a composition/dimension contradiction.
         # GPT Image 2 keeps its verified 1536x1024 size; other routes use the
         # canonical landscape plate dimensions from image_geometry.

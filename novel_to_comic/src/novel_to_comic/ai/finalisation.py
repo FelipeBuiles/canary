@@ -204,6 +204,12 @@ async def begin_image_call(
     ref_reads: list[tuple[Path, bytes | None]],
 ) -> ImageCallContext:
     from novel_to_comic.ai import client as ai_client
+    from novel_to_comic.ai.context import current_generation_probe
+
+    if probe := current_generation_probe():
+        # Image prompts are rendered requests, not instruction-template versions.
+        # Export only their fingerprint; image/reference bodies stay private.
+        probe.request_sha = ai_client._hash_payload(prompt)
 
     event_id = str(uuid.uuid4())
     operation = "image"

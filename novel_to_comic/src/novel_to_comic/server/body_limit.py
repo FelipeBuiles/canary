@@ -11,7 +11,7 @@ from starlette.responses import Response
 
 from novel_to_comic.input_limits import InputLimits
 
-_STYLE_DIRECTION_BODY_BYTES = 11 * 1024 * 1024
+_IMAGE_UPLOAD_BODY_BYTES = 11 * 1024 * 1024
 _MULTIPART_ENVELOPE_BYTES = 1024 * 1024
 
 
@@ -25,8 +25,9 @@ def _max_body_bytes() -> int:
 
 def _is_source_upload(path: str, method: str) -> bool:
     parts = path.rstrip("/").split("/")
+    # Creation and its read-only preview accept the same whole manuscript.
     return (
-        method == "POST" and path.rstrip("/") == "/api/projects"
+        method == "POST" and path.rstrip("/") in ("/api/projects", "/api/projects/source-preview")
     ) or (
         parts[1:3] == ["api", "projects"]
         and len(parts) > 3
@@ -71,9 +72,9 @@ def _body_cap_bytes(path: str, method: str) -> int:
         method == "POST"
         and len(parts) == 6
         and parts[1:3] == ["api", "projects"]
-        and parts[4:] == ["styles", "direction"]
+        and parts[4:] in (["styles", "direction"], ["cast", "reference-uploads"])
     ):
-        return _STYLE_DIRECTION_BODY_BYTES
+        return _IMAGE_UPLOAD_BODY_BYTES
     return _max_body_bytes()
 
 

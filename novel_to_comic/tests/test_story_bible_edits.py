@@ -32,6 +32,7 @@ from novel_to_comic.story_bible_edits import (
     add_state,
     edit_entity,
     merge_entities,
+    possible_duplicates,
     remove_entity,
     remove_state,
     restore_excluded,
@@ -136,6 +137,37 @@ def test_removal_keeps_extraction_from_recreating_the_name() -> None:
 
     with pytest.raises(EditRejected, match="Merge it into another place"):
         remove_entity(_bible(), "locations", "loc_001")
+
+
+def test_restoring_a_removed_entry_brings_it_back_whole() -> None:
+    # A new author entry never takes a removed entry's id: its Cast images stay its own.
+    added, tom = add_entity(_bible(), "characters", {"name": "Tom", "visual_anchor": "white beard"},
+                            ["scene_003"], editable={"scene_003"})
+    _, new_id = add_entity(remove_entity(added, "characters", tom), "characters",
+                           {"name": "Old Tom", "visual_anchor": "white beard"}, ["scene_003"], editable={"scene_003"})
+    assert (tom, new_id) == ("author_char_001", "author_char_002")
+
+    removed = remove_entity(_bible(), "characters", "char_002")
+    restored = restore_excluded(removed, "characters", "Ines")
+    ines = next(c for c in restored.characters if c.id == "char_002")
+    assert ines.visual_anchor == "long red hair, freckles"
+    assert "char_002" in restored.scenes[0].character_ids
+    assert restored.characters[0].relationships == [CharacterRelationship(character_id="char_002", relationship="sister")]
+    assert restored.excluded_entities == []
+
+    renamed = edit_entity(removed, "characters", "char_003", {"aliases": ["Ines"]})
+    with pytest.raises(EditRejected, match="already uses that name"):
+        restore_excluded(renamed, "characters", "Ines")
+
+
+def test_possible_duplicates_pair_shared_and_contained_names() -> None:
+    pairs = possible_duplicates(_bible(), {})
+    assert {(p["kind"], tuple(p["ids"]), p["reason"]) for p in pairs} == {
+        ("characters", ("char_002", "char_003"), "name_within"),
+        ("locations", ("loc_001", "loc_002"), "same_name"),
+    }
+    # Both cited: neither can be merged away, so it isn't suggested.
+    assert all(p["kind"] != "characters" for p in possible_duplicates(_bible(), {"char_002": ["P"], "char_003": ["P"]}))
 
 
 def test_merging_folds_scenes_looks_and_names_into_the_kept_entry() -> None:
@@ -490,57 +522,94 @@ def test_cast_reopens_only_for_references_that_are_not_current(series) -> None:
     reopened = client.post("/api/projects/pid/cast/reopen")
     assert reopened.status_code == 200 and reopened.json()["reopened"] is True
     assert load_state(root).stages["cast"].status == StageStatus.PENDING
-    assert client.get("/api/projects/pid/parts/part_0001/page-flags").json() == {"pages": []}
 
 
-def test_pages_drawn_before_an_edit_are_flagged(tmp_path, monkeypatch) -> None:
-    import hashlib
+def test_reference_form_edits_are_conservative():
+    from novel_to_comic.story_bible_edits import edit_state
 
-    from novel_to_comic.models.draw import PageReference
-    from novel_to_comic.models.page import ApprovedVisualReference
-    from novel_to_comic.stages import s5_plan
-    from novel_to_comic.story_bible_edits import pages_drawn_before_edits
+    bible = _bible()
+    edited = edit_entity(bible, "characters", "char_001", {"reference_form": "form"})
+    assert edited.characters[0].reference_form == "form"
+    with pytest.raises(ValueError, match="only for identity_kind 'group'"):
+        edit_entity(bible, "characters", "char_001", {"reference_form": "formation"})
 
-    sheet = tmp_path / "sheet.png"
-    sheet.write_bytes(b"regenerated")
-    old_digest, new_digest = "a" * 64, hashlib.sha256(b"regenerated").hexdigest()
+    misted = edit_state(bible, "characters", "char_003", "wet", {"reference_form": "form"})
+    assert misted.characters[2].appearance_states[0].reference_form == "form"
+    with pytest.raises(EditRejected, match="only for a group"):
+        edit_state(bible, "characters", "char_003", "wet", {"reference_form": "formation"})
+    flooded, state_id = add_state(bible, "locations", "loc_001", {"label": "Flooded", "visual_anchor": "flooded glass room"}, None)
+    with pytest.raises(EditRejected, match="Only a character's look"):
+        edit_state(flooded, "locations", "loc_001", state_id, {"reference_form": "form"})
 
-    def frozen(reference_id, anchor, digest, entity_id):
-        return PageReference(id=reference_id, order=1, media_type="image/png", content_sha256=digest,
-                             visual_anchor=anchor, entity_id=entity_id, label=entity_id)
 
-    requests = {
-        1: SimpleNamespace(references=(frozen("ref:mara", "short black hair", new_digest, "char_001"),
-                                       frozen("ref:key", "small brass key", new_digest, "prop_001")),
-                           written_identities=()),
-        2: SimpleNamespace(references=(frozen("ref:mara", "short black hair", old_digest, "char_001"),),
-                           written_identities=()),
-        4: SimpleNamespace(references=(), written_identities=(ApprovedVisualReference(
-            id="ref:visitor", entity_id="visitor", kind="character", requires_image=False,
-            visual_anchor="long white hair", label="Visitor"),)),
-    }
-    monkeypatch.setattr(TargetArtifacts, "read_plan", lambda self: SimpleNamespace(
-        pages=[SimpleNamespace(page_number=n) for n in range(1, 5)]))
-    monkeypatch.setattr(TargetArtifacts, "active_render_revision", lambda self, n: None if n == 3 else 4)
-    monkeypatch.setattr(TargetArtifacts, "read_provenance", lambda self, n, r: SimpleNamespace(render=n))
-    monkeypatch.setattr(TargetArtifacts, "producing_request", lambda self, render: requests[render])
-    monkeypatch.setattr(s5_plan, "approved_visual_inventory", lambda root: SimpleNamespace(references=[
-        SimpleNamespace(id="ref:mara", visual_anchor="short black hair", continuity_guard="", label="Mara"),
-        SimpleNamespace(id="ref:key", visual_anchor="large iron key", continuity_guard="", label="Key"),
-        SimpleNamespace(id="ref:visitor", visual_anchor="short white hair", continuity_guard="", label="Visitor"),
-    ]))
-    monkeypatch.setattr(s5_plan, "approved_reference_files", lambda root: {
-        "ref:mara": SimpleNamespace(path=sheet), "ref:key": SimpleNamespace(path=sheet),
+def test_the_newest_edit_can_be_undone_until_something_else_changes(series) -> None:
+    client, root = series
+    assert client.get("/api/projects/pid/story-bible/editor").json()["undo"] is None
+    merged = client.post("/api/projects/pid/story-bible/characters/char_003/merge",
+                         json={"expected_revision": 1, "into": "char_002"})
+    assert merged.status_code == 200
+    editor = client.get("/api/projects/pid/story-bible/editor").json()
+    assert editor["undo"] == {"blocked": None, "change": {
+        "action": "merge", "kind": "characters", "entity_id": "char_003", "name": "Ines Vale", "into": "Ines"}}
+
+    assert client.post("/api/projects/pid/story-bible/undo", json={"expected_revision": 1}).status_code == 409
+    undone = client.post("/api/projects/pid/story-bible/undo", json={"expected_revision": 2})
+    assert undone.status_code == 200 and undone.json()["undone"]["action"] == "merge"
+    bible = artifacts.read_story_bible(root)
+    assert bible.revision == 3 and [c.id for c in bible.characters] == ["char_001", "char_002", "char_003"]
+    assert client.get("/api/projects/pid/story-bible/editor").json()["undo"] is None
+
+    # Edits undo newest first; anything else writing the Bible ends the chain.
+    client.patch("/api/projects/pid/story-bible/props/prop_001", json={"expected_revision": 3, "changes": {"name": "Key"}})
+    client.patch("/api/projects/pid/story-bible/props/prop_001", json={"expected_revision": 4, "changes": {"name": "Old key"}})
+    assert client.post("/api/projects/pid/story-bible/undo", json={"expected_revision": 5}).status_code == 200
+    assert artifacts.read_story_bible(root).props[0].name == "Key"
+    bible = artifacts.read_story_bible(root)
+    bible.props[0].aliases = ["the key"]
+    artifacts.write_story_bible(root, bible)
+    refused = client.post("/api/projects/pid/story-bible/undo", json={"expected_revision": 6})
+    assert refused.status_code == 422 and "no edit to undo" in refused.json()["detail"]
+
+
+def test_undo_never_takes_away_what_an_adapted_part_cites(series) -> None:
+    client, root = series
+    added = client.post("/api/projects/pid/story-bible/characters", json={
+        "expected_revision": 1, "scene_ids": ["scene_003"],
+        "details": {"name": "Old Tom", "visual_anchor": "white beard, oilskin coat"},
     })
+    assert added.status_code == 200
+    TargetArtifacts(part_workspace(root, "part_0002")).write_adaptation(_adaptation_citing(("author_char_001",)))
+    assert client.get("/api/projects/pid/story-bible/editor").json()["undo"]["blocked"]
+    assert client.post("/api/projects/pid/story-bible/undo", json={"expected_revision": 2}).status_code == 409
 
-    assert pages_drawn_before_edits(tmp_path) == [
-        {"page_number": 1, "render_revision": 4, "changes": [
-            {"entity_id": "prop_001", "appearance_state_id": None, "label": "Key", "reasons": ["description"]},
-        ]},
-        {"page_number": 2, "render_revision": 4, "changes": [
-            {"entity_id": "char_001", "appearance_state_id": None, "label": "Mara", "reasons": ["reference image"]},
-        ]},
-        {"page_number": 4, "render_revision": 4, "changes": [
-            {"entity_id": "visitor", "appearance_state_id": None, "label": "Visitor", "reasons": ["description"]},
-        ]},
-    ]
+
+def test_removed_entries_come_back_through_restore(series) -> None:
+    client, root = series
+    assert client.delete("/api/projects/pid/story-bible/characters/char_002?expected_revision=1").status_code == 200
+    restored = client.delete("/api/projects/pid/story-bible/excluded/characters/Ines?expected_revision=2")
+    assert restored.status_code == 200
+    bible = artifacts.read_story_bible(root)
+    assert "char_002" in {c.id for c in bible.characters} and "char_002" in bible.scenes[0].character_ids
+
+
+def test_impact_previews_what_a_merge_or_removal_changes(series) -> None:
+    client, root = series
+    merge = client.get("/api/projects/pid/story-bible/characters/char_003/impact",
+                       params={"action": "merge", "into": "char_002"}).json()
+    assert merge["blocked"] is None
+    assert [scene["id"] for scene in merge["scenes"]] == ["scene_003"]
+    assert merge["looks"] == ["Soaked"] and merge["aliases"] == ["Ines Vale"]
+    assert merge["cast_images"] == 0
+
+    remove = client.get("/api/projects/pid/story-bible/characters/char_002/impact").json()
+    assert remove["action"] == "remove" and [s["id"] for s in remove["scenes"]] == ["scene_001"]
+    assert remove["relationships"] == 1
+    place = client.get("/api/projects/pid/story-bible/locations/loc_001/impact").json()
+    assert "Merge it into another place" in place["blocked"]
+
+    TargetArtifacts(part_workspace(root, "part_0001")).write_adaptation(_adaptation_citing(("char_002",)))
+    cited = client.get("/api/projects/pid/story-bible/characters/char_002/impact").json()
+    assert cited["blocked"].startswith("Can't remove it: Part 1 uses it.")
+    assert client.get("/api/projects/pid/story-bible/characters/char_002/impact",
+                      params={"action": "merge"}).status_code == 422
+    assert artifacts.read_story_bible(root).revision == 1  # previews never write

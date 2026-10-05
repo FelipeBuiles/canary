@@ -203,7 +203,7 @@ describe("BookRoom edition decisions", () => {
     }));
     renderRoom();
     expect(screen.getAllByText("Saved artwork needs text evidence")).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Check pages" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
     expect(screen.getByRole("link", { name: "Open page checks · Page 1" })).toBeTruthy();
   });
@@ -222,9 +222,9 @@ describe("BookRoom edition decisions", () => {
     renderRoom();
     expect(screen.getAllByText("Saved artwork needs text evidence")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
-    expect(screen.getByText(/2 pages haven’t had a text check/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Check pages" }));
-    await screen.findByText("1 page still needs a check.");
+    expect(screen.getByText(/The text check didn't finish on 2 pages/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await screen.findByText("The text check still didn't finish on 1 page.");
     expect(screen.queryByText(/Page 1:/)).toBeNull();  // One summary line, not a row per page.
     await waitFor(() => expect(finishChecks).toHaveBeenCalledWith("demo"));
     expect(recoverChecks).toHaveBeenCalledOnce();
@@ -237,7 +237,7 @@ describe("BookRoom edition decisions", () => {
     preflight.pages[0].accepted_editorial_issue_ids = ["accepted-concern"];
     renderRoom();
     fireEvent.click(screen.getByText("Accepted decisions (1)"));
-    expect(screen.getByRole("link", { name: "Page 1 · 1 accepted" }).getAttribute("href")).toBe("/project/demo/pages?page=1&review=visual");
+    expect(screen.getByRole("link", { name: "Page 1 · 1 accepted" }).getAttribute("href")).toBe("/project/demo/pages?page=1&review=page");
     expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", false);
   });
 
@@ -272,8 +272,8 @@ describe("BookRoom edition decisions", () => {
     preflight.pages[0].invariant_failures = [{ id: "file", owner_stage: "draw", code: "missing", message: "Page file missing", evidence: [] }];
     preflight.pages[0].unresolved_editorial_issue_ids = ["visual-concern"];
     renderRoom();
-    expect(screen.getByRole("link", { name: "Open page checks · Page 1" }).getAttribute("href")).toBe("/project/demo/pages?page=1&review=checks");
-    expect(screen.getByRole("link", { name: "Review page 1" }).getAttribute("href")).toBe("/project/demo/pages?page=1&review=visual");
+    expect(screen.getByRole("link", { name: "Open page checks · Page 1" }).getAttribute("href")).toBe("/project/demo/pages?page=1&review=page");
+    expect(screen.getByRole("link", { name: "Review page 1" }).getAttribute("href")).toBe("/project/demo/pages?page=1&review=page");
     expect(screen.getByRole("button", { name: "Create PDF" })).toHaveProperty("disabled", true);
     expect(screen.getByRole("button", { name: "Create CBZ" })).toHaveProperty("disabled", true);
   });
@@ -281,7 +281,7 @@ describe("BookRoom edition decisions", () => {
   it("links correction requests to the exact page checks", () => {
     preflight.correction_requests = [{ id: "correction", page_number: 7, failure_codes: ["lettering"], requested_correction: "Restore missing caption" }];
     renderRoom();
-    expect(screen.getByRole("link", { name: "Open page checks · Page 7" }).getAttribute("href")).toBe("/project/demo/pages?page=7&review=checks");
+    expect(screen.getByRole("link", { name: "Open page checks · Page 7" }).getAttribute("href")).toBe("/project/demo/pages?page=7&review=page");
   });
 
   it("recovers an unavailable preflight inline without enabling export", () => {

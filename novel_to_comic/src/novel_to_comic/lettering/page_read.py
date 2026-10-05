@@ -118,10 +118,3 @@ def read_for_render(
         stray_lettering=marks(extraction.lettering),
         in_world_text=marks(extraction.incidental_text),
     )
-
-
-def draw_page_read(config, artifacts: TargetArtifacts, page: ComicPage) -> GatewayPageOCRAdapter | None:
-    """The automatic read-back a draw job runs, or None when this project's draws skip it."""
-    from novel_to_comic.server.codex_admission import draw_reads_pages
-
-    return page_read_adapter(config, artifacts, page) if draw_reads_pages(config) else None

@@ -688,6 +688,14 @@ def _check_character_looks(characters: list[dict]) -> None:
                 "human members as background figures in scene summaries. Collective acting "
                 "creatures use identity_kind='group' with one shared visual design."
             )
+        forms = [character.get("reference_form")] + [
+            state.get("reference_form") for state in character.get("appearance_states", [])]
+        if "formation" in forms and character.get("identity_kind") != "group":
+            errors.append(
+                f"{cid} '{name}' uses reference_form 'formation' but is not identity_kind "
+                "'group'. Formation is only for a group whose members share one design; use "
+                "figure or form for one entity."
+            )
         base = str(character.get("visual_anchor", ""))
         looks = [("base", base, None)] + [
             (state.get("id"), str(state.get("visual_anchor", "")), state.get("continuity_guard"))

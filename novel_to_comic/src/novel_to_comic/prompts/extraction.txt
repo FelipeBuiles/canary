@@ -83,7 +83,12 @@ Look for stated height, weight, build, hair, facial anatomy and distinguishing
 traits throughout this source, including self-description and species anatomy.
 A first-person narrator often states their own height or build once, in passing,
 mid-action; that is identity. Brands, tattoos and scars belong to the body's
-look, never to props.
+look, never to props. When a character's stated size departs from an ordinary
+adult of their species (a tiny half-elf, a giant), put the height and a relative
+comparison in stature, e.g. 'two and a half feet tall; head reaches an adult's
+waist'; leave stature empty otherwise. Word marks so they cannot be drawn as the
+object they resemble: 'pale raised scar band around the third finger, no ring
+worn', not 'scar ring'. Keep stated materials and fabrics (silk, wood) in the tags.
 Demographic guesses and occupational labels are not physical anatomy. If only
 species anatomy is supplied, retain it without copying another individual's
 unique outfit or face. Leave unstated features unspecified for Cast design.
@@ -150,7 +155,14 @@ pelts and extracted substances can be objects; do not promote them as live actor
 Return places actually used and significant objects actually present. Recurring
 and plot-critical detachable objects belong in props; scene-specific visual
 objects can remain in scenes[].transient_objects. Recurrence is not a prerequisite
-for a plot-critical object. Body changes belong to character states, changes to
+for a plot-critical object. An object a scene is built around (the thing it
+examines across several paragraphs, opens, uses or turns on) is plot-critical:
+make it a prop even when it appears only once, and do not repeat it as a
+transient object. Record as a transient object any other object the source
+describes in physical detail, such as a sign or figurehead that names a place.
+For props and transient objects alike, keep the stated material, form, damage and
+placement (for example 'mounted above the outside door') in the anchor so it is
+not redrawn generically. Body changes belong to character states, changes to
 a place belong to location states. A prosthetic limb is not a detachable prop.
 Describe unusual object forms explicitly when necessary to prevent misreading.
 An occupational role or a placeholder such as 'field guide item' does not supply

@@ -21,7 +21,7 @@ requires a shared artifact authority and distributed mutation ownership first.
 Commands cover pipeline stages and their explicit auto-chain, page draws and
 corrections, cast references, covers, style proofs and lettering translation.
 Prepared page inputs retain their model profile, reference bytes, request hash and
-their page read-back (editable lettering). Stage implementations continue to receive `StageRuntime`.
+their page checks (read-back and visual review). Stage implementations continue to receive `StageRuntime`.
 Synchronous analysis/review APIs keep their existing request lifecycle.
 
 One account executes ordinary queued operations exclusively. Complete-page Draw
@@ -97,8 +97,22 @@ Project status returns explicit `active_jobs`; an unfinished Draw checkpoint no
 longer implies that pages are executing. Style cards distinguish queued, running,
 failed and unrequested proofs. A completed style can be selected while sibling
 proofs run. Lettering on a completed page can be edited while other pages draw;
-the same page remains protected. Other artifact-changing mutations retain their
-conflict guards. The remaining-page action says **Draw remaining pages**.
+the same page remains protected. Cast changes (characters, locations, props and
+alternate appearances), style directions, proof retries and auditions, covers
+and page corrections can be queued while stages or other jobs run. The worker
+keeps corrections unstarted until conflicting project work finishes, including
+Extract/Brief and lettering translation in the separate text lane. Same-asset
+duplicate submissions retain their existing guards. Review panels remain
+accessible during generation; page issue decisions and editorial decisions wait
+only for writers of their own evidence. Source replacement, resets, selection
+and other immediate artifact-changing mutations retain their conflict guards.
+The remaining-page action says **Draw remaining pages**.
+
+Cast reference jobs expose the style hash from their admitted command, including
+recovered history. The jobs response also identifies the current selected style;
+Cast cards recover status and correction drafts only from jobs in that style.
+Selecting a different style refreshes every part's Cast caches and clears obsolete
+correction submission errors. Earlier failures remain in the operation history.
 
 ## Setup and operation
 

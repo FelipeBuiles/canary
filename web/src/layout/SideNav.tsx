@@ -1,14 +1,17 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { Select } from "../components/ui/Select";
+import { Sheet } from "../components/composites/Sheet";
+import { TopBarPortal } from "./TopBarSlot";
+import { useDesktopLayout } from "../hooks/useDesktopLayout";
 import { useProjectStatus, useProjects } from "../api/queries";
 import { useI18n } from "../i18n";
 import { cn } from "../lib/cn";
+import { safeReplayLabel } from "../lib/replayPrivacy";
 import { Icon } from "../components/ui/Icon";
 import { canReadDocument, getRoomAccess } from "../lib/stationAccess";
 import { projectFileUrl, splitProjectKey } from "../api/projectScope";
 import { PartSwitcher } from "../components/parts/PartSwitcher";
-import { LockKeyhole } from "lucide-react";
+import { ArrowLeft, ChevronDown, LockKeyhole } from "lucide-react";
 import {
   STATIONS,
   getSubstepState,
@@ -80,6 +83,8 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useI18n();
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const desktop = useDesktopLayout();
   const { data: status } = useProjectStatus(projectId);
   const { data: projects } = useProjects();
   const readingParam = new URLSearchParams(location.search).get("reading");
@@ -94,6 +99,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
 
   function goTo(route: string) {
     if (!projectId) return;
+    setMobileOpen(false);
     navigate(`/project/${encodeURIComponent(projectId)}/${route}`);
   }
 
@@ -102,6 +108,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   from inside the room (search-only change) and from any other room. */
   function goToReading(kind: DrawerKind) {
     if (!projectId) return;
+    setMobileOpen(false);
     navigate({
       pathname: `/project/${encodeURIComponent(projectId)}/pages`,
       search: `?reading=${kind}`,
@@ -145,7 +152,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
           )}>
             {station.number}
           </span>
-          <span className={cn(
+          <span data-ph-safe-label={safeReplayLabel(t(station.label))} className={cn(
             "font-display text-[1.02rem] font-black uppercase leading-none tracking-[-0.02em] 2xl:text-[1.15rem]",
             isActive ? "text-ink-black" : "text-bristol/78",
           )}>
@@ -186,7 +193,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
                     )}>
                       {substepState === "done" ? "✓" : substepState === "current" ? "•" : ""}
                     </span>
-                    <span>{t(substep.label)}</span>
+                    <span data-ph-safe-label={safeReplayLabel(t(substep.label))}>{t(substep.label)}</span>
                   </button>
                 </li>
               );
@@ -227,72 +234,45 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
     );
   }
 
-  // Only meaningful inside a project — non-project pages keep just the brand bar.
-  const activeDecisions = activeStation?.substeps.filter(
-    (substep): substep is typeof substep & { route: string } =>
-      substep.kind === "gated" && Boolean(substep.route),
-  ) ?? [];
+  const currentPart = status?.parts?.find((part) => part.id === splitProjectKey(projectId ?? "").part);
 
   const mobileNav = projectId == null ? null : (
     <>
-      <header className="pressroom-sidebar flex h-shell-top shrink-0 items-center gap-2 border-b-[2px] border-ink-black bg-ink-black px-3 text-bristol md:hidden">
-        <Link to="/" className="flex min-w-0 flex-1 items-center gap-2">
-          <ProjectCoverThumb
-            key={projectId}
-            projectId={projectId}
-            hasCover={status?.has_cover ?? current?.has_cover ?? false}
-            compact
-          />
-          <span className="min-w-0">
-            <span className="block truncate font-display text-[0.88rem] font-bold uppercase leading-none tracking-[-0.02em]">
-              {projectTitle}
+      <TopBarPortal>
+        <div className="flex min-w-0 flex-1 items-center gap-2 px-3 studio-desktop:hidden">
+          <Link to="/" aria-label={t("Back to projects")} className="flex min-h-11 min-w-0 flex-1 items-center gap-2">
+            <ArrowLeft size={16} aria-hidden="true" className="shrink-0" />
+            <span className="min-w-0">
+              <span className="block truncate font-display text-[0.88rem] font-bold uppercase leading-none tracking-[-0.02em]">
+                {projectTitle}
+              </span>
+              <span className="mt-1 block truncate font-meta text-[0.62rem] font-semibold text-ink-muted">
+                {currentPart ? t("Part {number} of {count}", { number: currentPart.ordinal, count: status?.parts?.length ?? 0 }) : t("LIBRARY")}
+              </span>
             </span>
-            <span className="mt-1 block font-meta text-[0.5rem] font-semibold tracking-[0.1em] text-bristol/65">
-              ← {t("LIBRARY")}
-            </span>
-          </span>
-        </Link>
-        <Select
-          aria-label={t("STATION")}
-          tone="dark"
-          size="sm"
-          value={isSettingsActive ? "settings" : (activeStation ? stationDestination(activeStation, status) : STATIONS[0].primaryRoute)}
-          onValueChange={goTo}
-          options={[
-            ...STATIONS.map((station) => ({
-              value: stationDestination(station, status),
-              label: `${station.number} ${t(station.label)}${getRoomAccess(stationDestination(station, status), status).state !== "available" ? ` · ${t("Locked")}` : ""}`,
-              disabled: getRoomAccess(stationDestination(station, status), status).state !== "available",
-            })),
-            { value: "settings", label: `⚙ ${t("Settings")}` },
-          ]}
-          className="max-w-[9.5rem]"
-        />
-      </header>
-      {status?.parts && status.parts.length > 0 && (
-        <div className="flex shrink-0 border-b-[2px] border-ink-black bg-ink-black px-3 pb-2 md:hidden">
-          <PartSwitcher project={projectId} parts={status.parts} className="w-full" />
+          </Link>
+          <button
+            type="button"
+            aria-label={t("STATION")}
+            aria-haspopup="dialog"
+            aria-expanded={mobileOpen && !desktop}
+            onClick={() => setMobileOpen(true)}
+            className="flex min-h-11 min-w-0 max-w-[50%] items-center gap-2 px-2 font-meta text-xs font-semibold text-ink-black hover:bg-surface-container"
+          >
+            <span className="truncate">{activeStation ? `${activeStation.number} ${t(activeStation.label)}` : t("Settings")}</span>
+            <ChevronDown size={14} aria-hidden="true" className="shrink-0" />
+          </button>
         </div>
-      )}
-      {!isSettingsActive && activeDecisions.length > 1 && (
-        <nav className="flex shrink-0 border-b-[2px] border-ink-black bg-bristol md:hidden" aria-label={`${activeStation?.label} decisions`}>
-          {activeDecisions.map((substep) => (
-            <button
-              key={substep.key}
-              type="button"
-              onClick={() => goTo(substep.route)}
-              disabled={getRoomAccess(substep.route, status).state !== "available"}
-              aria-current={activeRoute === substep.route ? "page" : undefined}
-              className={cn(
-                "min-h-11 flex-1 border-r border-ink-black/12 px-3 font-meta text-[0.52rem] uppercase tracking-[0.12em] last:border-r-0",
-                activeRoute === substep.route ? "bg-ink-black text-bristol" : "text-ink-muted",
-              )}
-            >
-              {t(substep.label)}
-            </button>
-          ))}
+      </TopBarPortal>
+      <Sheet open={mobileOpen && !desktop} title={projectTitle} onClose={() => setMobileOpen(false)}
+        footer={<Link to={settingsPath} onClick={() => setMobileOpen(false)} className="flex min-h-11 items-center gap-2 font-meta text-xs font-semibold">
+          <Icon name="settings" size={16} />{t("Settings")}
+        </Link>}>
+        {status?.parts && status.parts.length > 0 && <PartSwitcher project={projectId} parts={status.parts} tone="light" className="mb-4" onNavigate={() => setMobileOpen(false)} />}
+        <nav aria-label={t("STATION")} className="bg-ink-black py-2 text-bristol">
+          {STATIONS.map(renderStationRow)}
         </nav>
-      )}
+      </Sheet>
     </>
   );
 
@@ -301,7 +281,7 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   return (
     <>
       {mobileNav}
-      <aside className="pressroom-sidebar hidden h-full w-[240px] shrink-0 flex-col bg-ink-black text-bristol md:flex xl:w-[270px] 2xl:w-[320px]">
+      <aside className="pressroom-sidebar hidden h-full w-[240px] shrink-0 flex-col bg-ink-black text-bristol studio-desktop:flex xl:w-[270px] 2xl:w-[320px]">
         <Link
           to="/"
           className="flex h-shell-top shrink-0 items-center gap-3 border-b-[2px] border-bristol/10 px-5 xl:px-6"

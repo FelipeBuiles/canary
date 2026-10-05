@@ -2,11 +2,9 @@
 
 import asyncio
 import hashlib
-import io
 import json
 import logging
 import shutil
-import warnings
 from pathlib import Path
 from typing import Literal
 from fastapi.responses import Response
@@ -16,6 +14,9 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 
 from novel_to_comic import artifacts
 from novel_to_comic.artifact_lock import production_lock
+from novel_to_comic.uploaded_images import (
+    IMAGE_SUFFIXES, MAX_IMAGE_BYTES, UploadedImageError, decode_uploaded_image, image_suffix,
+)
 from novel_to_comic.target_artifacts import TargetArtifacts, ArtifactMissing
 from novel_to_comic.lettering.service import style_from_template, project_lettering_mode
 from novel_to_comic.ai import ai_request_context
@@ -44,6 +45,7 @@ from novel_to_comic.stages.s2_style import (
     generate_sample_image,
     generate_samples_for_indices,
     generate_suggestions,
+    proof_copy_for_sample,
     style_proof_copy,
     custom_direction_candidate,
     describe_custom_direction,
@@ -86,13 +88,9 @@ from ..product_events import capture_server_event
 
 router = APIRouter()
 logger = logging.getLogger("canary.styles")
-_STYLE_IMAGE_TYPES = {
-    "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp",
-}
-_MAX_STYLE_REFERENCE_BYTES = 10 * 1024 * 1024
+_STYLE_IMAGE_TYPES = IMAGE_SUFFIXES
+_MAX_STYLE_REFERENCE_BYTES = MAX_IMAGE_BYTES
 _MAX_STYLE_MULTIPART_BYTES = _MAX_STYLE_REFERENCE_BYTES + 1024 * 1024
-_MAX_STYLE_IMAGE_DIMENSION = 10_000
-_MAX_STYLE_IMAGE_PIXELS = 40_000_000
 
 
 def is_style_selected(project_dir, config) -> bool:
@@ -452,7 +450,7 @@ def get_style_lettering_proof(
             return Response(source.read_bytes(), media_type="image/png", headers={"Cache-Control": "private, no-cache"})
         style = _proof_style(project[0], suggestion, active=suggestion["is_active"])
         art = source.read_bytes()
-        copy = style_proof_copy(project[1], _get_bible(project[0]), project[0])
+        copy = proof_copy_for_sample(style_proof_copy(project[1], _get_bible(project[0]), project[0]), source)
     # The overlay is a content-addressed derivative: render it outside the lock
     # so a cold proof never stalls the rest of the project (or the other proofs).
     try:
@@ -519,29 +517,16 @@ async def _prepare_style_direction(
     suffix = ""
     reference_size = None
     if image is not None:
-        suffix = _STYLE_IMAGE_TYPES.get((image.content_type or "").lower(), "")
-        if not suffix:
-            raise HTTPException(400, "Style reference must be PNG, JPEG, or WebP")
+        try:
+            suffix = image_suffix(image.content_type)
+        except UploadedImageError:
+            raise HTTPException(400, "Style reference must be PNG, JPEG, or WebP") from None
         image_bytes = await image.read(_MAX_STYLE_REFERENCE_BYTES + 1)
         if len(image_bytes) > _MAX_STYLE_REFERENCE_BYTES:
             raise HTTPException(413, "Style reference exceeds the 10 MiB limit")
         try:
-            from PIL import Image
-            with warnings.catch_warnings():
-                warnings.simplefilter("error", Image.DecompressionBombWarning)
-                with Image.open(io.BytesIO(image_bytes)) as decoded:
-                    expected_format = {".png": "PNG", ".jpg": "JPEG", ".webp": "WEBP"}[suffix]
-                    if decoded.format != expected_format:
-                        raise ValueError("declared and decoded image formats differ")
-                    if (
-                        decoded.width > _MAX_STYLE_IMAGE_DIMENSION
-                        or decoded.height > _MAX_STYLE_IMAGE_DIMENSION
-                        or decoded.width * decoded.height > _MAX_STYLE_IMAGE_PIXELS
-                    ):
-                        raise ValueError("decoded image dimensions exceed limits")
-                    reference_size = decoded.size
-                    decoded.verify()
-        except Exception:
+            reference_size = decode_uploaded_image(image_bytes, suffix)
+        except UploadedImageError:
             raise HTTPException(400, "Uploaded style reference is not a valid image") from None
 
     image_reference_supported = _supports_style_reference(config)
@@ -678,7 +663,7 @@ async def create_style_direction(
 
     try:
         lifecycle_owned = state.stages["style"].status not in (
-            StageStatus.AWAITING_REVIEW, StageStatus.COMPLETE,
+            StageStatus.RUNNING, StageStatus.AWAITING_REVIEW, StageStatus.COMPLETE,
         )
         if lifecycle_owned:
             begin_stage(state, "style", SAMPLE_COUNT if with_neighbors else 1)
@@ -1243,7 +1228,7 @@ def set_active_style(
         elif clear_style_failures_after_selection(state):
             save_state(state, project_dir)
 
-        result = {"status": "updated", "index": index, "style_template": template}
+        result = {"status": "updated", "index": index, "style_template": template, "style_changed": changed}
         if suggestion_id:
             result["id"] = suggestions[index - 1].get("id")
         if isinstance(user_id, str):
