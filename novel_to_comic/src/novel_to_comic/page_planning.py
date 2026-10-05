@@ -475,6 +475,7 @@ def _reference_view(
             "visual_anchor": reference.visual_anchor,
             "continuity_guard": reference.continuity_guard,
             "kind": reference.kind,
+            **({"identity": reference.identity} if reference.identity else {}),
         }
         for reference in references.references
         if entity_ids is None or reference.entity_id in entity_ids
@@ -490,6 +491,16 @@ _SEMANTIC_PAGE_CONTRACT = (
     "Name that setting in continuity_intent and cite its approved location entity in "
     "entity_ids wherever the environment is visible, including reaction and aftermath panels. "
     "Reference availability alone does not make a location or prop part of the scene. "
+    "Cite a scene object (kind object) in entity_ids wherever it is visible so Draw keeps "
+    "its anchor; never contradict its anchor in visual_intent or captions placed with it. "
+    "When a visible character's identity states an unusual stature, write the relative "
+    "scale into visual_intent of every panel showing them beside another figure or "
+    "furniture (for example 'his head level with her waist; he stands on the bench to "
+    "meet her eyes'); seated or standing, never stage them at ordinary height. "
+    "Show source-stated gestures as written (a thumb jerked over the shoulder stays that "
+    "gesture) rather than substituting another. "
+    "Do not put an exchange between two or more speakers into a panel that shows none "
+    "of their faces (a hands or object insert); keep each speaker visible where they speak. "
     "For ongoing physical attachments, describe what connects to what, the contact point, "
     "object orientation and what supports the body or object; carry that relationship "
     "into subsequent panels instead of merely naming the attached objects. "
@@ -925,6 +936,7 @@ def _draft_contract_failures(adaptation, references, draft):
     lettering_by_id = {item.id: item for beat in adaptation.beats for item in beat.lettering}
     carriers = change_carriers(draft.pages, beat_by_id, _draft_visible(lettering_by_id))
     acting_pages = []
+    speech = {}
     for page in draft.pages:
         acting_content = []
         for content in page.content:
@@ -958,6 +970,7 @@ def _draft_contract_failures(adaptation, references, draft):
             visible = _derived_speaker_citations(visible, tuple(
                 lettering_by_id[item] for item in content.lettering_ids if item in lettering_by_id
             ))
+            speech[content.id] = _onscreen_speech(content, lettering_by_id)
             acting_content.append(content.model_copy(update={"entity_ids": visible}))
         acting_pages.append(page.model_copy(update={"content": tuple(acting_content)}))
     if actual != expected:
@@ -973,7 +986,7 @@ def _draft_contract_failures(adaptation, references, draft):
             evidence=[f"Expected order: {expected!r}.", f"Actual order: {actual!r}.",
                       f"Missing items: {missing!r}.", *mismatches],
         ))
-    failures.extend(_staging_failures(references, acting_pages))
+    failures.extend(_staging_failures(references, acting_pages, speech))
     return tuple(failures)
 
 
@@ -1548,9 +1561,9 @@ async def _generate_detail_batch(
                 reference_failures = ()
             else:
                 errors = _detail_matches_map(draft, page_map.pages[start:stop])
-                reference_failures = _reference_authority_failures(
+                reference_failures = (*_reference_authority_failures(
                     draft.pages, references, page_number_offset=start,
-                )
+                ), *_speaker_acting_failures(adaptation, references, draft.pages))
             break
         if not errors and not reference_failures:
             return draft
@@ -3131,11 +3144,73 @@ def _expression_key(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
 
 
+def _onscreen_speech(
+    content: Any, lettering_by_id: Mapping[str, LetteringItem],
+) -> dict[str, tuple[str, ...]]:
+    """Adapt's on-screen lines in a draft panel, by speaker entity."""
+
+    lines: dict[str, list[str]] = {}
+    for item_id in content.lettering_ids:
+        item = lettering_by_id.get(item_id)
+        if item is not None and item.delivery == "onscreen" and item.speaker_entity_id is not None:
+            lines.setdefault(item.speaker_entity_id, []).append(item_id)
+    return {entity_id: tuple(ids) for entity_id, ids in lines.items()}
+
+
+def _speaker_visibility_evidence(entity_id: str, lines: tuple[str, ...]) -> str:
+    # Derived visibility is invisible to a planner that never cited the speaker;
+    # name the cause so a repair stages the speaker instead of re-asserting
+    # its own entity_ids.
+    return (
+        f"{entity_id!r} speaks Adapt's on-screen lettering {list(lines)!r} in this "
+        "panel, so it is visible even where entity_ids omit it. Keep that "
+        "allocation: compose the panel so the speaker is seen and author its "
+        "acting entry."
+    )
+
+
+def _speaker_acting_failures(
+    adaptation: BookAdaptation,
+    references: ApprovedVisualReferenceInventory,
+    pages: tuple[_PageDraft, ...],
+) -> tuple[InvariantFailure, ...]:
+    """Unacted on-screen speakers, checkable within one detail batch."""
+
+    characters = {r.entity_id for r in references.references if r.kind == "character"}
+    lettering_by_id = {item.id: item for beat in adaptation.beats for item in beat.lettering}
+    failures = []
+    for page in pages:
+        number = page.page_number
+        for order, content in enumerate(page.content, 1):
+            acted = {item.entity_id for item in content.acting}
+            for entity_id, lines in _onscreen_speech(content, lettering_by_id).items():
+                if entity_id not in characters or entity_id in acted:
+                    continue
+                content_id = f"page_{number:03d}_content_{order:03d}"
+                failures.append(InvariantFailure(
+                    id=f"plan_failure_missing_acting_{content_id}_{entity_id}",
+                    owner_stage="plan",
+                    code="missing_character_acting",
+                    message="Every visible character needs facing, gaze and expression.",
+                    artifact_ids=[f"page_{number:03d}", content_id],
+                    evidence=[
+                        f"Page {number} panel {order} shows {entity_id!r} without an acting entry.",
+                        _speaker_visibility_evidence(entity_id, lines),
+                    ],
+                ))
+    return tuple(failures)
+
+
 def _staging_failures(
     references: ApprovedVisualReferenceInventory,
     pages: tuple[ComicPage, ...] | list[ComicPage],
+    speech: Mapping[str, Mapping[str, tuple[str, ...]]] | None = None,
 ) -> list[InvariantFailure]:
-    """Every panel has a camera and every visible character has varied acting."""
+    """Every panel has a camera and every visible character has varied acting.
+
+    ``speech`` maps a content ID to its on-screen speakers' lettering IDs, so a
+    derived speaker's missing acting names why the speaker is visible.
+    """
 
     kinds = {reference.entity_id: reference.kind for reference in references.references}
     failures: list[InvariantFailure] = []
@@ -3166,7 +3241,12 @@ def _staging_failures(
                         artifact_ids=[artifact_id, content.id],
                         evidence=[
                             f"Page {page.page_number} panel {content.order} shows "
-                            f"{entity_id!r} without an acting entry."
+                            f"{entity_id!r} without an acting entry.",
+                            *(
+                                [_speaker_visibility_evidence(entity_id, lines)]
+                                if (lines := (speech or {}).get(content.id, {}).get(entity_id))
+                                else []
+                            ),
                         ],
                     ))
                     continue

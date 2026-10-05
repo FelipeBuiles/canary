@@ -8,7 +8,7 @@ import { CastRoom } from "../pages/rooms/CastRoom";
 import type { GenerationJob } from "../types/api";
 import type * as Client from "../api/client";
 
-const server = vi.hoisted(() => ({ jobs: [] as GenerationJob[], submit: vi.fn() }));
+const server = vi.hoisted(() => ({ jobs: [] as GenerationJob[], submit: vi.fn(), castStatus: "complete" }));
 const anchor = "1cat, tortoiseshell persian cat, flat face, fluffy fur, black fur, beige fur, white fur";
 const readable = "Tortoiseshell persian cat, flat face, fluffy fur, black fur, beige fur, white fur.";
 vi.mock("../api/client", async (original) => ({
@@ -19,7 +19,7 @@ vi.mock("../api/client", async (original) => ({
     if (path.includes("story_bible") || path.includes("story-bible")) return {
       characters: [{ id: "cat", name: "Companion", visual_anchor: anchor, age_range: "adult", gender: "female", distinguishing_features: ["fluffy fur"], relationships: [], appearance_states: [], default_outfit: "" }], locations: [], props: [],
     };
-    if (path.endsWith("/status")) return { style_selected: true, stages: { cast: { status: "complete" } } };
+    if (path.endsWith("/status")) return { style_selected: true, stages: { cast: { status: server.castStatus } } };
     if (path.includes("estimate")) {
       const cost = { estimate_credits: 4, reserved_credits: 6, reservation_multiplier: 1.5, confidence: "variable" };
       return { ...cost, instruction_estimate: cost };
@@ -31,7 +31,7 @@ vi.mock("../api/client", async (original) => ({
   },
 }));
 const clients: QueryClient[] = [];
-afterEach(() => { clients.forEach((client) => client.clear()); clients.length = 0; server.jobs = []; server.submit.mockReset(); });
+afterEach(() => { clients.forEach((client) => client.clear()); clients.length = 0; server.jobs = []; server.submit.mockReset(); server.castStatus = "complete"; });
 function mount(client: QueryClient) {
   return render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/project/fixture/cast"]}><I18nProvider><Routes><Route path="/project/:id/cast" element={<CastRoom />} /></Routes></I18nProvider></MemoryRouter></QueryClientProvider>);
 }
@@ -58,12 +58,12 @@ it("keeps canonical identity and a failed correction visible after closing and r
   await waitFor(() => expect(server.submit).toHaveBeenCalledTimes(1));
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("dialog")).toBeNull();
-  expect(screen.getByRole("button", { name: "Open image · Companion" }).hasAttribute("disabled")).toBe(true);
+  expect(screen.getByRole("button", { name: "Open image · Companion" }).hasAttribute("disabled")).toBe(false);
   expect(screen.queryByText("LAST CHANGE APPLIED")).toBeNull();
   view.unmount();
   view = mount(client);
   expect(await screen.findByText(readable)).toBeTruthy();
-  expect(screen.getByRole("button", { name: "Open image · Companion" }).hasAttribute("disabled")).toBe(true);
+  expect(screen.getByRole("button", { name: "Open image · Companion" }).hasAttribute("disabled")).toBe(false);
   const job: GenerationJob = { id: "correction", project_name: "fixture", kind: "character_ref_regen", label: "Companion", payload: { char_id: "cat", instruction: draft }, status: "queued", queue_position: 1, queued_at: new Date().toISOString(), started_at: null, finished_at: null, error: null };
   server.jobs = [job];
   await act(async () => { admit({ status: "queued", char_id: "cat", job }); });
@@ -82,4 +82,20 @@ it("keeps canonical identity and a failed correction visible after closing and r
   await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "REGENERATE WITH CHANGE" }));
   await waitFor(() => expect(server.submit).toHaveBeenCalledTimes(2));
   expect(screen.queryByText("LAST CHANGE APPLIED")).toBeNull();
+});
+
+it("queues a character change while Cast is generating other references", async () => {
+  server.castStatus = "running";
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  clients.push(client);
+  const job: GenerationJob = { id: "fix", project_name: "fixture", kind: "character_ref_regen", label: "Companion", payload: { char_id: "cat" }, status: "queued", queue_position: 2, queued_at: new Date().toISOString(), started_at: null, finished_at: null, error: null };
+  server.submit.mockResolvedValue({ status: "queued", char_id: "cat", job });
+  const user = userEvent.setup();
+  mount(client);
+  await user.click(await screen.findByRole("button", { name: "Review & adjust · Companion" }));
+  await user.type(screen.getByRole("textbox"), "Give her a darker tail.");
+  await user.click(await screen.findByRole("button", { name: /REGENERATE WITH CHANGE.*credits/ }));
+  await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "REGENERATE WITH CHANGE" }));
+  await waitFor(() => expect(server.submit).toHaveBeenCalledWith({ char_id: "cat", instruction: "Give her a darker tail.", reference_assets: [] }));
+  expect(within(screen.getByRole("region", { name: "REGENERATE IMAGE · Companion" })).getAllByRole("button", { name: "QUEUED" })).toHaveLength(2);
 });

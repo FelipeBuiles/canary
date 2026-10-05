@@ -138,7 +138,7 @@ describe("PostHog privacy boundary", () => {
     expect(maskReplayText("Export", document.getElementById("chrome")!)).toBe("******");
     expect(maskReplayText("Private manuscript", document.getElementById("prose")!)).toBe("******* **********");
     expect(maskReplayAttribute("href", "/project/private-id/cast")).toBe(`${window.location.origin}/project/:id/cast`);
-    expect(maskReplayAttribute("href", "/assets/index-abc.css")).toBe(`${window.location.origin}/other`);
+    expect(maskReplayAttribute("href", "/assets/index-abc.css")).toBe(`${window.location.origin}/assets/index-abc.css`);
     expect(maskReplayAttribute("src", "https://cdn.example/private.png?token=private")).toBe("[redacted]");
     expect(maskReplayAttribute("class", "primary")).toBe("[redacted]");
   });
@@ -198,7 +198,7 @@ it("drops automatic top-level person properties and opaque compressed replay fra
 });
 
 
-describe("first-touch continuity without persistent identity", () => {
+describe("bounded first-touch attribution", () => {
   it("preserves bounded tokens across reload and new tabs, then expires", () => {
     const store = new Map<string, string>();
     const storage = { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => { store.set(key, value); } };

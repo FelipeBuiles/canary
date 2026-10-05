@@ -3,7 +3,7 @@ from copy import deepcopy
 
 from novel_to_comic import artifacts
 from novel_to_comic.cast_roster import cast_character_ids, cast_story_bible, character_scene_counts
-from novel_to_comic.models.story_bible import Character, Scene, StoryBible
+from novel_to_comic.models.story_bible import Character, Scene, StoryBible, TransientObject
 from novel_to_comic.models.appearance import AppearanceState, StateActivation, StoryPosition
 from novel_to_comic.series import cast_inventory_keys
 from novel_to_comic.stages.s5_plan import approved_reference_files, approved_visual_inventory
@@ -105,3 +105,20 @@ def test_minor_states_keep_the_carried_crown_reference_without_another_paid_imag
     assert files['ari:returned'].path == files['ari:base'].path
     assert files['ari:dusty'].path == files['ari:base'].path
     assert {file.path for file in files.values()} == {files['ari:base'].path, files['ari:crowned'].path}
+
+
+def test_inventory_carries_character_identity_and_scene_objects_as_written_authority(tmp_path):
+    source = bible()
+    source.characters[0].stature = 'two and a half feet tall'
+    source.scenes[0].transient_objects = [TransientObject(
+        id='obj_sphinx', name='Wooden Sphinx', visual_anchor='tiny dry wooden sphinx figurine')]
+    artifacts.write_story_bible(tmp_path, source)
+
+    references = {ref.entity_id: ref for ref in approved_visual_inventory(tmp_path).references}
+
+    assert references['ari'].identity == 'adult female; stature: two and a half feet tall'
+    assert references['visitor'].identity == 'adult female'
+    sphinx = references['obj_sphinx']
+    assert (sphinx.kind, sphinx.requires_image, sphinx.visual_anchor) == (
+        'object', False, 'tiny dry wooden sphinx figurine')
+    assert ('obj_sphinx', None) not in cast_inventory_keys(tmp_path)

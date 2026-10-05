@@ -425,7 +425,9 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
             CORSMiddleware,
             allow_origins=cors_origins,
             allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
-            allow_headers=["Content-Type", "Authorization", "Idempotency-Key", "X-Canary-Ops-Token"],
+            allow_headers=["Content-Type", "Authorization", "Idempotency-Key", "X-Canary-Ops-Token",
+                           "X-Request-ID", "X-Canary-Session-ID", "traceparent"],
+            expose_headers=["X-Request-ID", "X-Trace-ID"],
         )
 
     @app.get("/api/health", tags=["meta"])

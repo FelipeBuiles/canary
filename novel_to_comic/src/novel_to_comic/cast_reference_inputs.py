@@ -1,4 +1,4 @@
-"""Explicit, project-local reference attachments for Cast corrections."""
+"""Explicit reference attachments for Cast corrections: project assets or author uploads."""
 from __future__ import annotations
 
 import hashlib
@@ -7,14 +7,16 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 from novel_to_comic import artifacts
 from novel_to_comic.image_references import AuthorityScope, ReferenceAsset
+from novel_to_comic.uploaded_images import decode_uploaded_image
 from novel_to_comic.workspace import series_root
 
 
-class CastReferenceInput(BaseModel):
+class CastAssetReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     asset_type: Literal["character", "location", "prop"]
     asset_id: str = Field(min_length=1)
     state_id: str | None = None
@@ -25,6 +27,51 @@ class CastReferenceInput(BaseModel):
         if value is not None and (not value or value in {".", ".."} or any(c in value for c in "/\\\x00")):
             raise ValueError("Invalid asset identifier")
         return value
+
+
+class UploadedReference(BaseModel):
+    """An image the author uploaded for this correction (see ``store_reference_upload``)."""
+    model_config = ConfigDict(extra="forbid")
+    upload_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+CastReferenceInput = CastAssetReference | UploadedReference
+_INPUT = TypeAdapter(CastReferenceInput)
+
+
+def parse_reference_input(value) -> CastReferenceInput:
+    return _INPUT.validate_python(value)
+
+
+def store_reference_upload(project_dir: Path, image_bytes: bytes, suffix: str, filename: str | None) -> dict:
+    """Persist validated image bytes once per content; return the attachment descriptor."""
+    upload_id = hashlib.sha256(image_bytes).hexdigest()[:32]
+    image_path = artifacts.reference_upload_path(project_dir, upload_id, suffix)
+    meta_path = artifacts.reference_upload_path(project_dir, upload_id, ".json")
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    if not image_path.is_file():
+        image_path.write_bytes(image_bytes)
+    label = (Path(filename or "").name.strip() or "Uploaded image")[:120]
+    if not meta_path.is_file():
+        meta_path.write_text(json.dumps({"suffix": suffix, "label": label}, sort_keys=True))
+    return upload_descriptor(project_dir, upload_id)
+
+
+def _upload_image(project_dir: Path, upload_id: str) -> tuple[Path, str]:
+    try:
+        meta = json.loads(artifacts.reference_upload_path(project_dir, upload_id, ".json").read_text())
+        path = artifacts.reference_upload_path(project_dir, upload_id, meta["suffix"])
+    except (OSError, ValueError, KeyError, TypeError):
+        raise HTTPException(400, "An uploaded reference image is no longer available. Upload it again.") from None
+    if not path.is_file():
+        raise HTTPException(400, "An uploaded reference image is no longer available. Upload it again.")
+    return path, str(meta.get("label") or "Uploaded image")
+
+
+def upload_descriptor(project_dir: Path, upload_id: str) -> dict:
+    path, label = _upload_image(project_dir, upload_id)
+    return {"upload_id": upload_id, "label": label,
+            "image_path": path.relative_to(series_root(project_dir)).as_posix()}
 
 
 def saved_reference_inputs(project_dir, asset_type, asset_id, state_id=None):
@@ -40,8 +87,23 @@ def saved_reference_inputs(project_dir, asset_type, asset_id, state_id=None):
         except ValueError:
             continue
         if entry.get("patch", {}).get("addendum") or entry.get("operation") == "restore":
-            current = [CastReferenceInput.model_validate(item) for item in entry.get("reference_assets", [])]
+            current = [parse_reference_input(item) for item in entry.get("reference_assets", [])]
     return current
+
+
+def _resolve_upload(project_dir: Path, item: UploadedReference) -> ReferenceAsset:
+    path, label = _upload_image(project_dir, item.upload_id)
+    data = path.read_bytes()
+    try:
+        decode_uploaded_image(data, path.suffix)
+    except ValueError as exc:
+        raise HTTPException(400, f"The uploaded reference {label} is unreadable. Upload it again.") from exc
+    return ReferenceAsset(
+        path=path, role="prop", entity_id=None, appearance_state_id=None,
+        authority_scope=AuthorityScope.CONTEXTUAL, preserve_facets=(), ignore_facets=(),
+        pose=None, content_sha256=hashlib.sha256(data).hexdigest(),
+        lineage_parent_sha256=None, label=label, purpose="instruction_context",
+    )
 
 
 def resolve_reference_inputs(project_dir: Path, attachments, *, target=None):
@@ -50,6 +112,12 @@ def resolve_reference_inputs(project_dir: Path, attachments, *, target=None):
     selected = []
     seen = set()
     for item in attachments:
+        if isinstance(item, UploadedReference):
+            if item.upload_id in seen:
+                raise HTTPException(400, "The same reference image was attached twice.")
+            seen.add(item.upload_id)
+            selected.append(_resolve_upload(project_dir, item))
+            continue
         key = (item.asset_type, item.asset_id, item.state_id)
         if key == target:
             raise HTTPException(400, "Choose a different asset to compare against.")

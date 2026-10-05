@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { Sheet } from "../composites/Sheet";
 import { Button } from "../ui/Button";
@@ -9,7 +9,7 @@ import { KIND_LABELS } from "./entityKinds";
 import { anchorFromEdit, editableAnchor } from "../../lib/visualAnchor";
 import { useAddEntity, useDraftEntity, useDraftEstimate, useEditEntity } from "../../api/seriesQueries";
 import type { EntityKind, StoryBibleEditor } from "../../api/storyBible";
-import type { CharacterRelationship } from "../../types/api";
+import type { CharacterRelationship, ReferenceForm } from "../../types/api";
 
 type FieldShape = "text" | "textarea" | "lines" | "aliases";
 interface FieldSpec { key: string; label: string; shape: FieldShape; required?: boolean; help?: string }
@@ -21,6 +21,7 @@ const FIELDS: Record<EntityKind, FieldSpec[]> = {
     { key: "visual_anchor", label: "Physical description", shape: "textarea", required: true, help: "Comma-separated physical tags: build, face, hair, usual clothing. No emotion, pose or action." },
     { key: "age_range", label: "Age", shape: "text" },
     { key: "gender", label: "Gender", shape: "text" },
+    { key: "stature", label: "Unusual stature", shape: "text", help: "Only for an unusual body scale: height plus a comparison, e.g. 'two and a half feet tall; head reaches an adult's waist'." },
     { key: "distinguishing_features", label: "Distinguishing features", shape: "lines", help: "One per line: permanent details true for the whole story." },
     { key: "default_outfit", label: "Usual outfit", shape: "text" },
     { key: "baseline_affect", label: "Usual demeanor", shape: "text" },
@@ -40,6 +41,12 @@ const FIELDS: Record<EntityKind, FieldSpec[]> = {
 };
 
 const NULLABLE = new Set(["baseline_affect", "time_of_day"]);
+
+const REFERENCE_FORMS: Array<{ value: ReferenceForm; label: string }> = [
+  { value: "figure", label: "Turnaround: people and animals" },
+  { value: "form", label: "Form study: no fixed front, back or head" },
+  { value: "formation", label: "Formation: a group sharing one design" },
+];
 
 function toForm(spec: FieldSpec, value: unknown): string {
   if (Array.isArray(value)) return value.join(spec.shape === "aliases" ? ", " : "\n");
@@ -61,9 +68,11 @@ interface Props {
   /** The entity to edit; omitted when adding. */
   entityId?: string;
   onClose: () => void;
+  /** Rarer, weightier actions shown after the details, e.g. merge and remove. */
+  actions?: ReactNode;
 }
 
-export function EntitySheet({ project, editor, kind, entityId, onClose }: Props) {
+export function EntitySheet({ project, editor, kind, entityId, onClose, actions }: Props) {
   const { t } = useI18n();
   const entities = editor.story_bible[kind] as unknown as Array<Record<string, unknown> & { id: string; name: string }>;
   const entity = entityId ? entities.find((item) => item.id === entityId) : undefined;
@@ -75,6 +84,8 @@ export function EntitySheet({ project, editor, kind, entityId, onClose }: Props)
     () => (entity?.relationships as CharacterRelationship[] | undefined) ?? []);
   const [scenes, setScenes] = useState<string[]>([]);
   const [castRequired, setCastRequired] = useState(entity?.cast_required === true);
+  const savedForm = (entity?.reference_form as ReferenceForm | undefined) ?? "figure";
+  const [referenceForm, setReferenceForm] = useState<ReferenceForm>(savedForm);
   const [error, setError] = useState<string | null>(null);
   const edit = useEditEntity();
   const add = useAddEntity();
@@ -99,6 +110,7 @@ export function EntitySheet({ project, editor, kind, entityId, onClose }: Props)
     }
     if (kind === "characters" && !adding) {
       if (castRequired !== (entity?.cast_required === true)) result.cast_required = castRequired;
+      if (referenceForm !== savedForm) result.reference_form = referenceForm;
       const cleaned = relationships.filter((rel) => rel.character_id && rel.relationship.trim())
         .map((rel) => ({ character_id: rel.character_id, relationship: rel.relationship.trim() }));
       if (JSON.stringify(cleaned) !== JSON.stringify(entity?.relationships ?? [])) result.relationships = cleaned;
@@ -172,11 +184,29 @@ export function EntitySheet({ project, editor, kind, entityId, onClose }: Props)
           </label>
         )}
         {kind === "characters" && !adding && (
+          <div>
+            <FieldLabel htmlFor="entity-reference_form">{t("Reference sheet")}</FieldLabel>
+            <SelectField id="entity-reference_form" value={referenceForm} disabled={busy} className="max-w-md"
+              onChange={(event) => setReferenceForm(event.target.value as ReferenceForm)}>
+              {REFERENCE_FORMS.map((option) => (
+                <option key={option.value} value={option.value}
+                  disabled={option.value === "formation" && entity?.identity_kind !== "group"}>
+                  {t(option.label)}
+                </option>
+              ))}
+            </SelectField>
+            <p className="mt-1.5 font-body text-xs text-ink-muted">
+              {t("How Cast lays out this character's reference. A turnaround fits anyone with a face and a fixed body; a form study suits a floating eye or a living cloud; a formation shows a group whose members share one design. Changing it marks the reference out of date.")}
+            </p>
+          </div>
+        )}
+        {kind === "characters" && !adding && (
           <Relationships editor={editor} self={entityId!} value={relationships} onChange={setRelationships} />
         )}
         {adding && <ScenePicker editor={editor} kind={kind} value={scenes} onChange={setScenes} />}
         {!adding && <LooksEditor project={project} editor={editor} kind={kind} entityId={entityId!} />}
         {missing.length > 0 && <p className="font-body text-xs text-ink-muted">{t("Required: {fields}", { fields: missing.join(", ") })}</p>}
+        {actions}
       </div>
     </Sheet>
   );

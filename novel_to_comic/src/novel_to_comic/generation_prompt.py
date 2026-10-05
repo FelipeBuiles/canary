@@ -24,6 +24,7 @@ is regenerated from typed fields on every render.
 
 from __future__ import annotations
 
+from novel_to_comic import reference_forms
 from novel_to_comic.generation_input import GenerationPromptInput
 from novel_to_comic.models.generation import PromptAnchor, PromptSubject
 from novel_to_comic.text_utils import clean as _clean
@@ -50,44 +51,6 @@ _BODY_PROPORTION_QUALITY = (
     "Use the anatomy, proportions, and silhouette specified by the active anchor; "
     "explicit changed anatomy and age override canonical-parent proportions",
 )
-
-# A single view teaches pages one camera angle and one face. Several neutral
-# views let Draw re-stage the character while identity stays fixed.
-_CHARACTER_REFERENCE_LAYOUT = (
-    "one clean wide turnaround reference sheet",
-    "exactly one character identity",
-    "exactly five depictions of that same character",
-    "left third, stacked: a head-and-shoulders three-quarter portrait on top and a "
-    "head-and-shoulders side profile below it",
-    "right two thirds, side by side at the same scale and ground line: full-body front "
-    "view, full-body three-quarter view, and full-body back view",
-    "the views are simultaneous design views, not different characters and not a "
-    "narrative sequence",
-)
-
-# A state sheet becomes the character's authority in every panel of that state,
-# so it carries only the changed look: one design stance, no situation. Pose,
-# support and anything touching the body come from each panel. The heads keep
-# the canonical sheet's crop regions.
-_STATE_REFERENCE_LAYOUT = (
-    "one clean wide appearance-state reference sheet",
-    "exactly one character identity",
-    "exactly three depictions of that same character",
-    "left third, stacked: a head-and-shoulders three-quarter portrait on top and a "
-    "head-and-shoulders side profile below it",
-    "right two thirds: one full-body front view in a neutral design stance, centered",
-    "show only how the body, face, hair and clothing look in this state; objects that "
-    "pierce, pin, bind or are held, other people, scenery, and the event or situation "
-    "that caused the state are left out, keeping only their visible marks on the body",
-    "the views are simultaneous design views of a look, not a scene or a pose to copy",
-)
-
-_CHARACTER_REFERENCE_PERFORMANCE = (
-    "Every view uses a relaxed neutral expression and a resting design pose; acting is "
-    "chosen per panel, not by the reference. Only an explicitly described state affect "
-    "may change the expression, without exaggeration",
-)
-
 
 _SHARED_ARTISTIC_HAND = (
     "Render every character with one shared artistic hand: identical contour language, "
@@ -209,7 +172,8 @@ def generate_system_constraints(
     character_label = labels["character"] if character_count == 1 else labels["characters"]
     if asset_kind == "character_ref":
         state_sheet = any(getattr(subject, "appearance_state_id", None) for subject in subjects)
-        layout = _STATE_REFERENCE_LAYOUT if state_sheet else _CHARACTER_REFERENCE_LAYOUT
+        form = next((getattr(subject, "reference_form", "figure") for subject in subjects), "figure")
+        layout = (reference_forms.STATE_LAYOUTS if state_sheet else reference_forms.CANONICAL_LAYOUTS)[form]
         lines = [*layout, labels["no_lettering"]]
         # A character's everyday demeanor is acting, owned by Plan per panel; a
         # canonical sheet that bakes it in makes every panel wear the same face.
@@ -231,7 +195,7 @@ def generate_system_constraints(
                 "intensify it beyond the state description"
             )
         else:
-            lines.extend(_CHARACTER_REFERENCE_PERFORMANCE)
+            lines.append(reference_forms.PERFORMANCE[form])
     elif asset_kind == "style_sample":
         lines = [
             f"exactly {character_count} distinct listed {character_label}",

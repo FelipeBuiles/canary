@@ -1,10 +1,12 @@
 import { CastRegenAction } from "../../components/composites/CastRegenAction";
 import { CastIdentityReview } from "../../components/composites/CastIdentityReview";
+import { useCastReview, useRedrawingCharacters } from "../../api/castReview";
 import { ArrowUpRight, Search, Users, MapPin, Box, LoaderCircle, ImagePlus, Expand } from "lucide-react";
 import { FieldLabel, TextField } from "../../components/ui/Field";
 import { useReferenceJob } from "../../hooks/useReferenceJob";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { castCharacters } from "../../lib/castRoster";
+import { msg } from "../../locales/messages";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   useApproveStage,
@@ -36,12 +38,12 @@ import { ImageModal } from "../../components/ui/ImageModal";
 import { useImageViewer } from "../../hooks/useImageViewer";
 import { GenerationDetailsPanel } from "../../components/ui/GenerationDetailsModal";
 import { LazyImage } from "../../components/ui/LazyImage";
-import type { AppearanceState, CastFailure, CastReferenceInput, Character, GenerationJob, Location, Prop } from "../../types/api";
+import type { AppearanceState, CastFailure, CastReferenceInput, Character, ContentTrigger, GenerationJob, Location, Prop } from "../../types/api";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { useI18n } from "../../i18n";
 import { FlowingDotsPlaceholder } from "../../components/ui/FlowingDotsPlaceholder";
 import { StaleStageNotice } from "../../components/composites";
-import { getCastCheckpointAction } from "../../lib/castCheckpoint";
+import { getCastCheckpointAction, isCastReviewBlocker } from "../../lib/castCheckpoint";
 import { missingVisualAnchors, readableAnchor, type MissingVisualAnchor } from "../../lib/visualAnchor";
 import { seriesPath } from "../../api/projectScope";
 import type { EntityKind } from "../../api/storyBible";
@@ -133,7 +135,12 @@ export function StateRefRow({
   const { t } = useI18n();
   const [failed, setFailed] = useState<Record<string, boolean>>({});
   const [viewer, setViewer] = useState<AppearanceState | null>(null);
+  const [viewerInstruction, setViewerInstruction] = useState<string | null>(null);
   const [restoredAt, setRestoredAt] = useState<Record<string, number>>({});
+  useCastSuggestion(kind, entityId, (text, stateId) => {
+    const state = states?.find((item) => item.id === stateId);
+    if (state) { setViewer(state); setViewerInstruction(text); }
+  }, true);
 
   const significant = (states ?? []).filter((s) => s.visually_significant);
   const { data: jobs } = useGenerationJobs(projectName, [], significant.length > 0);
@@ -226,16 +233,20 @@ export function StateRefRow({
         })}
       </div>
       {viewer && <StateAppearanceModal projectName={projectName} entityId={entityId} kind={kind}
-        state={viewer} failure={stateFailure(viewer.id)} stageRegenerating={stageRegenerating} onClose={() => setViewer(null)}
+        state={viewer} failure={stateFailure(viewer.id)} stageRegenerating={stageRegenerating}
+        initialInstruction={viewerInstruction} onClose={() => { setViewer(null); setViewerInstruction(null); }}
         onRestored={() => setRestoredAt((previous) => ({ ...previous, [viewer.id]: Date.now() }))} />}
 
     </div>
   );
 }
 
-function StateAppearanceModal({ projectName, entityId, kind, state, failure, stageRegenerating, onClose, onRestored }: {
+function StateAppearanceModal({ projectName, entityId, kind, state, failure, stageRegenerating, initialInstruction = null, onClose, onRestored }: {
   projectName: string; entityId: string; kind: "character" | "location";
-  state: AppearanceState; failure?: CastFailure; stageRegenerating: boolean; onClose: () => void; onRestored: () => void;
+  state: AppearanceState; failure?: CastFailure; stageRegenerating: boolean;
+  /** Suggested direction to review, e.g. a less graphic version after a decline. */
+  initialInstruction?: string | null;
+  onClose: () => void; onRestored: () => void;
 }) {
   const { t } = useI18n();
   const job = useReferenceJob(projectName, kind === "character" ? "char_id" : "loc_id", entityId, state.id);
@@ -243,9 +254,9 @@ function StateAppearanceModal({ projectName, entityId, kind, state, failure, sta
   const locationRegen = useRegenLocationState();
   const characterEdit = useRegenRefWithInstruction();
   const locationEdit = useRegenPlateWithInstruction();
-  const [instruction, setInstruction] = useState<string | null>(null);
+  const [instruction, setInstruction] = useState<string | null>(initialInstruction);
   const { data: estimate } = useAssetRegenEstimate(projectName, kind, entityId, state.id);
-  const busy = stageRegenerating || job.isSubmitting || !!job.activeJob || characterRegen.isPending || locationRegen.isPending || characterEdit.isPending || locationEdit.isPending;
+  const busy = job.isSubmitting || !!job.activeJob || characterRegen.isPending || locationRegen.isPending || characterEdit.isPending || locationEdit.isPending;
   const src = `/api${seriesPath(projectName)}/files/${kind === "character"
     ? `refs/${encodeURIComponent(entityId)}/states/${encodeURIComponent(state.id)}/sheet.png`
     : `plates/${encodeURIComponent(entityId)}/states/${encodeURIComponent(state.id)}.png`}?t=${job.timestamp}`;
@@ -276,7 +287,7 @@ function StateAppearanceModal({ projectName, entityId, kind, state, failure, sta
         busyLabel={job.activeJob ? queuedLabel(job.activeJob) : t("DRAWING…")}
         instruction={instruction ?? job.instructionDraft} onInstructionChange={setInstruction}
         error={job.regenError} onRegenerate={() => submit()} onRegenerateWithInstruction={submit} />
-      <RefVersionHistory projectName={projectName} assetType={kind} assetId={entityId} stateId={state.id} busy={busy}
+      <RefVersionHistory projectName={projectName} assetType={kind} assetId={entityId} stateId={state.id} busy={busy || stageRegenerating}
         refreshKey={job.timestamp} onRestored={() => { job.setTimestamp(Date.now()); job.setImgFailed(false); onRestored(); }} />
     </div>} />;
 }
@@ -434,7 +445,6 @@ function CastCard({
         type="button"
         className="group relative block w-full cursor-zoom-in bg-surface-container text-left focus-visible:outline-[3px] focus-visible:outline-offset-[-3px] focus-visible:outline-hero-red disabled:cursor-wait"
         onClick={onOpen}
-        disabled={generating}
         aria-label={`${t("Open image")} · ${name}`}
       >
         {probe}
@@ -498,7 +508,7 @@ function CastCard({
       <div className="min-w-0 px-5">{alternates}</div>
 
       <div className="min-w-0 px-5 pb-5 pt-5">
-        <Button variant="outline" size="sm" className="w-full" disabled={generating} onClick={onOpen} aria-label={`${t("Review & adjust")} · ${name}`}>
+        <Button variant="outline" size="sm" className="w-full" onClick={onOpen} aria-label={`${t("Review & adjust")} · ${name}`}>
           <ArrowUpRight size={16} aria-hidden="true" />{t("Review & adjust")}
         </Button>
         <Link
@@ -520,6 +530,28 @@ function CastCard({
   );
 }
 
+type CastSuggestion = { kind: "character" | "location" | "prop"; entityId: string; stateId?: string | null; text: string; nonce: number };
+const CastSuggestionContext = createContext<{ suggestion?: CastSuggestion; clear: () => void }>({ clear: () => undefined });
+
+/**
+ * Opens one reference's review with suggested direction, once per suggestion.
+ * Opening never spends: the author still reviews the direction and its cost.
+ * `states` targets the entity's appearance states instead of its main image.
+ */
+function useCastSuggestion(kind: CastSuggestion["kind"], entityId: string, open: (text: string, stateId: string | null) => void, states = false) {
+  const { suggestion, clear } = useContext(CastSuggestionContext);
+  const [opened, setOpened] = useState<number | null>(null);
+  const match = suggestion && suggestion.kind === kind && suggestion.entityId === entityId && !!suggestion.stateId === states
+    ? suggestion : undefined;
+  if (match && match.nonce !== opened) {
+    setOpened(match.nonce);
+    open(match.text.trim().slice(0, 500), match.stateId ?? null);
+  }
+  useEffect(() => {
+    if (match && match.nonce === opened) clear();
+  }, [match, opened, clear]);
+}
+
 function CharacterCastCard({
   character,
   projectName,
@@ -534,6 +566,7 @@ function CharacterCastCard({
   const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, isSubmitting, instructionDraft, regenError, setRegenError } =
     useReferenceJob(projectName, "char_id", character.id);
   const [instruction, setInstruction] = useState<string | null>(null);
+  useCastSuggestion("character", character.id, (text) => { setInstruction(text); setIsModalOpen(true); });
   const regenRef = useRegenRef();
   const regenRefInstructed = useRegenRefWithInstruction();
   const { data: regenEstimate } = useAssetRegenEstimate(projectName, "character", character.id, undefined, isModalOpen);
@@ -662,7 +695,7 @@ function CharacterCastCard({
               cost={regenEstimate}
               instructionCost={regenEstimate?.instruction_estimate}
               hasImage={!imgFailed || hasImage}
-              busy={isGenerating || isInstructionBusy}
+              busy={regenRef.isPending || isInstructionBusy || !!activeJob}
               busyLabel={isQueued ? t("QUEUED") : t("DRAWING…")}
               error={regenError}
               instruction={instruction ?? instructionDraft}
@@ -675,7 +708,7 @@ function CharacterCastCard({
               projectName={projectName}
               assetType="character" assetId={character.id}
               refreshKey={timestamp}
-              busy={isGenerating || isInstructionBusy}
+              busy={stageRegenerating || isGenerating || isInstructionBusy}
               onRestored={() => {
                 setTimestamp(Date.now());
                 setImgFailed(false);
@@ -748,6 +781,7 @@ function LocationPlateCard({
   const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, isSubmitting, instructionDraft, regenError, setRegenError: setLocalRegenError } =
     useReferenceJob(projectName, "loc_id", location.id);
   const [instruction, setInstruction] = useState<string | null>(null);
+  useCastSuggestion("location", location.id, (text) => { setInstruction(text); setIsModalOpen(true); });
   const regenPlate = useRegenPlate();
   const regenPlateInstructed = useRegenPlateWithInstruction();
   const { data: regenEstimate } = useAssetRegenEstimate(projectName, "location", location.id, undefined, isModalOpen);
@@ -874,7 +908,7 @@ function LocationPlateCard({
               cost={regenEstimate}
               instructionCost={regenEstimate?.instruction_estimate}
               hasImage={!imgFailed || hasImage}
-              busy={isGenerating || isInstructionBusy}
+              busy={regenPlate.isPending || isInstructionBusy || !!activeJob}
               busyLabel={isQueued ? t("QUEUED") : t("DRAWING…")}
               error={regenError}
               instruction={instruction ?? instructionDraft}
@@ -883,7 +917,7 @@ function LocationPlateCard({
               onRegenerateWithInstruction={submitInstruction}
             />
             <RefVersionHistory projectName={projectName} assetType="location" assetId={location.id}
-              refreshKey={timestamp} busy={isGenerating || isInstructionBusy}
+              refreshKey={timestamp} busy={stageRegenerating || isGenerating || isInstructionBusy}
               onRestored={() => { setTimestamp(Date.now()); setImgFailed(false); }} />
             <StateRefRow projectName={projectName} entityId={location.id} kind="location" states={location.appearance_states} stageRegenerating={stageRegenerating} refreshToken={timestamp} />
             <AnchorSection anchor={location.visual_anchor} />
@@ -926,6 +960,7 @@ function PropRefCard({
   const { imgFailed, setImgFailed, timestamp, setTimestamp, activeJob, setActiveJob, isSubmitting, instructionDraft, regenError, setRegenError: setLocalRegenError } =
     useReferenceJob(projectName, "prop_id", prop.id);
   const [instruction, setInstruction] = useState<string | null>(null);
+  useCastSuggestion("prop", prop.id, (text) => { setInstruction(text); setIsModalOpen(true); });
   const regenProp = useRegenProp();
   const regenPropInstructed = useRegenPropWithInstruction();
   const { data: regenEstimate } = useAssetRegenEstimate(projectName, "prop", prop.id, undefined, isModalOpen);
@@ -1044,7 +1079,7 @@ function PropRefCard({
               cost={regenEstimate}
               instructionCost={regenEstimate?.instruction_estimate}
               hasImage={!imgFailed || hasImage}
-              busy={isGenerating || isInstructionBusy}
+              busy={regenProp.isPending || isInstructionBusy || !!activeJob}
               busyLabel={isQueued ? t("QUEUED") : t("DRAWING…")}
               error={regenError}
               instruction={instruction ?? instructionDraft}
@@ -1117,11 +1152,26 @@ export function MissingAnchorsNotice({ projectId, missing }: { projectId: string
 }
 
 /** Names each reference that stopped Cast and why, so Resume is never a blind retry. */
-export function CastFailureNotice({ failures, onResume, resumeDisabled = false }: {
+/** Direction sent through a card's review after a decline; the author sees and can edit it first. */
+const LESS_GRAPHIC_DIRECTION = msg("Make this less graphic so the image provider accepts it. Show it non-explicitly: keep any nudity covered, draped or stylized with no visible breasts, nipples or genitals, and show injuries through framing, shadow or aftermath rather than gore. Keep its identity, materials, colors and design otherwise unchanged.");
+
+const TRIGGER_CATEGORY: Record<ContentTrigger["category"], string> = {
+  nudity: msg("nudity"), sexual: msg("sexual content"), gore: msg("gore"), violence: msg("violence"),
+};
+const TRIGGER_SOURCE: Record<ContentTrigger["source"], string> = {
+  description: msg("its description"), direction: msg("its direction"), style: msg("the style notes"), other: msg("the request"),
+};
+const STORY_KIND: Record<NonNullable<CastFailure["asset_type"]>, string> = {
+  character: "characters", location: "locations", prop: "props",
+};
+
+export function CastFailureNotice({ failures, onResume, resumeDisabled = false, onLessGraphic }: {
   failures: CastFailure[];
   /** Offered beside the list so every missing reference can be retried at once. */
   onResume?: () => void;
   resumeDisabled?: boolean;
+  /** Opens the declined reference's review with less graphic direction to confirm. */
+  onLessGraphic?: (failure: CastFailure) => void;
 }) {
   const { t } = useI18n();
   if (failures.length === 0) return null;
@@ -1143,14 +1193,49 @@ export function CastFailureNotice({ failures, onResume, resumeDisabled = false }
           </Button>
         )}
       </div>
-      <ul className="mt-3 space-y-3">
-        {failures.map((failure) => (
-          <li key={failure.item_id} className="font-body text-sm leading-6 text-ink-black">
-            <a href={anchor(failure)} className="font-bold underline decoration-hero-red underline-offset-4">{failure.label}</a>
-            <span className="block text-ink-black/80">{failure.message}</span>
-          </li>
-        ))}
+      <ul className="mt-3 space-y-4">
+        {failures.map((failure) => {
+          const declined = failure.classification === "provider_blocked";
+          const triggers = failure.likely_triggers ?? [];
+          return (
+            <li key={failure.item_id} className="font-body text-sm leading-6 text-ink-black">
+              <a href={anchor(failure)} className="font-bold underline decoration-hero-red underline-offset-4">{failure.label}</a>
+              <span className="block text-ink-black/80">{failure.message}</span>
+              {declined && triggers.length > 0 && (
+                <div className="mt-2">
+                  <p className="font-meta text-[0.65rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("Likely cause")}</p>
+                  <ul className="mt-1 space-y-1">
+                    {triggers.map((trigger) => (
+                      <li key={trigger.phrase}>
+                        <mark className="bg-narrator-gold/40 px-1 font-bold text-ink-black">{trigger.phrase}</mark>
+                        <span className="text-ink-black/80"> · {t("{category} in {source}", {
+                          category: t(TRIGGER_CATEGORY[trigger.category]), source: t(TRIGGER_SOURCE[trigger.source]),
+                        })}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {declined && (onLessGraphic || failure.entity_id) && (
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  {onLessGraphic && failure.entity_id && failure.asset_type && (
+                    <Button size="sm" variant="outline" onClick={() => onLessGraphic(failure)}>{t("Make a less graphic version")}</Button>
+                  )}
+                  {failure.entity_id && failure.asset_type && (
+                    <Link to={{ pathname: "../story", search: `?edit=${STORY_KIND[failure.asset_type]}:${encodeURIComponent(failure.entity_id)}` }} relative="path"
+                      className="inline-flex min-h-11 items-center font-meta text-xs underline underline-offset-4">{t("Reword its description")}</Link>
+                  )}
+                </div>
+              )}
+            </li>
+          );
+        })}
       </ul>
+      {failures.some((failure) => failure.classification === "provider_blocked") && (
+        <p className="mt-4 font-body text-xs text-ink-muted">
+          {t("A less graphic version opens the reference with suggested direction and its cost; nothing is generated until you confirm. Rewording the description changes it everywhere the entry appears.")}
+        </p>
+      )}
     </section>
   );
 }
@@ -1159,6 +1244,11 @@ export function CastRoom() {
   const { t } = useI18n();
   const [search, setSearch] = useState("");
   const [confirmCast, setConfirmCast] = useState(false);
+  const [castSuggestion, setCastSuggestion] = useState<CastSuggestion | undefined>();
+  const clearCastSuggestion = useCallback(() => setCastSuggestion(undefined), []);
+  const suggestionContext = useMemo(() => ({ suggestion: castSuggestion, clear: clearCastSuggestion }), [castSuggestion, clearCastSuggestion]);
+  // Set when Continue re-checked the cast; the server approves it if nothing is left to review.
+  const [continuing, setContinuing] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -1181,7 +1271,15 @@ export function CastRoom() {
   const isStageStuck = !!stageInfo?.stale;
   const lastProgressAt = stageInfo?.last_progress_at ?? null;
   const needsApproval = checkpointAction === "approve";
+  // After corrections every reference exists; only the character comparison is out of date.
+  const recheckOnly = checkpointAction === "resume" && isCastReviewBlocker(stageInfo?.approval_blocker);
   const canStartCast = stageStatus === "pending";
+  const redrawingCharacters = useRedrawingCharacters(id ?? "");
+  const { data: castReview } = useCastReview(id ?? "", !!status?.is_running || redrawingCharacters.size > 0);
+  // Any queued or running job (a single redraw included) must finish before approval.
+  const projectBusy = !!status?.is_running || redrawingCharacters.size > 0;
+  // Character Check notes are advice; approval never waits on them.
+  const openCastNotes = castReview?.status === "current" && !castReview.reviewing ? castReview.issues.length : 0;
   const { data: castResumeEstimate } = useStageEstimate(id, "cast", !isCastStageRunning);
 
   function startCast() {
@@ -1194,9 +1292,33 @@ export function CastRoom() {
     });
   }
 
+  // A re-check that found something to review (or failed) ends the continue;
+  // the footer then shows why. Reset while rendering, not in an effect.
+  if (continuing && stageStatus !== "running" && stageStatus !== "complete"
+      && !isCastReviewBlocker(stageInfo?.approval_blocker)) {
+    setContinuing(false);
+  }
+  // Once the re-check passes the server approves Cast and starts Adapt; follow it to Pages.
+  useEffect(() => {
+    if (continuing && id && stageStatus === "complete") navigate(`/project/${id}/pages`);
+  }, [continuing, id, stageStatus, navigate]);
+
+  function continueAfterCorrections() {
+    if (!id || !status?.style_selected) return;
+    setActionError(null);
+    setContinuing(true);
+    handleRun(id, "cast", {
+      thenApprove: true,
+      actionLabel: t("Continue"),
+      onError: (error) => { setContinuing(false); setActionError(error.message); },
+    });
+  }
+
   function handleContinueToPages() {
     if (!id) return;
-    if (checkpointAction === "resume" || canStartCast) {
+    if (recheckOnly) {
+      continueAfterCorrections();
+    } else if (checkpointAction === "resume" || canStartCast) {
       setConfirmCast(true);
     } else if (checkpointAction === "approve") {
       setActionError(null);
@@ -1308,19 +1430,28 @@ export function CastRoom() {
 
       {!stageRegenerating && missingAnchors.length > 0 && <MissingAnchorsNotice projectId={id} missing={missingAnchors} />}
 
-      {!stageRegenerating && (
+      {/* A queued run is already updating them; is_running covers queued as well as running jobs. */}
+      {!stageRegenerating && !status?.is_running && (
         <OutdatedReferences project={id} bible={bible} castStatus={stageStatus}
-          onResume={() => setConfirmCast(true)} resumeDisabled={isPipelineRunning || !status?.style_selected} />
+          onResume={() => setConfirmCast(true)} resumeDisabled={isPipelineRunning || !status?.style_selected} ready={!!status} />
       )}
 
-      {!stageRegenerating && (
+      {!stageRegenerating && !status?.is_running && (
         <CastFailureNotice
           failures={stageInfo?.failures ?? []}
+          onLessGraphic={(failure) => {
+            setSearch("");
+            setCastSuggestion({
+              kind: failure.asset_type!, entityId: failure.entity_id!, stateId: failure.state_id,
+              text: t(LESS_GRAPHIC_DIRECTION), nonce: Date.now(),
+            });
+          }}
           onResume={checkpointAction === "resume" ? () => setConfirmCast(true) : undefined}
           resumeDisabled={isPipelineRunning || !status?.style_selected || !castResumeEstimate}
         />
       )}
 
+      <CastSuggestionContext.Provider value={suggestionContext}>
       <section className="space-y-10">
         <div id="cast-characters" tabIndex={-1} hidden={!!search.trim() && matchingCharacters === 0}>
           <SectionHeader
@@ -1329,7 +1460,9 @@ export function CastRoom() {
             description="Portrait proofs keep faces, clothing, and silhouettes consistent from scene to scene."
           />
           {bible.characters.length > 0 && <CastIdentityReview projectId={id} characters={bible.characters} onShowCharacter={() => setSearch("")}
-            onResume={handleContinueStale} busy={stageRegenerating || !status?.style_selected} />}
+            onUseSuggestion={(characterId, text) => { setSearch(""); setCastSuggestion({ kind: "character", entityId: characterId, text, nonce: Date.now() }); }}
+            onResume={handleContinueStale} busy={stageRegenerating || !status?.style_selected}
+            redrawing={redrawingCharacters} />}
           <div className={`${CAST_GRID} sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4`}>
             {bible.characters.map((char) => (
               <div id={`cast-character-${char.id}`} tabIndex={-1} key={char.id} hidden={!matches(char)} className={CAST_GRID_ITEM}>
@@ -1379,6 +1512,7 @@ export function CastRoom() {
           </div>
         )}
       </section>
+      </CastSuggestionContext.Provider>
 
       {resetError && <p role="alert" className="font-body text-sm text-hero-red">{resetError.message}</p>}
       {!status?.style_selected && <p className="font-body text-sm text-ink-muted">{t("Choose a style before starting cast references.")}</p>}
@@ -1396,26 +1530,36 @@ export function CastRoom() {
         next={canStartCast ? t("Start the character and place references when you are ready")
           : missingAnchors.length > 0
           ? t("Add the missing descriptions above to continue")
+          : projectBusy && (needsApproval || recheckOnly)
+          ? t("A reference is still being drawn. Continue unlocks when it finishes.")
+          : recheckOnly
+          ? t("Scenewright checks your corrected cast, then adapts the book and plans complete pages — automatically")
           : checkpointAction === "resume"
           ? stageInfo?.approval_blocker ?? "Some cast references did not finish — resume from the missing images"
+          : needsApproval && openCastNotes > 0
+          ? t("{count, plural, one {# character note is open} other {# character notes are open}}. You can still continue; notes are advice.", { count: openCastNotes })
           : needsApproval
           ? "Scenewright adapts the book and plans complete pages — automatically"
           : stageStatus === "complete"
             ? "Review complete pages at the Pages station"
             : "Scenewright is drawing your cast"}
-        estimateCredits={canStartCast || checkpointAction === "resume"
+        estimateCredits={recheckOnly
+          ? (castResumeEstimate && chainEstimate ? castResumeEstimate.estimate_credits + chainEstimate.estimate_credits : undefined)
+          : canStartCast || checkpointAction === "resume"
           ? castResumeEstimate?.estimate_credits
           : needsApproval
             ? chainEstimate?.estimate_credits
             : null}
-        primaryLabel={canStartCast ? t("START CAST") : checkpointAction === "resume"
+        primaryLabel={canStartCast ? t("START CAST") : recheckOnly
+          ? "LOOKS RIGHT — CONTINUE →"
+          : checkpointAction === "resume"
           ? "↺ RESUME CAST"
           : needsApproval
             ? "LOOKS RIGHT — CONTINUE →"
             : "GO TO PAGES →"}
         onPrimary={handleContinueToPages}
-        primaryDisabled={approveStage.isPending || isPipelineRunning || (!canStartCast && missingAnchors.length > 0) || (!canStartCast && checkpointAction === "wait") || ((canStartCast || checkpointAction === "resume") && (!status?.style_selected || !castResumeEstimate))}
-        busy={approveStage.isPending || isPipelineRunning}
+        primaryDisabled={approveStage.isPending || isPipelineRunning || projectBusy || (!canStartCast && missingAnchors.length > 0) || (!canStartCast && checkpointAction === "wait") || ((canStartCast || checkpointAction === "resume") && (!status?.style_selected || !castResumeEstimate))}
+        busy={approveStage.isPending || isPipelineRunning || continuing}
         error={actionError}
         secondary={<RerunStageAction project={id} stage="cast" label="cast" disabled={stageRegenerating} />}
       />

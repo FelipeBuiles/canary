@@ -2188,7 +2188,8 @@ async def generate_wire_image_on_route(
 async def _generate_wire_image_once(
     *, config: Config, wire: "ProviderWireRequest", output_path: Path, feature: str,
 ) -> ApiResult[Path]:
-    with generation_probe():
+    with generation_probe() as probe:
+        probe.wire_schema_version = wire.schema_version
         return await _generate_wire_image_attempt(
             config=config, wire=wire, output_path=output_path, feature=feature,
         )

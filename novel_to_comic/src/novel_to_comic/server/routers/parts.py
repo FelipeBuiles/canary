@@ -222,15 +222,6 @@ def rename(part_id: str, body: RenameRequest, project_dir: Path = Depends(get_pr
     return {"part": record.model_dump()}
 
 
-@router.get("/parts/{part_id}/page-flags")
-def part_page_flags(part_id: str, root: Path = Depends(get_project_dir)):
-    """Drawn pages whose artwork predates a later Story Bible or Cast edit."""
-    from novel_to_comic.story_bible_edits import pages_drawn_before_edits
-    from ..deps import get_part_dir
-
-    return {"pages": pages_drawn_before_edits(get_part_dir(root, part_id))}
-
-
 @router.delete("/parts/{part_id}")
 def remove(part_id: str, project_dir: Path = Depends(get_project_dir)):
     try:

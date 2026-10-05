@@ -733,6 +733,11 @@ def _build_sections(
         if subject.identity and key not in emitted:
             anchor_lines.append(f"{subject.name} [{key[0]} / {key[1] or 'canonical'}]: {subject.identity}")
             emitted.add(key)
+        if subject.wardrobe.strip():
+            anchor_lines.append(
+                f"{subject.name} current wardrobe (overrides any clothing in the anchor above): "
+                f"{subject.wardrobe.strip()}"
+            )
         if subject.appearance_guard:
             anchor_lines.append(f"{subject.name} continuity guard: {subject.appearance_guard}")
     for anchor in prompt.anchors:

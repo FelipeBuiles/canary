@@ -214,9 +214,9 @@ it("keeps author directions open while single proofs draw and during a suggestio
   expect(screen.getByRole("button", { name: "ADD A DIRECTION" })).toHaveProperty("disabled", false);
   state.stylesMeta = { is_generating: true, is_suggesting: true };
   view.rerender(room());
-  // Authors can draft during a batch; the proof is created once the batch finishes.
+  // Authors can submit a proof to the queue during the batch.
   expect(screen.getByRole("button", { name: "ADD A DIRECTION" })).toHaveProperty("disabled", false);
-  expect(screen.getByText(/You can write your direction now/)).toBeTruthy();
+  expect(proof("Ink").getByRole("button", { name: "TEST IN ACTION", hidden: true })).toHaveProperty("disabled", false);
   state.stylesMeta = {};
 });
 

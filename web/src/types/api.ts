@@ -50,6 +50,16 @@ export interface CastFailure {
   classification: string | null;
   attempts: number | null;
   message: string;
+  /** After a decline: wording in the sent request that likely tripped the provider's filter. */
+  likely_triggers?: ContentTrigger[];
+}
+
+export interface ContentTrigger {
+  phrase: string;
+  category: "nudity" | "sexual" | "gore" | "violence";
+  /** Where the phrase was: the entry's description, a card direction, or the style notes. */
+  source: "description" | "direction" | "style" | "other";
+  context: string;
 }
 
 export interface StageInfo {
@@ -341,6 +351,8 @@ export interface GenerationJob {
   recoverable?: boolean | null;
   phase?: "generation" | "analysis" | "ambiguous_submission" | "outcome_unknown" | "cancelled" | null;
   is_current_page?: boolean;
+  /** The selected style frozen when this Cast reference job was admitted. */
+  reference_style_hash?: string;
 }
 
 export const STAGE_ORDER: StageName[] = [
@@ -409,6 +421,7 @@ export interface Character {
   visual_anchor: string;
   age_range: string;
   gender: string;
+  stature?: string;
   distinguishing_features: string[];
   baseline_affect: string | null;
   default_outfit: string;
@@ -418,7 +431,12 @@ export interface Character {
   aliases?: string[];
   origin?: EntityOrigin;
   cast_required?: boolean;
+  identity_kind?: "individual" | "interchangeable" | "group";
+  /** Cast reference sheet layout; see reference_forms.py. */
+  reference_form?: ReferenceForm;
 }
+
+export type ReferenceForm = "figure" | "form" | "formation";
 
 export interface Location {
   id: string;
@@ -469,6 +487,8 @@ export interface ExcludedEntity {
   kind: "character" | "location" | "prop";
   name: string;
   aliases: string[];
+  /** What the removal took out; present when restoring brings the entry back whole. */
+  removed?: { entity: Record<string, unknown>; scene_ids: string[] } | null;
 }
 
 export interface StoryBible {
@@ -656,7 +676,26 @@ export interface PageAnalysisRecovery {
   requires_paid_call: boolean;
 }
 
+export type PageRedrawReason = "image" | "description" | "continuity" | "removed";
+
+/** A Story Bible entry or Cast reference that changed after a page was drawn from it. */
+export interface PageRedrawChange {
+  reference_id: string;
+  entity_id: string;
+  appearance_state_id: string | null;
+  label: string;
+  reasons: PageRedrawReason[];
+}
+
+/** Why a drawn page's active art no longer matches its inputs. */
+export interface PageRedrawReasons {
+  plan_changed: boolean;
+  changed_references: PageRedrawChange[];
+}
+
 export interface CompletePageSummary {
+  /** Set when the page's plan or a Cast reference it was drawn from changed. */
+  redraw?: PageRedrawReasons | null;
   lettering_mode?: "hybrid" | "baked";
   lettering_revision?: number | null;
   lettering_placement_review_needed?: boolean;
@@ -665,6 +704,8 @@ export interface CompletePageSummary {
   issues: PageIssue[];
   failure: PageGenerationFailure | null;
   analysis_recovery: PageAnalysisRecovery;
+  /** The active art has a saved visual review from its draw or a re-check. */
+  visual_reviewed?: boolean;
 }
 
 export interface PageGenerationFailure {
@@ -679,6 +720,7 @@ export interface PageGenerationFailure {
 }
 
 export interface CompletePagesResponse {
+  redraws?: Array<PageRedrawReasons & { page_number: number }>;
   pages: CompletePageSummary[];
   issue_summary: PageIssueSummary;
 }
@@ -883,6 +925,15 @@ export interface CharacterRefVersionsResponse {
 }
 
 /** A licensed story shipped with Canary and available for local import. */
+/** How a manuscript reads before creation, split exactly as creation will split it. */
+export interface SourcePreview {
+  characters: number;
+  words: number;
+  chapters: number;
+  part_target_characters: number;
+  parts: { title: string | null; characters: number; words: number }[];
+}
+
 export interface ShortStory {
   code: string;
   title: string;
@@ -905,8 +956,20 @@ export interface ShortStory {
   sha256?: string;
 }
 
-export interface CastReferenceInput {
+export interface CastAssetReference {
   asset_type: "character" | "location" | "prop";
   asset_id: string;
   state_id?: string;
+}
+
+/** An image the author uploaded for a Cast correction. */
+export interface UploadedCastReference {
+  upload_id: string;
+}
+
+export type CastReferenceInput = CastAssetReference | UploadedCastReference;
+
+export interface CastReferenceUpload extends UploadedCastReference {
+  label: string;
+  image_path: string;
 }

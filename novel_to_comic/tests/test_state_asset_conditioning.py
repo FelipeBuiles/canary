@@ -650,6 +650,38 @@ def test_state_wire_carries_canonical_reference_and_hashes(tmp_path: Path, monke
     assert wire.execution_fingerprint
 
 
+def test_shape_change_keeps_only_hair_and_is_not_an_edit_of_the_parent(tmp_path: Path, monkeypatch):
+    """Regression for DCC: Donut splattered into a blob kept her whole cat face,
+    because the blob sheet was an edit of the cat sheet that preserved its face."""
+    from novel_to_comic.stages.s3_cast import _generate_state_asset_wire
+    from novel_to_comic.usage import ApiResult
+
+    char = _character()
+    _write_parent(artifacts.character_ref_sheet_path(tmp_path, char.id))
+    style_path, _ = _write_style(tmp_path)
+    state = AppearanceState(changed_facets=("anatomy", "shape"),
+        id="blob", label="Blob", visual_anchor="quivering wet mass of jellied flesh and long black hair",
+        visually_significant=True,
+    )
+    spec = build_character_state_spec(Config(), tmp_path, char, state, style_path=style_path)
+    captured = {}
+
+    async def fake_generate_wire_image(*, config, wire, output_path, feature):
+        captured["wire"] = wire
+        output_path.write_bytes(b"state-image")
+        return ApiResult(value=output_path)
+
+    monkeypatch.setattr("novel_to_comic.ai.generate_wire_image", fake_generate_wire_image)
+    asyncio.run(_generate_state_asset_wire(Config(), spec, tmp_path / "state.png", tmp_path, feature="test"))
+
+    wire = captured["wire"]
+    assert wire.references[0].role == "subject"
+    assert wire.references[0].preserve_facets == ("hair",)
+    assert "face" in wire.references[0].ignore_facets
+    assert wire.edit_parent_indices == ()
+    assert "Image operation: create a new image" in wire.prompt_parts[0]
+
+
 def test_state_wire_includes_state_direction_and_addendum(tmp_path: Path, monkeypatch):
     from novel_to_comic.stages.s3_cast import _generate_state_asset_wire
     from novel_to_comic.usage import ApiResult

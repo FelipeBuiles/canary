@@ -22,7 +22,11 @@ export interface ImageTarget {
   available: boolean;
 }
 
-export type ImagePrompt = "production" | "restructured";
+export type ImagePrompt =
+  | "production"
+  | "restructured"
+  | "sheet_form"
+  | "sheet_formation";
 
 export interface ImageArm {
   target: string;

@@ -29,12 +29,11 @@ from novel_to_comic.page_drawing import (
     ensure_current_page_edition,
     enqueue_complete_page_draw,
     prepare_page_correction,
-    validate_review_request,
 )
 from novel_to_comic.narrative_review import require_draw_narrative_reviews
 from novel_to_comic.page_previews import ensure_page_render_preview
 from novel_to_comic.page_source import PageSourceStale, page_source_view
-from novel_to_comic.lettering.page_read import draw_page_read, page_read_adapter
+from novel_to_comic.lettering.page_read import page_read_adapter
 from novel_to_comic.page_ocr import GatewayPageOCRAdapter  # noqa: F401  (tests patch it here)
 from novel_to_comic.page_review import (
     accept_editorial_page_issue,
@@ -108,6 +107,32 @@ def _lettering_placement_review_needed(target, number, hybrid: bool) -> bool:
     return placement_review_needed(state, provenance.render)
 
 
+def _redraw_inputs(project_dir):
+    from novel_to_comic.stages.s5_plan import approved_visual_inventory
+
+    inventory = {ref.id: ref for ref in approved_visual_inventory(project_dir).references}
+    return approved_reference_files(project_dir), inventory
+
+
+def _redraws(project_dir, target: TargetArtifacts) -> dict[int, dict]:
+    """Drawn pages whose plan, Story Bible entries or Cast references changed after drawing."""
+    from novel_to_comic.page_redraws import pages_needing_redraw
+
+    try:
+        return pages_needing_redraw(target, *_redraw_inputs(project_dir))
+    except (ArtifactMissing, ArtifactInvalid, ValueError, OSError):
+        return {}
+
+
+def _page_redraw(project_dir, target: TargetArtifacts, page_number: int) -> dict | None:
+    from novel_to_comic.page_redraws import redraw_reasons
+
+    try:
+        return redraw_reasons(target, page_number, *_redraw_inputs(project_dir))
+    except (ArtifactMissing, ArtifactInvalid, ValueError, OSError):
+        return None
+
+
 def _latest_provenance(target: TargetArtifacts, page_number: int):
     revision = target.active_render_revision(page_number)
     return target.read_provenance(page_number, revision) if revision is not None else None
@@ -138,11 +163,33 @@ def _analysis_recovery(target: TargetArtifacts, page_number: int) -> dict:
         pass
     cached = any(path.exists() for path in (
         target.raw_ocr_path(page_number, render.revision),
-        target.ocr_response_path(page_number, render.revision),
         target.analysis_path(page_number, render.revision),
-    ))
+    )) or _readable_ocr_response(target, page_number, render.revision)
     return {"status": "cached_evidence" if cached else "requires_ocr",
             "requires_paid_call": not cached}
+
+
+def _readable_ocr_response(target: TargetArtifacts, page_number: int, revision: int) -> bool:
+    """A saved answer counts as free evidence only when it can be read."""
+    from novel_to_comic.page_review import saved_ocr_draft
+
+    try:
+        return saved_ocr_draft(target.read_ocr_response(page_number, revision)) is not None
+    except (ArtifactMissing, ArtifactInvalid):
+        return False
+
+
+def _visual_reviewed(target: TargetArtifacts, page_number: int) -> bool:
+    """Whether the active art has a saved visual review. A status hint only:
+    the page review panel still serves a result only for current inputs."""
+    active = _latest_provenance(target, page_number)
+    if active is None:
+        return False
+    try:
+        reviews = target.read_visual_reviews(page_number, active.render.revision)
+    except ArtifactInvalid:
+        return False
+    return any(review.render_image_sha256 == active.render.image_sha256 for review in reviews)
 
 
 def _page_failure(target: TargetArtifacts, page_number: int):
@@ -332,8 +379,12 @@ def _draw_success_callback(
 
 
 
-def prepare_undrawn_pages(*, project_dir, config, rerun: bool = False):
-    """Preflight every selected page without writing an edition or placing holds."""
+def prepare_undrawn_pages(*, project_dir, config, rerun: bool = False, pages: frozenset[int] | None = None):
+    """Preflight every selected page without writing an edition or placing holds.
+
+    ``pages`` limits the batch to an explicit set (out-of-date drawn pages),
+    drawn or not.
+    """
     classify_operations(draw_operations(config))
     target = TargetArtifacts(project_dir)
     require_draw_narrative_reviews(target)
@@ -350,7 +401,10 @@ def prepare_undrawn_pages(*, project_dir, config, rerun: bool = False):
     prepared = []
     for selected in target.read_plan().pages:
         page_number = selected.page_number
-        if target.provenance_revisions(page_number) and not rerun:
+        if pages is not None:
+            if page_number not in pages:
+                continue
+        elif target.provenance_revisions(page_number) and not rerun:
             continue
         page = target.read_page(page_number)
         compiled = compile_page_generation_request(
@@ -372,10 +426,11 @@ async def enqueue_all_undrawn_pages(
     project_dir,
     config,
     rerun: bool = False,
+    pages: frozenset[int] | None = None,
 ):
     """Queue missing pages, or explicit replacement revisions without deletion."""
     target, adapter, prepared = await asyncio.to_thread(
-        prepare_undrawn_pages, project_dir=project_dir, config=config, rerun=rerun,
+        prepare_undrawn_pages, project_dir=project_dir, config=config, rerun=rerun, pages=pages,
     )
     # Estimation can select an ephemeral first edition; submission requires
     # Draw initialization to have durably pinned it first.
@@ -400,7 +455,7 @@ async def enqueue_all_undrawn_pages(
             adapter=adapter,
             artifacts=target,
             page=page,
-            ocr=draw_page_read(config, target, page),
+            ocr=page_read_adapter(config, target, page),
             on_success=_draw_success_callback(
                 request,
                 pkey=pkey,
@@ -425,7 +480,9 @@ def list_pages(request: Request = None, project=Depends(get_project)):
     plan = target.read_plan()
     _sync_draw_progress(project_dir, request.app if request else None)
     hybrid = _hybrid_lettering(target)
+    redraws = _redraws(project_dir, target)
     return {
+        "redraws": [{"page_number": number, **reasons} for number, reasons in sorted(redraws.items())],
         "pages": [
             {
                 "page": target.read_page(selected.page_number),
@@ -433,11 +490,13 @@ def list_pages(request: Request = None, project=Depends(get_project)):
                 "issues": _issues(target, selected.page_number),
                 "failure": _page_failure(target, selected.page_number),
                 "analysis_recovery": _analysis_recovery(target, selected.page_number),
+                "visual_reviewed": _visual_reviewed(target, selected.page_number),
                 "lettering_mode": "hybrid" if hybrid else "baked",
                 "lettering_revision": _lettering_revision(target, selected.page_number),
                 "lettering_placement_review_needed": _lettering_placement_review_needed(
                     target, selected.page_number, hybrid
                 ),
+                "redraw": redraws.get(selected.page_number),
             }
             for selected in plan.pages
         ],
@@ -468,6 +527,7 @@ def get_page(page_number: int, project=Depends(get_project)):
         "issues": _issues(target, page_number),
         "failure": _page_failure(target, page_number),
         "analysis_recovery": _analysis_recovery(target, page_number),
+        "redraw": _page_redraw(project_dir, target, page_number),
     }
 
 
@@ -699,7 +759,7 @@ def _prepare_initial_generation(
     revisions = target.provenance_revisions(page_number)
     if revisions and (resumable is None or resumable.correction is not None) and not _latest_render_is_stale(
         target, page_number, revisions[-1],
-    ):
+    ) and _page_redraw(project_dir, target, page_number) is None:
         raise HTTPException(
             409,
             "Page already has a render; create an issue and request a correction.",
@@ -722,6 +782,79 @@ def _prepare_initial_generation(
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
     return target, page, compiled
+
+
+class PageRedrawBatch(BaseModel):
+    # The pages the author saw and confirmed; a changed set is refused.
+    pages: list[int] = Field(min_length=1)
+
+
+def _prepared_redraws(project_dir, config, target: TargetArtifacts):
+    redraws = _redraws(project_dir, target)
+    if not redraws:
+        raise HTTPException(409, "Every drawn page matches its current plan and references.")
+    try:
+        _target, adapter, prepared = prepare_undrawn_pages(
+            project_dir=project_dir, config=config, pages=frozenset(redraws),
+        )
+    except (ArtifactMissing, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return redraws, adapter, prepared
+
+
+@router.get("/pages/redraws/estimate")
+def estimate_page_redraws(project=Depends(get_project)):
+    """Quote fresh drawings of every page whose plan or references changed."""
+    from novel_to_comic.page_drawing import estimate_draw_api_cost
+    from ..credits import credit_estimate_for_provider_cost
+
+    project_dir, config, _state = project
+    redraws, _adapter, prepared = _prepared_redraws(project_dir, config, TargetArtifacts(project_dir))
+    funding = classify_operations(draw_operations(config))
+    estimate = credit_estimate_for_provider_cost(0, "draw", reserve=True, funding=funding)
+    for _page_number, _page, compiled in prepared:
+        part = credit_estimate_for_provider_cost(
+            estimate_draw_api_cost(config, compiled), "draw", reserve=True, funding=funding,
+        )
+        estimate["estimate_credits"] += part["estimate_credits"]
+        estimate["reserved_credits"] += part["reserved_credits"]
+    return {**estimate, "pages": sorted(redraws)}
+
+
+@router.post("/pages/redraws")
+async def redraw_out_of_date_pages(
+    body: PageRedrawBatch,
+    request: Request,
+    project_id: str,
+    project=Depends(get_project),
+    user_id: str = Depends(get_current_user),
+):
+    """Draw every out-of-date page fresh from its current plan and references.
+
+    Old art stays in each page's history; nothing else is redrawn.
+    """
+    project_dir, config, _state = project
+    target = TargetArtifacts(project_dir)
+    redraws = await asyncio.to_thread(_redraws, project_dir, target)
+    if set(body.pages) != set(redraws):
+        raise HTTPException(409, "The pages that need redrawing changed. Refresh the estimate and confirm again.")
+    replaced = {number: target.active_render_revision(number) for number in redraws}
+    try:
+        jobs = await enqueue_all_undrawn_pages(
+            request, project_id=project_id, user_id=user_id, project_dir=project_dir,
+            config=config, pages=frozenset(redraws),
+        )
+    except (ArtifactMissing, ValueError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    for job, number in zip(jobs, sorted(redraws)):
+        if replaced[number] is not None:
+            record_page_outcome(request.app, "redraw_requested", user_id=user_id, project_id=project_id,
+                                target=target, page_number=number, render_revision=replaced[number],
+                                identity=job.id, mode="canonical")
+    return {"status": "queued", "jobs": [
+        {"page_number": number, "job": generation_job_payload(request.app, job)}
+        for job, number in zip(jobs, sorted(redraws))
+    ]}
 
 
 @router.get("/pages/{page_number}/generate/estimate")
@@ -793,7 +926,7 @@ def generate_page(
         adapter=adapter,
         artifacts=target,
         page=page,
-        ocr=draw_page_read(config, target, page),
+        ocr=page_read_adapter(config, target, page),
         on_success=_draw_success_callback(
             request,
             pkey=pkey,
@@ -1042,7 +1175,7 @@ def dismiss_recorded_page_issue(
             page_number=page_number,
             reason=("Author withdrew this manual correction request; no visual fix is claimed."
                     if _find_issue(TargetArtifacts(project_dir), page_number, issue_id).issue_type == "manual_change"
-                    else "Dismissed after visual review as a validator false positive."),
+                    else "Dismissed by the author as not a problem."),
         )
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -1377,7 +1510,7 @@ def submit_page_correction(
         adapter=adapter,
         artifacts=target,
         page=(page := target.read_page(page_number)),
-        ocr=draw_page_read(config, target, page),
+        ocr=page_read_adapter(config, target, page),
         parent_render_revision=correction.parent_render_revision,
         issue=primary_issue,
         on_success=_draw_success_callback(
@@ -1402,23 +1535,14 @@ def submit_page_correction(
 @router.get("/pages/{page_number}/visual-review/estimate")
 def visual_review_estimate(page_number: int, project=Depends(get_project)):
     from novel_to_comic.config import PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD
+    from novel_to_comic.page_visual_review import compile_visual_review
     from ..credits import credit_estimate_for_provider_cost
     project_dir, config, _state = project
     target = TargetArtifacts(project_dir)
     if _latest_provenance(target, page_number) is None:
         raise HTTPException(409, "Page has no render to review")
     try:
-        edition = ensure_current_page_edition(target, target.read_book_edition(), config, allow_retained_review=True)
-        compiled = compile_page_generation_request(
-            target.read_page(page_number),
-            edition,
-            approved_visual_inventory(project_dir),
-            approved_reference_files(project_dir),
-            retry=RetryProvenance(attempt=1),
-            style_template=config.style_template,
-            style_reference_path=require_style_reference(project_dir, config.style_template),
-        )
-        validate_review_request(compiled, edition)
+        compile_visual_review(project_dir, config, target, target.read_page(page_number))
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
     return credit_estimate_for_provider_cost(
@@ -1430,7 +1554,7 @@ def visual_review_estimate(page_number: int, project=Depends(get_project)):
 async def visual_review_page(page_number: int, project_id: str, request: Request,
                              project=Depends(get_project), user_id: str = Depends(get_current_user)):
     from ..credited_job import run_credited_page_check
-    from novel_to_comic.page_visual_review import review_page_visuals
+    from novel_to_comic.page_visual_review import compile_visual_review, review_page_visuals
     from novel_to_comic.config import PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD
     from novel_to_comic.target_artifacts import ArtifactInvalid
 
@@ -1443,13 +1567,7 @@ async def visual_review_page(page_number: int, project_id: str, request: Request
                         target=target, page_number=page_number, render_revision=active.render.revision)
     try:
         page = target.read_page(page_number)
-        edition = ensure_current_page_edition(target, target.read_book_edition(), config, allow_retained_review=True)
-        compiled = compile_page_generation_request(
-            page, edition, approved_visual_inventory(project_dir),
-            approved_reference_files(project_dir), retry=RetryProvenance(attempt=1), style_template=config.style_template,
-            style_reference_path=require_style_reference(project_dir, config.style_template),
-        )
-        validate_review_request(compiled, edition)
+        compiled = compile_visual_review(project_dir, config, target, page)
         result = await run_credited_page_check(
             user_id=user_id, project_id=project_id, project_dir=project_dir, page_number=page_number,
             estimated_cost_usd=float(PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD),
@@ -1482,6 +1600,7 @@ def read_saved_visual_review(page_number: int, project=Depends(get_project)):
     draft.
     """
     from novel_to_comic.page_visual_review import (
+        compile_visual_review,
         finding_issue_links,
         reference_display_for_render,
         validated_saved_visual_review,
@@ -1495,14 +1614,7 @@ def read_saved_visual_review(page_number: int, project=Depends(get_project)):
             raise HTTPException(409, "Page has no render to review")
         page = target.read_page(page_number)
         image = target.read_render(page_number, active.render.revision)
-        edition = ensure_current_page_edition(target, target.read_book_edition(), config, allow_retained_review=True)
-        compiled = compile_page_generation_request(
-            page, edition, approved_visual_inventory(project_dir),
-            approved_reference_files(project_dir), retry=RetryProvenance(attempt=1),
-            style_template=config.style_template,
-            style_reference_path=require_style_reference(project_dir, config.style_template),
-        )
-        validate_review_request(compiled, edition)
+        compiled = compile_visual_review(project_dir, config, target, page)
         try:
             report = validated_saved_visual_review(
                 page=page, render=active.render, image=image, compiled=compiled,

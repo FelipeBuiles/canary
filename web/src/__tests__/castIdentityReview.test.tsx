@@ -10,16 +10,17 @@ vi.mock("../api/client", () => ({ apiFetch: vi.fn() }));
 const clients: QueryClient[] = [];
 afterEach(() => { clients.forEach((client) => client.clear()); clients.length = 0; vi.resetAllMocks(); });
 
-function mount() {
+function mount(redrawing = new Set<string>()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   clients.push(client);
   const resume = vi.fn();
   const show = vi.fn();
+  const use = vi.fn();
   render(<QueryClientProvider client={client}><I18nProvider>
     <CastIdentityReview projectId="demo" characters={[{ id: "a", name: "Armitage" }, { id: "b", name: "Rice" }]}
-      onResume={resume} onShowCharacter={show} busy={false} />
+      onResume={resume} onShowCharacter={show} onUseSuggestion={use} busy={false} redrawing={redrawing} />
   </I18nProvider></QueryClientProvider>);
-  return { resume, show };
+  return { resume, show, use };
 }
 
 it("shows visual evidence with character links and never starts work on entry", async () => {
@@ -38,6 +39,21 @@ it("shows visual evidence with character links and never starts work on entry", 
   expect(show).toHaveBeenCalledOnce();
   expect(resume).not.toHaveBeenCalled();
   expect(apiFetch).toHaveBeenCalledWith("/projects/demo/cast/review");
+});
+
+it("hands a suggestion to the chosen character without starting work", async () => {
+  vi.mocked(apiFetch).mockResolvedValue({ status: "current", issues: [
+    { character_ids: ["a"], concern: "scale", evidence: "Too tall", suggestion: "Scale Armitage down" },
+    { character_ids: ["a", "b"], concern: "lookalike", evidence: "Same jaw", suggestion: "Give Rice a broader face" },
+  ] });
+  const { resume, use } = mount();
+  await userEvent.click(await screen.findByText("2 notes to review"));
+  await userEvent.click(screen.getAllByRole("button", { name: "Use this suggestion · Armitage" })[0]);
+  expect(use).toHaveBeenLastCalledWith("a", "Scale Armitage down");
+  expect(screen.getByRole("button", { name: "Use this suggestion · Rice" }).textContent).toContain("Use for Rice");
+  await userEvent.click(screen.getByRole("button", { name: "Use this suggestion · Rice" }));
+  expect(use).toHaveBeenLastCalledWith("b", "Give Rice a broader face");
+  expect(resume).not.toHaveBeenCalled();
 });
 
 it("does not present stale findings as current and requires deliberate review", async () => {
@@ -61,4 +77,36 @@ it("shows a failed read without claiming a clean cast", async () => {
   mount();
   expect(await screen.findByText(/Could not load the cast review/)).toBeTruthy();
   expect(screen.queryByText(/No identity problems/)).toBeNull();
+});
+
+it("marks a note fine for the current sheets and hides it", async () => {
+  const note = { character_ids: ["a"], concern: "presentation", evidence: "Too tall", suggestion: "Scale Armitage down" };
+  vi.mocked(apiFetch).mockImplementation(async (_path, options) => (options?.method === "POST"
+    ? { status: "current", issues: [], dismissed: 1, reviewing: false }
+    : { status: "current", issues: [note], dismissed: 0, reviewing: false }));
+  const { use } = mount();
+  await userEvent.click(await screen.findByText("1 note to review"));
+  await userEvent.click(screen.getByRole("button", { name: "This looks right" }));
+  expect(apiFetch).toHaveBeenCalledWith("/projects/demo/cast/review/dismiss", {
+    method: "POST", body: JSON.stringify({ character_ids: ["a"], concern: "presentation" }),
+  });
+  expect(await screen.findByText(/You marked 1 note as fine/)).toBeTruthy();
+  expect(screen.queryByText("Too tall")).toBeNull();
+  expect(use).not.toHaveBeenCalled();
+});
+
+it("says what the check is doing while it runs and offers no resume", async () => {
+  vi.mocked(apiFetch).mockResolvedValue({ status: "stale", issues: [], dismissed: 0, reviewing: true, characters: 4 });
+  mount();
+  expect(await screen.findByText(/Comparing 4 character sheets for lookalikes/)).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "RESUME CAST" })).toBeNull();
+});
+
+it("hides a note while its character is being redrawn and says the check will run again", async () => {
+  vi.mocked(apiFetch).mockResolvedValue({ status: "current", dismissed: 0, reviewing: false, issues: [
+    { character_ids: ["a"], concern: "presentation", evidence: "Too tall", suggestion: "Scale Armitage down" }] });
+  mount(new Set(["a"]));
+  expect(await screen.findByText(/Redrawing Armitage\. The check runs again/)).toBeTruthy();
+  expect(screen.queryByText("Too tall")).toBeNull();
+  expect(screen.queryByRole("button", { name: "RESUME CAST" })).toBeNull();
 });

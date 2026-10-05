@@ -75,10 +75,18 @@ remove, or merge its entries. Each edit is checked against the revision the
 author saw.
 
 **Removed name** — A character, place, or prop name the author removed from the
-Story Bible. Later extraction does not recreate it until the author restores it.
+Story Bible. Later extraction does not recreate it until the author restores it;
+restoring brings the entry back with its details and scenes.
 
 **Alias** — Another name for a Story Bible entry, such as the name of a
 duplicate merged into it. Extraction recognizes aliases as the same entry.
+
+**Reference form** — How a character's Cast reference sheet lays out its
+views: `figure` (a turnaround, the default, for any person or animal with a face
+and a fixed body), `form` (one entity with no fixed front, back or head, or whose
+identity is a material, light or motion) or `formation` (a group whose identity
+is its member count and arrangement). A wrong form is worse than a turnaround,
+so the others are explicit choices.
 
 **Cited entry** — A Story Bible entry or appearance state that an adapted
 part's script or pages name. It can be edited but not removed or merged away.

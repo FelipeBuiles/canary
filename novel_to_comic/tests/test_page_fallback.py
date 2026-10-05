@@ -218,6 +218,8 @@ def test_unknown_openai_outcome_is_absorbed_and_drawn_on_fal(tmp_path, failure):
 @pytest.mark.parametrize("failure", [
     _marks_5xx(_handler_failure(
         "OpenAI image submit failed for gpt-image-2.5-sunburst; upstream_status=400; detail=code=moderation_blocked")),
+    _marks_5xx(_handler_failure(
+        "OpenAI image stream failed for gpt-image-2.5-sunburst; request_id=req_1; detail=code=moderation_blocked")),
     _marks_5xx(_handler_failure("OpenAI image request_validation failed for gpt-image-2.5-sunburst")),
 ])
 def test_request_faults_stop_without_trying_fal(tmp_path, failure):

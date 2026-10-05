@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { GenerationJob } from "../../types/api";
 import { useI18n } from "../../i18n";
 import { Icon } from "../ui/Icon";
+import { proofCounts, shortlistOf, STEPS, stylePhaseOf, type StylePhase } from "./styleBatch";
 
 /**
  * Look's running view: which step a style batch is on and why it takes time.
@@ -10,49 +11,12 @@ import { Icon } from "../ui/Icon";
  * `style_shortlist`, `proofs`), so a reloaded room shows the same step.
  */
 
-type StylePhase = "queued" | "directions" | "production" | "proofs";
-
-interface ShortlistEntry {
-  label: string;
-  medium: string;
-  role: string;
-  palette?: string;
-  story_fit?: string;
-}
-
-const STEPS: { phase: Exclude<StylePhase, "queued">; label: string }[] = [
-  { phase: "directions", label: "Choose directions" },
-  { phase: "production", label: "Design lettering" },
-  { phase: "proofs", label: "Paint proofs" },
-];
-
 const PHASE_COPY: Record<StylePhase, string> = {
   queued: "Waiting for a free generation slot. Your batch starts automatically.",
   directions: "Reading your story and weighing a dozen visual directions. The six most distinct make the cut, each with its own medium and character design.",
   production: "Giving each chosen direction its own lettering and page framing, so every proof shows a finished comic page.",
   proofs: "Painting the same scene in every style, so you compare looks, not subjects. Each proof appears as soon as it's done.",
 };
-
-function stylePhaseOf(job: GenerationJob | undefined, fallback: StylePhase): StylePhase {
-  if (job?.status === "queued") return "queued";
-  const phase = job?.payload.style_phase;
-  return phase === "directions" || phase === "production" || phase === "proofs" ? phase : fallback;
-}
-
-function shortlistOf(job: GenerationJob | undefined): ShortlistEntry[] {
-  const entries = job?.payload.style_shortlist;
-  return Array.isArray(entries)
-    ? entries.filter((entry): entry is ShortlistEntry =>
-      !!entry && typeof entry === "object" && typeof (entry as ShortlistEntry).label === "string")
-    : [];
-}
-
-function proofCounts(job: GenerationJob | undefined): { done: number; total: number } {
-  const proofs = job?.payload.proofs;
-  if (!proofs || typeof proofs !== "object") return { done: 0, total: 0 };
-  const values = Object.values(proofs as Record<string, { status?: string }>);
-  return { done: values.filter((proof) => proof?.status === "complete").length, total: values.length };
-}
 
 function useElapsedSeconds(since: string | null | undefined): number | null {
   const [now, setNow] = useState(() => Date.now());
@@ -87,33 +51,33 @@ export function StyleGenerationProgress({
 
   return (
     <section aria-label={t("Style generation progress")}
-      className="mt-4 border-[2px] border-ink-black bg-narrator-gold p-3 text-ink-black md:p-4">
+      className="@container mt-4 border-[2px] border-ink-black bg-narrator-gold p-3 text-ink-black md:p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span aria-hidden className="animate-press-blink h-2.5 w-2.5 bg-hero-red" />
-          <span className="font-meta text-[0.7rem] font-bold tracking-[0.08em]">{title}</span>
+        <div className="flex min-w-0 max-w-full items-center gap-2">
+          <span aria-hidden className="animate-press-blink h-2.5 w-2.5 shrink-0 bg-hero-red" />
+          <span className="min-w-0 font-meta text-[0.7rem] font-bold tracking-[0.08em] [overflow-wrap:anywhere]">{title}</span>
         </div>
         {elapsed !== null && (
-          <span className="font-meta text-[0.68rem] font-bold tabular-nums tracking-[0.08em]"
+          <span className="max-w-full font-meta text-[0.68rem] font-bold tabular-nums tracking-[0.08em] [overflow-wrap:anywhere]"
             aria-label={t("Elapsed {time}", { time: formatElapsed(elapsed) })}>
             {formatElapsed(elapsed)}
           </span>
         )}
       </div>
 
-      <ol aria-label={t("Style generation steps")} className="mt-3 grid grid-cols-3 gap-[3px]">
+      <ol aria-label={t("Style generation steps")} className="mt-3 grid grid-cols-1 gap-[3px] @min-[22rem]:grid-cols-3">
         {STEPS.map((item, index) => (
           <li key={item.phase} aria-current={index === step ? "step" : undefined}
-            className={`flex min-h-9 items-center gap-1.5 px-2 py-1.5 font-meta text-[0.6rem] font-bold uppercase leading-tight tracking-[0.06em] ${
+            className={`flex min-h-9 min-w-0 items-center gap-1.5 px-2 py-1.5 font-meta text-[0.6rem] font-bold uppercase leading-tight tracking-[0.06em] ${
               index < step ? "bg-ink-black text-bristol"
                 : index === step ? "bg-bristol text-ink-black" : "bg-pulp-paper/60 text-ink-soft"
             }`}>
             <Icon name={index < step ? "check" : index === step ? "loader" : "circle"} size={12}
               className={index === step ? "shrink-0 motion-safe:animate-spin" : "shrink-0"} />
-            <span>
+            <span className="min-w-0 [overflow-wrap:anywhere]">
               {t(item.label)}
               {item.phase === "proofs" && index === step && total > 0 && (
-                <span className="tabular-nums"> {done}/{total}</span>
+                <span className="tabular-nums"> {done}<wbr />/{total}</span>
               )}
             </span>
           </li>

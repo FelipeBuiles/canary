@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 import zipfile
 import gzip
@@ -213,8 +214,85 @@ def _read_epub(path: Path, limits: InputLimits, started: float) -> str:
     return "\n\n".join(parts)
 
 
+_WORD_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def _read_docx(path: Path, limits: InputLimits, started: float) -> str:
+    """Read a Word document's body paragraphs; formatting and notes are dropped."""
+    from xml.etree import ElementTree
+
+    try:
+        with zipfile.ZipFile(path) as archive:
+            try:
+                info = archive.getinfo("word/document.xml")
+            except KeyError as exc:
+                raise InputLimitError(
+                    "This Word document could not be read. Please upload a valid .docx file."
+                ) from exc
+            # Markup is far larger than its text, but bound it like EPUB expansion.
+            if info.file_size > limits.extracted_characters * 20:
+                raise InputLimitError(
+                    "Word document expands beyond the allowed source size.", status_code=413
+                )
+            xml = archive.read(info)
+        if b"<!DOCTYPE" in xml[:4096]:
+            raise InputLimitError("This Word document could not be read. Please upload a valid .docx file.")
+        _check_elapsed(started, limits)
+        body = ElementTree.fromstring(xml).find(f"{_WORD_NS}body")
+    except InputLimitError:
+        raise
+    except (zipfile.BadZipFile, ElementTree.ParseError, OSError, ValueError) as exc:
+        raise InputLimitError(
+            "This Word document could not be read. Please upload a valid .docx file."
+        ) from exc
+    paragraphs: list[str] = []
+    characters = 0
+    for paragraph in body.iter(f"{_WORD_NS}p") if body is not None else ():
+        pieces: list[str] = []
+        for node in paragraph.iter():
+            if node.tag == f"{_WORD_NS}t" and node.text:
+                pieces.append(node.text)
+            elif node.tag == f"{_WORD_NS}tab":
+                pieces.append("\t")
+            elif node.tag in (f"{_WORD_NS}br", f"{_WORD_NS}cr"):
+                pieces.append("\n")
+        text = "".join(pieces).strip()
+        if not text:
+            continue
+        characters += len(text) + 2
+        if characters > limits.extracted_characters:
+            raise InputLimitError(
+                f"Extracted source exceeds the {limits.extracted_characters:,}-character limit.",
+                status_code=413,
+            )
+        paragraphs.append(text)
+    if not paragraphs:
+        raise InputLimitError("This Word document has no text.")
+    return "\n\n".join(paragraphs)
+
+
+_MD_FRONT_MATTER = re.compile(r"\A---\r?\n.*?\r?\n---\r?\n", re.DOTALL)
+_MD_IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+_MD_EMPHASIS = re.compile(r"(?<!\w)(\*\*|__|\*|_)(?=\S)(.+?)(?<=\S)\1(?!\w)")
+_MD_RULE = re.compile(r"^[ \t]{0,3}(?:[-*_][ \t]*){3,}$", re.MULTILINE)
+
+
+def clean_markdown(text: str) -> str:
+    """Keep a Markdown manuscript's prose and headings, without its markup.
+
+    ATX heading markers are kept because chapter detection reads them;
+    horizontal rules become a centered scene-break marker.
+    """
+    text = _MD_FRONT_MATTER.sub("", text)
+    text = _MD_IMAGE.sub("", text)
+    text = _MD_LINK.sub(r"\1", text)
+    text = _MD_RULE.sub("* * *", text)
+    return _MD_EMPHASIS.sub(r"\2", text)
+
+
 def read_source(path: Path, limits: InputLimits | None = None) -> str:
-    """Read and validate a TXT, PDF, or EPUB within the shared budgets."""
+    """Read and validate a TXT, Markdown, Word, PDF, or EPUB within the shared budgets."""
     limits = limits or InputLimits.from_env()
     try:
         size = path.stat().st_size
@@ -232,13 +310,17 @@ def read_source(path: Path, limits: InputLimits | None = None) -> str:
         text = _read_pdf(path, limits, started)
     elif suffix == ".epub":
         text = _read_epub(path, limits, started)
-    elif suffix == ".txt":
+    elif suffix == ".docx":
+        text = _read_docx(path, limits, started)
+    elif suffix in {".txt", ".md", ".markdown"}:
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
             raise InputLimitError("The source file could not be read.") from exc
+        if suffix != ".txt":
+            text = clean_markdown(text)
     else:
-        raise InputLimitError("Unsupported source type. Use TXT, PDF, or EPUB.")
+        raise InputLimitError("Unsupported source type. Use TXT, Markdown, Word (.docx), PDF, or EPUB.")
     _check_elapsed(started, limits)
     return _check_characters(text, limits)
 

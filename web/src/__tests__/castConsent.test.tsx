@@ -12,15 +12,19 @@ let stageStatus = "pending";
 let approvalBlocker: string | null = null;
 let selectedStyle = true;
 let failures: unknown[] = [];
+let isRunning = false;
 vi.mock("../hooks/useRunAction", () => ({ useRunAction: () => ({ handleRun: run, isPending: false }) }));
 vi.mock("../api/seriesQueries", () => ({
   useCastFreshness: () => ({ data: undefined }),
   useKeepReference: () => ({ mutate: vi.fn(), isPending: false, error: null }),
   useReopenCast: () => ({ mutate: vi.fn(), isPending: false, error: null }),
 }));
+let castReview: unknown = undefined;
+let redrawing = new Set<string>();
+vi.mock("../api/castReview", () => ({ useCastReview: () => ({ data: castReview }), useRedrawingCharacters: () => redrawing }));
 vi.mock("../api/queries", () => ({
   useStoryBible: () => ({ data: { characters: [], locations: [], props: [] }, isLoading: false }),
-  useProjectStatus: () => ({ data: { style_selected: selectedStyle, stages: { cast: { status: stageStatus, approval_blocker: approvalBlocker, failures } } } }),
+  useProjectStatus: () => ({ data: { style_selected: selectedStyle, is_running: isRunning, stages: { cast: { status: stageStatus, approval_blocker: approvalBlocker, failures } } } }),
   useApproveStage: () => ({ mutate: approve, isPending: false }),
   useResetStale: () => ({ mutate: vi.fn(), isPending: false }),
   useStageEstimate: () => ({ data: { estimate_credits: 20, reserved_credits: 30, reservation_multiplier: 1.5, confidence: "variable" } }),
@@ -30,13 +34,14 @@ vi.mock("../components/composites", async (importOriginal) => {
   const original = await importOriginal<typeof Composites>();
   return { ...original, RoomShell: ({ children }: { children: ReactNode }) => children, RerunStageAction: () => null };
 });
-import { CastRoom } from "../pages/rooms/CastRoom";
+import { CastFailureNotice, CastRoom } from "../pages/rooms/CastRoom";
+import { CAST_REVIEW_BLOCKER } from "../lib/castCheckpoint";
 
 function renderCast() {
   return render(<MemoryRouter initialEntries={["/project/demo/cast"]}><I18nProvider><Routes><Route path="/project/:id/cast" element={<CastRoom />} /></Routes></I18nProvider></MemoryRouter>);
 }
 
-beforeEach(() => { run.mockReset(); approve.mockReset(); stageStatus = "pending"; approvalBlocker = null; selectedStyle = true; failures = []; });
+beforeEach(() => { run.mockReset(); approve.mockReset(); stageStatus = "pending"; approvalBlocker = null; selectedStyle = true; failures = []; isRunning = false; castReview = undefined; redrawing = new Set(); });
 
 describe("cast consent", () => {
   it("names the reference that stopped Cast and why instead of a bare resume prompt", () => {
@@ -52,6 +57,52 @@ describe("cast consent", () => {
     expect(within(notice).getByRole("link", { name: "Kaitlin — Naked, suit gone" }).getAttribute("href")).toBe("#cast-character-kaitlin");
     expect(within(notice).getByText(message)).toBeTruthy();
     expect(screen.getByText(approvalBlocker)).toBeTruthy();
+  });
+
+  it("names the likely wording behind a decline and offers ways to unblock it", async () => {
+    const user = userEvent.setup();
+    const onLessGraphic = vi.fn();
+    const failure = {
+      item_id: "sphinx", asset_type: "prop" as const, entity_id: "sphinx", state_id: null,
+      label: "Wooden sphinx", classification: "provider_blocked", attempts: 1, message: "Declined.",
+      likely_triggers: [{ phrase: "bare womanly torso", category: "nudity" as const, source: "description" as const, context: "…" }],
+    };
+    render(<MemoryRouter initialEntries={["/project/demo/cast"]}><I18nProvider><Routes><Route path="/project/:id/cast"
+      element={<CastFailureNotice failures={[failure]} onLessGraphic={onLessGraphic} />} /></Routes></I18nProvider></MemoryRouter>);
+    const notice = screen.getByRole("alert", { name: "CAST STOPPED" });
+    expect(within(notice).getByText("bare womanly torso").parentElement!.textContent).toContain("nudity in its description");
+    expect(within(notice).getByRole("link", { name: "Reword its description" }).getAttribute("href"))
+      .toBe("/project/demo/story?edit=props:sphinx");
+    await user.click(within(notice).getByRole("button", { name: "Make a less graphic version" }));
+    expect(onLessGraphic).toHaveBeenCalledWith(failure);
+  });
+
+  it("hides a stopped Cast's failure while a new run is queued", () => {
+    stageStatus = "failed";
+    isRunning = true;
+    failures = [{
+      item_id: "kaitlin:naked", asset_type: "character", entity_id: "kaitlin", state_id: "naked",
+      label: "Kaitlin — Naked, suit gone", classification: "provider_blocked", attempts: 1, message: "Declined.",
+    }];
+    renderCast();
+    expect(screen.queryByRole("alert", { name: "CAST STOPPED" })).toBeNull();
+  });
+
+  it("says open Character Check notes are advice and keeps Continue enabled", () => {
+    stageStatus = "awaiting_review";
+    castReview = { status: "current", reviewing: false, dismissed: 0, issues: [
+      { character_ids: ["a"], concern: "presentation", evidence: "Too tall", suggestion: "Shrink" }] };
+    renderCast();
+    expect(screen.getByText("1 character note is open. You can still continue; notes are advice.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "LOOKS RIGHT — CONTINUE →" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("keeps Continue disabled while a character sheet is being redrawn", () => {
+    stageStatus = "awaiting_review";
+    redrawing = new Set(["a"]);
+    renderCast();
+    expect(screen.getByText("A reference is still being drawn. Continue unlocks when it finishes.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "LOOKS RIGHT — CONTINUE →" }).hasAttribute("disabled")).toBe(true);
   });
 
   it("offers review instead of another generation once individually generated references are ready", () => {
@@ -133,4 +184,18 @@ it("links each failed reference to its own card and offers one confirmed resume 
   await userEvent.click(within(notice).getByRole("button", { name: "RESUME CAST" }));
   expect(run).not.toHaveBeenCalled();
   expect(screen.getByRole("alertdialog")).toBeTruthy();
+});
+
+it("continues after corrections in one step: the server re-checks the cast, then approves it", async () => {
+  stageStatus = "awaiting_review";
+  approvalBlocker = CAST_REVIEW_BLOCKER;
+  renderCast();
+  expect(screen.queryByRole("button", { name: /RESUME CAST|RE-CHECK/ })).toBeNull();
+  expect(screen.getByText("Scenewright checks your corrected cast, then adapts the book and plans complete pages — automatically")).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "LOOKS RIGHT — CONTINUE →" }));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
+  expect(run).toHaveBeenCalledOnce();
+  expect(run.mock.calls[0][1]).toBe("cast");
+  expect(run.mock.calls[0][2]).toMatchObject({ thenApprove: true });
+  expect(approve).not.toHaveBeenCalled();
 });

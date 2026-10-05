@@ -54,8 +54,8 @@ async def test_multipart_parser_rejections_return_a_client_error(tmp_path):
 @pytest.mark.parametrize("status", ["queued", "running"])
 @pytest.mark.parametrize("kind, expected", [
     ("complete_page_draw", 200),
-    ("pipeline_stage", 409),
-    ("lettering_translation", 409),
+    ("pipeline_stage", 200),
+    ("lettering_translation", 200),
 ])
 @run_async
 async def test_page_correction_flow_during_other_page_work(tmp_path, suffix, status, kind, expected):
@@ -78,6 +78,59 @@ async def test_page_correction_flow_during_other_page_work(tmp_path, suffix, sta
         response = await client.post(path, json={}, headers=headers)
     assert response.status_code == expected, response.text
     assert bool(calls) == (expected == 200)
+
+
+@pytest.mark.parametrize("suffix", [
+    "/regen-ref", "/regen-ref-instructed", "/regen-state-ref",
+    "/regen-plate", "/regen-plate-instructed", "/regen-prop", "/regen-prop-instructed",
+    "/characters/ada/states/winter/regenerate-instructed",
+    "/locations/hall/states/night/regenerate", "/locations/hall/states/night/regenerate-instructed",
+    "/styles/direction", "/styles/generate-samples", "/styles/validation", "/cover",
+])
+@pytest.mark.parametrize("part", ["", "/parts/part_0001"])
+@run_async
+async def test_review_jobs_can_queue_during_a_stage_and_replay_once(tmp_path, suffix, part):
+    app = app_at(tmp_path)
+    app.state.generation_jobs["cast"] = SimpleNamespace(
+        project_name="account:book", kind="pipeline_stage", status="running", payload={"stage": "cast"},
+    )
+    calls = []
+    path = f"/api/projects/book{part}{suffix}"
+
+    @app.post(path)
+    async def correction():
+        calls.append(True)
+        return {"status": "queued", "job": {"id": "fix"}}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        for _ in range(2):
+            result = await client.post(path, json={}, headers={"Idempotency-Key": "fix"})
+            assert result.status_code == 200, result.text
+            assert result.json()["status"] == "queued"
+    assert calls == [True]
+
+
+@pytest.mark.parametrize("suffix, expected", [
+    ("/pages/2/issues", 200), ("/pages/2/issues/issue/accept", 200),
+    ("/pages/2/issues/issue/dismiss", 200), ("/pages/3/issues", 409),
+    ("/editorial/decisions", 200), ("/story-changes/preview", 200),
+    ("/config", 409), ("/reset/cast", 409), ("/regen-extract", 409),
+])
+@run_async
+async def test_review_records_only_conflict_with_their_own_writers(tmp_path, suffix, expected):
+    app = app_at(tmp_path)
+    app.state.generation_jobs["other-page"] = SimpleNamespace(
+        project_name="account:book", kind="complete_page_draw", status="running", payload={"page_number": 3},
+    )
+    path = f"/api/projects/book{suffix}"
+
+    @app.post(path)
+    async def edit():
+        return {"saved": True}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        result = await client.post(path, json={}, headers={"Idempotency-Key": "edit"})
+    assert result.status_code == expected, result.text
 
 
 @run_async

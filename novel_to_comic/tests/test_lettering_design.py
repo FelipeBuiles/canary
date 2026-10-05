@@ -209,7 +209,7 @@ def test_longest_story_copy_fits_every_preset_without_overlap(preset):
     assert all(len(getattr(_LONGEST_STORY_COPY, role)) == limit for role, limit in SPECIMEN_MAX_CHARS.items())
     state = resolve_style_proof(service.preset_style(preset), 1024, 1536, _LONGEST_STORY_COPY)
     assert {item.id.removeprefix("proof-"): item.resolved.text for item in state.elements} == (
-        _LONGEST_STORY_COPY.model_dump())
+        _LONGEST_STORY_COPY.model_dump(include=set(SPECIMEN_MAX_CHARS)))
     boxes = []
     for element in state.elements:
         body = element.resolved

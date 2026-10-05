@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
+import { useBackdropDismiss } from "../../hooks/useBackdropDismiss";
 import { cn } from "../../lib/cn";
 import { Button } from "../ui/Button";
 import { TextField } from "../ui/Field";
@@ -41,13 +42,14 @@ export function ConfirmModal({
   }, [busy, onClose]);
 
   useDialogFocus(modalRef, { enabled: open, onClose: handleClose });
+  const backdrop = useBackdropDismiss(handleClose);
 
   if (!open) return null;
 
   return (
     <div
       className="fixed inset-0 z-[120] flex items-center justify-center bg-ink-black/70"
-      onClick={handleClose}
+      {...backdrop}
       role="presentation"
     >
       <div

@@ -1,7 +1,7 @@
 # PostHog and launch learning
 
 Status: Current implementation; cloud activation and deployment remain separate.
-Last reviewed: 2026-09-28.
+Last reviewed: 2026-10-05.
 
 ## What is consolidated
 
@@ -18,8 +18,9 @@ reducing the Fly machine size.
   failures retry after ten seconds. Acceptance is not proof that every event is
   queryable in PostHog. Existing rows were excluded from backfill at cutover.
 - Explicit backend/browser errors retain exception types and code locations;
-  error messages, locals, source context, URLs, and automatic properties are
-  removed. Source maps support browser error investigation when uploads are
+  arbitrary error messages, locals, source context, URLs, and automatic properties
+  are removed. Recognized error codes and diagnostic message templates survive.
+  Source maps support browser error investigation when uploads are
   configured.
 - `$ai_generation` records include model, duration, usage, funding, outcome and
   known cost. Manuscripts, prompts, output text, image bodies and references are
@@ -27,20 +28,38 @@ reducing the Fly machine size.
   Unknown amounts are omitted; any vendor-derived estimate is not a ledger entry.
   Generations nest in an AI trace tree and carry version and timing fields; see
   [AI traces and author outcomes](#ai-traces-and-author-outcomes).
+  Text calls carry instruction-template and response-schema fingerprints;
+  image calls carry a rendered-request fingerprint (`request_sha`) and provider
+  wire schema version. A rendered-request fingerprint varies with story content
+  and is not a prompt-template version. Author metrics include the generation ID
+  and exact render revision they judge. Fingerprints do not assert provider deduplication.
 - Request → durable worker → stage → AI spans carry bounded identifiers and
-  W3C trace context. Only selected `canary.observations` logs are exported.
+  W3C trace context. Browser API calls send `traceparent`, `X-Request-ID`, and
+  a recorder session UUID in `X-Canary-Session-ID`; validated context survives
+  durable job serialization. Responses expose `X-Request-ID` and `X-Trace-ID`.
+  `api_request_completed` records route templates, method, status, outcome, job
+  IDs returned by the API, and elapsed
+  time, including failure context retained on browser exceptions. Backend events
+  carry the recorder session as `$session_id` for replay correlation. Request and
+  response bodies, auth headers, query strings, and public baggage are excluded.
+  Only selected `canary.observations` logs are exported.
   Generic tracing is a PostHog alpha capability; the selected project exposes its configuration with the expected
   `posthogDistinctId` correlation key. Live request, worker, stage, and AI span ingestion was verified on 2026-09-26; worker and AI spans retain parent links. This is not automatic browser tracing or host infrastructure APM.
 - Session replay and click autocapture (including `$rageclick`) feed
   Self-driving Replay Vision. The recorder is bundled (`posthog-recorder`;
-  the no-external SDK loads no scripts). Replays mask all inputs and all text
-  including interface controls and `[data-ph-unmask]`. Images, SVG, media,
+  the no-external SDK loads no scripts). Replays mask all inputs and author text.
+  Shared buttons and station navigation may expose literal catalog labels via
+  `data-ph-safe-label`; interpolated labels and `[data-ph-unmask]` cannot bypass
+  masking. Images, SVG, media,
   canvas, iframes, embedded objects and `[data-ph-block]` are blocked. A second
   boundary scrubs serialized full snapshots and mutations: arbitrary attributes,
-  CSS, URLs, custom/plugin frames and opaque packed events are excluded; only
-  bounded structural roles/types/geometry and route templates survive. Replay
+  inline styles, content-bearing URLs, custom/plugin frames and opaque packed
+  events are excluded. Class names survive only when present in a trusted app
+  stylesheet. Same-origin build CSS links survive; development CSS is rebuilt
+  from the live application stylesheet, with unsafe URLs and imports removed.
+  Structural roles/types/geometry and route templates survive. Replay
   event packing is disabled so this boundary can inspect the DOM; transport
-  compression remains available. This intentionally reduces replay visual fidelity.
+  compression remains available. Dynamic inline styling and artwork stay omitted.
   The SDK reads its remote config, which enables recording, from the regional
   `*-assets.i.posthog.com` host. The production CSP `connect-src` must allow it
   alongside the ingestion host; blocking it keeps events flowing but silently
@@ -63,7 +82,10 @@ reducing the Fly machine size.
   GeoIP enrichment are disabled; explicit canonical page views are described
   under [launch analytics dashboards](#launch-analytics-dashboards). Browser
   identity uses the authenticated account ID and resets on account changes; no
-  email or display name is sent. The SDK's `ip: false` does not stop PostHog
+  email or display name is sent. Anonymous identity and SDK session state persist
+  in first-party localStorage; sign-in merges the anonymous visit, and sign-out
+  or account switching resets the device identity. Denied storage falls back to
+  memory with anonymous merging disabled. The SDK's `ip: false` does not stop PostHog
   storing `$ip` on ingested events; only the project's "Discard client IP data"
   setting does.
 
@@ -233,9 +255,9 @@ Data added for these views:
   rebuilt from the template, the referrer is reduced to an external domain, and
   only bounded `utm_source`/`utm_medium`/`utm_campaign` tokens and browser, OS,
   and device labels survive the scrubber. Anonymous visitors stay personless.
-  Persistence remains in memory, so a reload is a new anonymous visitor: count
-  visits, not unique people. Signing in from an anonymous visit identifies that
-  visit; switching accounts still resets identity.
+  LocalStorage preserves identity across reloads and tabs. Signing in from an
+  anonymous visit identifies that visit; switching accounts resets the device
+  identity. Storage denial uses memory and counts separate visits.
 - **Signup attribution.** First-touch source (UTM source, `book_referral`,
   external referring domain, or `direct`) is captured on landing, sent as
   anonymous `signup_submitted`, and saved in Supabase user metadata as
@@ -427,7 +449,10 @@ provenance with the validated follow-up correction.
   unique index rejects existing duplicate signup rows and prevents the prior app
   writer from duplicating new signups during a migration-before-deploy gap.
 - Bounded first-touch tokens persist locally for 24 hours across reload/new tabs;
-  PostHog identifiers remain memory-only. No consent/replay configuration changes.
+  PostHog identifiers now persist in first-party localStorage and merge pre-login
+  visits on sign-in. Storage denial uses memory with `reuseAnonymousId` enabled.
+  Static control labels and trusted app styling are replayable; creative content,
+  inputs, media, network bodies, and credentials remain protected.
   OAuth callback carries only bounded tokens and an advisory flow-start time.
   Delayed returns up to 24 hours fill attribution only if the account was created
   during that flow; existing acquisition metadata is never overwritten.

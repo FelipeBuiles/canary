@@ -1,22 +1,32 @@
-import { useId, useState, type ComponentProps } from "react";
-import { X } from "lucide-react";
+import { useId, useRef, useState, type ComponentProps } from "react";
+import { Upload, X } from "lucide-react";
 import { useAssetRegenEstimate, useStoryBible } from "../../api/queries";
+import { uploadCastReference } from "../../api/pipeline";
 import { useReferenceJob } from "../../hooks/useReferenceJob";
-import type { CastReferenceInput } from "../../types/api";
+import type { CastAssetReference, CastReferenceInput } from "../../types/api";
 import { useI18n } from "../../i18n";
 import { RegenAction } from "./RegenAction";
 import { seriesPath } from "../../api/projectScope";
 
 type Props = Omit<ComponentProps<typeof RegenAction>, "onRegenerateWithInstruction"> & {
   projectName: string;
-  assetType: CastReferenceInput["asset_type"];
+  assetType: CastAssetReference["asset_type"];
   assetId: string;
   stateId?: string;
   onRegenerateWithInstruction: (instruction: string, references: CastReferenceInput[]) => void;
 };
-const referenceKey = (item: CastReferenceInput) => JSON.stringify([item.asset_type, item.asset_id, item.state_id]);
+const referenceKey = (item: CastReferenceInput) => "upload_id" in item
+  ? JSON.stringify(["upload", item.upload_id])
+  : JSON.stringify([item.asset_type, item.asset_id, item.state_id]);
+const ACCEPTED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
-function referenceImage(item: CastReferenceInput) {
+function referenceImage(projectName: string, item: CastReferenceInput) {
+  if ("upload_id" in item) return `/api${seriesPath(projectName)}/cast/reference-uploads/${encodeURIComponent(item.upload_id)}`;
+  return `/api${seriesPath(projectName)}/files/${assetImage(item)}`;
+}
+
+function assetImage(item: CastAssetReference) {
   const id = encodeURIComponent(item.asset_id);
   const state = item.state_id ? encodeURIComponent(item.state_id) : undefined;
   if (item.asset_type === "character") return `refs/${id}/${state ? `states/${state}/` : ""}sheet.png`;
@@ -27,6 +37,10 @@ function referenceImage(item: CastReferenceInput) {
 export function CastRegenAction({ projectName, assetType, assetId, stateId, onRegenerateWithInstruction, ...props }: Props) {
   const { t } = useI18n();
   const selectId = useId();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploadLabels, setUploadLabels] = useState<Record<string, string>>({});
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const { data: bible } = useStoryBible(projectName);
   const { referenceDraft } = useReferenceJob(projectName, assetType === "character" ? "char_id" : assetType === "location" ? "loc_id" : "prop_id", assetId, stateId);
   const [selection, setSelection] = useState<CastReferenceInput[] | null>(null);
@@ -40,10 +54,31 @@ export function CastRegenAction({ projectName, assetType, assetId, stateId, onRe
       }))),
     ]);
   }).filter((item) => !(item.asset_type === assetType && item.asset_id === assetId && item.state_id === stateId));
-  const labelFor = (item: CastReferenceInput) => choices.find((choice) => referenceKey(choice) === referenceKey(item))?.label ?? item.asset_id;
+  const labelFor = (item: CastReferenceInput) => "upload_id" in item
+    ? uploadLabels[item.upload_id] ?? t("Uploaded image")
+    : choices.find((choice) => referenceKey(choice) === referenceKey(item))?.label ?? item.asset_id;
   const available = choices.filter((item) => !selected.some((attachment) => referenceKey(attachment) === referenceKey(item)));
   const { data: capabilities } = useAssetRegenEstimate(projectName, assetType, assetId, stateId);
   const { data: estimate } = useAssetRegenEstimate(projectName, assetType, assetId, stateId, true, selected.length);
+
+  const uploadImage = async (file: File | undefined) => {
+    if (!file) return;
+    if (!ACCEPTED_IMAGE_TYPES.has(file.type)) return setUploadError(t("Use a PNG, JPG, or WebP image."));
+    if (file.size > MAX_IMAGE_BYTES) return setUploadError(t("Reference images must be 10 MB or smaller."));
+    setUploadError(null);
+    setUploading(true);
+    try {
+      const upload = await uploadCastReference(projectName, file);
+      setUploadLabels((labels) => ({ ...labels, [upload.upload_id]: upload.label }));
+      if (!selected.some((item) => "upload_id" in item && item.upload_id === upload.upload_id)) {
+        setSelection([...selected, { upload_id: upload.upload_id }]);
+      }
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : t("The image could not be uploaded."));
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const instructionPlaceholder = t(assetType === "character"
     ? "Change their appearance, outfit, expression or mood…"
@@ -58,7 +93,7 @@ export function CastRegenAction({ projectName, assetType, assetId, stateId, onRe
       {selected.length > 0 && estimate && !estimate.reference_assets_supported && <p role="alert" className="font-body text-sm text-hero-red">{t("Reference attachments are temporarily unavailable. Refresh before trying again.")}</p>}
       {selected.length > 0 && <ul aria-label={t("Attached references")} className="space-y-2">
         {selected.map((item) => <li key={referenceKey(item)} className="flex min-w-0 items-center gap-2 bg-surface-container p-2">
-          <img src={`/api${seriesPath(projectName)}/files/${referenceImage(item)}`} alt="" className="h-12 w-14 shrink-0 object-contain" />
+          <img src={referenceImage(projectName, item)} alt="" className="h-12 w-14 shrink-0 object-contain" />
           <span className="min-w-0 flex-1 break-words font-body text-xs leading-5 text-ink-black">{labelFor(item)}</span>
           <button type="button" disabled={props.busy || props.disabled} aria-label={`${t("Remove reference")} · ${labelFor(item)}`}
             onClick={() => setSelection(selected.filter((attachment) => referenceKey(attachment) !== referenceKey(item)))}
@@ -71,18 +106,28 @@ export function CastRegenAction({ projectName, assetType, assetId, stateId, onRe
         <summary className="min-h-11 cursor-pointer py-3 font-body text-xs text-ink-muted underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-hero-red">
           {t("Add a reference")}
         </summary>
-        <div className="pb-3">
-          <label htmlFor={selectId} className="block font-body text-sm text-ink-black">{t("Choose a reference")}</label>
-          <p className="my-1 font-body text-xs leading-5 text-ink-muted">{t("Attach an image from this project, then describe how it should guide the change.")}</p>
-          <select id={selectId} value="" disabled={props.busy || props.disabled || available.length === 0}
-            onChange={(event) => {
-              const item = choices.find((choice) => referenceKey(choice) === event.target.value);
-              if (item) setSelection([...selected, { asset_type: item.asset_type, asset_id: item.asset_id, state_id: item.state_id }]);
-            }}
-            className="min-h-11 w-full min-w-0 border-2 border-ink-black/25 bg-bristol px-2 font-body text-sm text-ink-black focus-visible:outline-2 focus-visible:outline-hero-red disabled:opacity-50">
-            <option value="">{t("Choose an image…")}</option>
-            {available.map((item) => <option key={referenceKey(item)} value={referenceKey(item)}>{item.label}</option>)}
-          </select>
+        <div className="space-y-3 pb-3">
+          <p className="font-body text-xs leading-5 text-ink-muted">{t("Attach any image, then describe how it should guide the change.")}</p>
+          <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" tabIndex={-1} aria-hidden="true"
+            onChange={(event) => { void uploadImage(event.target.files?.[0]); event.target.value = ""; }} />
+          <button type="button" disabled={props.busy || props.disabled || uploading} onClick={() => fileRef.current?.click()}
+            className="flex min-h-11 w-full items-center justify-center gap-2 border-2 border-dashed border-ink-black/30 bg-bristol px-3 font-body text-sm text-ink-black hover:border-ink-black/60 focus-visible:outline-2 focus-visible:outline-hero-red disabled:opacity-50">
+            <Upload size={16} aria-hidden="true" />
+            {uploading ? t("Uploading…") : t("Upload an image")}
+          </button>
+          {uploadError && <p role="alert" className="font-body text-xs text-hero-red">{uploadError}</p>}
+          {available.length > 0 && <div>
+            <label htmlFor={selectId} className="block font-body text-xs text-ink-muted">{t("Or choose one from this project")}</label>
+            <select id={selectId} value="" disabled={props.busy || props.disabled}
+              onChange={(event) => {
+                const item = choices.find((choice) => referenceKey(choice) === event.target.value);
+                if (item) setSelection([...selected, { asset_type: item.asset_type, asset_id: item.asset_id, state_id: item.state_id }]);
+              }}
+              className="mt-1 min-h-11 w-full min-w-0 border-2 border-ink-black/25 bg-bristol px-2 font-body text-sm text-ink-black focus-visible:outline-2 focus-visible:outline-hero-red disabled:opacity-50">
+              <option value="">{t("Choose an image…")}</option>
+              {available.map((item) => <option key={referenceKey(item)} value={referenceKey(item)}>{item.label}</option>)}
+            </select>
+          </div>}
         </div>
       </details>}
     </div>}

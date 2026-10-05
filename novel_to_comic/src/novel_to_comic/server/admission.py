@@ -26,6 +26,10 @@ _PAID = re.compile(r"^/(?:run|regen-[^/]+|cover|lettering/translate|approve/(?:b
 # Correction previews read the same page inputs as submission and must remain
 # available while independent page jobs run. Submission owns same-page conflicts.
 _TARGETED = re.compile(r"^/(?:regen-(?!extract)[^/]+|cover|pages/\d+/(?:generate|analyze|visual-review|corrections(?:/preview)?)|(?:characters|locations)/[^/]+/states/[^/]+/(?:regenerate|regenerate-instructed))$")
+# These routes only admit durable work. Execution owns artifact changes, so
+# accepting a correction never requires the author to wait for a stage.
+_QUEUED = re.compile(r"^/(?:regen-(?:ref|state-ref|plate|prop)(?:-instructed)?|cover|styles/(?:direction|generate-samples|validation)|pages/\d+/(?:generate|corrections)|(?:characters|locations)/[^/]+/states/[^/]+/(?:regenerate|regenerate-instructed))$")
+_REVIEW = re.compile(r"^/(?:pages/\d+/(?:corrections/preview|issues(?:/[^/]+/(?:accept|dismiss))?)|editorial/decisions|story-changes/preview)$")
 
 
 _PART_ROUTE = re.compile(r"^/parts/(part_\d{4})(/.*)?$")
@@ -106,8 +110,9 @@ def mutation_conflicts(app, key: str, suffix: str, part: str | None = None,
         return False
     elif suffix.startswith("/story-bible"):
         # Story Bible edits wait only for an extraction writing the same Bible.
-        # Removing or merging also waits for Adapt and Plan, which cite entities.
-        citing = {"extract", "adapt", "plan"} if method == "DELETE" or suffix.endswith("/merge") else {"extract"}
+        # Removing, merging or undoing also waits for Adapt and Plan, which cite entities.
+        takes_away = method == "DELETE" or suffix.endswith(("/merge", "/undo"))
+        citing = {"extract", "adapt", "plan"} if takes_away else {"extract"}
         return any(job.kind == "pipeline_stage" and job.payload.get("stage") in citing for job in jobs)
     elif (suffix == "/run" or _APPROVAL.fullmatch(suffix) or suffix.startswith("/reset/")
           or suffix in {"/cast/references/keep", "/cast/reopen"}):
@@ -138,6 +143,23 @@ def mutation_conflicts(app, key: str, suffix: str, part: str | None = None,
                    or (job.kind == "complete_page_draw" and job.payload.get("page_number") == number)
                    for job in jobs)
     return bool(jobs)
+
+
+def review_conflicts(app, key: str, suffix: str, part: str | None) -> bool:
+    """Review records only wait for writers of their own saved evidence."""
+    jobs = [job for job in _active_jobs(app, key)
+            if part is None or _job_part(job) in {part, None}]
+    page = re.fullmatch(r"/pages/(\d+)/issues(?:/[^/]+/(?:accept|dismiss))?", suffix)
+    if page:
+        return any(
+            (job.kind == "complete_page_draw" and job.payload.get("page_number") == int(page.group(1)))
+            or (job.kind == "pipeline_stage" and job.payload.get("stage") in {"extract", "adapt", "plan", "draw"})
+            for job in jobs
+        )
+    if suffix == "/editorial/decisions":
+        return any(job.kind == "pipeline_stage" and job.payload.get("stage") in {"extract", "adapt", "plan"}
+                   for job in jobs)
+    return False
 
 
 class Admission:
@@ -279,13 +301,16 @@ async def admission_middleware(request, call_next):
                 raise HTTPException(503, {"code": "credits_unavailable", "message": "Credit authorization is temporarily unavailable. Try again when service is ready."})
             pkey = project_key(account, project_id)
             part = part_route.group(1) if part_route else None
-            if any(job.project_name == pkey and getattr(job, "kind", None) == "lettering_translation" and job.status in {"queued", "running"}
+            review_or_queue = request.method == "POST" and bool(_QUEUED.fullmatch(suffix) or _REVIEW.fullmatch(suffix))
+            if _REVIEW.fullmatch(suffix) and review_conflicts(request.app, pkey, suffix, part):
+                raise HTTPException(409, "This review's saved evidence is being updated. Other reviews remain available.")
+            if not review_or_queue and any(job.project_name == pkey and getattr(job, "kind", None) == "lettering_translation" and job.status in {"queued", "running"}
                    and (part is None or _job_part(job) in {part, None})
                    for job in getattr(request.app.state, "generation_jobs", {}).values()):
                 raise HTTPException(409, "Wait for project lettering translation to finish before changing this project.")
-            if not _TARGETED.fullmatch(suffix) and mutation_conflicts(request.app, pkey, suffix, part, request.method):
+            if not review_or_queue and not _TARGETED.fullmatch(suffix) and mutation_conflicts(request.app, pkey, suffix, part, request.method):
                 raise HTTPException(409, "Wait for all project jobs to finish before changing this project.")
-            if _TARGETED.fullmatch(suffix):
+            if not review_or_queue and _TARGETED.fullmatch(suffix):
                 if any(job.project_name == pkey and job.status in {"queued", "running"}
                        and job.kind in {"pipeline_stage", "style_suggest"}
                        for job in request.app.state.generation_jobs.values()):

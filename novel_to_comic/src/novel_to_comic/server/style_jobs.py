@@ -30,6 +30,23 @@ def _checkpoint(directory, owned, proofs, error=None):
         save_state(state, directory)
 
 
+def _record_progress(directory, owned, proofs) -> None:
+    """Keep the Style stage's done count current while proofs finish.
+
+    The status API's item counts feed every progress view outside the Look
+    room (the floating indicator); without this they stayed at zero until the
+    whole batch ended.
+    """
+    if not owned:
+        return
+    with production_lock(directory):
+        state = load_state(directory)
+        if state.stages["style"].status != StageStatus.RUNNING:
+            return
+        state.stages["style"].items_done = sum(proof["status"] == "complete" for proof in proofs.values())
+        save_state(state, directory)
+
+
 STYLE_OPERATIONS = frozenset({"style_sample", "style_validation", "style_suggest", "style_direction"})
 
 
@@ -89,6 +106,7 @@ async def execute_style(app, job, directory, config):
             raise
         finally:
             persist_generation_job(app, job)
+            _record_progress(directory, owned, job.payload["proofs"])
             channel.put_nowait({"type": "stage_progress", "stage": "style_suggest",
                 "done": sum(p["status"] == "complete" for p in job.payload["proofs"].values()),
                 "total": len(job.payload["proofs"])})

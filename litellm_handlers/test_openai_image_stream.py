@@ -57,7 +57,8 @@ def test_streamed_edit_returns_final_image_usage_and_no_gateway_cost(monkeypatch
     assert request.headers["authorization"] == "Bearer sk-test"
     body = request.content
     for field, value in (("model", model), ("size", "1024x1536"), ("stream", "true"),
-                         ("partial_images", "0"), ("quality", "medium"), ("output_format", "png")):
+                         ("partial_images", "0"), ("quality", "medium"), ("output_format", "png"),
+                         ("moderation", "low")):
         assert f'name="{field}"\r\n\r\n{value}\r\n'.encode() in body
     assert body.count(b'name="image[]"') == 2
     assert b"canary_wire_request" not in body
@@ -80,6 +81,7 @@ def test_streamed_generation_sends_json(monkeypatch, model):
     body = json.loads(seen[0].content)
     assert str(seen[0].url).endswith("/images/generations")
     assert body["stream"] is True and body["partial_images"] == 0 and body["n"] == 1
+    assert body["moderation"] == "low"
     assert body["model"] == model
     assert result.data[0].b64_json == PNG
 

@@ -40,6 +40,13 @@ T = TypeVar("T")
 _OPENAI_IMAGE_PHASE = re.compile(
     r"OpenAI image (?P<phase>[a-z_]+) failed for [\w./-]+(?:; upstream_status=(?P<status>\d{3}))?"
 )
+# OpenAI's safety refusal codes. A refusal can arrive before acceptance (a
+# submit 400) or inside an accepted event stream; either way it is the
+# request's fault, never a lost result. The redacting wire transport copies the
+# code as ``openai_block`` so it survives without the provider message.
+_OPENAI_IMAGE_BLOCK = re.compile(
+    r'(?:\bcode=|"openai_block": ")(?P<code>moderation_blocked|content_policy_violation)\b'
+)
 # Set by the non-panel wire transport when the gateway itself was unreachable.
 _GATEWAY_UNREACHABLE_MARKER = "gateway connection could not be established"
 # Failures after which OpenAI cannot have charged for the attempt.
@@ -50,6 +57,12 @@ def openai_image_failure_marker(message: str) -> str | None:
     """The bounded, prompt-free phase marker inside a gateway error message."""
     match = _OPENAI_IMAGE_PHASE.search(message)
     return match.group(0) if match else None
+
+
+def openai_image_block_code(message: str) -> str | None:
+    """OpenAI's safety refusal code inside a gateway error message, if any."""
+    match = _OPENAI_IMAGE_BLOCK.search(message)
+    return match["code"] if match else None
 
 
 def classify_openai_image_failure(exc: BaseException) -> str | None:
@@ -68,6 +81,8 @@ def classify_openai_image_failure(exc: BaseException) -> str | None:
     if exc.phase == "ambiguous_submission":
         return "unknown_outcome"
     if exc.phase != "gateway_request":
+        return None
+    if openai_image_block_code(str(exc)):
         return None
     match = _OPENAI_IMAGE_PHASE.search(str(exc))
     if match is None:

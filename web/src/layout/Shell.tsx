@@ -14,7 +14,7 @@ export function Shell() {
 
   return (
     <TopBarSlotProvider>
-      <div className="flex h-dvh flex-col bg-surface-container md:flex-row">
+      <div className="flex h-dvh flex-col bg-surface-container studio-desktop:flex-row">
         <a
           href="#main-content"
           className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:bg-hero-red focus:px-4 focus:py-2 focus:text-bristol focus:font-meta focus:text-[0.6rem] focus:tracking-[0.18em] focus:outline-none"
@@ -22,11 +22,11 @@ export function Shell() {
           {t("SKIP TO CONTENT")}
         </a>
         <SideNav showDesktop={showDesktopProjectNav} />
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <AppTopBar />
-          <main id="main-content" className="app-workbench min-w-0 flex-1 overflow-y-auto bg-pulp-paper">
+          <main id="main-content" className="app-workbench min-h-0 min-w-0 flex-1 overflow-y-auto bg-pulp-paper">
             <div className={[
-              "app-workbench-sheet flex min-h-full w-full flex-col bg-pulp-paper px-5 py-6 md:px-10 md:py-10",
+              "app-workbench-sheet flex min-h-full w-full flex-col bg-pulp-paper px-3 py-3 studio-desktop:px-10 studio-desktop:py-10",
               !isLibrary ? "mx-auto max-w-[1560px]" : "",
             ].join(" ")}>
               <Outlet />

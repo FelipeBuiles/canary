@@ -1,14 +1,17 @@
 /**
  * Content-free errors, canonical page views, anonymous signup intent, and
  * content-masked click and session replay capture. Authenticated product
- * events retain their API path. Identity stays memory-only. Bounded attribution
+ * events retain their API path. Identity persists in first-party localStorage. Bounded attribution
  * tokens expire in browser storage after 24 hours; URLs are reduced to route templates.
  */
 import type { PostHog, CaptureResult } from "posthog-js/dist/module.no-external";
+import { apiRouteTemplate, observeApiRequests, safeExceptionMessage, type ErrorDiagnostics } from "./lib/telemetryDiagnostics";
+import { applicationStylesheet, replayClasses, replayStylesheet, replayText, safeReplayLabel } from "./lib/replayPrivacy";
 
 let client: PostHog | undefined;
 let loading: Promise<void> | undefined;
 let account: string | null = null;
+let authKnown = false;
 const tokenPattern = /^[A-Za-z0-9_./:{}@+-]{1,160}$/;
 const campaignPattern = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const labelPattern = /^[A-Za-z0-9 ._-]{1,40}$/;
@@ -133,30 +136,43 @@ function scrubElementsChain(chain: string): string | undefined {
  * templates and plugin frames (console and network) are dropped, since they
  * can carry request URLs or logged content.
  */
-const replayTags = new Set("html head body title div span p main section article aside header footer nav button a label input textarea select option ul ol li h1 h2 h3 h4 h5 h6 form fieldset legend details summary dialog table thead tbody tr th td br hr link meta".split(" "));
+const replayTags = new Set("html head body title style div span p main section article aside header footer nav button a label input textarea select option ul ol li h1 h2 h3 h4 h5 h6 form fieldset legend details summary dialog table thead tbody tr th td br hr link meta".split(" "));
 const replayKeys = new Set("id parentId nextId previousId type source x y timeOffset width height scrollTop scrollLeft isChecked positions adds removes texts attributes node childNodes initialOffset isSVG isShadow isShadowHost rootId".split(" "));
-const replayAttributes = new Set(["href", "src", "rel", "type", "role", "width", "height", "aria-expanded", "aria-selected", "aria-pressed", "aria-hidden", "disabled", "checked"]);
+const replayAttributes = new Set(["href", "src", "class", "rel", "type", "role", "width", "height", "aria-expanded", "aria-selected", "aria-pressed", "aria-hidden", "disabled", "checked"]);
+const replayLabels = new Map<number, string>();
 
 /** Fail closed after rrweb serialization too: input masking alone cannot protect DOM attributes. */
-function scrubReplayValue(value: unknown): unknown {
+function scrubReplayValue(value: unknown, label?: string): unknown {
   if (value === null || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))) return value;
-  if (Array.isArray(value)) return value.map(scrubReplayValue);
+  if (Array.isArray(value)) return value.map(item => scrubReplayValue(item, label));
   if (!value || typeof value !== "object") return undefined;
   const result: Record<string, unknown> = {};
   const object = value as Record<string, unknown>;
+  const attributes = object.attributes as Record<string, unknown> | undefined;
+  const declaredLabel = attributes && safeReplayLabel(attributes["data-ph-safe-label"]);
+  const nodeLabel = declaredLabel ?? (typeof object.id === "number" ? replayLabels.get(object.id) : undefined) ?? label;
+  if (typeof object.id === "number" && nodeLabel && replayLabels.size < 20000) replayLabels.set(object.id, nodeLabel);
+  if (object.tagName === "style") {
+    const css = replayStylesheet(attributes?.["data-vite-dev-id"]);
+    return { type: 2, id: object.id, tagName: "style", attributes: {}, childNodes: css ? [{ type: 3, id: (object.childNodes as { id?: number }[] | undefined)?.[0]?.id, textContent: css }] : [] };
+  }
   for (const [key, item] of Object.entries(object)) {
     if (key === "tagName") result[key] = typeof item === "string" && replayTags.has(item) ? item : "div";
     else if (key === "textContent" || key === "text" || key === "value") {
-      if (typeof item === "string") result[key] = maskReplayText(item);
+      // rrweb input events (source 5) always stay masked, even inside a labelled control.
+      if (typeof item === "string") result[key] = replayText(item, object.source === 5 ? undefined : nodeLabel);
     } else if (key === "attributes" && item && typeof item === "object" && !Array.isArray(item)) {
       result[key] = Object.fromEntries(Object.entries(item).filter(([name]) => replayAttributes.has(name))
-        .map(([name, content]) => [name, typeof content === "string" ? maskReplayAttribute(name, content) : null]));
+        .flatMap(([name, content]) => {
+          const clean = typeof content === "string" ? maskReplayAttribute(name, content) : null;
+          return name === "class" && clean === "[redacted]" ? [] : [[name, clean]];
+        }));
     } else if (replayKeys.has(key)) {
-      const clean = scrubReplayValue(item);
+      const clean = scrubReplayValue(item, nodeLabel);
       if (clean !== undefined) result[key] = clean;
     }
   }
-  // No script, CSS, media, iframe, or custom-element child content is replayable.
+  // Scripts, media, iframes, and custom-element child content stay blocked.
   if (typeof object.tagName === "string" && !replayTags.has(object.tagName)) {
     result.attributes = {};
     result.childNodes = [];
@@ -183,24 +199,34 @@ export function scrubSnapshotData(data: unknown): unknown[] | undefined {
       return [{ type: 5, ...timestamp, data: { tag: "$url_changed", payload: { href: canonicalUrl(inner.href) } } }];
     }
     if (item.type === 3 && (typeof payload?.source !== "number" || payload.source < 0 || payload.source > 6)) return [];
+    if (item.type === 2) replayLabels.clear();
+    if (item.type === 3 && Array.isArray(payload?.removes)) {
+      for (const removed of payload.removes) if (typeof removed?.id === "number") replayLabels.delete(removed.id);
+    }
     return [{ type: item.type, ...timestamp, data: scrubReplayValue(payload) ?? {} }];
   });
 }
 
-/** All prose, including dynamic controls and opt-out markers, stays masked. */
+/** Only an explicitly labelled, literal application control can expose text. */
 export function maskReplayText(text: string, _element?: HTMLElement | null): string {
-  void _element; // rrweb supplies the element; no element may opt out of masking.
-  return text.replace(/\S/g, "*");
+  const marker = _element?.closest("[data-ph-safe-label]");
+  if (_element?.closest("[data-ph-block], input, textarea, select, [contenteditable]")) return replayText(text);
+  return replayText(text, safeReplayLabel(marker?.getAttribute("data-ph-safe-label")));
 }
 
 export function maskReplayAttribute(name: string, value: string): string {
+  if (name === "data-ph-safe-label") return safeReplayLabel(value) ?? "[redacted]";
+  if (name === "data-vite-dev-id") return replayStylesheet(value) ? value : "[redacted]";
   if (name === "href" || name === "src") {
+    const stylesheet = name === "href" && applicationStylesheet(value);
+    if (stylesheet) return stylesheet;
     try {
       const url = new URL(value, window.location.origin);
       if (url.origin === window.location.origin) return window.location.origin + canonicalPath(url.pathname, account !== null);
     } catch { /* Redact malformed or external destinations. */ }
     return "[redacted]";
   }
+  if (name === "class") return replayClasses(value) ?? "[redacted]";
   if ((name === "width" || name === "height") && /^\d{1,5}$/.test(value)) return value;
   if (["aria-expanded", "aria-selected", "aria-pressed", "aria-hidden", "disabled", "checked"].includes(name) && ["true", "false", ""].includes(value)) return value;
   if (name === "role" && ["button", "dialog", "tab", "tabpanel", "navigation", "status", "alert", "group", "listbox", "option"].includes(value)) return value;
@@ -213,7 +239,7 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
   if (!event) return null;
   try {
     if (!["$exception", "$identify", "$create_alias", "$pageview", "signup_submitted", "$autocapture", "$rageclick",
-      "$snapshot"].includes(event.event)) return null;
+      "$snapshot", "api_request_completed"].includes(event.event)) return null;
     const source = event.properties ?? {};
     const properties: Record<string, unknown> = {
       $geoip_disable: true,
@@ -240,6 +266,17 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
       if (typeof source[key] === "number" && Number.isFinite(source[key])) properties[key] = source[key];
     }
     if (typeof source.$is_identified === "boolean") properties.$is_identified = source.$is_identified;
+    for (const key of ["request_id", "browser_session_id", "job_id", "operation_id", "trace_id", "span_id"]) {
+      const value = source[key];
+      if (typeof value === "string" && /^(?:[a-f0-9]{32}|[a-f0-9]{16}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/.test(value)) properties[key] = value;
+    }
+    if (typeof source.route === "string" && /^\/api(?:\/[a-z-]+|\/:id){0,16}$/.test(source.route)
+      && source.route === apiRouteTemplate(source.route.slice(4))) properties.route = source.route;
+    if (typeof source.method === "string" && ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"].includes(source.method)) properties.method = source.method;
+    if (typeof source.http_status === "number" && Number.isInteger(source.http_status) && source.http_status >= 100 && source.http_status <= 599) properties.http_status = source.http_status;
+    if (typeof source.latency_ms === "number" && Number.isFinite(source.latency_ms) && source.latency_ms >= 0) properties.latency_ms = source.latency_ms;
+    if (typeof source.error_code === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(source.error_code)) properties.error_code = source.error_code;
+    if (source.outcome === "succeeded" || source.outcome === "failed") properties.outcome = source.outcome;
     if (event.event === "$snapshot") {
       const frames = scrubSnapshotData(source.$snapshot_data);
       if (!frames || typeof properties.$session_id !== "string" || typeof properties.$window_id !== "string") return null;
@@ -300,14 +337,15 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
         const stack = item.stacktrace as { frames?: Record<string, unknown>[] } | undefined;
         return {
           type: typeof item.type === "string" && ["Error", "TypeError", "RangeError", "ReferenceError", "SyntaxError", "URIError", "EvalError", "DOMException", "AbortError", "ApiError", "InsufficientCreditsError", "ChunkLoadError"].includes(item.type) ? item.type : "Error",
-          value: "[redacted]",
+          value: safeExceptionMessage(item.value, properties.error_code, item.type),
           stacktrace: { frames: (stack?.frames ?? []).slice(-40).map(frame => {
             const clean: Record<string, unknown> = {};
             for (const key of ["lineno", "colno", "in_app", "platform"]) clean[key] = frame[key];
             // Retain deployed asset path/chunk IDs for source maps, never queries or external URLs.
             if (typeof frame.filename === "string") {
               const url = new URL(frame.filename, window.location.origin);
-              if (url.origin === window.location.origin && /^\/assets\/[A-Za-z0-9_.-]+\.js$/.test(url.pathname)) clean.filename = url.pathname;
+              if (url.origin === window.location.origin && (/^\/assets\/[A-Za-z0-9_.-]+\.js$/.test(url.pathname)
+                || /^\/src\/[A-Za-z0-9_/-]+\.(?:tsx?|jsx?)$/.test(url.pathname))) clean.filename = url.pathname;
             }
             for (const key of ["function", "module", "chunk_id"]) {
               if (typeof frame[key] === "string" && tokenPattern.test(frame[key])) clean[key] = frame[key];
@@ -316,7 +354,7 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
           }) },
         };
       });
-      properties.$exception_message = "[redacted]";
+      properties.$exception_message = safeExceptionMessage(source.$exception_message, properties.error_code);
     }
     return { event: event.event, uuid: event.uuid, timestamp: event.timestamp, properties };
   } catch {
@@ -325,13 +363,14 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
 }
 
 export function setTelemetryUser(userId: string | null): void {
-  if (account === userId) return;
+  if (authKnown && account === userId) return;
+  authKnown = true;
   const previous = account;
   account = userId;
   if (!client) return;
-  // Signing in from an anonymous visit keeps that visit's page views; switching
-  // or leaving an account starts a fresh anonymous identity.
-  if (previous) client.reset();
+  // Merge the persistent visit on sign-in; reset the device on account changes
+  // so the next account cannot inherit the previous account's visits.
+  if (previous || (client.get_property("$user_state") === "identified" && client.get_distinct_id() !== userId)) client.reset(true);
   if (userId) client.identify(userId);
 }
 
@@ -345,6 +384,13 @@ export function initTelemetry(): Promise<void> {
     // The no-external build never fetches scripts; bundle the replay recorder.
     await import("posthog-js/dist/posthog-recorder");
     const { default: posthog } = await import("posthog-js/dist/module.no-external");
+    let persistentIdentity = false;
+    try {
+      const probeKey = "canary:telemetry-storage-test";
+      window.localStorage.setItem(probeKey, "1");
+      persistentIdentity = window.localStorage.getItem(probeKey) === "1";
+      window.localStorage.removeItem(probeKey);
+    } catch { /* Use memory without anonymous merging when storage is denied. */ }
     posthog.init(key, {
       api_host: host,
       // Clicks and rage clicks keep tag/class structure only (see scrubEvent).
@@ -363,6 +409,8 @@ export function initTelemetry(): Promise<void> {
         recordHeaders: false,
         recordBody: false,
         recordCrossOriginIframes: false,
+        // Load only our scrubbed build stylesheet links in the replay player.
+        inlineStylesheet: false,
       },
       capture_pageview: false,
       capture_pageleave: false,
@@ -371,11 +419,18 @@ export function initTelemetry(): Promise<void> {
       capture_dead_clicks: false,
       capture_exceptions: { capture_unhandled_errors: true, capture_unhandled_rejections: true, capture_console_errors: false },
       person_profiles: "identified_only",
-      persistence: "memory",
+      persistence: persistentIdentity ? "localStorage" : "memory",
+      reuseAnonymousId: !persistentIdentity,
+      save_referrer: false,
+      save_campaign_params: false,
+      get_current_url: () => canonicalUrl(window.location.href),
+      disable_capture_url_hashes: true,
       ip: false,
       before_send: scrubEvent,
     });
     client = posthog;
+    observeApiRequests(properties => posthog.capture("api_request_completed", properties), () => posthog.get_session_id());
+    if (authKnown && posthog.get_property("$user_state") === "identified" && posthog.get_distinct_id() !== account) posthog.reset(true);
     if (account) posthog.identify(account);
   })().catch(() => { /* Telemetry must not prevent the application from loading. */ });
   return loading;
@@ -396,5 +451,8 @@ export function trackSignupSubmitted(): void {
 }
 
 export function captureUiError(error: unknown): void {
-  void initTelemetry().then(() => client?.captureException(error));
+  const value = error as { status?: number; code?: string; diagnostics?: ErrorDiagnostics; name?: string } | null;
+  const properties = { ...value?.diagnostics, http_status: value?.status ?? value?.diagnostics?.http_status,
+    error_code: value?.code ?? (value?.name === "InsufficientCreditsError" ? "insufficient_credits" : value?.diagnostics?.error_code) };
+  void initTelemetry().then(() => client?.captureException(error, properties));
 }

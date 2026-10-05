@@ -1203,6 +1203,21 @@ def test_text_reasoning_is_pinned_in_runtime_config(sdk, effort):
     assert observed and all(value == effort for value in observed)
 
 
+@pytest.mark.parametrize(("kind", "expected"), [("text", "medium"), ("image", "low")])
+def test_unspecified_effort_is_pinned_and_never_inherits_the_user_codex_config(sdk, kind, expected):
+    # The user's own ~/.codex/config.toml may say "max", which gpt-5.5 rejects.
+    observed = []
+    sdk.config_change = lambda config: observed.append(config.get("model_reasoning_effort"))
+    if kind == "image":
+        sdk.events = [_image_event(sdk)]
+        _generate()
+    else:
+        sdk.events = [sdk.types.ItemCompletedNotification(item=_Record(root=sdk.types.AgentMessageThreadItem(
+            id="message-1", type="agentMessage", phase=None, text="ready"))), _completed(sdk)]
+        asyncio.run(runtime.run_text(model="exact-model", system_prompt="Reply", user_content="Hello"))
+    assert observed and all(value == expected for value in observed)
+
+
 @pytest.mark.parametrize("kind", ["text", "image"])
 def test_fast_service_tier_is_pinned_and_recorded_for_every_call(sdk, kind):
     observed = []

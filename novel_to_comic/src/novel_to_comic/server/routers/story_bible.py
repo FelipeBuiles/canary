@@ -28,14 +28,18 @@ from novel_to_comic.story_bible_edits import (
     apply_edit,
     citation_index,
     edit_entity,
+    edit_impact,
     edit_state,
     editable_scene_ids,
     fill_blank_anchor,
     merge_entities,
+    possible_duplicates,
     refuse_if_cited,
     remove_entity,
     remove_state,
     restore_excluded,
+    undo_last_edit,
+    undo_preview,
 )
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
 
@@ -118,6 +122,31 @@ def _saved(bible: StoryBible, **extra) -> dict:
     return {"story_bible": bible, "revision": bible.revision, **extra}
 
 
+def _name(bible: StoryBible, kind: str, entity_id: str) -> str:
+    return next((item.name for item in getattr(bible, kind) if item.id == entity_id), entity_id)
+
+
+def _look(bible: StoryBible, kind: str, entity_id: str, state_id: str) -> str:
+    entity = next((item for item in getattr(bible, kind) if item.id == entity_id), None)
+    states = entity.appearance_states if entity is not None else []
+    return next((state.label for state in states if state.id == state_id), state_id)
+
+
+def _change(action: str, kind: str, entity_id: str, *, into: str | None = None, state_id: str | None = None):
+    """Describe an edit for Undo by names, read from the Bible it applied to."""
+
+    def describe(before: StoryBible, after: StoryBible) -> dict:
+        source = before if any(item.id == entity_id for item in getattr(before, kind)) else after
+        change = {"action": action, "kind": kind, "entity_id": entity_id, "name": _name(source, kind, entity_id)}
+        if into is not None:
+            change["into"] = _name(before, kind, into)
+        if state_id is not None:
+            change["look"] = _look(before if action != "add_look" else after, kind, entity_id, state_id)
+        return change
+
+    return describe
+
+
 @router.get("/story-bible/editor")
 def story_bible_editor(project=Depends(get_project)):
     """The Story Bible with what the editor needs to keep edits safe."""
@@ -137,6 +166,8 @@ def story_bible_editor(project=Depends(get_project)):
     for (entity_id, state_id), titles in states.items():
         state_citations.setdefault(entity_id, {})[state_id] = titles
     return {
+        "undo": undo_preview(root, bible),
+        "possible_duplicates": possible_duplicates(bible, entities),
         "story_bible": story_bible_api_view(bible, root),
         "revision": bible.revision,
         "parts": parts,
@@ -147,125 +178,13 @@ def story_bible_editor(project=Depends(get_project)):
     }
 
 
-@router.post("/story-bible/visual-anchor")
-def fill_visual_anchor(body: VisualAnchorFill, project=Depends(get_project)):
-    """Add a missing visual anchor without resetting any stage.
-
-    Existing anchors stay verbatim: only a blank one can be filled. An entry
-    with no written look cannot reach Plan, so no page was drawn from it; an
-    existing Cast image of it turns out of date for the author to keep or redo.
-    Admission already holds this behind a running Extract.
-    """
-    root, _config, state = project
-    if any(stage.status == StageStatus.RUNNING for stage in state.stages.values()):
-        raise HTTPException(409, "Wait for the running stage to finish before adding a visual anchor.")
-    with _edit_errors():
-        bible = fill_blank_anchor(root, body.entity_id, body.appearance_state_id, body.visual_anchor)
-    return _saved(bible, missing_visual_anchors=blank_visual_anchors(bible))
-
-
-@router.patch("/story-bible/{kind}/{entity_id}")
-def edit_story_bible_entity(kind: Kind, entity_id: str, body: EntityEdit, project=Depends(get_project)):
-    root, config, _state = project
-    with _edit_errors():
-        bible, _ = apply_edit(
-            root, body.expected_revision, lambda current: edit_entity(current, kind, entity_id, body.changes),
-            on_saved=_carry_references(config, root, kind, entity_id),
-        )
-    return _saved(bible)
-
-
-@router.post("/story-bible/{kind}")
-def add_story_bible_entity(kind: Kind, body: EntityAdd, project=Depends(get_project)):
+@router.post("/story-bible/undo")
+def undo_story_bible_edit(body: Revisioned, project=Depends(get_project)):
+    """Reverse the newest author edit, if nothing has changed the Bible since."""
     root, _config, _state = project
     with _edit_errors():
-        bible, entity_id = apply_edit(
-            root, body.expected_revision,
-            lambda current: add_entity(current, kind, body.details, body.scene_ids,
-                                       editable_scene_ids(root, current)),
-        )
-    return _saved(bible, entity_id=entity_id)
-
-
-@router.delete("/story-bible/{kind}/{entity_id}")
-def remove_story_bible_entity(
-    kind: Kind, entity_id: str, expected_revision: int = Query(ge=1), project=Depends(get_project),
-):
-    root, _config, _state = project
-
-    def edit(current: StoryBible) -> StoryBible:
-        refuse_if_cited(root, entity_id, action="remove it")
-        return remove_entity(current, kind, entity_id)
-
-    with _edit_errors():
-        bible, _ = apply_edit(root, expected_revision, edit)
-    return _saved(bible)
-
-
-@router.post("/story-bible/{kind}/{entity_id}/merge")
-def merge_story_bible_entity(kind: Kind, entity_id: str, body: EntityMerge, project=Depends(get_project)):
-    """Fold this entry into ``into``; its name becomes an alias there."""
-    root, _config, _state = project
-
-    def edit(current: StoryBible) -> StoryBible:
-        refuse_if_cited(root, entity_id, action="merge it away")
-        return merge_entities(current, kind, entity_id, body.into)
-
-    with _edit_errors():
-        bible, _ = apply_edit(root, body.expected_revision, edit)
-    return _saved(bible)
-
-
-@router.post("/story-bible/{kind}/{entity_id}/states")
-def add_story_bible_state(kind: Kind, entity_id: str, body: StateAdd, project=Depends(get_project)):
-    root, _config, _state = project
-    with _edit_errors():
-        bible, state_id = apply_edit(
-            root, body.expected_revision,
-            lambda current: add_state(current, kind, entity_id, body.details, body.starts_at_scene),
-        )
-    return _saved(bible, state_id=state_id)
-
-
-@router.patch("/story-bible/{kind}/{entity_id}/states/{state_id}")
-def edit_story_bible_state(
-    kind: Kind, entity_id: str, state_id: str, body: StateEdit, project=Depends(get_project),
-):
-    root, config, _state = project
-    with _edit_errors():
-        bible, _ = apply_edit(
-            root, body.expected_revision,
-            lambda current: edit_state(current, kind, entity_id, state_id, body.changes),
-            on_saved=_carry_references(config, root, kind, entity_id),
-        )
-    return _saved(bible)
-
-
-@router.delete("/story-bible/{kind}/{entity_id}/states/{state_id}")
-def remove_story_bible_state(
-    kind: Kind, entity_id: str, state_id: str, expected_revision: int = Query(ge=1),
-    project=Depends(get_project),
-):
-    root, _config, _state = project
-
-    def edit(current: StoryBible) -> StoryBible:
-        refuse_if_cited(root, entity_id, state_id, action="remove this look")
-        return remove_state(current, kind, entity_id, state_id)
-
-    with _edit_errors():
-        bible, _ = apply_edit(root, expected_revision, edit)
-    return _saved(bible)
-
-
-@router.delete("/story-bible/excluded/{kind}/{name}")
-def restore_story_bible_name(
-    kind: Kind, name: str, expected_revision: int = Query(ge=1), project=Depends(get_project),
-):
-    """Let later extractions find a removed name again."""
-    root, _config, _state = project
-    with _edit_errors():
-        bible, _ = apply_edit(root, expected_revision, lambda current: restore_excluded(current, kind, name))
-    return _saved(bible)
+        bible, change = undo_last_edit(root, body.expected_revision)
+    return _saved(bible, undone=change)
 
 
 @router.get("/story-bible/{kind}/draft-estimate")
@@ -329,3 +248,157 @@ async def draft_story_bible_entity(
         "suggested_scene_ids": [scene_id for scene_id in scene_ids if scene_id in editable],
         "mentioned_scene_ids": scene_ids,
     }
+
+
+@router.post("/story-bible/visual-anchor")
+def fill_visual_anchor(body: VisualAnchorFill, project=Depends(get_project)):
+    """Add a missing visual anchor without resetting any stage.
+
+    Existing anchors stay verbatim: only a blank one can be filled. An entry
+    with no written look cannot reach Plan, so no page was drawn from it; an
+    existing Cast image of it turns out of date for the author to keep or redo.
+    Admission already holds this behind a running Extract.
+    """
+    root, _config, state = project
+    if any(stage.status == StageStatus.RUNNING for stage in state.stages.values()):
+        raise HTTPException(409, "Wait for the running stage to finish before adding a visual anchor.")
+    with _edit_errors():
+        bible = fill_blank_anchor(root, body.entity_id, body.appearance_state_id, body.visual_anchor)
+    return _saved(bible, missing_visual_anchors=blank_visual_anchors(bible))
+
+
+@router.patch("/story-bible/{kind}/{entity_id}")
+def edit_story_bible_entity(kind: Kind, entity_id: str, body: EntityEdit, project=Depends(get_project)):
+    root, config, _state = project
+    with _edit_errors():
+        bible, _ = apply_edit(
+            root, body.expected_revision, lambda current: edit_entity(current, kind, entity_id, body.changes),
+            on_saved=_carry_references(config, root, kind, entity_id),
+            change=_change("edit", kind, entity_id),
+        )
+    return _saved(bible)
+
+
+@router.post("/story-bible/{kind}")
+def add_story_bible_entity(kind: Kind, body: EntityAdd, project=Depends(get_project)):
+    root, _config, _state = project
+    added: dict[str, str] = {}
+
+    def edit(current: StoryBible):
+        result, new_id = add_entity(current, kind, body.details, body.scene_ids, editable_scene_ids(root, current))
+        added["id"] = new_id
+        return result, new_id
+
+    with _edit_errors():
+        bible, entity_id = apply_edit(
+            root, body.expected_revision, edit,
+            change=lambda before, after: _change("add", kind, added["id"])(before, after),
+        )
+    return _saved(bible, entity_id=entity_id)
+
+
+@router.delete("/story-bible/{kind}/{entity_id}")
+def remove_story_bible_entity(
+    kind: Kind, entity_id: str, expected_revision: int = Query(ge=1), project=Depends(get_project),
+):
+    root, _config, _state = project
+
+    def edit(current: StoryBible) -> StoryBible:
+        refuse_if_cited(root, entity_id, action="remove it")
+        return remove_entity(current, kind, entity_id)
+
+    with _edit_errors():
+        bible, _ = apply_edit(root, expected_revision, edit, change=_change("remove", kind, entity_id))
+    return _saved(bible)
+
+
+@router.post("/story-bible/{kind}/{entity_id}/merge")
+def merge_story_bible_entity(kind: Kind, entity_id: str, body: EntityMerge, project=Depends(get_project)):
+    """Fold this entry into ``into``; its name becomes an alias there."""
+    root, _config, _state = project
+
+    def edit(current: StoryBible) -> StoryBible:
+        refuse_if_cited(root, entity_id, action="merge it away")
+        return merge_entities(current, kind, entity_id, body.into)
+
+    with _edit_errors():
+        bible, _ = apply_edit(root, body.expected_revision, edit,
+                              change=_change("merge", kind, entity_id, into=body.into))
+    return _saved(bible)
+
+
+@router.post("/story-bible/{kind}/{entity_id}/states")
+def add_story_bible_state(kind: Kind, entity_id: str, body: StateAdd, project=Depends(get_project)):
+    root, _config, _state = project
+    added: dict[str, str] = {}
+
+    def edit(current: StoryBible):
+        result, new_id = add_state(current, kind, entity_id, body.details, body.starts_at_scene)
+        added["id"] = new_id
+        return result, new_id
+
+    with _edit_errors():
+        bible, state_id = apply_edit(
+            root, body.expected_revision, edit,
+            change=lambda before, after: _change("add_look", kind, entity_id, state_id=added["id"])(before, after),
+        )
+    return _saved(bible, state_id=state_id)
+
+
+@router.patch("/story-bible/{kind}/{entity_id}/states/{state_id}")
+def edit_story_bible_state(
+    kind: Kind, entity_id: str, state_id: str, body: StateEdit, project=Depends(get_project),
+):
+    root, config, _state = project
+    with _edit_errors():
+        bible, _ = apply_edit(
+            root, body.expected_revision,
+            lambda current: edit_state(current, kind, entity_id, state_id, body.changes),
+            on_saved=_carry_references(config, root, kind, entity_id),
+            change=_change("edit_look", kind, entity_id, state_id=state_id),
+        )
+    return _saved(bible)
+
+
+@router.delete("/story-bible/{kind}/{entity_id}/states/{state_id}")
+def remove_story_bible_state(
+    kind: Kind, entity_id: str, state_id: str, expected_revision: int = Query(ge=1),
+    project=Depends(get_project),
+):
+    root, _config, _state = project
+
+    def edit(current: StoryBible) -> StoryBible:
+        refuse_if_cited(root, entity_id, state_id, action="remove this look")
+        return remove_state(current, kind, entity_id, state_id)
+
+    with _edit_errors():
+        bible, _ = apply_edit(root, expected_revision, edit,
+                              change=_change("remove_look", kind, entity_id, state_id=state_id))
+    return _saved(bible)
+
+
+@router.delete("/story-bible/excluded/{kind}/{name}")
+def restore_story_bible_name(
+    kind: Kind, name: str, expected_revision: int = Query(ge=1), project=Depends(get_project),
+):
+    """Bring a removed entry back, or let later extractions find a removed name again."""
+    root, _config, _state = project
+    with _edit_errors():
+        bible, _ = apply_edit(root, expected_revision, lambda current: restore_excluded(current, kind, name),
+                              change={"action": "restore", "kind": kind, "name": name})
+    return _saved(bible)
+
+
+@router.get("/story-bible/{kind}/{entity_id}/impact")
+def story_bible_edit_impact(
+    kind: Kind, entity_id: str, action: Literal["remove", "merge"] = "remove", into: str | None = None,
+    project=Depends(get_project),
+):
+    """What removing or merging this entry would change. Reads only."""
+    root, config, _state = project
+    if action == "merge" and not into:
+        raise HTTPException(422, "Choose the entry to keep.")
+    if into == entity_id:
+        raise HTTPException(422, "Choose two different entries to merge.")
+    with _edit_errors():
+        return edit_impact(config, root, kind, entity_id, merge_into=into if action == "merge" else None)

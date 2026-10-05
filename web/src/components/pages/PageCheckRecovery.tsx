@@ -7,9 +7,9 @@ import { Button } from "../ui/Button";
 import { useI18n } from "../../i18n";
 import { invalidateProject } from "../../api/projectScope";
 
-/** One calm line for pages drawn without a page read (older books, or a read that failed).
- * New pages are read automatically as they are drawn. */
-export function PageCheckRecovery({ project, unchecked, editable = true, onRecovered, requested = 0 }: { project: string; unchecked: number; editable?: boolean; onRecovered?: () => void; requested?: number }) {
+/** One calm line, after drawing settles, for pages whose automatic text check
+ * didn't finish. Every page is checked as it is drawn; this only re-reads. */
+export function PageCheckRecovery({ project, unchecked, onRecovered, requested = 0 }: { project: string; unchecked: number; onRecovered?: () => void; requested?: number }) {
   const { t } = useI18n();
   const client = useQueryClient();
   const [busy, setBusy] = useState(false);
@@ -74,14 +74,12 @@ export function PageCheckRecovery({ project, unchecked, editable = true, onRecov
   const failed = results.filter((page) => page.status !== "checked" && page.status !== "undrawn").length;
   const message = busy ? t("Checking pages…")
     : results.length && !failed ? t("All pages checked.")
-    : failed ? `${failed} ${t("{count, plural, one {page still needs a check.} other {pages still need a check.}}", { count: failed })}`
-    : editable
-      ? `${unchecked} ${t("{count, plural, one {page isn’t checked yet. Checking places balloons around faces and spots stray lettering.} other {pages aren’t checked yet. Checking places balloons around faces and spots stray lettering.}}", { count: unchecked })}`
-      : `${unchecked} ${t("{count, plural, one {page hasn’t had a text check. It can suggest wording differences.} other {pages haven’t had a text check. It can suggest wording differences.}}", { count: unchecked })}`;
+    : failed ? t("{count, plural, one {The text check still didn't finish on # page.} other {The text check still didn't finish on # pages.}}", { count: failed })
+    : t("{count, plural, one {The text check didn't finish on # page. Checking again never redraws it.} other {The text check didn't finish on # pages. Checking again never redraws them.}}", { count: unchecked });
   return <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-l-[3px] border-narrator-gold bg-bristol px-3 py-2">
     <p role="status" className="min-w-0 flex-1 font-body text-sm leading-6">{message}</p>
     {!(results.length && !failed) && <Button size="xs" variant="outline" disabled={busy} onClick={() => void recover()}>
-      {interrupted ? t("Refresh saved checks") : failed ? t("Try again") : t("Check pages")}
+      {interrupted ? t("Refresh saved checks") : failed ? t("Try again") : t("Check again")}
     </Button>}
     {error && <p role="alert" className="w-full text-sm text-hero-red">{error}</p>}
     {estimate && <ConfirmDrawer open title={t("Check the remaining pages?")}

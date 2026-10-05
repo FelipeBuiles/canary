@@ -112,9 +112,98 @@ def test_visual_review_uses_images_is_cached_and_expires_on_replacement(tmp_path
     assert generate.await_count == 1
     assert len(generate.call_args.kwargs["image_attachments"]) == 1
     assert generate.call_args.kwargs["retry_transport"] is False
-    assert design.review_status(config, tmp_path) == {"status": "current", **result}
+    assert design.review_status(config, tmp_path) == {
+        "status": "current", **result, "dismissed": 0, "reviewing": False}
     Image.new("RGB", (64, 64), "blue").save(artifacts.character_ref_sheet_path(tmp_path, "doctor"))
-    assert design.review_status(config, tmp_path) == {"status": "stale", "issues": []}
+    assert design.review_status(config, tmp_path) == {
+        "status": "stale", "issues": [], "dismissed": 0, "reviewing": False, "characters": 2}
+
+
+def _review_with(config, tmp_path, bible, issues):
+    with patch.object(design.text, "generate_json", new_callable=AsyncMock,
+                      return_value=ApiResult(value={"issues": issues})):
+        asyncio.run(design.review_cast(config, tmp_path, bible, MagicMock()))
+
+
+def test_dismissed_note_stays_hidden_for_the_same_sheet_and_returns_when_it_changes(tmp_path):
+    config, bible, _ = _cast(tmp_path)
+    note = {"character_ids": ["doctor"], "concern": "presentation", "evidence": "Too tall", "suggestion": "Shrink"}
+    other = {"character_ids": ["sailor"], "concern": "wardrobe", "evidence": "x", "suggestion": "y"}
+    _review_with(config, tmp_path, bible, [note, other])
+
+    design.dismiss_review_issue(config, tmp_path, ["doctor"], "presentation")
+    status = design.review_status(config, tmp_path)
+    assert status["issues"] == [other] and status["dismissed"] == 1
+
+    # Instructions changing re-runs the review on the same pixels: still dismissed.
+    path = artifacts.character_ref_instructions_path(tmp_path, "sailor")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    artifacts.append_instruction_log_entry(path, {"instruction": "x", "patch": {"addendum": "Taller", "status": "accepted"}})
+    _review_with(config, tmp_path, bible, [note])
+    assert design.review_status(config, tmp_path)["issues"] == []
+
+    # A new doctor sheet brings the note back.
+    Image.new("RGB", (64, 64), "blue").save(artifacts.character_ref_sheet_path(tmp_path, "doctor"))
+    _review_with(config, tmp_path, bible, [note])
+    assert design.review_status(config, tmp_path)["issues"] == [note]
+
+
+def test_dismiss_rejects_unknown_or_out_of_date_notes(tmp_path):
+    config, bible, _ = _cast(tmp_path)
+    _review_with(config, tmp_path, bible, [])
+    with pytest.raises(KeyError):
+        design.dismiss_review_issue(config, tmp_path, ["doctor"], "presentation")
+    Image.new("RGB", (64, 64), "blue").save(artifacts.character_ref_sheet_path(tmp_path, "doctor"))
+    with pytest.raises(ValueError, match="out of date"):
+        design.dismiss_review_issue(config, tmp_path, ["doctor"], "presentation")
+
+
+def test_review_reports_in_progress_only_during_the_model_call(tmp_path):
+    config, bible, _ = _cast(tmp_path)
+    seen = []
+
+    async def response(**_kwargs):
+        seen.append(design.review_status(config, tmp_path)["reviewing"])
+        raise RuntimeError("provider down")
+
+    with patch.object(design.text, "generate_json", side_effect=response):
+        with pytest.raises(RuntimeError):
+            asyncio.run(design.review_cast(config, tmp_path, bible, MagicMock()))
+    assert seen == [True]
+    assert design.review_status(config, tmp_path)["reviewing"] is False
+
+
+def test_sheet_redraw_reruns_character_check_and_settles_its_usage(tmp_path):
+    config, bible, _ = _cast(tmp_path)
+    image_usage = UsageRecord(provider="test", model="img", operation="image")
+    review_usage = UsageRecord(provider="test", model="txt", operation="text", input_tokens=5, output_tokens=5)
+
+    async def review(**kwargs):
+        kwargs["response_sink"](ApiResult(value="", usage=review_usage))
+        return ApiResult(value={"issues": []}, usage=review_usage)
+
+    redrawn = ApiResult(value=artifacts.character_ref_sheet_path(tmp_path, "doctor"), usage=image_usage)
+    with patch.object(design.text, "generate_json", side_effect=review) as generate:
+        result = asyncio.run(s3_cast._refresh_cast_review(config, tmp_path, redrawn))
+    assert generate.await_count == 1
+    assert result.usage is image_usage and result.additional_usage == (review_usage,)
+    assert design.review_status(config, tmp_path)["status"] == "current"
+
+
+def test_failed_character_check_never_fails_the_redraw_but_still_bills(tmp_path):
+    config, bible, _ = _cast(tmp_path)
+    review_usage = UsageRecord(provider="test", model="txt", operation="text", input_tokens=5, output_tokens=5)
+
+    async def review(**kwargs):
+        kwargs["response_sink"](ApiResult(value="", usage=review_usage))
+        return ApiResult(value={"issues": [{"character_ids": ["ghost"], "concern": "identity",
+                                            "evidence": "x", "suggestion": "y"}]})
+
+    redrawn = ApiResult(value=artifacts.character_ref_sheet_path(tmp_path, "doctor"))
+    with patch.object(design.text, "generate_json", side_effect=review):
+        result = asyncio.run(s3_cast._refresh_cast_review(config, tmp_path, redrawn))
+    assert result.additional_usage == (review_usage,)
+    assert design.review_status(config, tmp_path)["status"] == "missing"
 
 
 def test_review_rejects_unknown_ids_and_changed_pixels(tmp_path):
@@ -229,7 +318,7 @@ def test_cast_resume_holds_unchanged_state_request_that_keeps_failing(tmp_path, 
 
     config, bible, _ = _cast(tmp_path)
     bible.characters[0].appearance_states = [AppearanceState(
-        id="bare", label="Suit gone", visual_anchor="no spacesuit", visually_significant=True,
+        id="bare", label="Suit gone", visual_anchor="naked, no spacesuit", visually_significant=True,
         changed_facets=("clothing",))]
     artifacts.write_story_bible(tmp_path, bible)
     submissions = []
@@ -259,8 +348,13 @@ def test_cast_resume_holds_unchanged_state_request_that_keeps_failing(tmp_path, 
     assert failure["attempts"] == held_after
     if held_after == 1:
         assert failure["classification"] == "provider_blocked"
-        assert "Change its direction" in failure["message"]
-        assert "Change its direction" in s3_cast.cast_approval_blocker(config, tmp_path, stage)
+        assert failure["message"] == s3_cast.CAST_BLOCKED_MESSAGE
+        assert "scene" not in failure["message"] and "page" not in failure["message"]
+        assert "less graphic version" in s3_cast.cast_approval_blocker(config, tmp_path, stage)
+        assert [(item["phrase"], item["category"], item["source"]) for item in failure["likely_triggers"]] == [
+            ("naked", "nudity", "description")]
+    else:
+        assert failure["likely_triggers"] == []
 
     # Changing the direction yields a new request, which Resume submits again.
     bible.characters[0].appearance_states[0].visual_anchor = "no spacesuit, wrapped in a blanket"
@@ -389,3 +483,62 @@ def test_a_current_whole_roster_plan_is_converted_once_without_changing_designs(
 
     path.write_text(json.dumps({**earlier, "source_sha256": "0" * 64}))
     assert design.current_designs(config, tmp_path, bible) == {}
+
+
+def test_design_request_carries_story_evidence_for_unspecified_details(tmp_path):
+    """Regression for DCC's Mordecai: appearance facts alone gave the designer no
+    age or temperament, and it mirrored another character's open top."""
+    from novel_to_comic.models.story_bible import Scene
+
+    config, bible, _ = _project(tmp_path, "image-gemini-pro")
+    bible.characters[0].baseline_affect = "weary"
+    bible.scenes = [Scene.model_construct(
+        id=f"scene_{n}", character_ids=["sailor"],
+        summary=f"The storm breaks. Gustaf drinks alone, night {n}. The ship creaks.",
+    ) for n in range(1, 9)]
+    request = design._design_request(config, bible, {"sailor"}, {})
+
+    sailor = request["characters"][0]
+    assert sailor["baseline_affect"] == "weary"
+    assert sailor["story_evidence"] == [f"Gustaf drinks alone, night {n}." for n in range(1, 7)]
+    assert "story_evidence" not in design.design_context(config, bible)["characters"][0]
+    assert "never leave a chest, torso,\nskin or fur exposed under it" in design.DESIGN_SYSTEM
+    assert "Differentiate wardrobe as deliberately as faces" in design.DESIGN_SYSTEM
+
+
+def test_character_sheet_states_gender_and_shows_unusual_stature_to_scale(tmp_path):
+    config, bible, plan = _cast(tmp_path)
+    character = bible.characters[0]
+    ordinary = s3_cast._character_generation_input(config, bible, character, design=plan).prompt.constraints
+    assert f"Canonical gender: {character.gender}." in ordinary
+    assert "Canonical stature" not in ordinary
+
+    small = character.model_copy(update={"stature": "two and a half feet tall"})
+    constraints = s3_cast._character_generation_input(config, bible, small, design=plan).prompt.constraints
+    assert "Canonical stature: two and a half feet tall." in constraints
+    assert "silhouette of an ordinary adult" in constraints
+
+
+def test_dismiss_route_returns_the_filtered_check_and_maps_errors(tmp_path):
+    from fastapi import HTTPException
+    from novel_to_comic.server.routers.cast_assets import DismissReviewNoteRequest, dismiss_cast_review_note
+    config, bible, _ = _cast(tmp_path)
+    note = {"character_ids": ["doctor"], "concern": "presentation", "evidence": "Too tall", "suggestion": "Shrink"}
+    _review_with(config, tmp_path, bible, [note])
+    body = DismissReviewNoteRequest(character_ids=["doctor"], concern="presentation")
+    status = dismiss_cast_review_note(body, (tmp_path, config, None), "user")
+    assert status["issues"] == [] and status["dismissed"] == 1
+    with pytest.raises(HTTPException) as missing:
+        dismiss_cast_review_note(DismissReviewNoteRequest(character_ids=["sailor"], concern="wardrobe"),
+                                 (tmp_path, config, None), "user")
+    assert missing.value.status_code == 404
+
+
+def test_only_main_sheet_redraws_carry_the_character_check():
+    from novel_to_comic.server.codex_admission import cast_asset_operations, visual_review_operations
+    config = MagicMock()
+    config.effective_image_model.return_value = "img"
+    config.effective_visual_review_model.return_value = "vision"
+    assert cast_asset_operations(config, "character_ref_regen", "doctor")[-1] == visual_review_operations(config)[0]
+    assert cast_asset_operations(config, "character_ref_regen", "doctor:burned") == (("image", "img"),)
+    assert cast_asset_operations(config, "prop_ref_regen", "key") == (("image", "img"),)

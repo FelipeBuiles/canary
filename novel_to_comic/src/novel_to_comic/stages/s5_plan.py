@@ -15,7 +15,7 @@ from novel_to_comic.page_planning import (
     estimate_book_plan_cost,
     produce_book_plan,
 )
-from novel_to_comic.models.story_bible import MissingVisualAnchor, blank_visual_anchors
+from novel_to_comic.models.story_bible import MissingVisualAnchor, StoryBible, blank_visual_anchors
 from novel_to_comic.page_drawing import ApprovedReferenceFile
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.state import PipelineState
@@ -37,8 +37,9 @@ def reference_id(entity_id: str, appearance_state_id: str | None = None) -> str:
     return f"{entity_id}:{appearance_state_id or 'base'}"
 
 
-def approved_visual_inventory(project_dir: Path) -> ApprovedVisualReferenceInventory:
-    bible = artifacts.read_story_bible(project_dir)
+def approved_visual_inventory(project_dir: Path, bible: StoryBible | None = None) -> ApprovedVisualReferenceInventory:
+    """Every reference the Story Bible names; ``bible`` previews an unsaved edit."""
+    bible = bible if bible is not None else artifacts.read_story_bible(project_dir)
     if blank := blank_visual_anchors(bible):
         raise MissingVisualAnchor(blank)
     references = []
@@ -53,6 +54,7 @@ def approved_visual_inventory(project_dir: Path) -> ApprovedVisualReferenceInven
                     visual_anchor=entity.visual_anchor,
                     label=entity.name,
                     kind=kind,
+                    identity=character_identity(entity) if kind == "character" else "",
                     requires_image=kind != "character" or entity.id in recurring,
                 )
             )
@@ -66,10 +68,31 @@ def approved_visual_inventory(project_dir: Path) -> ApprovedVisualReferenceInven
                         label=entity.name,
                         continuity_guard=appearance.continuity_guard or "",
                         kind=kind,
+                        identity=character_identity(entity) if kind == "character" else "",
                         requires_image=kind != "character" or entity.id in recurring,
                     )
                 )
+    # A scene's described objects (a carved figurine, a figurehead) carry their
+    # anchor as written authority so every page that shows them agrees.
+    named = {reference.entity_id for reference in references}
+    for scene in bible.scenes:
+        for item in scene.transient_objects:
+            if item.id in named or not item.visual_anchor.strip():
+                continue
+            named.add(item.id)
+            references.append(ApprovedVisualReference(
+                id=reference_id(item.id), entity_id=item.id, visual_anchor=item.visual_anchor,
+                label=item.name, kind="object", requires_image=False,
+            ))
     return ApprovedVisualReferenceInventory(references=references)
+
+
+def character_identity(character) -> str:
+    """Gender, age and unusual stature as one short identity line."""
+    return "; ".join(filter(None, (
+        " ".join(filter(None, (character.age_range.strip(), character.gender.strip()))),
+        f"stature: {character.stature.strip()}" if character.stature.strip() else "",
+    )))
 
 
 def approved_reference_files(

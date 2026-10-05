@@ -24,7 +24,7 @@ from novel_to_comic.image_models import (
     IMAGE_PROVIDER_OPENROUTER,
     IMAGE_PROVIDER_VERTEX_MULTIMODAL,
 )
-from novel_to_comic.image_route_fallback import openai_image_failure_marker
+from novel_to_comic.image_route_fallback import openai_image_block_code, openai_image_failure_marker
 from novel_to_comic.provider_wire import (
     ProviderWireError,
     ProviderWireRequest,
@@ -317,6 +317,9 @@ def _raise_safe_wire_phase_error(phase: str, exc: BaseException) -> None:
                 openai_marker = openai_image_failure_marker(message)
                 if openai_marker:
                     descriptor["openai_failure"] = openai_marker
+                    block = openai_image_block_code(message)
+                    if block:
+                        descriptor["openai_block"] = block
                 if fal:
                     descriptor["fal_phase"] = fal.group("phase")
                     descriptor["fal_endpoint"] = fal.group("endpoint")

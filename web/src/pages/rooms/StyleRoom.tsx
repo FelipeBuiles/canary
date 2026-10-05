@@ -152,13 +152,13 @@ export function StyleRoom() {
     .sort((a, b) => a.queued_at.localeCompare(b.queued_at)).at(-1);
   const isSuggesting = !!stylesData?.is_suggesting || latestSuggestionJob?.status === "running"
     || latestSuggestionJob?.status === "queued" || suggestionStatus === "running";
-  // Author directions, retries, and refreshes queue behind proofs already
-  // drawing (each proof is its own job); auditions and a new batch still wait.
+  // Review work queues behind active generation. Selection and stage restarts
+  // still wait because they change the authority used by that generation.
   const proofsInFlight = !!stylesData?.is_generating;
   const batchInFlight = isStageGenerating || isSuggesting || suggestStyles.isPending;
-  const directionActionsDisabled = letteringOpen || batchInFlight || createStyleDirection.isPending;
+  const directionActionsDisabled = letteringOpen || createStyleDirection.isPending;
   const proofQueueDisabled = directionActionsDisabled || generateSamples.isPending;
-  const styleActionsDisabled = directionActionsDisabled || proofsInFlight;
+  const styleActionsDisabled = directionActionsDisabled || batchInFlight || proofsInFlight;
   const { data: suggestEstimate, error: suggestEstimateError, refetch: refetchSuggestEstimate } = useSuggestStylesEstimate(id, !isSuggesting);
   const { data: directionEstimate, error: directionEstimateError, refetch: refetchDirectionEstimate } = useStyleDirectionEstimate(id, !createStyleDirection.isPending);
   const { data: sampleEstimate } = useStyleSampleEstimate(id, !!pendingProofs);
@@ -420,7 +420,7 @@ export function StyleRoom() {
       suggestion={suggestion}
       projectName={id}
       isGenerating={proofQueued(suggestion)}
-      generationDisabled={styleActionsDisabled}
+      generationDisabled={letteringOpen}
       retryDisabled={proofQueueDisabled}
       awaitingBatch={batchInFlight}
       selectionDisabled={letteringOpen}
@@ -557,7 +557,7 @@ export function StyleRoom() {
             customNeighborsReferenceCost={directionEstimate?.estimates_with_reference.faithful_with_neighbors.estimate_credits}
             imageReferenceSupported={directionEstimate?.image_reference_supported}
             busy={directionActionsDisabled || (estimatesMissing && !estimateError)}
-            automaticDisabled={proofsInFlight}
+            automaticDisabled={batchInFlight || proofsInFlight}
             disabled={estimatesMissing || !!estimateError}
             onRetry={estimateError ? retryEstimates : undefined}
             error={suggestionError ?? estimateError?.message}
@@ -579,7 +579,6 @@ export function StyleRoom() {
               <p className="mt-2 font-body text-xs leading-6 text-pulp-paper/85">{t(activeSuggestion ? "Selected for your comic. You can still explore the other proofs." : "Use Select this style beneath your favorite proof.")}</p>
             </div>
           </section>
-          {batchInFlight && <p role="status" className="my-3 text-sm leading-6">{t("You can write your direction now. Create your proof when the current suggestion batch finishes; your text stays here.")}</p>}
           {showDirectionComposer && (
             <div className="mt-6">
               <StyleDirectionComposer
@@ -590,7 +589,7 @@ export function StyleRoom() {
                 customNeighborsReferenceCost={directionEstimate?.estimates_with_reference.faithful_with_neighbors.estimate_credits}
                 imageReferenceSupported={directionEstimate?.image_reference_supported}
                 busy={directionActionsDisabled || (estimatesMissing && !estimateError)}
-                automaticDisabled={proofsInFlight}
+                automaticDisabled={batchInFlight || proofsInFlight}
                 disabled={estimatesMissing || !!estimateError}
                 onRetry={estimateError ? retryEstimates : undefined}
                 error={suggestionError ?? estimateError?.message}

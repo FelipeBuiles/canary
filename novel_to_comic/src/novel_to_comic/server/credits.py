@@ -23,7 +23,10 @@ from postgrest.exceptions import APIError
 from novel_to_comic.config import Config, mock_mode_active
 from novel_to_comic.state import PipelineState
 from novel_to_comic.codex_dev import Funding, classify_operations, is_subscription
-from .codex_admission import image_operations, prompt_image_operations, stage_operations
+from .codex_admission import (
+    cast_asset_operations, image_operations, is_canonical_sheet_regen, prompt_image_operations,
+    stage_operations, visual_review_operations,
+)
 from novel_to_comic.usage import (
     UsageRecord,
     calculate_cost,
@@ -350,7 +353,9 @@ class UnifiedCostResolver:
         stage: Literal["cast"],
     ) -> CreditEstimate:
         """Add the separately billed prompt rewrite to an image estimate."""
-        funding = classify_operations(prompt_image_operations(config))
+        # The image estimate may already include API work (a sheet's Character Check).
+        funding = ("api" if image_estimate["funding"] == "api"
+                   else classify_operations(prompt_image_operations(config)))
         if is_subscription(funding):
             return credit_estimate_for_provider_cost(0.0, stage, reserve=False, funding=funding)
         if mock_mode_active(config):
@@ -405,7 +410,34 @@ class UnifiedCostResolver:
         asset_id: str,
         additional_reference_count: int | None = None,
     ) -> CreditEstimate:
-        """Estimate the credits needed to regenerate a single cast asset (character sheet or plate)."""
+        """Estimate one cast asset redraw, plus the Character Check a sheet redraw re-runs."""
+        image = UnifiedCostResolver._estimate_asset_image_cost(
+            config, project_dir, asset_type, asset_id, additional_reference_count)
+        if not is_canonical_sheet_regen(asset_type, asset_id) or mock_mode_active(config):
+            return image
+        from novel_to_comic.cast_design import estimate_review_cost
+        from novel_to_comic.cast_roster import read_cast_story_bible
+        review = credit_estimate_for_provider_cost(
+            estimate_review_cost(config, read_cast_story_bible(project_dir)), "cast", reserve=False,
+            funding=classify_operations(visual_review_operations(config)),
+        )
+        return CreditEstimate(
+            estimate_credits=image["estimate_credits"] + review["estimate_credits"],
+            reserved_credits=None,
+            reservation_multiplier=reservation_buffer(),
+            confidence="variable",
+            funding=classify_operations(cast_asset_operations(config, asset_type, asset_id)),
+        )
+
+    @staticmethod
+    def _estimate_asset_image_cost(
+        config: Config,
+        project_dir: Path,
+        asset_type: str,
+        asset_id: str,
+        additional_reference_count: int | None = None,
+    ) -> CreditEstimate:
+        """Estimate the image call that regenerates a single cast asset."""
         funding = classify_operations(image_operations(config))
         if is_subscription(funding):
             return credit_estimate_for_provider_cost(0.0, "cast", reserve=False, funding=funding)

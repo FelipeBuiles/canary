@@ -27,6 +27,7 @@ from novel_to_comic.state import (
     StageStatus,
     approve_stage,
     fail_stage,
+    hash_style_template,
     is_series_stage,
     load_series_state,
     load_state,
@@ -248,6 +249,7 @@ async def _run_stage_with_credits(
     rerun: bool = False,
     request: Request | None = None,
     queue_draw_pages: bool = False,
+    approve_part: str | None = None,
     **_unused_kwargs,
 ) -> None:
     admit_stage_action(config, stage)
@@ -425,6 +427,15 @@ async def _run_stage_with_credits(
             except Exception:
                 # A cover is auxiliary and queues only after Draw starts.
                 logger.exception("Could not queue project cover after Draw project=%s", project_id)
+    if stage == "cast" and approve_part and current.status == StageStatus.AWAITING_REVIEW:
+        adapt_part = _approve_cast_after_run(config, project_dir, state, Path(approve_part))
+        if adapt_part is not None:
+            # The part's Adapt reports on the part's own channel, as the approve endpoint's does.
+            channel = queue if request is None else request.app.state.event_queues.setdefault(
+                event_key(project_key(user_id, project_id), adapt_part), EventChannel())
+            await _run_stage_with_credits("adapt", config, adapt_part, load_state(adapt_part), channel,
+                                          user_id, project_id, request=request)
+        return
     if current.status != StageStatus.COMPLETE:
         return
     for next_stage in STAGE_AUTO_CHAIN.get(stage, ()):
@@ -446,11 +457,39 @@ async def _run_stage_with_credits(
             break
 
 
+def _approve_cast_after_run(config, series_dir: Path, state, part_dir: Path) -> Path | None:
+    """Approve Cast when the run the author asked to continue left nothing to review.
+
+    "Continue" after corrections re-runs only the identity review. When it
+    passes, the author has nothing left to look at, so Cast is approved as the
+    approve endpoint would, and the part whose Adapt that unblocks is returned
+    for the same explicit auto-chain. Anything still blocking leaves Cast
+    awaiting review, where the room shows why.
+    """
+    from novel_to_comic.stages.s3_cast import cast_approval_blocker
+
+    try:
+        if cast_approval_blocker(config, series_dir, state.stages["cast"]):
+            return None
+        require_approved_brief(TargetArtifacts(part_dir).read_brief())
+        part_state = load_state(part_dir)
+        adapt_part = _part_to_adapt_after(StageScope(series_dir, config, state, part_state, part_dir), "cast")
+        if adapt_part is not None:
+            admit_stage_action(config, "adapt")
+        approve_stage(state, "cast")
+    except (ArtifactMissing, ArtifactInvalid, ValueError, FileNotFoundError, HTTPException) as exc:
+        logger.info("Cast left for review after its run project=%s reason=%s", series_dir.name, exc)
+        return None
+    save_state(state, series_dir)
+    return adapt_part
+
+
 def _enqueue_pipeline(app, pkey, user_id, project_id, project_dir, config, stage,
-                      *, rerun=False, queue_pages=False):
+                      *, rerun=False, queue_pages=False, approve_part=None):
     from ..generation_jobs import enqueue_generation_job
     from ..job_commands import command
-    descriptor = command("pipeline", project_dir, config, rerun=rerun, queue_pages=queue_pages)
+    descriptor = command("pipeline", project_dir, config, rerun=rerun, queue_pages=queue_pages,
+                         approve_part=approve_part)
     descriptor = descriptor.model_copy(update={"stage": stage, "user_id": user_id, "project_id": project_id})
     return enqueue_generation_job(app, pkey, "pipeline_stage", stage,
                                   {"stage": stage}, None, user_id=user_id, command=descriptor)
@@ -588,6 +627,7 @@ async def _start_stage(
     user_id: str,
     queue_pages: bool = False,
     confirmed_archive_pages: int | None = None,
+    then_approve: bool = False,
 ):
     if stage is None:
         raise HTTPException(400, "stage parameter is required")
@@ -646,6 +686,12 @@ async def _start_stage(
         if not is_style_selected(project_dir, config):
             raise HTTPException(403, "Style must be selected first.")
 
+    approve_part = None
+    if then_approve:
+        if stage != "cast" or rerun or scope.part_dir is None:
+            raise HTTPException(400, "then_approve continues a part from a Cast run only.")
+        approve_part = str(scope.part_dir)
+
     if stage != "draw":
         try:
             if rerun and stage == "adapt":
@@ -659,7 +705,8 @@ async def _start_stage(
     request.app.state.event_queues[event_key(pkey, project_dir)] = queue
     if getattr(request.app.state, "durable_queue_required", False) is True:
         admitted = _enqueue_pipeline(request.app, pkey, user_id, project_id, project_dir,
-                                     config, stage, rerun=rerun, queue_pages=queue_pages)
+                                     config, stage, rerun=rerun, queue_pages=queue_pages,
+                                     approve_part=approve_part)
         return {"status": "started", "stage": stage, "job": generation_job_payload(request.app, admitted)}
     job = _run_stage_with_credits(
         stage,
@@ -672,6 +719,7 @@ async def _start_stage(
         rerun=rerun,
         request=request,
         queue_draw_pages=stage == "draw" and queue_pages,
+        approve_part=approve_part,
     )
     task = asyncio.create_task(_run_job(pkey, user_id, request, job, event_key(pkey, project_dir)))
     request.app.state.running_tasks[pkey] = task
@@ -687,9 +735,11 @@ async def run_pipeline(
     rerun: bool = Query(False),
     queue_pages: bool = Query(False),
     confirmed_archive_pages: int | None = Query(None, ge=0),
+    then_approve: bool = Query(False),
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
+    """``then_approve`` (Cast only): approve Cast and start Adapt if the run leaves nothing to review."""
     return await _start_stage(
         request,
         project_id,
@@ -699,6 +749,7 @@ async def run_pipeline(
         user_id,
         queue_pages,
         confirmed_archive_pages,
+        then_approve,
     )
 
 
@@ -833,7 +884,7 @@ def get_generation_jobs(
         if job.command is not None and job.command.operation == "page_draw"
         and "request" in job.command.arguments
     })
-    return {"jobs": payloads}
+    return {"jobs": payloads, "current_reference_style_hash": hash_style_template(project[1].style_template)}
 
 
 def _mark_current_page_jobs(

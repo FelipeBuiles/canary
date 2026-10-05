@@ -174,7 +174,7 @@ class GenerationProbe:
     """
 
     __slots__ = ("started", "executing", "first_content", "stream", "prompt_sha",
-                 "schema_sha", "input_messages", "output_text")
+                 "schema_sha", "request_sha", "wire_schema_version", "input_messages", "output_text")
 
     def __init__(self) -> None:
         self.started = time.perf_counter()
@@ -183,6 +183,8 @@ class GenerationProbe:
         self.stream: bool | None = None
         self.prompt_sha: str | None = None
         self.schema_sha: str | None = None
+        self.request_sha: str | None = None
+        self.wire_schema_version: int | None = None
         self.input_messages: list[dict[str, str]] | None = None
         self.output_text: str | None = None
 
@@ -198,7 +200,8 @@ class GenerationProbe:
                                    {"role": "user", "content": user_content}]
 
     def telemetry_fields(self, latency_ms: int) -> dict[str, object]:
-        fields: dict[str, object] = {"prompt_sha": self.prompt_sha, "schema_sha": self.schema_sha}
+        fields: dict[str, object] = {"prompt_sha": self.prompt_sha, "schema_sha": self.schema_sha,
+                                     "request_sha": self.request_sha, "wire_schema_version": self.wire_schema_version}
         if self.stream is not None:
             fields["$ai_stream"] = self.stream
         if self.executing is not None:

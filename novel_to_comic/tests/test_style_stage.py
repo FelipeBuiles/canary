@@ -25,6 +25,7 @@ from novel_to_comic.stages.s2_style import (
     StyleSketchBatch,
     build_style_sample_request,
     _dedupe_suggestions,
+    _drop_story_specific,
     _select_role_portfolio,
     _style_sample_brief_source_key,
     _style_sample_brief_source,
@@ -50,6 +51,8 @@ STORY_COPY = {
     "shout": "Donut!",
     "thought": "This is wrong.",
     "sfx": "CRUNCH",
+    "speaker": "Carl",
+    "thinker": "Carl",
 }
 
 BRIEF = (
@@ -182,6 +185,20 @@ def test_dedup_preserves_distinct_directions_within_an_author_medium():
         existing_suggestions=[first],
     )
     assert kept == [second]
+
+
+def test_templates_naming_story_places_or_people_are_dropped():
+    """Regression for DCC: "Seattle snowbanks" in the selected template put the
+    proof's street into every Cast asset, including dungeon rooms."""
+    bible = _bible()
+    named = [
+        {**_sugg("City", "oil"), "template": "Paint with dense oil, contrasting cold gray Seattle snowbanks."},
+        {**_sugg("Hero", "ink"), "template": "Ink every figure the way Carl would be inked."},
+    ]
+    assert _drop_story_specific(named, bible) == []
+    # A name word opening a sentence is ordinary prose, not a story name.
+    plain = {**_sugg("Lead", "ink"), "template": "Street lamps glow in dense ink."}
+    assert _drop_story_specific([plain], bible) == [plain]
 
 
 def test_role_aware_selector_does_not_relabel_diverse_candidates_by_position():
@@ -679,6 +696,26 @@ def test_validation_request_uses_dynamic_structured_action_without_contradiction
     assert "Software adds them later" in request.compiled.final_prompt
 
 
+
+def test_style_proof_uses_story_bible_wardrobe_over_anchor_clothing(tmp_path):
+    bible = _bible()
+    character = bible.characters[0]
+    character.visual_anchor += ", flowing silk robes"
+    character.default_outfit = "leather-clad, rogue-like"
+    prompt = build_style_sample_request(
+        Config(), bible, "A quiet scene.", candidate_id="wardrobe",
+    ).compiled.final_prompt
+    assert ("Carl current wardrobe (overrides any clothing in the anchor above): "
+            "leather-clad, rogue-like") in prompt
+    assert "current wardrobe: leather-clad, rogue-like" in _style_sample_brief_source(bible)
+
+    mock = AsyncMock(return_value=ApiResult(value=BRIEF, usage=None))
+    with patch("novel_to_comic.clients.text.generate_text", new=mock):
+        asyncio.run(ensure_style_sample_brief(Config(), bible, tmp_path))
+        character.default_outfit = "plate armour"
+        asyncio.run(ensure_style_sample_brief(Config(), bible, tmp_path))
+    assert mock.await_count == 2
+
 def _mixed_bible() -> StoryBible:
     bible = _bible("Ari")
     animal = bible.characters[0].model_copy(update={
@@ -1002,6 +1039,34 @@ def test_failed_curation_cancels_the_early_brief(tmp_path, monkeypatch):
     assert cancelled.is_set()
 
 
+def test_curation_preserves_author_direction_admitted_while_awaiting_model(tmp_path, monkeypatch):
+    from novel_to_comic.stage_runtime import StageRuntime
+    from novel_to_comic.stages import s2_style
+    from novel_to_comic.state import create_initial_state
+
+    artifacts.write_story_bible(tmp_path, _bible())
+    author = normalize_suggestion(_sugg("Author's ink", "ink"))
+    generated = normalize_suggestion(_sugg("Midnight ink", "ink"))
+    drawn = []
+
+    async def suggestions(config, bible, *, on_shortlist):
+        s2_style.save_suggestions(tmp_path, [author], bible.title)
+        return [generated], []
+
+    async def samples(config, bible, project_dir, candidates, indices, *, on_sample_done):
+        for index in indices:
+            drawn.append((index, candidates[index - 1]["id"]))
+            await on_sample_done(index, ApiResult(value=None, usage=None))
+
+    monkeypatch.setattr(s2_style, "ensure_style_sample_brief", AsyncMock(return_value=BRIEF))
+    monkeypatch.setattr(s2_style, "generate_suggestions", suggestions)
+    monkeypatch.setattr(s2_style, "generate_samples_for_indices", samples)
+    ctx = StageRuntime("style", create_initial_state("test", "novel.txt"), tmp_path)
+    asyncio.run(s2_style.run(Config(), tmp_path, ctx))
+    assert [candidate["id"] for candidate in s2_style.load_suggestions(tmp_path)] == [author["id"], generated["id"]]
+    assert drawn == [(2, generated["id"])]
+
+
 
 # ── story proof copy ─────────────────────────────────────────────────────────
 
@@ -1060,6 +1125,62 @@ def test_overlong_or_failed_proof_copy_falls_back_to_role_labels(tmp_path):
         assert not artifacts.style_proof_copy_path(tmp_path).exists()
 
 
+def test_proof_copy_lines_need_a_listed_owner(tmp_path):
+    from novel_to_comic.lettering.proof import LABEL_COPY
+    from novel_to_comic.stages.s2_style import style_proof_copy
+
+    for owners in ({"thinker": "Shoshana"}, {"speaker": None}):
+        answer = AsyncMock(return_value=ApiResult(value={**STORY_COPY, **owners}, usage=None))
+        with patch("novel_to_comic.clients.text.generate_json", new=answer), patch(
+            "novel_to_comic.clients.text.generate_text",
+            new=AsyncMock(return_value=ApiResult(value=BRIEF, usage=None)),
+        ):
+            asyncio.run(ensure_style_sample_brief(Config(), _bible(), tmp_path))
+        assert style_proof_copy(Config(), _bible(), tmp_path) == LABEL_COPY
+    answer = AsyncMock(return_value=ApiResult(value={**STORY_COPY, "speaker": "carl"}, usage=None))
+    with patch("novel_to_comic.clients.text.generate_json", new=answer), patch(
+        "novel_to_comic.clients.text.generate_text",
+        new=AsyncMock(return_value=ApiResult(value=BRIEF, usage=None)),
+    ):
+        asyncio.run(ensure_style_sample_brief(Config(), _bible(), tmp_path))
+    assert style_proof_copy(Config(), _bible(), tmp_path).speaker == "Carl"
+
+
+def test_editable_proof_art_stages_line_owners_and_gates_the_overlay(tmp_path):
+    from novel_to_comic.lettering.proof import LABEL_COPY, ProofCopy
+    from novel_to_comic.stages.s2_style import proof_copy_for_sample, proof_speaker_staging
+
+    config = Config(lettering_mode="editable")
+    bible = _bible()
+    unstaged = build_style_sample_request(config, bible, BRIEF, candidate_id="c").compiled.final_prompt
+    assert "Speaker staging" not in unstaged
+    artifacts.style_proof_copy_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    artifacts.style_proof_copy_path(tmp_path).write_text(json.dumps({
+        "version": STYLE_PROOF_COPY_VERSION,
+        "source_sha256": _style_proof_copy_source_key(config, bible),
+        "copy": {**STORY_COPY, "thinker": "Donut"},
+    }))
+    copy = ProofCopy.model_validate({**STORY_COPY, "thinker": "Donut"})
+    staged = build_style_sample_request(
+        config, bible, BRIEF, candidate_id="c", project_dir=tmp_path,
+    ).compiled.final_prompt
+    assert proof_speaker_staging(copy) in staged
+    assert "draw Carl with their head just below the speech space" in staged
+    assert "draw Donut with their head just below the thought space" in staged
+
+    def sample(name, prompt):
+        path = tmp_path / name
+        path.write_bytes(b"png")
+        artifacts.asset_meta_path(path).write_text(json.dumps({"prompt": prompt}))
+        return path
+
+    # Art drawn before its lines had owners keeps role labels under the pointers.
+    assert proof_copy_for_sample(copy, sample("old.png", unstaged)) == LABEL_COPY
+    assert proof_copy_for_sample(copy, sample("new.png", staged)) == copy
+    other = copy.model_copy(update={"thinker": "Carl"})
+    assert proof_copy_for_sample(other, tmp_path / "new.png") == LABEL_COPY
+
+
 def test_integrated_proof_letters_story_copy_once_cached(tmp_path):
     config = Config(lettering_mode="integrated")
     bible = _bible()
@@ -1074,7 +1195,7 @@ def test_integrated_proof_letters_story_copy_once_cached(tmp_path):
     story = build_style_sample_request(
         config, bible, BRIEF, candidate_id="c", project_dir=tmp_path,
     ).compiled.final_prompt
-    assert all(json.dumps(text) in story for text in STORY_COPY.values())
-    assert "listed subjects speak, shout and think" in story
+    assert all(json.dumps(STORY_COPY[role]) in story for role in ("caption", "speech", "shout", "thought", "sfx"))
+    assert "Carl says the speech and shout, Carl thinks the thought" in story
     # New story copy is new request identity: older proofs become refreshable.
     assert story != labelled

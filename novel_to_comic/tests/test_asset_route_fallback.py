@@ -16,6 +16,7 @@ from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.ai.providers import litellm_http
 from novel_to_comic.config import Config
 from novel_to_comic.image_models import image_model_profile
+from novel_to_comic.image_failure import classify_image_failure
 from novel_to_comic.image_route_fallback import classify_openai_image_failure
 from novel_to_comic.model_catalog import models
 from novel_to_comic.provider_wire import (
@@ -180,6 +181,19 @@ def test_a_request_fault_stops_without_trying_fal_and_keeps_the_hold(tmp_path):
     assert _models(caught.value.calls) == [OPENAI]
     assert _released(caught.value.db) == []
     assert JOB in credits._unsettled_jobs
+
+
+def test_a_moderation_block_inside_the_stream_is_a_decline_not_a_lost_result(tmp_path):
+    blocked = _handler_failure(
+        "OpenAI image stream failed for gpt-image-2.5-sunburst; request_id=req_1; "
+        "detail=code=moderation_blocked; type=image_generation_user_error; message=Your request was rejected")
+    with pytest.raises(AITransportError) as caught:
+        _run(tmp_path, _wire(), [blocked])
+    assert _models(caught.value.calls) == [OPENAI]
+    assert classify_openai_image_failure(caught.value) is None
+    assert classify_image_failure(caught.value) == "provider_blocked"
+    assert "rejected" not in str(caught.value)
+    assert not image_route_fallback.OPENAI_SUNBURST_CIRCUIT.is_open()
 
 
 def test_an_unknown_fal_backup_attempt_is_retained_as_today(tmp_path):

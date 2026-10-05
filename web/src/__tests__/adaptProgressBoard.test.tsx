@@ -43,7 +43,7 @@ describe("Adapt progress board", () => {
     expect(tiles[5].getAttribute("aria-label")).toBe("Part 3 · Waiting");
     expect(screen.getByText(/Writing part 2\. 1 part waiting\. This model writes one part at a time/)).toBeTruthy();
     expect(screen.queryByText(/Results appear when the step finishes/)).toBeNull();
-    expect(screen.queryByText("Adapting your story")).toBeTruthy();
+    expect(screen.queryByText("Scripting your book")).toBeTruthy();
   });
 
   it("marks the beats a check flagged and reports each round", () => {

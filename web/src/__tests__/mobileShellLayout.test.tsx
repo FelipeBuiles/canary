@@ -1,8 +1,10 @@
-import { render } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { setMedia } from "mock-match-media";
 import { describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
-import { TopBarSlotProvider } from "../layout/TopBarSlot";
+import { BottomBarPortal, TopBarSlotProvider } from "../layout/TopBarSlot";
+import { RoomHeader } from "../components/composites/RoomHeader";
 
 vi.mock("../api/queries", () => ({
   useCreditBalance: () => ({ data: { balance_credits: 500 } }),
@@ -34,10 +36,10 @@ describe("mobile project shell", () => {
     );
 
     expect(getByRole("banner").className).toContain("h-14");
-    expect(getByRole("banner").className).toContain("md:h-shell-top");
+    expect(getByRole("banner").className).toContain("studio-desktop:h-shell-top");
   });
 
-  it("tracks the visible mobile viewport so the approval footer stays on screen", () => {
+  it("tracks the visible mobile viewport for the content scroll area", () => {
     const { container } = render(
       <MemoryRouter initialEntries={["/project/demo/pages"]}>
         <I18nProvider>
@@ -49,5 +51,49 @@ describe("mobile project shell", () => {
     const shell = container.firstElementChild as HTMLElement;
     expect(shell.className).toContain("h-dvh");
     expect(shell.className).not.toContain("h-screen");
+  });
+
+  function renderRoom(onContinue = vi.fn()) {
+    return render(
+      <MemoryRouter initialEntries={["/project/demo/pages"]}>
+        <I18nProvider>
+          <Routes>
+            <Route path="/project/:id" element={<Shell />}>
+              <Route path="pages" element={<>
+                <RoomHeader kicker="PAGES" title="REVIEW COMPLETE PAGES" />
+                <p>Artwork to review</p>
+                <BottomBarPortal><footer><button onClick={onContinue}>Continue</button></footer></BottomBarPortal>
+              </>} />
+            </Route>
+          </Routes>
+        </I18nProvider>
+      </MemoryRouter>,
+    );
+  }
+
+  it.each([{ width: 390, height: 640 }, { width: 844, height: 390 }])("keeps room titles and approval actions in the content flow at $width × $height", (size) => {
+    setMedia(size);
+    renderRoom();
+    const main = screen.getByRole("main");
+    expect(main.contains(screen.getByRole("heading", { name: "REVIEW COMPLETE PAGES" }))).toBe(true);
+    expect(main.contains(screen.getByRole("button", { name: "Continue" }))).toBe(true);
+  });
+
+  it("preserves desktop slots and moves working actions when the viewport changes", () => {
+    setMedia({ width: 1366, height: 768 });
+    const onContinue = vi.fn();
+    renderRoom(onContinue);
+    const main = screen.getByRole("main");
+    expect(screen.getByRole("banner").contains(screen.getByRole("heading", { name: "REVIEW COMPLETE PAGES" }))).toBe(true);
+    expect(main.contains(screen.getByRole("button", { name: "Continue" }))).toBe(false);
+
+    act(() => setMedia({ width: 390, height: 640 }));
+    expect(main.contains(screen.getByRole("heading", { name: "REVIEW COMPLETE PAGES" }))).toBe(true);
+    expect(main.contains(screen.getByRole("button", { name: "Continue" }))).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(onContinue).toHaveBeenCalledOnce();
+
+    act(() => setMedia({ width: 1366, height: 768 }));
+    expect(main.contains(screen.getByRole("button", { name: "Continue" }))).toBe(false);
   });
 });

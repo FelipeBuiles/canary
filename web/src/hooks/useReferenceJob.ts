@@ -7,6 +7,8 @@ import { invalidateProject } from "../api/projectScope";
 export function useReferenceJob(project: string, identity: "char_id" | "loc_id" | "prop_id", entityId: string, stateId?: string) {
   const qc = useQueryClient();
   const { data } = useGenerationJobs(project, [], true);
+  const styleHash = data?.current_reference_style_hash;
+  const isCurrent = (job: GenerationJob) => !styleHash || job.reference_style_hash === styleHash;
   const scopedId = stateId ? `${entityId}:${stateId}` : entityId;
   const submissions = useMutationState({
     filters: { mutationKey: ["reference-instruction", identity] },
@@ -24,7 +26,7 @@ export function useReferenceJob(project: string, identity: "char_id" | "loc_id" 
   const [timestamp, setTimestamp] = useState(() => Date.now());
   const [failedImage, setFailedImage] = useState<string | null>(null);
   const observed = useRef<string | null>(null);
-  const scope = JSON.stringify([project, identity, entityId, stateId]);
+  const scope = JSON.stringify([project, identity, entityId, stateId, styleHash]);
   const [previousScope, setPreviousScope] = useState(scope);
   if (previousScope !== scope) {
     setPreviousScope(scope);
@@ -32,15 +34,17 @@ export function useReferenceJob(project: string, identity: "char_id" | "loc_id" 
     setLocalError(null);
     setFailedImage(null);
   }
-  let latest = previousScope === scope ? submitted : null;
+  let latest = previousScope === scope && submitted && isCurrent(submitted) ? submitted : null;
   for (const job of data?.jobs ?? []) {
+    if (!isCurrent(job)) continue;
     if (job.payload[identity] !== (stateId ? `${entityId}:${stateId}` : entityId)) continue;
     if (!latest || Date.parse(job.queued_at) >= Date.parse(latest.queued_at)) latest = job;
   }
   const admittedJob = (submission?.data as { job?: GenerationJob } | undefined)?.job;
-  if (admittedJob && (!latest || Date.parse(admittedJob.queued_at) > Date.parse(latest.queued_at))) latest = admittedJob;
+  if (admittedJob && isCurrent(admittedJob) && (!latest || Date.parse(admittedJob.queued_at) > Date.parse(latest.queued_at))) latest = admittedJob;
   const isSubmitting = submission?.status === "pending";
-  const submissionIsLatest = !!submission && (!latest || submission.submittedAt >= Date.parse(latest.queued_at));
+  const submissionIsLatest = !!submission && (!admittedJob || isCurrent(admittedJob))
+    && (!latest || submission.submittedAt >= Date.parse(latest.queued_at));
   const submittedInstruction = submissionIsLatest ? submission.instruction : latest?.payload.instruction;
   const referenceDraft = (submissionIsLatest ? submission.referenceAssets : latest?.payload.reference_assets) as CastReferenceInput[] | undefined;
   const instructionDraft = typeof submittedInstruction === "string" ? submittedInstruction : "";
@@ -48,7 +52,7 @@ export function useReferenceJob(project: string, identity: "char_id" | "loc_id" 
   const activeJob = latest?.status === "queued" || latest?.status === "running" ? latest : null;
   const terminalId = latest && !activeJob ? latest.id : null;
   const terminalError = latest?.status === "failed" ? latest.user_message ?? latest.error ?? "Regeneration failed" : null;
-  const refreshToken = `${timestamp}-${terminalId ?? ""}`;
+  const refreshToken = `${timestamp}-${styleHash ?? ""}-${terminalId ?? ""}`;
   const imageIdentity = JSON.stringify([scope, refreshToken]);
   const imgFailed = failedImage === imageIdentity;
   const regenError = isSubmitting ? null : submissionError ?? (localError?.terminalId === terminalId ? localError.message : terminalError);

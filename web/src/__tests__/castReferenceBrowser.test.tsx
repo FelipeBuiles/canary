@@ -8,13 +8,14 @@ import { CastRoom } from "../pages/rooms/CastRoom";
 import type { GenerationJob } from "../types/api";
 import type * as Client from "../api/client";
 
-const server = vi.hoisted(() => ({ jobs: [] as GenerationJob[], submit: vi.fn() }));
+const server = vi.hoisted(() => ({ jobs: [] as GenerationJob[], submit: vi.fn(), review: null as unknown }));
 const anchor = "1cat, tortoiseshell persian cat, flat face, fluffy fur, black fur, beige fur, white fur";
 vi.mock("../api/client", async (original) => ({
   ...await original<typeof Client>(),
   apiFetch: async (path: string, options?: RequestInit) => {
     if (options?.method && options.method !== "GET") { server.submit(path); throw new Error(`Unexpected mutation: ${path}`); }
     if (path.includes("/jobs")) return { jobs: server.jobs };
+    if (path.endsWith("/cast/review") && server.review) return server.review;
     if (path.includes("story_bible") || path.includes("story-bible")) return {
       characters: [{ id: "cat", name: "Companion", visual_anchor: anchor, age_range: "adult", gender: "female", distinguishing_features: ["fluffy fur"], relationships: [], appearance_states: [], default_outfit: "" }], locations: [{ id: "hall", name: "Great Hall", visual_anchor: "Stone pillars.", time_of_day: "night", mood: "ominous", appearance_states: [] }], props: [{ id: "key", name: "Brass Key", visual_anchor: "Three brass teeth.", first_appearance_scene: "part0002_scene_014" }],
     };
@@ -30,7 +31,7 @@ vi.mock("../api/client", async (original) => ({
   },
 }));
 const clients: QueryClient[] = [];
-afterEach(() => { clients.forEach((client) => client.clear()); clients.length = 0; server.jobs = []; server.submit.mockReset(); });
+afterEach(() => { clients.forEach((client) => client.clear()); clients.length = 0; server.jobs = []; server.review = null; server.submit.mockReset(); });
 function mount(client: QueryClient) {
   return render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/project/fixture/cast"]}><I18nProvider><Routes><Route path="/project/:id/cast" element={<CastRoom />} /></Routes></I18nProvider></MemoryRouter></QueryClientProvider>);
 }
@@ -89,6 +90,21 @@ it("offers section destinations and explicit review controls without starting ge
     expect(screen.queryByRole("alertdialog")).toBeNull();
     await user.keyboard("{Escape}");
   }
+  expect(server.submit).not.toHaveBeenCalled();
+});
+
+it("opens Review & adjust with a Character check suggestion prefilled and spends nothing", async () => {
+  const user = userEvent.setup();
+  server.review = { status: "current", issues: [{ character_ids: ["cat"], concern: "scale", evidence: "Too large", suggestion: "Make the cat smaller beside adults." }] };
+  renderCast();
+  await user.click(await screen.findByText("1 note to review"));
+  await user.click(screen.getByRole("button", { name: "Use this suggestion · Companion" }));
+  const dialog = screen.getByRole("dialog", { name: "COMPANION" });
+  expect((within(dialog).getByRole("textbox") as HTMLTextAreaElement).value).toBe("Make the cat smaller beside adults.");
+  await user.keyboard("{Escape}");
+  await user.click(screen.getByRole("button", { name: "Use this suggestion · Companion" }));
+  expect((within(screen.getByRole("dialog")).getByRole("textbox") as HTMLTextAreaElement).value).toBe("Make the cat smaller beside adults.");
+  expect(screen.queryByRole("alertdialog")).toBeNull();
   expect(server.submit).not.toHaveBeenCalled();
 });
 

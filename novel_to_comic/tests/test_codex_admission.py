@@ -161,14 +161,14 @@ def test_adapt_admission_uses_only_explicit_adapt_and_plan_models(select_routes)
 
 def test_dev_draw_allows_either_or_both_codex_selections(select_routes):
     config = Config(draw_model="codex-dev/image/gpt-5.5")
-    select_routes(text=(config.effective_page_ocr_model(),))
-    assert codex_dev.classify_operations(draw_operations(config, ocr=True)) == "codex_subscription"
+    select_routes(text=(config.effective_page_ocr_model(), config.effective_visual_review_model()))
+    assert codex_dev.classify_operations(draw_operations(config)) == "codex_subscription"
     select_routes()
-    assert codex_dev.classify_operations(draw_operations(config, ocr=False)) == "codex_subscription"
-    # Every draw reads its page back, so an API read makes the draw API-funded.
+    assert codex_dev.classify_operations(draw_operations(config, checks=False)) == "codex_subscription"
+    # Every draw checks its page, so API checks make the draw API-funded.
     assert codex_dev.classify_operations(draw_operations(config)) == "api"
     api_draw = Config()
-    select_routes(text=(api_draw.effective_page_ocr_model(),))
+    select_routes(text=(api_draw.effective_page_ocr_model(), api_draw.effective_visual_review_model()))
     assert codex_dev.classify_operations(draw_operations(api_draw)) == "api"
 
 
@@ -195,21 +195,23 @@ def test_cached_page_recovery_needs_neither_selected_route_nor_hold(tmp_path, mo
     database.assert_not_called()
 
 
-@pytest.mark.parametrize("codex_image,codex_ocr,expected", [
-    (False, False, 0.52), (True, False, 0.02),
+@pytest.mark.parametrize("codex_image,codex_checks,expected", [
+    (False, False, 0.55), (True, False, 0.05),
     (False, True, 0.50), (True, True, 0.0),
 ])
-def test_draw_estimates_include_only_api_operations(select_routes, monkeypatch, codex_image, codex_ocr, expected):
+def test_draw_estimates_include_only_api_operations(select_routes, monkeypatch, codex_image, codex_checks, expected):
     from novel_to_comic import page_drawing
 
     config = Config(draw_model="codex-dev/image/gpt-5.5") if codex_image else Config()
-    select_routes(text=(config.effective_page_ocr_model(),) if codex_ocr else ())
+    select_routes(text=(config.effective_page_ocr_model(), config.effective_visual_review_model())
+                  if codex_checks else ())
     monkeypatch.setattr(page_drawing, "PAGE_OCR_ESTIMATED_COST_USD", 0.02)
+    monkeypatch.setattr(page_drawing, "PAGE_VISUAL_REVIEW_ESTIMATED_COST_USD", 0.03)
     monkeypatch.setattr(page_drawing, "estimate_page_request_cost_usd", lambda compiled: 0.50)
     compiled = object()
-    assert page_drawing.estimate_draw_api_cost(config, compiled, ocr=True) == pytest.approx(expected)
-    assert page_drawing.estimate_draw_api_cost(config, compiled) == pytest.approx(expected)  # Read-back is included.
-    assert page_drawing.estimate_draw_api_cost(config, compiled, ocr=False) == (0 if codex_image else 0.50)
+    # The page read and the visual review are included by default.
+    assert page_drawing.estimate_draw_api_cost(config, compiled) == pytest.approx(expected)
+    assert page_drawing.estimate_draw_api_cost(config, compiled, checks=False) == (0 if codex_image else 0.50)
 
 
 @pytest.mark.parametrize("codex_text", [False, True])

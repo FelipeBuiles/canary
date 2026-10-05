@@ -10,6 +10,7 @@ import json
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -750,7 +751,7 @@ def test_complete_page_enqueue_uses_credited_lifecycle_and_persists_result(
 
     assert created is True
     assert reserve.call_args.args[-1] == credit_estimate_for_provider_cost(
-        estimate_draw_api_cost(Config(), compiled), "draw", reserve=True,
+        estimate_draw_api_cost(Config(), compiled, checks=False), "draw", reserve=True,
     )["reserved_credits"]
     debit.assert_called_once()
     release.assert_called_once()
@@ -876,6 +877,10 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
         cost_source="provider",
     )
 
+    review_usage = UsageRecord(
+        provider="gemini", model="visual-balanced", operation="text", cost_usd=0.02, cost_source="provider",
+    )
+
     class _OCR:
         async def extract(self, image: bytes):
             return ApiResult(
@@ -897,6 +902,8 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
         patch("novel_to_comic.server.credited_job.release_reservation"),
         patch("novel_to_comic.server.credited_job.debit_model_usage") as debit,
         patch("novel_to_comic.server.credited_job.ai_request_context"),
+        patch("novel_to_comic.page_visual_review.review_drawn_page", new_callable=AsyncMock,
+              return_value=ApiResult(value=SimpleNamespace(usage=review_usage))) as review,
     ):
         unanalysed, _ = enqueue_complete_page_draw(
             app,
@@ -929,20 +936,23 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
 
     assert unanalysed is not job
     image_quote = credit_estimate_for_provider_cost(
-        estimate_draw_api_cost(Config(), compiled, ocr=False),
+        estimate_draw_api_cost(Config(), compiled, checks=False),
         "draw", reserve=True,
     )
     checked_quote = credit_estimate_for_provider_cost(
-        estimate_draw_api_cost(Config(), compiled, ocr=True),
+        estimate_draw_api_cost(Config(), compiled, checks=True),
         "draw", reserve=True,
     )
     assert without_analysis == image_quote["reserved_credits"]
     assert with_analysis == checked_quote["reserved_credits"]
     debited = [call.args[3] for call in debit.call_args_list]
+    # The page read and the visual review both run inside the draw job.
     assert [usage.model for usage in debited] == [
         "openai/gpt-image-2.5/sunburst",
         "ocr-balanced",
+        "visual-balanced",
     ]
+    assert review.await_args.kwargs["render"].revision == 1
     # One ledger job, so whole credits are rounded once across both calls.
     assert {call.kwargs["job_id"] for call in debit.call_args_list} == {"ledger-job-1"}
     assert artifacts.read_analysis(7, 1).analysis_usage == analysis_usage
@@ -1379,8 +1389,8 @@ def test_visual_review_route_compiles_current_authority_without_redrawing(tmp_pa
     async def admitted(**kwargs):
         return await kwargs['work']()
 
-    with patch('novel_to_comic.server.routers.pages.approved_visual_inventory', return_value=_inventory()), \
-         patch('novel_to_comic.server.routers.pages.approved_reference_files', return_value=files), \
+    with patch('novel_to_comic.stages.s5_plan.approved_visual_inventory', return_value=_inventory()), \
+         patch('novel_to_comic.stages.s5_plan.approved_reference_files', return_value=files), \
          patch('novel_to_comic.server.credited_job.run_credited_page_check', side_effect=admitted), \
          patch('novel_to_comic.clients.text.generate_json', new_callable=AsyncMock,
                return_value=ApiResult(value={'findings': [], 'uncertain': []})) as generate:
@@ -1452,8 +1462,8 @@ def test_existing_page_checks_quote_holds_without_redrawing(tmp_path: Path) -> N
     app.include_router(router)
     app.dependency_overrides[get_project] = lambda: (tmp_path, Config(), None)
     with patch("novel_to_comic.server.credited_job.reserve_credits") as reserve, \
-         patch("novel_to_comic.server.routers.pages.approved_visual_inventory", return_value=_inventory()), \
-         patch("novel_to_comic.server.routers.pages.approved_reference_files", return_value=files):
+         patch("novel_to_comic.stages.s5_plan.approved_visual_inventory", return_value=_inventory()), \
+         patch("novel_to_comic.stages.s5_plan.approved_reference_files", return_value=files):
         client = TestClient(app)
         for check in ("analyze", "visual-review"):
             response = client.get(f"/pages/7/{check}/estimate")
@@ -1849,3 +1859,18 @@ def _bare_request():
     from types import SimpleNamespace
 
     return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
+
+
+def test_reference_identity_reaches_the_image_prompt(tmp_path):
+    from novel_to_comic.page_drawing import _compile_prompt
+
+    page = _ordered_page(state_first=True)
+    refs = _compile(tmp_path, page=page).request.references
+    refs = (refs[0].model_copy(update={"identity": "adult male; stature: two and a half feet tall"}), *refs[1:])
+
+    brief = _provider_brief(_compile_prompt(page, refs))
+
+    first = next(ref for ref in brief["approved_page_references"] if ref["image"] == "asset-A")
+    assert first["identity"] == "adult male; stature: two and a half feet tall"
+    assert all("identity" not in ref for ref in brief["approved_page_references"] if ref["image"] != "asset-A")
+    assert "never normalize it to ordinary height" in brief["reference_scope"]

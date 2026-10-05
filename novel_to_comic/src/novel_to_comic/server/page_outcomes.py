@@ -47,7 +47,7 @@ def record_page_outcome(app, outcome: str, *, user_id: str | None, project_id: s
         if outcome in _ART_VERDICTS and provenance is not None:
             observe_ai_metric(f"author_{outcome}", 1, trace_id=provenance.ai_trace_id,
                               parent_id=generation_id, user_id=user_id, project_id=project_id,
-                              page_number=page_number, render_revision=revision, category=category)
+                              page_number=page_number, render_revision=revision, generation_id=generation_id, category=category)
     except Exception as exc:  # noqa: BLE001 - analytics never blocks the author
         logging.getLogger(__name__).warning("Page outcome capture failed outcome=%s type=%s",
                                             outcome, type(exc).__name__)

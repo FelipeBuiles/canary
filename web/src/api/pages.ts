@@ -102,6 +102,17 @@ export function recoverPageChecks(project: string, allowPaid = false, renders: R
   });
 }
 
+export function getPageRedrawEstimate(project: string): Promise<CostEstimate & { pages: number[] }> {
+  return apiFetch(`${projectPath(project)}/pages/redraws/estimate`);
+}
+
+/** Draws every out-of-date page fresh; ``pages`` is the set the author confirmed. */
+export function redrawOutOfDatePages(project: string, pages: number[]): Promise<{
+  status: "queued"; jobs: Array<{ page_number: number; job: GenerationJob }>;
+}> {
+  return apiFetch(`${projectPath(project)}/pages/redraws`, { method: "POST", body: JSON.stringify({ pages }) });
+}
+
 export function generateCompletePage(
   project: string,
   pageNumber: number,

@@ -32,6 +32,7 @@ vi.mock("../api/queries", () => ({
   useImportStory: () => importStoryMutation,
   useRunPipeline: () => ({ mutate: runPipeline }),
   useShortStories: () => ({ data: [], isLoading: false, isError: false, refetch: vi.fn() }),
+  useSourcePreview: () => ({ isPending: true }),
   useGenerateProjectCover: () => generateCoverMutation,
   useDeleteProject: () => deleteProjectMutation,
 }));
@@ -85,6 +86,29 @@ describe("Library first-run (Issue #0)", () => {
     expect(document.activeElement).toBe(opener);
   });
 
+  it("keeps source input when text selection ends outside the creation dialog", async () => {
+    const user = userEvent.setup();
+    projectsResult.data = [];
+    renderLibrary();
+    await user.click(screen.getByRole("button", { name: "NEW PRODUCTION" }));
+    await user.click(screen.getByText("HAVE A STORY CODE OR LINK?"));
+    const field = screen.getByLabelText("Library of Short Stories code or URL");
+    await user.type(field, "the-open-window");
+    const dialog = screen.getByRole("dialog");
+    const backdrop = dialog.parentElement!;
+
+    await user.pointer([
+      { keys: "[MouseLeft>]", target: field, offset: 0 },
+      { target: backdrop },
+      { keys: "[/MouseLeft]", target: backdrop },
+    ]);
+
+    expect(screen.getByRole("dialog")).toBe(dialog);
+    expect(field).toHaveProperty("value", "the-open-window");
+    await user.click(backdrop);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("creates a source-only project and leaves generation for the Story decision", async () => {
     const user = userEvent.setup();
     projectsResult.data = [];
@@ -108,7 +132,7 @@ describe("Library first-run (Issue #0)", () => {
     createProjectMutation.mutate.mockImplementation((_input, options) => options.onSuccess({ id: "full-book", part_id: "part_0001" }));
     const view = renderLibrary();
     await user.click(screen.getByRole("button", { name: "NEW PRODUCTION" }));
-    await user.click(screen.getByRole("button", { name: "UPLOAD MANUSCRIPT" }));
+    await user.click(screen.getByRole("button", { name: "YOUR MANUSCRIPT" }));
     await user.upload(view.container.querySelector<HTMLInputElement>('input[type="file"]')!, new File(["Book"], "book.txt", { type: "text/plain" }));
     await user.click(screen.getByRole("button", { name: "CONTINUE" }));
     await user.click(screen.getByRole("button", { name: "CONTINUE" }));

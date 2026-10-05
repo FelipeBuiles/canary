@@ -1,6 +1,8 @@
 import { supabase } from "../lib/supabase";
 import { accountEpoch, assertAccountEpoch, trackAccountRequest } from "../lib/accountEpoch";
 import { pendingAction } from "./paidAction";
+import { isCastReviewBlocker } from "../lib/castCheckpoint";
+import { beginApiObservation, finishApiObservation, type ErrorDiagnostics } from "../lib/telemetryDiagnostics";
 
 const BASE = "/api";
 
@@ -14,6 +16,7 @@ export interface InsufficientCreditsInfo {
 }
 
 export class InsufficientCreditsError extends Error {
+  diagnostics?: ErrorDiagnostics;
   readonly insufficientCredits: InsufficientCreditsInfo;
   constructor(info: InsufficientCreditsInfo) {
     super(info.message);
@@ -32,6 +35,7 @@ export function isInsufficientCreditsError(err: unknown): err is InsufficientCre
  * because existing callers match on it.
  */
 export class ApiError extends Error {
+  diagnostics?: ErrorDiagnostics;
   readonly status: number;
   readonly code?: string;
   constructor(status: number, message: string, code?: string) {
@@ -85,18 +89,24 @@ export async function apiFetch<T>(
   const controller = new AbortController();
   const untrack = trackAccountRequest(controller);
   const isFormData = options?.body instanceof FormData;
+  const observation = beginApiObservation(path, method);
   const headers: Record<string, string> = {
     ...(isFormData ? {} : { "Content-Type": "application/json" }),
     ...(session ? { Authorization: `Bearer ${session.access_token}` } : {}),
     ...(options?.headers as Record<string, string> | undefined),
     ...(action ? { "Idempotency-Key": action.key } : {}),
+    "X-Request-ID": observation.request_id,
+    traceparent: observation.traceparent,
+    ...(observation.browser_session_id ? { "X-Canary-Session-ID": observation.browser_session_id } : {}),
   };
+  let response: Response | undefined;
   try {
   const res = await fetch(`${BASE}${path}`, {
     ...options,
     signal: options?.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal,
     headers,
   });
+  response = res;
   assertAccountEpoch(epoch);
   if (!res.ok) {
     const body = await res.text();
@@ -131,7 +141,7 @@ export async function apiFetch<T>(
     const isCastApproval = method === "POST" && /^\/projects\/[^/]+(?:\/parts\/[^/]+)?\/approve\/cast$/.test(path);
     const castRejected = (typeof detail === "object" && detail !== null
       && (detail as { code?: unknown }).code === "cast_approval_rejected")
-      || detail === "Compare the current character references before approving Cast. Resume Cast to run its visual review.";
+      || (typeof detail === "string" && isCastReviewBlocker(detail));
     if (res.status === 409 && isCastApproval && castRejected) action?.complete();
     if (res.status === 402) {
       const info = parseInsufficientCredits(detail);
@@ -158,7 +168,20 @@ export async function apiFetch<T>(
   const result = await res.json();
   assertAccountEpoch(epoch);
   action?.complete();
+  finishApiObservation(observation, res, undefined, result && typeof result === "object" ? {
+    job_id: result.job_id, operation_id: result.operation_id,
+  } : {});
   return result;
+  } catch (error) {
+    if (epoch === accountEpoch() && !controller.signal.aborted && !options?.signal?.aborted) {
+      const code = error instanceof InsufficientCreditsError ? "insufficient_credits"
+        : error instanceof ApiError ? error.code : !response ? "network_error" : undefined;
+      const diagnostics = finishApiObservation(observation, response, code, { failed: true });
+      if (error instanceof Error) {
+        try { Object.assign(error, { diagnostics }); } catch { /* Frozen external errors. */ }
+      }
+    }
+    throw error;
   } finally {
     untrack();
   }

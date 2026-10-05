@@ -202,7 +202,18 @@ export function loadRevisionDraft(
   }
 }
 
-/** A draft stored under an older target: offered for explicit rebase, never auto-migrated. */
+/** Something the author wrote or marked that has not been sent. Suggested findings alone are not work. */
+export function draftHasUnsentWork(draft: Pick<PersistedRevisionDraft, "submittedJobId" | "changes" | "note" | "pendingRequest">): boolean {
+  if (draft.submittedJobId) return false;
+  return !!draft.pendingRequest?.trim() || !!draft.note?.trim()
+    || draft.changes.some((change) => !change.issue_id || change.annotations.length > 0);
+}
+
+/**
+ * Unsent work stored under an older target: offered for explicit rebase, never
+ * auto-migrated. Drafts with nothing unsent, or already sent and superseded by
+ * a newer render, are removed here rather than offered.
+ */
 export function findStaleRevisionDraft(
   project: string,
   pageNumber: number,
@@ -218,6 +229,14 @@ export function findStaleRevisionDraft(
       if (!raw) continue;
       const parsed = JSON.parse(raw) as PersistedRevisionDraft;
       if (!Array.isArray(parsed.changes)) continue;
+      if (!draftHasUnsentWork(parsed)) {
+        // A sent draft stays only while its render is still the newest (its job may be in flight).
+        if (!parsed.submittedJobId || parsed.parentRenderRevision < target.parentRenderRevision) {
+          window.localStorage.removeItem(key);
+          index -= 1;
+        }
+        continue;
+      }
       if (
         !newest
         || parsed.comicPageRevision > newest.comicPageRevision

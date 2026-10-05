@@ -32,6 +32,9 @@ SPECIMEN_BOUNDS = (
 # Character ceilings keep story lines near what every bundled design fits in
 # its reservation. Fitting still decides per style: see resolve_style_proof.
 SPECIMEN_MAX_CHARS = {"caption": 48, "speech": 22, "shout": 8, "thought": 30, "sfx": 9}
+# Where the speech and thought pointers land (page space, approximate): proof
+# art stages each line's owner here so a pointer never names the wrong subject.
+SPEAKER_POINTS = {"speech": (.60, .56), "thought": (.22, .74)}
 
 
 class ProofCopy(BaseModel):
@@ -44,6 +47,10 @@ class ProofCopy(BaseModel):
     shout: str = Field(min_length=1, max_length=SPECIMEN_MAX_CHARS["shout"])
     thought: str = Field(min_length=1, max_length=SPECIMEN_MAX_CHARS["thought"])
     sfx: str = Field(min_length=1, max_length=SPECIMEN_MAX_CHARS["sfx"])
+    # Listed subjects who own the lines: speaker says speech and shout, thinker
+    # thinks thought. Role labels have no owners.
+    speaker: str | None = Field(default=None, min_length=1, max_length=120)
+    thinker: str | None = Field(default=None, min_length=1, max_length=120)
 
 
 # Without story copy, a proof names each lettering role instead of putting
@@ -96,8 +103,8 @@ def resolve_style_proof(
 ) -> PageLettering:
     """Attach specimen pointers to fitted bodies, not the art reservations.
 
-    These short pointers demonstrate typography; they do not identify speakers.
-    Saved page/editor targets remain untouched.
+    The pointers land near ``SPEAKER_POINTS``, where proof art stages the
+    copy's speaker and thinker. Saved page/editor targets remain untouched.
     """
     state = _fitted_copy(style, width, height, copy)
     elements = []

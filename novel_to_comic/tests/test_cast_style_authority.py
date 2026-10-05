@@ -155,3 +155,77 @@ def test_sunburst_cannot_silently_fall_back_to_text_only_cast(tmp_path):
         with pytest.raises(ValueError, match="selected Style proof is missing"):
             asyncio.run(s3_cast._generate_character_refs(config, tmp_path, bible, MagicMock()))
     submit.assert_not_awaited()
+
+
+def test_location_plate_frames_the_place_at_its_true_scale_without_the_style_proof(tmp_path):
+    """Regression for repeated tavern plates and a guild hall cloned from the
+    proof's apartment: the proof's room carried into other locations, and a
+    fixed wide shot let small or sparse anchors grow into it."""
+    config, _bible, _proof = _project(tmp_path, "image-sunburst")
+    anchor = "tiny wood-paneled booth room with sliding pocket-door"
+    location = SimpleNamespace(id="loc_snug", name="Snug", visual_anchor=anchor)
+    request = compile_non_panel_request(
+        config, s3_cast._location_generation_input(config, location),
+        reference_plan=s3_cast._location_plate_reference_plan(config),
+    )
+    prompt = request.compiled.final_prompt
+    assert request.wire.references == ()
+    assert "Secondary style notes" not in prompt and "rough ink and ochre palette" in prompt
+    assert anchor in prompt
+    assert "framed at the location's true scale and enclosure" in prompt
+    # The whole brief survives text-safety hygiene (it strips "read as ..." clauses).
+    assert s3_cast._LOCATION_PLATE_DIRECTION in prompt
+    assert "wide environment design plate" not in prompt.lower()
+
+
+@pytest.mark.parametrize(("form", "identity_kind", "expected"), [
+    ("form", "individual", "never invent a back, head or limbs the anchor does not give it"),
+    ("formation", "group", "with the member count and arrangement the anchor gives"),
+])
+def test_non_figure_sheets_drop_the_turnaround(tmp_path, form, identity_kind, expected):
+    """Labs 2026-10-04: a turnaround drew one planet-sized heart five times and
+    invented a back view for a floating eye."""
+    from novel_to_comic import reference_forms
+
+    config, bible, proof = _project(tmp_path, "image-sunburst")
+    hearts = Character(
+        id="hearts", name="Cosmic Hearts", visual_anchor="trio of planet-sized anatomical hearts",
+        age_range="", gender="", distinguishing_features=[], default_outfit="",
+        first_appearance_scene="scene_1", identity_kind=identity_kind, reference_form=form,
+    )
+    request = compile_non_panel_request(
+        config, s3_cast._character_generation_input(config, bible, hearts),
+        reference_plan=style_reference_plan(config, proof),
+    )
+    prompt = request.compiled.final_prompt
+    assert expected in prompt
+    assert "no props, vehicles, scenery or story situation" in prompt
+    assert "turnaround" not in prompt and "back view" not in prompt
+    assert "relaxed neutral expression" not in prompt
+    assert reference_forms.IDENTITY_DESIGN[form] in prompt
+    assert hearts.visual_anchor in prompt
+
+
+def test_a_state_can_change_the_sheet_form_and_figure_states_keep_theirs(tmp_path):
+    from novel_to_comic import reference_forms
+    from novel_to_comic.state_assets import build_character_state_spec
+
+    config, bible, proof = _project(tmp_path, "image-sunburst")
+    sailor = bible.characters[0]
+    mist = AppearanceState(id="mist", label="Mist", visual_anchor="drifting grey mist with yellow-haired face",
+                           changed_facets=("anatomy",), visually_significant=True, reference_form="form")
+    plain = AppearanceState(id="wet", label="Wet", visual_anchor="adult male, wet yellow hair, sailor",
+                            changed_facets=("hair",), visually_significant=True)
+    assert build_character_state_spec(config, tmp_path, sailor, mist).reference_form == "form"
+    assert reference_forms.STATE_DIRECTION["form"] in build_character_state_spec(
+        config, tmp_path, sailor, mist).rendered_prompt
+    figure = build_character_state_spec(config, tmp_path, sailor, plain)
+    assert figure.reference_form == "figure"
+    assert reference_forms.STATE_DIRECTION["figure"] in figure.rendered_prompt
+
+
+def test_formation_is_only_for_groups():
+    with pytest.raises(ValueError, match="only for identity_kind 'group'"):
+        Character(id="eye", name="Eye", visual_anchor="giant eye", age_range="", gender="",
+                  distinguishing_features=[], default_outfit="", first_appearance_scene="s",
+                  reference_form="formation")

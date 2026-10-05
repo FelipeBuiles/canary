@@ -32,7 +32,7 @@ export function RoomHeader({
 
   return (
     <>
-      <TopBarPortal>
+      <TopBarPortal inlineOnMobile>
         <div className={cn("relative flex min-w-0 flex-1 items-stretch overflow-hidden", className)}>
           {station && (
             <div className="hidden w-[68px] shrink-0 flex-col items-center justify-center bg-ink-black text-bristol lg:flex">
@@ -43,12 +43,12 @@ export function RoomHeader({
             </div>
           )}
 
-          <div className="flex min-w-0 flex-1 items-center gap-5 px-4 pb-1 md:px-5">
+          <div className="flex min-w-0 flex-1 items-center gap-5 studio-desktop:px-5 studio-desktop:pb-1">
             <div className="flex min-w-0 flex-col items-start justify-center gap-1 lg:max-w-[42%] lg:shrink-0">
-              <span className="font-meta text-[0.54rem] font-bold uppercase tracking-[0.14em] text-hero-red">
+              <span className="hidden font-meta text-[0.54rem] font-bold uppercase tracking-[0.14em] text-hero-red studio-desktop:block">
                 {t(kicker)}
               </span>
-              <h1 className="max-w-full truncate font-display text-[1.55rem] font-black uppercase leading-[0.9] tracking-[-0.03em] text-ink-black" title={t(title)}>
+              <h1 className="max-w-full font-display text-[1.55rem] font-black uppercase leading-[0.9] tracking-[-0.03em] text-ink-black [overflow-wrap:anywhere] studio-desktop:truncate" title={t(title)}>
                 {t(title)}
               </h1>
             </div>
@@ -63,14 +63,14 @@ export function RoomHeader({
             )}
 
             {actions && (
-              <div className="ml-auto hidden shrink-0 items-center gap-2 pl-3 md:flex">
+              <div className="ml-auto hidden shrink-0 items-center gap-2 pl-3 studio-desktop:flex">
                 {actions}
               </div>
             )}
           </div>
 
           {station && (
-            <div aria-hidden="true" className="absolute inset-x-0 bottom-0 h-[4px] bg-surface-variant">
+            <div aria-hidden="true" className="absolute inset-x-0 bottom-0 hidden h-[4px] bg-surface-variant studio-desktop:block">
               <span
                 className="relative block h-full bg-hero-red transition-[width] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]"
                 style={{ width: `${progress}%` }}
@@ -82,10 +82,9 @@ export function RoomHeader({
         </div>
       </TopBarPortal>
 
-      {/* On mobile the masthead only fits kicker + title; actions get their
-          own full-width strip directly beneath it. */}
+      {/* Phone room titles and tools scroll with their content. */}
       {actions && (
-        <div className="-mx-5 -mt-6 mb-2 flex flex-wrap items-center justify-end gap-2 border-b-[2px] border-ink-black/15 bg-bristol px-4 py-2 md:hidden">
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-2 studio-desktop:hidden">
           {actions}
         </div>
       )}

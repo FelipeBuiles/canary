@@ -39,15 +39,21 @@ class ApprovedVisualReference(BaseModel):
     label: str = ""
     continuity_guard: str = ""
     # Characters need per-panel acting; None means the kind is not known.
-    kind: Literal["character", "location", "prop"] | None = None
+    # Objects are a scene's transient objects: written authority only.
+    kind: Literal["character", "location", "prop", "object"] | None = None
+    # Source-stated gender, age and unusual stature, sent beside the anchor so
+    # the image model cannot drift a character's presentation or scale.
+    identity: str = ""
     # Incidental source participants retain textual identity authority without
     # requiring a dedicated Cast sheet. Recurring/retained identities use images.
     requires_image: bool = True
 
     @model_validator(mode="after")
     def _written_character_authority(self) -> "ApprovedVisualReference":
-        if not self.requires_image and self.kind != "character":
-            raise ValueError("Only incidental characters may use written identity authority")
+        if not self.requires_image and self.kind not in {"character", "object"}:
+            raise ValueError("Only incidental characters and scene objects may use written identity authority")
+        if self.kind == "object" and self.requires_image:
+            raise ValueError("Scene objects have written identity authority only")
         return self
 
 

@@ -21,9 +21,11 @@ from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
 
 from pydantic import BaseModel
-from novel_to_comic.cast_reference_inputs import CastReferenceInput, resolve_reference_inputs, saved_reference_inputs
+from novel_to_comic.cast_reference_inputs import (
+    CastReferenceInput, UploadedReference, resolve_reference_inputs, saved_reference_inputs,
+)
 from novel_to_comic.codex_dev import classify_operations
-from novel_to_comic.server.codex_admission import prompt_image_operations
+from novel_to_comic.server.codex_admission import cast_asset_operations, prompt_image_operations
 
 if TYPE_CHECKING:
     from novel_to_comic.config import Config
@@ -176,7 +178,7 @@ def restore_asset_instruction_direction(
 def asset_instruction_rewrite_system_prompt(kind: AssetKind) -> str:
     target = {
         "character_ref": "a character's wide turnaround reference sheet (two close-ups and front, three-quarter and back full-body views on a clean background)",
-        "location_plate": "a wide location reference with no characters present",
+        "location_plate": "a location reference framed at the place's true scale, with no characters present",
         "prop_ref": "an isolated object reference on a neutral background",
     }[kind]
     return (
@@ -345,9 +347,10 @@ def instructed_asset_execution(config, project_dir, db, user_id, project_id,
         attached_refs = resolve_reference_inputs(project_dir, attachments, target=(asset_type, asset_id, state_id))
         rewrite_context = _rewrite_context(asset_type, asset_obj, state_obj)
         rewrite_context["reference_assets"] = [
-            {**item.model_dump(), "reference_label": ref.label, "purpose": "user-attached reference; use as described in the instruction", **_rewrite_context(
+            {**item.model_dump(), "reference_label": ref.label, "purpose": "user-attached reference; use as described in the instruction",
+             **({} if isinstance(item, UploadedReference) else _rewrite_context(
                 item.asset_type, *resolve_cast_asset(project_dir, item.asset_type, item.asset_id, item.state_id)
-            )} for item, ref in zip(attachments, attached_refs, strict=True)
+            ))} for item, ref in zip(attachments, attached_refs, strict=True)
         ]
         rewrite_context.update(
             entity_id=asset_id,
@@ -478,7 +481,8 @@ async def apply_asset_instruction(
         project_dir=project_dir,
         stage="cast",
         reservation_credits=estimate["estimate_credits"],
-        operations=prompt_image_operations(config),
+        operations=(("text", config.effective_prompt_model()),
+                    *cast_asset_operations(config, job_kind, job_asset_id)),
         debit_description=f"Model call: regenerate instructed {asset_type} {asset_id}",
         user_id=user_id,
         semaphore=generation_semaphore_for_config(app, config),

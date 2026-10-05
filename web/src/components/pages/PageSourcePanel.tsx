@@ -111,9 +111,11 @@ export function PageSourcePanel({ project, item }: { project: string; item: Comp
       ? t("Lettering positions are not available for this artwork.")
       : t("Lettering positions appear after this page's text check.");
 
-  return <div className="grid gap-8 lg:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] lg:items-start">
-    <div className="lg:sticky lg:top-0">
-      {art ? <figure className="mx-auto max-w-sm lg:max-w-none">
+  // Lays out by its own width: beside the version preview it is a narrow column.
+  return <div className="@container">
+   <div className="grid gap-8 @4xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] @4xl:items-start">
+    <div className="@4xl:sticky @4xl:top-0">
+      {art ? <figure className="mx-auto max-w-56 @4xl:max-w-none">
         <div className="relative overflow-hidden border-[3px] border-ink-black bg-bristol">
           <img src={art} alt={`${t("Page")} ${pageNumber}`} className="block h-auto w-full" />
           <InspectButton images={{ src: art, alt: `${t("Page")} ${pageNumber}` }} />
@@ -154,5 +156,6 @@ export function PageSourcePanel({ project, item }: { project: string; item: Comp
         </article>)}
       </div>
     </section>
+   </div>
   </div>;
 }

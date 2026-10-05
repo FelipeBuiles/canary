@@ -33,6 +33,9 @@ class CharacterDraft(BaseModel):
     ))
     age_range: str
     gender: str
+    stature: str = Field(default="", description=(
+        "Height and a relative comparison only when the passages state an unusual body scale; "
+        "otherwise an empty string."))
     distinguishing_features: list[str] = Field(description="Permanent identity details true for the whole story.")
     default_outfit: str = Field(description="Typical clothing of the earliest look.")
     baseline_affect: str | None = Field(default=None, description="Stable low-intensity demeanor, or null.")

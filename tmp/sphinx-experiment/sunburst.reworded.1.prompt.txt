@@ -1,0 +1,30 @@
+Constraints
+- exactly 0 characters
+- single frozen instant, not a sequence or split-screen
+- no text, captions, speech balloons, or lettering anywhere in the image
+- One unified scene filling the entire canvas — no sub-panels, gutters, internal borders, page layouts, or split-screen compositions.
+- Surface fidelity: preserve the selected medium and deliberate texture, including authored grain, granulation, stippling, hatching or distress. Keep marks material-specific and subordinate to readable forms; maintain coherent tonal areas where the selected style calls for them. Do not smooth away intentional marks or change the chosen medium.
+- Detail hierarchy: keep focal contours legible at the intended viewing size. Vary mark scale with material and depth rather than spreading the same high-contrast speckles, cellular mottling or worm-like patches across unrelated surfaces. This targets unrequested digital artifacts, not explicitly chosen artistic texture.
+- Reference fidelity means intentional design and medium, not incidental pixel defects. For a new image, reconstruct surfaces without amplifying noise or compression artifacts in supplied references. For an edit, keep untouched artwork and composition unchanged; confine surface cleanup to the authorized change. Never add another grain layer merely because a reference or edit parent is already textured.
+
+Secondary style notes
+Secondary textual style notes; the approved visual style reference owns the intended rendering language, subject to surface-fidelity constraints for incidental texture: Layer semi-opaque risograph inks across rough pulpy unbleached paper using mechanical screening patterns and coarse half-tone dither. Embrace slight color misregistrations that expose bare paper along figure edges. Build depth exclusively through overlapping flat spot colors and stippled dot fields, transforming smoky barrooms and alchemical vials into vibrant, tactile underground printed panels. RENDERING APPROACH — Deliberate graphic abstraction and designed shapes, not photographic anatomy. CHARACTER DESIGN — compact: Simplified blocky characters with compressed limbs, thick cylindrical fingers, dot eyes, and solid silhouette cuts. Preserve this proportion and shape system consistently across all subjects and panels, adapted to each subject's species, age and identifying traits.
+
+Protected anchors
+Wooden Sphinx Figurine [author_prop_001 / canonical]: tiny ancient dry light wooden sphinx carving, sculpted woman's head and upper body in smooth carved wood, flowing into a crouching panther or lioness body, classical sphinx form, stoic impenetrable carved expression, worn with handling, pigments long faded, detachable twisting head concealing a spring-loaded needle and hollow interior
+
+Reference images
+Reference 0: sole visual rendering style authority for selected style — preserve its intended medium, mark-making, palette, line weight, facial modeling, wash density, edge treatment, shading, shadow depth, rendering density, degree of simplification, character proportion system and facial abstraction consistently; ignore depicted identities, hairstyles, costumes, objects, scenery, text and caption wording, poses, gaze, expressions, camera angles, panels, borders, source composition. Surface-fidelity constraints govern incidental texture: do not treat every blotch, stain or speckle as an authored style feature. Preserve deliberate material marks without transferring the same pattern to unrelated surfaces. Transfer how faces and bodies are drawn, not who is depicted or how they are posed. Canonical identity and active-state anatomy remain authoritative. This is rendering evidence, never scene, lettering, or layout authority.
+
+Scene direction
+Composition: Single centered prop reference, no cropping.
+Visual brief: Single object isolated on a neutral mid-grey background, three-quarter view, evenly lit, centered and fully visible with generous margin.
+
+User constraint notes
+No characters, hands, scenery, other objects, text, labels, or captions.
+
+Generation geometry
+Requested composition dimensions (intent, not an enforced output size): 1024x1024
+Output shape: square
+
+Image operation: create a new image from the specification. Supplied references are scoped evidence, not edit parents. Rendering-only references do not supply scene layout, subject identity, or anatomy.

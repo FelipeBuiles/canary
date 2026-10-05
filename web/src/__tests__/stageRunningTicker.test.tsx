@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it } from "vitest";
-import { StageRunning } from "../components/composites/StagePlaceholder";
+import { StagePlaceholder, StageRunning } from "../components/composites/StagePlaceholder";
 import { usePipelineStore } from "../store/pipeline";
 import { I18nProvider } from "../i18n";
 
@@ -92,11 +92,45 @@ describe("Long-running Story and Pages work", () => {
     expect(screen.getByText("This step can take several minutes. Results appear when the step finishes.")).toBeTruthy();
   });
 
-  it("advances the Pages checklist when adaptation finishes", () => {
+  it("presents Adapt and Plan as one run whose phase rail advances", () => {
     const { rerender } = renderStage(<StageRunning stage="adapt" />);
-    expect(screen.getByText("Adapting your story", { selector: "li span" }).closest("li")?.getAttribute("aria-current")).toBe("step");
-    rerender(<I18nProvider><StageRunning stage="plan" /></I18nProvider>);
-    expect(screen.getByText("Adapting your story").closest("li")?.textContent).toContain("Done");
-    expect(screen.getByText("Planning your pages", { selector: "li span" }).closest("li")?.getAttribute("aria-current")).toBe("step");
+    const title = screen.getByRole("heading", { level: 2 }).textContent;
+    expect(title).toBe("Scripting your book");
+    expect(screen.getByText("Write the comic script").closest("li")?.getAttribute("aria-current")).toBe("step");
+    expect(screen.getByText("Plan the pages").closest("li")?.textContent).toContain("Starts automatically");
+    rerender(<I18nProvider><StageRunning stage="plan" firstPhase={{
+      status: "complete", started_at: null, finished_at: null,
+      snapshot: { kind: "adapt", beats: 42, lettering: 180 } as never,
+    }} /></I18nProvider>);
+    expect(screen.getByRole("heading", { level: 2 }).textContent).toBe(title);
+    expect(screen.getByText("Write the comic script").closest("li")?.textContent).toContain("42 story beats · 180 lettering lines");
+    expect(screen.getByText("Plan the pages").closest("li")?.getAttribute("aria-current")).toBe("step");
+  });
+
+  it("keeps one run clock across the phase hand-off", () => {
+    const now = Date.now();
+    const iso = (offset: number) => new Date(now - offset).toISOString();
+    renderStage(<StageRunning stage="plan" startedAt={iso(10_000)} firstPhase={{
+      status: "complete", started_at: iso(370_000), finished_at: iso(11_000), snapshot: null,
+    }} />);
+    expect(screen.getByText(/Elapsed 6:1\d/)).toBeTruthy();
+  });
+
+  it("restarts the clock for a standalone retry of phase two", () => {
+    const now = Date.now();
+    const iso = (offset: number) => new Date(now - offset).toISOString();
+    renderStage(<StageRunning stage="plan" startedAt={iso(5_000)} firstPhase={{
+      status: "complete", started_at: iso(90_000_000), finished_at: iso(89_000_000), snapshot: null,
+    }} />);
+    expect(screen.getByText(/Elapsed 0:0\d/)).toBeTruthy();
+  });
+
+  it("shows phase two starting, not a start action, while the chained job hands off", () => {
+    const job = { id: "j", kind: "pipeline_stage", stage: "extract", status: "running", payload: { stage: "extract" } } as never;
+    renderStage(<StagePlaceholder project="demo" stage="brief" status="pending" activeJobs={[job]}
+      firstPhase={{ status: "complete", started_at: null, finished_at: null, snapshot: null }} />);
+    expect(screen.getByText("Preparing your story")).toBeTruthy();
+    expect(screen.getByText("Draft the story brief").closest("li")?.getAttribute("aria-current")).toBe("step");
+    expect(screen.queryByRole("button")).toBeNull();
   });
 });

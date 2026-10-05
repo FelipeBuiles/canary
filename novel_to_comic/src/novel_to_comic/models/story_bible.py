@@ -4,7 +4,12 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from novel_to_comic.models.appearance import AppearanceState, StateActivation
+from novel_to_comic.models.appearance import (
+    REFERENCE_FORM_DESCRIPTION,
+    AppearanceState,
+    ReferenceForm,
+    StateActivation,
+)
 from novel_to_comic.models.asset_id import safe_asset_id
 from novel_to_comic.workspace import FIRST_PART_ID
 
@@ -26,9 +31,17 @@ class Character(BaseModel):
         "Stated age or source-described life stage, or an empty string when unknown. "
         "Keep girls/boys/adolescents young; measurements and roles are not evidence of adulthood."))
     gender: str
+    stature: str = Field(default="", description=(
+        "Source-stated body scale only when it departs from an ordinary adult of the "
+        "character's species: a height plus a relative comparison an artist can stage, "
+        "for example 'two and a half feet tall; head reaches an adult human's waist'. "
+        "Empty for ordinary size or when the source states nothing."))
     distinguishing_features: list[str] = Field(description=(
         "Source-stated intrinsic anatomy, height, weight, build, hair, face and recognizable "
-        "traits. Add facts discovered later; an occupation or clothing list is not anatomy."))
+        "traits as they are at first appearance. Add facts discovered later about how the "
+        "character always looked; a mark, scar, tattoo, brand, injury or garment gained during "
+        "the story is a change for an appearance state from that point, never a feature here. "
+        "An occupation or clothing list is not anatomy."))
     # Stable, low-intensity demeanor only (for example "guarded and watchful").
     # Scene reactions belong in page-level acting direction, never visual_anchor.
     baseline_affect: str | None = None
@@ -51,6 +64,14 @@ class Character(BaseModel):
     cast_required: bool = Field(default=False, description=(
         "Needs a dedicated Cast reference even with few appearances: a principal "
         "antagonist, companion or plot-critical creature. False for incidental copies."))
+    reference_form: ReferenceForm = Field(default="figure", description=REFERENCE_FORM_DESCRIPTION)
+
+    @model_validator(mode="after")
+    def _formation_is_a_group(self) -> "Character":
+        forms = {self.reference_form, *(state.reference_form for state in self.appearance_states)}
+        if "formation" in forms and self.identity_kind != "group":
+            raise ValueError(f"{self.id}: a formation reference sheet is only for identity_kind 'group'")
+        return self
 
     _safe_id = field_validator("id")(safe_asset_id)
     # Ordered transitions into the states above. The look before the first
@@ -69,7 +90,10 @@ class Character(BaseModel):
 class Location(BaseModel):
     id: str  # "loc_001"
     name: str  # "The Bunker"
-    visual_anchor: str  # Base-state tags. Used when no activation resolves.
+    visual_anchor: str = Field(description=(
+        "Base-state physical tags, used when no activation resolves. When the place sits "
+        "inside a larger setting (a room in a dungeon, a cabin aboard a ship), begin with that "
+        "setting so the place is not drawn as an ordinary room elsewhere."))
     time_of_day: Optional[str] = None  # "night", "dawn", etc.
     mood: str  # "tense", "warm", "desolate"
     appearance_states: list[AppearanceState] = []
@@ -167,12 +191,22 @@ class Prop(BaseModel):
     _safe_id = field_validator("id")(safe_asset_id)
 
 
+class RemovedRecord(BaseModel):
+    """What a removal took out of the Story Bible, so restoring brings it back whole."""
+
+    entity: dict[str, Any]
+    scene_ids: list[str] = []
+    # Other characters' relationships that pointed at the removed character.
+    incoming: list[tuple[str, CharacterRelationship]] = []
+
+
 class ExcludedEntity(BaseModel):
     """An entity the author removed; later extraction must not recreate it."""
 
     kind: Literal["character", "location", "prop"]
     name: str
     aliases: list[str] = []
+    removed: RemovedRecord | None = None
 
 
 class StoryBible(BaseModel):

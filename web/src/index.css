@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* Keep short phone landscapes compact; ordinary laptops retain the full shell. */
+@custom-variant studio-desktop {
+  @media (width >= 48rem) and (height >= 32rem), (width >= 64rem) {
+    @slot;
+  }
+}
+
 @theme {
   --color-hero-red: #b51822;
   --color-pulp-paper: #fcfaed;

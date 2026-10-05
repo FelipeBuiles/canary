@@ -82,6 +82,7 @@ class PageReference(BaseModel):
     appearance_state_id: str | None = None
     label: str = ""
     continuity_guard: str = ""
+    identity: str = Field(default="", exclude_if=lambda value: not value)
 
     @model_validator(mode="after")
     def _validate_style_scope(self) -> "PageReference":

@@ -168,8 +168,22 @@ is refused (409 `stale_story_bible`) when the Bible changed since.
   parts). Editing is always allowed. Removal and merge also wait for running
   Adapt and Plan work.
 - Removed names become `excluded_entities`; registry-based extraction skips
-  them until the author restores them. Merged names become `aliases` of the
-  kept entry, and extraction recognizes aliases.
+  them until the author restores them. A removal keeps the removed record
+  (details, scenes, incoming relationships), so restoring brings the entry back
+  whole, under its id, and its Cast images apply again. Author-added ids are
+  never reused. Merged names become `aliases` of the kept entry, and
+  extraction recognizes aliases.
+- `GET /story-bible/{kind}/{id}/impact?action=remove|merge&into=` previews a
+  removal or merge without writing: the scenes, looks and relationships that
+  move or leave, Cast images that stop being used, new references Cast would
+  need, and why the edit is blocked.
+- Each author edit keeps the Bible from before it in
+  `story_bible_history/` (newest 20). `POST /story-bible/undo` reverses the
+  newest edit as a new revision while nothing else (another edit or an
+  extraction) has changed the Bible since; it never takes away what an adapted
+  part cites, and waits for running Adapt and Plan work. The editor response
+  carries `undo` and `possible_duplicates` (shared or contained names, a
+  suggestion only).
 - An added entry (`origin: author`) joins only scenes in parts whose Adapt
   hasn't started. `POST /story-bible/{kind}/draft` proposes its details from
   the passages that mention the name, under a credit hold
@@ -182,9 +196,10 @@ is refused (409 `stale_story_bible`) when the Bible changed since.
   its provenance, never replacing it); `POST /cast/reopen` returns an approved
   Cast to pending so a resumed Cast regenerates every out-of-date or missing
   reference. Edits that change no appearance carry current references over.
-- `GET /parts/{part_id}/page-flags` lists drawn pages whose frozen references
-  differ from the current Story Bible or Cast. Pages are never redrawn
-  automatically.
+- The Pages list reports each drawn page whose frozen references or written
+  identities differ from the current Story Bible or Cast (image, description,
+  continuity note, or removed entry), alongside re-planned pages, in its
+  `redraws` field (`page_redraws.py`). Pages are never redrawn automatically.
 - Every entry keeps a written look: no edit may blank a visual anchor (422).
   A blank anchor left by an extraction from before anchors were required is
   filled in place with `POST /story-bible/visual-anchor` (the Cast station
@@ -234,6 +249,12 @@ not per-page acceptance.
 ### Cast reference corrections
 
 Every significant character or location appearance opens its own revision controls.
+Review and instructed corrections stay available while Cast or other project
+work runs. Corrections queue without rewriting instructions or changing images
+at admission; conflicting generation finishes before they execute. This applies
+to main references, alternate appearances, locations and props. A second active
+correction for the same asset still shares or rejects according to its existing
+route contract, preserving one paid action per request.
 State corrections use the entity-scoped instructed regeneration routes; their
 instructions and images do not replace the main reference. Missing appearances
 can be generated individually. Each paid action remains explicitly estimated
@@ -643,9 +664,21 @@ authorities are retained in `FrozenPageGenerationRequest.written_identities`
 and participate in its content hash and subsequent Story Bible edit advisories.
 Image authorities remain required for recurring and retained characters,
 locations and props; reference overflow still fails before spend.
+Scene `transient_objects` enter the same inventory as `kind: object` with
+`requires_image: false`: Adapt may cite them in beat `entity_ids`, Plan cites
+them where visible, and Draw sends their anchor as written identity. Character
+references carry an `identity` line (age, gender and any unusual `stature`)
+beside the anchor in Plan's inventory and Draw's reference payload.
 
-Cast character sheets are neutral five-view turnarounds (three-quarter and
-profile heads; front, three-quarter and back bodies) and carry identity only.
+Cast character sheets carry identity only and follow the character's
+`reference_form` (`reference_forms.py`). The default `figure` sheet is a
+neutral five-view turnaround (three-quarter and profile heads; front,
+three-quarter and back bodies). A `form` sheet shows one hero depiction with a
+material study and an alternate shape, for an entity with no fixed front, back
+or head; a `formation` sheet shows a `group` in formation with member studies.
+Every form keeps the hero in the right two thirds and a close study top-left,
+so the `full_body` and `portrait` crops stay valid. An appearance state may
+override the form when it changes the body plan.
 Only an authored state affect reaches a sheet. Appearance-state sheets show only
 the changed look (two heads and one neutral full body), never the situation:
 objects touching the body, support and pose stay in the continuity guard and
@@ -889,23 +922,29 @@ serves the derivative, keyed by raw art, style, engine and specimen copy.
 Specimen words are the project's story proof copy (`samples/style_proof_copy.json`,
 feature `style.proof_copy`): caption, speech, shout, thought and SFX lines from
 the proof scene's source passage, spoken only by its listed subjects and
-bounded by `SPECIMEN_MAX_CHARS` so every bundled design fits. It is authored
+bounded by `SPECIMEN_MAX_CHARS` so every bundled design fits. The copy names its
+`speaker` (speech and shout) and `thinker` (thought), each a listed subject;
+copy without listed owners is invalid. It is authored
 with the shared proof brief and cached by the same scene selection; every proof
 of a project letters the same lines. Without valid copy (failure, overrun, or
 the brief pass disabled), proofs letter neutral role labels, never invented
 dialogue, and a line one design cannot fit shows that role's label.
 The speech reservation contains separate normal and shouted-speech specimens;
 the shout uses a burst variant of the speech style, distinct from free-standing
-SFX. Provisional specimen tails attach after text fitting and stay short; they
-are typography demonstrations, not detected speaker positions. Generated thought
+SFX. Specimen tails attach after text fitting and stay short, ending near
+`SPEAKER_POINTS`. Editable proof art with story copy stages the speaker and
+thinker at those points, so new copy is new art request identity. The overlay
+letters story copy only on art whose stored prompt carries that copy's staging;
+other art letters role labels, so a pointer never assigns a line to whoever
+the art happened to place there. Generated thought
 styles use compact padding. The shared renderer balances thought text across lines
 and fits it inside unequal cloud lobes distributed around the full perimeter.
 Each element/style has a deterministic silhouette shared by fitting and rendering;
 moving a bubble does not change its shape. SVG font families are
 quoted so measurement and rendered text use the same bundled font.
 Integrated style proofs draw the same caption, speech, shout, thought and SFX specimen
-strings directly into the image using the candidate’s prose lettering standard;
-new story copy is new request identity, so older integrated proofs become refreshable.
+strings directly into the image using the candidate’s prose lettering standard,
+with tails pointing at the named speaker and thinker; new story copy is new request identity, so older integrated proofs become refreshable.
 Software design tokens remain excluded from the image prompt; the endpoint serves
 the original lettered raster without an overlay. Compilation, estimates, freshness
 and delivery follow the project mode, including a retained frozen edition.
@@ -951,12 +990,25 @@ After character generation, Cast visually compares all canonical sheets using
 labelled contact sheets and the configured visual review model. The typed
 `refs/cast_review.json` stores suspected lookalikes, anatomy, wardrobe and identity
 concerns, keyed to source, designs, correction direction and exact image hashes.
-`GET /cast/review` reports missing, stale or current evidence without spending.
+`GET /cast/review` reports missing, stale or current evidence without spending,
+plus `reviewing` while the model call is in flight. Redrawing a character's main
+sheet (plain or instructed) re-runs the review in the same job when every sheet
+and design is current; its usage settles with the redraw and is included in the
+redraw estimate, and a failed review leaves the check stale without failing the
+redraw. `POST /cast/review/dismiss` records that the author judged one note fine
+(`refs/cast_review_dismissals.json`), bound to the exact sheet hashes of its
+characters, so the note returns when any of those sheets is redrawn. Notes are
+advisory: approval needs a current review, not an empty one.
 A Cast run with failed assets or checks fails the stage instead of entering the
 author checkpoint. Project status exposes `stages.cast.approval_blocker`, using
 the same read-only gate as approval: no failed/incomplete items, all required
 canonical and appearance images present, and a current identity review. The UI
 offers Resume Cast for blocked historical checkpoints rather than Continue.
+`stages.cast.failures` lists each failed reference; a provider decline adds
+`likely_triggers`, phrases in the sent request that commonly trip safety filters
+(`content_triggers.py`, a deterministic heuristic, never a verdict). The UI offers
+a less graphic version, which opens the reference's direction review prefilled,
+and a link to reword the entry's description. Neither spends until confirmed.
 Resume rechecks and counts reusable references; its progress total is the full
 inventory, not the number of new image calls.
 The Cast screen links each concern to its characters. Empty findings do not mean
@@ -1412,7 +1464,7 @@ bytes must match render lineage. None of these actions redraws, verifies visual
 identity, or guarantees provider success; an OCR failure leaves the saved image
 available for inspection and recovery.
 
-Stage estimates include page references and, for editable lettering, each page's automatic read-back; Cast estimates include state
+Stage estimates include page references and each page's automatic read-back and visual review; Cast estimates include state
 references. Provider usage and credit settlement remain distinct from estimates
 and stage-progress totals. Missing usage is not evidence of zero provider cost.
 
@@ -1439,7 +1491,12 @@ an unknown outcome also falls back once; its image can never arrive later, so no
 duplicate page is published, and Canary absorbs its possible charge (the job
 hold is not retained for it; the render provenance records the absorbed usage
 event and its estimated cost). Refusals, invalid requests, cancellation, and
-completed output that fails validation stop without trying FAL. After three
+completed output that fails validation stop without trying FAL. A
+`moderation_blocked` refusal is a refusal wherever it arrives, including
+inside an accepted event stream: it neither falls back nor counts toward the
+circuit, and it surfaces as a provider decline. The gateway's OpenAI image
+handler sends `moderation: "low"` on every request, the least restrictive tier
+OpenAI offers; FAL's Sunburst endpoint has no moderation control. After three
 consecutive OpenAI failures a worker sends Sunburst images (pages and
 Style/Cast images share one circuit) straight to FAL for 15 minutes. Style/Cast
 provenance records the route and any absorbed attempt in `response_metadata`,
@@ -1477,8 +1534,9 @@ Book reads `GET /api/credits/history?project_id={project_id}` so its credit
 history uses the same holds, final charges, releases, and unsuccessful-attempt
 semantics as the account ledger. Customer credit-history responses omit provider
 prices, model identities, token counts, funding routes, and cost-source details.
-Provider usage remains internal accounting evidence. Optional visual review uses
-`/pages/{page_number}/visual-review` and its `/estimate` endpoint. Restart the
+Provider usage remains internal accounting evidence. A visual review that did
+not finish during the draw is re-run with `/pages/{page_number}/visual-review`
+and its `/estimate` endpoint. Restart the
 gateway after changing its retry configuration.
 
 ## Book readiness and package recovery
@@ -1498,13 +1556,16 @@ packages saved pages without generating artwork or spending credits. Book
 distinguishes technical blockers, unresolved review issues, and accepted
 editorial decisions, with links back to Pages.
 
-Text review is optional and advisory. Missing, stale, invalid or mismatched OCR
+Page checks are automatic and advisory. Missing, stale, invalid or mismatched OCR
 evidence does not block Draw approval or export and never proves that saved
-artwork needs replacement. Editable-lettering draw and correction jobs read each
-page back once, best effort (heads for balloon seeds, drawn-in lettering);
-integrated draws do not run OCR. Preflight
-only reads retained analysis and never repairs or buys OCR; explicit Pages text
-review handles that boundary. Automatic text findings remain reviewable, are not
+artwork needs replacement. Every draw and correction job, in both lettering
+modes, reads its page back (retried once; heads for balloon seeds and drawn-in
+lettering on editable editions) and runs the visual review against approved
+references, both best effort. An unreadable saved OCR answer is kept beside the
+next read and is not free cached evidence. Preflight
+only reads retained analysis and never repairs or buys OCR; Pages offers a
+re-check only after drawing settles. An unproven reading order stays analysis
+evidence and is not a page finding. Automatic text findings remain reviewable, are not
 preselected for redraw. Existing advisory text findings do not require acceptance
 before export; a detected hybrid `unexpected_generated_lettering` issue is an
 explicit review concern, handled through normal issue resolution. A missing

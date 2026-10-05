@@ -70,7 +70,7 @@ describe("RevisionDraft focused-fix history scope", () => {
             issues={[FACE_ISSUE, TOWER_ISSUE]}
             seeds={[]}
             onSeedsConsumed={vi.fn()}
-            onDraftKeysChange={vi.fn()}
+           
             onJobQueued={vi.fn()}
           />
         </I18nProvider>

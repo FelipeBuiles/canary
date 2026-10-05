@@ -2355,6 +2355,35 @@ def test_attributed_protected_speech_is_realized_by_its_quotations(lettering, mi
     }]
 
 
+_SPLIT_SPEECH = "Really, Carl. If you're going on like that. I just can't fathom why."
+
+
+@pytest.mark.parametrize(("balloons", "missing"), [
+    (("Really, Carl. If you're going on like that.", "I just can't fathom why."), False),
+    (("Really, Carl.", "If you're going on like that.", "I just can't fathom why."), False),
+    (("I just can't fathom why.", "Really, Carl. If you're going on like that."), True),
+    (("Really, Carl. If you're going on like this.", "I just can't fathom why."), True),
+])
+def test_protected_passage_may_span_consecutive_balloons_in_reading_order(balloons, missing):
+    # A comic splits a long protected speech across balloons; each word must
+    # still survive verbatim and in order.
+    adaptation = _with_lettering_text(balloons[0])
+    beat = adaptation.beats[0]
+    first = beat.lettering[0]
+    lettering = tuple(
+        first.model_copy(update={"id": f"lettering_{index:03d}", "text": text})
+        for index, text in enumerate(balloons, start=1)
+    )
+    adaptation = adaptation.model_copy(update={"beats": (
+        beat.model_copy(update={"lettering": lettering}), *adaptation.beats[1:],
+    )})
+    brief = _approved_brief().model_copy(update={"protected_language": (_SPLIT_SPEECH,)})
+
+    result = validate_book_adaptation(_source_document(), brief, adaptation)
+
+    assert ("protected_language_missing" in [f.code for f in result.invariant_failures]) == missing
+
+
 def test_attributed_speech_tag_comma_is_not_protected_wording():
     source = _source_from_units(*_ATTRIBUTED_SPEECH_SOURCE)
     phrase = '"Goblins aren\'t very bright," he thought.'

@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -40,6 +41,7 @@ let includeUndrawnPage = false;
 let includeThirdUndrawnPage = false;
 let completePagesUnavailable = false;
 let placementReviewNeeded = false;
+let letteringMode: "hybrid" | undefined;
 let pageIssues: Array<Record<string, unknown>> | undefined;
 let persistedPageFailure: Record<string, unknown> | null = null;
 let persistedRenderedFailure: Record<string, unknown> | null = null;
@@ -157,6 +159,7 @@ vi.mock("../api/queries", () => ({
         failure: persistedRenderedFailure,
         analysis_recovery: { status: analysisChecked ? "checked" : "requires_ocr", requires_paid_call: !analysisChecked },
         lettering_placement_review_needed: placementReviewNeeded,
+        ...(letteringMode ? { lettering_mode: letteringMode } : {}),
       }, ...(includeUndrawnPage ? [{
         page: {
           page_number: 2,
@@ -298,6 +301,7 @@ describe("PagesRoom", () => {
     includeThirdUndrawnPage = false;
     completePagesUnavailable = false;
     placementReviewNeeded = false;
+    letteringMode = undefined;
     pageIssues = undefined;
     persistedPageFailure = null;
     persistedRenderedFailure = null;
@@ -409,12 +413,15 @@ describe("PagesRoom", () => {
     expect(screen.queryByRole("button", { name: "Open page 2, revision 0" })).toBeNull();
   });
 
-  it("opens flagged pages directly in Checks without starting paid work", () => {
+  it("opens flagged pages on the Page tab with their checks, without starting paid work", () => {
     renderRoom();
     fireEvent.click(screen.getByRole("button", { name: "REVIEW FLAGGED PAGES (1)" }));
 
     const dialog = screen.getByRole("dialog", { name: "Page 1 review" });
-    expect(within(dialog).getByRole("button", { name: "Text & findings" }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(dialog).getByRole("button", { name: "Page" }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(dialog).getByRole("region", { name: "Checks" })).toBeTruthy();
+    expect(within(dialog).queryByRole("button", { name: "Text & findings" })).toBeNull();
+    expect(within(dialog).queryByRole("button", { name: "Visual review" })).toBeNull();
     expect(generatePage).not.toHaveBeenCalled();
     expect(analyzePage).not.toHaveBeenCalled();
     expect(reviewVisuals).not.toHaveBeenCalled();
@@ -691,7 +698,8 @@ describe("PagesRoom", () => {
     expect(screen.queryByRole("dialog", { name: "Page 1 review" })).toBeNull();
   });
 
-  it("closes page review when the backdrop is clicked but not its content", () => {
+  it("closes page review when the backdrop is clicked but not its content", async () => {
+    const user = userEvent.setup();
     renderRoom();
 
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
@@ -699,8 +707,29 @@ describe("PagesRoom", () => {
     fireEvent.click(screen.getByRole("button", { name: "Page" }));
     expect(screen.getByRole("dialog", { name: "Page 1 review" })).toBe(dialog);
 
-    fireEvent.click(dialog);
+    await user.click(dialog);
     expect(screen.queryByRole("dialog", { name: "Page 1 review" })).toBeNull();
+  });
+
+  it("keeps correction wording when text selection ends outside page review", async () => {
+    const user = userEvent.setup();
+    renderRoom();
+    await user.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
+    await user.click(screen.getByRole("button", { name: "MAKE CHANGES" }));
+    const field = screen.getByLabelText(/What would you like to change/);
+    await user.type(field, "Restore the approved face.");
+    const dialog = screen.getByRole("dialog", { name: "Page 1 review" });
+
+    await user.pointer([
+      { keys: "[MouseLeft>]", target: field, offset: 0 },
+      { target: dialog },
+      { keys: "[/MouseLeft]", target: dialog },
+    ]);
+
+    expect(screen.getByRole("dialog", { name: "Page 1 review" })).toBe(dialog);
+    expect(field).toHaveProperty("value", "Restore the approved face.");
+    expect(previewCorrections).not.toHaveBeenCalled();
+    expect(submitCorrections).not.toHaveBeenCalled();
   });
 
   function stubPreviewResult(): Record<string, unknown> {
@@ -789,10 +818,10 @@ describe("PagesRoom", () => {
       expect.objectContaining({ project: "demo", pageNumber: 1 }),
       expect.any(Object),
     );
-    expect(screen.getByText("Checking your correction…")).toBeTruthy();
+    expect(screen.getByText("Redrawing this page")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Generate revision" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Review changes" })).toBeNull();
-    expect(screen.getByRole("button", { name: "MAKE CHANGES" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "REDRAWING…" })).toHaveProperty("disabled", true);
   });
 
   it("requires a new review after the requested wording changes", () => {
@@ -987,7 +1016,6 @@ describe("PagesRoom", () => {
     renderRoom();
 
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
-    fireEvent.click(screen.getByRole("button", { name: "Text & findings" }));
 
     expect(screen.getByText("Possible wording difference")).toBeTruthy();
     expect(screen.getByText("Open the door. · Run!")).toBeTruthy();
@@ -995,16 +1023,16 @@ describe("PagesRoom", () => {
     expect(screen.getByText("POSSIBLE DIFFERENCES", { exact: false })).toBeTruthy();
     // No implicit per-issue redraw: fixes wait in the draft until previewed and submitted.
     expect(screen.queryByRole("button", { name: "CORRECT PAGE FINDINGS" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "TEXT LOOKS CORRECT" }));
+    fireEvent.click(screen.getByRole("button", { name: "NOT A PROBLEM" }));
     expect(dismissIssue).toHaveBeenCalledWith({
       project: "demo",
       pageNumber: 1,
       issueId: "page-issue-draw-page-001-render-002-misspelled_lettering",
     }, expect.any(Object));
-    // Redraws route through the draft: on the Page tab the finding waits selected once editing is opened.
-    fireEvent.click(screen.getByRole("button", { name: "Page" }));
-    fireEvent.click(screen.getByRole("button", { name: "MAKE CHANGES" }));
-    expect(screen.getByRole("checkbox", { name: /OCR lettering does not exactly match/ })).toHaveProperty("checked", false);
+    // Fix routes through the draft: the finding opens editing already selected.
+    fireEvent.click(screen.getByRole("button", { name: "FIX" }));
+    expect(screen.getByRole("checkbox", { name: /OCR lettering does not exactly match/ })).toHaveProperty("checked", true);
+    expect(generatePage).not.toHaveBeenCalled();
   });
 
   it("summarizes insertions, deletions and reorders across every differing segment", () => {
@@ -1027,7 +1055,6 @@ describe("PagesRoom", () => {
     renderRoom();
 
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
-    fireEvent.click(screen.getByRole("button", { name: "Text & findings" }));
 
     expect(screen.getByText("POSSIBLE DIFFERENCES · 3")).toBeTruthy();
     expect(screen.getByText(/Moved:/)).toBeTruthy();
@@ -1181,8 +1208,8 @@ describe("PagesRoom", () => {
     renderRoom();
 
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
-    fireEvent.click(screen.getByRole("button", { name: "Text & findings" }));
-    fireEvent.click(screen.getByRole("button", { name: "CHECK PAGE TEXT" }));
+    expect(screen.getByText("The text check didn't finish.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "CHECK TEXT AGAIN" }));
     expect(analyzePage).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "CONFIRM TEXT CHECK" }));
     expect(analyzePage).toHaveBeenCalledWith({
@@ -1190,6 +1217,62 @@ describe("PagesRoom", () => {
       pageNumber: 1,
     }, expect.any(Object));
     expect(generatePage).not.toHaveBeenCalled();
+  });
+
+  it("never asks for a manual check while pages are still drawing", () => {
+    analysisChecked = false;
+    includeUndrawnPage = true;
+    generationJobResults = [{ id: "drawing-job", status: "running" }];
+    renderRoom();
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+    expect(screen.queryByText(/text check didn't finish/)).toBeNull();
+  });
+
+  it("clears an automatic visual finding as not a problem, or fixes it through the draft", () => {
+    pageIssues = [{
+      id: `visual-review-${"a".repeat(64)}-1`,
+      issue_type: "visual_prop",
+      classification: "editorial_issue",
+      correction_kind: "render_fidelity",
+      correction_owner: "draw",
+      page_number: 1,
+      render_revision: 2,
+      evidence: ["Panel 3: The scar ring is on the fourth finger.", "Expected: base of the third finger."],
+      requested_correction: "Move the scar ring to the third finger.",
+      status: "open",
+      resolution_revision: null,
+    }];
+    renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
+    const checks = screen.getByRole("region", { name: "Checks" });
+    expect(within(checks).getByText("1 thing to look at.", { exact: false })).toBeTruthy();
+    expect(within(checks).getByText("Object")).toBeTruthy();
+    fireEvent.click(within(checks).getByRole("button", { name: "NOT A PROBLEM" }));
+    expect(dismissIssue).toHaveBeenCalledWith({
+      project: "demo", pageNumber: 1, issueId: `visual-review-${"a".repeat(64)}-1`,
+    }, expect.any(Object));
+    fireEvent.click(within(checks).getByRole("button", { name: "FIX" }));
+    expect(screen.getByRole("checkbox", { name: /Move the scar ring/ })).toHaveProperty("checked", true);
+    expect(reviewVisuals).not.toHaveBeenCalled();
+    expect(generatePage).not.toHaveBeenCalled();
+  });
+
+  it("treats a finding a newer check already cleared as done, not as an error", () => {
+    dismissIssue.mockImplementation((_vars, options: { onError?: (error: Error) => void }) => options.onError?.(
+      new Error(`API 422: page issue 'visual-review-${"a".repeat(64)}-1' was not found`),
+    ));
+    pageIssues = [{
+      id: `visual-review-${"a".repeat(64)}-1`, issue_type: "visual_prop", classification: "editorial_issue",
+      correction_kind: "render_fidelity", correction_owner: "draw", page_number: 1, render_revision: 2,
+      evidence: ["Panel 3: The scar ring is on the fourth finger."], requested_correction: "Move the scar ring.",
+      status: "open", resolution_revision: null,
+    }];
+    renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
+    fireEvent.click(within(screen.getByRole("region", { name: "Checks" })).getAllByRole("button", { name: "NOT A PROBLEM" })[0]);
+    expect(dismissIssue).toHaveBeenCalled();
+    expect(screen.queryByText(/was not found/)).toBeNull();
+    expect(screen.queryByText("Your decision was not saved. Try again.", { exact: false })).toBeNull();
   });
 
   it("continues to Book with unchecked artwork without running or charging for OCR", () => {
@@ -1243,31 +1326,44 @@ describe("PagesRoom", () => {
 
     const reviseTab = screen.getByRole("button", { name: "Page" });
     expect(reviseTab.getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "Visual review" }).getAttribute("aria-pressed")).toBe("false");
-    expect(screen.getByRole("button", { name: "Text & findings" }).getAttribute("aria-pressed")).toBe("false");
+    // Integrated lettering lives in the art: only the page (with its checks) and history.
+    expect(screen.queryByRole("button", { name: "Lettering" })).toBeNull();
+    expect(screen.getByRole("button", { name: "History" }).getAttribute("aria-pressed")).toBe("false");
     // Artwork and the opt-in editing entry render in the first viewport, not behind reading overlays.
     expect(screen.getByAltText("Complete page 1, render revision 2")).toBeTruthy();
     expect(screen.getByRole("button", { name: "MAKE CHANGES" })).toBeTruthy();
     // Editing stays closed until requested.
     expect(screen.queryByLabelText(/What would you like to change/)).toBeNull();
-    // Visual and checks views stay out of the default viewport.
-    expect(screen.queryByText("VISUAL REVIEW")).toBeNull();
-    expect(screen.queryByText("ISSUE HISTORY")).toBeNull();
+    // The checks sit with the page, below the artwork.
+    expect(screen.getByRole("region", { name: "Checks" })).toBeTruthy();
   });
 
-  it("shows the manuscript source for the open page in its own tab", () => {
+  it("offers the Lettering tab only for editable lettering", () => {
+    letteringMode = "hybrid";
+    renderRoom("/project/demo/pages?page=1&review=lettering");
+    expect(screen.getByRole("button", { name: "Lettering" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("falls back to the page when an integrated page is linked to Lettering", () => {
+    renderRoom("/project/demo/pages?page=1&review=lettering");
+    expect(screen.queryByRole("button", { name: "Lettering" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Page" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("region", { name: "Checks" })).toBeTruthy();
+  });
+
+  it("shows the manuscript source for the open page under History", () => {
     renderRoom();
 
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
-    fireEvent.click(screen.getByRole("button", { name: "Source" }));
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
 
-    expect(screen.getByRole("button", { name: "Source" }).getAttribute("aria-pressed")).toBe("true");
-    const region = screen.getByRole("region", { name: "Source" });
+    expect(screen.getByRole("button", { name: "History" }).getAttribute("aria-pressed")).toBe("true");
+    const region = screen.getByRole("region", { name: "History" });
     expect(within(region).getByText("Mara argued at the market.").tagName).toBe("MARK");
     expect(within(region).getByText("Lettering positions are not available for this artwork.")).toBeTruthy();
   });
 
-  it("switches between visual and checks views and keeps the draft mounted", () => {
+  it("switches to History and back and keeps the draft mounted", () => {
     renderRoom();
 
     fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
@@ -1283,13 +1379,9 @@ describe("PagesRoom", () => {
       "value", "Keep the reveal, but restore the approved face.",
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Visual review" }));
-    expect(screen.getByRole("button", { name: "Visual review" }).getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByText("VISUAL REVIEW")).toBeTruthy();
-    expect(screen.queryByText("ISSUE HISTORY")).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "Text & findings" }));
-    expect(screen.getByText("ISSUE HISTORY")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "History" }));
+    expect(screen.getByRole("button", { name: "History" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("region", { name: "History" })).toBeTruthy();
 
     // Unsaved draft state survives tab switches: the draft stays mounted hidden.
     fireEvent.click(screen.getByRole("button", { name: "Page" }));
@@ -1334,7 +1426,7 @@ describe("PagesRoom", () => {
     renderRoom();
 
     const card = screen.getByRole("button", { name: "Open page 1, revision 2" });
-    expect(screen.getByText("Needs visual review")).toBeTruthy();
+    expect(screen.getByText("Confirm fix")).toBeTruthy();
     expect(card.textContent).not.toContain("Confirmed");
   });
 
@@ -1427,9 +1519,9 @@ describe("PagesRoom", () => {
 
   it("opens a Book finding on the requested page and review view", () => {
     includeUndrawnPage = true;
-    renderRoom("/project/demo/pages?page=1&review=checks&filter=needs-review");
+    renderRoom("/project/demo/pages?page=1&review=page&filter=needs-review");
     const dialog = screen.getByRole("dialog", { name: "Page 1 review" });
-    expect(within(dialog).getByRole("button", { name: "Text & findings" }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(dialog).getByRole("button", { name: "Page" }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(within(dialog).getByRole("button", { name: "NEXT PAGE" }));
     expect(screen.getByRole("dialog", { name: "Page 2 review" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "NEXT UNRESOLVED" }));
@@ -1440,13 +1532,13 @@ describe("PagesRoom", () => {
   });
 
   it("restores review context in this session but lets explicit links win", () => {
-    window.sessionStorage.setItem("page-review:v2:signed-out:demo", "page=1&review=checks&filter=needs-review");
+    window.sessionStorage.setItem("page-review:v2:signed-out:demo", "page=1&review=history&filter=needs-review");
     const first = renderRoom();
     expect(screen.getByRole("dialog", { name: "Page 1 review" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Text & findings" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "History" }).getAttribute("aria-pressed")).toBe("true");
     first.unmount();
-    renderRoom("/project/demo/pages?page=1&review=visual&filter=all");
-    expect(screen.getByRole("button", { name: "Visual review" }).getAttribute("aria-pressed")).toBe("true");
+    renderRoom("/project/demo/pages?page=1&review=page&filter=all");
+    expect(screen.getByRole("button", { name: "Page" }).getAttribute("aria-pressed")).toBe("true");
   });
 
   it("ignores invalid review URL values without choosing an arbitrary page", () => {

@@ -164,7 +164,7 @@ export function updateStylePresentation(
 export function setActiveStyle(
   project: string,
   id: string,
-): Promise<{ status: string; id: string; index: number; style_template: string }> {
+): Promise<{ status: string; id: string; index: number; style_template: string; style_changed: boolean }> {
   return apiFetch(`${seriesPath(project)}/styles/active`, {
     method: "PATCH",
     body: JSON.stringify({ id }),

@@ -1571,3 +1571,21 @@ def test_canonical_staging_can_substantiate_a_continuity_contradiction():
     invented = finding.model_copy(update={"passages": (finding.passages[0],
         NarrativePassage(artifact_id="page_007", quote="This text was not supplied."))})
     assert not _blocks(invented, window, "plan")
+
+
+def test_plan_signals_an_exchange_staged_in_a_faceless_insert():
+    def line(speaker):
+        return {"kind": "dialogue", "delivery": "onscreen", "speaker_entity_id": speaker}
+
+    page = {"page_number": 10, "beat_ids": ["beat_1"], "content": [
+        {"id": "page_010_content_003", "beat_ids": ["beat_1"], "camera": {"shot": "insert"},
+         "lettering": [line("char_witch"), line("char_oran"), line("char_witch")]},
+        {"id": "page_010_content_004", "beat_ids": ["beat_1"], "camera": {"shot": "medium"},
+         "lettering": [line("char_witch"), line("char_oran")]},
+    ]}
+    context = {"phase": "plan", "beats": [], "pages": [page]}
+
+    signals = [s for s in narrative_signals(context) if s["id"].startswith("faceless_exchange")]
+
+    assert [s["id"] for s in signals] == ["faceless_exchange_page_010_content_003"]
+    assert signals[0]["artifact_ids"] == ["page_010"]

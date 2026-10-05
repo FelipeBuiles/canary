@@ -83,6 +83,68 @@ def test_stored_language_switch_waits_only_for_work_that_rewrites_lettering(tmp_
         assert mutation_conflicts(app, "account:book", "/lettering/locale")
 
 
+@pytest.mark.parametrize("writer_kind, payload", [
+    ("pipeline_stage", {"stage": "cast"}),
+    ("pipeline_stage", {"stage": "extract"}),
+    ("lettering_translation", {}),
+])
+def test_queued_cast_correction_waits_unstarted_for_project_writer(tmp_path, writer_kind, payload):
+    from novel_to_comic.server import generation_jobs
+
+    async def scenario():
+        app = make_app(tmp_path)
+        app.state.durable_queue_required = False
+        entered, release = asyncio.Event(), asyncio.Event()
+        calls = []
+
+        async def writer():
+            entered.set()
+            await release.wait()
+            calls.append("generation finished")
+
+        async def correction():
+            calls.append("correction")
+
+        first = generation_jobs.GenerationJob("writer", "account:book", writer_kind, "Writer", payload, 1, writer, user_id="account")
+        fix = generation_jobs.GenerationJob("fix", "account:book", "character_ref_regen", "Ada", {"char_id": "ada"}, 2, correction, user_id="account")
+        app.state.generation_jobs = {first.id: first, fix.id: fix}
+        active = asyncio.create_task(generation_jobs.run_generation_job(app, first))
+        await entered.wait()
+        waiting = asyncio.create_task(generation_jobs.run_generation_job(app, fix))
+        try:
+            await asyncio.sleep(0.15)
+            assert fix.status == "queued" and fix.started_at is None
+            assert calls == []
+            release.set()
+            await asyncio.gather(active, waiting)
+        finally:
+            release.set()
+            await asyncio.gather(active, waiting)
+        assert calls == ["generation finished", "correction"]
+        assert fix.status == "complete"
+
+    asyncio.run(scenario())
+
+
+def test_project_text_lane_cannot_overtake_an_earlier_queued_correction(tmp_path):
+    from novel_to_comic.server.generation_jobs import GenerationJob, project_work_precedes
+    app = make_app(tmp_path)
+    fix = GenerationJob("fix", "account:book", "character_ref_regen", "Ada", {}, 1, None)
+    text = GenerationJob("text", "account:book", "pipeline_stage", "Extract", {"stage": "extract"}, 2, None)
+    app.state.generation_jobs = {fix.id: fix, text.id: text}
+    assert project_work_precedes(app, text)
+    assert not project_work_precedes(app, fix)
+    fix.status = "complete"
+    assert not project_work_precedes(app, text)
+    fix.status = "running"
+    fix.project_name = "account:another-book"
+    assert not project_work_precedes(app, text)
+    fix.project_name = text.project_name
+    fix.payload["part_id"] = "part_0001"
+    text.payload["part_id"] = "part_0002"
+    assert not project_work_precedes(app, text)
+
+
 def test_restore_distinguishes_unstarted_from_unknown(tmp_path):
     app = make_app(tmp_path)
     queue = DurableQueue(app, "postgresql://unused")
@@ -783,3 +845,45 @@ def test_shutdown_while_drained_leaves_operation_queued_for_restart(tmp_path, mo
     restarted = make_app(tmp_path)
     DurableQueue(restarted, "postgresql://unused").restore()
     assert restarted.state.generation_jobs[job.id].status == "queued"
+
+
+def test_style_batch_reports_each_finished_proof_in_the_stage_counts(tmp_path, monkeypatch):
+    """Regression: the floating indicator read 0/6 until the whole batch ended."""
+    from novel_to_comic.server import style_jobs
+    from novel_to_comic.server.generation_jobs import GenerationJob
+    from novel_to_comic.state import StageStatus, create_initial_state, load_state, save_state
+    from tests.test_style_stage import _bible
+
+    state = create_initial_state("book", "novel.txt")
+    state.stages["style"].status = StageStatus.RUNNING
+    save_state(state, tmp_path)
+    candidates = [style_jobs.style.normalize_suggestion({"id": str(i), "label": f"Style {i}"}) for i in range(3)]
+    seen: list[int] = []
+
+    async def suggestions(config, bible, *, existing_suggestions, custom_direction, on_shortlist):
+        return candidates, []
+
+    async def image(config, bible, output, **kwargs):
+        seen.append(load_state(tmp_path).stages["style"].items_done)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"proof")
+
+    async def brief(*_args):
+        return "brief"
+
+    monkeypatch.setattr(style_jobs.style, "ensure_style_sample_brief", brief)
+    monkeypatch.setattr(style_jobs.style, "generate_suggestions", suggestions)
+    monkeypatch.setattr(style_jobs.style, "generate_sample_image", image)
+    config = Config(image_concurrency=1)
+    job = GenerationJob(id="batch", project_name="account:book", kind="style_suggest", label="Styles",
+        payload={}, sequence=1, runner=None, command=command("style_suggest", tmp_path, config,
+            bible=_bible().model_dump(mode="json"), lifecycle_owned=True))
+
+    async def exercise():
+        app = make_app(tmp_path)
+        app.state.generation_jobs[job.id] = job
+        await style_jobs.execute_style(app, job, tmp_path, config)
+
+    asyncio.run(exercise())
+    assert seen == [0, 1, 2]
+    assert load_state(tmp_path).stages["style"].items_done == 3

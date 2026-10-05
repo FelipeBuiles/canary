@@ -612,10 +612,15 @@ _DISABLED_FEATURES = (
 )
 
 
+# Always pinned: an unset effort would inherit the user's personal Codex config,
+# whose value (e.g. "max") the selected model may reject.
+_DEFAULT_EFFORT = {"image": "low", "text": "medium"}
+
+
 def _config(root: Path, request: dict[str, Any], profile: str) -> dict[str, Any]:
     workspace = root / "workspace"
     return {
-        **({"model_reasoning_effort": request["effort"]} if request.get("effort") else {}),
+        "model_reasoning_effort": request.get("effort") or _DEFAULT_EFFORT[request["kind"]],
         "model_provider": PROVIDER,
         "service_tier": SERVICE_TIER,
         "forced_login_method": "chatgpt", "approval_policy": "never",

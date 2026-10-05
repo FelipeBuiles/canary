@@ -56,7 +56,8 @@ def _usage() -> UsageRecord:
                        cached_image_tokens=0, image_output_tokens=343)
 
 
-def _record(requests, request_id, *, result, submitted_at, status="complete"):
+def _record(requests, request_id, *, result, submitted_at, status="complete", prompt=PROMPT,
+            asset_kind="character_ref"):
     blob = b"\x89PNG " + request_id.encode()
     digest = hashlib.sha256(blob).hexdigest()
     (requests / "blobs").mkdir(parents=True, exist_ok=True)
@@ -70,7 +71,7 @@ def _record(requests, request_id, *, result, submitted_at, status="complete"):
     wire = ProviderWireRequest(
         discriminator=PROVIDER_WIRE_DISCRIMINATOR, schema_version=PROVIDER_WIRE_SCHEMA_VERSION,
         requested_alias="image-sunburst", expected_route="gpt_image_2", provider_key="fal-queue",
-        configured_provider_model="fal-queue/openai/gpt-image-2.5/sunburst", prompt_parts=(PROMPT,),
+        configured_provider_model="fal-queue/openai/gpt-image-2.5/sunburst", prompt_parts=(prompt,),
         references=(reference,), width=1024, height=1024, structured_aspect=None,
         controls=(("quality", "medium"),), compiled_request_sha256="c" * 64, execution_fingerprint="",
     )
@@ -78,7 +79,7 @@ def _record(requests, request_id, *, result, submitted_at, status="complete"):
     (requests / request_id).mkdir()
     (requests / request_id / "manifest.json").write_text(json.dumps({
         "wire_request": json.loads(wire.to_json()), "submitted_at": submitted_at,
-        "request_context": {"asset_kind": "character_ref"},
+        "request_context": {"asset_kind": asset_kind},
     }))
     (requests / request_id / "status.json").write_text(json.dumps({"status": status, "result_link": result}))
     return wire
@@ -453,3 +454,48 @@ def test_unmeasured_sizes_scale_the_nearest_measured_size_by_area():
 
     assert codex_page == pytest.approx(measured * (1696 * 2528) / (1024 * 1536))
     assert codex_page < 0.05  # never the $0.25 reservation allowance
+
+
+
+def _sheet_prompt():
+    from novel_to_comic import reference_forms
+
+    layout = "\n".join(f"- {line}" for line in reference_forms.CANONICAL_LAYOUTS["figure"])
+    composition, brief = reference_forms.CANONICAL_DIRECTION["figure"]
+    return (
+        f"Constraints\n{layout}\n- no text, captions, speech balloons, or lettering anywhere in the image\n"
+        f"- {reference_forms.PERFORMANCE['figure']}\n\n"
+        "Protected anchors\nCosmic Hearts [char_hearts / canonical]: trio of planet-sized hearts\n\n"
+        f"Scene direction\nComposition: {composition}\nVisual brief: {brief}\n\n"
+        f"User constraint notes\n{reference_forms.IDENTITY_DESIGN['figure']}"
+    )
+
+
+@pytest.mark.parametrize(("variant", "expected"), [
+    ("sheet_form", "never invent a back, head or limbs the anchor does not give it"),
+    ("sheet_formation", "with the member count and arrangement the anchor gives"),
+])
+def test_sheet_form_variants_replace_the_turnaround_and_keep_anchors_and_references(root, variant, expected):
+    _record(root / "story" / "requests", "hearts", result="refs/char_hearts/sheet.png", submitted_at="2026-10-04",
+            prompt=_sheet_prompt())
+    item = image_compare.AssetItem(root / "story", "hearts")
+    prepared = item.prepare(None, image_compare.get_target("sunburst-openai"), variant)
+
+    assert expected in prepared.prompt
+    assert "turnaround" not in prepared.prompt and "back view" not in prepared.prompt
+    assert "relaxed neutral expression" not in prepared.prompt
+    assert "named individual's own face" not in prepared.prompt
+    assert "Cosmic Hearts [char_hearts / canonical]: trio of planet-sized hearts" in prepared.prompt
+    assert "no text, captions, speech balloons" in prepared.prompt
+    assert prepared.references == 1 and prepared.missing_verbatim == []
+
+
+def test_sheet_form_variants_refuse_plates_and_drifted_layouts(root):
+    _record(root / "story" / "requests", "plate", result="plates/loc_snug.png", submitted_at="2026-10-04",
+            asset_kind="location_plate")
+    plate = image_compare.AssetItem(root / "story", "plate")
+    with pytest.raises(ValueError, match="only to character sheets"):
+        plate.prepare(None, image_compare.get_target("sunburst-openai"), "sheet_form")
+    character = image_compare.AssetItem(root / "story", "new")
+    with pytest.raises(ValueError, match="not a turnaround character sheet"):
+        character.prepare(None, image_compare.get_target("sunburst-openai"), "sheet_form")

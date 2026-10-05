@@ -6,6 +6,7 @@ import pytest
 from novel_to_comic.input_limits import (
     InputLimitError,
     InputLimits,
+    clean_markdown,
     decode_remote_story,
     read_source,
 )
@@ -171,3 +172,64 @@ def test_remote_gzip_expansion_is_bounded():
         decode_remote_story(compressed, _limits())
 
     assert exc_info.value.status_code == 413
+
+
+def _docx(path: Path, body: str) -> Path:
+    namespace = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("word/document.xml", f'<w:document xmlns:w="{namespace}"><w:body>{body}</w:body></w:document>')
+    return path
+
+
+def test_docx_paragraphs_become_blank_line_separated_text(tmp_path: Path):
+    source = _docx(tmp_path / "novel.docx", (
+        "<w:p><w:r><w:t>Chapter 1</w:t></w:r></w:p>"
+        "<w:p/>"
+        "<w:p><w:r><w:t xml:space=\"preserve\">The keeper </w:t></w:r><w:r><w:t>climbed.</w:t></w:r></w:p>"
+        "<w:p><w:r><w:t>Line one</w:t><w:br/><w:t>line two</w:t></w:r></w:p>"
+    ))
+
+    assert read_source(source, _limits()) == "Chapter 1\n\nThe keeper climbed.\n\nLine one\nline two"
+
+
+def test_docx_budgets_and_malformed_documents_are_rejected(tmp_path: Path):
+    long = _docx(tmp_path / "long.docx", "<w:p><w:r><w:t>" + "x" * 101 + "</w:t></w:r></w:p>")
+    with pytest.raises(InputLimitError, match="character limit") as exc_info:
+        read_source(long, _limits())
+    assert exc_info.value.status_code == 413
+
+    empty = _docx(tmp_path / "empty.docx", "<w:p/>")
+    with pytest.raises(InputLimitError, match="no text"):
+        read_source(empty, _limits())
+
+    not_zip = tmp_path / "broken.docx"
+    not_zip.write_bytes(b"not a zip")
+    with pytest.raises(InputLimitError, match="Word document could not be read"):
+        read_source(not_zip, _limits())
+
+    entities = tmp_path / "entities.docx"
+    with zipfile.ZipFile(entities, "w") as archive:
+        archive.writestr("word/document.xml", '<!DOCTYPE x [<!ENTITY a "aaaa">]><x>&a;</x>')
+    with pytest.raises(InputLimitError, match="Word document could not be read"):
+        read_source(entities, _limits())
+
+
+def test_markdown_keeps_prose_and_chapter_headings_without_markup():
+    text = (
+        "---\ntitle: Draft\n---\n"
+        "# Chapter 1\n\nShe said **no** and *meant* it. See [the map](map.png).\n"
+        "![cover](cover.png)\n\n---\n\nsnake_case_word stays.\n"
+    )
+
+    assert clean_markdown(text) == (
+        "# Chapter 1\n\nShe said no and meant it. See the map.\n"
+        "\n\n* * *\n\nsnake_case_word stays.\n"
+    )
+
+
+def test_markdown_files_are_read_as_cleaned_text(tmp_path: Path):
+    source = tmp_path / "novel.md"
+    source.write_text("# Chapter 1\n\n**Bold** start.")
+
+    assert read_source(source, _limits()) == "# Chapter 1\n\nBold start."

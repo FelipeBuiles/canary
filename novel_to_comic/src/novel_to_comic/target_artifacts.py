@@ -134,6 +134,25 @@ class TargetArtifacts:
     def write_cast_review(self, review) -> None:
         self._write_model(self.cast_review_path, review)
 
+    @property
+    def cast_review_dismissals_path(self) -> Path:
+        return self.series_dir / "refs" / "cast_review_dismissals.json"
+
+    def read_cast_review_dismissals(self):
+        from novel_to_comic.cast_design import CastReviewDismissals
+        if not self.cast_review_dismissals_path.exists():
+            return CastReviewDismissals(dismissed=[])
+        return self._read_model("cast_review_dismissals", self.cast_review_dismissals_path,
+                                CastReviewDismissals)
+
+    def write_cast_review_dismissals(self, dismissals) -> None:
+        self._write_model(self.cast_review_dismissals_path, dismissals)
+
+    @property
+    def cast_review_running_path(self) -> Path:
+        """Marker present while a cast visual review call is in flight."""
+        return self.series_dir / "refs" / ".cast_review_running"
+
     def archive_adaptation_work(self) -> Path:
         return self.archive_stage_work("adapt")
 
@@ -1012,6 +1031,16 @@ class TargetArtifacts:
             self.ocr_response_path(response.page_number, response.render_revision),
             response, OCRProviderResponse,
         )
+
+    def retire_unreadable_ocr_response(self, page_number: int, render_revision: int) -> None:
+        """Keep an unreadable paid answer as evidence beside, not in place of, the next read."""
+        path = self.ocr_response_path(page_number, render_revision)
+        if not path.exists():
+            return
+        attempt = 1
+        while (retired := path.with_name(f"{path.stem}.unreadable_{attempt}.json")).exists():
+            attempt += 1
+        path.rename(retired)
 
     def read_ocr_response(self, page_number: int, render_revision: int) -> OCRProviderResponse:
         return self._read_model(
