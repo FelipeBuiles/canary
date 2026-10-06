@@ -5,7 +5,8 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { setMedia } from "mock-match-media";
 import { describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
-import { BottomBarPortal, TopBarSlotProvider } from "../layout/TopBarSlot";
+import { TopBarSlotProvider } from "../layout/TopBarSlot";
+import { ApprovalBar } from "../components/composites/ApprovalBar";
 import { RoomHeader } from "../components/composites/RoomHeader";
 import { DESKTOP_LAYOUT_QUERY } from "../hooks/useDesktopLayout";
 
@@ -65,7 +66,7 @@ describe("mobile project shell", () => {
               <Route path="pages" element={<>
                 <RoomHeader kicker="PAGES" title="REVIEW COMPLETE PAGES" />
                 <p>Artwork to review</p>
-                <BottomBarPortal><footer><button onClick={onContinue}>Continue</button></footer></BottomBarPortal>
+                <ApprovalBar next="Review the artwork" primaryLabel="Continue" onPrimary={onContinue} />
               </>} />
             </Route>
           </Routes>
@@ -74,12 +75,21 @@ describe("mobile project shell", () => {
     );
   }
 
-  it.each([{ width: 390, height: 640 }, { width: 844, height: 390 }, { width: 768, height: 1024 }, { width: 1023, height: 1200 }])("keeps room titles and approval actions in the content flow at $width × $height", (size) => {
+  it.each([
+    { width: 390, height: 640, standing: false },
+    { width: 844, height: 390, standing: false },
+    { width: 767, height: 1024, standing: false },
+    { width: 768, height: 599, standing: false },
+    { width: 768, height: 600, standing: true },
+    { width: 768, height: 1024, standing: true },
+    { width: 1023, height: 1200, standing: true },
+  ])("keeps compact titles in the page and standing=$standing actions at $width × $height", ({ standing, ...size }) => {
     setMedia(size);
     renderRoom();
     const main = screen.getByRole("main");
     expect(main.contains(screen.getByRole("heading", { name: "REVIEW COMPLETE PAGES" }))).toBe(true);
-    expect(main.contains(screen.getByRole("button", { name: "Continue" }))).toBe(true);
+    expect(main.contains(screen.getByRole("button", { name: "Continue" }))).toBe(!standing);
+    expect(screen.getByRole("button", { name: "Continue" }).closest("footer")).not.toBeNull();
   });
 
   it("preserves desktop slots and moves working actions when the viewport changes", () => {
@@ -96,7 +106,16 @@ describe("mobile project shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     expect(onContinue).toHaveBeenCalledOnce();
 
-    act(() => setMedia({ width: 1366, height: 768 }));
+    act(() => setMedia({ width: 768, height: 1024 }));
+    expect(main.contains(screen.getByRole("heading", { name: "REVIEW COMPLETE PAGES" }))).toBe(true);
+    expect(main.contains(screen.getByRole("button", { name: "Continue" }))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(onContinue).toHaveBeenCalledTimes(2);
+
+    act(() => setMedia({ width: 844, height: 390 }));
+    expect(main.contains(screen.getByRole("button", { name: "Continue" }))).toBe(true);
+
+    act(() => setMedia({ width: 1366, height: 500 }));
     expect(main.contains(screen.getByRole("button", { name: "Continue" }))).toBe(false);
   });
 

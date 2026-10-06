@@ -153,3 +153,17 @@ def test_unknown_model_has_truthful_fallback_description():
     assert description.provider_key == "unknown"
     assert description.display_name == "custom/provider-model"
     assert description.provider_model == "custom/provider-model"
+
+
+def test_nano_banana_alias_and_provider_literals_have_documented_capabilities():
+    from novel_to_comic.image_models import image_model_profile
+
+    for model in ("image-nano-banana-2.1", "gemini-nano-banana-2.1",
+                  "vertex_ai/gemini-nano-banana-2.1", "vertex-multimodal/gemini-nano-banana-2.1"):
+        description = describe_image_model(model)
+        profile = image_model_profile(model)
+        assert description.display_name == "Nano Banana 2.1"
+        assert profile.route == ImageRoute.NANO_BANANA_21
+        assert profile.max_references == 14
+        assert profile.supported_controls == frozenset({"quality"})
+        assert profile.provider_key == "vertex-multimodal"

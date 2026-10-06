@@ -11,6 +11,7 @@ GATEWAY_IMAGE_BALANCED = "image-gemini-pro"
 GATEWAY_IMAGE_QUALITY = "image-gpt-2"
 GATEWAY_IMAGE_SUNBURST = "image-sunburst"
 GATEWAY_IMAGE_FLARE = "image-flare"
+GATEWAY_IMAGE_NANO_BANANA_21 = "image-nano-banana-2.1"
 GATEWAY_IMAGE_MUSE = "image-muse"
 GATEWAY_IMAGE_SEEDREAM_TEST = "image-seedream-v5-lite"
 
@@ -43,6 +44,7 @@ IMAGE_PROVIDER_UNKNOWN = "unknown"
 class ImageRoute(str, Enum):
     """Stable application routes independent of mutable UI tier labels."""
 
+    NANO_BANANA_21 = "nano_banana_21"
     GEMINI_FLASH_LITE = "gemini_flash_lite"
     GEMINI_PRO_IMAGE = "gemini_pro_image"
     SEEDREAM = "seedream"
@@ -63,6 +65,11 @@ class ImageModelDescription:
 
 
 _ALIAS_DESCRIPTIONS: dict[str, ImageModelDescription] = {
+    GATEWAY_IMAGE_NANO_BANANA_21: ImageModelDescription(
+        route=ImageRoute.NANO_BANANA_21, display_name="Nano Banana 2.1",
+        provider_model="vertex-multimodal/gemini-nano-banana-2.1",
+        provider_key=IMAGE_PROVIDER_VERTEX_MULTIMODAL,
+    ),
     GATEWAY_IMAGE_FAST: ImageModelDescription(
         route=ImageRoute.GEMINI_FLASH_LITE,
         display_name="Gemini 3.1 Flash Lite Image",
@@ -148,6 +155,9 @@ def describe_image_model(model: str) -> ImageModelDescription:
             provider_model=normalized,
             provider_key=IMAGE_PROVIDER_OPENROUTER,
         )
+    if normalized in {"gemini-nano-banana-2.1", "vertex_ai/gemini-nano-banana-2.1",
+                      "vertex-multimodal/gemini-nano-banana-2.1"}:
+        return _ALIAS_DESCRIPTIONS[GATEWAY_IMAGE_NANO_BANANA_21]
     if normalized == _GEMINI_FLASH_LITE_MODEL:
         return ImageModelDescription(
             route=ImageRoute.GEMINI_FLASH_LITE,
@@ -223,6 +233,7 @@ _ALL_CONTROLS: tuple[str, ...] = (
 #   (the route has no provider-side prefix slice that threatens protected
 #   content).
 _PROMPT_CHAR_LIMITS: dict[ImageRoute, int | None] = {
+    ImageRoute.NANO_BANANA_21: None,
     ImageRoute.GEMINI_FLASH_LITE: None,
     ImageRoute.GEMINI_PRO_IMAGE: None,
     ImageRoute.SEEDREAM: None,
@@ -235,6 +246,7 @@ _PROMPT_CHAR_LIMITS: dict[ImageRoute, int | None] = {
 #: structurally rather than as prose. Empty tuple means the route has no
 #: dedicated aspect parameter (it derives aspect from width/height only).
 _NATIVE_ASPECTS: dict[ImageRoute, tuple[str, ...]] = {
+    ImageRoute.NANO_BANANA_21: (),
     ImageRoute.GEMINI_FLASH_LITE: (),
     ImageRoute.GEMINI_PRO_IMAGE: (),
     ImageRoute.SEEDREAM: (),
@@ -251,6 +263,7 @@ _NATIVE_ASPECTS: dict[ImageRoute, tuple[str, ...]] = {
 #   route forwards these today, so they are unsupported (phantom) until a route
 #   is verified to send them.
 _SUPPORTED_CONTROLS: dict[ImageRoute, frozenset[str]] = {
+    ImageRoute.NANO_BANANA_21: frozenset({"quality"}),
     ImageRoute.GEMINI_FLASH_LITE: frozenset({"quality"}),
     ImageRoute.GEMINI_PRO_IMAGE: frozenset({"quality"}),
     ImageRoute.SEEDREAM: frozenset({"quality"}),
@@ -336,6 +349,7 @@ class ImageModelProfile:
 
 # Product reference caps; GPT Image 2.5 uses its documented 16-image limit.
 _ROUTE_REFERENCE_CAPS: dict[ImageRoute, int] = {
+    ImageRoute.NANO_BANANA_21: 14,
     ImageRoute.GEMINI_FLASH_LITE: 10,
     ImageRoute.GEMINI_PRO_IMAGE: 10,
     ImageRoute.SEEDREAM: 10,
@@ -347,6 +361,7 @@ _ROUTE_REFERENCE_CAPS: dict[ImageRoute, int] = {
 
 
 _ROUTE_PROVIDER_KEYS: dict[ImageRoute, str] = {
+    ImageRoute.NANO_BANANA_21: IMAGE_PROVIDER_VERTEX_MULTIMODAL,
     ImageRoute.GEMINI_FLASH_LITE: IMAGE_PROVIDER_VERTEX_MULTIMODAL,
     ImageRoute.GEMINI_PRO_IMAGE: IMAGE_PROVIDER_VERTEX_MULTIMODAL,
     ImageRoute.SEEDREAM: IMAGE_PROVIDER_FAL_QUEUE,

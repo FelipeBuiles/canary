@@ -1,10 +1,8 @@
 # Lightsail releases from Depot CI
 
-**Status: CI access provisioned on 2026-10-06; deployment is
-not activated or live-deploy verified.** Fly is
-still production. Do not enable unattended releases until the initial migration,
-single-owner fencing, edge checks, candidate-image tests and restore rehearsal
-in [the migration plan](../proposals/aws-lightsail-migration.md) pass.
+**Status: Lightsail became production on 2026-10-06. Fly is stopped and fenced.
+CI activation is enabled; the first complete live CI release passed.**
+See the dated cutover evidence below for checks and remaining limitations.
 
 Depot remains the CI runner and image builder. `.depot/workflows/ci.yml` saves
 the production image in Depot's OCI registry (`registry.depot.dev/js338b6zll`),
@@ -140,7 +138,7 @@ browser SSH, default-key download, S3, billing or general administrator access.
 Use Depot's documented [OIDC claim format](https://depot.dev/docs/ci/oidc), and
 verify the actual subject during setup before enabling deployment.
 
-Configure the following Depot entries, each scoped to repository
+Configure the deployment credentials and connection entries scoped to repository
 `FelipeBuiles/canary`, branch `main`, workflow `.depot/workflows/ci.yml`, environment
 `production`, with no unscoped fallback:
 
@@ -150,7 +148,13 @@ Configure the following Depot entries, each scoped to repository
 | Variable | `LIGHTSAIL_HOST` | `52.203.15.28` (current static IPv4) |
 | Variable | `LIGHTSAIL_SSH_KNOWN_HOSTS` | Verified full ED25519 known-hosts entry for that IP |
 | Variable | `LIGHTSAIL_CI_ROLE_ARN` | Scoped firewall role ARN |
-| Variable | `CANARY_DEPLOY_TARGET` | Leave unset until activation; then `lightsail` |
+| Variable | `CANARY_DEPLOY_TARGET` | Leave unset until activation; then `lightsail`; see scope exception below |
+
+The non-secret `CANARY_DEPLOY_TARGET` activation flag is scoped to repository,
+main and workflow, without an environment selector, so it can be evaluated by
+the job-level condition. Keep the SSH secret and connection variables scoped
+to `production` as above. Run `mcf4dgqxgk` passed its tests/build but skipped
+deployment when the flag also had the environment selector.
 
 Retain the frontend build and PostHog source-map settings. This workflow no longer
 uses `FLY_API_TOKEN` or `CANARY_OPS_TOKEN`. Retire their Depot copies after the
@@ -172,8 +176,8 @@ its own short-lived job authentication; the host receives only a
 - IAM simulation allowed the three intended actions in `us-east-1`, denied
   mutations on another instance, and denied all three in another region.
   Snapshot creation, default-key download, browser SSH, instance creation and
-  IAM role creation were denied. This verifies policy evaluation, not live OIDC
-  federation; the actual Depot token and AWS session still need a CI rehearsal.
+  IAM role creation were denied. Live main-branch OIDC federation and restricted
+  SSH subsequently passed in preflight run `clhzrddvrt`.
 - Installed the release controller, public verifier, Compose file and systemd
   unit on the host. The existing secrets loader was retained. `visudo`, `sshd -t`
   and `systemd-analyze verify` passed; SSH was reloaded and operator access retested.
@@ -201,14 +205,16 @@ printed only selected identity claims, never the token. Runs:
 `5dr7xk9qs5` (AWS rejection), `6j44vjn6sm` (identity diagnostic).
 
 The manual-only `.depot/workflows/lightsail-preflight.yml` is included with the
-migration CI changes. Once published on main, dispatch it with:
+migration CI changes, now published on main. Dispatch it with:
 
 ```sh
 depot ci dispatch --org 6ntrqswcbt --repo FelipeBuiles/canary \
   --workflow lightsail-preflight.yml --ref main
 ```
 
-The AWS-only preflight passed on 2026-10-06 in run `j1jxgsn23z`.
+The AWS-only preflight passed on 2026-10-06 in run `j1jxgsn23z`; the extended
+SSH preflight passed in run `clhzrddvrt`. An independent AWS read confirmed
+the temporary runner rule was removed and the original firewall preserved.
 The extended preflight also runs `deploy_lightsail.py --check-access`: it opens
 TCP 22 for the runner's public IPv4 only, uses the pinned SSH key, sends an empty
 JSON object (never a valid release request), and requires the controller's fixed
@@ -219,10 +225,56 @@ a rule; inspect the logged CIDR and remove it manually if needed.
 
 The SSH secret and host/known-host variables also have a separate
 `lightsail-preflight` variant scoped to this workflow, main, repository and
-production environment. Production CI retains its original scope. Publishing to main is a separate step:
-the currently published CI still deploys to Fly on a main push. Review and land
-the migration CI changes with Lightsail activation disabled before using this
-preflight; do not inadvertently dispatch the old deployment workflow.
+production environment. Production CI retains its original scope. The published
+workflow builds the candidate image and skips Lightsail deployment while
+`CANARY_DEPLOY_TARGET` is unset. Automatic Fly deployment has been removed.
+
+### Isolated host runtime evidence (2026-10-06)
+
+Candidate `bee4fdb1b12f91e83852b6deed48bd8f7ae05efb` passed all CI gates in
+[workflow z2dvcn4sp4](https://depot.dev/orgs/6ntrqswcbt/workflows/z2dvcn4sp4);
+production deployment was skipped. The tested image is
+`registry.depot.dev/js338b6zll@sha256:d0b7892911bcf8f9adeb1592405f520d3b260efebc1f110642ff56d420a0cfbf`.
+
+The existing Lightsail VM ran that exact image under a temporary
+`canary-rehearsal.service`. The candidate's unit and Compose templates retained
+the read-only filesystem, dropped capabilities, secret loader, restart policy
+and cleanup commands. Rehearsal paths and the Compose project name were separate;
+network mode was `none`, published ports were removed, and all credentials were
+dummy values. No production identity, bundle, project data or queue was used.
+
+Verified on the real host:
+
+- Two disposable age identities independently decrypted the dummy SOPS bundle.
+- systemd materialized secrets on `/run` and started both application processes.
+  The version endpoint matched the candidate, liveness returned 200, and
+  readiness correctly returned 503 with dependencies unavailable.
+- The loader's real `/proc` mount scan preserved plaintext mounted by the running
+  container. Stopping the service removed the decrypted dummy bundle.
+- Killing the container triggered systemd restart; the fixture project marker
+  survived. Restoring the fixture directory from its copy and restarting with
+  the encrypted bundle also passed.
+- A separate maintenance-gate check prevented startup and plaintext materialization.
+  The first attempt at this check hit the configured three-start limit after
+  the preceding restart drills; a fresh temporary unit isolated the condition.
+
+Compose returned 130 during an intentional systemd stop, so systemd recorded an
+exit-code failure even though the processes stopped and pruning succeeded. An
+explicit stop did not restart the service. Diagnose the journal before treating
+that status alone as an application crash; repeated starts also consume the
+configured start-limit budget. Do not routinely reset that budget to bypass
+an unexplained production failure.
+
+All temporary units, containers, dummy keys, fixture data and plaintext were
+removed. The candidate image remains cached on the VM. Production maintenance
+remained present, CI activation remained absent, and `canary.service` remained
+inactive. The registry pull used temporary credentials under `/run`, then removed them.
+
+This was a runtime/secret-lifecycle drill, not a complete migration rehearsal.
+It did not prove a healthy disposable queue/database, authenticated user flows,
+Nginx/Cloudflare headers and TLS, a real project-volume restore, reboot behavior,
+or the release controller's drain/replacement/failure transaction. Those remain
+activation gates. The fixture marker restore is not evidence of a production backup.
 
 Only after the manual first migration has fenced Fly, transferred the complete
 project volume, started and verified Lightsail, switched the origin, and passed
@@ -248,3 +300,80 @@ No image or environment-history pruning is automatic. Monitor disk usage and
 retain the rollback pair plus needed evidence; remove obsolete images during
 reviewed maintenance. These workflows add no new AWS instance, load balancer,
 database, container service or persistent registry credential.
+
+
+### Production cutover evidence (2026-10-06)
+
+- Drained Fly and verified zero in-flight work, cordoned its machine, stopped
+  application writers, and copied the final volume. All 597 files matched by
+  SHA-256, size, mode and ownership on Lightsail. The source archive hash is
+  `daf70834be6c83dbf4ec7b8b58103e2bd8f0629364289f2805d92f4259da96a4`.
+- Encrypted volume and database backups are in the operator's protected
+  `~/.config/canary/backups/` directory. Recovery-key decryption verified the
+  volume archive; an isolated PostgreSQL restore recovered 32 projects, 52
+  queue records and 6 auth users. These are cutover backups, not an automated
+  off-AWS backup service.
+- Final Fly snapshot `vs_O1g72J0pJ2pIzxl1zoPD1Z7` reached `created`.
+  Machine `48e7295a973948` is stopped and cordoned, with autostart disabled.
+  Its volume and snapshots remain for recovery and can still incur storage cost.
+  Never restart it while Lightsail owns the production queue.
+- Lightsail `canary-prod` owns production on static IP `52.203.15.28`.
+  Cloudflare's proxied apex A/AAAA records point to this VM; `www` points to
+  the apex. The public release verifier passed before admission resumed.
+  Supabase, LiteLLM and generation queue readiness all passed; the queue client
+  connection uses TLS. No paid generation was submitted for these checks.
+- Nginx uses the checked-in `deploy/lightsail/nginx.conf`. Ports 80/443 accept
+  only Cloudflare ranges; SSH retains the operator `/32` and Lightsail browser
+  access. Cloudflare global authenticated origin pulls are enforced, and origin
+  logs show `mtls=SUCCESS`. This authenticates the Cloudflare network, not a
+  unique zone certificate. Proxy headers are overwritten at the origin.
+- Let's Encrypt covers apex and www, initially expiring 2027-01-04. Certbot
+  reconfiguration passed its staging HTTP challenge and saved webroot renewal
+  with an Nginx reload hook. A subsequent `renew --dry-run --run-deploy-hooks`
+  passed with client-certificate enforcement active. `certbot.timer` and
+  `canary.service` are enabled.
+  The latter's boot enablement is verified; an actual host reboot is not yet tested.
+- An isolated candidate-image PostgreSQL queue drill passed interrupted-work
+  recovery, FIFO continuation and duplicate-delivery suppression without providers.
+- A project-specific schema error was seen during authenticated browsing. The
+  operator identified it as unrelated existing failed-project state and requested
+  that it be excluded from this infrastructure migration investigation. Authenticated
+  PDF/CBZ exports have not been established by that browser check.
+- Daily Lightsail automatic snapshots are enabled at 07:00 UTC. The first
+  scheduled snapshot has not yet run. Snapshot storage is billed separately.
+- Existing AWS budgets include a $10 gross-cost budget excluding credits/refunds
+  and a separate $1 net-spend budget. Alert delivery is not verified. Credits'
+  exact date interpretation and Lightsail eligibility remain as documented in
+  the migration proposal; a remaining balance alone does not verify eligibility.
+
+Keep the stopped Fly resources through a complete workload and backup cycle.
+Before retiring them, finish recurring encrypted off-AWS application-consistent
+backups, verify alert delivery, and complete the authenticated export/restore
+check with a known-good project. A scheduled VM snapshot alone does not prove
+application/database consistency. Do not claim a measured performance improvement
+from health checks alone.
+
+
+### First complete CI release (2026-10-06)
+
+[Workflow sppfgkz3lm](https://depot.dev/orgs/6ntrqswcbt/workflows/sppfgkz3lm),
+run `p70jrl2qf9`, passed every test/build gate and its production deploy job.
+The host controller pulled and verified the immutable image, drained, replaced
+and restarted the owner, verified public readiness/security headers/source SHA,
+and resumed admission. Final local checks confirmed `draining=false`,
+`safe_to_deploy=true`, all three dependencies `ok`, no maintenance hold, and CI
+activation enabled. AWS independently confirmed runner `52.206.49.240/32` was
+removed; only the original operator `/32` and browser SSH alias remain.
+
+Deployed source: `bee4fdb1b12f91e83852b6deed48bd8f7ae05efb`.
+Build timestamp: `2026-10-06T20:03:49Z`.
+Image: `registry.depot.dev/js338b6zll@sha256:26d09ba5e191f73724205c2768a37d21ab346fc575a2c6005b0292b549f450e1`.
+The earlier same-source candidate is retained as a rollback image; different
+build timestamps produce different immutable images. Local unrelated model
+changes were not included in either production build.
+
+This live success proves the normal release transaction, not every injected
+failure/disconnect/reboot case listed above. Keep those limitations distinct
+from the isolated runtime and queue drills. The environment-scope diagnosis is
+supported by run `mcf4dgqxgk` skipping deploy and this run deploying after only
+the non-secret flag's environment selector was removed.

@@ -100,5 +100,5 @@ def test_pricing_overrides_cover_active_routes_and_subscription_equivalents():
     assert {key for key, value in overrides["model_overrides"].items()
             if value["mode"] == "image_generation"} == {
         "gpt-image-2.5-sunburst", "openai/gpt-image-2.5/sunburst",
-        "gpt-image-2.5-flare",
+        "gpt-image-2.5-flare", "gemini-nano-banana-2.1",
     }

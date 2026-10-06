@@ -639,7 +639,7 @@ export function StyleRoom() {
             </section>
           )}
 
-          <section aria-label={t("STYLE PROOFS")}>
+          <section aria-label={t("STYLE PROOFS")} className="@container/style-proofs">
             <div className="mb-6 flex flex-wrap items-center justify-between gap-4 bg-surface-container p-4">
               <div className="min-w-0">
                 <p className="flex items-center gap-2 font-meta text-xs font-bold"><Columns2 size={17} aria-hidden="true" />{t("Compare your favorites")}</p>
@@ -695,9 +695,10 @@ export function StyleRoom() {
                 onOpen={(index) => { setFlipIndex(index); setProofView("flip"); }}
               />
             ) : (
-            <div data-testid="style-proof-grid" className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-x-6">
-              {filteredSuggestions.map(renderProofCard)}
-            </div>
+              // Fit 280px cards plus 24px gaps, with at most three columns.
+              <div data-testid="style-proof-grid" className="grid grid-cols-1 gap-x-6 @min-[584px]/style-proofs:grid-cols-2 @min-[888px]/style-proofs:grid-cols-3">
+                {filteredSuggestions.map(renderProofCard)}
+              </div>
             )}
             {hiddenSuggestions.length > 0 && (
               <details className="mt-8 bg-surface-container px-4">
