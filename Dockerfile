@@ -17,6 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && test -s /etc/ssl/certs/ca-certificates.crt \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+COPY novel_to_comic/src/novel_to_comic/lettering/ /build/novel_to_comic/src/novel_to_comic/lettering/
+# Release metadata must not invalidate dependency installation layers.
 ARG CANARY_VERSION=unknown
 ARG CANARY_BUILD_TIMESTAMP=unknown
 ARG VITE_SUPABASE_URL
@@ -32,10 +37,6 @@ RUN if [ -z "$VITE_SUPABASE_URL" ]; then \
       echo "VITE_SUPABASE_PUBLISHABLE_KEY build argument is required" >&2; exit 1; \
     fi \
     && case "$VITE_SUPABASE_URL" in https://*.supabase.co|http://localhost:*|http://127.0.0.1:*) ;; *) echo "VITE_SUPABASE_URL must be a Supabase HTTPS URL or a local development URL" >&2; exit 1 ;; esac
-COPY web/package.json web/package-lock.json ./
-RUN npm ci
-COPY web/ ./
-COPY novel_to_comic/src/novel_to_comic/lettering/ /build/novel_to_comic/src/novel_to_comic/lettering/
 # Export the build args into the shell environment so Vite inlines them into
 # the bundle. Supabase URL/key are required and validated before compilation;
 # optional values such as VITE_POSTHOG_PROJECT_TOKEN may remain empty.
@@ -63,10 +64,6 @@ RUN --mount=type=secret,id=POSTHOG_API_KEY \
 # The Machine stays running; see docs/deploy.md for the architecture rationale.
 FROM python:3.12-slim-bookworm
 WORKDIR /app
-ARG CANARY_VERSION=unknown
-ARG CANARY_BUILD_TIMESTAMP=unknown
-ENV CANARY_VERSION="$CANARY_VERSION" \
-    CANARY_BUILD_TIMESTAMP="$CANARY_BUILD_TIMESTAMP"
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.17 /uv /usr/local/bin/uv
 
@@ -92,24 +89,6 @@ RUN set -eu; \
       sleep 5; \
     done; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
-
-# The curated homepage catalogue ships in the image; CANARY_SHOWCASE_DIR can still
-# point at a separately mounted catalogue.
-COPY showcase/books/ ./showcase/books/
-
-# Copy application source and install the project itself
-COPY novel_to_comic/ ./novel_to_comic/
-RUN cd novel_to_comic && uv sync --extra web --frozen --no-dev
-# The local Codex and Claude Code execution adapters are never present in a
-# production image. Routing authority remains so stray saved subscription
-# selections fail closed.
-RUN rm novel_to_comic/src/novel_to_comic/ai/codex_runtime.py \
-       novel_to_comic/src/novel_to_comic/ai/claude_runtime.py \
-       novel_to_comic/src/novel_to_comic/ai/providers/codex_dev.py \
-       novel_to_comic/src/novel_to_comic/codex_complete_page.py \
-       novel_to_comic/src/novel_to_comic/server/routers/labs.py \
-    && rm -r novel_to_comic/src/novel_to_comic/labs
-RUN /app/novel_to_comic/.venv/bin/python -c "from novel_to_comic.server.showcase import books; books(strict=True)"
 
 # ─── LiteLLM proxy (loopback subprocess) ────────────────────────────────────
 # The proxy has its own dependency tree (transitively large, occasionally
@@ -164,6 +143,26 @@ COPY litellm/entrypoint.sh /app/entrypoint.sh
 COPY litellm/recovery.py /app/recovery.py
 RUN chmod +x /app/entrypoint.sh
 
+# Install application source after gateway dependencies so app changes reuse
+# the independent gateway environment and generated Prisma client.
+# The curated homepage catalogue ships in the image; CANARY_SHOWCASE_DIR can still
+# point at a separately mounted catalogue.
+COPY showcase/books/ ./showcase/books/
+
+# Copy application source and install the project itself
+COPY novel_to_comic/ ./novel_to_comic/
+RUN cd novel_to_comic && uv sync --extra web --frozen --no-dev
+# The local Codex and Claude Code execution adapters are never present in a
+# production image. Routing authority remains so stray saved subscription
+# selections fail closed.
+RUN rm novel_to_comic/src/novel_to_comic/ai/codex_runtime.py \
+       novel_to_comic/src/novel_to_comic/ai/claude_runtime.py \
+       novel_to_comic/src/novel_to_comic/ai/providers/codex_dev.py \
+       novel_to_comic/src/novel_to_comic/codex_complete_page.py \
+       novel_to_comic/src/novel_to_comic/server/routers/labs.py \
+    && rm -r novel_to_comic/src/novel_to_comic/labs
+RUN /app/novel_to_comic/.venv/bin/python -c "from novel_to_comic.server.showcase import books; books(strict=True)"
+
 # Copy built frontend so FastAPI can serve it as static files
 COPY --from=frontend /build/web/dist ./web/dist
 
@@ -171,6 +170,12 @@ ENV PYTHONPATH=/app:/app/litellm_handlers
 # Price and gate every route from the bundled map plus config model_info, never
 # a copy fetched at boot (see litellm/config.yaml).
 ENV LITELLM_LOCAL_MODEL_COST_MAP=True
+
+# Runtime metadata belongs after all dependency and source layers.
+ARG CANARY_VERSION=unknown
+ARG CANARY_BUILD_TIMESTAMP=unknown
+ENV CANARY_VERSION="$CANARY_VERSION" \
+    CANARY_BUILD_TIMESTAMP="$CANARY_BUILD_TIMESTAMP"
 
 EXPOSE 8000
 

@@ -45,6 +45,7 @@ from novel_to_comic.page_drawing import (
     draw_complete_page,
     estimate_draw_api_cost,
     ensure_current_page_edition,
+    current_page_capability_profile,
     enqueue_complete_page_draw,
     fal_sunburst_page_capability_profile,
     production_page_capability_profile,
@@ -441,22 +442,28 @@ def test_less_graphic_depiction_preserves_authority_and_softens_visual_treatment
     assert "Ward’s torn left sleeve; blood below the right eye" in compiled.request.prompt
 
 
-def test_edition_rejects_changes_to_current_profile_after_the_model_changes(tmp_path: Path) -> None:
+def test_edition_accepts_changes_to_current_profile_after_the_model_changes(tmp_path: Path) -> None:
     artifacts = TargetArtifacts(tmp_path)
     old = _edition(_profile(model="old-model"))
     artifacts.write_book_edition(old)
-    with pytest.raises(ValueError):
-        ensure_current_page_edition(artifacts, old)
+    selected = ensure_current_page_edition(artifacts, old, persist=False)
     assert artifacts.read_book_edition() == old
+    assert selected.revision == old.revision + 1
+    assert selected.capability_profile == current_page_capability_profile()
+    assert ensure_current_page_edition(artifacts, old) == selected
+    assert artifacts.read_book_edition() == selected
 
 
-def test_edition_rejects_changes_after_current_model_was_saved_with_wrong_dimensions(tmp_path: Path) -> None:
+def test_edition_accepts_changes_after_current_model_was_saved_with_wrong_dimensions(tmp_path: Path) -> None:
     artifacts = TargetArtifacts(tmp_path)
     old = _edition(_profile(output_width=2048, output_height=3072))
     artifacts.write_book_edition(old)
-    with pytest.raises(ValueError):
-        ensure_current_page_edition(artifacts, old)
+    selected = ensure_current_page_edition(artifacts, old, persist=False)
     assert artifacts.read_book_edition() == old
+    assert selected.revision == old.revision + 1
+    assert selected.capability_profile == current_page_capability_profile()
+    assert ensure_current_page_edition(artifacts, old) == selected
+    assert artifacts.read_book_edition() == selected
 
 
 def test_failed_request_gets_its_own_revision_before_render_retry(
@@ -500,7 +507,7 @@ def test_book_edition_rejects_unselected_capability_before_cost() -> None:
         )
 
     existing = _edition()
-    with pytest.raises(ValueError, match="fixed"):
+    with pytest.raises(ValueError, match="capability profile"):
         select_book_edition(
             edition_id=existing.id,
             profile=_profile(model="another-model"),
@@ -508,13 +515,16 @@ def test_book_edition_rejects_unselected_capability_before_cost() -> None:
         )
 
 
-def test_page_correction_uses_current_model_after_edition_rejects_changes(tmp_path: Path) -> None:
+def test_page_correction_uses_current_model_after_edition_changes(tmp_path: Path) -> None:
     artifacts = TargetArtifacts(tmp_path)
     old = _edition(_profile(model="gemini-3.1-flash-image"))
     artifacts.write_book_edition(old)
-    with pytest.raises(ValueError):
-        ensure_current_page_edition(artifacts, old)
+    selected = ensure_current_page_edition(artifacts, old, persist=False)
     assert artifacts.read_book_edition() == old
+    assert selected.revision == old.revision + 1
+    assert selected.capability_profile == current_page_capability_profile()
+    assert ensure_current_page_edition(artifacts, old) == selected
+    assert artifacts.read_book_edition() == selected
 
 
 def test_reference_capacity_fails_before_generation_instead_of_dropping_identity(tmp_path: Path, monkeypatch) -> None:
@@ -1404,7 +1414,8 @@ def test_visual_review_route_compiles_current_authority_without_redrawing(tmp_pa
     assert artifacts.provenance_revisions(page.page_number) == (1,)
 
 
-def test_draw_estimate_is_read_only_and_excludes_optional_lettering_check(tmp_path: Path) -> None:
+@pytest.mark.parametrize("change_profile", [False, True])
+def test_draw_estimate_is_read_only_and_excludes_optional_lettering_check(tmp_path: Path, change_profile: bool) -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from novel_to_comic.server.credits import credit_estimate_for_provider_cost
@@ -1420,6 +1431,11 @@ def test_draw_estimate_is_read_only_and_excludes_optional_lettering_check(tmp_pa
     compile_page_generation_request(
         page, edition, _inventory(), files, retry=RetryProvenance(attempt=1),
     )
+    if change_profile:
+        artifacts.replace_book_edition(BookEdition(
+            revision=edition.revision + 1, id=edition.id,
+            capability_profile=production_page_capability_profile(),
+        ))
     before = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
     app = FastAPI()
     app.include_router(router)

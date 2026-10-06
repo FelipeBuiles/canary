@@ -127,8 +127,9 @@ def test_new_editions_get_openai_first_and_existing_fal_editions_keep_drawing():
         edition = BookEdition(revision=1, id="e", capability_profile=profile)
         assert ensure_current_page_edition(None, edition, config) is edition
     stranded = BookEdition(revision=1, id="e", capability_profile=muse_page_capability_profile())
-    with pytest.raises(ValueError, match="different page profile"):
-        ensure_current_page_edition(None, stranded, config)
+    updated = ensure_current_page_edition(None, stranded, config, persist=False)
+    assert updated.capability_profile == fallback
+    assert updated.revision == 2
 
 
 def test_lettering_variant_of_the_retained_edition_must_match_the_project():

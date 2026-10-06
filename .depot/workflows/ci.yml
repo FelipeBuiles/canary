@@ -1,4 +1,4 @@
-name: CI
+name: Depot CI
 
 # Test + build gate. Every PR and push to main must pass before merge or deploy.
 on:
@@ -22,13 +22,19 @@ concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Keep working-directory on individual steps: Depot's injected local-patch step
+# must run at the repository root so it applies changes outside each package.
 jobs:
   backend:
-    name: Backend (pytest)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: novel_to_comic
+    name: Backend (pytest shard ${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    runs-on:
+      size: 2x8
+      image: 6ntrqswcbt.registry.depot.dev/canary-ci:py312-node24.21-pw1.63-v1
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - name: Set up Python
@@ -42,29 +48,44 @@ jobs:
           enable-cache: true
           cache-dependency-glob: novel_to_comic/uv.lock
       - name: Sync dependencies
+        working-directory: novel_to_comic
         # The web extra includes production telemetry integrations.
         run: uv sync --locked --extra web --extra dev
       - name: Check locked production dependencies
+        working-directory: novel_to_comic
+        if: matrix.shard == 0
         run: python ../scripts/check_release.py audit-app
       - name: Install Playwright Chromium
-        run: uv run playwright install --with-deps chromium
+        working-directory: novel_to_comic
+        run: bash ../scripts/ci_install_browser.sh
       - name: Documentation reliability
+        if: matrix.shard == 0
         working-directory: .
         run: python scripts/check_docs_reliability.py
       - name: Ruff
+        working-directory: novel_to_comic
+        if: matrix.shard == 0
         run: uv run ruff check .
-      - name: Pytest
-        run: uv run python ../scripts/run_backend_checks.py -x -q
-      - name: Full-page contract gates
-        # Local fixtures only; no provider credentials or credits required.
-        run: uv run python ../scripts/run_backend_checks.py -q tests/test_full_page_contracts.py
+      - uses: depot/setup-action@v1
+      # Candidates are relative to cwd; report paths are relative to GITHUB_WORKSPACE.
+      - name: Pytest shard
+        working-directory: novel_to_comic
+        run: >-
+          depot tests run
+          --candidates-command "rg --files tests -g 'test_*.py' -g '*_test.py' | sort"
+          --candidate-type filename
+          --timings-type filename
+          --split-key canary-backend-py312
+          --index ${{ matrix.shard }} --total 4
+          --command "xargs -r uv run python ../scripts/run_backend_checks.py -q --durations=5 -o junit_family=xunit1 --junitxml=reports/pytest.xml"
+          --report-path novel_to_comic/reports/pytest.xml
 
   web:
     name: Web (vitest + build)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
+    runs-on:
+      size: 8x32
+      image: 6ntrqswcbt.registry.depot.dev/canary-ci:py312-node24.21-pw1.63-v1
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - name: Set up Node
@@ -74,39 +95,48 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Install dependencies and validate peers
+        working-directory: web
         run: |
           npm ci
           npm ls --all
       - name: Dependency audits
+        working-directory: web
         # No advisory allowlist: fail closed on production or tooling findings.
         run: |
           npm run audit:production
           npm audit --audit-level=high
       - name: Vitest
+        working-directory: web
         # Import-time Supabase validation requires non-secret placeholders.
         env:
           VITE_SUPABASE_URL: https://ci.supabase.co
           VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci
         run: npm run test
       - name: ESLint
+        working-directory: web
         run: npm run lint
       - name: Build
+        working-directory: web
         run: npm run build
 
   docker:
+    # Main releases build the production image instead of a second smoke image.
+    if: github.event_name == 'pull_request'
     name: Docker image (build smoke test)
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 30
     # Build production end-to-end without publishing or deploying an image.
     steps:
       - uses: actions/checkout@v7
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+      - name: Set up Depot builder
+        uses: depot/setup-action@v1
       - name: Prepare build metadata
         id: build_meta
         run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       - name: Build image
-        uses: docker/build-push-action@v7
+        uses: depot/build-push-action@v1
         with:
+          project: js338b6zll
           context: .
           file: ./Dockerfile
           push: false
@@ -117,14 +147,12 @@ jobs:
             VITE_SUPABASE_URL=https://ci-smoke.supabase.co
             VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_ci_smoke
             VITE_CANARY_ENV=production
-          secrets: |
-            POSTHOG_API_KEY=${{ secrets.POSTHOG_API_KEY }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
   gateway:
     name: Gateway dependency contracts
-    runs-on: ubuntu-latest
+    runs-on:
+      size: 2x8
+      image: 6ntrqswcbt.registry.depot.dev/canary-ci:py312-node24.21-pw1.63-v1
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -145,8 +173,9 @@ jobs:
           litellm/.venv/bin/python litellm/patch_http_errors.py
           litellm/.venv/bin/python litellm/patch_anthropic_refusals.py
           litellm/.venv/bin/python -m pytest litellm/tests -q
-      - name: Build the local gateway image
-        run: docker build -f litellm/Dockerfile -t canary-gateway-ci .
+      - uses: depot/setup-action@v1
+      - name: Build the gateway image
+        run: depot build --project js338b6zll --load -f litellm/Dockerfile -t canary-gateway-ci .
       - name: Verify database-free and PostgreSQL-backed gateway startup
         run: python scripts/smoke_gateway.py canary-gateway-ci
       - name: Check locked production dependencies
@@ -154,7 +183,9 @@ jobs:
 
   tooling:
     name: Root tooling
-    runs-on: ubuntu-latest
+    runs-on:
+      size: 2x8
+      image: 6ntrqswcbt.registry.depot.dev/canary-ci:py312-node24.21-pw1.63-v1
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
@@ -169,22 +200,73 @@ jobs:
           npm ls --all
           npm audit --audit-level=high
 
-  deploy:
-    name: Deploy production
-    needs: [backend, web, docker, gateway, tooling]
-    # The authenticated drain barrier excludes new admissions and stays set
-    # on failure. Release every main push after all required checks pass.
+  database:
+    name: PostgreSQL authorization and ledger
+    runs-on:
+      size: 2x8
+      image: 6ntrqswcbt.registry.depot.dev/canary-ci:py312-node24.21-pw1.63-v1
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: canary_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d canary_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CREDIT_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/canary_test
+      CANARY_DISPOSABLE_DATABASE: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: "0.12.17"
+          enable-cache: true
+          cache-dependency-glob: novel_to_comic/uv.lock
+      - name: Install dependencies
+        working-directory: novel_to_comic
+        run: uv sync --frozen --extra web --extra dev
+      - name: Install browser for paid-action integration tests
+        working-directory: novel_to_comic
+        run: bash ../scripts/ci_install_browser.sh
+      - name: Existing and new billing/security regressions
+        working-directory: novel_to_comic
+        # Keep money/security checks independently visible; this does not
+        # replace or relax the normal whole-repository lint/test/build gates.
+        # PostgreSQL contracts run after schema bootstrap, below.
+        run: >-
+          uv run python ../scripts/run_backend_checks.py -q
+          --ignore-glob='tests/*_postgres.py'
+          -k "billing or refund or checkout or credit or auth or security_boundary"
+      - name: Install disposable database client
+        run: |
+          if ! command -v psql >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client
+          fi
+      - name: Exercise real ledger transactions and browser roles
+        # Shared bootstrap, migration replay and complete database contracts.
+        run: python scripts/check_release.py database
+
+  release_image:
+    name: Build production image
+    environment: production
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: https://scenewright.ink
-    concurrency:
-      group: production-deploy
-      cancel-in-progress: false
-      queue: max
-    permissions:
-      contents: read
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      image: registry.fly.io/canary-web@${{ steps.image.outputs.digest }}
+      digest: ${{ steps.image.outputs.digest }}
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
@@ -214,17 +296,18 @@ jobs:
         id: release
         run: |
           echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-          echo "image=registry.fly.io/canary-web:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+          echo "image=registry.fly.io/canary-web:${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+      - name: Set up Depot builder
+        uses: depot/setup-action@v1
       - name: Authenticate to the Fly registry
         run: flyctl auth docker
       # Build before draining so customers are not blocked during the build.
       # The pushed image is the exact artifact deployed and rolled back to.
       - name: Build and push release image
         id: image
-        uses: docker/build-push-action@v7
+        uses: depot/build-push-action@v1
         with:
+          project: js338b6zll
           context: .
           file: ./Dockerfile
           push: true
@@ -240,10 +323,9 @@ jobs:
             VITE_CANARY_ENV=production
           secrets: |
             POSTHOG_API_KEY=${{ secrets.POSTHOG_API_KEY }}
-          cache-from: type=gha
       - name: Smoke test release image
         env:
-          IMAGE: ${{ steps.release.outputs.image }}
+          IMAGE: registry.fly.io/canary-web@${{ steps.image.outputs.digest }}
         run: |
           docker pull "$IMAGE"
           docker run --rm --entrypoint /app/novel_to_comic/.venv/bin/python "$IMAGE" \
@@ -252,6 +334,26 @@ jobs:
           # `import litellm` would not load them.
           docker run --rm --entrypoint /app/.venv-litellm/bin/python "$IMAGE" \
             -c "import litellm.proxy.proxy_server, canary_metrics_callback"
+
+  deploy:
+    name: Deploy production
+    environment: production
+    needs: [backend, web, gateway, tooling, database, release_image]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 40
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+      queue: max
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Fly CLI
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        with:
+          version: 0.4.104
       - name: Drain production and wait for running work
         if: ${{ !inputs.skip_drain }}
         env:
@@ -264,8 +366,8 @@ jobs:
         run: echo 'Offline recovery requested by operator; deployment drain skipped because production machines are stopped.' >> "$GITHUB_STEP_SUMMARY"
       - name: Record rollback target
         env:
-          IMAGE: ${{ steps.release.outputs.image }}
-          DIGEST: ${{ steps.image.outputs.digest }}
+          IMAGE: ${{ needs.release_image.outputs.image }}
+          DIGEST: ${{ needs.release_image.outputs.digest }}
         run: |
           {
             echo "## Production deployment"
@@ -279,7 +381,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Deploy exact release image
         env:
-          IMAGE: ${{ steps.release.outputs.image }}
+          IMAGE: ${{ needs.release_image.outputs.image }}
         run: flyctl deploy -a canary-web --image "$IMAGE"
       - name: Verify deployed release
         env:

@@ -389,7 +389,7 @@ def prepare_undrawn_pages(*, project_dir, config, rerun: bool = False, pages: fr
     target = TargetArtifacts(project_dir)
     require_draw_narrative_reviews(target)
     edition = (
-        ensure_current_page_edition(target, target.read_book_edition(), config)
+        ensure_current_page_edition(target, target.read_book_edition(), config, persist=False)
         if target.book_edition_path.exists()
         else select_book_edition(
             edition_id="book-edition-001", profile=initial_page_profile(project_dir, config),
@@ -750,7 +750,7 @@ def _latest_render_is_stale(target: TargetArtifacts, page_number: int, revision:
 
 
 def _prepare_initial_generation(
-    project, page_number: int, depiction: Literal["canonical", "less_graphic"],
+    project, page_number: int, depiction: Literal["canonical", "less_graphic"], *, persist: bool = True,
 ):
     project_dir, config, _state = project
     classify_operations(draw_operations(config))
@@ -767,7 +767,7 @@ def _prepare_initial_generation(
     try:
         require_draw_narrative_reviews(target)
         page = target.read_page(page_number)
-        edition = ensure_current_page_edition(target, target.read_book_edition(), config)
+        edition = ensure_current_page_edition(target, target.read_book_edition(), config, persist=persist)
         compiled = compile_page_generation_request(
             page,
             edition,
@@ -864,7 +864,7 @@ def estimate_page_generation(
     project=Depends(get_project),
 ):
     """Compile the same request as Draw without submitting or reserving credits."""
-    _target, _page, compiled = _prepare_initial_generation(project, page_number, depiction)
+    _target, _page, compiled = _prepare_initial_generation(project, page_number, depiction, persist=False)
     return dict(correction_credit_estimate(compiled, config=project[1], reserve=True))
 
 
@@ -1251,7 +1251,7 @@ def _reference_entries(project_dir, references) -> list[dict]:
         )
     return entries
 def _prepare_explicit_correction(
-    *, target: TargetArtifacts, page_number: int, body: PageCorrectionCreate, config,
+    *, target: TargetArtifacts, page_number: int, body: PageCorrectionCreate, config, persist: bool = True,
 ):
     """Run the shared no-spend validation+compile; maps failures to HTTP."""
     from novel_to_comic.page_review import (
@@ -1264,7 +1264,7 @@ def _prepare_explicit_correction(
     try:
         require_draw_narrative_reviews(target)
         page = target.read_page(page_number)
-        edition = ensure_current_page_edition(target, target.read_book_edition(), config)
+        edition = ensure_current_page_edition(target, target.read_book_edition(), config, persist=persist)
         provenance = _latest_provenance(target, page_number)
         resumable = target.resumable_generation_request(page_number)
         if (resumable is not None and resumable.correction is not None
@@ -1440,7 +1440,7 @@ def preview_page_correction(
     classify_operations(draw_operations(config))
     target = TargetArtifacts(project_dir)
     prepared = _prepare_explicit_correction(
-        target=target, page_number=page_number, body=body, config=config,
+        target=target, page_number=page_number, body=body, config=config, persist=False,
     )
     return _correction_preview_payload(target=target, page_number=page_number, prepared=prepared, config=config)
 

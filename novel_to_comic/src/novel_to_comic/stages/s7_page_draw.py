@@ -48,7 +48,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     classify_operations(draw_operations(config))
     target = TargetArtifacts(project_dir)
     profile = (
-        ensure_current_page_edition(target, target.read_book_edition(), config).capability_profile
+        ensure_current_page_edition(target, target.read_book_edition(), config, persist=False).capability_profile
         if target.book_edition_path.exists() else initial_page_profile(project_dir, config)
     )
     if not target.plan_path.exists():

@@ -71,7 +71,6 @@ def update_config(body: dict, request: Request, project=Depends(get_project), us
 
         if not model_settings_enabled():
             raise HTTPException(403, "Project model choices require local development mode.")
-        previous_draw_model = config.draw_model
         try:
             # Replace the override map: omitted stages inherit account settings.
             proposed = body["dev_model_selections"]
@@ -86,11 +85,6 @@ def update_config(body: dict, request: Request, project=Depends(get_project), us
             config = account_config(config, request.app.state.projects_dir, user_id)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        if config.draw_model != previous_draw_model:
-            from novel_to_comic.target_artifacts import TargetArtifacts
-
-            if TargetArtifacts(project_dir).book_edition_path.exists():
-                raise HTTPException(409, "Changing the Draw model requires a new edition or project. Other model choices can still be updated.")
 
     # Apply updates
     for key, value in body.items():

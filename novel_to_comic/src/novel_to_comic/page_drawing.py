@@ -436,46 +436,43 @@ def select_book_edition(
     profile: PageCapabilityProfile,
     existing: BookEdition | None = None,
 ) -> BookEdition:
-    """Select the process-bound profile without changing an existing edition."""
-
-    if (
-        existing is not None
-        and (
-            edition_id != existing.id
-            or profile != existing.capability_profile
-        )
+    """Select a supported profile, advancing the edition when it changes."""
+    if existing is not None and edition_id != existing.id:
+        raise ValueError("the identity is fixed for the edition")
+    if not _supported_page_profile(profile) and not (
+        existing is not None and profile == existing.capability_profile and retained_baked_profile(profile)
     ):
-        raise ValueError("one model and capability profile are fixed for the edition")
-    if not _supported_page_profile(profile) and not (existing is not None and retained_baked_profile(profile)):
-        raise ValueError(
-            "provider/model does not satisfy the current complete-page capability profile; "
-            "existing editions cannot change profiles"
-        )
-    selected = BookEdition(
-        revision=existing.revision if existing is not None else 1,
+        raise ValueError("provider/model does not satisfy the current complete-page capability profile")
+    changed = existing is not None and profile != existing.capability_profile
+    return BookEdition(
+        revision=existing.revision + int(changed) if existing is not None else 1,
         id=edition_id,
         capability_profile=profile,
     )
-    if existing is not None and selected != existing:
-        raise ValueError("one model and capability profile are fixed for the edition")
-    return selected
 
 
 def ensure_current_page_edition(
     artifacts: TargetArtifacts,
     edition: BookEdition,
     config: Config | None = None,
-    *, allow_retained_review: bool = False,
+    *, allow_retained_review: bool = False, persist: bool = True,
 ) -> BookEdition:
-    """New spend is strict; retained baked art remains inspectable without rebinding."""
-    if allow_retained_review and retained_baked_profile(edition.capability_profile):
+    """Use the configured profile for new work, retaining old request provenance.
+
+    Estimates select the same revision without persisting it. Existing render
+    bytes and frozen requests remain unchanged when the active profile advances.
+    """
+    if allow_retained_review:
         return edition
-    if edition.capability_profile not in spendable_page_profiles(config):
-        raise ValueError(
-            "This edition uses a different page profile. Existing editions cannot "
-            "change profiles; existing pages will not be mixed with another model."
-        )
-    return edition
+    if edition.capability_profile in spendable_page_profiles(config):
+        return edition
+    profile = current_page_capability_profile(config)
+    if profile.exact_visible_lettering != edition.capability_profile.exact_visible_lettering:
+        raise ValueError("This edition uses a different page profile lettering mode; create a new project to change lettering modes.")
+    selected = select_book_edition(edition_id=edition.id, profile=profile, existing=edition)
+    if persist:
+        artifacts.replace_book_edition(selected)
+    return selected
 
 
 def _selected_authorities(

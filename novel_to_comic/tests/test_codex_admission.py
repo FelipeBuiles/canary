@@ -247,3 +247,24 @@ def test_mixed_route_still_rejects_disabled_codex_before_queue(tmp_path, monkeyp
         )
     database.assert_not_called()
     assert queue.state.generation_queue.empty()
+
+
+def test_codex_draw_credit_estimate_charges_only_separately_selected_api_checks(select_routes, monkeypatch):
+    from novel_to_comic import page_drawing
+
+    config = Config(draw_model="codex-dev/image/gpt-5.5")
+    select_routes()
+    monkeypatch.setenv("PULP_CREDITS_PER_PROVIDER_USD", "100")
+    monkeypatch.setenv("PULP_MODEL_COST_MARKUP", "1.0")
+    monkeypatch.setenv("PULP_RESERVATION_BUFFER", "1.25")
+    def unexpected_image_price(compiled):
+        raise AssertionError("Codex subscription images must not be priced")
+    monkeypatch.setattr(page_drawing, "estimate_page_request_cost_usd", unexpected_image_price)
+    estimate = page_drawing.correction_credit_estimate(object(), config=config, reserve=True)
+    assert estimate["funding"] == "api"
+    assert estimate["estimate_credits"] == 3
+    assert estimate["reserved_credits"] == 4
+    select_routes(text=(config.effective_page_ocr_model(), config.effective_visual_review_model()))
+    estimate = page_drawing.correction_credit_estimate(object(), config=config, reserve=True)
+    assert estimate["funding"] == "codex_subscription"
+    assert estimate["estimate_credits"] == estimate["reserved_credits"] == 0

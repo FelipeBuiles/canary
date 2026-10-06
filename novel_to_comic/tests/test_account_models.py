@@ -585,7 +585,7 @@ def test_project_model_changes_require_dev_gate(client, project_settings, monkey
     assert (project_settings / "config.yaml").read_bytes() == before
 
 
-def test_existing_edition_allows_text_changes_but_not_draw_model_changes(client, project_settings, monkeypatch):
+def test_existing_edition_allows_text_and_draw_model_changes(client, project_settings, monkeypatch):
     from novel_to_comic.target_artifacts import TargetArtifacts
     from novel_to_comic.models.draw import BookEdition
     from novel_to_comic.page_drawing import production_page_capability_profile
@@ -595,12 +595,12 @@ def test_existing_edition_allows_text_changes_but_not_draw_model_changes(client,
     ))
     response = client.patch("/api/projects/novel/config/", json={"dev_model_selections": {"adapt": "gpt-6-sol"}})
     assert response.status_code == 200
-    before = (project_settings / "config.yaml").read_bytes()
+    before = TargetArtifacts(project_settings).read_book_edition()
     enable_codex(monkeypatch)
     response = client.patch("/api/projects/novel/config/", json={"dev_model_selections": {"draw": "codex-dev/image/gpt-5.5", "adapt": "claude-opus-5-5"}})
-    assert response.status_code == 409
-    assert "new edition" in response.json()["detail"]
-    assert (project_settings / "config.yaml").read_bytes() == before
+    assert response.status_code == 200
+    assert load_config(project_settings)[0].dev_model_selections["draw"] == "codex-dev/image/gpt-5.5"
+    assert TargetArtifacts(project_settings).read_book_edition() == before
 
 
 @pytest.mark.parametrize("environment", ["production", "prod", "live"])
