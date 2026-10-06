@@ -1,5 +1,5 @@
 name: Lightsail authentication preflight
-# Manual, read-only check. No checkout, app secrets, build, SSH or deployment.
+# Manual access check. Temporarily opens runner-only SSH; never submits a release.
 on:
   workflow_dispatch:
 permissions:
@@ -10,7 +10,11 @@ jobs:
     environment: production
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: depot-ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 8
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: read
       id-token: write
@@ -33,3 +37,10 @@ jobs:
           subprocess.run(["aws", "lightsail", "get-instance-port-states", "--region", "us-east-1", "--instance-name", "canary-prod", "--query", "portStates[].{from:fromPort,to:toPort,protocol:protocol}", "--output", "json"], check=True)
           print("Depot OIDC authentication and Lightsail firewall read verified; no changes made.")
           PY
+      - uses: actions/checkout@v7
+      - name: Verify restricted SSH and firewall cleanup
+        env:
+          LIGHTSAIL_HOST: ${{ vars.LIGHTSAIL_HOST }}
+          LIGHTSAIL_SSH_KNOWN_HOSTS: ${{ vars.LIGHTSAIL_SSH_KNOWN_HOSTS }}
+          LIGHTSAIL_SSH_PRIVATE_KEY: ${{ secrets.LIGHTSAIL_SSH_PRIVATE_KEY }}
+        run: python3 scripts/deploy_lightsail.py --check-access

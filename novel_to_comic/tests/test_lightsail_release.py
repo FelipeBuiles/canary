@@ -202,3 +202,35 @@ def test_ci_preserves_preexisting_operator_rule():
         return SimpleNamespace(stdout=b'release_verified_and_resumed' if argv[0] == 'ssh' else b'token')
     m.deploy(env, run, lambda: '8.8.4.4')
     assert not any('open-instance-public-ports' in e or 'close-instance-public-ports' in e for e in events)
+
+
+@pytest.mark.parametrize("outcome", ["rejected", "ssh_failure", "accepted", "cleanup_failed"])
+def test_access_probe_never_requests_a_release_and_verifies_cleanup(outcome):
+    m = load('scripts/deploy_lightsail.py')
+    events = []
+    env = dict(LIGHTSAIL_HOST='52.203.15.28', LIGHTSAIL_SSH_KNOWN_HOSTS='pinned-key',
+               LIGHTSAIL_SSH_PRIVATE_KEY='test-key')
+
+    def run(argv, **kwargs):
+        events.append(argv)
+        assert argv[0] != 'depot'
+        if 'get-instance-port-states' in argv:
+            remains = outcome == 'cleanup_failed' and any('close-instance-public-ports' in e for e in events)
+            ports = [{'fromPort': 22, 'toPort': 22, 'cidrs': ['8.8.4.4/32']}] if remains else []
+            return SimpleNamespace(stdout=json.dumps({'portStates': ports}).encode())
+        if argv[0] == 'ssh':
+            assert kwargs['input'] == b'{}'
+            assert 'StrictHostKeyChecking=yes' in argv
+            if outcome == 'accepted':
+                return SimpleNamespace(stdout=b'release_verified_and_resumed')
+            raise m.subprocess.CalledProcessError(
+                255 if outcome == 'ssh_failure' else 1, argv, output=b'',
+                stderr=b'release_failed_admission_not_automatically_resumed')
+        return SimpleNamespace(stdout=b'')
+
+    if outcome == 'rejected':
+        m.deploy(env, run, lambda: '8.8.4.4', check_access=True)
+    else:
+        with pytest.raises((ValueError, m.subprocess.CalledProcessError)):
+            m.deploy(env, run, lambda: '8.8.4.4', check_access=True)
+    assert any('close-instance-public-ports' in e for e in events)
