@@ -1534,7 +1534,11 @@ Book reads `GET /api/credits/history?project_id={project_id}` so its credit
 history uses the same holds, final charges, releases, and unsuccessful-attempt
 semantics as the account ledger. Customer credit-history responses omit provider
 prices, model identities, token counts, funding routes, and cost-source details.
-Provider usage remains internal accounting evidence. A visual review that did
+Provider usage remains internal accounting evidence. Each row carries a
+customer-facing `label` derived server-side from its ledger description, Draw
+rows and runs carry `page_number`, targeted runs (a regenerated reference, a
+style sample) carry `action`, and `spend_by_stage` totals final charges over
+the whole scoped history, independent of pagination. A visual review that did
 not finish during the draw is re-run with `/pages/{page_number}/visual-review`
 and its `/estimate` endpoint. Restart the
 gateway after changing its retry configuration.

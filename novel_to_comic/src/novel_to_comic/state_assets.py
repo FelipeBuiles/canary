@@ -17,7 +17,7 @@ from novel_to_comic.models.story_bible import Character, Location
 from novel_to_comic.workspace import series_root
 from novel_to_comic.image_models import image_model_profile_for_config
 from novel_to_comic.image_ref_strategy import RefStrategy
-from novel_to_comic.style_contract import rendering_style_template
+from novel_to_comic.style_contract import figure_free_style_template, rendering_style_template
 
 STATE_ASSET_SPEC_VERSION = 2
 
@@ -96,6 +96,8 @@ class StateAssetGenerationSpec(BaseModel):
     overridden_facets: tuple[str, ...]
     replaces_identity: bool = False
     reference_form: ReferenceForm = "figure"
+    #: The canonical parent sheet's layout; a form parent has no face or hair.
+    canonical_reference_form: ReferenceForm = "figure"
     style_path: str | None = None
     style_sha256: str | None = None
     configured_route_model: str
@@ -162,15 +164,16 @@ def build_character_state_spec(
     instructions = artifacts.character_state_ref_instructions_path(project_dir, char.id, state.id)
     addendum = artifacts.read_active_addendum(instructions)
     overridden = set(state.changed_facets)
+    form = reference_forms.reference_form(char, state)
+    style_text = rendering_style_template(config.style_template)
     prompt_parts = [
-        rendering_style_template(config.style_template),
+        style_text if form == "figure" else figure_free_style_template(style_text),
         f"CHARACTER STATE REFERENCE SHEET — {char.name} ({state.label}).",
         state.visual_anchor,
     ]
     direction_parts = [f"CHARACTER STATE REFERENCE SHEET — {char.name} ({state.label})."]
     if state.continuity_guard:
         prompt_parts.append(state.continuity_guard)
-    form = reference_forms.reference_form(char, state)
     composition = reference_forms.STATE_DIRECTION[form]
     prompt_parts.append(composition)
     direction_parts.append(composition)
@@ -184,7 +187,8 @@ def build_character_state_spec(
         canonical_parent_path=_relative(parent, project_dir) or "", canonical_parent_sha256=parent_hash,
         preserved_facets=() if state.replaces_identity else ("identity",),
         overridden_facets=tuple(sorted(overridden)), replaces_identity=state.replaces_identity,
-        reference_form=form, style_path=_relative(style_path, project_dir),
+        reference_form=form, canonical_reference_form=reference_forms.reference_form(char),
+        style_path=_relative(style_path, project_dir),
         style_sha256=_sha256(style_path), configured_route_model=config.effective_image_model(),
         configured_route=image_model_profile_for_config(config).route.value,
         requested_shape="landscape", effective_width=state_reference_dimensions(config, "character")[0],
@@ -213,7 +217,8 @@ def build_location_state_spec(
     instructions = artifacts.location_state_plate_instructions_path(project_dir, loc.id, state.id)
     addendum = artifacts.read_active_addendum(instructions)
     overridden = set(state.changed_facets)
-    prompt_parts = [rendering_style_template(config.style_template), "LOCATION STATE DESIGN PLATE", state.visual_anchor]
+    prompt_parts = [figure_free_style_template(rendering_style_template(config.style_template)),
+                    "LOCATION STATE DESIGN PLATE", state.visual_anchor]
     direction_parts = ["LOCATION STATE DESIGN PLATE"]
     composition = "Location state plate at the location's true scale and enclosure. Active-state conditions win. No characters or text."
     prompt_parts.append(composition)
@@ -315,6 +320,10 @@ def revalidate_state_asset_lineage(state_path: Path, parent_path: Path) -> dict 
 #: state ref carries full appearance authority; the canonical parent used as a
 #: compatible identity reference preserves only these facets.
 _CHARACTER_IDENTITY_FACETS: tuple[str, ...] = ("face", "hair", "build")
+
+#: A form or formation parent has no face, hair or build to keep: offering
+#: "hair" alone made a sheet for a point of light grow a human head.
+_FORM_IDENTITY_FACETS: tuple[str, ...] = ("materials", "light", "color")
 
 
 #: Facets that a character state anchor may override. When overridden, the
@@ -444,9 +453,11 @@ def _build_character_conditioning_assets(
         return [], dropped, True
 
     ignore_facets = changed_mapped
+    identity_facets = (_CHARACTER_IDENTITY_FACETS if spec.canonical_reference_form == "figure"
+                       else _FORM_IDENTITY_FACETS)
     # Identity facets not overridden are what the parent can still condition.
     preserve_facets = tuple(
-        f for f in _CHARACTER_IDENTITY_FACETS if f not in set(ignore_facets)
+        f for f in identity_facets if f not in set(ignore_facets)
     )
     asset = ReferenceAsset(
         path=parent_path,

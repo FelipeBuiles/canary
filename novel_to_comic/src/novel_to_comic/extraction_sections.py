@@ -51,7 +51,12 @@ characters. Newly stated stable physical facts (height, build, hair or face)
 belong in distinguishing_features even when they become known after this
 character's first section. A mark, scar, tattoo, brand, injury or garment the
 character gains in this section is a change: give it an appearance state from
-that point, never a distinguishing feature. Code appends them without rewriting the established
+that point, never a distinguishing feature. When the source gives one entity a new
+physical form (a machine rebuilt or succeeded under the same identity, a body
+dissolved into light or mind, a creature transformed), give each visually
+distinct form an appearance state from that point, with a self-contained
+anchor; a form that is unseen or exists beyond space states that in its anchor.
+Code appends them without rewriting the established
 anchor or fabricating a physical change. Set cast_required=true when this
 section establishes a principal antagonist, companion or plot-critical creature;
 use false otherwise. Code never demotes an existing required Cast identity.
@@ -714,8 +719,12 @@ def section_schema(registry: StoryBible | None, prefix: str, *, continuable: boo
 
 
 def section_prefix(part_number: int, index: int) -> str:
-    """New-ID prefix for a section; later parts never reuse part 1's prefixes."""
-    return f"part{index:04d}_" if part_number == 1 else f"p{part_number:04d}s{index:04d}_"
+    """New-ID prefix for a section of a part.
+
+    Naming sections ``partNNNN_`` gave a one-part book ``part0002_*`` entities,
+    which read as a second part that does not exist.
+    """
+    return f"p{part_number:04d}s{index:04d}_"
 
 
 async def extract_sections(

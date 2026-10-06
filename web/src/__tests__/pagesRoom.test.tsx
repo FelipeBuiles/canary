@@ -364,6 +364,15 @@ describe("PagesRoom", () => {
     expect(generatePage).not.toHaveBeenCalled();
   });
 
+  it.each(["running", "pending"] as const)("offers no adaptation restart while the first page plan is %s", (planStatus) => {
+    stageStatuses.adapt = { status: "complete", stale: false };
+    stageStatuses.plan = { status: planStatus, stale: false };
+    stageStatuses.draw = { status: "pending", stale: false };
+    completePagesUnavailable = true;
+    renderRoom();
+    expect(screen.queryByRole("button", { name: /Start adaptation over/ })).toBeNull();
+  });
+
   it("keeps adaptation rerun available when the saved page plan cannot load", () => {
     completePagesUnavailable = true;
     renderRoom();

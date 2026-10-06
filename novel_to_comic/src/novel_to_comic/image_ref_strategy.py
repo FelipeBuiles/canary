@@ -88,17 +88,6 @@ class RefStrategy:
     def _seedream(self) -> bool:
         return is_seedream_model(self.model)
 
-    def use_location_plate_refs(self) -> bool:
-        # GPT Image 2 processes every supplied image at high fidelity, so location
-        # plates can leak repeated background textures into panels. Keep locations
-        # text-driven for the gpt-image-2 route.
-        return not self._gpt_image_2
-
-    def use_style_sample_refs(self) -> bool:
-        # GPT Image 2 uses the image edit endpoint whenever any reference image is
-        # supplied. Keep style text-driven to avoid copying sample texture/noise.
-        return not self._gpt_image_2
-
     # ------------------------------------------------------------------
     # Cast: asset refs, prompts, and dimensions
     # ------------------------------------------------------------------

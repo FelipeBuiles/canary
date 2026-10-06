@@ -1072,3 +1072,41 @@ def test_prop_state_compiles_with_prop_authority_and_guard(tmp_path):
     assert wire.input.asset_kind == 'prop_ref'
     assert wire.input.lineage['asset_kind'] == 'prop_state_ref'
     assert state.visual_anchor in wire.compiled.final_prompt
+
+
+def test_form_parent_conditions_its_state_on_light_not_a_face(tmp_path: Path):
+    """A form parent has no face or hair: preserving "hair" alone made a sheet
+    for a point of light grow the style proof's human head."""
+    from novel_to_comic.state_assets import build_state_reference_plan
+
+    char = Character(
+        id="man", name="Man",
+        visual_anchor="vast shimmering web of interconnected thought spanning galaxies",
+        age_range="ageless", gender="", distinguishing_features=[], default_outfit="",
+        first_appearance_scene="scene_001", reference_form="form",
+    )
+    _write_parent(artifacts.character_ref_sheet_path(tmp_path, char.id))
+    state = AppearanceState(
+        id="last_mind", label="Last mind", changed_facets=("shape", "anatomy"),
+        visual_anchor="solitary fading point of mental light in total void",
+        visually_significant=True, reference_form="form",
+    )
+    spec = build_character_state_spec(Config(), tmp_path, char, state)
+    subject = next(asset for asset in build_state_reference_plan(spec, tmp_path).selected
+                   if asset.role == "subject")
+
+    assert spec.canonical_reference_form == "form"
+    assert set(subject.preserve_facets) == {"materials", "light", "color"}
+    assert "face" in subject.ignore_facets
+
+
+def test_form_state_sheet_drops_the_character_proportion_system(tmp_path: Path):
+    style = "Gouache on board.\n\nCHARACTER DESIGN — heroic: squared cleft jaws.\n\nPAGE FRAMING STANDARD — cream margins."
+    char = Character(id="man", name="Man", visual_anchor="web of light", age_range="ageless",
+                     gender="", distinguishing_features=[], default_outfit="",
+                     first_appearance_scene="scene_001", reference_form="form")
+    state = AppearanceState(id="spark", label="Spark", visual_anchor="a point of light",
+                            visually_significant=True, changed_facets=("shape",))
+    spec = build_character_state_spec(Config(style_template=style), tmp_path, char, state)
+    assert "Gouache on board." in spec.rendered_prompt
+    assert "cleft jaws" not in spec.rendered_prompt

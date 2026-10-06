@@ -201,7 +201,7 @@ function ArmEditor({ arms, targets, onChange }: {
         <div key={index} className="flex flex-wrap items-center gap-2">
           <span className="w-12 font-meta text-xs font-bold">Arm {index + 1}</span>
           <Select
-            className="min-w-[16rem] flex-1"
+            className="min-w-0 flex-[1_1_16rem]"
             aria-label={`Arm ${index + 1} model and route`}
             value={arm.target}
             onValueChange={(target) => update(index, { target })}
@@ -212,7 +212,7 @@ function ArmEditor({ arms, targets, onChange }: {
             }))}
           />
           <Select
-            className="min-w-[12rem]"
+            className="min-w-0 flex-[1_1_12rem]"
             aria-label={`Arm ${index + 1} prompt`}
             value={arm.prompt}
             onValueChange={(prompt) => update(index, { prompt: prompt as ImagePrompt })}
@@ -635,28 +635,30 @@ function ImageCompareRun({ run, targets }: { run: LabsRunDetail; targets: ImageT
       </div>
       {retry.error && <p className="font-body text-sm text-hero-red">{String(retry.error)}</p>}
       {!blind && (
-        <table className="w-full border-collapse font-body text-sm">
-          <thead>
-            <tr className={cn(META, "text-left")}>
-              <th className="py-1 pr-3 font-normal">Arm</th>
-              <th className="py-1 pr-3 font-normal">Done</th>
-              <th className="py-1 pr-3 font-normal">Avg time</th>
-              <th className="py-1 pr-3 font-normal">Per image (API rates)</th>
-              <th className="py-1 font-normal">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {totals.map((total) => (
-              <tr key={total.index} className="border-t border-ink-black/10 align-top tabular-nums">
-                <td className="py-1 pr-3"><span className="font-bold">Arm {total.index + 1}</span> · {armName(targets, total.arm)}</td>
-                <td className="py-1 pr-3">{total.done}/{total.total}{total.failed ? ` · ${total.failed} failed` : ""}</td>
-                <td className="py-1 pr-3">{seconds(total.seconds)}</td>
-                <td className="py-1 pr-3">{total.perImage == null ? "—" : `≈${usd(total.perImage)}`}</td>
-                <td className="py-1">{total.cost}</td>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[480px] border-collapse font-body text-sm">
+            <thead>
+              <tr className={cn(META, "text-left")}>
+                <th className="py-1 pr-3 font-normal">Arm</th>
+                <th className="py-1 pr-3 font-normal">Done</th>
+                <th className="py-1 pr-3 font-normal">Avg time</th>
+                <th className="py-1 pr-3 font-normal">Per image (API rates)</th>
+                <th className="py-1 font-normal">Total</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {totals.map((total) => (
+                <tr key={total.index} className="border-t border-ink-black/10 align-top tabular-nums">
+                  <td className="py-1 pr-3"><span className="font-bold">Arm {total.index + 1}</span> · {armName(targets, total.arm)}</td>
+                  <td className="py-1 pr-3">{total.done}/{total.total}{total.failed ? ` · ${total.failed} failed` : ""}</td>
+                  <td className="py-1 pr-3">{seconds(total.seconds)}</td>
+                  <td className="py-1 pr-3">{total.perImage == null ? "—" : `≈${usd(total.perImage)}`}</td>
+                  <td className="py-1">{total.cost}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
       {!blind && (
         <p className={META}>
@@ -859,14 +861,14 @@ export function LabsRoom() {
   const open = (next: Record<string, string>) => setParams(next);
 
   return (
-    <div className="mx-auto max-w-[1400px] px-4 py-6 md:px-8">
+    <div className="mx-auto w-full min-w-0 max-w-[1400px] px-4 py-6 md:px-8">
       <SectionHeader
         kicker="Local development"
         title="Labs"
         description="Model experiments on your own projects. API calls cost operator USD; subscription calls use your Claude or Codex allowance. Never account credits."
       />
-      <div className="grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
-        <aside className="space-y-5">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
+        <aside className="min-w-0 space-y-5">
           <nav aria-label="New experiment" className="grid gap-2">
             {(["image_compare", "stage_models"] as const).map((kind) => (
               <Button key={kind} variant={view === kind ? "primary" : "outline"} size="sm" onClick={() => open({ new: kind })}>

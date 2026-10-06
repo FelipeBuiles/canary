@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { setMedia } from "mock-match-media";
@@ -5,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
 import { BottomBarPortal, TopBarSlotProvider } from "../layout/TopBarSlot";
 import { RoomHeader } from "../components/composites/RoomHeader";
+import { DESKTOP_LAYOUT_QUERY } from "../hooks/useDesktopLayout";
 
 vi.mock("../api/queries", () => ({
   useCreditBalance: () => ({ data: { balance_credits: 500 } }),
@@ -71,7 +74,7 @@ describe("mobile project shell", () => {
     );
   }
 
-  it.each([{ width: 390, height: 640 }, { width: 844, height: 390 }])("keeps room titles and approval actions in the content flow at $width × $height", (size) => {
+  it.each([{ width: 390, height: 640 }, { width: 844, height: 390 }, { width: 768, height: 1024 }, { width: 1023, height: 1200 }])("keeps room titles and approval actions in the content flow at $width × $height", (size) => {
     setMedia(size);
     renderRoom();
     const main = screen.getByRole("main");
@@ -95,5 +98,12 @@ describe("mobile project shell", () => {
 
     act(() => setMedia({ width: 1366, height: 768 }));
     expect(main.contains(screen.getByRole("button", { name: "Continue" }))).toBe(false);
+  });
+
+  it("keeps the CSS studio-desktop variant and the JS layout query in agreement", () => {
+    const css = fs.readFileSync(path.resolve(import.meta.dirname, "../index.css"), "utf8");
+    const variant = /@custom-variant studio-desktop \{\s*@media ([^{]+)\{/.exec(css)?.[1].trim();
+    expect(variant).toBe("(width >= 64rem)");
+    expect(DESKTOP_LAYOUT_QUERY).toBe("(min-width: 1024px)");
   });
 });

@@ -491,6 +491,10 @@ _SEMANTIC_PAGE_CONTRACT = (
     "Name that setting in continuity_intent and cite its approved location entity in "
     "entity_ids wherever the environment is visible, including reaction and aftermath panels. "
     "Reference availability alone does not make a location or prop part of the scene. "
+    "Draw sends every cited entity's approved reference image, so cite an entity only "
+    "where it is drawn as that reference or approved state shows it. A voice, an unseen "
+    "presence, or a form no approved anchor describes is not cited: the speaker stays on "
+    "its lettering and visual_intent describes what is drawn instead. "
     "Cite a scene object (kind object) in entity_ids wherever it is visible so Draw keeps "
     "its anchor; never contradict its anchor in visual_intent or captions placed with it. "
     "When a visible character's identity states an unusual stature, write the relative "
@@ -990,12 +994,13 @@ def _draft_contract_failures(adaptation, references, draft):
     return tuple(failures)
 
 
-def _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat):
+def _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat, *, integrated_lettering=False):
     failures = _draft_contract_failures(adaptation, references, draft)
     if failures:
         return (), PlanValidation(invariant_failures=failures)
     pages = _canonical_pages(adaptation, draft, pin_by_beat, references)
-    validation = validate_book_plan(adaptation, references, target_range, pages)
+    validation = validate_book_plan(adaptation, references, target_range, pages,
+                                    integrated_lettering=integrated_lettering)
     return pages, PlanValidation(
         invariant_failures=validation.invariant_failures,
         editorial_issues=_merged_editorial_issues(validation.editorial_issues,
@@ -1042,6 +1047,7 @@ async def _produce_book_plan_one_shot(
     author_pins: tuple[AuthorGeometryPin, ...] | list[AuthorGeometryPin] = (),
     story_instruction: str = "",
     concurrency: int = 4,
+    integrated_lettering: bool = False,
 ) -> BookPlan:
     """Generate, validate, and persist one global canonical book plan."""
 
@@ -1093,7 +1099,8 @@ async def _produce_book_plan_one_shot(
                     continue
                 break
             try:
-                pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat)
+                pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat,
+                                    integrated_lettering=integrated_lettering)
             except PlanInvariantError as allocation_error:
                 validation = allocation_error.validation
             except ValidationError as error:
@@ -1667,6 +1674,7 @@ async def _produce_book_plan_two_pass(
     author_pins: tuple[AuthorGeometryPin, ...] | list[AuthorGeometryPin],
     story_instruction: str = "",
     concurrency: int = 4,
+    integrated_lettering: bool = False,
 ) -> BookPlan:
     author_instruction = story_instruction
     pin_by_beat = _validate_author_pins(adaptation, author_pins)
@@ -1758,7 +1766,8 @@ async def _produce_book_plan_two_pass(
             batches,
         )
         progress.publish("checking")
-        pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat)
+        pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat,
+                                    integrated_lettering=integrated_lettering)
         if not validation.invariant_failures:
             progress.publish("reviewing")
             artifacts.write_plan_review_draft(PlanReviewDraft(adaptation_sha256=adaptation.content_sha256, rhythm_summary=draft.rhythm_summary, pages=pages))
@@ -1833,7 +1842,8 @@ async def _produce_book_plan_two_pass(
                 page_map,
                 batches,
             )
-            pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat)
+            pages, validation = _validate_plan_draft(adaptation, references, target_range, draft, pin_by_beat,
+                                    integrated_lettering=integrated_lettering)
             if not validation.invariant_failures:
                 progress.publish("reviewing")
                 artifacts.write_plan_review_draft(PlanReviewDraft(adaptation_sha256=adaptation.content_sha256, rhythm_summary=draft.rhythm_summary, pages=pages))
@@ -1896,6 +1906,7 @@ async def produce_book_plan(
     story_instruction: str = "",
     max_generation_calls: int | None = None,
     concurrency: int = 4,
+    integrated_lettering: bool = False,
 ) -> BookPlan:
     """Produce one canonical plan through the cheapest quality-safe workflow."""
 
@@ -1931,6 +1942,7 @@ async def produce_book_plan(
             author_pins=author_pins,
             story_instruction=story_instruction,
             concurrency=concurrency,
+            integrated_lettering=integrated_lettering,
         )
     return await _produce_book_plan_two_pass(
         adaptation,
@@ -1943,6 +1955,7 @@ async def produce_book_plan(
         author_pins=author_pins,
         story_instruction=story_instruction,
         concurrency=concurrency,
+        integrated_lettering=integrated_lettering,
     )
 
 
@@ -2600,8 +2613,14 @@ def validate_book_plan(
     references: ApprovedVisualReferenceInventory,
     target_range: ApprovedPageRange,
     pages: tuple[ComicPage, ...] | list[ComicPage],
+    *,
+    integrated_lettering: bool = False,
 ) -> PlanValidation:
-    """Validate canonical pages against Plan's three authoritative inputs."""
+    """Validate canonical pages against Plan's three authoritative inputs.
+
+    ``integrated_lettering`` adds the density evidence that matters only when
+    the image model draws the canonical copy itself.
+    """
 
     failures: list[InvariantFailure] = []
     issues: list[EditorialIssue] = []
@@ -3022,11 +3041,13 @@ def validate_book_plan(
             if beat_id in beat_by_id
         ]
         peak_beats = [beat for beat in page_beats if beat.narrative_function == "peak"]
+        # A Peak that also carries its own aftermath is one moment, not a
+        # Peak competing with a separate Release for room.
         release_beats = [
             beat
             for beat in page_beats
-            if beat.narrative_function == "release"
-            or "aftermath" in beat.story_functions
+            if beat not in peak_beats
+            and (beat.narrative_function == "release" or "aftermath" in beat.story_functions)
         ]
         represented_emphasis = {beat.narrative_function for beat in page_beats}
         if page_beats and page.emphasis not in represented_emphasis:
@@ -3095,10 +3116,15 @@ def validate_book_plan(
                     ],
                 )
             )
+        # Only a reveal that opens the page lands on the page turn; one placed
+        # later in the page is revealed by reading order, not by turning.
+        opening = min(page.content, key=lambda content: content.order, default=None)
+        opening_beats = set(opening.beat_ids) if opening is not None else set()
         reveal_beats = [
             beat
             for beat in page_beats
-            if "reveal" in beat.story_functions and beat.narrative_function == "peak"
+            if beat.id in opening_beats
+            and "reveal" in beat.story_functions and beat.narrative_function == "peak"
         ]
         if not reveal_beats or page_index == 0:
             continue
@@ -3127,11 +3153,94 @@ def validate_book_plan(
                     )
                 )
 
+    issues.extend(_uncast_recurring_character_issues(references, pages))
+    if integrated_lettering:
+        issues.extend(_integrated_lettering_density_issues(pages))
     failures.extend(_staging_failures(references, pages))
     return PlanValidation(
         invariant_failures=failures,
         editorial_issues=issues,
     )
+
+
+_UNCAST_RECURRING_PAGES = 2
+
+
+def _uncast_recurring_character_issues(
+    references: ApprovedVisualReferenceInventory,
+    pages: tuple[ComicPage, ...] | list[ComicPage],
+) -> list[EditorialIssue]:
+    """A written-identity character drawn on several pages has no image to
+    keep it consistent; each page invents its look again."""
+    written = {
+        reference.entity_id: reference.label or reference.entity_id
+        for reference in references.references
+        if reference.kind == "character" and not reference.requires_image
+    }
+    shown: dict[str, list[int]] = {}
+    for page in pages:
+        for entity_id in dict.fromkeys(
+            entity_id for content in page.content for entity_id in content.entity_ids
+        ):
+            if entity_id in written:
+                shown.setdefault(entity_id, []).append(page.page_number)
+    return [
+        EditorialIssue(
+            id=f"plan_issue_uncast_recurring_character_{entity_id}",
+            owner_stage="plan",
+            code="uncast_recurring_character",
+            message=(
+                "A character without a Cast reference appears on several pages; "
+                "add it to Cast to keep its look consistent."
+            ),
+            artifact_ids=[f"page_{number:03d}" for number in numbers],
+            evidence=[
+                f"{written[entity_id]} ({entity_id}) is drawn from written identity only "
+                f"on pages {numbers}."
+            ],
+        )
+        for entity_id, numbers in shown.items()
+        if len(numbers) >= _UNCAST_RECURRING_PAGES
+    ]
+
+
+# Integrated pages ask the image model to draw every word. OCR of 24 drawn
+# integrated pages (2026-10-05) found no copy errors up to 87 words and 7
+# lettering items; these limits flag only pages well beyond that evidence.
+_INTEGRATED_PAGE_WORDS = 110
+_INTEGRATED_PAGE_ITEMS = 10
+
+
+def _integrated_lettering_density_issues(
+    pages: tuple[ComicPage, ...] | list[ComicPage],
+) -> list[EditorialIssue]:
+    issues = []
+    for page in pages:
+        lettering = [item for content in page.content for item in content.lettering]
+        words = sum(len(item.text.split()) for item in lettering)
+        if words <= _INTEGRATED_PAGE_WORDS and len(lettering) <= _INTEGRATED_PAGE_ITEMS:
+            continue
+        issues.append(
+            EditorialIssue(
+                id=f"plan_issue_dense_integrated_lettering_page_{page.page_number:03d}",
+                owner_stage="plan",
+                code="dense_integrated_lettering",
+                message=(
+                    "This page asks the image model to draw more lettering than drawn "
+                    "pages have been verified to reproduce exactly."
+                ),
+                source_unit_ids=list(dict.fromkeys(
+                    unit for item in lettering for unit in item.source_unit_ids
+                )),
+                artifact_ids=[f"page_{page.page_number:03d}", *(item.id for item in lettering)],
+                evidence=[
+                    f"Page {page.page_number} carries {len(lettering)} lettering items and "
+                    f"{words} words; integrated pages above {_INTEGRATED_PAGE_ITEMS} items "
+                    f"or {_INTEGRATED_PAGE_WORDS} words are beyond verified exact copy."
+                ],
+            )
+        )
+    return issues
 
 
 # A character whose panels repeat one facing and face reads as a pasted

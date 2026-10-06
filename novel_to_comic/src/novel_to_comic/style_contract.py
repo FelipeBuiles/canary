@@ -24,6 +24,7 @@ DEFAULT_PAGE_FRAMING_STANDARD = (
 LETTERING_MARKER = "LETTERING STANDARD —"
 FRAMING_MARKER = "PAGE FRAMING STANDARD —"
 DESIGN_MARKER = "POST-PRODUCTION LETTERING DESIGN —"
+CHARACTER_DESIGN_MARKER = "CHARACTER DESIGN —"
 
 
 def rendering_style_template(visual_style: str) -> str:
@@ -33,6 +34,20 @@ def rendering_style_template(visual_style: str) -> str:
                    DESIGN_MARKER, RENDERING_FIDELITY_MARKER):
         rendering = rendering.split(marker, 1)[0]
     return rendering.strip()
+
+
+def figure_free_style_template(visual_style: str) -> str:
+    """The selected style without its character proportion system.
+
+    Plates, props and form or formation sheets show no figure. Proportion
+    direction such as squared jaws or heroic torsos made form sheets invent a
+    human face for an entity whose anchor gives it none.
+    """
+    if CHARACTER_DESIGN_MARKER not in (visual_style or ""):
+        return visual_style or ""
+    before, after = visual_style.split(CHARACTER_DESIGN_MARKER, 1)
+    remainder = after.split("\n\n", 1)[1] if "\n\n" in after else ""
+    return "\n\n".join(part for part in (before.strip(), remainder.strip()) if part)
 
 
 def page_style_template(
@@ -89,7 +104,7 @@ def style_template_for_suggestion(suggestion: dict) -> str:
         if rendering_direction:
             visual_style += "\n\nRENDERING APPROACH — " + rendering_direction
         visual_style += (
-            "\n\nCHARACTER DESIGN — " + (f"{family}: " if family else "") + character_design
+            f"\n\n{CHARACTER_DESIGN_MARKER} " + (f"{family}: " if family else "") + character_design
             + " Preserve this proportion and shape system consistently across all subjects "
             "and panels, adapted to each subject's species, age and identifying traits."
         )

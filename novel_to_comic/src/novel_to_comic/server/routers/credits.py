@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Any
@@ -60,18 +61,112 @@ def _history_run(row: dict[str, Any]) -> str:
     return str(row.get("job_id") or row["id"])
 
 
+# Customer-facing names for the model steps a run paid for. Keys are the AI
+# request features that ``_settle_event_usage`` writes as "Model call: <feature>".
+_FEATURE_LABELS = {
+    "extract.book_map": "Story map",
+    "extract.book_map_digest": "Story map summary",
+    "extract.sequences": "Scenes",
+    "extract.story_bible": "Story bible",
+    "brief.infer": "Adaptation brief",
+    "story_bible.draft_entity": "Story bible entry",
+    "style.suggestions": "Style suggestions",
+    "style.sample_brief": "Sample brief",
+    "style.sample": "Style sample",
+    "style.proof_copy": "Sample lettering",
+    "style.production": "Production style",
+    "style.direction_naming": "Style name",
+    "cast.design": "Character and place designs",
+    "cast.character_ref": "Character reference",
+    "cast.character_state_ref": "Appearance reference",
+    "cast.character_ref_instruction_rewrite": "Instruction rewrite",
+    "cast.location_plate": "Location reference",
+    "cast.location_state_plate": "Location variant",
+    "cast.location_plate_instruction_rewrite": "Instruction rewrite",
+    "cast.prop_ref": "Prop reference",
+    "cast.prop_state_ref": "Prop variant",
+    "cast.prop_ref_instruction_rewrite": "Instruction rewrite",
+    "cast.visual_review": "Visual check",
+    "adapt.book": "Book adaptation",
+    "adapt.narrative_treatment": "Narrative treatment",
+    "adapt.blueprint": "Scene blueprint",
+    "adapt.lettering": "Lettering copy",
+    "plan.book": "Book plan",
+    "plan.map": "Page map",
+    "plan.detail": "Page details",
+    "complete_page_draw": "Page art",
+    "draw.visual_review": "Visual check",
+    "draw.page_ocr": "Text check",
+    "lettering.translate": "Lettering translation",
+    "project.cover": "Cover",
+}
+
+# Targeted actions debit under a fixed description (see ``debit_description``
+# callers). Their label also names the whole run, unlike stage runs.
+_ACTION_PREFIXES = (
+    ("Model call: regenerate character ref", "Character reference"),
+    ("Model call: regenerate appearance state", "Appearance reference"),
+    ("Model call: regenerate location plate", "Location reference"),
+    ("Model call: regenerate location state", "Location variant"),
+    ("Model call: regenerate prop ref", "Prop reference"),
+    ("Model call: regenerate instructed character", "Character reference"),
+    ("Model call: regenerate instructed location", "Location reference"),
+    ("Model call: regenerate instructed prop", "Prop reference"),
+    ("Model call: rewrite", "Instruction rewrite"),
+    ("Model call: project cover", "Cover"),
+    ("Project lettering translation", "Lettering translation"),
+    ("Style direction", "Style direction"),
+    ("Style suggestions", "Style suggestions"),
+    ("Style sample", "Style sample"),
+    ("Style validation", "Style check"),
+)
+_MODEL_CALL = re.compile(r"^Model call(?: [a-z_]+)?: (?P<feature>[a-z_.]+)$")
+_COMPLETE_PAGE = re.compile(r"^Complete page (?P<page>\d+)$")
+
+
+def _charge_label(row: dict[str, Any]) -> tuple[str, bool]:
+    """Name what one ledger row paid for, and whether it names a targeted action."""
+    if row.get("status") in {"reserved", "released"}:
+        return "Credit hold", False
+    if int(row.get("amount_credits") or 0) > 0:
+        return "Credit purchase", False
+    description = str(row.get("description") or "")
+    if _COMPLETE_PAGE.match(description):
+        return "Page art", False
+    for prefix, label in _ACTION_PREFIXES:
+        if description.startswith(prefix):
+            return label, True
+    match = _MODEL_CALL.match(description)
+    if match:
+        feature = match["feature"]
+        if feature.endswith(".narrative_review"):
+            return "Story review", False
+        if feature in _FEATURE_LABELS:
+            return _FEATURE_LABELS[feature], False
+    return "Other steps", False
+
+
+def _page_number(row: dict[str, Any]) -> int | None:
+    match = _COMPLETE_PAGE.match(str(row.get("description") or ""))
+    return int(match["page"]) if match else None
+
+
 def _public_history_row(row: dict[str, Any]) -> dict[str, Any]:
     """Return only customer-facing accounting facts, never provider internals."""
     return {
-        key: row.get(key)
-        for key in (
-            "id",
-            "amount_credits",
-            "status",
-            "stage",
-            "created_at",
-            "image_count",
-        )
+        **{
+            key: row.get(key)
+            for key in (
+                "id",
+                "amount_credits",
+                "status",
+                "stage",
+                "created_at",
+                "image_count",
+            )
+        },
+        "label": _charge_label(row)[0],
+        "page_number": _page_number(row),
     }
 
 
@@ -115,6 +210,14 @@ def _group_history_runs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         else:
             status = "complete"
         representative = reservation or (settled[0] if settled else ordered[0])
+        action = next(
+            (label for label, targeted in map(_charge_label, settled) if targeted),
+            None,
+        )
+        page_number = next(
+            (number for number in map(_page_number, ordered) if number is not None),
+            None,
+        )
         runs.append(
             {
                 "run_id": run_id,
@@ -128,6 +231,8 @@ def _group_history_runs(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "returned_credits": returned,
                 "credits_added": added,
                 "status": status,
+                "action": action,
+                "page_number": page_number,
                 "rows": [_public_history_row(row) for row in ordered],
             }
         )
@@ -144,6 +249,16 @@ def _month_used_credits(rows: list[dict[str, Any]]) -> int:
         and int(row["amount_credits"]) < 0
         and str(row.get("created_at") or "").startswith(prefix)
     )
+
+
+def _spend_by_stage(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """Total final charges per stage across the whole (scoped) history."""
+    totals: dict[str, int] = defaultdict(int)
+    for row in rows:
+        amount = int(row["amount_credits"])
+        if row.get("status") == "settled" and amount < 0:
+            totals[row.get("stage") or "other"] += -amount
+    return dict(totals)
 
 
 @router.get("/pricing-reference")
@@ -180,4 +295,5 @@ def history(
         "offset": offset,
         "has_more": offset + len(page) < len(runs),
         "month_used_credits": _month_used_credits(rows),
+        "spend_by_stage": _spend_by_stage(rows),
     }

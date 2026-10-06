@@ -267,6 +267,9 @@ export interface CreditTransaction {
   stage: string | null;
   created_at: string;
   image_count?: number;
+  /** Customer-facing name of what this row paid for. */
+  label: string;
+  page_number: number | null;
 }
 
 export interface CreditLedgerRun {
@@ -281,6 +284,9 @@ export interface CreditLedgerRun {
   returned_credits: number;
   credits_added: number;
   status: "in_flight" | "complete" | "failed";
+  /** Names a targeted action (a regenerated reference, a style sample); null for stage runs. */
+  action: string | null;
+  page_number: number | null;
   rows: CreditTransaction[];
 }
 
@@ -290,6 +296,8 @@ export interface CreditHistoryPage {
   offset: number;
   has_more: boolean;
   month_used_credits: number;
+  /** Final charges per stage across the whole scoped history, not just this page. */
+  spend_by_stage: Record<string, number>;
 }
 
 export interface CreditPackage {

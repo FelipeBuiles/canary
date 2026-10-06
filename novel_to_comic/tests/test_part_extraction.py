@@ -31,7 +31,7 @@ def _section_payload(content: dict, *, newcomer: str | None = None) -> dict:
     prefix = content["id_prefix"]
     scene_id = prefix + "scene_001"
     registry = {entry["id"] for entry in content.get("registry", {}).get("characters", [])}
-    ari = "part0001_char_001"
+    ari = "p0001s0001_char_001"
     characters = []
     locations = []
     if ari in registry:
@@ -133,13 +133,13 @@ def test_a_later_part_continues_ids_ordinals_and_sequences(tmp_path, monkeypatch
 
     # Part 1 maps the whole saved book once; part 2 reuses the fresh map.
     assert calls[:3] == ["extract.book_map_digest", "extract.book_map_digest", "extract.book_map"]
-    assert calls[3:] and all(prefix.startswith("part") for prefix in calls[3:])
+    assert calls[3:] and all(prefix.startswith("p0001s") for prefix in calls[3:])
     assert calls_two and all(prefix.startswith("p0002s") for prefix in calls_two)
     # The book map names the ferryman recurring, so Cast designs him.
     assert next(c for c in bible.characters if c.name == "Ferryman").cast_required
     assert bible.title == "Crossing"
     assert {scene.part_id for scene in bible.scenes} == {"part_0001", "part_0002"}
-    ari = [character for character in bible.characters if character.id == "part0001_char_001"]
+    ari = [character for character in bible.characters if character.id == "p0001s0001_char_001"]
     assert len(ari) == 1 and ari[0].name == "Ari"
     assert any(character.name == "Ferryman" for character in bible.characters)
     assert {arc.part_id for arc in bible.sequences} == {"part_0001", "part_0002"}
@@ -191,7 +191,7 @@ def test_a_later_part_waits_for_blank_anchors_before_any_model_call(tmp_path, mo
     calls = _fake_model(monkeypatch, newcomer="Ferryman")
 
     workspace = part_workspace(root, "part_0002")
-    with pytest.raises(MissingVisualAnchor, match=r"no visual anchor: Ari \(part0001_char_001\)"):
+    with pytest.raises(MissingVisualAnchor, match=r"no visual anchor: Ari \(p0001s0001_char_001\)"):
         s1_extract.estimate_cost(config, workspace, load_state(workspace))
     with pytest.raises(MissingVisualAnchor):
         _extract(root, "part_0002", config)

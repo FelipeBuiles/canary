@@ -41,6 +41,10 @@ _FIGURE_LAYOUT = (
 # no guard pulled a story scene (a rowing boat) into the sheet.
 _NO_SITUATION = "no props, vehicles, scenery or story situation"
 
+# "Material, light or face" let a sheet for a point of light pick "face" and
+# borrow one from the style proof. A face is drawn only when the anchor gives one.
+_ANCHORED_FACE = "when its anchor gives it one"
+
 _FORM_LAYOUT = (
     "one clean wide form study reference sheet",
     "exactly one character identity",
@@ -48,8 +52,9 @@ _FORM_LAYOUT = (
     "right two thirds: one large hero depiction of the whole entity in its characteristic "
     "shape and orientation, centered; no ground line or standing pose unless the anchor "
     "gives it legs to stand on",
-    "left third, stacked: a close study of its defining material, surface, light or face on "
-    "top, and the whole entity in one characteristic alternate shape, motion or deformation below it",
+    "left third, stacked: a close study of its defining material, surface or light (its face "
+    f"only {_ANCHORED_FACE}) on top, and the whole entity in one characteristic alternate "
+    "shape, motion or deformation below it",
     "the depictions are simultaneous design studies of one entity, not different characters "
     f"and not a narrative sequence; {_NO_SITUATION}; never invent a back, head or limbs the "
     "anchor does not give it",
@@ -60,8 +65,8 @@ _FORMATION_LAYOUT = (
     "exactly one collective identity whose members share one design",
     "right two thirds: the whole group in its characteristic formation, with the member count "
     "and arrangement the anchor gives, every member fully visible and consistent in design",
-    "left third, stacked: a close study of one member's defining material, surface, light or "
-    "face on top, and one whole member below it",
+    "left third, stacked: a close study of one member's defining material, surface or light "
+    f"(its face only {_ANCHORED_FACE}) on top, and one whole member below it",
     "the depictions are simultaneous design studies of one collective, not different characters "
     f"and not a narrative sequence; {_NO_SITUATION}; never invent a back, head or limbs the "
     "anchor does not give it",
@@ -94,6 +99,23 @@ STATE_LAYOUTS: dict[ReferenceForm, tuple[str, ...]] = {
     ),
     "form": (*_FORM_LAYOUT, _STATE_ONLY_THE_LOOK),
     "formation": (*_FORMATION_LAYOUT, _STATE_ONLY_THE_LOOK),
+}
+
+# Identity quality for sheets. A figure keeps its facial identity; a form or
+# formation keeps its shape, material and light and gains no face it lacks.
+IDENTITY_QUALITY: dict[ReferenceForm, str] = {
+    "figure": (
+        "Preserve the active anchor's age, species, anatomy, and facial identity in the "
+        "selected rendering style; avoid accidental distortion, not intentional stylization"
+    ),
+    "form": (
+        "Preserve the active anchor's shape, material, light and anatomy in the selected "
+        "rendering style; add no face, head or human figure the anchor does not give it"
+    ),
+    "formation": (
+        "Preserve the active anchor's member design, count, arrangement and anatomy in the "
+        "selected rendering style; add no face, head or human figure the anchor does not give it"
+    ),
 }
 
 PERFORMANCE: dict[ReferenceForm, str] = {
@@ -199,7 +221,8 @@ IDENTITY_DESIGN: dict[ReferenceForm, str] = {
     ),
     "form": (
         f"Design this entity's own shape, surface and light from the canonical facts. {_NOT_A_CAST} "
-        "Unspecified details must remain compatible with its anatomy and nature."
+        "Unspecified details must remain compatible with its anatomy and nature. Give it a face, "
+        "head or human figure only when its anchor does."
     ),
     "formation": (
         "Design one shared member design and the group's formation from the canonical facts. "

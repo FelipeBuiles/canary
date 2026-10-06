@@ -121,26 +121,29 @@ describe("credits page data and recovery", () => {
 });
 
 
-it("condenses attempts and filters open holds without showing them as charges", () => {
+it("folds a sitting of page draws into one session and filters open holds without showing them as charges", () => {
   const base: CreditLedgerRun = {
     run_id: "complete", job_id: "job", stage: "draw", project_id: "cthulhu",
     started_at: "2026-09-12T12:00:00Z", last_activity_at: "2026-09-12T12:01:00Z",
     estimate_credits: 37, actual_credits: 8, returned_credits: 29,
-    credits_added: 0, status: "complete", rows: [],
+    credits_added: 0, status: "complete", action: null, page_number: 1, rows: [],
   };
   mocks.runs = [base,
-    { ...base, run_id: "open", status: "in_flight", actual_credits: 0, returned_credits: 0 },
-    { ...base, run_id: "failed", status: "failed", actual_credits: 0, returned_credits: 37 },
+    { ...base, run_id: "open", status: "in_flight", actual_credits: 0, returned_credits: 0, page_number: 2 },
+    { ...base, run_id: "failed", status: "failed", actual_credits: 0, returned_credits: 37, page_number: 3 },
   ];
   const { container } = renderPage();
-  const group = container.querySelector("details.group\\/activity")!;
-  expect(group.textContent).toContain("3 activities");
-  expect(group.textContent).toContain("1 open hold");
-  expect(group.textContent).toContain("1 unsuccessful");
-  expect(group.hasAttribute("open")).toBe(false);
+  const session = container.querySelector("details.group\\/session")!;
+  expect(session.textContent).toContain("Drawing pages");
+  expect(session.textContent).toContain("In progress");
+  expect(session.textContent).toContain("8 credits");
+  expect(session.hasAttribute("open")).toBe(false);
+  expect(screen.getByText("1 attempt didn't finish")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Filter history by activity" }));
   fireEvent.click(screen.getByRole("option", { name: "Open holds" }));
-  expect(container.querySelector("details.group\\/activity")?.textContent).toContain("1 activity");
-  expect(container.querySelector("details.group\\/activity")?.textContent).not.toContain("unsuccessful");
+  expect(screen.getByText("Drawing pages")).toBeTruthy();
+  expect(screen.getByText("reserved").parentElement?.textContent).toContain("37 credits reserved");
+  expect(screen.getByRole("meter", { name: "Reserved credits used" })).toBeTruthy();
+  expect(screen.queryByText("1 attempt didn't finish")).toBeNull();
   expect(screen.queryByLabelText("8 credits")).toBeNull();
 });

@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 export function ProgressStats({ children }: { children: ReactNode }) {
   return (
     <div className="@container mt-4">
-      <dl className="grid grid-cols-1 gap-[3px] bg-ink-black p-[3px] @min-[18rem]:grid-cols-2 @min-[36rem]:grid-cols-4">
+      <dl className="grid grid-cols-1 gap-[3px] bg-ink-black p-[3px] @min-[18rem]:grid-cols-2 @min-[32rem]:grid-cols-4">
         {children}
       </dl>
     </div>

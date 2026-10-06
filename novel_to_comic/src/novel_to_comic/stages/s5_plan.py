@@ -250,6 +250,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
         max_generation_calls=config.narrative_max_calls,
         story_instruction=instruction,
         concurrency=config.effective_text_concurrency(),
+        integrated_lettering=config.lettering_mode == "integrated",
     )
     if directive is not None:
         target.clear_story_directive("plan")

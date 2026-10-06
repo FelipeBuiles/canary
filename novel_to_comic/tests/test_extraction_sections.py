@@ -27,10 +27,10 @@ def run_async(fn):
 
 
 def payload(index, text, state=None):
-    prefix = f"part{index:04d}_"
+    prefix = sections.section_prefix(1, index)
     scene_id = prefix + "scene_001"
     character = {
-        "id": "part0001_char_001", "name": "Ari", "visual_anchor": "adult, black hair",
+        "id": "p0001s0001_char_001", "name": "Ari", "visual_anchor": "adult, black hair",
         "age_range": "adult", "gender": "female", "distinguishing_features": [],
         "default_outfit": "coat", "first_appearance_scene": scene_id,
         "appearance_states": [], "appearance_timeline": [],
@@ -41,8 +41,8 @@ def payload(index, text, state=None):
     return {
         "title": "Crossing", "author": "Unknown", "total_scenes": 1,
         "characters": [character],
-        "locations": [{"id": "part0001_loc_001", "name": "Gate", "visual_anchor": "iron gate", "mood": "quiet"}],
-        "scenes": [{"id": scene_id, "chapter": 1, "title": "Crossing", "location_id": "part0001_loc_001",
+        "locations": [{"id": "p0001s0001_loc_001", "name": "Gate", "visual_anchor": "iron gate", "mood": "quiet"}],
+        "scenes": [{"id": scene_id, "chapter": 1, "title": "Crossing", "location_id": "p0001s0001_loc_001",
                     "character_ids": [character["id"]], "summary": "Ari crosses the gate.", "scene_type": "action",
                     "narrative_beat": "rising_action", "source_start_quote": source_units(text)[0].text.strip()}],
         "sequences": [], "props": [],
@@ -128,8 +128,8 @@ async def test_promotional_matter_does_not_need_a_fictional_location_or_retry(pl
     raw['characters'] = []
     raw['character_participation'] = []
     raw['scenes'][0].update(character_ids=[], scene_type='promotional front matter',
-                            location_id='part0001_unspecified', summary='Recommendations for reading communities.')
-    raw['locations'] = ([{'id': 'part0001_unspecified', 'name': 'Unspecified setting',
+                            location_id='p0001s0001_unspecified', summary='Recommendations for reading communities.')
+    raw['locations'] = ([{'id': 'p0001s0001_unspecified', 'name': 'Unspecified setting',
                          'visual_anchor': '', 'mood': 'Unstated'}] if placeholder_definition else [])
     original = json.dumps(raw, sort_keys=True)
     calls = []
@@ -139,7 +139,7 @@ async def test_promotional_matter_does_not_need_a_fictional_location_or_retry(pl
         return ApiResult(value=raw)
     result = await s1_extract._extract_with_retry(
         Config(), 'instructions', text, generate=generate,
-        validate=lambda value: sections.merge_section(None, value, 'part0001_'))
+        validate=lambda value: sections.merge_section(None, value, 'p0001s0001_'))
     assert result.value.scenes[0].scene_type == 'non_narrative'
     assert result.value.scenes[0].location_id is None
     assert not result.value.locations and not result.value.characters
@@ -160,7 +160,7 @@ def test_non_narrative_span_keeps_existing_location_authorities():
     raw['scenes'][0].update(character_ids=[], scene_type='back matter')
     raw['locations'] = [{'id': previous.locations[0].id}]
     parsed = s1_extract._parse_extraction(sections.hydrate_section(raw, previous), 'Join the Reading Club.')
-    merged = sections.merge_section(previous, parsed, 'part0002_')
+    merged = sections.merge_section(previous, parsed, 'p0001s0002_')
     assert merged.scenes[-1].location_id is None
     assert merged.locations == previous.locations
     assert merged.characters == previous.characters
@@ -173,7 +173,7 @@ def test_late_physical_facts_and_important_cast_selection_accumulate_without_rew
     raw['characters'] = [{'id': previous.characters[0].id,
                           'distinguishing_features': ['Black hair', 'Six feet tall'], 'cast_required': True}]
     hydrated = sections.hydrate_section(raw, previous)
-    merged = sections.merge_section(previous, StoryBible.model_validate(hydrated), 'part0002_')
+    merged = sections.merge_section(previous, StoryBible.model_validate(hydrated), 'p0001s0002_')
     character = merged.characters[0]
     assert character.visual_anchor == previous.characters[0].visual_anchor
     assert character.distinguishing_features == ['Black hair', 'Six feet tall']
@@ -185,7 +185,7 @@ def test_late_physical_facts_and_important_cast_selection_accumulate_without_rew
     # A later default/empty delta cannot discard facts or demote an authority.
     raw = payload(3, 'Ari walks through the courtyard.')
     raw['characters'] = [{'id': character.id, 'distinguishing_features': [], 'cast_required': False}]
-    next_bible = sections.merge_section(merged, StoryBible.model_validate(sections.hydrate_section(raw, merged)), 'part0003_')
+    next_bible = sections.merge_section(merged, StoryBible.model_validate(sections.hydrate_section(raw, merged)), 'p0001s0003_')
     assert next_bible.characters[0].distinguishing_features == character.distinguishing_features
     assert next_bible.characters[0].cast_required is True
 
@@ -215,8 +215,8 @@ async def test_known_identity_facts_do_not_require_invented_local_participation_
 
     result = await s1_extract._extract_with_retry(Config(), 'source reader', text, generate=generate,
         prepare=lambda value: sections.hydrate_section(value, previous), registry=previous,
-        validate=lambda value: sections.merge_section(previous, value, 'part0002_'))
-    merged = sections.merge_section(previous, result.value, 'part0002_')
+        validate=lambda value: sections.merge_section(previous, value, 'p0001s0002_'))
+    merged = sections.merge_section(previous, result.value, 'p0001s0002_')
     assert len(calls) == 1
     assert merged.characters[0].aliases == ['Qwist']
     assert merged.characters[0].distinguishing_features == ['Six feet tall']
@@ -228,10 +228,10 @@ async def test_known_identity_facts_do_not_require_invented_local_participation_
 def test_a_real_unknown_setting_still_fails_with_its_id():
     raw = payload(1, 'Ari opened the gate.')
     raw['locations'] = []
-    raw['scenes'][0]['location_id'] = 'part0001_missing_gate'
+    raw['scenes'][0]['location_id'] = 'p0001s0001_missing_gate'
     parsed = s1_extract._parse_extraction(raw, 'Ari opened the gate.')
-    with pytest.raises(ValueError, match="Undefined location ID: 'part0001_missing_gate'"):
-        sections.merge_section(None, parsed, 'part0001_')
+    with pytest.raises(ValueError, match="Undefined location ID: 'p0001s0001_missing_gate'"):
+        sections.merge_section(None, parsed, 'p0001s0001_')
 
 
 @pytest.mark.parametrize('staged', ['characters', 'objects'])
@@ -243,7 +243,7 @@ def test_nonnarrative_classification_does_not_discard_staged_entities(staged):
         raw['character_participation'] = []
         raw['scenes'][0]['character_ids'] = []
         raw['scenes'][0]['transient_objects'] = [{
-            'id': 'part0001_trans_001', 'name': 'Gate', 'visual_anchor': 'iron gate',
+            'id': 'p0001s0001_trans_001', 'name': 'Gate', 'visual_anchor': 'iron gate',
         }]
     with pytest.raises(ValueError, match='physically staged character participation'):
         s1_extract._parse_extraction(raw, 'Ari opened the gate.')
@@ -253,7 +253,7 @@ def test_an_empty_setting_used_by_a_narrative_scene_still_fails():
     text = 'Ari opened the gate. Join the Reading Club.'
     raw = payload(1, text)
     raw['locations'][0]['visual_anchor'] = ''
-    raw['scenes'].append({**raw['scenes'][0], 'id': 'part0001_scene_002',
+    raw['scenes'].append({**raw['scenes'][0], 'id': 'p0001s0001_scene_002',
                           'character_ids': [], 'scene_type': 'back matter',
                           'source_start_quote': 'Join the Reading Club.'})
     with pytest.raises(ValueError, match='nonempty visual_anchor'):
@@ -268,9 +268,9 @@ def test_oversized_sentence_fails_before_any_call():
 def test_merge_keeps_entity_scoped_states_and_cross_section_recovery():
     first = StoryBible.model_validate(payload(1, "Ari fell.", appearance()))
     second = StoryBible.model_validate(payload(2, "Ari recovered.", appearance("restored")))
-    merged = sections.merge_section(first, second, "part0002_")
+    merged = sections.merge_section(first, second, "p0001s0002_")
     assert len(merged.characters) == 1
-    assert merged.characters[0].first_appearance_scene == "part0001_scene_001"
+    assert merged.characters[0].first_appearance_scene == "p0001s0001_scene_001"
     assert [a.state_id for a in merged.characters[0].appearance_timeline] == ["hurt", "restored"]
     assert sections.registry_context(merged)["characters"][0]["carried_state_id"] == "restored"
     assert len(first.scenes) == 1  # failed/preview merges cannot mutate prior work
@@ -289,24 +289,24 @@ def test_merge_rejects_identity_drift_and_bad_references(change, match):
     elif change == "state":
         raw["characters"][0]["appearance_states"][0]["continuity_guard"] = "Discard bandages."
     elif change == "alias":
-        raw["characters"][0]["id"] = "part0002_char_001"
+        raw["characters"][0]["id"] = "p0001s0002_char_001"
     elif change == "location":
         raw["scenes"][0]["location_id"] = "missing"
     elif change == "timeline":
-        raw["characters"][0]["appearance_timeline"][0]["at"]["scene_id"] = "part0001_scene_001"
+        raw["characters"][0]["appearance_timeline"][0]["at"]["scene_id"] = "p0001s0001_scene_001"
     elif change == "state_reference":
         raw["characters"][0]["appearance_timeline"][0]["state_id"] = "missing"
     with pytest.raises(ValueError, match=match):
-        sections.merge_section(first, StoryBible.model_validate(raw), "part0002_")
+        sections.merge_section(first, StoryBible.model_validate(raw), "p0001s0002_")
 
 
 @run_async
 async def test_section_removes_links_to_undefined_background_mentions_without_a_retry():
     text = 'Ari opened the gate. A photograph of Jo stood on the shelf.'
     raw = payload(1, text)
-    raw['characters'][0]['relationships'] = [{'character_id': 'part0001_char_002', 'relationship': 'friend'}]
+    raw['characters'][0]['relationships'] = [{'character_id': 'p0001s0001_char_002', 'relationship': 'friend'}]
     raw['character_participation'].append({
-        'character_id': 'part0001_char_002', 'scene_id': 'part0001_scene_001',
+        'character_id': 'p0001s0001_char_002', 'scene_id': 'p0001s0001_scene_001',
         'classification': 'background_only', 'source_quote': 'A photograph of Jo',
     })
     calls = []
@@ -316,32 +316,32 @@ async def test_section_removes_links_to_undefined_background_mentions_without_a_
 
     result = await s1_extract._extract_with_retry(
         Config(), 'instructions', text, generate=generate,
-        validate=lambda value: sections.merge_section(None, value, 'part0001_'))
+        validate=lambda value: sections.merge_section(None, value, 'p0001s0001_'))
 
     assert len(calls) == 1
-    assert [character.id for character in result.value.characters] == ['part0001_char_001']
+    assert [character.id for character in result.value.characters] == ['p0001s0001_char_001']
     assert not result.value.characters[0].relationships
 
 
 def correction_payloads():
     text = 'Ari opened the gate. Jo waited.'
     initial = payload(1, text)
-    jo = {**initial['characters'][0], 'id': 'part0001_char_002', 'name': 'Jo',
+    jo = {**initial['characters'][0], 'id': 'p0001s0001_char_002', 'name': 'Jo',
           'visual_anchor': 'adult, red hair', 'relationships': []}
-    initial['characters'].extend([jo, {**initial['characters'][0], 'id': 'part0001_char_003',
+    initial['characters'].extend([jo, {**initial['characters'][0], 'id': 'p0001s0001_char_003',
                                      'name': 'Unstaged residents'}])
     initial['scenes'][0]['character_ids'].append(jo['id'])
     initial['character_participation'].append({
-        'character_id': jo['id'], 'scene_id': 'part0001_scene_001',
+        'character_id': jo['id'], 'scene_id': 'p0001s0001_scene_001',
         'classification': 'direct_action', 'source_quote': 'Jo waited.',
     })
     corrected = json.loads(json.dumps(initial))
     corrected['characters'].pop()
     # Removing the residents made the model renumber Ari's definition, while
     # leaving all the redundant references on Ari's previous ID.
-    corrected['characters'][0]['id'] = 'part0001_char_003'
+    corrected['characters'][0]['id'] = 'p0001s0001_char_003'
     corrected['characters'][1]['relationships'] = [
-        {'character_id': 'part0001_char_001', 'relationship': 'friend'}]
+        {'character_id': 'p0001s0001_char_001', 'relationship': 'friend'}]
     return text, initial, corrected
 
 
@@ -357,14 +357,14 @@ async def test_schema_correction_reconciles_renumbered_characters_without_an_ext
 
     result = await s1_extract._extract_with_retry(
         Config(), 'instructions', text, max_retries=1, generate=generate,
-        validate=lambda value: sections.merge_section(None, value, 'part0001_'))
+        validate=lambda value: sections.merge_section(None, value, 'p0001s0001_'))
 
     assert len(calls) == 2
-    assert [c.id for c in result.value.characters] == ['part0001_char_003', 'part0001_char_002']
-    assert result.value.scenes[0].character_ids == ['part0001_char_003', 'part0001_char_002']
+    assert [c.id for c in result.value.characters] == ['p0001s0001_char_003', 'p0001s0001_char_002']
+    assert result.value.scenes[0].character_ids == ['p0001s0001_char_003', 'p0001s0001_char_002']
     assert result.value.characters[0].name == 'Ari'
     assert result.value.characters[0].visual_anchor == initial['characters'][0]['visual_anchor']
-    assert result.value.characters[1].relationships[0].character_id == 'part0001_char_003'
+    assert result.value.characters[1].relationships[0].character_id == 'p0001s0001_char_003'
     assert json.dumps([initial, corrected], sort_keys=True) == originals
 
 
@@ -379,18 +379,18 @@ async def test_correction_reference_recovery_requires_one_unchanged_defined_iden
     elif change == 'missing_definition':
         corrected['characters'].pop(0)
     elif change == 'ambiguous_current':
-        corrected['characters'].append({**corrected['characters'][0], 'id': 'part0001_char_004'})
+        corrected['characters'].append({**corrected['characters'][0], 'id': 'p0001s0001_char_004'})
     elif change == 'ambiguous_previous':
-        initial['characters'].append({**initial['characters'][0], 'id': 'part0001_char_004'})
+        initial['characters'].append({**initial['characters'][0], 'id': 'p0001s0001_char_004'})
     calls = []
     async def generate(**kwargs):
         calls.append(kwargs)
         return ApiResult(value=[initial, corrected][len(calls) - 1])
 
-    with pytest.raises(ValueError, match="Undefined character IDs: \\['part0001_char_001'\\]"):
+    with pytest.raises(ValueError, match="Undefined character IDs: \\['p0001s0001_char_001'\\]"):
         await s1_extract._extract_with_retry(
             Config(), 'instructions', text, max_retries=1, generate=generate,
-            validate=lambda value: sections.merge_section(None, value, 'part0001_'))
+            validate=lambda value: sections.merge_section(None, value, 'p0001s0001_'))
     assert len(calls) == 2
 
 
@@ -400,20 +400,20 @@ async def test_correction_recovery_does_not_guess_an_identity_without_previous_r
     async def generate(**kwargs):
         return ApiResult(value=corrected)
 
-    with pytest.raises(ValueError, match="Undefined character IDs: \\['part0001_char_001'\\]"):
+    with pytest.raises(ValueError, match="Undefined character IDs: \\['p0001s0001_char_001'\\]"):
         await s1_extract._extract_with_retry(Config(), 'instructions', text, max_retries=0, generate=generate)
 
 
 @run_async
 async def test_correction_reference_recovery_never_rewrites_scene_ids():
     text, initial, corrected = correction_payloads()
-    corrected['scenes'][0]['id'] = 'part0001_scene_002'
+    corrected['scenes'][0]['id'] = 'p0001s0001_scene_002'
     calls = []
     async def generate(**kwargs):
         calls.append(kwargs)
         return ApiResult(value=[initial, corrected][len(calls) - 1])
 
-    with pytest.raises(ValueError, match="scene IDs outside this section: \\['part0001_scene_001'\\]"):
+    with pytest.raises(ValueError, match="scene IDs outside this section: \\['p0001s0001_scene_001'\\]"):
         await s1_extract._extract_with_retry(Config(), 'instructions', text, max_retries=1, generate=generate)
     assert len(calls) == 2
 
@@ -424,20 +424,20 @@ async def test_correction_recovery_preserves_existing_intermediate_feedback_and_
     intermediate['scenes'][0]['source_start_quote'] = 'Not a source sentence.'
     final = json.loads(json.dumps(intermediate))
     final['scenes'][0]['source_start_quote'] = 'Ari opened the gate.'
-    final['scenes'][0]['character_ids'][0] = 'part0001_char_003'
-    final['character_participation'][0]['character_id'] = 'part0001_char_003'
-    final['characters'][1]['relationships'][0]['character_id'] = 'part0001_char_003'
+    final['scenes'][0]['character_ids'][0] = 'p0001s0001_char_003'
+    final['character_participation'][0]['character_id'] = 'p0001s0001_char_003'
+    final['characters'][1]['relationships'][0]['character_id'] = 'p0001s0001_char_003'
     calls = []
     async def generate(**kwargs):
         calls.append(kwargs)
         if len(calls) == 3:
-            assert "Undefined character IDs: ['part0001_char_001']" in kwargs['user_content']
+            assert "Undefined character IDs: ['p0001s0001_char_001']" in kwargs['user_content']
             assert 'Unresolved scene IDs' not in kwargs['user_content']
         return ApiResult(value=[initial, intermediate, final][len(calls) - 1])
 
     result = await s1_extract._extract_with_retry(
         Config(), 'instructions', text, generate=generate,
-        validate=lambda value: sections.merge_section(None, value, 'part0001_'))
+        validate=lambda value: sections.merge_section(None, value, 'p0001s0001_'))
 
     assert len(calls) == 3
     assert len(result.value.characters) == 2
@@ -446,7 +446,7 @@ async def test_correction_recovery_preserves_existing_intermediate_feedback_and_
 @run_async
 async def test_correction_recovery_leaves_normally_valid_final_response_membership_unchanged():
     text, initial, final = correction_payloads()
-    final['scenes'][0]['character_ids'][0] = 'part0001_char_003'
+    final['scenes'][0]['character_ids'][0] = 'p0001s0001_char_003'
     final['character_participation'][0]['classification'] = 'background_only'
     final['characters'][1]['relationships'] = []
     calls = []
@@ -456,10 +456,10 @@ async def test_correction_recovery_leaves_normally_valid_final_response_membersh
 
     result = await s1_extract._extract_with_retry(
         Config(), 'instructions', text, max_retries=1, generate=generate,
-        validate=lambda value: sections.merge_section(None, value, 'part0001_'))
+        validate=lambda value: sections.merge_section(None, value, 'p0001s0001_'))
 
     assert len(calls) == 2
-    assert result.value.scenes[0].character_ids == ['part0001_char_003', 'part0001_char_002']
+    assert result.value.scenes[0].character_ids == ['p0001s0001_char_003', 'p0001s0001_char_002']
     assert [c.name for c in result.value.characters] == ['Ari', 'Jo']
 
 
@@ -472,7 +472,7 @@ async def test_terminal_identity_conflict_names_both_declarations_without_changi
     async def generate(**kwargs):
         calls.append(kwargs)
         if len(calls) > 1:
-            assert 'Preserve base visual_anchor verbatim for part0001_char_001' in kwargs['user_content']
+            assert 'Preserve base visual_anchor verbatim for p0001s0001_char_001' in kwargs['user_content']
             assert 'Registry ID' not in kwargs['user_content']
         return ApiResult(value=raw)
 
@@ -480,7 +480,7 @@ async def test_terminal_identity_conflict_names_both_declarations_without_changi
         await s1_extract._extract_with_retry(
             Config(), 'instructions', 'Ari closed the gate.', generate=generate,
             prepare=lambda value: sections.hydrate_section(value, previous),
-            validate=lambda value: sections.merge_section(previous, value, 'part0002_'))
+            validate=lambda value: sections.merge_section(previous, value, 'p0001s0002_'))
 
     assert len(calls) == 3
     assert "belongs to 'Ari'" in str(error.value)
@@ -496,8 +496,8 @@ def test_unknown_relationship_feedback_identifies_the_missing_target_without_inv
     raw['characters'][0]['relationships'] = [{'character_id': 'missing_character', 'relationship': 'friend'}]
     parsed = s1_extract._parse_extraction(raw, 'Ari opened the gate.')
 
-    with pytest.raises(ValueError, match='Unknown relationship target for part0001_char_001') as error:
-        sections.merge_section(None, parsed, 'part0001_')
+    with pytest.raises(ValueError, match='Unknown relationship target for p0001s0001_char_001') as error:
+        sections.merge_section(None, parsed, 'p0001s0001_')
 
     assert 'missing_character' in str(error.value)
     assert 'registry IDs' in str(error.value)
@@ -507,17 +507,17 @@ def test_unknown_relationship_feedback_identifies_the_missing_target_without_inv
 
 def test_section_relationships_keep_known_registry_targets_absent_from_local_rosters():
     first = payload(1, 'Ari opened the gate.')
-    first['characters'].append({**first['characters'][0], 'id': 'part0001_char_002', 'name': 'Jo'})
+    first['characters'].append({**first['characters'][0], 'id': 'p0001s0001_char_002', 'name': 'Jo'})
     previous = StoryBible.model_validate(first)
     raw = payload(2, 'Ari closed the gate.')
-    raw['characters'][0]['relationships'] = [{'character_id': 'part0001_char_002', 'relationship': 'friend'}]
+    raw['characters'][0]['relationships'] = [{'character_id': 'p0001s0001_char_002', 'relationship': 'friend'}]
 
     parsed = s1_extract._parse_extraction(sections.hydrate_section(raw, previous), 'Ari closed the gate.')
-    merged = sections.merge_section(previous, parsed, 'part0002_')
+    merged = sections.merge_section(previous, parsed, 'p0001s0002_')
 
-    assert [character.id for character in parsed.characters] == ['part0001_char_001']
-    assert parsed.scenes[0].character_ids == ['part0001_char_001']
-    assert merged.characters[0].relationships[0].character_id == 'part0001_char_002'
+    assert [character.id for character in parsed.characters] == ['p0001s0001_char_001']
+    assert parsed.scenes[0].character_ids == ['p0001s0001_char_001']
+    assert merged.characters[0].relationships[0].character_id == 'p0001s0001_char_002'
     assert not previous.characters[0].relationships
 
 
@@ -732,7 +732,7 @@ async def test_validation_failure_archives_only_failed_responses_and_retry_resum
         if content.startswith("Your previous"):
             calls.append(2)
             assert "UNCLASSIFIED CHARACTERS:" in content
-            assert "character_id='part0002_char_002', name='Elderly residents'" in content
+            assert "character_id='p0001s0002_char_002', name='Elderly residents'" in content
             value = json.loads(json.dumps(second_payload))
         else:
             data = json.loads(content)
@@ -742,7 +742,7 @@ async def test_validation_failure_archives_only_failed_responses_and_retry_resum
                 second_payload = json.loads(json.dumps(value))
         if reject and failed_call == "section" and calls[-1] == 2:
             value["characters"].append({
-                **value["characters"][0], "id": "part0002_char_002", "name": "Elderly residents",
+                **value["characters"][0], "id": "p0001s0002_char_002", "name": "Elderly residents",
             })
         return ApiResult(value=value)
 
@@ -806,17 +806,17 @@ def test_explicit_invalid_offset_never_falls_back_to_a_different_occurrence():
 def test_existing_entity_delta_inherits_authorities_without_repeating_old_transitions():
     previous = StoryBible.model_validate(payload(1, 'Ari fell.', appearance()))
     raw = payload(2, 'Ari recovered.')
-    raw['characters'] = [{'id': 'part0001_char_001', 'appearance_timeline': [
-        {'state_id': 'hurt', 'at': {'scene_id': 'part0002_scene_001'}}]}]
-    raw['locations'] = [{'id': 'part0001_loc_001'}]
+    raw['characters'] = [{'id': 'p0001s0001_char_001', 'appearance_timeline': [
+        {'state_id': 'hurt', 'at': {'scene_id': 'p0001s0002_scene_001'}}]}]
+    raw['locations'] = [{'id': 'p0001s0001_loc_001'}]
     hydrated = sections.hydrate_section(raw, previous)
     parsed = s1_extract._parse_extraction(hydrated, 'Ari recovered.')
-    merged = sections.merge_section(previous, parsed, 'part0002_')
+    merged = sections.merge_section(previous, parsed, 'p0001s0002_')
     character = merged.characters[0]
     assert character.visual_anchor == previous.characters[0].visual_anchor
     assert character.appearance_states == previous.characters[0].appearance_states
     assert [item.at.scene_id for item in character.appearance_timeline] == [
-        'part0001_scene_001', 'part0002_scene_001']
+        'p0001s0001_scene_001', 'p0001s0002_scene_001']
     assert 'visual_anchor' not in raw['characters'][0]
     assert len(json.dumps(raw)) < len(json.dumps(hydrated))
 
@@ -837,17 +837,17 @@ def test_recurring_location_reuses_unique_registry_identity_and_preserves_state_
     previous = StoryBible.model_validate(first)
     raw = payload(2, 'Ari closed the gate.')
     raw['locations'] = [{
-        'id': 'part0002_loc_001', 'name': name,
-        'appearance_timeline': [{'state_id': 'closed', 'at': {'scene_id': 'part0002_scene_001'}}],
+        'id': 'p0001s0002_loc_001', 'name': name,
+        'appearance_timeline': [{'state_id': 'closed', 'at': {'scene_id': 'p0001s0002_scene_001'}}],
     }]
     if anchor is not None:
         raw['locations'][0]['visual_anchor'] = anchor
-    raw['scenes'][0]['location_id'] = 'part0002_loc_001'
+    raw['scenes'][0]['location_id'] = 'p0001s0002_loc_001'
 
     parsed = s1_extract._parse_extraction(sections.hydrate_section(raw, previous), 'Ari closed the gate.')
-    merged = sections.merge_section(previous, parsed, 'part0002_')
+    merged = sections.merge_section(previous, parsed, 'p0001s0002_')
 
-    assert parsed.scenes[0].location_id == 'part0001_loc_001'
+    assert parsed.scenes[0].location_id == 'p0001s0001_loc_001'
     assert len(merged.locations) == 1
     assert merged.locations[0].name == 'Gate'
     assert merged.locations[0].aliases == ['North Gate']
@@ -856,67 +856,67 @@ def test_recurring_location_reuses_unique_registry_identity_and_preserves_state_
     assert merged.locations[0].appearance_states[0].continuity_guard == 'Keep the gate  closed.'
     assert merged.locations[0].appearance_timeline[0].state_id == 'closed'
     assert not previous.locations[0].appearance_timeline
-    assert raw['locations'][0]['id'] == raw['scenes'][0]['location_id'] == 'part0002_loc_001'
+    assert raw['locations'][0]['id'] == raw['scenes'][0]['location_id'] == 'p0001s0002_loc_001'
 
 
 def test_recurring_character_and_prop_ids_are_resolved_in_all_typed_references():
     first = payload(1, 'Ari opened the gate.')
     first['characters'].append({
-        **first['characters'][0], 'id': 'part0001_char_002', 'name': 'Jo', 'visual_anchor': 'adult, red hair',
+        **first['characters'][0], 'id': 'p0001s0001_char_002', 'name': 'Jo', 'visual_anchor': 'adult, red hair',
     })
-    first['props'] = [{'id': 'part0001_prop_001', 'name': 'Key', 'aliases': ['Latch key'],
-                       'visual_anchor': 'iron key, round bow', 'first_appearance_scene': 'part0001_scene_001'}]
+    first['props'] = [{'id': 'p0001s0001_prop_001', 'name': 'Key', 'aliases': ['Latch key'],
+                       'visual_anchor': 'iron key, round bow', 'first_appearance_scene': 'p0001s0001_scene_001'}]
     previous = StoryBible.model_validate(first)
     text = 'Ari closed the gate. Jo waited.'
     raw = payload(2, text)
     raw['characters'][0].update(
-        id='part0002_char_001', name='ARI', visual_anchor='black hair',
-        relationships=[{'character_id': 'part0002_char_002', 'relationship': 'friend'}])
+        id='p0001s0002_char_001', name='ARI', visual_anchor='black hair',
+        relationships=[{'character_id': 'p0001s0002_char_002', 'relationship': 'friend'}])
     raw['characters'].append({
-        **raw['characters'][0], 'id': 'part0002_char_002', 'name': 'Jo', 'visual_anchor': 'red hair',
-        'relationships': [{'character_id': 'part0002_char_001', 'relationship': 'friend'}],
+        **raw['characters'][0], 'id': 'p0001s0002_char_002', 'name': 'Jo', 'visual_anchor': 'red hair',
+        'relationships': [{'character_id': 'p0001s0002_char_001', 'relationship': 'friend'}],
     })
-    raw['scenes'][0]['character_ids'] = ['part0002_char_001', 'part0002_char_002']
-    raw['character_participation'][0]['character_id'] = 'part0002_char_001'
+    raw['scenes'][0]['character_ids'] = ['p0001s0002_char_001', 'p0001s0002_char_002']
+    raw['character_participation'][0]['character_id'] = 'p0001s0002_char_001'
     raw['character_participation'].append({
-        'character_id': 'part0002_char_002', 'scene_id': 'part0002_scene_001',
+        'character_id': 'p0001s0002_char_002', 'scene_id': 'p0001s0002_scene_001',
         'classification': 'direct_action', 'source_quote': 'Jo waited.',
     })
-    raw['props'] = [{'id': 'part0002_prop_001', 'name': 'Latch key', 'visual_anchor': 'iron key'}]
+    raw['props'] = [{'id': 'p0001s0002_prop_001', 'name': 'Latch key', 'visual_anchor': 'iron key'}]
 
     parsed = s1_extract._parse_extraction(sections.hydrate_section(raw, previous), text)
-    merged = sections.merge_section(previous, parsed, 'part0002_')
+    merged = sections.merge_section(previous, parsed, 'p0001s0002_')
 
-    assert parsed.scenes[0].character_ids == ['part0001_char_001', 'part0001_char_002']
+    assert parsed.scenes[0].character_ids == ['p0001s0001_char_001', 'p0001s0001_char_002']
     assert len(merged.characters) == 2
     assert [c.visual_anchor for c in merged.characters] == ['adult, black hair', 'adult, red hair']
-    assert merged.characters[0].relationships[0].character_id == 'part0001_char_002'
-    assert merged.characters[1].relationships[0].character_id == 'part0001_char_001'
+    assert merged.characters[0].relationships[0].character_id == 'p0001s0001_char_002'
+    assert merged.characters[1].relationships[0].character_id == 'p0001s0001_char_001'
     assert len(merged.props) == 1
-    assert merged.props[0].id == 'part0001_prop_001'
+    assert merged.props[0].id == 'p0001s0001_prop_001'
     assert merged.props[0].visual_anchor == 'iron key, round bow'
-    assert merged.props[0].first_appearance_scene == 'part0001_scene_001'
-    assert raw['characters'][0]['relationships'][0]['character_id'] == 'part0002_char_002'
+    assert merged.props[0].first_appearance_scene == 'p0001s0001_scene_001'
+    assert raw['characters'][0]['relationships'][0]['character_id'] == 'p0001s0002_char_002'
 
 
 @pytest.mark.parametrize('anchor', ['wooden gate', 'iron gate, broken hinge', '', None])
 def test_registry_name_matching_does_not_hide_conflicting_or_blank_anchors(anchor):
     previous = StoryBible.model_validate(payload(1, 'Ari opened the gate.'))
     raw = payload(2, 'Ari closed the gate.')
-    raw['locations'][0].update(id='part0002_loc_001', visual_anchor=anchor)
-    raw['scenes'][0]['location_id'] = 'part0002_loc_001'
+    raw['locations'][0].update(id='p0001s0002_loc_001', visual_anchor=anchor)
+    raw['scenes'][0]['location_id'] = 'p0001s0002_loc_001'
 
     hydrated = sections.hydrate_section(raw, previous)
 
-    assert hydrated['locations'][0]['id'] == 'part0002_loc_001'
+    assert hydrated['locations'][0]['id'] == 'p0001s0002_loc_001'
     assert hydrated['locations'][0]['visual_anchor'] == anchor
-    assert hydrated['scenes'][0]['location_id'] == 'part0002_loc_001'
+    assert hydrated['scenes'][0]['location_id'] == 'p0001s0002_loc_001'
     if anchor:
         parsed = s1_extract._parse_extraction(hydrated, 'Ari closed the gate.')
         with pytest.raises(ValueError, match='Reuse the registry ID for Gate') as error:
-            sections.merge_section(previous, parsed, 'part0002_')
-        assert 'part0001_loc_001' in str(error.value)
-        assert 'part0002_loc_001' in str(error.value)
+            sections.merge_section(previous, parsed, 'p0001s0002_')
+        assert 'p0001s0001_loc_001' in str(error.value)
+        assert 'p0001s0002_loc_001' in str(error.value)
         assert 'visual_anchor' in str(error.value)
     else:
         with pytest.raises(ValueError):
@@ -925,76 +925,76 @@ def test_registry_name_matching_does_not_hide_conflicting_or_blank_anchors(ancho
 
 def test_ambiguous_registry_aliases_are_never_resolved_by_picking_one_entity():
     first = payload(1, 'Ari opened the gate.')
-    first['locations'].append({**first['locations'][0], 'id': 'part0001_loc_002',
+    first['locations'].append({**first['locations'][0], 'id': 'p0001s0001_loc_002',
                                'name': 'Second gate', 'aliases': ['Gate']})
     previous = StoryBible.model_validate(first)
     raw = payload(2, 'Ari closed the gate.')
-    raw['locations'][0]['id'] = raw['scenes'][0]['location_id'] = 'part0002_loc_001'
+    raw['locations'][0]['id'] = raw['scenes'][0]['location_id'] = 'p0001s0002_loc_001'
 
     hydrated = sections.hydrate_section(raw, previous)
     parsed = s1_extract._parse_extraction(hydrated, 'Ari closed the gate.')
 
-    assert parsed.scenes[0].location_id == 'part0002_loc_001'
+    assert parsed.scenes[0].location_id == 'p0001s0002_loc_001'
     with pytest.raises(ValueError, match='Reuse the registry ID for Gate') as error:
-        sections.merge_section(previous, parsed, 'part0002_')
-    assert 'part0001_loc_001' in str(error.value)
-    assert 'part0001_loc_002' in str(error.value)
+        sections.merge_section(previous, parsed, 'p0001s0002_')
+    assert 'p0001s0001_loc_001' in str(error.value)
+    assert 'p0001s0001_loc_002' in str(error.value)
 
 
 def test_resolving_registry_identity_still_rejects_conflicting_state_definitions():
     previous = StoryBible.model_validate(payload(1, 'Ari fell.', appearance()))
     raw = payload(2, 'Ari walked.', appearance())
-    raw['characters'][0]['id'] = 'part0002_char_001'
+    raw['characters'][0]['id'] = 'p0001s0002_char_001'
     raw['characters'][0]['appearance_states'][0]['continuity_guard'] = 'Discard bandages.'
-    raw['scenes'][0]['character_ids'] = ['part0002_char_001']
-    raw['character_participation'][0]['character_id'] = 'part0002_char_001'
+    raw['scenes'][0]['character_ids'] = ['p0001s0002_char_001']
+    raw['character_participation'][0]['character_id'] = 'p0001s0002_char_001'
 
     parsed = s1_extract._parse_extraction(sections.hydrate_section(raw, previous), 'Ari walked.')
 
     with pytest.raises(ValueError, match='Preserve state definition verbatim'):
-        sections.merge_section(previous, parsed, 'part0002_')
+        sections.merge_section(previous, parsed, 'p0001s0002_')
 
 
 def test_registry_resolution_keeps_duplicate_deltas_visible_to_validation():
     previous = StoryBible.model_validate(payload(1, 'Ari opened the gate.'))
     raw = payload(2, 'Ari closed the gate.')
-    raw['locations'].append({**raw['locations'][0], 'id': 'part0002_loc_001'})
+    raw['locations'].append({**raw['locations'][0], 'id': 'p0001s0002_loc_001'})
 
     parsed = s1_extract._parse_extraction(sections.hydrate_section(raw, previous), 'Ari closed the gate.')
 
     with pytest.raises(ValueError, match='Duplicate locations IDs in section'):
-        sections.merge_section(previous, parsed, 'part0002_')
+        sections.merge_section(previous, parsed, 'p0001s0002_')
 
 
 def test_entity_delta_does_not_hide_explicit_identity_or_state_conflicts():
     previous = StoryBible.model_validate(payload(1, 'Ari fell.', appearance()))
     raw = payload(2, 'Ari walked.')
-    raw['characters'] = [{'id': 'part0001_char_001', 'visual_anchor': 'different identity'}]
+    raw['characters'] = [{'id': 'p0001s0001_char_001', 'visual_anchor': 'different identity'}]
     hydrated = sections.hydrate_section(raw, previous)
     parsed = s1_extract._parse_extraction(hydrated, 'Ari walked.')
     with pytest.raises(ValueError, match='base visual_anchor'):
-        sections.merge_section(previous, parsed, 'part0002_')
+        sections.merge_section(previous, parsed, 'p0001s0002_')
 
 
 def test_section_inherits_book_metadata_and_ignores_only_unused_known_id_echoes():
     previous = StoryBible.model_validate(payload(1, 'Ari opened the gate.'))
     previous.characters.append(previous.characters[0].model_copy(update={
-        'id': 'part0001_char_002', 'name': 'Keeper'}))
+        'id': 'p0001s0001_char_002', 'name': 'Keeper'}))
     raw = payload(2, 'Ari closed the gate.')
     raw.pop('title')
     raw.pop('author')
     raw.pop('total_scenes')
-    raw['characters'].append({'id': 'part0001_char_002'})
+    raw['characters'].append({'id': 'p0001s0001_char_002'})
     hydrated = sections.hydrate_section(raw, previous)
     assert hydrated['title'] == previous.title
     assert hydrated['author'] == previous.author
-    assert [c['id'] for c in hydrated['characters']] == ['part0001_char_001']
+    assert [c['id'] for c in hydrated['characters']] == ['p0001s0001_char_001']
     parsed = s1_extract._parse_extraction(hydrated, 'Ari closed the gate.')
-    merged = sections.merge_section(previous, parsed, 'part0002_')
+    merged = sections.merge_section(previous, parsed, 'p0001s0002_')
     assert len(merged.characters) == 2  # the book still retains the earlier keeper
     raw['characters'][-1]['appearance_timeline'] = []
     assert len(sections.hydrate_section(raw, previous)['characters']) == 1  # empty deltas are echoes too
-    raw['characters'][-1] = {'id': 'part0002_char_unknown'}
+    raw['characters'][-1] = {'id': 'p0001s0002_char_unknown'}
     assert len(sections.hydrate_section(raw, previous)['characters']) == 2
 
 
@@ -1013,9 +1013,9 @@ async def test_section_repairs_metadata_and_evidence_locally_without_model_retry
     result = await s1_extract._extract_with_retry(
         Config(), 'instructions', 'Ari closed the gate.', generate=generate,
         prepare=lambda value: sections.hydrate_section(value, previous),
-        validate=lambda value: sections.merge_section(previous, value, 'part0002_'))
+        validate=lambda value: sections.merge_section(previous, value, 'p0001s0002_'))
     assert len(calls) == 1
-    assert result.value.scenes[0].character_ids == ['part0001_char_001']
+    assert result.value.scenes[0].character_ids == ['p0001s0001_char_001']
     assert result.value.total_scenes == 1
 
 
@@ -1039,8 +1039,8 @@ async def test_redundant_registry_entries_need_one_model_response(echo):
     result = await s1_extract._extract_with_retry(
         Config(), 'instructions', 'Ari closed the gate.', generate=generate,
         prepare=lambda value: sections.hydrate_section(value, previous),
-        validate=lambda value: sections.merge_section(previous, value, 'part0002_'))
-    merged = sections.merge_section(previous, result.value, 'part0002_')
+        validate=lambda value: sections.merge_section(previous, value, 'p0001s0002_'))
+    merged = sections.merge_section(previous, result.value, 'p0001s0002_')
     assert len(result.value.characters) == 1
     assert merged.characters[0].appearance_states[0].continuity_guard == 'Preserve the bandaged arm.'
     assert merged.characters[0].appearance_timeline[-1].state_id == 'hurt'
@@ -1056,7 +1056,7 @@ def test_coalescing_repetitions_retains_conflicting_definitions():
     assert len(hydrated['characters']) == 2
     parsed = s1_extract._parse_extraction(hydrated, 'Ari closed the gate.')
     with pytest.raises(ValueError, match='Duplicate characters IDs'):
-        sections.merge_section(previous, parsed, 'part0002_')
+        sections.merge_section(previous, parsed, 'p0001s0002_')
 
 
 @pytest.mark.parametrize('reference', ['roster', 'evidence', 'both', 'background'])
@@ -1076,12 +1076,12 @@ def test_section_resolves_omitted_known_entities_from_references(reference):
     assert hydrated['characters'][0]['visual_anchor'] == previous.characters[0].visual_anchor
     assert hydrated['characters'][0]['appearance_states'] == previous.characters[0].model_dump(mode='json')['appearance_states']
     assert hydrated['characters'][0]['appearance_timeline'] == []
-    assert hydrated['locations'][0]['id'] == 'part0001_loc_001'
+    assert hydrated['locations'][0]['id'] == 'p0001s0001_loc_001'
     assert 'characters' not in raw
     parsed = s1_extract._parse_extraction(hydrated, 'Ari closed the gate.')
-    merged = sections.merge_section(previous, parsed, 'part0002_')
+    merged = sections.merge_section(previous, parsed, 'p0001s0002_')
     assert merged.characters == previous.characters
-    assert parsed.scenes[0].character_ids == ([] if reference == 'background' else ['part0001_char_001'])
+    assert parsed.scenes[0].character_ids == ([] if reference == 'background' else ['p0001s0001_char_001'])
     assert len(merged.scenes) == 2
 
 
@@ -1092,18 +1092,18 @@ def test_registry_resolution_never_invents_unknown_entities_or_imports_old_scene
     raw['characters'] = []
     evidence = raw['character_participation'][0]
     if unknown in {'character', 'both'}:
-        evidence['character_id'] = 'part0002_unknown'
-        raw['scenes'][0]['character_ids'] = ['part0002_unknown']
+        evidence['character_id'] = 'p0001s0002_unknown'
+        raw['scenes'][0]['character_ids'] = ['p0001s0002_unknown']
     if unknown in {'scene', 'both'}:
-        evidence['scene_id'] = 'part0001_scene_001'
+        evidence['scene_id'] = 'p0001s0001_scene_001'
     hydrated = sections.hydrate_section(raw, previous)
     with pytest.raises(ValueError, match='Participation evidence must reference') as error:
         s1_extract._parse_extraction(hydrated, 'Ari closed the gate.')
     if unknown in {'character', 'both'}:
-        assert 'part0002_unknown' in str(error.value)
+        assert 'p0001s0002_unknown' in str(error.value)
         assert not hydrated['characters']
     if unknown in {'scene', 'both'}:
-        assert 'part0001_scene_001' in str(error.value)
+        assert 'p0001s0001_scene_001' in str(error.value)
         assert len(hydrated['scenes']) == 1
 
 
@@ -1122,8 +1122,8 @@ async def test_omitted_known_definitions_need_one_response_not_a_correction():
     result = await s1_extract._extract_with_retry(
         Config(), 'instructions', 'Ari closed the gate.', generate=generate,
         prepare=lambda value: sections.hydrate_section(value, previous),
-        validate=lambda value: sections.merge_section(previous, value, 'part0002_'))
-    assert result.value.characters[0].id == 'part0001_char_001'
+        validate=lambda value: sections.merge_section(previous, value, 'p0001s0002_'))
+    assert result.value.characters[0].id == 'p0001s0001_char_001'
     assert calls == 1
 
 
@@ -1205,7 +1205,7 @@ async def test_a_section_that_opens_mid_scene_continues_it(tmp_path, monkeypatch
         value = payload(index, content["source_section"])
         if index == 2:
             value["continues_previous_scene"] = True
-            assert content["previous_scene"]["id"] == "part0001_scene_001"
+            assert content["previous_scene"]["id"] == "p0001s0001_scene_001"
         return ApiResult(value=value)
 
     monkeypatch.setattr(sections, "generate_json", generate)
@@ -1219,3 +1219,10 @@ async def test_a_section_that_opens_mid_scene_continues_it(tmp_path, monkeypatch
     document = TargetArtifacts(tmp_path).read_source()
     assert document.scenes[0].last_unit_id == document.units[
         len(source_units(parts[0] + parts[1])) - 1].id
+
+
+def test_section_prefixes_name_the_part_and_never_look_like_another_part():
+    """A one-part book once got ``p0001s0002_*`` entities from its second section."""
+    assert sections.section_prefix(1, 2) == "p0001s0002_"
+    assert sections.section_prefix(1, 2) != sections.section_prefix(2, 1)
+    assert not sections.section_prefix(1, 2).startswith("part")

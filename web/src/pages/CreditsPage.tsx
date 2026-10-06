@@ -229,7 +229,7 @@ export function CreditsPage() {
               History
             </h2>
             <p className="mt-1.5 font-body text-sm font-semibold text-ink-muted">
-              {t("Grouped by day, project, and activity. Open a group to see individual attempts and charges.")}
+              {t("Grouped by day and work session. Open an activity to see what each step and page cost.")}
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">

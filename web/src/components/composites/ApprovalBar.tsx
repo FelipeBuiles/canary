@@ -59,10 +59,10 @@ export function ApprovalBar({
           {t("Next:")}
         </div>
         <div className="w-full min-w-0 studio-desktop:w-auto studio-desktop:flex-1">
+          <span className="mb-2 inline-flex bg-narrator-gold px-2 py-1 font-meta text-[0.62rem] font-bold uppercase leading-none tracking-[0.1em] text-ink-black studio-desktop:hidden">
+            {t("Next:")}
+          </span>
           <div className="font-body text-sm font-bold leading-snug text-ink-black">
-            <span className="mr-2 font-meta text-xs font-bold uppercase tracking-[0.1em] text-hero-red studio-desktop:hidden">
-              {t("Next:")}
-            </span>
             {next}
           </div>
           {error ? (
@@ -75,9 +75,9 @@ export function ApprovalBar({
             </div>
           )}
         </div>
-        <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2 studio-desktop:gap-3">
+        <div className="flex w-full min-w-0 flex-wrap items-center justify-end gap-2 sm:ml-auto sm:w-auto studio-desktop:gap-3">
           {secondary}
-          <Button size="md" onClick={onPrimary} disabled={primaryDisabled || busy}>
+          <Button size="md" onClick={onPrimary} disabled={primaryDisabled || busy} className="flex-1 sm:flex-none">
             {busy ? t("WORKING…") : primaryLabel}
           </Button>
         </div>

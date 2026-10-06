@@ -42,10 +42,7 @@ _UNIFIED_CANVAS = (
     "internal borders, page layouts, or split-screen compositions."
 )
 
-_FACIAL_QUALITY = (
-    "Preserve the active anchor's age, species, anatomy, and facial identity in the "
-    "selected rendering style; avoid accidental distortion, not intentional stylization",
-)
+_FACIAL_QUALITY = (reference_forms.IDENTITY_QUALITY["figure"],)
 
 _BODY_PROPORTION_QUALITY = (
     "Use the anatomy, proportions, and silhouette specified by the active anchor; "
@@ -184,7 +181,7 @@ def generate_system_constraints(
                     f"state affect for {subject.name}: {baseline_affect}; render it "
                     "subtly and consistently without escalating its intensity"
                 )
-        lines.extend(_FACIAL_QUALITY)
+        lines.append(reference_forms.IDENTITY_QUALITY[form])
         lines.extend(_BODY_PROPORTION_QUALITY)
         # A state reference may intentionally require fever, delirium, or another
         # altered affect. Preserve it, but do not let the model amplify beyond the

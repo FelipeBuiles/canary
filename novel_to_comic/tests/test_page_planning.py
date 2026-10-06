@@ -4672,3 +4672,91 @@ def test_detail_batch_corrects_unacted_onscreen_speaker_before_merge(tmp_path):
     assert "[missing_character_acting] (page_030, page_030_content_001)" in feedback
     assert repr(speaker_line) in feedback
     assert [a.entity_id for a in draft.pages[0].content[0].acting] == ["character_johansen"]
+
+
+def _pages_from(adaptation, layout, *, entity_ids=("location_alert",), page_turn_role="none",
+                density_intent="standard"):
+    """One content item per (beat id) in each page of ``layout``."""
+    beats = {beat.id: beat for beat in adaptation.beats}
+    seen: set[str] = set()
+    pages = []
+    for number, beat_ids in enumerate(layout, start=1):
+        content = []
+        for order, beat_id in enumerate(beat_ids, start=1):
+            lettering = () if beat_id in seen else tuple(beats[beat_id].lettering)
+            seen.add(beat_id)
+            content.append(PageContent(
+                id=f"page_{number:03d}_content_{order:03d}", order=order, beat_ids=[beat_id],
+                camera=PanelCamera(shot="medium", angle="eye_level"),
+                visual_intent=beats[beat_id].summary, lettering=lettering, entity_ids=list(entity_ids),
+            ))
+        pages.append(ComicPage(
+            page_number=number, revision=1, adaptation_revision=adaptation.revision,
+            adaptation_sha256=adaptation.content_sha256, page_turn_role=page_turn_role,
+            spread_role="single", emphasis=beats[beat_ids[-1]].narrative_function,
+            density_intent=density_intent, layout_intent="Test layout.", content=content,
+            reading_order=[ordered for item in content
+                           for ordered in (item.id, *(letter.id for letter in item.lettering))],
+        ))
+    return pages
+
+
+def _with_beat(adaptation, index, **updates):
+    payload = adaptation.model_dump()
+    payload["content_sha256"] = ""
+    payload["beats"][index].update(updates)
+    return BookAdaptation.model_validate(payload)
+
+
+def test_reveal_placed_after_a_pages_opening_panel_needs_no_page_turn() -> None:
+    adaptation = _with_beat(_adaptation(), 1, narrative_function="peak", story_functions=["reveal"])
+    pages = _pages_from(adaptation, [["beat_0001"], ["beat_0001", "beat_0002"]])
+    validation = validate_book_plan(adaptation, _inventory(), ApprovedPageRange(minimum=2, maximum=2), pages)
+    assert "weak_page_turn" not in {issue.code for issue in validation.editorial_issues}
+
+
+def test_peak_carrying_its_own_aftermath_is_not_a_peak_release_collision() -> None:
+    adaptation = _with_beat(_adaptation(), 1, narrative_function="peak",
+                            story_functions=["reveal", "aftermath"])
+    pages = _pages_from(adaptation, [["beat_0001", "beat_0002"]], density_intent="dense")
+    validation = validate_book_plan(adaptation, _inventory(), ApprovedPageRange(minimum=1, maximum=1), pages)
+    assert "poor_peak_release_proportion" not in {issue.code for issue in validation.editorial_issues}
+
+
+def _inventory_with_written_character() -> ApprovedVisualReferenceInventory:
+    return ApprovedVisualReferenceInventory(references=[
+        *_inventory().references,
+        ApprovedVisualReference(
+            id="ref_mate_base", entity_id="character_mate", label="The Mate",
+            visual_anchor="wiry sailor in an oilskin", kind="character", requires_image=False,
+        ),
+    ])
+
+
+@pytest.mark.parametrize(("layout", "flagged"), [
+    ([["beat_0001"], ["beat_0002"]], True),
+    ([["beat_0001", "beat_0002"]], False),
+])
+def test_uncast_character_drawn_on_several_pages_is_an_editorial_issue(layout, flagged) -> None:
+    adaptation = _adaptation()
+    pages = _pages_from(adaptation, layout, entity_ids=("location_alert", "character_mate"))
+    validation = validate_book_plan(adaptation, _inventory_with_written_character(),
+                                    ApprovedPageRange(minimum=1, maximum=2), pages)
+    issues = [issue for issue in validation.editorial_issues if issue.code == "uncast_recurring_character"]
+    assert bool(issues) is flagged
+    if flagged:
+        assert issues[0].artifact_ids == ("page_001", "page_002")
+        assert not issues[0].blocking
+
+
+@pytest.mark.parametrize("integrated", [True, False])
+def test_dense_lettering_is_flagged_only_for_integrated_lettering(integrated) -> None:
+    payload = _adaptation().model_dump()
+    payload["content_sha256"] = ""
+    payload["beats"][0]["lettering"][0]["text"] = " ".join(["The reef rose before us."] * 25)
+    adaptation = BookAdaptation.model_validate(payload)
+    pages = _pages_from(adaptation, [["beat_0001", "beat_0002"]])
+    validation = validate_book_plan(adaptation, _inventory(), ApprovedPageRange(minimum=1, maximum=1),
+                                    pages, integrated_lettering=integrated)
+    codes = {issue.code for issue in validation.editorial_issues}
+    assert ("dense_integrated_lettering" in codes) is integrated

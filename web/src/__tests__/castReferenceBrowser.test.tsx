@@ -18,6 +18,7 @@ vi.mock("../api/client", async (original) => ({
     if (path.endsWith("/cast/review") && server.review) return server.review;
     if (path.includes("story_bible") || path.includes("story-bible")) return {
       characters: [{ id: "cat", name: "Companion", visual_anchor: anchor, age_range: "adult", gender: "female", distinguishing_features: ["fluffy fur"], relationships: [], appearance_states: [], default_outfit: "" }], locations: [{ id: "hall", name: "Great Hall", visual_anchor: "Stone pillars.", time_of_day: "night", mood: "ominous", appearance_states: [] }], props: [{ id: "key", name: "Brass Key", visual_anchor: "Three brass teeth.", first_appearance_scene: "part0002_scene_014" }],
+      scenes: [{ id: "part0002_scene_014", part_id: "part0002", chapter: 3, title: "The Brass Door", location_id: "hall" }],
     };
     if (path.endsWith("/status")) return { style_selected: true, stages: { cast: { status: "complete" } } };
     if (path.includes("estimate")) {
@@ -113,6 +114,6 @@ it("aligns each card's sections and names where a prop first appears in reader t
   const heading = await screen.findByRole("heading", { name: "Brass Key" });
   const card = heading.closest("article")!;
   expect(card.classList.contains("grid-rows-subgrid")).toBe(true);
-  expect(within(card).getByText("First seen: Part 2, scene 14")).toBeTruthy();
+  expect(within(card).getByText("First seen: The Brass Door")).toBeTruthy();
   expect(within(card).getByText("Three brass teeth.")).toBeTruthy();
 });

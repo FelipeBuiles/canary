@@ -1,8 +1,10 @@
 @import "tailwindcss";
 
-/* Keep short phone landscapes compact; ordinary laptops retain the full shell. */
+/* The sidebar shell needs room for a useful workbench beside it; narrower
+   windows (split screens, tablets, phone landscapes) keep compact navigation.
+   Keep in sync with DESKTOP_LAYOUT_QUERY in hooks/useDesktopLayout.ts. */
 @custom-variant studio-desktop {
-  @media (width >= 48rem) and (height >= 32rem), (width >= 64rem) {
+  @media (width >= 64rem) {
     @slot;
   }
 }
@@ -517,6 +519,24 @@
 
 .animate-press-seat {
   animation: press-seat var(--motion-stamp) var(--ease-platen);
+}
+
+/* The compact station drawer slides in like a sheet fed into the press. */
+@keyframes drawer-in {
+  from { transform: translateX(-100%); }
+  to { transform: none; }
+}
+
+@keyframes drawer-scrim {
+  from { background-color: transparent; }
+}
+
+.animate-drawer-in {
+  animation: drawer-in var(--motion-reveal) var(--ease-platen) both;
+}
+
+.animate-drawer-scrim {
+  animation: drawer-scrim var(--motion-settle) ease-out both;
 }
 
 /* One-time pull-back: the gallery tilts into a wall of every page, holds, then settles. */

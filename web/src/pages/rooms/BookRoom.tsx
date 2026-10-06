@@ -16,6 +16,7 @@ import { pageCompositePreviewUrl } from "../../api/lettering";
 import { getPageReplanEstimate, pageRenderPreviewUrl, replanPage } from "../../api/pages";
 import { BookExportPanel } from "../../components/book/BookExportPanel";
 import { CreditHistoryLedger } from "../../components/credits/CreditHistoryLedger";
+import { CreditSpendSummary } from "../../components/credits/CreditSpendSummary";
 import { PageThumbnail } from "../../components/pages/PageThumbnail";
 import { BookReader } from "../../components/BookReader";
 import { PageCheckRecovery } from "../../components/pages/PageCheckRecovery";
@@ -140,7 +141,6 @@ export function BookRoom() {
   const title = status?.project_name ?? t("Your book");
   const creditRuns = creditHistory?.pages.flatMap((page) => page.runs ?? []) ?? [];
   const creditDayGroups = groupRunsByDay(creditRuns);
-  const creditProjectNames = new Map([[id, title]]);
   const packages = preflight?.packages ?? [];
   const reviewUrl = (pageNumber: number, review: "page" | "lettering") =>
     `/project/${encodeURIComponent(id)}/pages?page=${pageNumber}&review=${review}`;
@@ -172,14 +172,16 @@ export function BookRoom() {
       />
 
 
-      <section aria-label={t("Read your book")} className="grid gap-8 bg-ink-black p-6 text-bristol shadow-paper md:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] md:items-center md:p-9">
-        {bookPages.length > 0 && <button type="button" onClick={() => setReaderOpen(true)} aria-label={t("Open the book reader")} className="mx-auto aspect-[2/3] w-full max-w-[15rem] overflow-hidden bg-surface-container text-ink-black shadow-[6px_6px_0_0_var(--color-narrator-gold)] transition-transform hover:-translate-y-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-narrator-gold motion-reduce:transition-none">
+      {/* The hero's own width decides whether the cover sits beside the text. */}
+      <div className="@container">
+      <section aria-label={t("Read your book")} className="grid gap-6 bg-ink-black p-5 text-bristol shadow-paper @min-[40rem]:grid-cols-[minmax(0,13rem)_minmax(0,1fr)] @min-[40rem]:items-center @min-[40rem]:gap-8 @min-[40rem]:p-9 @min-[56rem]:grid-cols-[minmax(0,15rem)_minmax(0,1fr)]">
+        {bookPages.length > 0 && <button type="button" onClick={() => setReaderOpen(true)} aria-label={t("Open the book reader")} className="mx-auto aspect-[2/3] w-full max-w-[11rem] overflow-hidden @min-[40rem]:max-w-[15rem] bg-surface-container text-ink-black shadow-[6px_6px_0_0_var(--color-narrator-gold)] transition-transform hover:-translate-y-1 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-narrator-gold motion-reduce:transition-none">
           {status?.has_cover
             ? <img src={`/api${projectPath(id)}/files/cover/cover.png`} alt={t("Book cover")} className="h-full w-full object-cover" decoding="async" />
             : <PageThumbnail reveal={false} onRevealEnd={() => {}} src={(bookPages[0].hybrid ? pageCompositePreviewUrl(id, bookPages[0].pageNumber, bookPages[0].revision, "reader", bookPages[0].letteringRevision) : pageRenderPreviewUrl(id, bookPages[0].pageNumber, bookPages[0].revision, "reader"))} alt={t("First page of the book")} />}
         </button>}
         <div className="min-w-0">
-          <h2 className="break-words font-display text-3xl font-black leading-tight tracking-[-0.03em] md:text-5xl">{title}</h2>
+          <h2 className="text-balance break-words font-display text-3xl font-black leading-tight tracking-[-0.03em] @min-[56rem]:text-5xl">{title}</h2>
           <p className="mt-3 font-meta text-sm text-bristol/85">{completePages ? `${bookPages.length} ${bookPages.length === 1 ? t("page drawn") : t("pages drawn")}` : pagesLoading ? t("Loading artwork…") : t("Page previews are unavailable.")}</p>
           <p role="status" className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 font-meta text-xs font-bold uppercase tracking-[0.1em]">
             {checking ? <span className="text-bristol/85">{t("Checking edition…")}</span>
@@ -195,6 +197,7 @@ export function BookRoom() {
           <p className="mt-4 font-body text-xs leading-6 text-bristol/75">{t("Reading does not generate artwork or use credits.")}</p>
         </div>
       </section>
+      </div>
 
       {readerOpen && (
         <BookReader
@@ -362,10 +365,10 @@ export function BookRoom() {
         <SectionHeader
           variant="underline"
           title={t("CREDIT HISTORY")}
-          description={t("Credits used by this book across every edition and revision. Open an activity to see its hold, final charge, and released credits.")}
+          description={t("Credits used by this book across every part, edition, and revision. Open an activity to see what each step cost.")}
           actions={<Link to={`/credits?project=${encodeURIComponent(splitProjectKey(id).id)}`} className="inline-flex min-h-11 items-center font-meta text-xs font-bold underline underline-offset-4">{t("View all credit history")}</Link>}
         />
-        <p className="mb-4 font-body text-sm leading-6 text-ink-muted">{t("Open holds are still reserved. They are separate from final charges.")}</p>
+        <CreditSpendSummary spendByStage={creditHistory?.pages[0]?.spend_by_stage} />
         {creditHistoryError && (
           <Surface tone="pulp" padding="md" shadow="none" role="alert" className="mb-4">
             <p className="font-body text-sm">{t("Credit history could not be loaded.")}</p>
@@ -380,7 +383,7 @@ export function BookRoom() {
           </Surface>
         ) : (
           <>
-            <CreditHistoryLedger groups={creditDayGroups} projectNameMap={creditProjectNames} />
+            <CreditHistoryLedger groups={creditDayGroups} />
             {hasOlderCreditHistory && (
               <Button variant="outline" size="sm" fullWidth className="mt-5" disabled={isFetchingOlderCreditHistory} onClick={() => void fetchOlderCreditHistory()}>
                 {t(isFetchingOlderCreditHistory ? "Loading history…" : "Load older history")}

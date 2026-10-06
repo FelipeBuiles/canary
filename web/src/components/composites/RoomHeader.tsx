@@ -9,6 +9,8 @@ import { TopBarPortal } from "../../layout/TopBarSlot";
  * Unified stage page header. Renders into the shell masthead (AppTopBar slot)
  * rather than occupying its own bar in the content flow: kicker stacked above
  * a display title on the left, lead alongside, actions on the right.
+ * Masthead width, not the viewport, decides what fits: the task title and
+ * actions keep priority; the lead and station block appear only with room.
  */
 export function RoomHeader({
   kicker,
@@ -33,9 +35,9 @@ export function RoomHeader({
   return (
     <>
       <TopBarPortal inlineOnMobile>
-        <div className={cn("relative flex min-w-0 flex-1 items-stretch overflow-hidden", className)}>
+        <div className={cn("@container/masthead relative flex min-w-0 flex-1 items-stretch overflow-hidden", className)}>
           {station && (
-            <div className="hidden w-[68px] shrink-0 flex-col items-center justify-center bg-ink-black text-bristol lg:flex">
+            <div className="hidden w-[68px] shrink-0 flex-col items-center justify-center bg-ink-black text-bristol @min-[60rem]/masthead:flex">
               <span className="font-meta text-[0.46rem] font-bold tracking-[0.14em] text-bristol/65">{t("STATION")}</span>
               <strong className="mt-1 font-display text-[1.5rem] font-black leading-none tracking-[-0.03em]">
                 {station.number}
@@ -44,19 +46,19 @@ export function RoomHeader({
           )}
 
           <div className="flex min-w-0 flex-1 items-center gap-5 studio-desktop:px-5 studio-desktop:pb-1">
-            <div className="flex min-w-0 flex-col items-start justify-center gap-1 lg:max-w-[42%] lg:shrink-0">
+            <div className="flex min-w-0 flex-[0_1_auto] flex-col items-start justify-center gap-1">
               <span className="hidden font-meta text-[0.54rem] font-bold uppercase tracking-[0.14em] text-hero-red studio-desktop:block">
                 {t(kicker)}
               </span>
-              <h1 className="max-w-full font-display text-[1.55rem] font-black uppercase leading-[0.9] tracking-[-0.03em] text-ink-black [overflow-wrap:anywhere] studio-desktop:truncate" title={t(title)}>
+              <h1 className="max-w-full text-balance font-display text-[1.85rem] font-black uppercase leading-[0.92] tracking-[-0.03em] text-ink-black [overflow-wrap:anywhere] sm:text-[2.25rem] studio-desktop:text-[1.55rem] studio-desktop:leading-[0.9] studio-desktop:line-clamp-2 studio-desktop:[overflow-wrap:break-word]" title={t(title)}>
                 {t(title)}
               </h1>
             </div>
 
             {lead && (
               <>
-                <span aria-hidden="true" className="hidden h-8 w-[2px] shrink-0 bg-ink-black/16 lg:block" />
-                <span className="hidden min-w-0 max-w-[46rem] text-balance font-body text-[0.8rem] font-semibold leading-snug text-ink-muted line-clamp-2 lg:[display:-webkit-box]">
+                <span aria-hidden="true" className="hidden h-8 w-[2px] shrink-0 bg-ink-black/16 @min-[56rem]/masthead:block" />
+                <span className="hidden min-w-0 max-w-[46rem] flex-[1_1_0] text-balance font-body text-[0.8rem] font-semibold leading-snug text-ink-muted line-clamp-2 @min-[56rem]/masthead:[display:-webkit-box]">
                   {typeof lead === "string" ? t(lead) : lead}
                 </span>
               </>
@@ -82,9 +84,9 @@ export function RoomHeader({
         </div>
       </TopBarPortal>
 
-      {/* Phone room titles and tools scroll with their content. */}
+      {/* Compact room titles and tools scroll with their content. */}
       {actions && (
-        <div className="mt-3 flex flex-wrap items-center justify-end gap-2 studio-desktop:hidden">
+        <div className="mt-4 flex flex-wrap items-center gap-2 studio-desktop:hidden">
           {actions}
         </div>
       )}

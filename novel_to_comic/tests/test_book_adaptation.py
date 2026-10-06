@@ -1018,6 +1018,43 @@ def test_unpunctuated_display_text_is_an_editorial_question(text: str) -> None:
     assert candidate.beats[0].lettering[0].text == text
 
 
+def _source_with_last_unit(text: str) -> SourceDocument:
+    source = _source_document()
+    head = source.units[0].text
+    return SourceDocument.model_validate({
+        **source.model_dump(), "source_sha256": "", "text": head + text,
+        "units": [
+            source.units[0].model_dump(),
+            {**source.units[1].model_dump(), "text": text, "end_offset": len(head + text)},
+        ],
+    })
+
+
+def test_display_text_closing_on_a_bare_quoted_word_is_not_clipped() -> None:
+    # OCR joined two words and the quote closes without a stop, as printed.
+    source = _source_with_first_unit('The AC said, "MAN\'SORIGINAL STAR IS A \nWHITE DWARF" and stopped. ')
+    result = validate_book_adaptation(
+        source, _approved_brief(), _with_lettering_text("MAN'S ORIGINAL STAR IS A WHITE DWARF"))
+    assert "possible_clipped_display_text" not in {i.code for i in result.editorial_issues}
+
+
+def test_display_text_ending_the_source_without_a_stop_is_not_clipped() -> None:
+    candidate = _with_lettering_text("And there was light --")
+    item = candidate.beats[0].lettering[0].model_copy(update={"source_unit_ids": ("source_000002",)})
+    beat = candidate.beats[0].model_copy(update={"lettering": (item,)})
+    candidate = candidate.model_copy(update={"beats": (beat, *candidate.beats[1:])})
+    result = validate_book_adaptation(_source_with_last_unit("And there was light -- \n \n"), _approved_brief(), candidate)
+    assert "possible_clipped_display_text" not in {i.code for i in result.editorial_issues}
+
+
+@pytest.mark.parametrize("source_text", ['He said, "I saw the door open." ', "I saw the door open and ran. "])
+def test_display_text_short_of_its_source_ending_stays_an_editorial_question(source_text: str) -> None:
+    result = validate_book_adaptation(
+        _source_with_first_unit(source_text), _approved_brief(), _with_lettering_text("I saw the door open"),
+    )
+    assert "possible_clipped_display_text" in {i.code for i in result.editorial_issues}
+
+
 def test_continuity_is_scoped_to_the_character_or_narrative_thread() -> None:
     payload = _book_adaptation().model_dump()
     payload["content_sha256"] = ""
