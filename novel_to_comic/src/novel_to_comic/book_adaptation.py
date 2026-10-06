@@ -1799,7 +1799,9 @@ def build_book_adaptation_prompt(
         "dialogue or thought uses delivery='onscreen', one precise speaker name, "
         "and that Story Bible character's speaker_entity_id. Off-panel voices or "
         "choruses use delivery='offscreen' and a precise speaker label without "
-        "inventing a visible character. Narration uses delivery='narration'. "
+        "inventing a visible character. A speaker heard through a device, or present "
+        "only as a voice or an unseen, formless presence, is offscreen too: onscreen "
+        "makes Draw show that character's reference image. Narration uses delivery='narration'. "
         "Quoted prose, translated inscriptions, manuscript excerpts, and phrases "
         "reported by a narrator use caption plus delivery='quoted_text'; do not "
         "misclassify quoted prose as dialogue by a present character. SFX uses "
@@ -4778,6 +4780,9 @@ def validate_book_adaptation(
             not _has_terminal_display_punctuation(text)
             and not is_book_title
             and not is_protected_narration
+            and not _ends_where_source_ends(
+                text, [unit.text for unit in source.units if unit.id in item.source_unit_ids]
+            )
         ):
             # Missing punctuation cannot prove truncation: date cards, headings,
             # chants, and quoted phrases may be complete without a final stop.
@@ -5045,6 +5050,34 @@ def _has_terminal_display_punctuation(text: str) -> bool:
     while stripped and stripped[-1] in "\"'”’)]}":
         stripped = stripped[:-1].rstrip()
     return bool(stripped) and stripped[-1] in ".!?…—"
+
+
+_CLOSING_DELIMITERS = "\"'”’)]}"
+
+
+def _ends_where_source_ends(text: str, source_texts: list[str]) -> bool:
+    """Whether unpunctuated display text stops exactly where its source does.
+
+    A source line can end without a stop (a quote that closes on a bare word,
+    a trailing dash). Whitespace is ignored because OCR and line breaks split
+    or join words. Text followed by more words or by a stop the copy dropped
+    is still possibly clipped.
+    """
+    needle = re.sub(r"\s+", "", text.rstrip(_CLOSING_DELIMITERS + " "))
+    haystack = re.sub(r"\s+", "", " ".join(source_texts))
+    if not needle:
+        return False
+    start = haystack.find(needle)
+    while start != -1:
+        end = start + len(needle)
+        closed = end
+        while closed < len(haystack) and haystack[closed] in _CLOSING_DELIMITERS:
+            closed += 1
+        following = haystack[closed:closed + 1]
+        if not following or (closed > end and following not in ".!?…—"):
+            return True
+        start = haystack.find(needle, start + 1)
+    return False
 
 
 def _has_unbalanced_display_delimiters(text: str) -> bool:

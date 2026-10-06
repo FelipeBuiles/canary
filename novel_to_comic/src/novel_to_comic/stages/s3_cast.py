@@ -12,6 +12,8 @@ from pathlib import Path
 from rich.console import Console
 
 from novel_to_comic import artifacts, reference_forms
+from novel_to_comic.models.appearance import ReferenceForm
+from novel_to_comic.style_contract import figure_free_style_template
 from novel_to_comic.cast_roster import read_cast_story_bible
 from novel_to_comic.config import Config
 from novel_to_comic.generation_input import GenerationPromptInput
@@ -196,6 +198,13 @@ def _prop_ref_meta(
 
 
 
+def _asset_style_text(config: Config, form: ReferenceForm | None = None) -> str:
+    """Selected style text for a Cast asset; only figures receive the
+    character proportion system (``form=None`` is a plate or prop)."""
+    return (config.style_template if form == "figure"
+            else figure_free_style_template(config.style_template))
+
+
 def _cast_asset_style_ref(config: Config, style_ref: Path | None) -> Path | None:
     return RefStrategy.for_config(config).cast_style_ref(style_ref)
 
@@ -334,7 +343,7 @@ def _character_generation_input(
             generation_height=1024,
             generation_shape="landscape",
         ),
-        selected_style_text=config.style_template,
+        selected_style_text=_asset_style_text(config, form),
         selected_style_source_hash=hashlib.sha256(config.style_template.encode()).hexdigest(),
     )
 
@@ -393,7 +402,7 @@ def _location_generation_input(
             generation_height=768,
             generation_shape="landscape",
         ),
-        selected_style_text=config.style_template,
+        selected_style_text=_asset_style_text(config),
         selected_style_source_hash=hashlib.sha256(config.style_template.encode()).hexdigest(),
     )
 
@@ -421,7 +430,7 @@ def _prop_generation_input(
             generation_height=1024,
             generation_shape="square",
         ),
-        selected_style_text=config.style_template,
+        selected_style_text=_asset_style_text(config),
         selected_style_source_hash=hashlib.sha256(config.style_template.encode()).hexdigest(),
     )
 
@@ -518,7 +527,8 @@ def _compile_state_asset_wire(
     )(
         asset_identity=f"{spec.entity_id}:{spec.state_id}",
         prompt=prompt,
-        selected_style_text=config.style_template,
+        selected_style_text=_asset_style_text(
+            config, spec.reference_form if spec.asset_kind == "character_state_ref" else None),
         selected_style_source_hash=spec.style_sha256,
         lineage=spec.lineage_metadata(),
         edit_parent_indices=tuple(index for index, ref in enumerate(plan.selected) if ref.role != "style")
@@ -1024,10 +1034,8 @@ async def _generate_prop_refs(
     """Generate one neutral-background reference image per story prop.
 
     Stage 1 already filters props down to those that recur or are plot-central,
-    so every prop in the bible gets a ref sheet. For models that handle visual
-    references reliably, the image is conditioned on the active style sample so
-    prop refs share the panel art style. For gpt-image-2, style stays text-only
-    to avoid edit-reference texture artifacts.
+    so every prop in the bible gets a ref sheet. Every route conditions the
+    image on the selected style proof so prop refs share the panel art style.
     """
     props_to_gen = [p for p in story_bible.props if not prop_ids or p.id in prop_ids]
     if not props_to_gen:

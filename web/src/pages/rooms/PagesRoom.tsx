@@ -515,7 +515,10 @@ export function PagesRoom() {
     );
   }
 
-  const rerunAdaptation = id && status && ["complete", "running"].includes(status.stages.adapt?.status ?? "pending") ? (
+  // Starting over only makes sense once a first adaptation and page plan
+  // have finished (or the plan failed); never while that first run is going.
+  const rerunAdaptation = id && status && status.stages.adapt?.status === "complete"
+    && ["complete", "failed"].includes(status.stages.plan?.status ?? "pending") ? (
     <RerunStageAction
       project={id}
       stage="adapt"
@@ -879,7 +882,7 @@ export function PagesRoom() {
         <WholeBookReveal
           ready={filter === "all" && pages.length > 1 && drawnPages.length === pages.length && drawingPages.size === 0}
           editionKey={editionKeyFor(projectId, pages.map((item) => item.page))}
-          className="grid grid-cols-1 gap-5 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+          className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,250px),1fr))] gap-5"
         >
           {visiblePages.map((item) => {
             const revision = item.active_render?.render.revision;

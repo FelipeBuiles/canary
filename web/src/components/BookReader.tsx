@@ -1,4 +1,5 @@
-import { useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { pageCompositePreviewUrl } from "../api/lettering";
 import { pageRenderPreviewUrl } from "../api/pages";
 import { useI18n } from "../i18n";
@@ -30,6 +31,22 @@ const WINDOW = 1;
 const PREFETCH = 2;
 
 const SWIPE_THRESHOLD_PX = 48;
+
+/**
+ * Facing pages are only readable when two fit-height pages share a wide,
+ * landscape window. Narrower or portrait windows default to single pages.
+ */
+const SPREADS_QUERY = "(min-width: 1024px) and (min-aspect-ratio: 6/5)";
+
+function subscribeSpreads(onChange: () => void) {
+  const query = window.matchMedia(SPREADS_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+function useRoomForSpreads() {
+  return useSyncExternalStore(subscribeSpreads, () => window.matchMedia(SPREADS_QUERY).matches, () => true);
+}
 
 function readerPageUrl(project: string, page: ReaderPage) {
   return page.imageUrl ?? (page.hybrid
@@ -161,7 +178,10 @@ function ViewLayer({
 
 export function BookReader({ project = "", pages, initialPageNumber, onClose, title, headerActions, endContent, closeLabel, languageLabel }: BookReaderProps) {
   const { t } = useI18n();
-  const [layout, setLayout] = useState<ReaderLayout>("spreads");
+  const roomForSpreads = useRoomForSpreads();
+  // A layout the reader picks sticks; otherwise the window decides.
+  const [chosenLayout, setChosenLayout] = useState<ReaderLayout | null>(null);
+  const layout = chosenLayout ?? (roomForSpreads ? "spreads" : "single");
   const [fit, setFit] = useState<Fit>("height");
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -170,32 +190,18 @@ export function BookReader({ project = "", pages, initialPageNumber, onClose, ti
   const inspector = useImageViewer();
 
   const views = useMemo(() => buildReaderViews(pages, layout), [pages, layout]);
-  const [index, setIndex] = useState(() =>
-    initialPageNumber
-      ? viewIndexForPage(buildReaderViews(pages, "spreads"), initialPageNumber)
-      : 0,
-  );
+  // The reader's place is a page, not a view index, so any layout change —
+  // chosen or caused by resizing the window — keeps the page in view.
+  const [position, setPosition] = useState<number | "end">(() => initialPageNumber ?? pages[0]?.pageNumber ?? 0);
   const lastIndex = Math.max(views.length - 1 + (endContent ? 1 : 0), 0);
-  const safeIndex = Math.min(index, lastIndex);
+  const safeIndex = position === "end" && endContent ? views.length : viewIndexForPage(views, position === "end" ? -1 : position);
   const showingEnd = !!endContent && safeIndex === views.length;
   const current = views[safeIndex];
 
   function goTo(next: number) {
-    setIndex(Math.max(0, Math.min(next, lastIndex)));
-  }
-
-  /** Switching layout must land on the page the reader was already showing. */
-  function changeLayout(next: ReaderLayout) {
-    if (showingEnd) {
-      setLayout(next);
-      setIndex(buildReaderViews(pages, next).length);
-      return;
-    }
-    const anchor = current?.pages[0].pageNumber;
-    setLayout(next);
-    if (anchor !== undefined) {
-      setIndex(viewIndexForPage(buildReaderViews(pages, next), anchor));
-    }
+    const target = Math.max(0, Math.min(next, lastIndex));
+    if (endContent && target === views.length) setPosition("end");
+    else if (views[target]) setPosition(views[target].pages[0].pageNumber);
   }
 
   // Warm the HTTP cache just past the mounted window so a fast reader never
@@ -261,7 +267,8 @@ export function BookReader({ project = "", pages, initialPageNumber, onClose, ti
   const atStart = safeIndex <= 0;
   const atEnd = safeIndex >= lastIndex;
 
-  return (
+  // Mounted at the viewport layer so room spacing never offsets the overlay.
+  return createPortal(
     <div
       ref={dialogRef}
       role="dialog"
@@ -306,7 +313,7 @@ export function BookReader({ project = "", pages, initialPageNumber, onClose, ti
           )}
           <button
             type="button"
-            onClick={() => changeLayout(layout === "spreads" ? "single" : "spreads")}
+            onClick={() => setChosenLayout(layout === "spreads" ? "single" : "spreads")}
             aria-pressed={layout === "spreads"}
             className="min-h-11 border-[2px] border-bristol/40 px-3 font-meta text-xs font-bold text-bristol transition-colors hover:border-bristol"
           >
@@ -424,6 +431,7 @@ export function BookReader({ project = "", pages, initialPageNumber, onClose, ti
         />
       </footer>
       {inspector.viewer}
-    </div>
+    </div>,
+    document.body,
   );
 }

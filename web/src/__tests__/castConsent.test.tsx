@@ -23,7 +23,7 @@ let castReview: unknown = undefined;
 let redrawing = new Set<string>();
 vi.mock("../api/castReview", () => ({ useCastReview: () => ({ data: castReview }), useRedrawingCharacters: () => redrawing }));
 vi.mock("../api/queries", () => ({
-  useStoryBible: () => ({ data: { characters: [], locations: [], props: [] }, isLoading: false }),
+  useStoryBible: () => ({ data: { characters: [], locations: [], props: [], scenes: [] }, isLoading: false }),
   useProjectStatus: () => ({ data: { style_selected: selectedStyle, is_running: isRunning, stages: { cast: { status: stageStatus, approval_blocker: approvalBlocker, failures } } } }),
   useApproveStage: () => ({ mutate: approve, isPending: false }),
   useResetStale: () => ({ mutate: vi.fn(), isPending: false }),

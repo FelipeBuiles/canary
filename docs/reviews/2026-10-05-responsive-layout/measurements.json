@@ -1,0 +1,1676 @@
+[
+  {
+    "label": "book-768",
+    "documentWidth": 768,
+    "grids": [
+      {
+        "class": "grid gap-8 bg-ink-black p-6 text-bristol shadow-paper md:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] md:items-center md:p-9",
+        "columns": "240px 89px",
+        "width": 433
+      },
+      {
+        "class": "grid gap-4 sm:grid-cols-2",
+        "columns": "208.5px 208.5px",
+        "width": 433
+      },
+      {
+        "class": "grid gap-5 ",
+        "columns": "373px",
+        "width": 373
+      },
+      {
+        "class": "grid gap-5 md:grid-cols-2",
+        "columns": "176.5px 176.5px",
+        "width": 373
+      }
+    ],
+    "main": [
+      {
+        "height": 928,
+        "scrollWidth": 513,
+        "width": 513
+      }
+    ],
+    "overflow": [
+      {
+        "font": "16px",
+        "overflow": "clip",
+        "scrollWidth": 215,
+        "tag": "INPUT",
+        "text": "",
+        "width": 173
+      }
+    ],
+    "sidebar": [
+      {
+        "display": "flex",
+        "width": 240
+      }
+    ],
+    "url": "http://localhost:5173/project/5615241e-33cd-4263-8542-7cf09340a2c8~part_0001/book",
+    "viewport": [
+      768,
+      1024
+    ]
+  },
+  {
+    "label": "story-768",
+    "documentWidth": 768,
+    "grids": [
+      {
+        "class": "grid items-start gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]",
+        "columns": "433px",
+        "width": 433
+      },
+      {
+        "class": "grid grid-cols-2 gap-4",
+        "columns": "188.5px 188.5px",
+        "width": 393
+      },
+      {
+        "class": "mt-4 grid items-start gap-6 lg:grid-cols-2",
+        "columns": "433px",
+        "width": 433
+      },
+      {
+        "class": "grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-4 py-6 md:grid-cols-[4rem_minmax(0,1fr)] md:gap-x-6 md:py-8 xl:grid-cols-[4rem_minmax(0,1fr)_15rem]",
+        "columns": "64px 345px",
+        "width": 433
+      },
+      {
+        "class": "grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-4 py-6 md:grid-cols-[4rem_minmax(0,1fr)] md:gap-x-6 md:py-8 xl:grid-cols-[4rem_minmax(0,1fr)_15rem]",
+        "columns": "64px 345px",
+        "width": 433
+      },
+      {
+        "class": "grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-4 py-6 md:grid-cols-[4rem_minmax(0,1fr)] md:gap-x-6 md:py-8 xl:grid-cols-[4rem_minmax(0,1fr)_15rem]",
+        "columns": "64px 345px",
+        "width": 433
+      },
+      {
+        "class": "grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-4 py-6 md:grid-cols-[4rem_minmax(0,1fr)] md:gap-x-6 md:py-8 xl:grid-cols-[4rem_minmax(0,1fr)_15rem]",
+        "columns": "64px 345px",
+        "width": 433
+      }
+    ],
+    "main": [
+      {
+        "height": 790,
+        "scrollWidth": 513,
+        "width": 513
+      }
+    ],
+    "overflow": [
+      {
+        "font": "24.8px",
+        "overflow": "hidden",
+        "scrollWidth": 365,
+        "tag": "H1",
+        "text": "CONFIRM THE STORY & BRIEF",
+        "width": 327
+      }
+    ],
+    "sidebar": [
+      {
+        "display": "flex",
+        "width": 240
+      }
+    ],
+    "url": "http://localhost:5173/project/5615241e-33cd-4263-8542-7cf09340a2c8~part_0001/story",
+    "viewport": [
+      768,
+      1024
+    ]
+  },
+  {
+    "label": "story-767",
+    "documentWidth": 767,
+    "grids": [
+      {
+        "class": "grid items-start gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]",
+        "columns": "728px",
+        "width": 728
+      },
+      {
+        "class": "grid grid-cols-2 gap-4",
+        "columns": "336px 336px",
+        "width": 688
+      },
+      {
+        "class": "mt-4 grid items-start gap-6 lg:grid-cols-2",
+        "columns": "728px",
+        "width": 728
+      },
+      {
+        "class": "grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-4 py-6 md:grid-cols-[4rem_minmax(0,1fr)] md:gap-x-6 md:py-8 xl:grid-cols-[4rem_minmax(0,1fr)_15rem]",
+        "columns": "40px 676px",
+        "width": 728
+      },
+      {
+        "class": "grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-4 py-6 md:grid-cols-[4rem_minmax(0,1fr)] md:gap-x-6 md:py-8 xl:grid-cols-[4rem_minmax(0,1fr)_15rem]",
+        "columns": "40px 676px",
+        "width": 728
+      },
+      {
+        "class": "grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-4 py-6 md:grid-cols-[4rem_minmax(0,1fr)] md:gap-x-6 md:py-8 xl:grid-cols-[4rem_minmax(0,1fr)_15rem]",
+        "columns": "40px 676px",
+        "width": 728
+      },
+      {
+        "class": "grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-4 py-6 md:grid-cols-[4rem_minmax(0,1fr)] md:gap-x-6 md:py-8 xl:grid-cols-[4rem_minmax(0,1fr)_15rem]",
+        "columns": "40px 676px",
+        "width": 728
+      }
+    ],
+    "main": [
+      {
+        "height": 968,
+        "scrollWidth": 752,
+        "width": 752
+      }
+    ],
+    "overflow": [],
+    "sidebar": [
+      {
+        "display": "none",
+        "width": 0
+      }
+    ],
+    "url": "http://localhost:5173/project/5615241e-33cd-4263-8542-7cf09340a2c8~part_0001/story",
+    "viewport": [
+      767,
+      1024
+    ]
+  },
+  {
+    "label": "story-1024",
+    "documentWidth": 1024,
+    "grids": [
+      {
+        "class": "grid items-start gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]",
+        "columns": "689px",
+        "width": 689
+      },
+      {
+        "class": "grid grid-cols-2 gap-4",
+        "columns": "316.5px 316.5px",
+        "width": 649
+      },
+      {
+        "class": "mt-4 grid items-start gap-6 lg:grid-cols-2",
+        "columns": "332.5px 332.5px",
+        "width": 689
+      },
+      {
+        "class": "grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-4 py-6 md:grid-cols-[4rem_minmax(0,1fr)] md:gap-x-6 md:py-8 xl:grid-cols-[4rem_minmax(0,1fr)_15rem]",
+        "columns": "64px 601px",
+        "width": 689
+      },
+      {
+        "class": "grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-4 py-6 md:grid-cols-[4rem_minmax(0,1fr)] md:gap-x-6 md:py-8 xl:grid-cols-[4rem_minmax(0,1fr)_15rem]",
+        "columns": "64px 601px",
+        "width": 689
+      },
+      {
+        "class": "grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-4 py-6 md:grid-cols-[4rem_minmax(0,1fr)] md:gap-x-6 md:py-8 xl:grid-cols-[4rem_minmax(0,1fr)_15rem]",
+        "columns": "64px 601px",
+        "width": 689
+      },
+      {
+        "class": "grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-4 py-6 md:grid-cols-[4rem_minmax(0,1fr)] md:gap-x-6 md:py-8 xl:grid-cols-[4rem_minmax(0,1fr)_15rem]",
+        "columns": "64px 601px",
+        "width": 689
+      }
+    ],
+    "main": [
+      {
+        "height": 596,
+        "scrollWidth": 769,
+        "width": 769
+      }
+    ],
+    "overflow": [
+      {
+        "font": "24.8px",
+        "overflow": "hidden",
+        "scrollWidth": 365,
+        "tag": "H1",
+        "text": "CONFIRM THE STORY & BRIEF",
+        "width": 217
+      }
+    ],
+    "sidebar": [
+      {
+        "display": "flex",
+        "width": 240
+      }
+    ],
+    "url": "http://localhost:5173/project/5615241e-33cd-4263-8542-7cf09340a2c8~part_0001/story",
+    "viewport": [
+      1024,
+      768
+    ]
+  },
+  {
+    "label": "look-1024",
+    "documentWidth": 1024,
+    "grids": [
+      {
+        "class": "grid gap-6 bg-ink-black p-6 text-pulp-paper shadow-paper md:grid-cols-[minmax(0,1fr)_minmax(0,0.55fr)] md:p-8",
+        "columns": "387.734px 213.266px",
+        "width": 689
+      },
+      {
+        "class": "grid grid-cols-1 gap-x-6 md:grid-cols-2 lg:grid-cols-3",
+        "columns": "213.664px 213.664px 213.672px",
+        "width": 689
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 mb-8 min-w-0",
+        "columns": "209.664px",
+        "width": 213.6640625
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 mb-8 min-w-0",
+        "columns": "209.664px",
+        "width": 213.6640625
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 mb-8 min-w-0",
+        "columns": "209.672px",
+        "width": 213.671875
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 mb-8 min-w-0",
+        "columns": "209.664px",
+        "width": 213.6640625
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black shadow-ink -translate-x-[2px] -translate-y-[2px] mb-8 min-w-0",
+        "columns": "209.664px",
+        "width": 213.6640625
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 mb-8 min-w-0",
+        "columns": "209.672px",
+        "width": 213.671875
+      }
+    ],
+    "main": [
+      {
+        "height": 596,
+        "scrollWidth": 769,
+        "width": 769
+      }
+    ],
+    "overflow": [
+      {
+        "font": "24.8px",
+        "overflow": "hidden",
+        "scrollWidth": 228,
+        "tag": "H1",
+        "text": "CHOOSE THE LOOK",
+        "width": 217
+      }
+    ],
+    "sidebar": [
+      {
+        "display": "flex",
+        "width": 240
+      }
+    ],
+    "url": "http://localhost:5173/project/5615241e-33cd-4263-8542-7cf09340a2c8~part_0001/styles",
+    "viewport": [
+      1024,
+      768
+    ]
+  },
+  {
+    "label": "look-768",
+    "documentWidth": 768,
+    "grids": [
+      {
+        "class": "grid gap-6 bg-ink-black p-6 text-pulp-paper shadow-paper md:grid-cols-[minmax(0,1fr)_minmax(0,0.55fr)] md:p-8",
+        "columns": "222.578px 122.422px",
+        "width": 433
+      },
+      {
+        "class": "grid grid-cols-1 gap-x-6 md:grid-cols-2 lg:grid-cols-3",
+        "columns": "204.5px 204.5px",
+        "width": 433
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 mb-8 min-w-0",
+        "columns": "200.5px",
+        "width": 204.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 mb-8 min-w-0",
+        "columns": "200.5px",
+        "width": 204.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 mb-8 min-w-0",
+        "columns": "200.5px",
+        "width": 204.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 mb-8 min-w-0",
+        "columns": "200.5px",
+        "width": 204.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black shadow-ink -translate-x-[2px] -translate-y-[2px] mb-8 min-w-0",
+        "columns": "200.5px",
+        "width": 204.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 mb-8 min-w-0",
+        "columns": "200.5px",
+        "width": 204.5
+      }
+    ],
+    "main": [
+      {
+        "height": 790,
+        "scrollWidth": 513,
+        "width": 513
+      }
+    ],
+    "overflow": [
+      {
+        "font": "24.8px",
+        "overflow": "hidden",
+        "scrollWidth": 228,
+        "tag": "H1",
+        "text": "CHOOSE THE LOOK",
+        "width": 134
+      }
+    ],
+    "sidebar": [
+      {
+        "display": "flex",
+        "width": 240
+      }
+    ],
+    "url": "http://localhost:5173/project/5615241e-33cd-4263-8542-7cf09340a2c8~part_0001/styles",
+    "viewport": [
+      768,
+      1024
+    ]
+  },
+  {
+    "label": "cast-768",
+    "documentWidth": 768,
+    "grids": [
+      {
+        "class": "grid gap-6 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] md:items-end",
+        "columns": "207px 138px",
+        "width": 369
+      },
+      {
+        "class": "grid grid-cols-1 gap-x-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4",
+        "columns": "206.5px 206.5px",
+        "width": 433
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "206.5px",
+        "width": 206.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "202.5px",
+        "width": 206.5
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "206.5px",
+        "width": 206.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "202.5px",
+        "width": 206.5
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "206.5px",
+        "width": 206.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "202.5px",
+        "width": 206.5
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "206.5px",
+        "width": 206.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "202.5px",
+        "width": 206.5
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "206.5px",
+        "width": 206.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "202.5px",
+        "width": 206.5
+      },
+      {
+        "class": "grid grid-cols-1 gap-x-5 md:grid-cols-2 xl:grid-cols-3",
+        "columns": "206.5px 206.5px",
+        "width": 433
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "206.5px",
+        "width": 206.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "202.5px",
+        "width": 206.5
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "206.5px",
+        "width": 206.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "202.5px",
+        "width": 206.5
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "206.5px",
+        "width": 206.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "202.5px",
+        "width": 206.5
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "206.5px",
+        "width": 206.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "202.5px",
+        "width": 206.5
+      },
+      {
+        "class": "grid grid-cols-1 gap-x-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4",
+        "columns": "206.5px 206.5px",
+        "width": 433
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "206.5px",
+        "width": 206.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "202.5px",
+        "width": 206.5
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "206.5px",
+        "width": 206.5
+      }
+    ],
+    "main": [
+      {
+        "height": 829,
+        "scrollWidth": 513,
+        "width": 513
+      }
+    ],
+    "overflow": [
+      {
+        "font": "24.8px",
+        "overflow": "hidden",
+        "scrollWidth": 423,
+        "tag": "H1",
+        "text": "CONFIRM CHARACTERS & PLACES",
+        "width": 327
+      },
+      {
+        "font": "14px",
+        "overflow": "visible",
+        "scrollWidth": 185,
+        "tag": "P",
+        "text": "First seen: scene_the_headless_snug",
+        "width": 163
+      },
+      {
+        "font": "14px",
+        "overflow": "visible",
+        "scrollWidth": 188,
+        "tag": "P",
+        "text": "First seen: scene_sphinx_examination",
+        "width": 163
+      }
+    ],
+    "sidebar": [
+      {
+        "display": "flex",
+        "width": 240
+      }
+    ],
+    "url": "http://localhost:5173/project/5615241e-33cd-4263-8542-7cf09340a2c8~part_0001/cast",
+    "viewport": [
+      768,
+      1024
+    ]
+  },
+  {
+    "label": "cast-1024",
+    "documentWidth": 1024,
+    "grids": [
+      {
+        "class": "grid gap-6 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] md:items-end",
+        "columns": "360.594px 240.398px",
+        "width": 625
+      },
+      {
+        "class": "grid grid-cols-1 gap-x-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4",
+        "columns": "216.328px 216.336px 216.328px",
+        "width": 689
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "216.328px",
+        "width": 216.328125
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "212.328px",
+        "width": 216.328125
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "216.336px",
+        "width": 216.3359375
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "212.336px",
+        "width": 216.3359375
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "216.328px",
+        "width": 216.328125
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "212.328px",
+        "width": 216.328125
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "216.328px",
+        "width": 216.328125
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "212.328px",
+        "width": 216.328125
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "216.336px",
+        "width": 216.3359375
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "212.336px",
+        "width": 216.3359375
+      },
+      {
+        "class": "grid grid-cols-1 gap-x-5 md:grid-cols-2 xl:grid-cols-3",
+        "columns": "334.5px 334.5px",
+        "width": 689
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "334.5px",
+        "width": 334.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "330.5px",
+        "width": 334.5
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "334.5px",
+        "width": 334.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "330.5px",
+        "width": 334.5
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "334.5px",
+        "width": 334.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "330.5px",
+        "width": 334.5
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "334.5px",
+        "width": 334.5
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "330.5px",
+        "width": 334.5
+      },
+      {
+        "class": "grid grid-cols-1 gap-x-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4",
+        "columns": "216.328px 216.336px 216.328px",
+        "width": 689
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "216.328px",
+        "width": 216.328125
+      },
+      {
+        "class": "relative overflow-hidden grid grid-rows-subgrid gap-y-0 border-[2px] bg-bristol transition-[box-shadow,border-color,transform] duration-[180ms] ease-[cubic-bezier(0.22,1,0.36,1)] focus:outline-none focus-visible:outline focus-visible:outline-[3px] focus-visible:outline-offset-4 focus-visible:outline-hero-red border-ink-black/8 min-w-0",
+        "columns": "212.328px",
+        "width": 216.328125
+      },
+      {
+        "class": "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0",
+        "columns": "216.336px",
+        "width": 216.3359375
+      }
+    ],
+    "main": [
+      {
+        "height": 596,
+        "scrollWidth": 769,
+        "width": 769
+      }
+    ],
+    "overflow": [
+      {
+        "font": "24.8px",
+        "overflow": "hidden",
+        "scrollWidth": 423,
+        "tag": "H1",
+        "text": "CONFIRM CHARACTERS & PLACES",
+        "width": 216
+      },
+      {
+        "font": "14px",
+        "overflow": "visible",
+        "scrollWidth": 185,
+        "tag": "P",
+        "text": "First seen: scene_the_headless_snug",
+        "width": 172
+      },
+      {
+        "font": "14px",
+        "overflow": "visible",
+        "scrollWidth": 188,
+        "tag": "P",
+        "text": "First seen: scene_sphinx_examination",
+        "width": 172
+      }
+    ],
+    "sidebar": [
+      {
+        "display": "flex",
+        "width": 240
+      }
+    ],
+    "url": "http://localhost:5173/project/5615241e-33cd-4263-8542-7cf09340a2c8~part_0001/cast",
+    "viewport": [
+      1024,
+      768
+    ]
+  },
+  {
+    "label": "pages-768",
+    "dialogs": [],
+    "documentWidth": 768,
+    "grids": [
+      {
+        "class": "grid gap-6 bg-ink-black p-6 text-pulp-paper shadow-paper md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] md:p-8",
+        "columns": "207px 138px",
+        "width": 433
+      },
+      {
+        "class": "grid grid-cols-1 gap-5 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 ",
+        "columns": "206.5px 206.5px",
+        "width": 433
+      }
+    ],
+    "main": [
+      {
+        "height": 852,
+        "scrollWidth": 513,
+        "width": 513
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/project/5615241e-33cd-4263-8542-7cf09340a2c8~part_0001/pages",
+    "viewport": [
+      768,
+      1024
+    ]
+  },
+  {
+    "label": "pages-1280",
+    "dialogs": [],
+    "documentWidth": 1280,
+    "grids": [
+      {
+        "class": "grid gap-6 bg-ink-black p-6 text-pulp-paper shadow-paper md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] md:p-8",
+        "columns": "496.195px 330.797px",
+        "width": 915
+      },
+      {
+        "class": "grid grid-cols-1 gap-5 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 ",
+        "columns": "213.75px 213.75px 213.75px 213.75px",
+        "width": 915
+      }
+    ],
+    "main": [
+      {
+        "height": 628,
+        "scrollWidth": 995,
+        "width": 995
+      }
+    ],
+    "overflow": [
+      {
+        "font": "24.8px",
+        "overflow": "hidden",
+        "scrollWidth": 326,
+        "tag": "H1",
+        "text": "REVIEW COMPLETE PAGES",
+        "width": 311
+      }
+    ],
+    "url": "http://localhost:5173/project/5615241e-33cd-4263-8542-7cf09340a2c8~part_0001/pages",
+    "viewport": [
+      1280,
+      800
+    ]
+  },
+  {
+    "label": "pages-375",
+    "dialogs": [],
+    "documentWidth": 375,
+    "grids": [
+      {
+        "class": "grid gap-6 bg-ink-black p-6 text-pulp-paper shadow-paper md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] md:p-8",
+        "columns": "288px",
+        "width": 336
+      },
+      {
+        "class": "grid grid-cols-1 gap-5 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 ",
+        "columns": "336px",
+        "width": 336
+      }
+    ],
+    "main": [
+      {
+        "height": 756,
+        "scrollWidth": 360,
+        "width": 360
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/project/5615241e-33cd-4263-8542-7cf09340a2c8~part_0001/pages",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "page-dialog-375",
+    "dialogs": [
+      {
+        "height": 812,
+        "scrollWidth": 375,
+        "text": "Page 1 review",
+        "width": 375
+      }
+    ],
+    "documentWidth": 375,
+    "grids": [
+      {
+        "class": "grid gap-6 bg-ink-black p-6 text-pulp-paper shadow-paper md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] md:p-8",
+        "columns": "288px",
+        "width": 336
+      },
+      {
+        "class": "grid grid-cols-1 gap-5 min-[480px]:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 ",
+        "columns": "336px",
+        "width": 336
+      }
+    ],
+    "main": [
+      {
+        "height": 756,
+        "scrollWidth": 360,
+        "width": 360
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/project/5615241e-33cd-4263-8542-7cf09340a2c8~part_0001/pages?page=1&review=page",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "login-375",
+    "documentWidth": 365,
+    "grids": [
+      {
+        "class": "grid flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_520px]",
+        "columns": "365.333px",
+        "width": 365
+      },
+      {
+        "class": "grid grid-cols-2 border-b-[2px] border-ink-black",
+        "columns": "155.667px 155.667px",
+        "width": 311
+      }
+    ],
+    "main": [
+      {
+        "height": 1005,
+        "scrollWidth": 365,
+        "width": 365
+      }
+    ],
+    "overflow": [],
+    "url": "http://127.0.0.1:5173/login",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "signup-375",
+    "documentWidth": 365,
+    "grids": [
+      {
+        "class": "grid flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_520px]",
+        "columns": "365.333px",
+        "width": 365
+      },
+      {
+        "class": "grid grid-cols-2 border-b-[2px] border-ink-black",
+        "columns": "155.667px 155.667px",
+        "width": 311
+      }
+    ],
+    "main": [
+      {
+        "height": 1123,
+        "scrollWidth": 365,
+        "width": 365
+      }
+    ],
+    "overflow": [],
+    "url": "http://127.0.0.1:5173/login",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "samples-375",
+    "documentWidth": 365,
+    "grids": [
+      {
+        "class": "grid gap-3 bg-surface-container p-4 sm:grid-cols-[minmax(0,1fr)_190px] sm:items-end",
+        "columns": "293.333px",
+        "width": 325
+      },
+      {
+        "class": "grid gap-4 sm:grid-cols-2",
+        "columns": "325.333px",
+        "width": 325
+      }
+    ],
+    "main": [
+      {
+        "height": 4851,
+        "scrollWidth": 365,
+        "width": 365
+      }
+    ],
+    "overflow": [],
+    "url": "http://127.0.0.1:5173/samples",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "sample-reader-375",
+    "documentWidth": 365,
+    "grids": [],
+    "main": [
+      {
+        "height": 16422,
+        "scrollWidth": 365,
+        "width": 365
+      }
+    ],
+    "overflow": [],
+    "url": "http://127.0.0.1:5173/samples?story=kaitlin-out-of-space",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "legal-terms-375",
+    "documentWidth": 365,
+    "grids": [],
+    "main": [
+      {
+        "height": 4887,
+        "scrollWidth": 365,
+        "width": 365
+      }
+    ],
+    "overflow": [],
+    "url": "http://127.0.0.1:5173/legal/terms",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "reset-375",
+    "documentWidth": 365,
+    "grids": [
+      {
+        "class": "grid flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_520px]",
+        "columns": "365.333px",
+        "width": 365
+      },
+      {
+        "class": "grid grid-cols-2 border-b-[2px] border-ink-black",
+        "columns": "155.667px 155.667px",
+        "width": 311
+      }
+    ],
+    "main": [
+      {
+        "height": 1005,
+        "scrollWidth": 365,
+        "width": 365
+      }
+    ],
+    "overflow": [],
+    "url": "http://127.0.0.1:5173/login",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "callback-375",
+    "documentWidth": 375,
+    "grids": [],
+    "main": [
+      {
+        "height": 812,
+        "scrollWidth": 375,
+        "width": 375
+      }
+    ],
+    "overflow": [],
+    "url": "http://127.0.0.1:5173/auth/callback",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "project-settings-768-confirmed",
+    "documentWidth": 768,
+    "grids": [
+      {
+        "class": "grid items-start gap-6 md:grid-cols-[200px_minmax(0,1fr)] md:gap-9",
+        "columns": "200px 197px",
+        "width": 433
+      },
+      {
+        "class": "grid gap-4 not-last:border-b not-last:border-ink-black/10 px-5 py-6 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)] lg:gap-8 lg:px-7 lg:py-8",
+        "columns": "153px",
+        "width": 193
+      },
+      {
+        "class": "grid gap-4 not-last:border-b not-last:border-ink-black/10 px-5 py-6 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)] lg:gap-8 lg:px-7 lg:py-8",
+        "columns": "153px",
+        "width": 193
+      }
+    ],
+    "main": [
+      {
+        "height": 928,
+        "scrollWidth": 513,
+        "width": 513
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/project/5615241e-33cd-4263-8542-7cf09340a2c8~part_0001/settings",
+    "viewport": [
+      768,
+      1024
+    ]
+  },
+  {
+    "label": "project-settings-general-768",
+    "documentWidth": 768,
+    "grids": [
+      {
+        "class": "grid items-start gap-6 md:grid-cols-[200px_minmax(0,1fr)] md:gap-9",
+        "columns": "200px 197px",
+        "width": 433
+      },
+      {
+        "class": "grid gap-4 not-last:border-b not-last:border-ink-black/10 px-5 py-6 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)] lg:gap-8 lg:px-7 lg:py-8",
+        "columns": "153px",
+        "width": 193
+      }
+    ],
+    "main": [
+      {
+        "height": 928,
+        "scrollWidth": 513,
+        "width": 513
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/project/5615241e-33cd-4263-8542-7cf09340a2c8~part_0001/settings",
+    "viewport": [
+      768,
+      1024
+    ]
+  },
+  {
+    "label": "account-768",
+    "documentWidth": 768,
+    "grids": [
+      {
+        "class": "grid items-start gap-6 md:grid-cols-[200px_minmax(0,1fr)] md:gap-9",
+        "columns": "200px 452px",
+        "width": 688
+      }
+    ],
+    "main": [
+      {
+        "height": 968,
+        "scrollWidth": 768,
+        "width": 768
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/account",
+    "viewport": [
+      768,
+      1024
+    ]
+  },
+  {
+    "label": "credits-375",
+    "documentWidth": 375,
+    "grids": [
+      {
+        "class": "border-[2px] border-ink-black bg-ink-black text-bristol shadow-paper grid overflow-hidden md:grid-cols-[minmax(0,1fr)_320px]",
+        "columns": "332px",
+        "width": 336
+      },
+      {
+        "class": "grid gap-4 sm:grid-cols-2 lg:grid-cols-3",
+        "columns": "336px",
+        "width": 336
+      },
+      {
+        "class": "grid gap-x-8 gap-y-3 px-5 py-5 font-body text-[0.88rem] font-semibold leading-6 text-ink-muted md:grid-cols-2 md:px-7",
+        "columns": "296px",
+        "width": 336
+      }
+    ],
+    "main": [
+      {
+        "height": 756,
+        "scrollWidth": 360,
+        "width": 360
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/credits",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "library-375",
+    "documentWidth": 375,
+    "grids": [
+      {
+        "class": "relative grid overflow-hidden border-[3px] border-ink-black bg-ink-black text-bristol shadow-paper lg:grid-cols-[minmax(0,1fr)_360px]",
+        "columns": "330px",
+        "width": 336
+      },
+      {
+        "class": "grid grid-cols-[repeat(auto-fill,minmax(min(100%,270px),1fr))] gap-7",
+        "columns": "336px",
+        "width": 336
+      }
+    ],
+    "main": [
+      {
+        "height": 756,
+        "scrollWidth": 360,
+        "width": 360
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "wizard-source-375",
+    "documentWidth": 375,
+    "grids": [
+      {
+        "class": "relative grid overflow-hidden border-[3px] border-ink-black bg-ink-black text-bristol shadow-paper lg:grid-cols-[minmax(0,1fr)_360px]",
+        "columns": "330px",
+        "width": 336
+      },
+      {
+        "class": "grid grid-cols-[repeat(auto-fill,minmax(min(100%,270px),1fr))] gap-7",
+        "columns": "336px",
+        "width": 336
+      },
+      {
+        "class": "grid grid-cols-2 border-b-2 border-ink-black/15",
+        "columns": "142px 142px",
+        "width": 284
+      },
+      {
+        "class": "grid gap-3 bg-surface-container p-4 sm:grid-cols-[minmax(0,1fr)_190px] sm:items-end",
+        "columns": "252px",
+        "width": 284
+      },
+      {
+        "class": "grid gap-4 sm:grid-cols-2",
+        "columns": "284px",
+        "width": 284
+      }
+    ],
+    "main": [
+      {
+        "height": 756,
+        "scrollWidth": 360,
+        "width": 360
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "wizard-details-375",
+    "documentWidth": 375,
+    "grids": [
+      {
+        "class": "relative grid overflow-hidden border-[3px] border-ink-black bg-ink-black text-bristol shadow-paper lg:grid-cols-[minmax(0,1fr)_360px]",
+        "columns": "330px",
+        "width": 336
+      },
+      {
+        "class": "grid grid-cols-[repeat(auto-fill,minmax(min(100%,270px),1fr))] gap-7",
+        "columns": "336px",
+        "width": 336
+      },
+      {
+        "class": "grid gap-4 sm:grid-cols-2",
+        "columns": "284px",
+        "width": 284
+      }
+    ],
+    "main": [
+      {
+        "height": 756,
+        "scrollWidth": 360,
+        "width": 360
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "wizard-lettering-375",
+    "documentWidth": 375,
+    "grids": [
+      {
+        "class": "relative grid overflow-hidden border-[3px] border-ink-black bg-ink-black text-bristol shadow-paper lg:grid-cols-[minmax(0,1fr)_360px]",
+        "columns": "330px",
+        "width": 336
+      },
+      {
+        "class": "grid grid-cols-[repeat(auto-fill,minmax(min(100%,270px),1fr))] gap-7",
+        "columns": "336px",
+        "width": 336
+      },
+      {
+        "class": "grid gap-4 sm:grid-cols-2",
+        "columns": "284px",
+        "width": 284
+      }
+    ],
+    "main": [
+      {
+        "height": 756,
+        "scrollWidth": 360,
+        "width": 360
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "editable-project-801",
+    "documentWidth": 801,
+    "grids": [],
+    "main": [
+      {
+        "height": 928,
+        "scrollWidth": 561,
+        "width": 561
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/project/2a62c567-05f5-486d-9773-0b4708112bda~part_0001/styles",
+    "viewport": [
+      801,
+      1024
+    ]
+  },
+  {
+    "label": "labs-375",
+    "documentWidth": 375,
+    "grids": [
+      {
+        "class": "grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)]",
+        "columns": "1442.27px",
+        "width": 1368
+      }
+    ],
+    "main": [
+      {
+        "height": 741,
+        "scrollWidth": 1470,
+        "width": 360
+      },
+      {
+        "height": 956,
+        "scrollWidth": 1442,
+        "width": 1442
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/labs",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "backoffice-gate-375",
+    "documentWidth": 375,
+    "grids": [],
+    "main": [],
+    "overflow": [],
+    "url": "http://localhost:5173/backoffice",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "primitives-375",
+    "documentWidth": 375,
+    "grids": [
+      {
+        "class": "grid gap-5 xl:grid-cols-[1fr_1fr]",
+        "columns": "336px",
+        "width": 336
+      },
+      {
+        "class": "grid gap-4 p-4 md:grid-cols-2",
+        "columns": "300px",
+        "width": 332
+      },
+      {
+        "class": "grid gap-5 xl:grid-cols-[1fr_1fr]",
+        "columns": "336px",
+        "width": 336
+      },
+      {
+        "class": "grid gap-4 p-4 md:grid-cols-2",
+        "columns": "300px",
+        "width": 332
+      },
+      {
+        "class": "grid gap-3 md:grid-cols-2",
+        "columns": "300px",
+        "width": 300
+      },
+      {
+        "class": "grid gap-3 sm:grid-cols-3",
+        "columns": "300px",
+        "width": 300
+      },
+      {
+        "class": "mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4",
+        "columns": "300px",
+        "width": 300
+      }
+    ],
+    "main": [
+      {
+        "height": 741,
+        "scrollWidth": 374,
+        "width": 360
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/dev/primitives",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "confirmation-drawer-375",
+    "documentWidth": 375,
+    "grids": [
+      {
+        "class": "grid gap-5 xl:grid-cols-[1fr_1fr]",
+        "columns": "336px",
+        "width": 336
+      },
+      {
+        "class": "grid gap-4 p-4 md:grid-cols-2",
+        "columns": "300px",
+        "width": 332
+      },
+      {
+        "class": "grid gap-5 xl:grid-cols-[1fr_1fr]",
+        "columns": "336px",
+        "width": 336
+      },
+      {
+        "class": "grid gap-4 p-4 md:grid-cols-2",
+        "columns": "300px",
+        "width": 332
+      },
+      {
+        "class": "grid gap-3 md:grid-cols-2",
+        "columns": "300px",
+        "width": 300
+      },
+      {
+        "class": "grid gap-3 sm:grid-cols-3",
+        "columns": "300px",
+        "width": 300
+      },
+      {
+        "class": "mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4",
+        "columns": "300px",
+        "width": 300
+      }
+    ],
+    "main": [
+      {
+        "height": 741,
+        "scrollWidth": 374,
+        "width": 360
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/dev/primitives",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "book-320",
+    "documentWidth": 320,
+    "grids": [
+      {
+        "class": "grid gap-8 bg-ink-black p-6 text-bristol shadow-paper md:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] md:items-center md:p-9",
+        "columns": "233px",
+        "width": 281
+      },
+      {
+        "class": "grid gap-4 sm:grid-cols-2",
+        "columns": "281px",
+        "width": 281
+      }
+    ],
+    "main": [
+      {
+        "height": 584,
+        "scrollWidth": 305,
+        "width": 305
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/project/5615241e-33cd-4263-8542-7cf09340a2c8~part_0001/book",
+    "viewport": [
+      320,
+      640
+    ]
+  },
+  {
+    "label": "story-1024x600",
+    "documentWidth": 1024,
+    "grids": [
+      {
+        "class": "grid items-start gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]",
+        "columns": "689px",
+        "width": 689
+      },
+      {
+        "class": "grid grid-cols-2 gap-4",
+        "columns": "316.5px 316.5px",
+        "width": 649
+      },
+      {
+        "class": "mt-4 grid items-start gap-6 lg:grid-cols-2",
+        "columns": "332.5px 332.5px",
+        "width": 689
+      },
+      {
+        "class": "grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-4 py-6 md:grid-cols-[4rem_minmax(0,1fr)] md:gap-x-6 md:py-8 xl:grid-cols-[4rem_minmax(0,1fr)_15rem]",
+        "columns": "64px 601px",
+        "width": 689
+      },
+      {
+        "class": "grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-4 py-6 md:grid-cols-[4rem_minmax(0,1fr)] md:gap-x-6 md:py-8 xl:grid-cols-[4rem_minmax(0,1fr)_15rem]",
+        "columns": "64px 601px",
+        "width": 689
+      },
+      {
+        "class": "grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-4 py-6 md:grid-cols-[4rem_minmax(0,1fr)] md:gap-x-6 md:py-8 xl:grid-cols-[4rem_minmax(0,1fr)_15rem]",
+        "columns": "64px 601px",
+        "width": 689
+      },
+      {
+        "class": "grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-4 py-6 md:grid-cols-[4rem_minmax(0,1fr)] md:gap-x-6 md:py-8 xl:grid-cols-[4rem_minmax(0,1fr)_15rem]",
+        "columns": "64px 601px",
+        "width": 689
+      }
+    ],
+    "main": [
+      {
+        "height": 428,
+        "scrollWidth": 769,
+        "width": 769
+      }
+    ],
+    "overflow": [
+      {
+        "overflow": "hidden",
+        "scrollWidth": 365,
+        "tag": "H1",
+        "text": "CONFIRM THE STORY & BRIEF",
+        "width": 216
+      }
+    ],
+    "url": "http://localhost:5173/project/5615241e-33cd-4263-8542-7cf09340a2c8~part_0001/story",
+    "viewport": [
+      1024,
+      600
+    ]
+  },
+  {
+    "label": "entity-sheet-375",
+    "documentWidth": 375,
+    "grids": [
+      {
+        "class": "grid items-start gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]",
+        "columns": "336px",
+        "width": 336
+      },
+      {
+        "class": "grid grid-cols-2 gap-4",
+        "columns": "140px 140px",
+        "width": 296
+      },
+      {
+        "class": "mt-4 grid items-start gap-6 lg:grid-cols-2",
+        "columns": "336px",
+        "width": 336
+      },
+      {
+        "class": "grid gap-x-8 md:grid-cols-2",
+        "columns": "336px",
+        "width": 336
+      },
+      {
+        "class": "grid gap-5 md:grid-cols-2",
+        "columns": "316px",
+        "width": 316
+      }
+    ],
+    "main": [
+      {
+        "height": 756,
+        "scrollWidth": 360,
+        "width": 360
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/project/5615241e-33cd-4263-8542-7cf09340a2c8~part_0001/story",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "privacy-375",
+    "documentWidth": 360,
+    "grids": [],
+    "main": [
+      {
+        "height": 4649,
+        "scrollWidth": 360,
+        "width": 360
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/legal/privacy",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "acceptable-use-375",
+    "documentWidth": 360,
+    "grids": [],
+    "main": [
+      {
+        "height": 2956,
+        "scrollWidth": 360,
+        "width": 360
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/legal/acceptable-use",
+    "viewport": [
+      375,
+      812
+    ]
+  },
+  {
+    "label": "not-found-375",
+    "documentWidth": 375,
+    "grids": [],
+    "main": [
+      {
+        "height": 756,
+        "scrollWidth": 375,
+        "width": 375
+      }
+    ],
+    "overflow": [],
+    "url": "http://localhost:5173/responsive-review-missing",
+    "viewport": [
+      375,
+      812
+    ]
+  }
+]

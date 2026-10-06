@@ -210,8 +210,8 @@ function StageDocket({
       : "bg-ink-black text-bristol";
 
   return (
-    <div className="@container flex items-start justify-center studio-desktop:min-h-[50vh] studio-desktop:items-center studio-desktop:px-6 studio-desktop:py-8">
-      <article className="grid w-full max-w-[760px] overflow-hidden border-[3px] border-ink-black bg-bristol shadow-paper studio-desktop:@min-[42rem]:grid-cols-[150px_minmax(0,1fr)]">
+    <div className="@container flex items-start justify-center studio-desktop:min-h-[50vh] studio-desktop:items-center studio-desktop:px-6">
+      <article className="grid w-full max-w-[880px] overflow-hidden border-[3px] border-ink-black bg-bristol shadow-paper studio-desktop:@min-[42rem]:grid-cols-[150px_minmax(0,1fr)]">
         <div className={`relative hidden items-center justify-center gap-3 px-5 py-3 studio-desktop:flex @min-[42rem]:min-h-full @min-[42rem]:flex-col @min-[42rem]:gap-0 @min-[42rem]:py-6 @min-[42rem]:text-center ${plateClass}`}>
           <div className="hidden font-meta text-[0.54rem] font-bold uppercase leading-none tracking-[0.14em] opacity-70 @min-[42rem]:block">
             {t("Station")}

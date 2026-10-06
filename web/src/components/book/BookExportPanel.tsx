@@ -57,7 +57,7 @@ export function BookExportPanel({
           {unavailableReason ?? t("Resolve the edition checks before creating a package.")}
         </p>
       )}
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))] gap-4">
         {(["pdf", "cbz"] as const).map((format) => {
           const saved = packages.find((item) => item.format === format);
           const working = pending && pendingFormat === format;

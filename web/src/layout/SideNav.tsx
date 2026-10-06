@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { Sheet } from "../components/composites/Sheet";
+import { StationDrawer } from "./StationDrawer";
 import { TopBarPortal } from "./TopBarSlot";
 import { useDesktopLayout } from "../hooks/useDesktopLayout";
 import { useProjectStatus, useProjects } from "../api/queries";
@@ -235,55 +235,18 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
   }
 
   const currentPart = status?.parts?.find((part) => part.id === splitProjectKey(projectId ?? "").part);
+  const activeIndex = activeStation ? STATIONS.findIndex((station) => station.key === activeStation.key) : -1;
+  const progress = activeIndex >= 0 ? ((activeIndex + 1) / STATIONS.length) * 100 : 0;
+  const closeDrawer = () => setMobileOpen(false);
 
-  const mobileNav = projectId == null ? null : (
-    <>
-      <TopBarPortal>
-        <div className="flex min-w-0 flex-1 items-center gap-2 px-3 studio-desktop:hidden">
-          <Link to="/" aria-label={t("Back to projects")} className="flex min-h-11 min-w-0 flex-1 items-center gap-2">
-            <ArrowLeft size={16} aria-hidden="true" className="shrink-0" />
-            <span className="min-w-0">
-              <span className="block truncate font-display text-[0.88rem] font-bold uppercase leading-none tracking-[-0.02em]">
-                {projectTitle}
-              </span>
-              <span className="mt-1 block truncate font-meta text-[0.62rem] font-semibold text-ink-muted">
-                {currentPart ? t("Part {number} of {count}", { number: currentPart.ordinal, count: status?.parts?.length ?? 0 }) : t("LIBRARY")}
-              </span>
-            </span>
-          </Link>
-          <button
-            type="button"
-            aria-label={t("STATION")}
-            aria-haspopup="dialog"
-            aria-expanded={mobileOpen && !desktop}
-            onClick={() => setMobileOpen(true)}
-            className="flex min-h-11 min-w-0 max-w-[50%] items-center gap-2 px-2 font-meta text-xs font-semibold text-ink-black hover:bg-surface-container"
-          >
-            <span className="truncate">{activeStation ? `${activeStation.number} ${t(activeStation.label)}` : t("Settings")}</span>
-            <ChevronDown size={14} aria-hidden="true" className="shrink-0" />
-          </button>
-        </div>
-      </TopBarPortal>
-      <Sheet open={mobileOpen && !desktop} title={projectTitle} onClose={() => setMobileOpen(false)}
-        footer={<Link to={settingsPath} onClick={() => setMobileOpen(false)} className="flex min-h-11 items-center gap-2 font-meta text-xs font-semibold">
-          <Icon name="settings" size={16} />{t("Settings")}
-        </Link>}>
-        {status?.parts && status.parts.length > 0 && <PartSwitcher project={projectId} parts={status.parts} tone="light" className="mb-4" onNavigate={() => setMobileOpen(false)} />}
-        <nav aria-label={t("STATION")} className="bg-ink-black py-2 text-bristol">
-          {STATIONS.map(renderStationRow)}
-        </nav>
-      </Sheet>
-    </>
-  );
-
-  if (!showDesktop) return <>{mobileNav}</>;
-
-  return (
-    <>
-      {mobileNav}
-      <aside className="pressroom-sidebar hidden h-full w-[240px] shrink-0 flex-col bg-ink-black text-bristol studio-desktop:flex xl:w-[270px] 2xl:w-[320px]">
+  /** The pressroom: shared by the desktop sidebar and the compact drawer. */
+  function renderPressroom(inDrawer: boolean) {
+    const onNavigate = inDrawer ? closeDrawer : undefined;
+    return (
+      <>
         <Link
           to="/"
+          onClick={onNavigate}
           className="flex h-shell-top shrink-0 items-center gap-3 border-b-[2px] border-bristol/10 px-5 xl:px-6"
           aria-label={t("LIBRARY")}
         >
@@ -306,11 +269,11 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
 
         {projectId && status?.parts && status.parts.length > 0 && (
           <div className="shrink-0 border-b-[2px] border-bristol/10 px-5 py-3 xl:px-6">
-            <PartSwitcher project={projectId} parts={status.parts} className="w-full" />
+            <PartSwitcher project={projectId} parts={status.parts} className="w-full" onNavigate={onNavigate} />
           </div>
         )}
 
-        <nav aria-label="Stations" className="min-h-0 flex-1 overflow-y-auto py-3">
+        <nav aria-label={inDrawer ? t("STATION") : "Stations"} className="min-h-0 flex-1 overflow-y-auto py-3">
           {projectId ? (
             STATIONS.map((station) => renderStationRow(station))
           ) : (
@@ -323,6 +286,8 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
         <div className="h-shell-footer shrink-0 border-t-[2px] border-bristol/10">
           <Link
             to={settingsPath}
+            onClick={onNavigate}
+            aria-current={isSettingsActive ? "page" : undefined}
             className={cn(
               "flex h-full w-full items-center gap-3 px-5 font-meta text-[0.62rem] tracking-[0.14em] transition-colors xl:px-6 2xl:text-[0.68rem]",
               isSettingsActive
@@ -334,6 +299,77 @@ export function SideNav({ showDesktop = true }: SideNavProps) {
             {t("Settings")}
           </Link>
         </div>
+      </>
+    );
+  }
+
+  const partLine = currentPart && (status?.parts?.length ?? 0) > 1
+    ? t("Part {number} of {count}", { number: currentPart.ordinal, count: status?.parts?.length ?? 0 })
+    : null;
+
+  const mobileNav = projectId == null ? null : (
+    <>
+      <TopBarPortal>
+        {/* Compact navigator: the active station token, as the sidebar shows it. */}
+        <div className="relative flex min-w-0 flex-1 items-stretch studio-desktop:hidden">
+          <Link
+            to="/"
+            aria-label={t("Back to projects")}
+            className="flex w-12 shrink-0 items-center justify-center border-r-[2px] border-ink-black/10 text-ink-black transition-colors hover:bg-surface-container sm:w-14"
+          >
+            <ArrowLeft size={18} aria-hidden="true" />
+          </Link>
+          <button
+            type="button"
+            aria-label={t("STATION")}
+            aria-haspopup="dialog"
+            aria-expanded={mobileOpen && !desktop}
+            onClick={() => setMobileOpen(true)}
+            className="group flex min-w-0 flex-1 items-center gap-3 px-3 pb-1 text-left transition-colors hover:bg-surface-container sm:px-4"
+          >
+            <span aria-hidden="true" className="hidden sm:flex">
+              <ProjectCoverThumb key={projectId} projectId={projectId} hasCover={status?.has_cover ?? current?.has_cover ?? false} compact />
+            </span>
+            <span
+              aria-hidden="true"
+              className="flex h-8 w-8 shrink-0 items-center justify-center border-[2px] border-ink-black bg-narrator-gold font-meta text-[0.58rem] font-bold tracking-[0.08em] text-ink-black"
+            >
+              {activeStation ? activeStation.number : <Icon name="settings" size={14} />}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-display text-[1.05rem] font-black uppercase leading-none tracking-[-0.02em] text-ink-black">
+                {activeStation ? t(activeStation.label) : t("Settings")}
+              </span>
+              <span className="mt-1 block truncate font-meta text-[0.6rem] font-semibold tracking-[0.04em] text-ink-muted">
+                {projectTitle}{partLine && ` · ${partLine}`}
+              </span>
+            </span>
+            <span aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center border-[2px] border-ink-black/15 text-ink-black transition-colors group-hover:border-ink-black">
+              <ChevronDown size={14} />
+            </span>
+          </button>
+          {activeStation && (
+            <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-[4px] bg-surface-variant">
+              <span className="relative block h-full bg-hero-red" style={{ width: `${progress}%` }}>
+                <span className="absolute -right-1 bottom-0 h-[4px] w-2 bg-narrator-gold" />
+              </span>
+            </span>
+          )}
+        </div>
+      </TopBarPortal>
+      <StationDrawer open={mobileOpen && !desktop} label={projectTitle} onClose={closeDrawer}>
+        {renderPressroom(true)}
+      </StationDrawer>
+    </>
+  );
+
+  if (!showDesktop) return <>{mobileNav}</>;
+
+  return (
+    <>
+      {mobileNav}
+      <aside className="pressroom-sidebar hidden h-full w-[240px] shrink-0 flex-col bg-ink-black text-bristol studio-desktop:flex xl:w-[270px] 2xl:w-[320px]">
+        {renderPressroom(false)}
       </aside>
     </>
   );

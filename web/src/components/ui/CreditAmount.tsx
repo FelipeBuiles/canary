@@ -23,7 +23,7 @@ export function CreditAmount({
   sign,
   showMark = false,
   showLabel = true,
-  label = "credits",
+  label = value === 1 ? "credit" : "credits",
   className,
   markClassName,
 }: CreditAmountProps) {

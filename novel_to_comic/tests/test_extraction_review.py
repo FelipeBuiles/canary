@@ -290,20 +290,20 @@ def test_sectioned_extract_and_brief_use_the_existing_call_graph_and_cache_sourc
                     visual_anchor='burrowing worm', age_range='', gender='', distinguishing_features=[],
                     default_outfit='', first_appearance_scene=scene_id, cast_required=True,
                     evidence=[dict(scene_id=scene_id, source_quote='The worm queen bit Mira.')])],
-                    character_details=[dict(id='part0001_char_mira', distinguishing_features=['Six feet tall'],
+                    character_details=[dict(id='p0001s0001_char_mira', distinguishing_features=['Six feet tall'],
                         evidence=[dict(scene_id=scene_id, source_quote='Mira stood six feet tall.')])])))
         index = context['section']
         scene_id = context['id_prefix'] + 'scene_1'
-        character = dict(id='part0001_char_mira', name='Mira', visual_anchor='teenage girl', age_range='13',
+        character = dict(id='p0001s0001_char_mira', name='Mira', visual_anchor='teenage girl', age_range='13',
                          gender='female', distinguishing_features=[], default_outfit='plain shirt',
-                         first_appearance_scene=scene_id) if index == 1 else {'id': 'part0001_char_mira'}
+                         first_appearance_scene=scene_id) if index == 1 else {'id': 'p0001s0001_char_mira'}
         value = dict(title='The Cave', author='A. Example', characters=[character],
-            locations=[dict(id='part0001_loc_cave', name='Cave', visual_anchor='cave', mood='tense')]
+            locations=[dict(id='p0001s0001_loc_cave', name='Cave', visual_anchor='cave', mood='tense')]
                       if index == 1 else [], scenes=[dict(id=scene_id, chapter=1, title='Crossing',
-                location_id='part0001_loc_cave', character_ids=['part0001_char_mira'], summary='Mira crosses the cave.',
+                location_id='p0001s0001_loc_cave', character_ids=['p0001s0001_char_mira'], summary='Mira crosses the cave.',
                 scene_type='action', narrative_beat='rising_action',
                 source_start_quote=context['required_first_scene_source_start_quote'])], props=[],
-            character_participation=[dict(character_id='part0001_char_mira', scene_id=scene_id,
+            character_participation=[dict(character_id='p0001s0001_char_mira', scene_id=scene_id,
                 classification='direct_action', source_quote=context['required_first_scene_source_start_quote'])])
         assert 'source_review' not in kwargs['json_schema']['properties']
         return ApiResult(value=value)

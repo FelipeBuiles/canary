@@ -109,7 +109,7 @@ it("starts Cast with its bundled cover estimate without requesting a cover befor
   state.castStatus = undefined;
 });
 
-it("places all six base proofs in the responsive three-column desktop grid", () => {
+it("places all six base proofs in a grid sized by card width", () => {
   state.labels = ["Ink", "Watercolor", "Noir", "Graphic", "Caricature", "Paper"];
   state.estimateError = null;
   state.castStatus = undefined;
@@ -117,9 +117,8 @@ it("places all six base proofs in the responsive three-column desktop grid", () 
     <Route path="/projects/:id/style" element={<StyleRoom />} />
   </Routes></MemoryRouter></I18nProvider>);
   const grid = screen.getByTestId("style-proof-grid");
-  expect(grid.classList.contains("grid-cols-1")).toBe(true);
-  expect(grid.classList.contains("md:grid-cols-2")).toBe(true);
-  expect(grid.classList.contains("lg:grid-cols-3")).toBe(true);
+  // Columns come from a minimum card width, never from viewport breakpoints.
+  expect(grid.classList.contains("grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]")).toBe(true);
   expect(within(grid).getAllByRole("heading", { level: 3 })).toHaveLength(6);
   expect(within(grid).getAllByRole("button", { name: "SELECT THIS STYLE" })).toHaveLength(6);
 });

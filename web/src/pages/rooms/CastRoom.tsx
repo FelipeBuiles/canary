@@ -372,17 +372,19 @@ function AnchorSection({ anchor }: { anchor: string }) {
 const CAST_CARD_ROWS = 6;
 // No row gap: a subgrid would absorb it into every section. Cards space
 // themselves with a bottom margin instead.
-const CAST_GRID = "grid grid-cols-1 gap-x-5";
+// Card minimums, not viewport breakpoints, decide column counts.
+const CAST_GRID = "grid gap-x-5";
 // Each card's wrapper carries its anchor and search visibility, and passes the
 // CAST_CARD_ROWS rows through (Tailwind needs the literal row-span-6).
 const CAST_GRID_ITEM = "row-span-6 mb-8 grid min-w-0 scroll-mt-24 grid-rows-subgrid gap-y-0";
 
-/** "part0001_scene_003" → "Part 1, scene 3"; any other id stays as written. */
+/** "part0001_scene_003" → "Part 1, scene 3"; other ids read as words. */
 function sceneLabel(sceneId: string, t: (key: string, values?: Record<string, string | number>) => string) {
   const match = /^part0*(\d+)_scene_0*(\d+)$/.exec(sceneId);
-  return match
-    ? t("Part {part}, scene {scene}", { part: match[1], scene: match[2] })
-    : sceneId;
+  if (match) return t("Part {part}, scene {scene}", { part: match[1], scene: match[2] });
+  // "scene_the_headless_snug" → "The headless snug"
+  const words = sceneId.replace(/^scene_/, "").replace(/_+/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : sceneId;
 }
 
 function CastCard({
@@ -490,7 +492,7 @@ function CastCard({
         <h3 className="line-clamp-2 text-balance font-display text-[1.45rem] font-black leading-[1.08] tracking-[-0.03em] text-ink-black" title={name}>
           {name}
         </h3>
-        {meta && <p className="mt-1.5 font-body text-sm text-ink-muted">{meta}</p>}
+        {meta && <p className="mt-1.5 font-body text-sm text-ink-muted [overflow-wrap:anywhere]">{meta}</p>}
       </div>
 
       <div className="min-w-0 px-5 pt-3">
@@ -950,10 +952,13 @@ function PropRefCard({
   prop,
   projectName,
   stageRegenerating,
+  firstSceneTitle,
 }: {
   prop: Prop;
   projectName: string;
   stageRegenerating: boolean;
+  /** The Story Bible title of the prop's first scene, when this series knows it. */
+  firstSceneTitle?: string;
 }) {
   const refUrl = `/api${seriesPath(projectName)}/files/refs/props/${encodeURIComponent(prop.id)}/ref.png`;
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -1031,6 +1036,7 @@ function PropRefCard({
   const isInstructionBusy = regenPropInstructed.isPending || isSubmitting;
 
   const { t } = useI18n();
+  const firstSceneLabel = prop.first_appearance_scene ? firstSceneTitle || sceneLabel(prop.first_appearance_scene, t) : undefined;
   const { hasImage, imageSrc, probe } = useLiveStageAsset(refUrl, timestamp, stageRegenerating);
   // A card hides its asset only while that asset is genuinely absent or
   // while this card's own regeneration is in flight.
@@ -1057,7 +1063,7 @@ function PropRefCard({
         stageRegenerating={stageRegenerating}
         onOpen={() => setIsModalOpen(true)}
         onImageError={() => setImgFailed(true)}
-        meta={prop.first_appearance_scene ? `${t("First seen")}: ${sceneLabel(prop.first_appearance_scene, t)}` : undefined}
+        meta={firstSceneLabel ? `${t("First seen")}: ${firstSceneLabel}` : undefined}
         tags={[]}
         summary={readableAnchor(prop.visual_anchor)}
         alternates={null}
@@ -1091,7 +1097,7 @@ function PropRefCard({
             {prop.first_appearance_scene && (
               <div>
                 <div className="font-meta text-[0.5rem] tracking-[0.18em] text-ink-black/40 mb-1">FIRST APPEARANCE</div>
-                <p className="text-[0.82rem] text-ink-black">{prop.first_appearance_scene}</p>
+                <p className="text-[0.82rem] text-ink-black [overflow-wrap:anywhere]">{firstSceneLabel}</p>
               </div>
             )}
             <GenerationDetailsPanel metadata={generationMeta} isLoading={isMetaLoading} />
@@ -1463,7 +1469,7 @@ export function CastRoom() {
             onUseSuggestion={(characterId, text) => { setSearch(""); setCastSuggestion({ kind: "character", entityId: characterId, text, nonce: Date.now() }); }}
             onResume={handleContinueStale} busy={stageRegenerating || !status?.style_selected}
             redrawing={redrawingCharacters} />}
-          <div className={`${CAST_GRID} sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4`}>
+          <div className={`${CAST_GRID} grid-cols-[repeat(auto-fill,minmax(min(100%,260px),1fr))]`}>
             {bible.characters.map((char) => (
               <div id={`cast-character-${char.id}`} tabIndex={-1} key={char.id} hidden={!matches(char)} className={CAST_GRID_ITEM}>
               <CharacterCastCard
@@ -1482,7 +1488,7 @@ export function CastRoom() {
             title="LOCATION PLATES"
             description="Wide environment plates anchor geography, architecture, light, and atmosphere."
           />
-          <div className={`${CAST_GRID} md:grid-cols-2 xl:grid-cols-3`}>
+          <div className={`${CAST_GRID} grid-cols-[repeat(auto-fill,minmax(min(100%,320px),1fr))]`}>
             {bible.locations.map((loc) => (
               <div id={`cast-location-${loc.id}`} tabIndex={-1} key={loc.id} hidden={!matches(loc)} className={CAST_GRID_ITEM}>
               <LocationPlateCard
@@ -1498,13 +1504,14 @@ export function CastRoom() {
         {bible.props.length > 0 && (
           <div id="cast-props" tabIndex={-1} hidden={!!search.trim() && matchingProps === 0}>
             <SectionHeader variant="underline" title="PROP REFS" />
-            <div className={`${CAST_GRID} sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4`}>
+            <div className={`${CAST_GRID} grid-cols-[repeat(auto-fill,minmax(min(100%,240px),1fr))]`}>
               {bible.props.map((prop) => (
                 <div id={`cast-prop-${prop.id}`} tabIndex={-1} key={prop.id} hidden={!matches(prop)} className={CAST_GRID_ITEM}>
                 <PropRefCard
                   prop={prop}
                   projectName={id}
                   stageRegenerating={stageRegenerating}
+                  firstSceneTitle={bible.scenes.find((scene) => scene.id === prop.first_appearance_scene)?.title}
                 />
                 </div>
               ))}

@@ -229,3 +229,39 @@ def test_formation_is_only_for_groups():
         Character(id="eye", name="Eye", visual_anchor="giant eye", age_range="", gender="",
                   distinguishing_features=[], default_outfit="", first_appearance_scene="s",
                   reference_form="formation")
+
+
+def test_only_figures_receive_the_character_proportion_system(tmp_path):
+    """Regression for The Last Question: "squared cleft jaws" and facial-identity
+    wording gave a form sheet for a point of light a technician's face."""
+    from novel_to_comic import reference_forms
+
+    config, bible, proof = _project(tmp_path, "image-sunburst")
+    suggestion = {"template": "Matte gouache on warm board.", "visual_logic": "realistic_illustration",
+                  "proportion_family": "heroic", "character_design": "Squared cleft jaws."}
+    config = config.model_copy(update={"style_template": style_template_for_suggestion(suggestion)})
+    light = Character(
+        id="light", name="Last Mind", visual_anchor="solitary fading point of mental light",
+        age_range="", gender="", distinguishing_features=[], default_outfit="",
+        first_appearance_scene="scene_1", reference_form="form",
+    )
+    prompts = {
+        name: compile_non_panel_request(config, input_data, reference_plan=plan).compiled.final_prompt
+        for name, input_data, plan in (
+            ("figure", s3_cast._character_generation_input(config, bible, bible.characters[0]),
+             style_reference_plan(config, proof)),
+            ("form", s3_cast._character_generation_input(config, bible, light),
+             style_reference_plan(config, proof)),
+            ("plate", s3_cast._location_generation_input(
+                config, SimpleNamespace(id="loc", name="Void", visual_anchor="black void")),
+             s3_cast._location_plate_reference_plan(config)),
+        )
+    }
+    assert "Squared cleft jaws." in prompts["figure"]
+    assert reference_forms.IDENTITY_QUALITY["figure"] in prompts["figure"]
+    for name in ("form", "plate"):
+        assert "Matte gouache on warm board." in prompts[name]
+        assert "Squared cleft jaws." not in prompts[name]
+    assert reference_forms.IDENTITY_QUALITY["form"] in prompts["form"]
+    assert "facial identity" not in prompts["form"]
+    assert "light or face" not in prompts["form"]

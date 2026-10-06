@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { setMedia } from "mock-match-media";
 import { I18nProvider } from "../i18n";
 import type { CreditHistoryPage, FinishPreflight } from "../types/api";
 import type * as PagesApi from "../api/pages";
@@ -105,7 +106,7 @@ beforeEach(() => {
   exportError = null;
   pendingFormat = null;
   devDiagnostics = false;
-  creditHistory = { pages: [{ runs: [], limit: 30, offset: 0, has_more: false, month_used_credits: 0 }] };
+  creditHistory = { pages: [{ runs: [], limit: 30, offset: 0, has_more: false, month_used_credits: 0, spend_by_stage: {} }] };
   finishStageStatus = "complete";
   drawStageStatus = "complete";
   rerunPreflight.mockReset();
@@ -125,19 +126,24 @@ beforeEach(() => {
 
 describe("BookRoom edition decisions", () => {
   it("shows the book credit ledger without provider costs or model internals", () => {
+    creditHistory.pages[0].spend_by_stage = { style: 20, draw: 9 };
     creditHistory.pages[0].runs = [{
       run_id: "draw-1", job_id: "job-1", stage: "draw", project_id: "demo",
       started_at: "2026-09-20T14:00:00Z", last_activity_at: "2026-09-20T14:01:00Z",
       estimate_credits: 12, actual_credits: 9, returned_credits: 3, credits_added: 0,
-      status: "complete", rows: [{
+      status: "complete", action: null, page_number: 4, rows: [{
         id: "charge-1", amount_credits: -9, status: "settled", stage: "draw",
-        created_at: "2026-09-20T14:01:00Z", image_count: 1,
+        created_at: "2026-09-20T14:01:00Z", image_count: 1, label: "Page art", page_number: 4,
       }],
     }];
     renderRoom();
     expect(screen.getByRole("heading", { name: "CREDIT HISTORY" })).toBeTruthy();
-    expect(screen.getByText("Draw pages")).toBeTruthy();
+    expect(screen.getByText("Spent on this book").parentElement?.textContent).toContain("29 credits");
+    expect(screen.getByText("Drew page 4")).toBeTruthy();
     expect(screen.getByText("charged").parentElement?.textContent).toContain("9 credits charged");
+    expect(screen.getByText("Reserved 12, charged 9, 3 returned to your balance.")).toBeTruthy();
+    // A book's own history never names the project, so a part key cannot misname it.
+    expect(screen.queryByText("Project no longer available")).toBeNull();
     expect(screen.queryByText(/USD|gemini|provider/i)).toBeNull();
   });
 
@@ -448,6 +454,7 @@ describe("Book reader", () => {
   });
 
   it("keeps a facing pair together and preserves its page when switching layouts", () => {
+    setMedia({ width: 1366, height: 768 });
     drawnPages = [drawnPage(1), drawnPage(2, "left"), drawnPage(3, "right")];
     renderRoom();
     fireEvent.click(screen.getByRole("button", { name: "Read your book" }));
@@ -455,6 +462,33 @@ describe("Book reader", () => {
     expect(screen.getByRole("slider", { name: "Jump to page" }).getAttribute("aria-valuetext")).toBe("Pages 2–3 of 3");
     fireEvent.click(screen.getByRole("button", { name: "SPREADS" }));
     expect(screen.getByRole("slider", { name: "Jump to page" }).getAttribute("aria-valuetext")).toBe("Page 2 of 3");
+  });
+
+  it("reads single pages in narrow windows and keeps the page when the window widens", () => {
+    setMedia({ width: 375, height: 812 });
+    drawnPages = [drawnPage(1), drawnPage(2, "left"), drawnPage(3, "right")];
+    renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: "Read your book" }));
+    const slider = () => screen.getByRole("slider", { name: "Jump to page" });
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(slider().getAttribute("aria-valuetext")).toBe("Page 3 of 3");
+    act(() => setMedia({ width: 1366, height: 768 }));
+    expect(slider().getAttribute("aria-valuetext")).toBe("Pages 2–3 of 3");
+    // An explicit choice outlasts later window changes, on the page last turned to.
+    fireEvent.click(screen.getByRole("button", { name: "SPREADS" }));
+    act(() => setMedia({ width: 375, height: 812 }));
+    act(() => setMedia({ width: 1366, height: 768 }));
+    expect(slider().getAttribute("aria-valuetext")).toBe("Page 3 of 3");
+  });
+
+  it("covers the whole viewport instead of sitting inside the room's spacing", () => {
+    drawnPages = [drawnPage(1)];
+    const { container } = renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: "Read your book" }));
+    const reader = screen.getByRole("dialog", { name: "Book reader" });
+    expect(reader.parentElement).toBe(document.body);
+    expect(container.contains(reader)).toBe(false);
   });
 
   it("does not hijack keyboard input intended for the page slider", () => {

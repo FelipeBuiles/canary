@@ -695,7 +695,7 @@ export function StyleRoom() {
                 onOpen={(index) => { setFlipIndex(index); setProofView("flip"); }}
               />
             ) : (
-            <div data-testid="style-proof-grid" className="grid grid-cols-1 gap-x-6 md:grid-cols-2 lg:grid-cols-3">
+            <div data-testid="style-proof-grid" className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-x-6">
               {filteredSuggestions.map(renderProofCard)}
             </div>
             )}

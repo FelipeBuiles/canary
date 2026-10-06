@@ -39,8 +39,8 @@ export function BookPublication({ project, title, ready, onPreview }: { project:
         description={query.data ? t("Later edits stay private until you update the published version.") : t("Publish all finished pages for anyone with the link to read and download. Your manuscript and working files stay private. Later edits stay private until you update the published version.")} />
     </div>
     {query.isPending ? <p role="status" className="font-body text-sm text-ink-muted">{t("Loading…")}</p> : query.isError ? <div role="alert" className="space-y-3"><p className="font-body text-sm">{t("Sharing settings could not be loaded.")}</p><Button variant="outline" size="sm" onClick={() => void query.refetch()}>{t("Try again")}</Button></div> : <EntityCard>
-      {query.data && <div className="grid gap-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-        <div className="min-w-0">
+      {query.data && <div className="flex flex-wrap items-center justify-between gap-5">
+        <div className="min-w-0 flex-[1_1_16rem]">
           <h3 className="break-words font-display text-xl font-black uppercase leading-tight">{query.data.title}</h3>
           <p className="mt-2 font-meta text-xs text-ink-muted">{query.data.author} · {query.data.pages.length} {t("pages")}</p>
           {readerLanguages.length > 1 && <p className="mt-2 font-body text-sm">{t("Reader languages")}: {readerLanguages.map(item => item.locale === "source" ? t("Original") : item.locale.toUpperCase()).join(" · ")}</p>}
@@ -52,7 +52,7 @@ export function BookPublication({ project, title, ready, onPreview }: { project:
         </div>
       </div>}
       {(!query.data || editing) && <form className={`grid gap-5 ${query.data ? "mt-6 border-t border-ink-black/15 pt-6" : ""}`} onSubmit={(event) => { event.preventDefault(); mutation.mutate(false); }}>
-        <div className="grid gap-5 md:grid-cols-2">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-5">
           <div><FieldLabel htmlFor={`${project}-public-title`}>{t("Public title")}</FieldLabel><TextField id={`${project}-public-title`} required maxLength={160} value={values.title} onChange={e => update({ title: e.target.value })} /></div>
           <div><FieldLabel htmlFor={`${project}-author-credit`}>{t("Author credit")}</FieldLabel><TextField id={`${project}-author-credit`} required maxLength={120} value={values.author} onChange={e => update({ author: e.target.value })} /></div>
         </div>

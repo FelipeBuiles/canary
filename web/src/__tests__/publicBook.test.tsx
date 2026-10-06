@@ -52,7 +52,7 @@ describe("public books", () => {
     fireEvent.touchEnd(reader, { changedTouches: [{ clientX: 50, clientY: 100 }] });
     expect(screen.getByRole("img", { name: "Page 2 — Page 2" })).toBeTruthy();
     fireEvent.keyDown(window, { key: "End" });
-    fireEvent.click(screen.getByRole("button", { name: "SPREADS" }));
+    fireEvent.click(screen.getByRole("button", { name: "SINGLE PAGE" }));
     expect(screen.getByRole("heading", { name: "Every book starts with a story." })).toBeTruthy();
     fireEvent.keyDown(window, { key: "ArrowLeft" });
     expect(screen.getByRole("img", { name: "Page 2 — Page 2" })).toBeTruthy();
