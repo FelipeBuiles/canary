@@ -208,8 +208,18 @@ depot ci dispatch --org 6ntrqswcbt --repo FelipeBuiles/canary \
   --workflow lightsail-preflight.yml --ref main
 ```
 
-It assumes the production role and reads firewall state only. It neither uses
-the SSH key nor changes the firewall. Publishing to main is a separate step:
+The AWS-only preflight passed on 2026-10-06 in run `j1jxgsn23z`.
+The extended preflight also runs `deploy_lightsail.py --check-access`: it opens
+TCP 22 for the runner's public IPv4 only, uses the pinned SSH key, sends an empty
+JSON object (never a valid release request), and requires the controller's fixed
+rejection. It obtains no registry token and cannot start a release even if
+deployment is subsequently enabled. It removes its temporary rule in `finally`
+and verifies that the rule is absent. A hard runner termination can still leave
+a rule; inspect the logged CIDR and remove it manually if needed.
+
+The SSH secret and host/known-host variables also have a separate
+`lightsail-preflight` variant scoped to this workflow, main, repository and
+production environment. Production CI retains its original scope. Publishing to main is a separate step:
 the currently published CI still deploys to Fly on a main push. Review and land
 the migration CI changes with Lightsail activation disabled before using this
 preflight; do not inadvertently dispatch the old deployment workflow.

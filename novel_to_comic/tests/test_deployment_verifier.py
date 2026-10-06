@@ -148,13 +148,14 @@ def test_ci_verifies_then_resumes_with_the_expected_release_and_ops_auth():
     workflow = yaml.safe_load((REPO_ROOT / ".depot/workflows/ci.yml").read_text())
     steps = workflow["jobs"]["deploy"]["steps"]
     deploy = next(i for i, step in enumerate(steps) if step.get("name") == "Deploy exact release image")
-    verify = next(i for i, step in enumerate(steps) if step.get("name") == "Verify deployed release")
     record = next(i for i, step in enumerate(steps) if step.get("name") == "Record deployed release")
-    assert deploy < verify < record
-    assert steps[verify]["run"] == "python scripts/verify_deployment.py --resume"
-    assert steps[verify]["env"]["EXPECTED_CANARY_VERSION"] == "${{ github.sha }}"
-    assert steps[verify]["env"]["CANARY_OPS_TOKEN"] == "${{ secrets.CANARY_OPS_TOKEN }}"
-    assert "if" not in steps[verify]
+    assert deploy < record
+    assert steps[deploy]["run"] == "python3 scripts/deploy_lightsail.py"
+    assert steps[deploy]["env"]["CANARY_RELEASE_VERSION"] == "${{ github.sha }}"
+    # The host transaction verifies then resumes; test_lightsail_release tests
+    # that ordering and its failure paths. CI must not receive the ops token.
+    assert "CANARY_OPS_TOKEN" not in str(workflow)
+    assert "if" not in steps[deploy]
 
 
 def test_verifier_rejects_wrong_release_and_missing_headers(
