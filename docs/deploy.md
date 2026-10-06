@@ -421,78 +421,18 @@ not bypass CI or authorize production migration/deployment.
 
 ### CI-managed production deployment
 
-Every push to `main` automatically requests a production release through `CI`.
-Manual dispatch on `main` remains available for reruns and offline recovery.
-For offline recovery when production machines are already stopped, select
-`skip_drain` in the manual dispatch form (CLI: `gh workflow run ci.yml --ref main
--F skip_drain=true`). This explicit override skips only the HTTP drain step and
-records the choice in the run summary; builds, smoke tests, and deployment
-verification still run. It defaults to false. An unreachable endpoint alone
-does not establish that machines are stopped; normal releases still require drain.
+The native Depot workflow in `.depot/workflows/ci.yml` now targets Lightsail,
+using Depot's OCI registry and a host-side drain/replace/verify/resume transaction.
+It no longer deploys to Fly. Production itself is still on Fly until the initial
+migration is completed; the new deploy job is disabled by default.
 
-Prepare any required maintenance restrictions before pushing to `main`. The
-`Deploy production` job starts only after backend, frontend, production-image,
-gateway, and root-tooling jobs pass for the exact SHA; it then:
-
-1. Authenticates `POST /api/ops/drain`, then waits for deployment status to show
-   both `draining: true` and `safe_to_deploy: true`. Queued durable operations
-   do not block this; they stay unstarted and resume after explicit resume.
-2. Before draining, builds the tested source SHA once with production frontend
-   arguments, pushes it as `registry.fly.io/canary-web:<sha>`, and smoke-tests
-   that image. After drain it records the previous releases' images
-   (`flyctl releases --image`) and deploys the pushed image with
-   `flyctl deploy --image`; Fly does not rebuild. Roll back by deploying the
-   previous image reference. The pushed image differs from the `docker` job's
-   smoke image only by its production `VITE_*` build arguments.
-3. Verifies `/api/version`, liveness, the production readiness contract
-   (Supabase, LiteLLM and generation queue all `ok`), and
-   required security-header presence. Only after those checks pass,
-   `python scripts/verify_deployment.py --resume` authenticates
-   `POST /api/ops/resume` and confirms `draining: false` through deployment
-   status. Resume also checks dependency readiness on the server. Failed or
-   cancelled releases leave admission closed and require operator recovery.
-   Signed-in behavior and policy values still need their release exercises.
-
-Running `scripts/verify_deployment.py` without `--resume` checks that admission
-is open without changing it. Both modes require `CANARY_OPS_TOKEN`; `--resume`
-also requires `EXPECTED_CANARY_VERSION` so an unexpected release cannot reopen
-generation. A healthy readiness response alone does not prove admission is open.
-
-The workflow deliberately has no production database credential and cannot
-apply schema changes. If a release requires a database change, complete the
-reviewed manual operation in Step 1 before pushing the release to `main`.
-
-**Release cancellation protection:** each main push and manual dispatch has a unique
-workflow concurrency group and disables automatic cancellation; PR runs
-still cancel superseded CI on the same ref. The existing
-`production-deploy` job group runs one deployment at a time and uses
-`queue: max` so later releases do not replace an earlier pending deploy.
-GitHub caps this queue at 100 pending jobs; additional requests are cancelled.
-These semantics follow [GitHub's concurrency documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#concurrency).
-
-This protects against superseding runs, not deliberate operator cancellation,
-job timeouts, or runner failure. Those can leave the old process drained or a
-new process already running: inspect actual release/activity state before
-explicitly resuming or rolling back. Queued releases still require valid
-maintenance and schema conditions when they reach deployment.
-
-Configure a GitHub environment named `production`, limit it to the `main`
-branch, and add these environment secrets:
-
-- `FLY_API_TOKEN` — an app-scoped deploy token for `canary-web`.
-- `CANARY_OPS_TOKEN` — the same value configured on the Fly app.
-- `VITE_SUPABASE_URL` — the public production project URL.
-- `VITE_SUPABASE_PUBLISHABLE_KEY` — the browser-safe publishable key.
-- `POSTHOG_PROJECT_TOKEN` — public ingestion token (runtime and frontend).
-- `POSTHOG_API_KEY` — private build-only source-map upload credential.
-- Repository variables `POSTHOG_HOST` and `POSTHOG_PROJECT_ID` select the region and project.
-
-Do not store the Supabase service-role key as a `VITE_*` value. The deploy job
-closes server admission but does not announce a customer maintenance window.
-It cannot bootstrap drain on an old binary: complete the controlled first
-cutover and stop the old process before using the offline recovery option.
-For unattended deployment, leave required environment reviewers disabled;
-configured reviewers would still require approval before deployment.
+See [Lightsail CI setup and activation](ops/lightsail-ci.md) for the exact host
+installation, scoped AWS OIDC role, Depot secret/variable availability rules,
+activation gates and failure recovery. All existing test jobs remain release
+gates. There is no CI drain bypass or automatic first cutover. The deployment
+key is dedicated to a forced command; runtime secrets and the ops token stay on
+Lightsail. [CI runner details](reference/ci-runners.md) cover Depot's test/build
+configuration and cache behavior.
 
 ### Drain, wait for idle, and explicitly resume
 

@@ -163,6 +163,31 @@ def _fake_entrypoint(tmp_path, pipeline="exit 17", proxy="while :; do sleep 1; d
     return entrypoint, env
 
 
+def test_children_receive_only_their_own_secrets(tmp_path):
+    gateway, web = tmp_path / "gateway.env", tmp_path / "web.env"
+    entrypoint, env = _fake_entrypoint(
+        tmp_path,
+        proxy=f'env > "{gateway}"; while :; do sleep 1; done',
+        pipeline=f'env > "{web}"; while [ ! -s "{gateway}" ]; do sleep 0.05; done; exit 0',
+    )
+    gateway_only = {"OPENAI_API_KEY", "FAL_KEY", "LITELLM_MASTER_KEY", "LITELLM_SALT_KEY",
+                    "AWS_BEARER_TOKEN_BEDROCK", "DATABASE_URL"}
+    web_only = {"LITELLM_API_KEY", "CANARY_OPS_TOKEN", "SUPABASE_SECRET_KEY",
+                "CANARY_QUEUE_DATABASE_URL", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET",
+                "R2_ACCESS_KEY", "R2_SECRET_KEY"}
+    env.update({name: "dummy-" + name for name in gateway_only | web_only})
+    env["CANARY_ENV"] = "production"
+    result = subprocess.run(["bash", str(entrypoint)], env=env, capture_output=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+    def names(path):
+        return {line.split("=", 1)[0] for line in path.read_text().splitlines() if "=" in line}
+
+    assert gateway_only <= names(gateway) and not web_only & names(gateway)
+    assert web_only <= names(web) and not gateway_only & names(web)
+    assert "CANARY_ENV" in names(gateway) & names(web)
+
+
 def test_web_crashes_recover_then_latch_without_touching_customer_files(tmp_path):
     entrypoint, env = _fake_entrypoint(tmp_path)
     artwork = tmp_path / "page.png"

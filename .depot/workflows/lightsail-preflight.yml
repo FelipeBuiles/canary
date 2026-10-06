@@ -1,0 +1,35 @@
+name: Lightsail authentication preflight
+# Manual, read-only check. No checkout, app secrets, build, SSH or deployment.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  lightsail_access_check:
+    name: Check Lightsail CI authentication (no deployment)
+    environment: production
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Obtain scoped AWS firewall access
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::569757033859:role/canary-depot-lightsail-deploy
+          aws-region: us-east-1
+          role-duration-seconds: 900
+          retry-max-attempts: 2
+      - name: Verify role and read Lightsail firewall state
+        run: |
+          python3 - <<'PY'
+          import json
+          import subprocess
+          identity = json.loads(subprocess.check_output(["aws", "sts", "get-caller-identity"]))
+          assert identity["Account"] == "569757033859"
+          assert identity["Arn"].startswith("arn:aws:sts::569757033859:assumed-role/canary-depot-lightsail-deploy/")
+          subprocess.run(["aws", "lightsail", "get-instance-port-states", "--region", "us-east-1", "--instance-name", "canary-prod", "--query", "portStates[].{from:fromPort,to:toPort,protocol:protocol}", "--output", "json"], check=True)
+          print("Depot OIDC authentication and Lightsail firewall read verified; no changes made.")
+          PY

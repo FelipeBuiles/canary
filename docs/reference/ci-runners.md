@@ -11,14 +11,15 @@ For a push to main (or a manual Depot dispatch on main):
 
 1. Backend, frontend, gateway, tooling, and PostgreSQL security/billing checks
    run in parallel with the production image build.
-2. The image job builds and pushes a uniquely tagged release to Fly's registry
+2. The image job builds and saves a uniquely tagged release to Depot's OCI registry
    and smoke-tests it using its immutable digest. BuildKit's cache persists in
    Depot container-build project `js338b6zll` (`canary`).
 3. Deployment waits for all five checks and the image job to succeed, then takes
    the `production-deploy` concurrency lock. Running deployments are not cancelled.
-4. It drains production, records rollback information, deploys the exact tested
-   image digest, and verifies the expected source SHA before resuming admissions.
-   A drain or verification failure preserves the existing failure behavior.
+4. It requests a host-managed Lightsail release of the exact tested image digest.
+   The host drains, records the rollback configuration, replaces the process,
+   verifies the source SHA and public contracts, then explicitly resumes.
+   Deployment is disabled until the first Lightsail cutover is complete.
 
 PRs run the five check jobs and a Docker smoke build with placeholder configuration.
 They never run the production image or deployment job. Main releases build only
@@ -100,61 +101,43 @@ trials with placeholder frontend configuration, not production deployment timing
 Earlier baseline runs used an earlier working-tree snapshot and different cache
 states, so treat speed comparisons as indicative rather than controlled benchmarks.
 
-## Credentials and production restriction
+## Lightsail deployment configuration
 
-The following GitHub production environment secrets were imported into
-Scenewright's Depot CI secret store on 2026-10-06:
+The release destination has changed to Lightsail; Depot still runs tests and
+builds. See [Lightsail CI](../ops/lightsail-ci.md) for the dedicated SSH key,
+read-only pull tokens, scoped AWS OIDC firewall role, host controller, activation
+switches, cancellation semantics and operator recovery.
 
-- `FLY_API_TOKEN`, `CANARY_OPS_TOKEN`
-- `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`
-- `POSTHOG_API_KEY`, `POSTHOG_PROJECT_TOKEN`
-
-`POSTHOG_HOST` and `POSTHOG_PROJECT_ID` variables were also imported.
-Each imported value has exactly one variant, scoped to repository `FelipeBuiles/canary`, branch `main`,
-workflow `.depot/workflows/ci.yml`, and environment `production`. No unscoped
-fallback production variants were present at verification. The two privileged jobs declare
-`environment: production` for Depot secret matching.
-
-GitHub's production environment currently allows only main, with no required
-reviewer or wait timer. Depot does not enforce GitHub environment protection
-rules. Preserve the main restriction through both the job conditions and Depot
-secret availability rules. See [secret availability](https://depot.dev/docs/ci/how-to-guides/manage-secrets-and-variables).
+Frontend build/source-map credentials retain their production availability rules:
+repository `FelipeBuiles/canary`, branch `main`, workflow `.depot/workflows/ci.yml`,
+environment `production`, with no unscoped variants. The updated workflow does
+not use `FLY_API_TOKEN` or `CANARY_OPS_TOKEN`. Existing imported copies are not
+removed by this source change and should be retired after the rollback window.
+Depot does not enforce GitHub environment protection rules; preserve the job and
+secret-availability restrictions. See [secret availability](https://depot.dev/docs/ci/how-to-guides/manage-secrets-and-variables).
 
 ## Activation and operation
 
-Scoped credentials have been imported and verified; temporary migration branch
-access was removed and GitHub production access is main-only again. Commit the Depot workflow
-and removal of both GitHub workflows together so there is one release authority.
-Depot registers automatic triggers when the workflow reaches the default branch.
-The first main push then runs the complete release. Keep production execution
-unverified until that run succeeds. Update any branch protection rules requiring
-old GitHub job names to the corresponding `Depot CI / ...` checks.
+Publishing this workflow ends automatic Fly deployment. The Lightsail deploy job
+skips until `CANARY_DEPLOY_TARGET=lightsail`, and the host independently requires
+its `ci-enabled` marker, no maintenance hold, and a running application. Complete
+the initial migration and Linux rehearsal before setting these gates.
 
-For manual releases use Depot's dashboard or:
+For a normal manual release after activation:
 
 ```sh
 depot ci dispatch --repo FelipeBuiles/canary --workflow ci.yml --ref main
 ```
 
-The optional `skip_drain` input is only for operator-directed offline recovery
-when production machines are stopped. Never use it for a normal release.
+There is no offline `skip_drain` input. Operator-managed recovery must establish
+safe data and queue ownership before starting either platform.
 
-For local changes, select test jobs explicitly; do not run the full release
-workflow just to validate local code:
+For local changes, select test jobs explicitly rather than invoking deployment:
 
 ```sh
 depot ci run --workflow .depot/workflows/ci.yml --job backend --job web --job gateway --job tooling --job database
 ```
 
-The CLI patch must include new files (`git add -N <file>` is sufficient). During
-this migration, disable Git rename detection for local runs so the move from
-`.github` to `.depot` applies correctly:
-
-```sh
-GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.renames GIT_CONFIG_VALUE_0=false \
-  depot ci run --workflow .depot/workflows/ci.yml --job backend
-```
-
-The dedicated GitHub bridge token created during setup is unused and can be
-revoked along with the repository's `DEPOT_TOKEN` secret after cutover. Existing
-GitHub production secrets can remain as a rollback source during rollout.
+The local patch must include new files (`git add -N <file>` is sufficient).
+A local provider-free test run is not proof of OIDC, registry, SSH, firewall or
+systemd release behavior; those remain part of the isolated Linux rehearsal.

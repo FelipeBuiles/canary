@@ -141,6 +141,7 @@ COPY litellm_handlers/__init__.py litellm_handlers/provider_wire.py litellm_hand
 # for readiness → supervises litellm and the web process together).
 COPY litellm/entrypoint.sh /app/entrypoint.sh
 COPY litellm/recovery.py /app/recovery.py
+COPY scripts/canary_secrets.py /app/canary_secrets.py
 RUN chmod +x /app/entrypoint.sh
 
 # Install application source after gateway dependencies so app changes reuse
@@ -179,4 +180,4 @@ ENV CANARY_VERSION="$CANARY_VERSION" \
 
 EXPOSE 8000
 
-ENTRYPOINT ["/app/entrypoint.sh"]
+ENTRYPOINT ["/app/novel_to_comic/.venv/bin/python", "/app/canary_secrets.py", "run"]

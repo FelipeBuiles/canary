@@ -1,0 +1,90 @@
+# Install alongside canary.service. All interpolated settings are NON-SECRET.
+# The image must include scripts/canary_secrets.py through the root Dockerfile.
+services:
+  canary:
+    image: ${CANARY_IMAGE:?Use a tested image@sha256 digest}
+    pull_policy: never
+    restart: "no"
+    stop_grace_period: 30s
+    ports:
+      - "127.0.0.1:8000:8000"
+    # A compromised process gets no capabilities, no setuid escalation and no
+    # writable image. Writes go to /projects and the in-memory /tmp only.
+    # Still root inside the container: /srv/canary/projects must be root-owned.
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=1g
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      CANARY_SECRET_BUNDLE_REQUIRED: "1"
+      CANARY_SECRETS_FILE: /run/secrets/runtime.json
+      CANARY_LOADER_SHA256: ${CANARY_LOADER_SHA256:?Required}
+      CANARY_HEALTH_HOST: ${CANARY_HEALTH_HOST:?Required}
+      # Host Nginx reaches the published port through this network's gateway.
+      # Trusting only it makes Uvicorn use the rightmost untrusted X-Forwarded-For hop.
+      CANARY_FORWARDED_ALLOW_IPS: 172.29.88.1
+      CANARY_ENV: production
+      CANARY_COOKIE_SECURE: "true"
+      CANARY_ALLOWED_HOSTS: ${CANARY_ALLOWED_HOSTS:?Required}
+      CANARY_BACKOFFICE_ORIGINS: ${CANARY_BACKOFFICE_ORIGINS:-}
+      CANARY_INTERNAL_ACCOUNT_IDS: ${CANARY_INTERNAL_ACCOUNT_IDS:-}
+      SCENEWRIGHT_APP_URL: ${SCENEWRIGHT_APP_URL:?Required}
+      SUPABASE_URL: ${SUPABASE_URL:?Required}
+      LITELLM_BASE_URL: http://127.0.0.1:4000
+      CANARY_GENERATION_WORKERS: "5"
+      CANARY_GENERATION_JOB_TIMEOUT_SECONDS: "900"
+      CANARY_BATCH_JOB_TIMEOUT_SECONDS: "7200"
+      CANARY_LABS_ENABLED: "false"
+      CANARY_STRIPE_WEBHOOK_MAX_KB: "256"
+      AI_BILL_FAILED_REQUESTS: provider_usage_only
+      PULP_CREDITS_PER_PROVIDER_USD: "100"
+      PULP_MODEL_COST_MARKUP: "2.0"
+      AWS_REGION_NAME: ${AWS_REGION_NAME:-us-east-1}
+      AWS_EC2_METADATA_DISABLED: "true"
+      VERTEXAI_PROJECT: ${VERTEXAI_PROJECT:-}
+      VERTEXAI_LOCATION: ${VERTEXAI_LOCATION:-global}
+      GOOGLE_CLOUD_QUOTA_PROJECT: ${GOOGLE_CLOUD_QUOTA_PROJECT:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      R2_ENDPOINT: ${R2_ENDPOINT:-}
+      R2_BUCKET: ${R2_BUCKET:-}
+      R2_PUBLIC_URL: ${R2_PUBLIC_URL:-}
+      POSTHOG_PROJECT_TOKEN: ${POSTHOG_PROJECT_TOKEN:-}
+      POSTHOG_HOST: ${POSTHOG_HOST:-}
+      POSTHOG_TRACE_SAMPLE_RATE: ${POSTHOG_TRACE_SAMPLE_RATE:-1}
+    volumes:
+      - type: bind
+        source: /srv/canary/projects
+        target: /projects
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /run/canary/secrets/${CANARY_BUNDLE_SHA256:?Required}/runtime.json
+        target: /run/secrets/runtime.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /run/canary/secrets/${CANARY_BUNDLE_SHA256:?Required}/credentials
+        target: /run/credentials
+        read_only: true
+        bind:
+          create_host_path: false
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ulimits:
+      core: 0
+
+networks:
+  default:
+    ipam:
+      config:
+        # Fixed so the trusted proxy address above is stable; avoids Lightsail's
+        # 172.26.0.0/16 VPC and Docker's default pools.
+        - subnet: 172.29.88.0/24
+          gateway: 172.29.88.1
