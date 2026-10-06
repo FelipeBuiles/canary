@@ -264,7 +264,25 @@ class VertexMultimodalLLM(CustomLLM):
             raise ValueError(
                 "Vertex image requests require a frozen wire or complete-page request"
             )
-        client = genai.Client(vertexai=True, project=project, location=location)
+        if vertex_model == "gemini-nano-banana-2.1":
+            if ref_count > 14:
+                raise ValueError("Nano Banana 2.1 accepts at most 14 reference images")
+            if location != "global":
+                raise ValueError("Nano Banana 2.1 requires the global Vertex location")
+            pricing = optional_params.get("canary_image_pricing")
+            if not isinstance(pricing, dict) or not all(
+                key in pricing for key in ("input_cost_per_token", "cached_input_cost_per_token",
+                                           "text_output_cost_per_token", "image_output_cost_per_token")
+            ):
+                raise ValueError("Nano Banana 2.1 requires configured modality pricing")
+        client_kwargs: dict[str, Any] = {"vertexai": True, "project": project, "location": location}
+        if vertex_model == "gemini-nano-banana-2.1":
+            # The SDK otherwise retries transient errors below the gateway's
+            # num_retries=0 setting, including ambiguous image submissions.
+            client_kwargs["http_options"] = types.HttpOptions(
+                retry_options=types.HttpRetryOptions(attempts=1),
+            )
+        client = genai.Client(**client_kwargs)
         try:
             # TEXT is not optional: Gemini 3 Pro Image is a thinking model that
             # emits reasoning text alongside the image, and every documented
@@ -338,6 +356,8 @@ class VertexMultimodalLLM(CustomLLM):
             ref_count,
             image_size=requested_image_size,
         )
+        if vertex_model == "gemini-nano-banana-2.1":
+            response_cost = _native_image_usage_cost(response, optional_params["canary_image_pricing"])
         model_response.created = int(time.time())
         model_response.data = [ImageObject(b64_json=b64)]
         model_response.usage = _image_usage(response, response_cost=response_cost)
@@ -958,16 +978,40 @@ def _extract_image(response: types.GenerateContentResponse) -> tuple[bytes, str]
 
 
 def _detail_value(detail: Any, key: str) -> Any:
+    if isinstance(detail, dict):
+        return detail.get(key)
     dump = getattr(detail, "model_dump", None)
     if callable(dump):
         return dump(exclude_none=True).get(key)
     return getattr(detail, key, None)
 
 
+def _native_image_usage_cost(response: Any, pricing: dict[str, float]) -> float | None:
+    """Price reported modalities and reasoning using the configured Vertex tariff."""
+    usage = getattr(response, "usage_metadata", None)
+    if usage is None:
+        return None
+    details = getattr(usage, "candidates_tokens_details", None)
+    if not details:
+        # Without output modalities a per-token image tariff cannot be applied truthfully.
+        return None
+    prompt = int(getattr(usage, "prompt_token_count", 0) or 0)
+    cached = int(getattr(usage, "cached_content_token_count", 0) or 0)
+    cost = ((prompt - cached) * pricing["input_cost_per_token"]
+            + cached * pricing["cached_input_cost_per_token"])
+    for detail in details:
+        modality = str(_detail_value(detail, "modality") or "").upper()
+        rate = pricing["image_output_cost_per_token"] if "IMAGE" in modality else pricing["text_output_cost_per_token"]
+        cost += int(_detail_value(detail, "token_count") or 0) * rate
+    cost += int(getattr(usage, "thoughts_token_count", 0) or 0) * pricing["text_output_cost_per_token"]
+    return cost
+
+
 def _image_usage(response: types.GenerateContentResponse, *, response_cost: float | None) -> ImageUsage:
     usage = getattr(response, "usage_metadata", None)
     prompt_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
-    output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
+    output_tokens = (int(getattr(usage, "candidates_token_count", 0) or 0)
+                     + int(getattr(usage, "thoughts_token_count", 0) or 0))
     total_tokens = int(getattr(usage, "total_token_count", 0) or prompt_tokens + output_tokens)
     image_tokens = 0
     text_tokens = 0

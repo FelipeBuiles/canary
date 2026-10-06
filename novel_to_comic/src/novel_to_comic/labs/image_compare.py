@@ -36,7 +36,7 @@ from typing import Any, Literal
 from novel_to_comic.ai.context import ai_request_context
 from novel_to_comic.server.telemetry import ai_span
 from novel_to_comic.config import Config, load_config
-from novel_to_comic.image_models import GATEWAY_IMAGE_FLARE, GATEWAY_IMAGE_SUNBURST
+from novel_to_comic.image_models import GATEWAY_IMAGE_FLARE, GATEWAY_IMAGE_SUNBURST, GATEWAY_IMAGE_NANO_BANANA_21
 from novel_to_comic.image_route_fallback import FAL_SUNBURST_GATEWAY_MODEL, OPENAI_SUNBURST_GATEWAY_MODEL
 from novel_to_comic.usage import UsageRecord, calculate_cost_breakdown, estimate_image_cost
 
@@ -74,6 +74,8 @@ def image_targets() -> list[ImageTarget]:
                     gateway_model=GATEWAY_IMAGE_FLARE, model_alias=GATEWAY_IMAGE_FLARE),
         ImageTarget("sunburst-fal", "GPT Image 2.5 Sunburst", "FAL API", "api", True,
                     gateway_model=FAL_SUNBURST_GATEWAY_MODEL),
+        ImageTarget("nano-banana-2.1-vertex", "Nano Banana 2.1", "Vertex AI", "api", True,
+                    gateway_model=GATEWAY_IMAGE_NANO_BANANA_21, model_alias=GATEWAY_IMAGE_NANO_BANANA_21),
     ]
     targets += [
         ImageTarget(model["id"], f"GPT Image 2 via {model['id'].rsplit('/', 1)[1]}", "Codex subscription",
@@ -119,10 +121,10 @@ class Prepared:
         in, $30 out per million tokens), so Codex cells are priced as if GPT
         Image 2 consumed as many tokens as Sunburst: an approximation. The Codex
         reasoning model's own tokens are not reported and not included.
-        Flare has no measured consumption yet, so it uses its own configured
+        Flare and Nano Banana 2.1 have no measured consumption yet, so each uses its configured
         allowances instead of Sunburst's measurements.
         """
-        if self.pricing_model == GATEWAY_IMAGE_FLARE:
+        if self.pricing_model in {GATEWAY_IMAGE_FLARE, GATEWAY_IMAGE_NANO_BANANA_21}:
             return estimate_image_cost(
                 self.pricing_model, 1, quality=quality, width=self.width, height=self.height,
                 ref_count=self.references, prompt_text=self.prompt, basis="expected",
@@ -243,7 +245,7 @@ class AssetItem:
                 raise ValueError(f"{target.label} accepts at most {profile.max_references} references; "
                                  f"this request has {len(references)}")
             wire = replace(wire, provider_key=description.provider_key, requested_alias=target.gateway_model,
-                           configured_provider_model=description.provider_model,
+                           configured_provider_model=description.provider_model, expected_route=description.route.value,
                            controls=(("quality", self.quality),))
         return replace(wire, execution_fingerprint=wire.recompute_execution_fingerprint())
 
@@ -264,13 +266,20 @@ class PageItem:
             compile_page_generation_request,
             current_page_capability_profile,
             openai_page_capability_profile,
+            nano_banana_21_page_capability_profile,
             select_book_edition,
         )
         from novel_to_comic.stages.s5_plan import approved_reference_files, approved_visual_inventory
         from novel_to_comic.style_reference import require_style_reference
         from novel_to_comic.target_artifacts import TargetArtifacts
 
-        if config.draw_model == GATEWAY_IMAGE_FLARE:
+        if config.draw_model == GATEWAY_IMAGE_NANO_BANANA_21:
+            profile = nano_banana_21_page_capability_profile()
+            if config.lettering_mode == "integrated":
+                profile = profile.model_copy(update={
+                    "id": profile.id + "-integrated-v1", "exact_visible_lettering": True,
+                })
+        elif config.draw_model == GATEWAY_IMAGE_FLARE:
             profile = openai_page_capability_profile("gpt-image-2.5-flare", quality="medium")
             if config.lettering_mode == "integrated":
                 profile = profile.model_copy(update={
@@ -354,13 +363,20 @@ def list_items(project_dir: Path) -> list[dict[str, Any]]:
         if current is None or (entry["recorded_at"] or "") > (current["recorded_at"] or ""):
             latest[status["result_link"]] = entry
     items = sorted(latest.values(), key=lambda item: item["label"])
-    target = TargetArtifacts(project_dir)
-    if target.plan_path.exists():
+    from novel_to_comic.workspace import part_ordinal, part_workspaces, workspace_part_id
+
+    for workspace in [project_dir, *part_workspaces(project_dir)]:
+        target = TargetArtifacts(workspace)
+        if not target.plan_path.exists():
+            continue
+        part = workspace_part_id(workspace)
         for page in target.read_plan().pages:
             content = target.read_page(page.page_number).content
             items.append({
-                "id": f"page:{page.page_number}", "kind": "page",
-                "label": f"Page {page.page_number} · {len(content)} panel{'s' if len(content) != 1 else ''}",
+                "id": f"page:{part}:{page.page_number}" if part else f"page:{page.page_number}",
+                "kind": "page",
+                "label": (f"Part {part_ordinal(part)} · " if part else "")
+                         + f"Page {page.page_number} · {len(content)} panel{'s' if len(content) != 1 else ''}",
             })
     return items
 
@@ -369,8 +385,16 @@ def load_item(project_dir: Path, item_id: str) -> AssetItem | PageItem:
     kind, _, key = item_id.partition(":")
     if kind == "asset" and key == Path(key).name:
         return AssetItem(project_dir, key)
-    if kind == "page" and key.isdigit():
-        return PageItem(project_dir, int(key))
+    if kind == "page":
+        if key.isdigit():
+            return PageItem(project_dir, int(key))
+        part, _, number = key.partition(":")
+        if number.isdigit():
+            from novel_to_comic.workspace import part_workspaces
+
+            workspace = next((path for path in part_workspaces(project_dir) if path.name == part), None)
+            if workspace is not None:
+                return PageItem(workspace, int(number))
     raise ValueError(f"Unknown item: {item_id}")
 
 

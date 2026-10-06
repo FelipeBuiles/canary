@@ -25,7 +25,8 @@ interface ApprovalBarProps {
 /**
  * The one standing approval bar: every station ends the same way — what
  * happens next, what it costs, one primary button. Renders into the shell
- * footer slot on desktop. Phone actions scroll after their review content.
+ * footer slot on desktop and taller tablets. Phone actions scroll after
+ * their review content.
  */
 export function ApprovalBar({
   next,

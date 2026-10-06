@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useDesktopLayout } from "../hooks/useDesktopLayout";
 
@@ -10,6 +10,16 @@ interface ShellSlotsContextValue {
 }
 
 const ShellSlotsContext = createContext<ShellSlotsContextValue | null>(null);
+
+// Tablets can keep actions visible with compact navigation. Short phone
+// landscapes still need the footer in the scroll flow to leave room for art.
+const STANDING_FOOTER_QUERY = "(min-width: 1024px), (min-width: 768px) and (min-height: 600px)";
+
+function subscribeFooterLayout(onChange: () => void) {
+  const query = window.matchMedia(STANDING_FOOTER_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
 
 /** Wraps the shell so pages can project content into the masthead and footer. */
 export function TopBarSlotProvider({ children }: { children: ReactNode }) {
@@ -48,15 +58,19 @@ export function BottomBarHost() {
 }
 
 /**
- * Desktop actions use the standing shell footer. Phone actions stay in the
- * page's scroll flow so review content can use the full viewport.
+ * Desktop and taller tablet actions use the standing shell footer. Phone
+ * actions stay in the scroll flow so review content can use the full viewport.
  */
 export function BottomBarPortal({ children }: { children: ReactNode }) {
   const ctx = useContext(ShellSlotsContext);
-  const desktop = useDesktopLayout();
+  const standing = useSyncExternalStore(
+    subscribeFooterLayout,
+    () => window.matchMedia(STANDING_FOOTER_QUERY).matches,
+    () => true,
+  );
   // Rooms remain independently renderable in tests, component references,
   // and embedded surfaces that do not mount the full application shell.
-  if (!ctx || !desktop) return children;
+  if (!ctx || !standing) return children;
   if (!ctx?.bottomEl) return null;
   return createPortal(children, ctx.bottomEl);
 }

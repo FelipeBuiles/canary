@@ -67,9 +67,11 @@ def test_invalid_design_response_records_usage_and_never_generates_images(tmp_pa
     config, bible, _ = _cast(tmp_path)
     TargetArtifacts(tmp_path).cast_design_path.unlink()
     ctx = MagicMock()
-    usage = UsageRecord(provider="test", model="test", operation="text", input_tokens=10, output_tokens=10)
+    usages = []
 
     async def response(**kwargs):
+        usage = UsageRecord(provider="test", model="test", operation="text", input_tokens=10, output_tokens=10)
+        usages.append(usage)
         kwargs["response_sink"](ApiResult(value='{"characters": []}', usage=usage))
         return ApiResult(value={"characters": []}, usage=usage)
 
@@ -77,8 +79,132 @@ def test_invalid_design_response_records_usage_and_never_generates_images(tmp_pa
          patch.object(s3_cast, "submit_non_panel_request", new_callable=AsyncMock) as images:
         with pytest.raises(ValueError, match="every character"):
             asyncio.run(design.ensure_design(config, tmp_path, bible, ctx))
-    ctx.record_api_usage.assert_called_once_with(usage)
+    assert ctx.record_api_usage.call_count == 2
+    assert [call.args[0] for call in ctx.record_api_usage.call_args_list] == usages
     images.assert_not_awaited()
+    assert not TargetArtifacts(tmp_path).cast_design_path.exists()
+
+
+@pytest.mark.parametrize("fault", ["missing", "repeated", "unexpected", "same_face", "shape"])
+def test_completed_invalid_design_is_corrected_once_before_saving_or_image_work(tmp_path, fault):
+    config, bible, plan = _cast(tmp_path)
+    # These are the two IDs required by the production Everest run. The source
+    # facts remain synthetic; reproduction makes no provider calls.
+    for character, choice, cid in zip(bible.characters, plan.characters, ("char_narrator", "char_jimmy")):
+        character.id = choice.character_id = cid
+    TargetArtifacts(tmp_path).cast_design_path.unlink()
+    valid = {"characters": [choice.model_dump() for choice in plan.characters]}
+    invalid = json.loads(json.dumps(valid))
+    if fault == "missing":
+        invalid["characters"].pop()
+    elif fault == "repeated":
+        invalid["characters"][1]["character_id"] = "char_narrator"
+    elif fault == "unexpected":
+        invalid["characters"][0]["character_id"] = "Narrator (Boss)"
+    elif fault == "same_face":
+        invalid["characters"][1] = {**invalid["characters"][0], "character_id": "char_jimmy"}
+    else:
+        invalid = {"designs": invalid["characters"]}
+    ctx = MagicMock()
+    calls = []
+    usages = [UsageRecord(call_id=f"design_{i}", provider="test", model="test", operation="text",
+                          input_tokens=10, output_tokens=10) for i in range(2)]
+
+    async def respond(**kwargs):
+        assert not TargetArtifacts(tmp_path).cast_design_path.exists()
+        assert kwargs["retry_transport"] is False and kwargs["retry_invalid_json"] is False
+        schema = kwargs["json_schema"]
+        assert schema["properties"]["characters"]["minItems"] == 2
+        assert schema["properties"]["characters"]["maxItems"] == 2
+        assert schema["$defs"]["CharacterDesign"]["properties"]["character_id"]["enum"] == [
+            "char_jimmy", "char_narrator"]
+        index = len(calls)
+        calls.append(kwargs)
+        value = invalid if index == 0 else valid
+        kwargs["response_sink"](ApiResult(value=json.dumps(value), usage=usages[index]))
+        return ApiResult(value=value, usage=usages[index])
+
+    with patch.object(design.text, "generate_json", side_effect=respond), \
+         patch.object(s3_cast, "submit_non_panel_request", new_callable=AsyncMock) as images:
+        accepted = asyncio.run(design.ensure_design(config, tmp_path, bible, ctx))
+
+    assert len(calls) == 2
+    assert calls[1]["user_content"].startswith(calls[0]["user_content"])
+    assert "previous design response failed validation" in calls[1]["user_content"]
+    assert "char_narrator" in calls[1]["user_content"] and "char_jimmy" in calls[1]["user_content"]
+    assert accepted.characters == plan.characters
+    assert TargetArtifacts(tmp_path).read_cast_design() == accepted
+    assert [call.args[0] for call in ctx.record_api_usage.call_args_list] == usages
+    ctx.record_item_done.assert_called_once_with(cost=0.0)
+    images.assert_not_awaited()
+
+
+@pytest.mark.parametrize("after_rejection", [False, True])
+def test_design_transport_failure_never_retries_or_loses_completed_usage(tmp_path, after_rejection):
+    config, bible, _ = _cast(tmp_path)
+    TargetArtifacts(tmp_path).cast_design_path.unlink()
+    ctx = MagicMock()
+    usage = UsageRecord(call_id="completed_design", provider="test", model="test", operation="text")
+    calls = []
+
+    async def respond(**kwargs):
+        calls.append(kwargs)
+        if after_rejection and len(calls) == 1:
+            kwargs["response_sink"](ApiResult(value='{"characters": []}', usage=usage))
+            return ApiResult(value={"characters": []}, usage=usage)
+        raise TimeoutError("submission outcome unknown")
+
+    with patch.object(design.text, "generate_json", side_effect=respond):
+        with pytest.raises(TimeoutError, match="outcome unknown"):
+            asyncio.run(design.ensure_design(config, tmp_path, bible, ctx))
+    assert len(calls) == (2 if after_rejection else 1)
+    if after_rejection:
+        ctx.record_api_usage.assert_called_once_with(usage)
+    else:
+        ctx.record_api_usage.assert_not_called()
+    assert not TargetArtifacts(tmp_path).cast_design_path.exists()
+
+
+def test_design_estimate_includes_the_bounded_correction_only_for_missing_designs(tmp_path):
+    config, bible, _ = _cast(tmp_path)
+    with patch.object(design, "estimate_text_cost", return_value=1.0), \
+         patch.object(design, "estimate_review_cost", return_value=10.0):
+        assert design.estimate_design_review(config, tmp_path, bible) == 10.0
+        TargetArtifacts(tmp_path).cast_design_path.unlink()
+        assert design.estimate_design_review(config, tmp_path, bible) == 13.0
+
+
+@pytest.mark.parametrize("after_rejection", [False, True])
+def test_unparseable_design_stops_and_stage_records_each_completed_attempt_once(tmp_path, after_rejection):
+    from novel_to_comic.ai.errors import AIStructuredResponseError
+    from novel_to_comic.stage_runtime import StageRuntime
+    from novel_to_comic.state import create_initial_state, StageStatus
+
+    config, bible, _ = _cast(tmp_path)
+    TargetArtifacts(tmp_path).cast_design_path.unlink()
+    state = create_initial_state("test", "novel.txt")
+    ctx = StageRuntime("cast", state, tmp_path, on_event=lambda _event: None)
+    usages = []
+
+    async def respond(**kwargs):
+        usage = UsageRecord(provider="test", model="test", operation="text", cost_usd=0.1)
+        usages.append(usage)
+        rejected = after_rejection and len(usages) == 1
+        kwargs["response_sink"](ApiResult(value='{"characters": []}' if rejected else '{', usage=usage))
+        if rejected:
+            return ApiResult(value={"characters": []}, usage=usage)
+        raise AIStructuredResponseError("invalid JSON", usage_records=[usage])
+
+    with patch.object(design.text, "generate_json", side_effect=respond):
+        with pytest.raises(AIStructuredResponseError, match="invalid JSON"):
+            with ctx.execute():
+                asyncio.run(design.ensure_design(config, tmp_path, bible, ctx))
+
+    assert len(usages) == (2 if after_rejection else 1)
+    stage = state.stages["cast"]
+    assert stage.status == StageStatus.FAILED
+    assert [entry["call_id"] for entry in stage.usage_log] == [u.call_id for u in usages]
+    assert stage.cost_usd == pytest.approx(len(usages) * 0.1)
     assert not TargetArtifacts(tmp_path).cast_design_path.exists()
 
 
@@ -442,23 +568,35 @@ def test_missing_cast_source_is_a_blocker_not_a_status_read_failure(tmp_path):
     assert "source artifacts" in s3_cast.cast_approval_blocker(Config(), tmp_path, StageState())
 
 
-def test_a_new_character_is_designed_beside_the_established_cast(tmp_path):
+@pytest.mark.parametrize("invalid_first", [False, True])
+def test_a_new_character_is_designed_beside_the_established_cast(tmp_path, invalid_first):
     config, bible, plan = _cast(tmp_path)
     bible.characters.append(bible.characters[0].model_copy(update={
         "id": "cook", "name": "Cook", "visual_anchor": "adult female, red apron"}))
     requests = []
 
     async def respond(**kwargs):
-        requests.append(json.loads(kwargs["user_content"]))
-        return ApiResult(value={"characters": [{
+        requests.append(kwargs["user_content"])
+        assert TargetArtifacts(tmp_path).read_cast_design() == plan
+        schema = kwargs["json_schema"]
+        assert schema["properties"]["characters"]["minItems"] == 1
+        assert schema["properties"]["characters"]["maxItems"] == 1
+        assert schema["$defs"]["CharacterDesign"]["properties"]["character_id"]["enum"] == ["cook"]
+        new_design = {
             "character_id": "cook", "face": "round face", "hair": "bun", "silhouette": "short",
-            "posture": "busy", "wardrobe": "apron", "contrast": "Unlike Gustaf and the Doctor"}]})
+            "posture": "busy", "wardrobe": "apron", "contrast": "Unlike Gustaf and the Doctor"}
+        characters = [new_design]
+        if invalid_first and len(requests) == 1:
+            characters.append({**plan.characters[0].model_dump(), "face": "replaced established face"})
+        return ApiResult(value={"characters": characters})
 
     with patch.object(design.text, "generate_json", side_effect=respond):
         updated = asyncio.run(design.ensure_design(config, tmp_path, bible, MagicMock()))
 
-    assert [c["character_id"] for c in requests[0]["characters"]] == ["cook"]
-    assert {d["character_id"] for d in requests[0]["established"]} == {"sailor", "doctor"}
+    assert len(requests) == (2 if invalid_first else 1)
+    request = json.loads(requests[0])
+    assert [c["character_id"] for c in request["characters"]] == ["cook"]
+    assert {d["character_id"] for d in request["established"]} == {"sailor", "doctor"}
     assert updated.characters[:2] == plan.characters
     assert updated.fingerprints["sailor"] == plan.fingerprints["sailor"]
     assert design.read_design(config, tmp_path, bible).characters[2].face == "round face"

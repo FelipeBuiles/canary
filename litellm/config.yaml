@@ -263,6 +263,19 @@ model_list:
   litellm_params:
     model: openai-stream/gpt-image-2.5-flare
     api_key: os.environ/OPENAI_API_KEY
+# Operator-funded Labs image experiments, using the existing Vertex ADC.
+- model_name: image-nano-banana-2.1
+  litellm_params:
+    model: vertex-multimodal/gemini-nano-banana-2.1
+    vertex_project: os.environ/VERTEXAI_PROJECT
+    vertex_location: global
+    canary_image_pricing:
+      input_cost_per_token: 1.5e-06
+      cached_input_cost_per_token: 1.5e-07
+      text_output_cost_per_token: 7.5e-06
+      image_output_cost_per_token: 3.0e-05
+  model_info:
+    mode: image_generation
 litellm_settings:
   set_verbose: false
   num_retries: 0
@@ -271,6 +284,8 @@ litellm_settings:
   # Unsupported parameters fail the request instead of vanishing from it.
   drop_params: false
   custom_provider_map:
+  - provider: vertex-multimodal
+    custom_handler: litellm_handlers.vertex_multimodal.vertex_multimodal_llm
   - provider: fal-queue
     custom_handler: litellm_handlers.fal_provider.fal_queue_llm
   - provider: openai-stream

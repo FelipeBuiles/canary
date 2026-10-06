@@ -499,3 +499,99 @@ def test_sheet_form_variants_refuse_plates_and_drifted_layouts(root):
     character = image_compare.AssetItem(root / "story", "new")
     with pytest.raises(ValueError, match="not a turnaround character sheet"):
         character.prepare(None, image_compare.get_target("sunburst-openai"), "sheet_form")
+
+
+def test_nano_banana_asset_preserves_prompt_references_and_vertex_identity(root):
+    item = image_compare.AssetItem(root / "story", "new")
+    target = image_compare.get_target("nano-banana-2.1-vertex")
+    prepared = item.prepare(None, target, "production")
+    wire = item._wire_for(target, PROMPT, restructured=False)
+    params, files = serialize_wire_request(wire)
+    assert wire.provider_key == "vertex-multimodal"
+    assert wire.expected_route == "nano_banana_21"
+    assert wire.configured_provider_model == "vertex-multimodal/gemini-nano-banana-2.1"
+    assert wire.requested_alias == "image-nano-banana-2.1"
+    assert prepared.prompt == PROMPT
+    assert prepared.reference_sha256 == tuple(ref.content_sha256 for ref in item.wire.references)
+    assert json.loads(params["canary_wire_request"])["controls"] == [["quality", "medium"]]
+    assert [part[1][1] for part in files] == [b"\x89PNG new"]
+    assert prepared.estimate_usd(target, "medium") == pytest.approx(
+        0.15 + 0.00168, abs=0.001,
+    )
+
+
+@pytest.mark.parametrize("lettering_mode", ["editable", "integrated"])
+def test_nano_banana_page_compiles_for_vertex_preserving_lettering_mode(root, tmp_path, monkeypatch, lettering_mode):
+    from novel_to_comic.target_artifacts import TargetArtifacts
+
+    monkeypatch.setattr(TargetArtifacts, "read_page", lambda self, number: _page())
+    from novel_to_comic import style_reference
+    from novel_to_comic.stages import s5_plan
+
+    monkeypatch.setattr(s5_plan, "approved_visual_inventory", lambda path: _inventory())
+    monkeypatch.setattr(s5_plan, "approved_reference_files", lambda path: _reference_files(tmp_path))
+    monkeypatch.setattr(style_reference, "require_style_reference", lambda *args: None)
+    config = Config(draw_model="image-nano-banana-2.1", lettering_mode=lettering_mode)
+    profile, compiled = image_compare.PageItem(root / "story", 1)._compile(config)
+    assert profile.model == compiled.request.model == "gemini-nano-banana-2.1"
+    assert profile.provider == compiled.request.provider == "vertex-multimodal"
+    assert profile.max_image_references == 14 and profile.max_attempts == 1
+    assert profile.exact_visible_lettering == (lettering_mode == "integrated")
+    assert (compiled.request.output_width, compiled.request.output_height) == (1696, 2528)
+    adapter = page_drawing.complete_page_adapter(config, profile)
+    assert adapter._transport._gateway_model == "image-nano-banana-2.1"
+    assert adapter.prepare(compiled)
+
+
+def test_nano_banana_rejects_reference_overflow_before_submission(root):
+    item = image_compare.AssetItem(root / "story", "new")
+    item.wire = replace(item.wire, references=tuple(
+        replace(item.wire.references[0], index=index, provider_binding=str(index)) for index in range(15)
+    ))
+    with pytest.raises(ValueError, match="at most 14 references"):
+        item.prepare(None, image_compare.get_target("nano-banana-2.1-vertex"), "production")
+
+
+def _write_labs_plan(workspace):
+    from novel_to_comic.models.page import BookPlan, PlannedPageRevision
+    from novel_to_comic.target_artifacts import TargetArtifacts
+
+    source = _page()
+    page = type(source).model_validate({**source.model_dump(exclude={"content_sha256"}), "page_number": 1})
+    artifacts = TargetArtifacts(workspace)
+    artifacts.write_page(page)
+    artifacts.write_plan(BookPlan(
+        revision=1, adaptation_revision=page.adaptation_revision,
+        adaptation_sha256=page.adaptation_sha256, target_page_min=1, target_page_max=1,
+        pages=(PlannedPageRevision(page_number=1, revision=page.revision, content_sha256=page.content_sha256),),
+    ))
+
+
+def test_labs_lists_pages_across_parts_and_loads_the_selected_workspace(root):
+    from novel_to_comic.workspace import create_part_workspace
+
+    project = root / "story"
+    first = create_part_workspace(project, "part_0001")
+    second = create_part_workspace(project, "part_0002")
+    unplanned = create_part_workspace(project, "part_0003")
+    for workspace in (first, second):
+        _write_labs_plan(workspace)
+    pages = [item for item in image_compare.list_items(project) if item["kind"] == "page"]
+    assert [item["id"] for item in pages] == ["page:part_0001:1", "page:part_0002:1"]
+    assert pages[0]["label"].startswith("Part 1 · Page 1 · ")
+    assert pages[1]["label"].startswith("Part 2 · Page 1 · ")
+    assert image_compare.load_item(project, pages[0]["id"])._project_dir == first
+    assert image_compare.load_item(project, pages[1]["id"])._project_dir == second
+    assert image_compare.load_item(project, pages[1]["id"]).page_number == 1
+    with pytest.raises(ValueError):
+        image_compare.load_item(project, "page:../../outside:1")
+    assert not (unplanned / "plan").exists()
+
+
+def test_flat_workspace_pages_keep_their_direct_ids(root):
+    project = root / "story"
+    _write_labs_plan(project)
+    pages = [item for item in image_compare.list_items(project) if item["kind"] == "page"]
+    assert [item["id"] for item in pages] == ["page:1"]
+    assert pages[0]["label"].startswith("Page 1 · ")
+    assert image_compare.load_item(project, "page:1")._project_dir == project

@@ -10,14 +10,19 @@ import io
 import json
 import re
 import time
+from collections import Counter
 from typing import Literal
 
 from PIL import Image, ImageDraw, ImageOps
 from pydantic import BaseModel, ConfigDict, Field
 
 from novel_to_comic import artifacts
+from novel_to_comic.ai.errors import AIStructuredResponseError
 from novel_to_comic.cast_roster import read_cast_story_bible
 from novel_to_comic.clients import text
+from novel_to_comic.clients.structured_call import (
+    StructuredCallError, generate_validated_json, validation_error_summary,
+)
 from novel_to_comic.target_artifacts import ArtifactInvalid, TargetArtifacts
 from novel_to_comic.usage import estimate_text_cost
 
@@ -93,6 +98,7 @@ class CastReviewDismissals(BaseModel):
 
 # A review is one model call; a marker older than this is from a crashed worker.
 _REVIEW_MARKER_TTL_SECONDS = 15 * 60
+_DESIGN_ATTEMPTS = 2
 
 
 DESIGN_SYSTEM = """Design a visually distinguishable ensemble for a comic. Return JSON
@@ -192,10 +198,22 @@ def _signature(design: CharacterDesign) -> tuple[str, ...]:
     return tuple(getattr(design, key).strip().casefold() for key in ("face", "hair", "silhouette"))
 
 
+def _validate_design_roster(designs, expected_ids: set[str]) -> None:
+    counts = Counter(c.character_id for c in designs)
+    missing = sorted(expected_ids - counts.keys())
+    unexpected = sorted(counts.keys() - expected_ids)
+    repeated = sorted(cid for cid, count in counts.items() if count > 1)
+    if missing or unexpected or repeated:
+        details = "; ".join(f"{label}: {', '.join(ids)}" for label, ids in (
+            ("missing", missing), ("unexpected", unexpected), ("repeated", repeated),
+        ) if ids)
+        raise ValueError(
+            f"Cast design must cover every character exactly once ({details}); rerun Cast."
+        )
+
+
 def validate_designs(plan, bible) -> None:
-    ids = [c.character_id for c in plan.characters]
-    if len(ids) != len(set(ids)) or set(ids) != {c.id for c in bible.characters}:
-        raise ValueError("Cast design must cover every character exactly once; rerun Cast.")
+    _validate_design_roster(plan.characters, {c.id for c in bible.characters})
     signatures = [_signature(c) for c in plan.characters]
     if len(signatures) != len(set(signatures)):
         raise ValueError("Cast design repeats a face, hair and silhouette combination; rerun Cast.")
@@ -297,6 +315,14 @@ def _design_request(config, bible, missing_ids: set[str], established: dict[str,
     return context
 
 
+def _design_response_schema(missing_ids: set[str]) -> dict:
+    """Bind the model's roster to this request; local validation also checks uniqueness."""
+    schema = CastDesignResponse.model_json_schema()
+    schema["$defs"]["CharacterDesign"]["properties"]["character_id"]["enum"] = sorted(missing_ids)
+    schema["properties"]["characters"].update(minItems=len(missing_ids), maxItems=len(missing_ids))
+    return schema
+
+
 async def ensure_design(config, project_dir, bible, ctx):
     """Design only the characters without a current design; keep the rest."""
     target = TargetArtifacts(project_dir)
@@ -312,30 +338,71 @@ async def ensure_design(config, project_dir, bible, ctx):
         return plan
     ctx.log("Designing distinct identities across the full cast" if not established
             else f"Designing {len(missing_ids)} new character identities beside the established cast")
-    request = _design_request(config, bible, missing_ids, established)
-    result = await text.generate_json(
-        config=config, model=config.effective_prompt_model(), system_prompt=DESIGN_SYSTEM,
-        user_content=json.dumps(request, ensure_ascii=False, default=str),
-        max_output_tokens=max(4096, len(missing_ids) * 900),
-        json_schema=CastDesignResponse.model_json_schema(),
-        feature="cast.design", retry_invalid_json=False, retry_transport=False,
-        response_sink=lambda response: ctx.record_api_usage(response.usage) if response.usage else None,
-    )
+    request = json.dumps(_design_request(config, bible, missing_ids, established),
+                         ensure_ascii=False, default=str)
+    recorded_calls: set[str] = set()
+
+    def record_response(response) -> None:
+        for usage in (*response.additional_usage, response.usage):
+            if usage is not None and usage.call_id not in recorded_calls:
+                ctx.record_api_usage(usage)
+                recorded_calls.add(usage.call_id)
+
+    def parse_response(raw) -> CastDesignPlan:
+        try:
+            response = CastDesignResponse.model_validate(raw)
+        except ValueError as exc:
+            raise ValueError(
+                "Cast design returned an invalid character roster; rerun Cast. "
+                + validation_error_summary(exc)
+            ) from None
+        _validate_design_roster(response.characters, missing_ids)
+        merged = {**established, **{d.character_id: d for d in response.characters}}
+        plan = CastDesignPlan(
+            characters=[merged[c.id] for c in bible.characters],
+            fingerprints={c.id: character_fingerprint(config, c) for c in bible.characters},
+        )
+        validate_designs(plan, bible)
+        return plan
+
+    def correction(raw, error) -> str:
+        ctx.log("Correcting the Cast design response before generating references")
+        return (
+            request + "\n\nThe previous design response failed validation: "
+            + validation_error_summary(error)
+            + "\nReturn a complete corrected characters array, exactly once for each of these IDs: "
+            + json.dumps(sorted(missing_ids))
+            + ". Copy these IDs exactly; do not use names or design established characters. "
+            "Keep the source facts and established designs unchanged.\nPrevious response: "
+            + json.dumps(raw, ensure_ascii=False, default=str)
+        )
+
+    async def generate(**kwargs):
+        # Only completed, parsed responses can enter the bounded correction path.
+        # Transport failures and unparseable JSON never trigger another paid call.
+        return await text.generate_json(
+            **kwargs, retry_invalid_json=False, retry_transport=False,
+            response_sink=record_response,
+        )
+
     try:
-        response = CastDesignResponse.model_validate(result.value)
-    except ValueError:
-        raise ValueError(
-            "Cast design returned an invalid character roster; rerun Cast."
-        ) from None
-    designed = {design.character_id: design for design in response.characters}
-    if len(designed) != len(response.characters) or set(designed) != missing_ids:
-        raise ValueError("Cast design must cover every character exactly once; rerun Cast.")
-    merged = {**established, **designed}
-    plan = CastDesignPlan(
-        characters=[merged[c.id] for c in bible.characters],
-        fingerprints={c.id: character_fingerprint(config, c) for c in bible.characters},
-    )
-    validate_designs(plan, bible)
+        outcome = await generate_validated_json(
+            config, model=config.effective_prompt_model(), system_prompt=DESIGN_SYSTEM,
+            user_content=request, parse=parse_response, correction=correction,
+            label="Cast design", feature="cast.design",
+            max_output_tokens=max(4096, len(missing_ids) * 900),
+            json_schema=_design_response_schema(missing_ids),
+            retries=_DESIGN_ATTEMPTS - 1, temperatures=(0.7, 0.4), generate=generate,
+        )
+    except AIStructuredResponseError as exc:
+        # StageRuntime records error-carried usage. The raw response sink has
+        # already recorded completed calls, including rejected JSON, exactly once.
+        raise AIStructuredResponseError(
+            str(exc), usage_records=[u for u in exc.usage_records if u.call_id not in recorded_calls],
+        ) from exc
+    except StructuredCallError as exc:
+        raise ValueError(str(exc.last_error)) from None
+    plan = outcome.value
     target.write_cast_design(plan)
     ctx.record_item_done(cost=0.0)
     return plan
@@ -500,8 +567,13 @@ def estimate_design_review(config, project_dir, bible) -> float:
     if missing:
         request = json.dumps(_design_request(config, bible, missing, established),
                              ensure_ascii=False, default=str)
-        total += estimate_text_cost(config.effective_prompt_model(), DESIGN_SYSTEM + request,
-                                    output_chars=len(missing) * 3600)
+        # Reserve room for the one bounded correction, including its rejected output.
+        total += _DESIGN_ATTEMPTS * estimate_text_cost(
+            config.effective_prompt_model(), DESIGN_SYSTEM + request,
+            output_chars=len(missing) * 3600,
+        )
+        total += estimate_text_cost(config.effective_prompt_model(), len(missing) * 3600,
+                                    output_chars=0)
     total += estimate_review_cost(config, bible)
     return total
 

@@ -967,6 +967,11 @@ plan covering the entire ensemble. Face, hair, silhouette, posture, wardrobe and
 contrasts are explicit adaptation choices for unspecified details, never edits
 to source visual anchors. The prompt receives the full roster and co-occurrence
 sets. Missing, repeated or duplicate-id designs are rejected before image work.
+The response schema limits the roster to the exact requested IDs and count.
+A completed JSON response with invalid designs gets at most one correction with
+the validation details; transport failures and unparseable responses are not
+resubmitted. Both completed attempts retain their usage, and the estimate includes
+the correction allowance. Established designs stay fixed through the correction.
 Canonical sheets receive these choices alongside verbatim source anchors, age,
 wardrobe and distinguishing details. Authorized correction addenda take priority.
 

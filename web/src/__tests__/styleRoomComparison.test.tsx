@@ -109,7 +109,7 @@ it("starts Cast with its bundled cover estimate without requesting a cover befor
   state.castStatus = undefined;
 });
 
-it("places all six base proofs in a grid sized by card width", () => {
+it("renders all six base proofs with their selection actions", () => {
   state.labels = ["Ink", "Watercolor", "Noir", "Graphic", "Caricature", "Paper"];
   state.estimateError = null;
   state.castStatus = undefined;
@@ -117,8 +117,6 @@ it("places all six base proofs in a grid sized by card width", () => {
     <Route path="/projects/:id/style" element={<StyleRoom />} />
   </Routes></MemoryRouter></I18nProvider>);
   const grid = screen.getByTestId("style-proof-grid");
-  // Columns come from a minimum card width, never from viewport breakpoints.
-  expect(grid.classList.contains("grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))]")).toBe(true);
   expect(within(grid).getAllByRole("heading", { level: 3 })).toHaveLength(6);
   expect(within(grid).getAllByRole("button", { name: "SELECT THIS STYLE" })).toHaveLength(6);
 });

@@ -303,3 +303,29 @@ def test_empty_image_with_unknown_finish_reason_remains_ambiguous():
     )], prompt_feedback=None)
     with pytest.raises(ValueError, match="did not contain image bytes"):
         _extract_image(response)
+
+
+@pytest.mark.parametrize(("quality", "size"), [("low", "1K"), ("medium", "2K"), ("high", "4K")])
+def test_nano_banana_native_controls_omit_unsupported_sampling(quality, size):
+    assert _image_config_kwargs(2 / 3, quality, model="gemini-nano-banana-2.1") == {
+        "image_size": size, "aspect_ratio": "2:3",
+    }
+
+
+def test_nano_banana_cost_prices_reported_modalities_cache_and_reasoning():
+    from litellm_handlers.vertex_multimodal import _native_image_usage_cost
+    import yaml
+
+    config = yaml.safe_load((Path(__file__).resolve().parents[2] / "litellm/config.yaml").read_text())
+    route = next(r for r in config["model_list"] if r["model_name"] == "image-nano-banana-2.1")
+    pricing = route["litellm_params"]["canary_image_pricing"]
+    response = SimpleNamespace(usage_metadata=SimpleNamespace(
+        prompt_token_count=1400, cached_content_token_count=100, thoughts_token_count=200,
+        candidates_tokens_details=[{"modality": "IMAGE", "token_count": 1680},
+                                  {"modality": "TEXT", "token_count": 20}],
+    ))
+    assert _native_image_usage_cost(response, pricing) == pytest.approx(
+        1300 * 1.5e-6 + 100 * 1.5e-7 + 1680 * 3e-5 + 220 * 7.5e-6,
+    )
+    response.usage_metadata.candidates_tokens_details = None
+    assert _native_image_usage_cost(response, pricing) is None

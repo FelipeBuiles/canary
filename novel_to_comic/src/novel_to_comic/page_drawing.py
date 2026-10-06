@@ -148,6 +148,23 @@ def legacy_vertex_page_capability_profile() -> PageCapabilityProfile:
     )
 
 
+def nano_banana_21_page_capability_profile() -> PageCapabilityProfile:
+    """Labs-only native Vertex page profile; production selection stays separate."""
+    from novel_to_comic.usage import get_pricing_resolver
+
+    pricing, _ = get_pricing_resolver()._pricing_for("gemini-nano-banana-2.1")
+    return PageCapabilityProfile(
+        id="nano-banana-2.1-complete-page-medium-hybrid-v1", exact_visible_lettering=False,
+        provider="vertex-multimodal", model="gemini-nano-banana-2.1",
+        max_image_references=14, reference_ordering="ordered",
+        editing_modes=("instructed", "region_targeted"),
+        output_width=1696, output_height=2528, max_prompt_characters=32_000,
+        retry_semantics="bounded_submission", max_attempts=1,
+        price_per_page_usd=Decimal(str(pricing["estimated_output_cost_per_image"])),
+        price_per_reference_usd=Decimal(str(pricing["estimated_input_cost_per_reference"])),
+    )
+
+
 def openai_page_capability_profile(
     model: str, *, quality: Literal["high", "medium"] = "high",
 ) -> PageCapabilityProfile:
@@ -266,7 +283,7 @@ def _supported_page_profile(profile: PageCapabilityProfile) -> bool:
         }))
     from novel_to_comic.codex_dev import model_has_vision, selectable_models, selector_available
 
-    if profile == current_page_capability_profile() or any(
+    if profile == nano_banana_21_page_capability_profile() or profile == current_page_capability_profile() or any(
         profile == openai_page_capability_profile(model, quality=quality)
         for model in ("gpt-image-2.5-sunburst", "gpt-image-2.5-flare")
         for quality in ("high", "medium")
@@ -1326,7 +1343,8 @@ class GoogleVertexCompletePageTransport:
     def __init__(self, config: Config, profile: PageCapabilityProfile | None = None) -> None:
         self._config = config
         self._profile = profile or current_page_capability_profile(config)
-        self._gateway_model = COMPLETE_PAGE_GATEWAY_MODEL
+        self._gateway_model = ("image-nano-banana-2.1" if self._profile.model == "gemini-nano-banana-2.1"
+                               else COMPLETE_PAGE_GATEWAY_MODEL)
         # The provider and upstream model this transport submits to. A
         # single-route profile's route is the profile itself.
         self._route_provider = self._profile.provider

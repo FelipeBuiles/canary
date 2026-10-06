@@ -177,6 +177,24 @@ own token usage and cost. Automated checks do not establish image quality or
 account access. See [OpenAI's Flare model](https://developers.openai.com/api/docs/models/gpt-image-2.5-flare)
 and [image generation guide](https://developers.openai.com/api/docs/guides/image-generation).
 
+Page items include every planned part, labelled by part and page number. Each
+selection compiles against that part workspace, so equal page numbers in two
+parts remain distinct. A page does not need to have been drawn to appear.
+
+Nano Banana 2.1 is also available through Vertex AI as `image-nano-banana-2.1`
+(upstream `gemini-nano-banana-2.1`). Select **Nano Banana 2.1 · Vertex AI**
+in Image comparison for recorded Style/Cast requests or planned Draw pages.
+This operator-funded Labs route uses the configured Vertex project and ADC at
+`global`; it allows at most 14 ordered reference images and makes one submission
+per cell, without fallback. Recorded assets map Low/Medium/High quality to
+1K/2K/4K; page experiments use a frozen 2K portrait profile and preserve the
+project's integrated or editable lettering mode. Estimates use the model's
+configured allowance, while reported output modalities and reasoning are priced
+at its own Vertex rates. The gateway must be rebuilt for its new handler and
+Google Gen AI SDK, and the backend must reload the updated Labs target list.
+See [Google's model specifications](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/nano-banana-2-1)
+and [Vertex pricing](https://cloud.google.com/vertex-ai/generative-ai/pricing).
+
 ## Labs comparison reasoning
 
 **Labs → Stage models** compares two to six models and offers a reasoning selector for every selected model and

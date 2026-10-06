@@ -1,6 +1,9 @@
 # Fly to AWS: Lightsail migration design
 
-**Status: Proposed. Researched October 6, 2026. No infrastructure deployed.**
+**Status: Design researched October 6, 2026; production cutover completed that day.**
+Current implementation and verification evidence is in
+[the Lightsail runbook](../ops/lightsail-ci.md#production-cutover-evidence-2026-10-06).
+Cost comparisons below are the original design assumptions, not a current invoice.
 
 ## Recommendation
 
