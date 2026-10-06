@@ -36,7 +36,9 @@ retained as current reference.
 ## Current contracts and capability evidence
 
 - [Encrypted secret delivery](ops/secret-delivery.md): SOPS/age tooling,
-  1Password recovery custody, and unactivated Lightsail delivery templates.
+  1Password recovery custody, and the active Lightsail delivery contract.
+- [Deployment](deploy.md): current single-owner Lightsail architecture and rollout requirements.
+- [Backup and restore](ops/backup-restore.md): application recovery contract for the container/infrastructure backup setup.
 - [Lightsail CI releases](ops/lightsail-ci.md): Depot builds, host-managed
   deployment, CI access setup, activation gates and failure recovery.
 - [PostHog and launch learning](reference/observability.md): implemented telemetry,
@@ -65,9 +67,9 @@ retained as current reference.
 
 ## Active future work
 
-- [AWS Lightsail migration](proposals/aws-lightsail-migration.md): October 6
-  infrastructure review, verified regional pricing, credit-access findings,
-  and proposed portable migration within a bounded hosting budget.
+- [AWS Lightsail migration design](proposals/aws-lightsail-migration.md): October 6
+  decision history and original assumptions. The current deployment entry points
+  above supersede its sequencing and export-delivery choices.
 - [Launch analytics and learning](research/2026-09-26-launch-learning-system.md):
   research behind the implemented event contracts, feedback, and learning workflow.
   See the current PostHog operating guide above for activation status.

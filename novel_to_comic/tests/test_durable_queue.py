@@ -1,4 +1,5 @@
 """Durable dispatch tests. Set CANARY_TEST_QUEUE_DSN for real PostgreSQL checks."""
+from novel_to_comic.server import page_operations, pipeline_operations
 import asyncio
 import fcntl
 import json
@@ -18,16 +19,19 @@ from novel_to_comic.server.job_commands import command, read_blob, save_blob
 
 
 def make_app(root):
-    return SimpleNamespace(state=SimpleNamespace(
+    from novel_to_comic.server.app import create_app
+    app = create_app(root)
+    app.state = SimpleNamespace(
         projects_dir=root, admission=Admission(root), generation_jobs={},
         running_tasks={}, style_tasks={}, event_queues={}, user_generation_semaphores={},
         credit_leases_ready=True, durable_queue_required=True,
         generation_job_timeout_seconds=5,
-    ))
+    )
+    return app
 
 
 def enqueue(app, label):
-    spec = command("fixture", app.state.projects_dir / "account" / "book", Config())
+    spec = command("cover", app.state.projects_dir / "account" / "book", Config())
     spec = spec.model_copy(update={"stage": "draw", "user_id": "account", "project_id": "book"})
     return enqueue_generation_job(app, "account:book", "complete_page_draw", label,
                                   {"page_number": int(label)}, None, user_id="account", command=spec)
@@ -160,7 +164,7 @@ def test_restore_distinguishes_unstarted_from_unknown(tmp_path):
         persist_generation_job(app, second)
         restarted = make_app(tmp_path)
         recovery = DurableQueue(restarted, "postgresql://unused")
-        recovery.restore()
+        await recovery.restore()
         assert restarted.state.generation_jobs[first.id].status == "queued"
         unknown = restarted.state.generation_jobs[second.id]
         assert unknown.status == "failed" and unknown.phase == "outcome_unknown"
@@ -208,7 +212,7 @@ asyncio.run(crash(Path(sys.argv[1])))
     with (tmp_path / ".queue-owner.lock").open("a+b") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     recovered = make_app(tmp_path)
-    DurableQueue(recovered, "postgresql://unused").restore()
+    asyncio.run(DurableQueue(recovered, "postgresql://unused").restore())
     jobs = {job.label: job for job in recovered.state.generation_jobs.values()}
     assert jobs["1"].status == "queued"
     assert jobs["2"].status == "failed"
@@ -260,7 +264,7 @@ def test_cancel_queued_pages_preserves_running_work_and_survives_restore(tmp_pat
         assert running.status == "running"
         assert await queue.cancel_queued_pages(project_name="account:book", user_id="account") == []
         restored = make_app(tmp_path)
-        DurableQueue(restored, "postgresql://unused").restore()
+        await DurableQueue(restored, "postgresql://unused").restore()
         assert restored.state.generation_jobs[waiting.id].status == "cancelled"
         queue.worker.cancel()
         await asyncio.gather(queue.worker, return_exceptions=True)
@@ -551,6 +555,7 @@ def test_page_handler_reconstructs_frozen_bytes_and_ocr(tmp_path, monkeypatch):
     monkeypatch.setattr(page_drawing, "page_draw_execution", execution)
     monkeypatch.setattr(page_drawing, "complete_page_adapter", lambda config, **kwargs: "adapter")
     monkeypatch.setattr(job_execution.TargetArtifacts, "read_plan", lambda self: SimpleNamespace(pages=[_page()]))
+    monkeypatch.setattr(job_execution.TargetArtifacts, "read_page", lambda self, number: _page())
     spec = command("page_draw", tmp_path, Config(),
         request=compiled.request.model_dump(mode="json"), page=_page().model_dump(mode="json"),
         references=[save_blob(tmp_path, data) for data in compiled.reference_bytes],
@@ -597,23 +602,22 @@ def test_production_readiness_requires_queue_even_when_other_checks_pass(tmp_pat
 
 def test_draw_batch_preparation_keeps_heartbeat_alive_and_announces_only_queued_pages(tmp_path, monkeypatch):
     import threading
-    from novel_to_comic.server.routers import pages
     entered, release = threading.Event(), threading.Event()
     target = SimpleNamespace(read_book_edition=lambda: object())
     def prepare(**kwargs):
         entered.set()
         assert release.wait(2), "Preparation blocked the event loop heartbeat"
         return target, object(), [(1, SimpleNamespace(page_number=1), object())]
-    monkeypatch.setattr(pages, "prepare_undrawn_pages", prepare)
-    monkeypatch.setattr(pages, "ensure_current_page_edition", lambda *args: None)
+    monkeypatch.setattr(page_operations, "prepare_undrawn_pages", prepare)
+    monkeypatch.setattr(page_operations, "ensure_current_page_edition", lambda *args: None)
     app = make_app(tmp_path)
     events = asyncio.Queue()
     app.state.event_queues["account:book"] = events
-    def reject(*args, **kwargs):
+    async def reject(*args, **kwargs):
         raise RuntimeError("publication failed")
-    monkeypatch.setattr(pages, "enqueue_complete_page_draw", reject)
+    monkeypatch.setattr(page_operations, "enqueue_complete_page_draw", reject)
     async def exercise():
-        task = asyncio.create_task(pages.enqueue_all_undrawn_pages(
+        task = asyncio.create_task(page_operations.enqueue_all_undrawn_pages(
             SimpleNamespace(app=app), project_id="book", user_id="account", project_dir=tmp_path, config=Config()))
         await until(entered.is_set)
         # This coroutine stands in for the queue heartbeat. It must run while
@@ -627,7 +631,6 @@ def test_draw_batch_preparation_keeps_heartbeat_alive_and_announces_only_queued_
 
 def test_draw_dispatch_failure_persists_stage_failure(tmp_path, monkeypatch):
     from novel_to_comic.server import job_execution
-    from novel_to_comic.server.routers import pipeline
     from novel_to_comic.state import create_initial_state, save_state, load_state, begin_stage, StageStatus
     state = create_initial_state("book", "novel.txt")
     save_state(state, tmp_path)
@@ -635,7 +638,7 @@ def test_draw_dispatch_failure_persists_stage_failure(tmp_path, monkeypatch):
         begin_stage(state, "draw", 63)
         save_state(state, directory)
         raise RuntimeError("Durable generation queue is unavailable")
-    monkeypatch.setattr(pipeline, "_run_stage_with_credits", initialize_then_fail)
+    monkeypatch.setattr(pipeline_operations, "_run_stage_with_credits", initialize_then_fail)
     spec = command("pipeline", tmp_path, Config(), queue_pages=True).model_copy(update={"stage": "draw"})
     job = SimpleNamespace(command=spec, project_name="account:book", payload={"stage": "draw"})
     app = make_app(tmp_path)
@@ -649,12 +652,11 @@ def test_draw_dispatch_failure_persists_stage_failure(tmp_path, monkeypatch):
 
 def test_failed_stage_raises_stage_specific_error(tmp_path, monkeypatch):
     from novel_to_comic.server import job_execution
-    from novel_to_comic.server.routers import pipeline
     from novel_to_comic.state import create_initial_state, save_state, fail_stage
     save_state(create_initial_state("book", "novel.txt"), tmp_path)
     async def settle_failed(stage, config, directory, state, *args, **kwargs):
         fail_stage(state, "cast", "Cast rejected the reference sheet")
-    monkeypatch.setattr(pipeline, "_run_stage_with_credits", settle_failed)
+    monkeypatch.setattr(pipeline_operations, "_run_stage_with_credits", settle_failed)
     spec = command("pipeline", tmp_path, Config()).model_copy(update={"stage": "cast"})
     job = SimpleNamespace(command=spec, project_name="account:book", payload={"stage": "cast"})
     with pytest.raises(job_execution.PipelineStageFailed, match="reference sheet"):
@@ -709,7 +711,7 @@ def test_reservation_failure_reports_original_unexpected_cause_once(
         pytest.fail("A denied reservation must not start generation")
 
     monkeypatch.setattr(credited_job, failure_boundary, fail)
-    monkeypatch.setattr(pipeline, "_run_stage", unexpected_stage)
+    monkeypatch.setattr(pipeline_operations, "_run_stage", unexpected_stage)
     spec = command("pipeline", tmp_path, Config()).model_copy(
         update={"stage": "extract", "user_id": "account", "project_id": "book"},
     )
@@ -746,7 +748,8 @@ def test_restore_closes_the_style_stage_a_hard_stop_left_running(tmp_path, sibli
     DurableQueue(app, "postgresql://unused")  # creates the journal schema
 
     def style_job(job_id, status):
-        spec = command("style_suggest", project, Config(), lifecycle_owned=True, bible={})
+        from .test_cast_asset_routes import _bible
+        spec = command("style_suggest", project, Config(), lifecycle_owned=True, bible=_bible().model_dump(mode="json"))
         spec = spec.model_copy(update={"stage": "style", "user_id": "account", "project_id": "book"})
         job = GenerationJob(id=job_id, project_name="account:book", kind="style_suggest", label="Styles",
                             payload={"proofs": {"1": {"status": "complete"}, "2": {"status": "running"}}},
@@ -759,7 +762,7 @@ def test_restore_closes_the_style_stage_a_hard_stop_left_running(tmp_path, sibli
     style_job("interrupted", "running")
     if sibling_queued:
         style_job("waiting", "queued")
-    DurableQueue(make_app(tmp_path), "postgresql://unused").restore()
+    asyncio.run(DurableQueue(make_app(tmp_path), "postgresql://unused").restore())
     style = load_state(project).stages["style"]
     if sibling_queued:
         assert style.status == StageStatus.RUNNING
@@ -768,12 +771,14 @@ def test_restore_closes_the_style_stage_a_hard_stop_left_running(tmp_path, sibli
         assert style.items_done == 1
 
 
-def test_page_replan_is_a_paid_whole_project_mutation():
+def test_page_replan_is_a_paid_whole_project_mutation(tmp_path):
     # One planning call, so it needs a receipt; it rewrites the book plan, so it
     # waits for every running job instead of running beside page draws.
-    from novel_to_comic.server.admission import _PAID, _TARGETED
-
-    assert _PAID.fullmatch("/pages/16/replan")
+    from novel_to_comic.server.admission import _TARGETED
+    from novel_to_comic.server.action_policy import request_policy
+    policy = request_policy(SimpleNamespace(app=make_app(tmp_path), method="POST",
+        url=SimpleNamespace(path="/api/projects/book/parts/part_0001/pages/16/replan")))
+    assert policy.spends and not policy.dispatches
     assert not _TARGETED.fullmatch("/pages/16/replan")
 
 
@@ -843,7 +848,7 @@ def test_shutdown_while_drained_leaves_operation_queued_for_restart(tmp_path, mo
     job = asyncio.run(exercise())
     assert job.status == "queued" and job.started_at is None
     restarted = make_app(tmp_path)
-    DurableQueue(restarted, "postgresql://unused").restore()
+    asyncio.run(DurableQueue(restarted, "postgresql://unused").restore())
     assert restarted.state.generation_jobs[job.id].status == "queued"
 
 

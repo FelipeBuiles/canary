@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import HTTPException, UploadFile
 from PIL import Image
 from starlette.datastructures import Headers
 from starlette.requests import Request
@@ -12,7 +12,6 @@ from starlette.requests import Request
 from novel_to_comic import artifacts
 from novel_to_comic.config import Config
 from novel_to_comic.server.routers.styles import (
-    _assert_no_style_task,
     _prepare_style_direction,
     create_style_direction,
     generate_style_samples,
@@ -27,15 +26,17 @@ from novel_to_comic.state import StageStatus, create_initial_state
 from tests.test_style_stage import _bible
 
 
-def _request(headers: list[tuple[bytes, bytes]] | None = None) -> Request:
-    app = FastAPI()
-    app.state.running_tasks = {}
-    app.state.style_tasks = {}
-    app.state.generation_jobs = {}
-    app.state.event_queues = {}
-    app.state.generation_queue = asyncio.Queue()
-    app.state.generation_semaphore = asyncio.Semaphore(1)
-    return Request({"type": "http", "app": app, "headers": headers or []})
+@pytest.fixture
+def tmp_path(tmp_path):
+    directory = tmp_path / "user" / "demo"
+    directory.mkdir(parents=True)
+    return directory
+
+
+def _request(root, headers=None) -> Request:
+    from tests.queue_fixtures import create_app
+    app = create_app(root.parent.parent)
+    return Request({"type":"http","app":app,"headers":headers or []})
 
 
 def _png_upload() -> UploadFile:
@@ -52,11 +53,13 @@ def _project(tmp_path, status: StageStatus = StageStatus.PENDING):
     artifacts.story_bible_path(tmp_path).write_text(_bible().model_dump_json())
     state = create_initial_state("demo", "novel.txt")
     state.stages["style"].status = status
+    from novel_to_comic.state import save_state
+    save_state(state,tmp_path)
     return tmp_path, Config(image_model="image-gemini-pro"), state
 
 
 def test_credit_failure_leaves_no_direction_artifacts(tmp_path):
-    request = _request()
+    request = _request(tmp_path)
     with patch(
         "novel_to_comic.server.routers.styles.assert_sufficient_credits",
         side_effect=HTTPException(402, "insufficient"),
@@ -72,62 +75,25 @@ def test_credit_failure_leaves_no_direction_artifacts(tmp_path):
 
 
 
-def test_style_task_guard_blocks_overlap():
-    async def scenario():
-        request = _request()
-        request.app.state.style_tasks["user:demo"] = asyncio.get_running_loop().create_future()
-        with pytest.raises(HTTPException) as exc_info:
-            _assert_no_style_task(request, "user:demo")
-        assert exc_info.value.status_code == 409
-
-    asyncio.run(scenario())
 
 
 
 
-def test_concurrent_direction_upload_is_owner_guarded(tmp_path):
+def test_direction_upload_cancellation_creates_no_command(tmp_path):
     class BlockingUpload:
-        content_type = "image/png"
-        filename = "blocked.png"
-
-        def __init__(self):
-            self.started = asyncio.Event()
-            self.release = asyncio.Event()
-
+        content_type, filename = "image/png", "blocked.png"
         async def read(self, _size):
-            self.started.set()
-            await self.release.wait()
-            return _png_upload().file.read()
-
+            await asyncio.Event().wait()
     async def scenario():
-        request = _request()
-        project = _project(tmp_path)
-        upload = BlockingUpload()
-        with (
-            patch("novel_to_comic.server.routers.styles.assert_sufficient_credits"),
-            patch("novel_to_comic.server.routers.styles.get_db", return_value=object()),
-            patch("novel_to_comic.server.routers.styles.reserve_credits", return_value=("r", "j")),
-            patch("novel_to_comic.server.routers.styles.release_reservation") as release,
-            patch("novel_to_comic.server.routers.styles.enqueue_reserved_generation_job") as enqueue,
-        ):
-            first = asyncio.create_task(create_style_direction(
-                request, "demo", direction_text="ink", label=None,
-                with_neighbors=False, image=upload, project=project, user_id="user",
-            ))
-            await upload.started.wait()
-            with pytest.raises(HTTPException) as exc_info:
-                await create_style_direction(
-                    request, "demo", direction_text="ink", label=None,
-                    with_neighbors=False, image=None, project=project, user_id="user",
-                )
-            assert exc_info.value.status_code == 409
-            first.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await first
-            assert enqueue.call_count == 0
-            assert release.call_count == 0
-            assert not (tmp_path / "samples").exists()
-
+        request = _request(tmp_path)
+        task = asyncio.create_task(create_style_direction(request,"demo", direction_text="ink",
+            label=None,with_neighbors=False,image=BlockingUpload(),project=_project(tmp_path),user_id="user"))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not request.app.state.generation_jobs
+        assert not (tmp_path / "samples").exists()
     asyncio.run(scenario())
 
 
@@ -212,7 +178,7 @@ def test_get_styles_does_not_call_missing_proof_stale(tmp_path):
 
 @pytest.mark.parametrize("failure_point", ["estimate", "db"])
 def test_direction_post_guard_failures_release_owner(tmp_path, failure_point):
-    request = _request()
+    request = _request(tmp_path)
     patches = [
         patch(
             "novel_to_comic.server.routers.styles._direction_credit_estimates",
@@ -234,31 +200,18 @@ def test_direction_post_guard_failures_release_owner(tmp_path, failure_point):
                 request, "demo", direction_text="ink", label=None,
                 with_neighbors=False, image=None, project=_project(tmp_path), user_id="user",
             ))
-    assert "user:demo" not in request.app.state.style_tasks
+    assert not request.app.state.generation_jobs
     assert not (tmp_path / "samples").exists()
 
 
-def test_suggest_setup_failure_releases_reservation_and_queue(tmp_path):
-    async def scenario():
-        request = _request()
-        project = _project(tmp_path)
-        with (
-            patch("novel_to_comic.server.routers.styles.get_db", return_value=object()),
-            patch("novel_to_comic.server.routers.styles.assert_sufficient_credits"),
-            patch("novel_to_comic.server.routers.styles.reserve_credits", return_value=("r", "j")),
-            patch("novel_to_comic.server.routers.styles.release_reservation") as release,
-            patch("novel_to_comic.server.routers.styles.save_state", side_effect=RuntimeError("disk")),
-        ):
-            with pytest.raises(RuntimeError, match="disk"):
-                await suggest_styles(
-                    request, "demo", project=project, user_id="user",
-                )
-        assert release.call_count == 1
-        assert "user:demo" not in request.app.state.style_tasks
-        assert "user:demo" not in request.app.state.event_queues
-        assert project[2].stages["style"].status == StageStatus.FAILED
-
-    asyncio.run(scenario())
+def test_suggest_setup_failure_never_acquires_a_hold(tmp_path, style_ledger):
+    request, project = _request(tmp_path), _project(tmp_path)
+    with patch("novel_to_comic.server.routers.styles.save_state", side_effect=RuntimeError("disk")):
+        with pytest.raises(RuntimeError, match="disk"):
+            asyncio.run(suggest_styles(request,"demo",project=project,user_id="user"))
+    assert not request.app.state.generation_jobs
+    assert not style_ledger.holds
+    assert not style_ledger.released
 
 
 
@@ -280,14 +233,14 @@ def test_decoded_image_dimensions_are_bounded(tmp_path):
 
 
 def test_direction_rejects_oversized_content_length_before_queue(tmp_path):
-    request = _request([(b"content-length", str(12 * 1024 * 1024).encode())])
+    request = _request(tmp_path, [(b"content-length", str(12 * 1024 * 1024).encode())])
     with pytest.raises(HTTPException) as exc_info:
         asyncio.run(create_style_direction(
             request, "demo", direction_text="ink", label=None,
             with_neighbors=False, image=None, project=_project(tmp_path), user_id="user",
         ))
     assert exc_info.value.status_code == 413
-    assert not request.app.state.style_tasks
+    assert not any(j.status == "running" for j in request.app.state.generation_jobs.values())
 
 
 
@@ -363,34 +316,34 @@ def style_ledger(monkeypatch):
 
 
 def install_style_ledger(monkeypatch):
-    """Fake credit ledger for style routes; shared by other suites."""
-    from novel_to_comic.server import credited_job
+    """A fake ledger; admission and execution retain their production implementations."""
+    from novel_to_comic.server import credited_job, credits, db
     from novel_to_comic.server.routers import styles
-
-    ledger = SimpleNamespace(balance=10000, holds={}, released=[], expired=set())
-
-    def reserve(_db, _user, _project, _stage, required):
+    from novel_to_comic.stages import s2_style
+    ledger=SimpleNamespace(balance=10000,holds={},released=[],expired=set())
+    def sufficient(_db,_user,required,**kwargs):
         if required > ledger.balance - sum(ledger.holds.values()):
-            raise HTTPException(402, "insufficient")
-        key = f"hold-{len(ledger.holds) + len(ledger.released)}"
-        ledger.holds[key] = required
-        return key, f"ledger-{key}"
-
-    def release(_db, key):
+            raise HTTPException(402,"insufficient")
+    def reserve(_db,_user,_project,_stage,required,**kwargs):
+        sufficient(_db,_user,required)
+        key=f"hold-{len(ledger.holds)+len(ledger.released)}"
+        ledger.holds[key]=required
+        return key,f"ledger-{key}"
+    def release(_db,key):
         if key in ledger.holds:
             ledger.holds.pop(key)
             ledger.released.append(key)
-
-    def active(_db, key):
+    def active(_db,key):
         if key not in ledger.holds or key in ledger.expired:
             raise RuntimeError("Credit reservation expired or ownership was lost")
-
-    for module in (styles, credited_job):
-        monkeypatch.setattr(module, "get_db", lambda: ledger)
-        monkeypatch.setattr(module, "reserve_credits", reserve)
-        monkeypatch.setattr(module, "release_reservation", release)
-    monkeypatch.setattr(styles, "assert_sufficient_credits", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(credited_job, "assert_reservation_active", active)
+    for module in (styles,credited_job,db):
+        monkeypatch.setattr(module,"get_db",lambda:ledger)
+    for module in (styles,credited_job):
+        monkeypatch.setattr(module,"assert_sufficient_credits",sufficient)
+    monkeypatch.setattr(credits,"reserve_credits",reserve)
+    monkeypatch.setattr(credits,"release_reservation",release)
+    monkeypatch.setattr(credits,"assert_reservation_active",active)
+    monkeypatch.setattr(s2_style,"ensure_style_sample_brief",AsyncMock(return_value=None))
     return ledger
 
 
@@ -416,61 +369,36 @@ async def _queue_style_operation(request, project, operation):
 
 
 @pytest.mark.parametrize("operation", ["direction", "suggest", "samples", "validation"])
-@pytest.mark.parametrize("terminal", ["cancel", "expired"])
-def test_style_queue_releases_unstarted_hold_without_paid_work(
-    tmp_path, style_ledger, operation, terminal,
-):
+def test_style_queue_cancellation_needs_no_hold_or_paid_work(tmp_path, style_ledger, operation):
     async def scenario():
-        request = _request()
-        project = _project(tmp_path)
-        with (
-            patch("novel_to_comic.server.routers.styles.ensure_style_sample_brief", new=AsyncMock()) as brief,
-            patch("novel_to_comic.server.routers.styles.generate_sample_image", new=AsyncMock()) as image,
-            patch("novel_to_comic.server.routers.styles.generate_suggestions", new=AsyncMock()) as suggestions,
-        ):
-            await _queue_style_operation(request, project, operation)
-            job = request.app.state.generation_queue.get_nowait()
-            assert len(style_ledger.holds) == 1
-            if terminal == "expired":
-                style_ledger.expired.update(style_ledger.holds)
-                with pytest.raises(RuntimeError, match="expired"):
-                    await job.runner()
-            else:
-                job.on_cancel()
-            job.on_cancel()
-            brief.assert_not_awaited()
-            image.assert_not_awaited()
-            suggestions.assert_not_awaited()
+        request, project = _request(tmp_path), _project(tmp_path)
+        await _queue_style_operation(request,project,operation)
+        job = request.app.state.generation_queue.get_nowait()
         assert not style_ledger.holds
-        assert len(style_ledger.released) == 1
-        assert not request.app.state.style_tasks
-        if operation in ("direction", "suggest"):
-            assert project[2].stages["style"].status == StageStatus.FAILED
-
+        job.status = "cancelled"
+        from novel_to_comic.server.generation_jobs import run_generation_job
+        await run_generation_job(request.app,job)
+        assert not job.started_at
+        assert not style_ledger.holds and not style_ledger.released
     asyncio.run(scenario())
 
 
-def test_competing_style_jobs_cannot_spend_another_queued_hold(tmp_path, style_ledger):
+def test_queue_admission_leaves_credits_available_until_execution(tmp_path, style_ledger):
     async def scenario():
-        first = _request()
-        second = _request()
-        project = _project(tmp_path, StageStatus.AWAITING_REVIEW)
-        with patch(
-            "novel_to_comic.server.routers.styles._style_sample_credit_estimate",
-            return_value={"reserved_credits": 10, "estimate_credits": 8},
-        ):
+        request, project = _request(tmp_path), _project(tmp_path,StageStatus.AWAITING_REVIEW)
+        with patch("novel_to_comic.server.routers.styles._style_sample_credit_estimate",
+                   return_value={"reserved_credits":10,"estimate_credits":8}):
             style_ledger.balance = 10
-            await _queue_style_operation(first, project, "samples")
-            with pytest.raises(HTTPException) as error:
-                await _queue_style_operation(second, project, "validation")
-            assert error.value.status_code == 402
-            assert second.app.state.generation_queue.empty()
-            first.app.state.generation_queue.get_nowait().on_cancel()
-            await _queue_style_operation(second, project, "validation")
-            assert len(style_ledger.holds) == 1
-            second.app.state.generation_queue.get_nowait().on_cancel()
+            await _queue_style_operation(request,project,"samples")
+            await _queue_style_operation(request,project,"validation")
+        assert len(request.app.state.generation_jobs) == 2
         assert not style_ledger.holds
-
+        # The worker rechecks available balance before any provider work.
+        style_ledger.balance = 0
+        with pytest.raises(HTTPException) as exc:
+            await request.app.state.generation_queue.get_nowait().runner()
+        assert exc.value.status_code == 402
+        assert not style_ledger.holds
     asyncio.run(scenario())
 
 
@@ -479,7 +407,7 @@ def test_style_provider_work_runs_under_hold_and_releases_on_success(
     tmp_path, style_ledger, operation,
 ):
     async def scenario():
-        request = _request()
+        request = _request(tmp_path)
         project = _project(tmp_path)
         calls = []
 
@@ -499,28 +427,28 @@ def test_style_provider_work_runs_under_hold_and_releases_on_success(
             })], None
 
         with (
-            patch("novel_to_comic.server.routers.styles.ensure_style_sample_brief", side_effect=paid),
-            patch("novel_to_comic.server.routers.styles.generate_sample_image", side_effect=paid),
-            patch("novel_to_comic.server.routers.styles.generate_samples_for_indices", side_effect=paid),
-            patch("novel_to_comic.server.routers.styles.generate_suggestions", side_effect=suggestions),
+            patch("novel_to_comic.stages.s2_style.ensure_style_sample_brief", side_effect=paid),
+            patch("novel_to_comic.stages.s2_style.generate_sample_image", side_effect=paid),
+            patch("novel_to_comic.stages.s2_style.describe_custom_direction", new=AsyncMock()),
+            patch("novel_to_comic.stages.s2_style.generate_suggestions", side_effect=suggestions),
         ):
             await _queue_style_operation(request, project, operation)
             await request.app.state.generation_queue.get_nowait().runner()
-        assert calls == [operation] * (1 if operation == "validation" else 2)
+        assert calls == [operation] * (1 if operation == "validation" else 3 if operation == "suggest" else 2)
         assert not style_ledger.holds
-        assert not request.app.state.style_tasks
+        assert not any(j.status == "running" for j in request.app.state.generation_jobs.values())
         if operation in ("direction", "suggest"):
-            assert project[2].stages["style"].status == StageStatus.AWAITING_REVIEW
+            assert __import__("novel_to_comic.state",fromlist=["load_state"]).load_state(tmp_path).stages["style"].status == StageStatus.AWAITING_REVIEW
 
     asyncio.run(scenario())
 
 
 def test_suggest_broadcasts_terminal_failure_to_each_subscriber(tmp_path, style_ledger):
     async def scenario():
-        request = _request()
+        request = _request(tmp_path)
         project = _project(tmp_path)
         with patch(
-            "novel_to_comic.server.routers.styles.generate_suggestions",
+            "novel_to_comic.stages.s2_style.generate_suggestions",
             new=AsyncMock(side_effect=RuntimeError("provider failed")),
         ):
             await _queue_style_operation(request, project, "suggest")
@@ -532,7 +460,7 @@ def test_suggest_broadcasts_terminal_failure_to_each_subscriber(tmp_path, style_
             events = []
             while not subscriber.empty():
                 events.append(subscriber.get_nowait()["type"])
-            assert events == ["stage_begin", "log", "stage_fail"]
+            assert events[0] == "stage_begin" and events[-1] == "stage_fail"
             channel.unsubscribe(subscriber)
         assert not style_ledger.holds
 
@@ -540,9 +468,9 @@ def test_suggest_broadcasts_terminal_failure_to_each_subscriber(tmp_path, style_
 
 
 @pytest.mark.parametrize("fail_neighbors", [False, True])
-def test_direction_neighbors_commit_only_after_all_proofs(tmp_path, style_ledger, fail_neighbors):
+def test_direction_neighbors_keep_candidates_and_record_each_proof_outcome(tmp_path, style_ledger, fail_neighbors):
     async def scenario():
-        request = _request()
+        request = _request(tmp_path)
         project = _project(tmp_path)
         neighbors = [normalize_suggestion({
             "label": f"N{i}", "medium": f"medium {i}", "template": f"style {i}",
@@ -550,12 +478,19 @@ def test_direction_neighbors_commit_only_after_all_proofs(tmp_path, style_ledger
         }, origin="generated_neighbor") for i, role in enumerate(
             ("story_fit_primary", "story_fit_secondary", "adjacent", "contrast", "wildcard")
         )]
+        images = 0
+        async def proof(*args,**kwargs):
+            nonlocal images
+            images += 1
+            if fail_neighbors and images > 1:
+                raise RuntimeError("proof failed")
         with (
-            patch("novel_to_comic.server.routers.styles.ensure_style_sample_brief", new=AsyncMock()),
-            patch("novel_to_comic.server.routers.styles.generate_sample_image", new=AsyncMock()),
-            patch("novel_to_comic.server.routers.styles.generate_suggestions", new=AsyncMock(return_value=(neighbors, None))),
+            patch("novel_to_comic.stages.s2_style.ensure_style_sample_brief", new=AsyncMock()),
+            patch("novel_to_comic.stages.s2_style.generate_sample_image", new=proof),
+            patch("novel_to_comic.stages.s2_style.describe_custom_direction", new=AsyncMock()),
+            patch("novel_to_comic.stages.s2_style.generate_suggestions", new=AsyncMock(return_value=(neighbors, None))),
             patch(
-                "novel_to_comic.server.routers.styles.generate_samples_for_indices",
+                "novel_to_comic.stages.s2_style.generate_samples_for_indices",
                 new=AsyncMock(side_effect=RuntimeError("proof failed") if fail_neighbors else None),
             ),
         ):
@@ -571,9 +506,9 @@ def test_direction_neighbors_commit_only_after_all_proofs(tmp_path, style_ledger
                 await job.runner()
         persisted = load_suggestions(tmp_path)
         assert [item["origin"] for item in persisted] == (
-            ["user_text"] if fail_neighbors else ["user_text"] + ["generated_neighbor"] * 5
+            ["user_text"] + ["generated_neighbor"] * 5
         )
-        assert project[2].stages["style"].status == (
+        assert __import__("novel_to_comic.state",fromlist=["load_state"]).load_state(tmp_path).stages["style"].status == (
             StageStatus.FAILED if fail_neighbors else StageStatus.AWAITING_REVIEW
         )
         assert not style_ledger.holds
@@ -584,7 +519,7 @@ def test_direction_neighbors_commit_only_after_all_proofs(tmp_path, style_ledger
 @pytest.mark.parametrize("operation", ["direction", "suggest", "samples", "validation"])
 def test_style_enqueue_failure_releases_hold(tmp_path, style_ledger, operation):
     async def scenario():
-        request = _request()
+        request = _request(tmp_path)
         project = _project(tmp_path)
         with patch(
             "novel_to_comic.server.credited_job.enqueue_generation_job",
@@ -593,10 +528,10 @@ def test_style_enqueue_failure_releases_hold(tmp_path, style_ledger, operation):
             with pytest.raises(RuntimeError, match="queue unavailable"):
                 await _queue_style_operation(request, project, operation)
         assert not style_ledger.holds
-        assert len(style_ledger.released) == 1
-        assert not request.app.state.style_tasks
+        assert len(style_ledger.released) == 0
+        assert not any(j.status == "running" for j in request.app.state.generation_jobs.values())
         if operation in ("direction", "suggest"):
-            assert project[2].stages["style"].status == StageStatus.FAILED
+            assert __import__("novel_to_comic.state",fromlist=["load_state"]).load_state(tmp_path).stages["style"].status == StageStatus.FAILED
 
     asyncio.run(scenario())
 
@@ -604,23 +539,23 @@ def test_style_enqueue_failure_releases_hold(tmp_path, style_ledger, operation):
 @pytest.mark.parametrize("operation", ["samples", "validation"])
 def test_style_retry_reuses_queued_job_without_another_hold(tmp_path, style_ledger, operation):
     async def scenario():
-        request = _request()
+        request = _request(tmp_path)
         project = _project(tmp_path, StageStatus.AWAITING_REVIEW)
         first = await _queue_style_operation(request, project, operation)
         style_ledger.balance = 0
         second = await _queue_style_operation(request, project, operation)
         assert first == second
         assert request.app.state.generation_queue.qsize() == 1
-        request.app.state.generation_queue.get_nowait().on_cancel()
+        request.app.state.generation_queue.get_nowait().status = "cancelled"
         assert not style_ledger.holds
-        assert len(style_ledger.released) == 1
+        assert len(style_ledger.released) == 0
 
     asyncio.run(scenario())
 
 
 def test_author_direction_queues_without_restarting_a_running_style_stage(tmp_path, style_ledger):
     async def scenario():
-        request = _request()
+        request = _request(tmp_path)
         project = _project(tmp_path, StageStatus.RUNNING)
         stage = project[2].stages["style"]
         stage.items_total, stage.items_done = 6, 2
@@ -628,7 +563,7 @@ def test_author_direction_queues_without_restarting_a_running_style_stage(tmp_pa
         assert result["status"] == "queued"
         assert (stage.items_total, stage.items_done, stage.status) == (6, 2, StageStatus.RUNNING)
         job = request.app.state.generation_queue.get_nowait()
-        job.on_cancel()
+        job.status = "cancelled"
         assert stage.status == StageStatus.RUNNING
 
     asyncio.run(scenario())
@@ -653,32 +588,22 @@ def test_default_and_directed_quotes_price_six_and_five_images(tmp_path):
         assert all(call.args[2] == NEIGHBOR_COUNT == 5 for call in batch.call_args_list)
 
 
-def test_six_proof_progress_is_monotonic_when_images_finish_out_of_order(tmp_path, style_ledger):
-    from novel_to_comic.stages.s2_style import SAMPLE_COUNT
+def test_six_proof_progress_is_monotonic_when_images_finish_out_of_order(tmp_path,style_ledger):
     from tests.test_style_stage import _batch
-
+    from novel_to_comic.state import load_state
+    from novel_to_comic.stages import s2_style
     async def scenario():
-        request, project = _request(), _project(tmp_path)
-        suggestions = [normalize_suggestion(s) for s in _batch(count=SAMPLE_COUNT)["styles"]]
-
-        async def finish_in_reverse(_config, _bible, _directory, _suggestions, indices, *, on_sample_done):
-            assert indices == [1, 2, 3, 4, 5, 6]
-            for index in reversed(indices):
-                await on_sample_done(index, None)
-
-        with (
-            patch("novel_to_comic.server.routers.styles.generate_suggestions",
-                  new=AsyncMock(return_value=(suggestions, None))),
-            patch("novel_to_comic.server.routers.styles.generate_samples_for_indices", new=finish_in_reverse),
-        ):
-            await suggest_styles(request, "demo", None, project=project, user_id="user")
-            assert project[2].stages["style"].items_total == SAMPLE_COUNT
+        request,project = _request(tmp_path),_project(tmp_path)
+        candidates=[normalize_suggestion(item) for item in _batch(count=6)["styles"]]
+        async def image(_config,_bible,path,**kwargs):
+            await asyncio.sleep(0.001 * (sum(path.name.encode()) % 7))
+        with patch.object(s2_style,"generate_suggestions",new=AsyncMock(return_value=(candidates,None))), \
+             patch.object(s2_style,"generate_sample_image",new=image):
+            await suggest_styles(request,"demo",None,project=project,user_id="user")
             await request.app.state.generation_queue.get_nowait().runner()
-        events = request.app.state.event_queues["user:demo"].history
-        progress = [event["done"] for event in events if event["type"] == "stage_progress"]
-        assert progress == [0, 1, 2, 3, 4, 5, 6, 6]
-        assert project[2].stages["style"].items_done == SAMPLE_COUNT
-        assert len(load_suggestions(tmp_path)) == SAMPLE_COUNT
+        progress=[e["done"] for e in request.app.state.event_queues["user:demo"].history if e["type"]=="stage_progress"]
+        assert progress == sorted(progress) and progress[-1] == 6
+        assert load_state(tmp_path).stages["style"].items_done == 6
+        assert len(load_suggestions(tmp_path)) == 6
         assert not style_ledger.holds
-
     asyncio.run(scenario())

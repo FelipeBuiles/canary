@@ -12,6 +12,7 @@ import os
 from typing import Any
 
 from fastapi import Header, HTTPException
+from .generation_jobs import generation_jobs_snapshot
 
 
 def require_ops_token(
@@ -32,11 +33,9 @@ def _unfinished(values) -> int:
 
 def deployment_activity(app) -> dict[str, Any]:
     """Return aggregate activity without exposing users, projects, or prompts."""
-    pipeline_tasks = _unfinished(app.state.running_tasks.values())
-    style_tasks = _unfinished(app.state.style_tasks.values())
     active_jobs = [
         job
-        for job in app.state.generation_jobs.values()
+        for job in generation_jobs_snapshot(app)
         if job.status in {"queued", "running"}
     ]
     queued_jobs = sum(1 for job in active_jobs if job.status == "queued")
@@ -55,8 +54,6 @@ def deployment_activity(app) -> dict[str, Any]:
 
     counts = {
         "admitting_requests": getattr(getattr(app.state, "admission", None), "active_requests", 0),
-        "pipeline_tasks": pipeline_tasks,
-        "style_tasks": style_tasks,
         "queued_generation_jobs": queued_jobs,
         "running_generation_jobs": running_jobs,
         "queue_items": queued_items,

@@ -1,4 +1,5 @@
 """Local complete-page profile boundaries; no SDK or provider calls."""
+from novel_to_comic.server import page_operations, pipeline_operations
 import asyncio
 import hashlib
 import io
@@ -171,6 +172,7 @@ def test_five_references_keep_original_bytes_and_six_use_a_lossless_sheet(tmp_pa
         ref = member["authority"]
         assert ref["content_sha256"] == hashlib.sha256(files[ref["id"]].path.read_bytes()).hexdigest()
     monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_operations, "approved_reference_files", lambda path: files)
     entries = pages._reference_entries(tmp_path, prepared.references)
     assert [entry["id"] for entry in entries] == [r.id for r in inventory.references]
     assert all(entry["image_path"] for entry in entries)
@@ -200,14 +202,16 @@ def test_draw_estimate_maps_incompatible_reference_to_conflict(tmp_path, monkeyp
         TargetArtifacts, "read_plan", lambda self: SimpleNamespace(pages=[page])
     )
     monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(page_operations, "approved_visual_inventory", lambda path: inventory)
     monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_operations, "approved_reference_files", lambda path: files)
 
     app = FastAPI()
     app.include_router(pages.router)
     app.dependency_overrides[get_project] = lambda: (tmp_path, _codex_config(), None)
     from novel_to_comic.server.auth import get_current_user
     app.dependency_overrides[get_current_user] = lambda: "owner"
-    from novel_to_comic.server.routers import projects as project_routes
+    from novel_to_comic.server import cover_operations as project_routes
     monkeypatch.setattr(project_routes, "needs_initial_project_cover", lambda *args: False)
     response = TestClient(app).get("/pages/generate/estimate")
 
@@ -250,28 +254,37 @@ def test_start_draw_packs_references_for_both_entry_paths(tmp_path, monkeypatch,
     artifacts.write_page(page)
     monkeypatch.setattr(TargetArtifacts, "read_plan", lambda self: SimpleNamespace(pages=[page]))
     monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(page_operations, "approved_visual_inventory", lambda path: inventory)
     monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_operations, "approved_reference_files", lambda path: files)
     monkeypatch.setattr(pipeline, "project_busy", lambda *args, **kwargs: False)
     monkeypatch.setattr(pipeline, "_require_previous_stage", lambda *args: None)
     monkeypatch.setattr(styles, "is_style_selected", lambda *args: True)
     run_stage = AsyncMock()
-    monkeypatch.setattr(pipeline, "_run_stage_with_credits", run_stage)
+    monkeypatch.setattr(pipeline_operations, "_run_stage_with_credits", run_stage)
 
-    async def run_job(pkey, user_id, request, job, channel=None):
-        await job
-
-    monkeypatch.setattr(pipeline, "_run_job", run_job)
-    app = SimpleNamespace(state=SimpleNamespace(event_queues={}, running_tasks={}))
+    from tests.queue_fixtures import create_app
+    from novel_to_comic.state import create_initial_state, save_state
+    directory = tmp_path / "user" / "project"
+    directory.mkdir(parents=True)
+    TargetArtifacts(directory).write_page(page)
+    from .style_reference_support import write_style_proof
+    write_style_proof(directory)
+    state = create_initial_state("Project", "source.txt")
+    save_state(state, directory)
+    app = create_app(tmp_path)
 
     async def start():
         result = await pipeline._start_stage(
             SimpleNamespace(app=app), "project", "draw", False,
-            (tmp_path, _codex_config(), None), "user", queue_pages=queue_pages,
+            (directory, _codex_config(), state), "user", queue_pages=queue_pages,
         )
-        await asyncio.gather(*app.state.running_tasks.values())
+        job = app.state.generation_jobs[result["job"]["id"]]
+        await job.runner()
         return result
 
-    assert asyncio.run(start()) == {"status": "started", "stage": "draw"}
+    result = asyncio.run(start())
+    assert (result["status"], result["stage"]) == ("started", "draw")
     assert run_stage.call_args.kwargs["queue_draw_pages"] is queue_pages
     assert not artifacts.book_edition_path.exists()
 
@@ -281,9 +294,9 @@ def test_start_draw_marks_preflight_rejection_before_dispatch(tmp_path, monkeypa
     from novel_to_comic.server.routers import pipeline
 
     prepare = MagicMock(side_effect=ValueError("reference overflow"))
-    monkeypatch.setattr(pages, "prepare_undrawn_pages", prepare)
+    monkeypatch.setattr(page_operations, "prepare_undrawn_pages", prepare)
     dispatch = AsyncMock()
-    monkeypatch.setattr(pipeline, "_run_stage_with_credits", dispatch)
+    monkeypatch.setattr(pipeline_operations, "_run_stage_with_credits", dispatch)
     with pytest.raises(HTTPException) as caught:
         asyncio.run(pipeline._start_stage(
             SimpleNamespace(), "project", "draw", False,
@@ -308,9 +321,11 @@ def test_queue_all_later_reference_overflow_has_no_enqueue_or_credit_hold(tmp_pa
     artifacts.write_page(later)
     monkeypatch.setattr(TargetArtifacts, "read_plan", lambda self: SimpleNamespace(pages=[first, later]))
     monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(page_operations, "approved_visual_inventory", lambda path: inventory)
     monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_operations, "approved_reference_files", lambda path: files)
     enqueue = MagicMock(side_effect=AssertionError("partial batch was enqueued"))
-    monkeypatch.setattr(pages, "enqueue_complete_page_draw", enqueue)
+    monkeypatch.setattr(page_operations, "enqueue_complete_page_draw", enqueue)
     from novel_to_comic.server import credited_job
     reserve = MagicMock(side_effect=AssertionError("batch reached credit reservation"))
     monkeypatch.setattr(credited_job, "reserve_credits", reserve)
@@ -319,7 +334,7 @@ def test_queue_all_later_reference_overflow_has_no_enqueue_or_credit_hold(tmp_pa
         event_queues={}, generation_jobs={}, generation_queue=events,
     ))
     with pytest.raises(ValueError):
-        asyncio.run(pages.enqueue_all_undrawn_pages(
+        asyncio.run(page_operations.enqueue_all_undrawn_pages(
             SimpleNamespace(app=app), project_id="project", user_id="user",
             project_dir=tmp_path, config=_codex_config(),
         ))
@@ -341,13 +356,15 @@ def test_batch_subscription_quote_is_zero_and_subscription_even_when_empty(tmp_p
     artifacts.write_page(page)
     monkeypatch.setattr(TargetArtifacts, "read_plan", lambda self: SimpleNamespace(pages=[page] if page_count else []))
     monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(page_operations, "approved_visual_inventory", lambda path: inventory)
     monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_operations, "approved_reference_files", lambda path: files)
     app = FastAPI()
     app.include_router(pages.router)
     app.dependency_overrides[get_project] = lambda: (tmp_path, _codex_config(), None)
     from novel_to_comic.server.auth import get_current_user
     app.dependency_overrides[get_current_user] = lambda: "owner"
-    from novel_to_comic.server.routers import projects as project_routes
+    from novel_to_comic.server import cover_operations as project_routes
     monkeypatch.setattr(project_routes, "needs_initial_project_cover", lambda *args: False)
     response = TestClient(app).get("/pages/generate/estimate")
     assert response.status_code == 200
@@ -413,11 +430,14 @@ def test_native_draw_persists_untouched_png_and_unknown_observed_cost_and_model(
     app = SimpleNamespace(state=SimpleNamespace(
         generation_jobs={}, generation_job_sequence=0, generation_queue=asyncio.Queue(),
     ))
-    job, created = credited_job.enqueue_reserved_generation_job(
+    from tests.queue_fixtures import enqueue_test_operation
+    monkeypatch.setattr(credited_job, "assert_sufficient_credits", lambda *a, **k: None)
+    monkeypatch.setattr("novel_to_comic.server.db.get_db", lambda: database)
+    job, created = enqueue_test_operation(
         app, project_name="project", user_id="user", project_id="id",
         project_dir=artifacts.project_dir, stage="draw", kind="complete_page_draw",
         label="Page 7", payload={"request_sha256": compiled.request.request_sha256},
-        work=work, debit_description="Draw page", reservation_credits=99,
+        work=work, config=config, debit_description="Draw page", reservation_credits=99,
         operations=draw_operations(config),
     )
     asyncio.run(job.runner())
@@ -471,13 +491,15 @@ def test_explicit_retry_estimate_after_failed_codex_draw(tmp_path, monkeypatch, 
     ))
     artifacts.write_request(original.request, request_revision=1)
     monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(page_operations, "approved_visual_inventory", lambda path: inventory)
     monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_operations, "approved_reference_files", lambda path: files)
     app = FastAPI()
     app.include_router(pages.router)
     app.dependency_overrides[get_project] = lambda: (tmp_path, _codex_config(), None)
     from novel_to_comic.server.auth import get_current_user
     app.dependency_overrides[get_current_user] = lambda: "owner"
-    from novel_to_comic.server.routers import projects as project_routes
+    from novel_to_comic.server import cover_operations as project_routes
     monkeypatch.setattr(project_routes, "needs_initial_project_cover", lambda *args: False)
 
     client = TestClient(app)
@@ -593,6 +615,7 @@ def reviewed_story_precondition(monkeypatch):
     # upstream fixtures. Real missing/stale review admission is tested in
     # test_narrative_review.py.
     monkeypatch.setattr("novel_to_comic.server.routers.pages.require_draw_narrative_reviews", lambda target: None)
+    monkeypatch.setattr("novel_to_comic.server.page_operations.require_draw_narrative_reviews", lambda target: None)
     monkeypatch.setattr("novel_to_comic.narrative_review.require_draw_narrative_reviews", lambda target: None)
 
 
@@ -646,7 +669,9 @@ def test_a_replanned_page_draws_fresh_while_current_art_still_needs_a_correction
         edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(_codex_config()),
     ))
     monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(page_operations, "approved_visual_inventory", lambda path: inventory)
     monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_operations, "approved_reference_files", lambda path: files)
     monkeypatch.setattr(TargetArtifacts, "provenance_revisions", lambda self, number: (1,))
     project = (tmp_path, _codex_config(), None)
 
@@ -669,7 +694,9 @@ def test_a_page_drawn_from_a_changed_cast_reference_draws_fresh(tmp_path, monkey
         edition_id="dev-edition", profile=page_drawing.current_page_capability_profile(_codex_config()),
     ))
     monkeypatch.setattr(pages, "approved_visual_inventory", lambda path: inventory)
+    monkeypatch.setattr(page_operations, "approved_visual_inventory", lambda path: inventory)
     monkeypatch.setattr(pages, "approved_reference_files", lambda path: files)
+    monkeypatch.setattr(page_operations, "approved_reference_files", lambda path: files)
     monkeypatch.setattr(TargetArtifacts, "provenance_revisions", lambda self, number: (1,))
     monkeypatch.setattr(pages, "_latest_render_is_stale", lambda target, number, revision: False)
     monkeypatch.setattr(pages, "_page_redraw", lambda project_dir, target, number: {

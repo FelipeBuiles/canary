@@ -4,6 +4,9 @@
 Current implementation and verification evidence is in
 [the Lightsail runbook](../ops/lightsail-ci.md#production-cutover-evidence-2026-10-06).
 Cost comparisons below are the original design assumptions, not a current invoice.
+The [current deployment contract](../deploy.md) supersedes this design’s export
+delivery choice: private exports stay authenticated; R2 is reserved for an explicitly
+private backup destination if selected.
 
 ## Recommendation
 
@@ -62,7 +65,7 @@ The repository review used executable configuration and code, including
 `server/durable_queue.py`, and `server/ratelimit.py` under the Python source
 root. The earlier [deployment review](deployment-platform-review.md) supports
 the single-owner limitation, but is stale about the queue and release workflow:
-the [deploy runbook](../deploy.md#step-1b--generation-queue-database) records
+the [deploy runbook](../deploy.md#generation-queue-database) records
 private Supabase queue provisioning on September 27, while
 `.github/workflows/ci.yml` is absent in this checkout. Its described pipeline
 must not be treated as available automation.

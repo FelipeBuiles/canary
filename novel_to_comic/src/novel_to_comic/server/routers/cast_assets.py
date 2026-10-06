@@ -8,7 +8,9 @@ an earlier version — without re-running the stage.
 
 from __future__ import annotations
 
+
 from pathlib import Path
+import asyncio
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
@@ -20,7 +22,6 @@ from novel_to_comic.asset_versions import list_asset_versions, restore_asset_ver
 from novel_to_comic.cast_instructions import (
     ASSET_REGEN_KINDS,
     MAX_INSTRUCTION_CHARS,
-    apply_asset_instruction,
     asset_regen_label,
     resolve_cast_asset,
     restore_asset_instruction_direction,
@@ -39,6 +40,8 @@ from ..generation_jobs import (
 )
 from ..ratelimit import cost_limit, limiter
 
+from ..cast_admission import apply_asset_instruction
+
 router = APIRouter()
 
 
@@ -56,7 +59,7 @@ class DismissReviewNoteRequest(BaseModel):
     concern: str = Field(min_length=1, max_length=40)
 
 
-@router.post("/cast/review/dismiss")
+@router.post("/cast/review/dismiss", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def dismiss_cast_review_note(body: DismissReviewNoteRequest, project=Depends(get_project),
                              user_id: str = Depends(get_current_user)):  # noqa: ARG001 — auth gate
     """The author judged one Character Check note fine for the current sheets."""
@@ -87,7 +90,7 @@ class KeepReferenceRequest(BaseModel):
     state_id: str | None = None
 
 
-@router.post("/cast/references/keep")
+@router.post("/cast/references/keep", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def keep_cast_reference(body: KeepReferenceRequest, project=Depends(get_project)):
     """Keep an out-of-date reference as it is after its entity was edited."""
     from novel_to_comic.stages.s3_cast import keep_current_reference, reference_freshness
@@ -102,7 +105,7 @@ def keep_cast_reference(body: KeepReferenceRequest, project=Depends(get_project)
     return {"references": reference_freshness(config, project_dir)}
 
 
-@router.post("/cast/reopen")
+@router.post("/cast/reopen", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def reopen_cast(project=Depends(get_project)):
     """Reopen an approved Cast so it regenerates out-of-date or missing references.
 
@@ -121,7 +124,7 @@ def reopen_cast(project=Depends(get_project)):
     return {"reopened": True, "references": pending}
 
 
-@router.post("/cast/reference-uploads")
+@router.post("/cast/reference-uploads", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 async def upload_cast_reference(image: UploadFile = File(...), project=Depends(get_project)):
     """Store an author's image so a Cast correction can attach it. No spend."""
     from novel_to_comic.uploaded_images import (
@@ -137,7 +140,11 @@ async def upload_cast_reference(image: UploadFile = File(...), project=Depends(g
         decode_uploaded_image(data, suffix)
     except UploadedImageError as exc:
         raise HTTPException(400, f"Reference image {exc}.") from None
-    return store_reference_upload(project_dir, data, suffix, image.filename)
+    def keep():
+        from ..storage_budget import ingestion
+        with ingestion(project_dir, len(data) + 4096):
+            return store_reference_upload(project_dir, data, suffix, image.filename)
+    return await asyncio.to_thread(keep)
 
 
 @router.get("/cast/reference-uploads/{upload_id}")
@@ -207,7 +214,7 @@ def _require_cast_asset(project_dir, asset_type: str, asset_id: str, state_id=No
     resolve_cast_asset(project_dir, asset_type, asset_id, state_id)
 
 
-def _enqueue_cast_asset_regen(
+async def _enqueue_cast_asset_regen(
     request: Request,
     project_id: str,
     user_id: str,
@@ -241,7 +248,7 @@ def _enqueue_cast_asset_regen(
     )
 
     from ..job_commands import command
-    job, _created = enqueue_credited_job(
+    job, _created = await enqueue_credited_job(
         request.app,
         project_name=pkey,
         user_id=user_id,
@@ -251,7 +258,7 @@ def _enqueue_cast_asset_regen(
         kind=kind,
         label=label,
         payload={asset_id_key: asset_id},
-        work=work,
+
         command=command("cast_asset", project_dir, config, kind=kind, asset_id=asset_id),
         debit_description=debit_description,
         semaphore=generation_semaphore_for_config(request.app, config),
@@ -308,7 +315,7 @@ async def asset_regen_estimate(
     }
 
 
-@router.post("/regen-ref")
+@router.post("/regen-ref", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
 @limiter.limit(cost_limit)
 async def regen_ref(
     request: Request,
@@ -322,7 +329,7 @@ async def regen_ref(
     project_dir, config, _state = project
     _require_path_safe_id(char_id, "char_id")
     _require_cast_asset(project_dir, "character", char_id)
-    return _enqueue_cast_asset_regen(
+    return await _enqueue_cast_asset_regen(
         request,
         project_id,
         user_id,
@@ -336,7 +343,7 @@ async def regen_ref(
     )
 
 
-@router.post("/regen-state-ref")
+@router.post("/regen-state-ref", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
 @limiter.limit(cost_limit)
 async def regen_state_ref(
     request: Request,
@@ -352,7 +359,7 @@ async def regen_state_ref(
     _require_path_safe_id(char_id, "char_id")
     _require_path_safe_id(state_id, "state_id")
     _require_cast_asset(project_dir, "character", char_id, state_id)
-    return _enqueue_cast_asset_regen(
+    return await _enqueue_cast_asset_regen(
         request,
         project_id,
         user_id,
@@ -370,7 +377,7 @@ async def regen_state_ref(
     )
 
 
-@router.post("/regen-plate")
+@router.post("/regen-plate", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
 @limiter.limit(cost_limit)
 async def regen_plate(
     request: Request,
@@ -384,7 +391,7 @@ async def regen_plate(
     project_dir, config, _state = project
     _require_path_safe_id(loc_id, "loc_id")
     _require_cast_asset(project_dir, "location", loc_id)
-    return _enqueue_cast_asset_regen(
+    return await _enqueue_cast_asset_regen(
         request,
         project_id,
         user_id,
@@ -398,7 +405,7 @@ async def regen_plate(
     )
 
 
-@router.post("/locations/{loc_id}/states/{state_id}/regenerate")
+@router.post("/locations/{loc_id}/states/{state_id}/regenerate", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
 @limiter.limit(cost_limit)
 async def regenerate_location_state(
     request: Request,
@@ -414,7 +421,7 @@ async def regenerate_location_state(
     _require_path_safe_id(loc_id, "loc_id")
     _require_path_safe_id(state_id, "state_id")
     _require_cast_asset(project_dir, "location", loc_id, state_id)
-    return _enqueue_cast_asset_regen(
+    return await _enqueue_cast_asset_regen(
         request,
         project_id,
         user_id,
@@ -430,7 +437,7 @@ async def regenerate_location_state(
     )
 
 
-@router.post("/regen-prop")
+@router.post("/regen-prop", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
 @limiter.limit(cost_limit)
 async def regen_prop(
     request: Request,
@@ -444,7 +451,7 @@ async def regen_prop(
     project_dir, config, _state = project
     _require_path_safe_id(prop_id, "prop_id")
     _require_cast_asset(project_dir, "prop", prop_id)
-    return _enqueue_cast_asset_regen(
+    return await _enqueue_cast_asset_regen(
         request,
         project_id,
         user_id,
@@ -458,7 +465,7 @@ async def regen_prop(
     )
 
 
-@router.post("/regen-ref-instructed")
+@router.post("/regen-ref-instructed", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
 @limiter.limit(cost_limit)
 async def regen_ref_with_instruction(
     request: Request,
@@ -483,7 +490,7 @@ async def regen_ref_with_instruction(
     )
 
 
-@router.post("/regen-plate-instructed")
+@router.post("/regen-plate-instructed", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
 @limiter.limit(cost_limit)
 async def regen_plate_with_instruction(
     request: Request,
@@ -508,7 +515,7 @@ async def regen_plate_with_instruction(
     )
 
 
-@router.post("/regen-prop-instructed")
+@router.post("/regen-prop-instructed", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
 @limiter.limit(cost_limit)
 async def regen_prop_with_instruction(
     request: Request,
@@ -533,7 +540,7 @@ async def regen_prop_with_instruction(
     )
 
 
-@router.post("/characters/{char_id}/states/{state_id}/regenerate-instructed")
+@router.post("/characters/{char_id}/states/{state_id}/regenerate-instructed", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
 @limiter.limit(cost_limit)
 async def regenerate_character_state_instructed(
     request: Request,
@@ -562,7 +569,7 @@ async def regenerate_character_state_instructed(
     )
 
 
-@router.post("/locations/{loc_id}/states/{state_id}/regenerate-instructed")
+@router.post("/locations/{loc_id}/states/{state_id}/regenerate-instructed", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
 @limiter.limit(cost_limit)
 async def regenerate_location_state_instructed(
     request: Request,
@@ -619,7 +626,7 @@ def get_character_ref_versions(
     }
 
 
-@router.post("/character-ref-versions/restore")
+@router.post("/character-ref-versions/restore", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def restore_character_ref_version(
     char_id: str = Query(...),
     version: int = Query(...),
@@ -687,7 +694,7 @@ def get_location_plate_versions(
     }
 
 
-@router.post("/location-plate-versions/restore")
+@router.post("/location-plate-versions/restore", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def restore_location_plate_version(
     loc_id: str = Query(...),
     version: int = Query(..., ge=1),

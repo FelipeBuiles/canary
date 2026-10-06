@@ -1,3 +1,4 @@
+from novel_to_comic.server import pipeline_operations
 import asyncio
 from functools import wraps
 from types import SimpleNamespace
@@ -59,9 +60,9 @@ async def test_reservation_race_rejection_does_not_reset_rerun(tmp_path, monkeyp
     async def reject(**kwargs):
         raise CreditReservationDenied("Another action consumed the balance")
 
-    monkeypatch.setattr(pipeline, "run_credited_stage", reject)
-    monkeypatch.setattr(pipeline, "capture_server_event", lambda *args, **kwargs: None)
-    await pipeline._run_stage_with_credits("extract", Config(), tmp_path, state, EventChannel(), "account", "book", rerun=True)
+    monkeypatch.setattr(pipeline_operations, "run_credited_stage", reject)
+    monkeypatch.setattr(pipeline_operations, "capture_server_event", lambda *args, **kwargs: None)
+    await pipeline_operations._run_stage_with_credits("extract", Config(), tmp_path, state, EventChannel(), "account", "book", rerun=True)
     assert artifact.read_text() == '{"paid": "prior output"}'
     assert (tmp_path / "state.json").read_bytes() == before
 
@@ -81,10 +82,10 @@ async def test_only_a_balance_shortfall_is_reported_as_a_credit_block(
     async def reject(**kwargs):
         raise CreditReservationDenied("Blocked", detail) from cause
 
-    monkeypatch.setattr(pipeline, "run_credited_stage", reject)
-    monkeypatch.setattr(pipeline, "capture_server_event", lambda name, **kwargs: server_events.append(name))
-    monkeypatch.setattr(pipeline, "capture_lifecycle", lambda app, name, attempt_id, **kwargs: lifecycle.append((name, kwargs["properties"])))
-    await pipeline._run_stage_with_credits("extract", Config(), tmp_path, state, EventChannel(), "account", "book")
+    monkeypatch.setattr(pipeline_operations, "run_credited_stage", reject)
+    monkeypatch.setattr(pipeline_operations, "capture_server_event", lambda name, **kwargs: server_events.append(name))
+    monkeypatch.setattr(pipeline_operations, "capture_lifecycle", lambda app, name, attempt_id, **kwargs: lifecycle.append((name, kwargs["properties"])))
+    await pipeline_operations._run_stage_with_credits("extract", Config(), tmp_path, state, EventChannel(), "account", "book")
 
     assert ("credit_blocked" in server_events) is credit_blocked
     failed = [properties for name, properties in lifecycle if name == "stage_failed"]
@@ -155,10 +156,10 @@ async def test_adapt_restart_archives_only_after_hold_and_resume_keeps_work(tmp_
         # Stop here without invoking providers or auto-chaining.
         active_state.stages[stage].status = StageStatus.FAILED
 
-    monkeypatch.setattr(pipeline, "run_credited_stage", credited)
-    monkeypatch.setattr(pipeline, "_run_stage", run)
-    monkeypatch.setattr(pipeline, "capture_server_event", lambda *args, **kwargs: None)
-    await pipeline._run_stage_with_credits("adapt", Config(), tmp_path, state, EventChannel(), "account", "book", rerun=rerun)
+    monkeypatch.setattr(pipeline_operations, "run_credited_stage", credited)
+    monkeypatch.setattr(pipeline_operations, "_run_stage", run)
+    monkeypatch.setattr(pipeline_operations, "capture_server_event", lambda *args, **kwargs: None)
+    await pipeline_operations._run_stage_with_credits("adapt", Config(), tmp_path, state, EventChannel(), "account", "book", rerun=rerun)
     archives = list((tmp_path / ".checkpoints/restarts").glob("*"))
     assert len(archives) == int(rerun)
     if rerun:
@@ -174,9 +175,9 @@ async def test_adapt_restart_credit_race_preserves_checkpoints(tmp_path, monkeyp
     async def reject(**kwargs):
         raise CreditReservationDenied("Insufficient credits")
 
-    monkeypatch.setattr(pipeline, "run_credited_stage", reject)
-    monkeypatch.setattr(pipeline, "capture_server_event", lambda *args, **kwargs: None)
-    await pipeline._run_stage_with_credits("adapt", Config(), tmp_path, state, EventChannel(), "account", "book", rerun=True)
+    monkeypatch.setattr(pipeline_operations, "run_credited_stage", reject)
+    monkeypatch.setattr(pipeline_operations, "capture_server_event", lambda *args, **kwargs: None)
+    await pipeline_operations._run_stage_with_credits("adapt", Config(), tmp_path, state, EventChannel(), "account", "book", rerun=True)
     assert all((tmp_path / path).read_text() == path for path in paths)
     assert (tmp_path / "state.json").read_bytes() == before
     assert not (tmp_path / ".checkpoints/restarts").exists()
@@ -273,11 +274,13 @@ def test_jobs_endpoint_restores_queued_page_visibility_from_durable_command(tmp_
         payload={"page_number": compiled.request.page_number,
                  "request_sha256": compiled.request.request_sha256},
         command=command("page_draw", tmp_path, Config(),
-                        request=compiled.request.model_dump(mode="json")),
+                        request=compiled.request.model_dump(mode="json"),
+                        page=_page().model_dump(mode="json"), references=[]),
     )
-    app = SimpleNamespace(state=SimpleNamespace(generation_jobs={job.id: job}))
+    from novel_to_comic.server.admission import Admission
+    app = SimpleNamespace(state=SimpleNamespace(generation_jobs={job.id: job}, admission=Admission(tmp_path)))
     result = pipeline.get_generation_jobs(
-        SimpleNamespace(app=app), "book", ids=None,
+        SimpleNamespace(app=app), "book", ids=None, before=None, limit=100,
         project=(tmp_path, Config(), None), user_id="account",
     )
     assert result["jobs"][0]["status"] == "queued"
@@ -313,11 +316,11 @@ async def test_continuing_plan_repairs_an_adaptation_no_plan_can_satisfy(tmp_pat
     from novel_to_comic.stages import s4_adapt
     monkeypatch.setattr(s4_adapt, "published_adaptation_needs_repair",
                         lambda project_dir: needs_repair and not repaired["done"])
-    monkeypatch.setattr(pipeline, "run_credited_stage", credited)
-    monkeypatch.setattr(pipeline, "_run_stage", run)
-    monkeypatch.setattr(pipeline, "capture_server_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline_operations, "run_credited_stage", credited)
+    monkeypatch.setattr(pipeline_operations, "_run_stage", run)
+    monkeypatch.setattr(pipeline_operations, "capture_server_event", lambda *args, **kwargs: None)
 
-    await pipeline._run_stage_with_credits("plan", Config(), tmp_path, state, EventChannel(), "account", "book")
+    await pipeline_operations._run_stage_with_credits("plan", Config(), tmp_path, state, EventChannel(), "account", "book")
 
     assert ran == (["adapt", "plan"] if needs_repair else ["plan"])
     assert state.stages["plan"].status == StageStatus.COMPLETE
@@ -334,9 +337,9 @@ async def test_stage_exception_reaches_error_tracking_with_its_stage(tmp_path, m
             raise error
 
     captured = []
-    monkeypatch.setitem(pipeline.REGISTRY, "plan", Broken())
+    monkeypatch.setitem(pipeline_operations.REGISTRY, "plan", Broken())
     monkeypatch.setattr(telemetry, "capture_exception", lambda exc, **kwargs: captured.append((exc, kwargs)))
-    await pipeline._run_stage("plan", Config(), tmp_path, state, EventChannel(), user_id="account")
+    await pipeline_operations._run_stage("plan", Config(), tmp_path, state, EventChannel(), user_id="account")
     assert state.stages["plan"].status == StageStatus.FAILED
     assert captured == [(error, {"user_id": "account", "stage": "plan"})]
 

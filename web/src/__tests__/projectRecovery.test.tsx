@@ -31,7 +31,7 @@ beforeEach(() => {
   fetchMock.mockImplementation(async (path, options) => {
     if (path.endsWith("/status")) {
       if (missing) throw new ApiError(404, "Project not found");
-      return { id: "demo", is_running: false, stages: { extract: { status: "failed" } } };
+      return { id: "demo", is_running: false, part_busy: false, series_busy: false, stages: { extract: { status: "failed" } } };
     }
     if (path === "/credits/balance") return { balance_credits: 1000 };
     if (path.includes("/estimate")) {
@@ -59,7 +59,7 @@ beforeEach(() => {
 
 function setup(element: React.ReactNode, { route = "/project/demo/story", guarded = false, cached = false } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-  if (cached) client.setQueryData(["project", "demo", "status"], { id: "demo", is_running: false, stages: {} });
+  if (cached) client.setQueryData(["project", "demo", "status"], { id: "demo", is_running: false, part_busy: false, series_busy: false, stages: {} });
   render(<QueryClientProvider client={client}><I18nProvider><MemoryRouter initialEntries={[route]}><Routes>
     <Route path="/" element={<p>Project library</p>} />
     {guarded ? <Route path="/project/:id" element={<ProjectRooms />}>
@@ -99,7 +99,7 @@ describe("Extraction refusal recovery", () => {
     expect(within(screen.getByRole("alertdialog")).getByLabelText("about 25 credits")).toBeTruthy();
     expect(fetchMock.mock.calls.some(([path]) => path.includes("/run"))).toBe(false);
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Retry stage" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/projects/demo/run?stage=extract", { method: "POST" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/projects/demo/run?stage=extract", { paidAction: true, method: "POST" }));
   });
 
   it("keeps retry disabled after a failed model save and permits recovery", async () => {

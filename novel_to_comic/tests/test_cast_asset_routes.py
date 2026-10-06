@@ -8,6 +8,7 @@ whole stage again.
 """
 
 from __future__ import annotations
+from novel_to_comic.server.cast_admission import apply_asset_instruction
 
 import asyncio
 import json
@@ -20,12 +21,7 @@ import pytest
 from fastapi import HTTPException
 
 from novel_to_comic import artifacts
-from novel_to_comic.cast_instructions import (
-    PromptInstructionError,
-    apply_asset_instruction,
-    parse_asset_instruction_patch,
-    validate_user_instruction,
-)
+from novel_to_comic.cast_instructions import PromptInstructionError, parse_asset_instruction_patch, validate_user_instruction
 from novel_to_comic.config import Config
 from novel_to_comic.models.appearance import AppearanceState
 from novel_to_comic.models.story_bible import (
@@ -98,8 +94,10 @@ def _bible() -> StoryBible:
 
 
 def _project(tmp_path: Path) -> Path:
-    project_dir = tmp_path / "demo"
-    project_dir.mkdir()
+    project_dir = tmp_path / "u1" / "demo"
+    project_dir.mkdir(parents=True)
+    from novel_to_comic.state import create_initial_state, save_state
+    save_state(create_initial_state("Demo", "input/source.txt"), project_dir)
     artifacts.write_story_bible(project_dir, _bible())
     _prepare_character_inputs(project_dir, Config())
     return project_dir
@@ -163,6 +161,12 @@ def _rewrite(addendum: str = "Singe the left sleeve and darken the cuff.") -> Ap
 
 
 def _apply(project_dir: Path, app, *, run_job=True, **kwargs):
+    from novel_to_comic.server.admission import Admission
+    from tests.queue_fixtures import TestDispatcher
+    app.state.projects_dir = project_dir.parent.parent
+    app.state.admission = Admission(app.state.projects_dir)
+    app.state.durable_queue_required = True
+    app.state.durable_queue = TestDispatcher(app, "postgresql://unused")
     db = MagicMock()
     app.billing_db = db
 
@@ -191,17 +195,17 @@ def _apply(project_dir: Path, app, *, run_job=True, **kwargs):
     )
     async def submit():
         result = await apply_asset_instruction(**{**defaults, **kwargs})
+        job = app.state.generation_jobs[result["job"]["id"]]
+        async def execute():
+            from novel_to_comic.server.generation_jobs import run_generation_job
+            with patch("novel_to_comic.server.db.get_db", return_value=db):
+                await run_generation_job(app, job)
+        job.runner = execute
         if run_job:
-            from novel_to_comic.server.generation_jobs import generation_worker
-
-            worker = asyncio.create_task(generation_worker(app))
-            await app.state.generation_queue.join()
-            worker.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await worker
+            await execute()
         return result
 
-    with patch("novel_to_comic.server.credited_job.get_db", return_value=db):
+    with patch("novel_to_comic.server.credited_job.get_db", return_value=db), patch("novel_to_comic.server.credited_job.assert_sufficient_credits"):
         return asyncio.run(submit())
 
 
@@ -447,20 +451,21 @@ def test_canonical_anatomy_restoration_reaches_image_without_mutating_anchor(tmp
     ) == direction
 
 
-def test_queued_correction_cancellation_releases_hold_once_without_rewrite(tmp_path, image_work):
+def test_queued_correction_cancellation_needs_no_hold_or_rewrite(tmp_path, image_work):
     project_dir = _project(tmp_path)
     app = _app()
     with patch("novel_to_comic.clients.text.generate_json") as rewrite:
         result = _apply(project_dir, app, run_job=False)
         job = app.state.generation_jobs[result["job"]["id"]]
-        job.on_cancel()
-        job.on_cancel()
+        job.status = "cancelled"
+        from novel_to_comic.server.generation_jobs import persist_generation_job
+        persist_generation_job(app, job)
     rewrite.assert_not_called()
     releases = [call for call in app.billing_db.rpc.call_args_list if call.args[0] == "release_credit_reservation"]
-    assert len(releases) == 1
+    assert len(releases) == 0
     for image in image_work.values():
         image.assert_not_awaited()
-def test_running_rewrite_cancellation_releases_hold_and_never_submits_image(tmp_path, image_work):
+def test_running_rewrite_cancellation_retains_ambiguous_hold_and_never_submits_image(tmp_path, image_work):
     project_dir = _project(tmp_path)
     app = _app()
 
@@ -482,7 +487,8 @@ def test_running_rewrite_cancellation_releases_hold_and_never_submits_image(tmp_
     _apply(project_dir, app, run_job=False)
     asyncio.run(scenario())
     releases = [call for call in app.billing_db.rpc.call_args_list if call.args[0] == "release_credit_reservation"]
-    assert len(releases) == 1
+    assert len(releases) == 0
+    assert next(iter(app.state.generation_jobs.values())).phase == "outcome_unknown"
     for image in image_work.values():
         image.assert_not_awaited()
 
@@ -613,7 +619,7 @@ def test_a_second_edit_is_refused_while_one_is_still_running(tmp_path: Path):
             app, "u1:p1", "character_ref_regen", {"char_id": "char_001"}
         ).id == first["job"]["id"]
         reserves = [call for call in first_db.rpc.call_args_list if call.args[0] == "reserve_stage_credits"]
-        assert len(reserves) == 1
+        assert len(reserves) == 0
     assert exc_info.value.status_code == 409
 
 

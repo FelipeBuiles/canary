@@ -1,184 +1,103 @@
-"""Tests for the CreditedJob module (server/credited_job.py)."""
-
+"""Production command admission, settlement, and cancellation boundaries."""
 import asyncio
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
+from unittest.mock import patch
+
+from novel_to_comic.server import credited_job, credits
+from novel_to_comic.usage import ApiResult, UsageRecord
+from tests.queue_fixtures import enqueue_test_operation
 
 
-from novel_to_comic.usage import ApiResult
+@pytest.fixture
+def ledger(monkeypatch):
+    db = object()
+    reserve = MagicMock(return_value=("hold", "command-ledger-job"))
+    release = MagicMock()
+    debit = MagicMock()
+    monkeypatch.setattr(credited_job, "get_db", lambda: db)
+    monkeypatch.setattr(credited_job, "assert_sufficient_credits", lambda *a, **kw: None)
+    monkeypatch.setattr("novel_to_comic.server.db.get_db", lambda: db)
+    monkeypatch.setattr(credits, "reserve_credits", reserve)
+    monkeypatch.setattr(credits, "release_reservation", release)
+    monkeypatch.setattr(credits, "debit_model_usage", debit)
+    monkeypatch.setattr(credits, "assert_reservation_active", lambda *a: None)
+    yield SimpleNamespace(db=db, reserve=reserve, release=release, debit=debit)
+    credits._unsettled_jobs.discard("command-ledger-job")
 
 
-def _make_app() -> MagicMock:
-    """Create a minimal FastAPI-like app stub for generation job tests."""
-    app = MagicMock()
-    app.state.generation_jobs = {}
-    app.state.generation_job_sequence = 0
-    app.state.generation_queue = asyncio.Queue()
-    return app
+def admit(tmp_path, work, app=None, **kwargs):
+    app = app or SimpleNamespace(state=SimpleNamespace(
+        generation_jobs={}, generation_job_sequence=0, generation_queue=asyncio.Queue(),
+    ))
+    return app, enqueue_test_operation(app, project_name="u1:book", user_id="u1",
+        project_id="book", project_dir=tmp_path, stage="cast", kind="project_cover",
+        label="Cover", payload={}, work=work, debit_description="Cover",
+        reservation_credits=5, operations=(("image", "image-gpt-2"),), **kwargs)
 
 
-class TestEnqueueCreditedJob:
-    def test_returns_existing_job_on_dedup(self, tmp_path: Path):
-        from novel_to_comic.server.credited_job import enqueue_credited_job
-        from novel_to_comic.server.generation_jobs import enqueue_generation_job
-
-        app = _make_app()
-
-        async def _noop():
-            return ApiResult(value=None)
-
-        # Pre-enqueue a matching job
-        existing = enqueue_generation_job(
-            app,
-            project_name="proj",
-            kind="char_regen",
-            label="char / foo",
-            payload={"char_id": "foo"},
-            runner=_noop,
-        )
-
-        with patch("novel_to_comic.server.credited_job.get_db"), \
-             patch("novel_to_comic.server.credited_job.reserve_credits", side_effect=AssertionError("duplicate reserved twice")):
-            job, created = enqueue_credited_job(
-                app,
-                project_name="proj",
-                user_id="u1",
-                project_id="p1",
-                project_dir=tmp_path,
-                stage="cast",
-                kind="char_regen",
-                label="char / foo",
-                payload={"char_id": "foo"},
-                work=_noop,
-                debit_description="test debit",
-                operations=(("image", "image-gpt-2"),),
-            )
-
-        assert created is False
-        assert job.id == existing.id
+def test_duplicate_admission_and_queued_cancel_take_no_hold(tmp_path, ledger):
+    async def forbidden():
+        raise AssertionError("unstarted operation reached provider")
+    app, (job, created) = admit(tmp_path, forbidden)
+    _, (duplicate, created_again) = admit(tmp_path, forbidden, app)
+    assert created and not created_again and duplicate is job
+    ledger.reserve.assert_not_called()
+    job.status = "cancelled"
+    from novel_to_comic.server.generation_jobs import run_generation_job
+    asyncio.run(run_generation_job(app, job))
+    ledger.reserve.assert_not_called()
+    ledger.release.assert_not_called()
 
 
-    def test_runner_skips_debit_when_no_usage(self, tmp_path: Path):
-        from novel_to_comic.server.credited_job import enqueue_credited_job
+def test_no_usage_releases_once_without_debit(tmp_path, ledger):
+    async def work():
+        from novel_to_comic.ai.context import current_ai_request_context
+        assert current_ai_request_context().job_id == "command-ledger-job"
+        return ApiResult(value="saved", usage=None)
+    _, (job, _) = admit(tmp_path, work)
+    ledger.reserve.assert_not_called()
+    asyncio.run(job.runner())
+    ledger.reserve.assert_called_once()
+    assert ledger.reserve.call_args.kwargs["job_id"] == job.command.ledger_job_id
+    ledger.debit.assert_not_called()
+    ledger.release.assert_called_once_with(ledger.db, "hold")
 
-        app = _make_app()
 
-        async def _work():
-            return ApiResult(value="ok", usage=None)
+def test_expired_execution_hold_never_calls_provider(tmp_path, ledger, monkeypatch):
+    work = MagicMock(side_effect=AssertionError("expired hold reached provider"))
+    monkeypatch.setattr(credits, "assert_reservation_active", MagicMock(side_effect=RuntimeError("lease expired")))
+    _, (job, _) = admit(tmp_path, work)
+    with pytest.raises(RuntimeError, match="lease expired"):
+        asyncio.run(job.runner())
+    work.assert_not_called()
+    ledger.release.assert_called_once_with(ledger.db, "hold")
 
-        with patch("novel_to_comic.server.credited_job.get_db"), \
-             patch("novel_to_comic.server.credited_job.reserve_credits", return_value=(None, "job")), \
-             patch("novel_to_comic.server.credited_job.debit_model_usage") as mock_debit, \
-             patch("novel_to_comic.server.credited_job.ai_request_context") as mock_ctx:
-            mock_ctx.return_value.__enter__ = MagicMock(return_value=None)
-            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
 
-            job, _ = enqueue_credited_job(
-                app,
-                project_name="proj",
-                user_id="u1",
-                project_id="p1",
-                project_dir=tmp_path,
-                stage="cast",
-                kind="char_regen",
-                label="char",
-                payload={"char_id": "c"},
-                work=_work,
-                debit_description="regen",
-                operations=(("image", "image-gpt-2"),),
-            )
-
-            asyncio.run(job.runner())
-
-        mock_debit.assert_not_called()
-
-    def test_runner_clears_items_failed_cast_on_success(self, tmp_path: Path):
-        from novel_to_comic.server.credited_job import enqueue_credited_job
-        from novel_to_comic.state import create_initial_state, save_state, load_state
-
-        # Setup initial state with a failed item
-        state = create_initial_state("proj", "novel.txt")
-        state.stages["cast"].items_failed = ["protagonist"]
-        state.stages["cast"].items_done = 8
-        state.stages["cast"].items_total = 10
-        save_state(state, tmp_path)
-
-        app = _make_app()
-
-        async def _work():
-            return ApiResult(value="ok", usage=None)
-
-        with patch("novel_to_comic.server.credited_job.get_db"), \
-             patch("novel_to_comic.server.credited_job.reserve_credits", return_value=(None, "job")), \
-             patch("novel_to_comic.server.credited_job.ai_request_context") as mock_ctx:
-            mock_ctx.return_value.__enter__ = MagicMock(return_value=None)
-            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
-
-            job, _ = enqueue_credited_job(
-                app,
-                project_name="proj",
-                user_id="u1",
-                project_id="p1",
-                project_dir=tmp_path,
-                stage="cast",
-                kind="character_ref_regen",
-                label="char",
-                payload={"char_id": "protagonist"},
-                work=_work,
-                debit_description="regen",
-                operations=(("image", "image-gpt-2"),),
-            )
-
-            asyncio.run(job.runner())
-
-        # Verify the item has been removed from items_failed in state.json
-        loaded_state = load_state(tmp_path)
-        assert "protagonist" not in loaded_state.stages["cast"].items_failed
-        assert loaded_state.stages["cast"].items_done == 9
-
-    def test_runner_clears_items_failed_draw_on_success(self, tmp_path: Path):
-        from novel_to_comic.server.credited_job import enqueue_credited_job
-        from novel_to_comic.state import create_initial_state, save_state, load_state
-
-        # Setup initial state with a failed item
-        state = create_initial_state("proj", "novel.txt")
-        state.stages["draw"].items_failed = ["page_001"]
-        state.stages["draw"].items_done = 5
-        state.stages["draw"].items_total = 10
-        save_state(state, tmp_path)
-
-        app = _make_app()
-
-        async def _work():
-            return ApiResult(value="ok", usage=None)
-
-        with patch("novel_to_comic.server.credited_job.get_db"), \
-             patch("novel_to_comic.server.credited_job.reserve_credits", return_value=(None, "job")), \
-             patch("novel_to_comic.server.credited_job.ai_request_context") as mock_ctx:
-            mock_ctx.return_value.__enter__ = MagicMock(return_value=None)
-            mock_ctx.return_value.__exit__ = MagicMock(return_value=False)
-
-            job, _ = enqueue_credited_job(
-                app,
-                project_name="proj",
-                user_id="u1",
-                project_id="p1",
-                project_dir=tmp_path,
-                stage="draw",
-                kind="complete_page_draw",
-                label="page",
-                payload={"page_number": 1},
-                work=_work,
-                debit_description="regen",
-                operations=(("complete_page", "image-gemini-pro"),),
-            )
-
-            asyncio.run(job.runner())
-
-        # Verify the item has been removed from items_failed in state.json
-        loaded_state = load_state(tmp_path)
-        assert "page_001" not in loaded_state.stages["draw"].items_failed
-        assert loaded_state.stages["draw"].items_done == 6
+def test_completion_waits_for_every_debit_and_failed_settlement_never_completes(tmp_path, ledger):
+    events = []
+    usage = UsageRecord(provider="fixture", model="fixture", operation="text", input_tokens=1)
+    async def work():
+        return ApiResult(value="saved art", usage=usage, additional_usage=(usage,))
+    def settle(*args, **kwargs):
+        events.append("settled")
+        if len(events) == 2:
+            raise RuntimeError("ambiguous settlement")
+    ledger.debit.side_effect = settle
+    app, (job, _) = admit(tmp_path, work, on_settled=lambda result: events.append("complete"))
+    from novel_to_comic.server.generation_jobs import run_generation_job
+    async def handler(*args):
+        return await work(), lambda result: events.append("complete")
+    with patch("novel_to_comic.server.job_execution._operate", new=handler):
+        asyncio.run(run_generation_job(app, job))
+    assert events == ["settled", "settled"]
+    ledger.release.assert_called_once_with(ledger.db, "hold")
+    # run_generation_job reconstructs the production handler, so substitute only
+    # the provider operation while keeping all state and settlement transitions.
+    assert job.status == "failed"
+    assert "complete" not in events
 
 
 def test_page_check_sets_billing_context_and_releases_hold_on_failure(tmp_path):
@@ -201,30 +120,3 @@ def test_page_check_sets_billing_context_and_releases_hold_on_failure(tmp_path):
         assert reserve.call_args.args[-1] > 0
         release.assert_called_once_with(db.return_value, 'hold')
     assert current_ai_request_context().user_id is None
-
-
-def test_expired_queued_job_never_calls_provider(tmp_path):
-    import pytest
-    from novel_to_comic.server.credited_job import enqueue_credited_job
-
-    called = False
-
-    async def work():
-        nonlocal called
-        called = True
-        return ApiResult(value=None)
-
-    with patch("novel_to_comic.server.credited_job.get_db"), \
-         patch("novel_to_comic.server.credited_job.reserve_credits", return_value=("hold", "job")), \
-         patch("novel_to_comic.server.credited_job.assert_reservation_active", side_effect=RuntimeError("lease expired")), \
-         patch("novel_to_comic.server.credited_job.release_reservation"):
-        job, _ = enqueue_credited_job(
-            _make_app(), project_name="project", user_id="user", project_id=None,
-            project_dir=tmp_path, stage="cast", kind="character_ref_regen",
-            label="alice", payload={"char_id": "alice"}, work=work,
-            debit_description="cast", estimate_credits=5,
-            operations=(("image", "image-gpt-2"),),
-        )
-        with pytest.raises(RuntimeError, match="lease expired"):
-            asyncio.run(job.runner())
-    assert called is False

@@ -1,5 +1,6 @@
--- Required for both existing installations and new installations after the
--- base docs/supabase-schema.sql. Apply as the database owner, not a browser role.
+-- Historical security delta, now included in docs/supabase-schema.sql.
+-- Legacy replay remains safe; the canonical schema alone converges security.
+-- Apply as the database owner, not a browser role.
 -- This migration changes authorization, not customer files or ledger balances.
 begin;
 

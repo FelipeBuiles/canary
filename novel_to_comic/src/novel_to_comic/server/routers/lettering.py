@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from functools import wraps
 from typing import Literal
 
@@ -36,7 +37,7 @@ from ..page_outcomes import record_page_outcome
 from novel_to_comic.localization import LetteringLocale
 from novel_to_comic.lettering.translation import (
     TargetLocale, TranslationSnapshotConflict, assert_snapshot,
-    prepare_translation, stored_languages, switch_stored_locale, translate_project,
+    prepare_translation, stored_languages, switch_stored_locale,
 )
 
 router = APIRouter()
@@ -86,7 +87,7 @@ def get_lettering(page_number: int, project=Depends(get_project)):
     return editor_state(TargetArtifacts(project[0]), page_number)
 
 
-@router.put("/pages/{page_number}/lettering")
+@router.put("/pages/{page_number}/lettering", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 @_errors
 def put_lettering(page_number: int, body: LetteringSave, request: Request, project_id: str,
                   project=Depends(get_project), user_id: str = Depends(get_current_user)):
@@ -100,7 +101,7 @@ def put_lettering(page_number: int, body: LetteringSave, request: Request, proje
     return editor_state(target, page_number)
 
 
-@router.post("/pages/{page_number}/lettering/reset")
+@router.post("/pages/{page_number}/lettering/reset", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 @_errors
 def reset_page_lettering(
     page_number: int, body: LetteringReset, request: Request, project_id: str,
@@ -147,7 +148,7 @@ def get_lettering_style(project=Depends(get_project)):
     }
 
 
-@router.put("/lettering/style")
+@router.put("/lettering/style", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 @_errors
 def put_lettering_style(body: StyleSave, project=Depends(get_project)):
     target = TargetArtifacts(project[0])
@@ -219,37 +220,23 @@ def get_translation_estimate(target_locale: TargetLocale, project=Depends(get_pr
     return prepare_translation(TargetArtifacts(project[0]), project[1], target_locale).estimate
 
 
-@router.post("/lettering/locale")
+@router.post("/lettering/locale", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 @_errors
 def post_stored_locale(body: LetteringLocaleSelection, project=Depends(get_project)):
     """Free, synchronous switch between languages that are already fully stored."""
     return switch_stored_locale(TargetArtifacts(project[0]), project[1], body.target_locale, body.expected_snapshot_sha256)
 
 
-@router.post("/lettering/translate")
+@router.post("/lettering/translate", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
 async def post_translation(
     project_id: str, body: LetteringTranslate, request: Request,
     project=Depends(get_project), user_id: str = Depends(get_current_user),
 ):
     target = TargetArtifacts(project[0])
     try:
-        with production_lock(project[0]):
-            prepared = prepare_translation(target, project[1], body.target_locale)
-            assert_snapshot(prepared, body.expected_snapshot_sha256)
+        prepared = await asyncio.to_thread(prepare_translation, target, project[1], body.target_locale)
+        assert_snapshot(prepared, body.expected_snapshot_sha256)
 
-            async def work():
-                await translate_project(target, project[1], prepared)
-
-            from ..job_commands import command, snapshot
-            job, _ = enqueue_reserved_generation_job(
-                request.app, project_name=project_key(user_id, project_id),
-                user_id=user_id, project_id=project_id, project_dir=project[0],
-                stage="lettering", kind="lettering_translation", label=f"Translate lettering to {body.target_locale}",
-                payload=body.model_dump(), work=work, debit_description="Project lettering translation",
-                command=command("lettering_translation", project[0], project[1], prepared=snapshot(prepared)),
-                reservation_credits=prepared.estimate["reserved_credits"],
-                operations=(("text", prepared.model),),
-            )
     except TranslationSnapshotConflict as exc:
         raise HTTPException(412, str(exc)) from exc
     except (LetteringConflict, ArtifactInvalid) as exc:
@@ -258,4 +245,14 @@ async def post_translation(
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    from ..job_commands import command, snapshot
+    job, _ = await enqueue_reserved_generation_job(
+        request.app, project_name=project_key(user_id, project_id),
+        user_id=user_id, project_id=project_id, project_dir=project[0],
+        stage="lettering", kind="lettering_translation", label=f"Translate lettering to {body.target_locale}",
+        payload=body.model_dump(),  debit_description="Project lettering translation",
+        command=command("lettering_translation", project[0], project[1], prepared=snapshot(prepared)),
+        reservation_credits=prepared.estimate["reserved_credits"],
+        operations=(("text", prepared.model),),
+    )
     return {"job": generation_job_payload(request.app, job)}

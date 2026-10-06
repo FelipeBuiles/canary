@@ -357,7 +357,7 @@ async def analyze_page_render(
     if image_sha256 != render.image_sha256:
         raise ValueError("page render bytes do not match render lineage")
     try:
-        analysis = revalidate_cached_page_render(page=page, render=render, artifacts=artifacts)
+        analysis = await asyncio.to_thread(revalidate_cached_page_render, page=page, render=render, artifacts=artifacts)
         return PageAnalysisResult(analysis=analysis, usage=None)
     except ArtifactMissing as exc:
         if exc.name != "raw_ocr":
@@ -374,7 +374,7 @@ async def analyze_page_render(
         figures_read=True,
     )
     artifacts.write_raw_ocr(raw)
-    analysis = _validate_observations(page=page, render=render, raw=raw, artifacts=artifacts)
+    analysis = await asyncio.to_thread(_validate_observations, page=page, render=render, raw=raw, artifacts=artifacts)
     await asyncio.to_thread(_reseed_lettering, artifacts, page.page_number)
     return PageAnalysisResult(analysis=analysis, usage=read.usage)
 

@@ -61,13 +61,13 @@ Open before public beta (operator actions, not code):
 - [ ] The production Machine is intentionally stopped; start it for launch
       and record Machine/release state.
 - [ ] Provision, bootstrap, and back up the generation queue PostgreSQL
-      ([Step 1b](../deploy.md#step-1b--generation-queue-database)).
+      ([Step 1b](../deploy.md#generation-queue-database)).
 - [ ] Record which `docs/sql/*.sql` migrations production has; confirm the
       production Supabase project is separate from local development.
 - [ ] Hosted uptime checks on `/api/health` and `/api/health/ready`, Sentry DSNs
       with a received test event, until the external monitor host exists.
 - [ ] Cloudflare TLS/caching settings per the
-      [runbook](../deploy.md#cloudflare-in-front-of-fly); decide on origin bypass.
+      [runbook](../deploy.md#one-artifact-owner); decide on origin bypass.
 - [ ] Provider-side spend limits (OpenAI, Anthropic, FAL) as a billing backstop.
 - [ ] Measure peak memory with five workers on the 4 GB Machine; cap beta signups.
 - [ ] Exercise the build-once image release and an image rollback in production.

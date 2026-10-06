@@ -1,14 +1,16 @@
 """JWT authentication dependency using Supabase JWKS (RS256/ES256)."""
 
 import os
+import time
 from uuid import UUID
 
 import jwt
 from jwt import PyJWKClient
-from fastapi import Cookie, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 SESSION_COOKIE_NAME = "pulp_session"
+router = APIRouter()
 
 # Lazily initialised — requires SUPABASE_URL at first request.
 _jwks_client: PyJWKClient | None = None
@@ -116,7 +118,24 @@ async def get_current_user(
         httponly=True,
         secure=_cookie_secure(request),
         samesite="lax",
-        max_age=60 * 60,
+        # The cookie must not outlive the already verified access token.
+        max_age=max(0, min(60 * 60, int(jwt.decode(token, options={"verify_signature": False})["exp"]) - int(time.time()))),
         path="/",
     )
     return user_id
+
+
+@router.post("/session")
+def synchronize_session(user: str = Depends(get_current_user)):
+    """Bearer-authenticated account/refresh transitions update native reads."""
+    return {"status": "ready"}
+
+
+@router.post("/logout", status_code=204)
+def logout(request: Request):
+    """Expire native-read authorization even when the JWT is already expired."""
+    response = Response(status_code=204)
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/", httponly=True,
+                           secure=_cookie_secure(request), samesite="lax")
+    response.headers["Cache-Control"] = "no-store"
+    return response

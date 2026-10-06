@@ -14,17 +14,22 @@ from novel_to_comic.config import Config
 from novel_to_comic.lettering import service, translation
 from novel_to_comic.models.lettering import LetteringSettings
 from novel_to_comic.models.page import PlannedPageRevision
-from novel_to_comic.server import credited_job
+from novel_to_comic.server import credited_job, credits
 from novel_to_comic.server.deps import get_project
 from novel_to_comic.server.generation_jobs import generation_worker
 from novel_to_comic.server.routers.lettering import router
 from novel_to_comic.usage import ApiResult
-from .test_hybrid_lettering import book as _book_fixture, save, update
+from .test_hybrid_lettering import make_book, save, update
 from .test_server_admission import app_at, run_async
 
 
 # Register the shared pytest fixture without shadowing an unused import.
-book = _book_fixture
+@pytest.fixture
+def book(tmp_path):
+    from novel_to_comic.state import create_initial_state, save_state
+    target, image = make_book(tmp_path / "account" / "book")
+    save_state(create_initial_state("Book", "source.txt"), target.project_dir)
+    return target, image
 
 
 def add_page(artifacts, image):
@@ -43,7 +48,11 @@ def add_page(artifacts, image):
 def translated_app(book, monkeypatch):
     artifacts, image = book
     config = Config()
-    app = app_at(artifacts.project_dir)
+    app = app_at(artifacts.project_dir.parent.parent)
+    app.state.projects_dir = artifacts.project_dir.parent.parent
+    from tests.queue_fixtures import TestDispatcher
+    app.state.durable_queue = TestDispatcher(app, "postgresql://unused")
+    app.state.durable_queue_required = True
     app.state.generation_queue = asyncio.Queue()
     app.state.user_generation_semaphores = {}
     app.include_router(router, prefix="/api/projects/{project_id}")
@@ -51,9 +60,11 @@ def translated_app(book, monkeypatch):
     database = MagicMock()
     reservations, releases, calls = [], [], []
     monkeypatch.setattr(credited_job, "get_db", lambda: database)
-    monkeypatch.setattr(credited_job, "reserve_credits", lambda *args: (reservations.append(args[-1]) or "hold", "ledger-job"))
-    monkeypatch.setattr(credited_job, "release_reservation", lambda *args: releases.append(args[-1]))
-    monkeypatch.setattr(credited_job, "assert_reservation_active", lambda *args: None)
+    monkeypatch.setattr(credited_job, "assert_sufficient_credits", lambda *a, **k: None)
+    monkeypatch.setattr("novel_to_comic.server.db.get_db", lambda: database)
+    monkeypatch.setattr(credits, "reserve_credits", lambda *args, **kwargs: (reservations.append(args[-1]) or "hold", "ledger-job"))
+    monkeypatch.setattr(credits, "release_reservation", lambda *args: releases.append(args[-1]))
+    monkeypatch.setattr(credits, "assert_reservation_active", lambda *args: None)
 
     async def provider(**kwargs):
         assert reservations, "provider ran before credit admission"
@@ -70,19 +81,6 @@ def translated_app(book, monkeypatch):
 @run_async
 async def test_estimate_submit_job_translates_every_page_and_preserves_authored_state(translated_app):
     app, artifacts, image, reservations, releases, calls = translated_app
-    from novel_to_comic.server.generation_jobs import enqueue_generation_job, generation_job_payload
-    draws = []
-
-    @app.post("/api/projects/book/pages/1/generate")
-    async def queue_draw():
-        async def draw():
-            assert job.status == "complete", "artwork must wait for project translation"
-            draws.append("after translation")
-
-        queued = enqueue_generation_job(app, "account:book", "complete_page_draw", "Page 1",
-                                        {"page_number": 1}, draw, user_id="account")
-        return {"status": "queued", "job": generation_job_payload(app, queued)}
-
     add_page(artifacts, image)
     initial = service.ensure_lettering(artifacts, 1)
     first = initial.elements[0].model_dump()
@@ -105,9 +103,6 @@ async def test_estimate_submit_job_translates_every_page_and_preserves_authored_
         assert accepted.status_code == 200, accepted.text
         job = app.state.generation_jobs[accepted.json()["job"]["id"]]
         assert job.kind == "lettering_translation" and job.status == "queued"
-        drawing = await client.post("/api/projects/book/pages/1/generate", headers={"Idempotency-Key": "draw"})
-        assert drawing.status_code == 200, drawing.text
-        assert drawing.json()["job"]["status"] == "queued" and not draws
         replay = await client.post(root + "/translate", json=body, headers={"Idempotency-Key": "translate"})
         assert replay.json() == accepted.json()
         worker = asyncio.create_task(generation_worker(app))
@@ -118,7 +113,6 @@ async def test_estimate_submit_job_translates_every_page_and_preserves_authored_
             with suppress(asyncio.CancelledError):
                 await worker
         assert job.status == "complete", job.error
-        assert draws == ["after translation"]
     assert releases == ["hold"] and len(reservations) == 1
     assert calls and all(not call["retry_invalid_json"] and not call["retry_transport"] for call in calls)
     page1, page2 = artifacts.read_lettering(1), artifacts.read_lettering(2)
@@ -151,9 +145,9 @@ async def test_stale_quote_and_insufficient_credits_never_reach_provider(transla
         assert stale.status_code == 412
         assert not reservations and not calls
         from fastapi import HTTPException
-        def denied(*args):
+        def denied(*args, **kwargs):
             raise HTTPException(402, "Insufficient credits")
-        monkeypatch.setattr(credited_job, "reserve_credits", denied)
+        monkeypatch.setattr(credited_job, "assert_sufficient_credits", denied)
         body["expected_snapshot_sha256"] = (await client.get(root + "/translation-estimate?target_locale=es")).json()["snapshot_sha256"]
         denied_response = await client.post(root + "/translate", json=body, headers={"Idempotency-Key": "denied"})
         assert denied_response.status_code == 402

@@ -8,6 +8,7 @@ import pytest
 from novel_to_comic import codex_dev
 from novel_to_comic.config import Config
 from novel_to_comic.server import credited_job, credits
+from tests.queue_fixtures import enqueue_test_operation
 from novel_to_comic.server.codex_admission import (
     action_operations,
     draw_operations,
@@ -50,11 +51,13 @@ def test_mixed_queue_reserves_api_spend_and_releases_hold(tmp_path, monkeypatch,
     select_routes(text=(config.effective_prompt_model(),))
     database = MagicMock()
     monkeypatch.setattr(credited_job, "get_db", lambda: database)
+    monkeypatch.setattr(credited_job, "assert_sufficient_credits", lambda *_a, **_k: None)
+    monkeypatch.setattr("novel_to_comic.server.db.get_db", lambda: database)
     reserve = MagicMock(return_value=("hold", "job"))
     release = MagicMock()
-    monkeypatch.setattr(credited_job, "reserve_credits", reserve)
-    monkeypatch.setattr(credited_job, "release_reservation", release)
-    monkeypatch.setattr(credited_job, "assert_reservation_active", lambda *args: None)
+    monkeypatch.setattr(credits, "reserve_credits", reserve)
+    monkeypatch.setattr(credits, "release_reservation", release)
+    monkeypatch.setattr(credits, "assert_reservation_active", lambda *args: None)
     executed = []
 
     async def work():
@@ -71,14 +74,15 @@ def test_mixed_queue_reserves_api_spend_and_releases_hold(tmp_path, monkeypatch,
         ),))
 
     queue = app()
-    job, created = credited_job.enqueue_reserved_generation_job(
+    job, created = enqueue_test_operation(
         queue, project_name="project", user_id="user", project_id="id",
         project_dir=tmp_path, stage="style", kind="style", label="Style", payload={},
         work=work, debit_description="Style", reservation_credits=10,
         operations=prompt_image_operations(config),
     )
     assert created
-    assert reserve.call_args.args[-1] == 10
+    assert job.command.reservation_credits == 10
+    reserve.assert_not_called()
     if cancel:
         with pytest.raises(asyncio.CancelledError):
             asyncio.run(job.runner())
@@ -101,6 +105,8 @@ def test_subscription_job_needs_no_credit_hold_or_ledger_entry(tmp_path, monkeyp
     select_routes(images=(config.effective_image_model(),))
     database = MagicMock()
     monkeypatch.setattr(credited_job, "get_db", lambda: database)
+    monkeypatch.setattr(credited_job, "assert_sufficient_credits", lambda *_a, **_k: None)
+    monkeypatch.setattr("novel_to_comic.server.db.get_db", lambda: database)
 
     async def work():
         return ApiResult(value="generated", usage=UsageRecord(
@@ -109,7 +115,7 @@ def test_subscription_job_needs_no_credit_hold_or_ledger_entry(tmp_path, monkeyp
         ))
 
     queue = app()
-    job, created = credited_job.enqueue_reserved_generation_job(
+    job, created = enqueue_test_operation(
         queue, project_name="project", user_id="user", project_id="id",
         project_dir=tmp_path, stage="cast", kind="cast", label="Cast", payload={},
         work=work, debit_description="Cast", reservation_credits=99,
@@ -239,7 +245,7 @@ def test_mixed_route_still_rejects_disabled_codex_before_queue(tmp_path, monkeyp
     monkeypatch.setattr(credited_job, "get_db", database)
     queue = app()
     with pytest.raises(codex_dev.CodexRoutingError, match="ENABLED"):
-        credited_job.enqueue_reserved_generation_job(
+        enqueue_test_operation(
             queue, project_name="project", user_id="user", project_id="id",
             project_dir=tmp_path, stage="style", kind="style", label="Style", payload={},
             work=MagicMock(), debit_description="Style", reservation_credits=10,

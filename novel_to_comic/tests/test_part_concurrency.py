@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
 
 from novel_to_comic.config import Config
 from novel_to_comic.server.admission import mutation_conflicts, project_busy
@@ -16,13 +19,13 @@ def _job(job_id: str, directory: Path | None, *, kind: str = "complete_page_draw
     return GenerationJob(
         id=job_id, project_name="account:book", kind=kind, label=job_id,
         payload={"stage": stage}, sequence=1, runner=None,
-        command=command("page_draw", directory, Config()) if directory is not None else None,
+        command=command("pipeline", directory, Config()).model_copy(update={"stage": stage}) if directory is not None else None,
     )
 
 
 def _app(*jobs) -> SimpleNamespace:
     return SimpleNamespace(state=SimpleNamespace(
-        running_tasks={}, style_tasks={}, generation_jobs={job.id: job for job in jobs},
+        generation_jobs={job.id: job for job in jobs},
     ))
 
 
@@ -52,6 +55,32 @@ def test_mutations_conflict_only_with_overlapping_work(tmp_path) -> None:
     assert not mutation_conflicts(app, "account:book", "", "part_0001", method="PATCH")
     assert not mutation_conflicts(app, "account:book", "/approve/cast")
     assert not mutation_conflicts(app, "account:book", "/story-bible/characters/char_001")
+
+
+@pytest.mark.parametrize('scope,part_busy,series_busy', [('sibling', False, False), ('own', True, False), ('series', True, True)])
+def test_status_projects_the_same_busy_scope_as_admission(tmp_path, monkeypatch, scope, part_busy, series_busy):
+    from novel_to_comic.server.routers import projects, parts
+    from novel_to_comic.state import create_initial_state
+    root = tmp_path / 'account' / 'book'
+    part = root / 'parts' / 'part_0002'
+    directory = root if scope == 'series' else part if scope == 'own' else root / 'parts' / 'part_0001'
+    job = _job('active', directory, kind='character_ref_regen' if scope == 'series' else 'complete_page_draw',
+               stage='cast' if scope == 'series' else 'draw')
+    app = _app(job)
+    db = MagicMock()
+    db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = []
+    monkeypatch.setattr(projects, 'get_db', lambda: db)
+    monkeypatch.setattr(projects, '_reconcile_series_stages', lambda *a: False)
+    monkeypatch.setattr(projects, '_reopen_unapproved_brief', lambda *a: False)
+    monkeypatch.setattr(projects, '_stage_payload', lambda *a, **kw: {'status': 'pending'})
+    monkeypatch.setattr(projects, '_series_cost_usd', lambda *a: (0, 0))
+    monkeypatch.setattr(parts, 'part_summaries', lambda *a: [])
+    state = create_initial_state('Book', 'source.txt')
+    result = projects._project_status_payload(SimpleNamespace(app=app), 'book', root, part, Config(), 'account',
+                                              series_state=state, part_state=state)
+    assert result['is_running'] is result['part_busy'] is part_busy
+    assert result['series_busy'] is series_busy
+    assert bool(result['active_jobs']) is part_busy
 
 
 def test_story_bible_edits_wait_for_an_extraction(tmp_path) -> None:

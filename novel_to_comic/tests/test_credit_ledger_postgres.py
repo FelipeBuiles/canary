@@ -12,7 +12,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -91,37 +91,54 @@ def test_atomic_reservations_across_process_connections(ledger):
 
 def test_different_cast_jobs_compete_for_one_balance(ledger, tmp_path):
     from fastapi import HTTPException
-    from novel_to_comic.server.credited_job import enqueue_credited_job
+    from novel_to_comic.config import Config
+    from novel_to_comic.server.generation_jobs import GenerationJob
+    from novel_to_comic.server.job_commands import command
+    from novel_to_comic.server.job_execution import execute_command
+    from novel_to_comic.state import create_initial_state, save_state
 
     db, user = ledger
-    barrier = Barrier(2)
-    app = MagicMock()
-    app.state.generation_jobs = {}
-    app.state.generation_queue = asyncio.Queue()
-    app.state.generation_job_sequence = 0
+    directory = tmp_path / user / "book"
+    directory.mkdir(parents=True)
+    save_state(create_initial_state("Book", "source.txt"), directory)
+    app = SimpleNamespace(state=SimpleNamespace(projects_dir=tmp_path))
+    jobs = []
+    for asset in ("alice", "bob"):
+        spec = command("cast_asset", directory, Config(), asset_id=asset, kind="character_ref_regen")
+        spec = spec.model_copy(update={"user_id": user, "stage": "cast", "reservation_credits": 5,
+                                       "ledger_job_id": str(uuid.uuid4())})
+        jobs.append(GenerationJob(id=str(uuid.uuid4()), project_name=f"{user}:book",
+                                  kind="character_ref_regen", label=asset, sequence=len(jobs),
+                                  runner=None, payload={"char_id": asset}, command=spec))
 
-    async def work():
-        return ApiResult(value=None)
-
-    def submit(asset):
-        barrier.wait()
-        try:
-            return enqueue_credited_job(
-                app, project_name="project", user_id=user, project_id=None,
-                project_dir=tmp_path, stage="cast", kind="character_ref_regen",
-                label=asset, payload={"char_id": asset}, work=work,
-                debit_description="cast", estimate_credits=5,
-                operations=(("image", "image-gpt-2"),),
-            )[0]
-        except HTTPException as exc:
-            return exc.status_code
-
-    with patch("novel_to_comic.server.credited_job.get_db", return_value=db), \
-         patch.object(credits, "get_balance_credits", return_value=0):
-        with ThreadPoolExecutor(2) as pool:
-            results = list(pool.map(submit, ["alice", "bob"]))
-    assert results.count(402) == 1
-    assert db.query(f"select count(*) from public.credit_ledger where user_id='{user}' and status='reserved';") == "1"
+    async def exercise():
+        entered, release = asyncio.Event(), asyncio.Event()
+        calls = []
+        async def operation(_app, job, *_args):
+            calls.append(job.label)
+            entered.set()
+            await release.wait()
+            return ApiResult(value=None), None
+        # Simulate competing execution connections; the database enforces the
+        # hold even if the process-local scheduler cannot coordinate them.
+        with patch("novel_to_comic.server.db.get_db", return_value=db), \
+             patch.object(credits, "get_balance_credits", return_value=0), \
+             patch("novel_to_comic.server.job_execution._operate", new=operation):
+            tasks = [asyncio.create_task(execute_command(app, job)) for job in jobs]
+            try:
+                await asyncio.wait_for(entered.wait(), 5)
+                finished, _ = await asyncio.wait(tasks, timeout=5, return_when=asyncio.FIRST_COMPLETED)
+                assert len(finished) == 1
+                error = next(iter(finished)).exception()
+                assert isinstance(error, HTTPException) and error.status_code == 402
+                assert db.query(f"select count(*) from public.credit_ledger where user_id='{user}' and status='reserved';") == "1"
+                assert len(calls) == 1
+            finally:
+                release.set()
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+            assert sum(isinstance(result, HTTPException) for result in results) == 1
+            assert db.query(f"select count(*) from public.credit_ledger where user_id='{user}' and status='reserved';") == "0"
+    asyncio.run(exercise())
 
 
 def test_committed_zero_settlement_is_immutable_after_response_loss(ledger):

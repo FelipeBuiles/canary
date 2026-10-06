@@ -1,6 +1,7 @@
 # Encrypted production secret delivery
 
-**Status: Current implementation, October 6, 2026. Not activated in production.**
+**Status: Current implementation, October 6, 2026. Activated on Lightsail; see
+[cutover evidence](lightsail-ci.md#production-cutover-evidence-2026-10-06).**
 
 The [strategy](../proposals/aws-secret-management.md) defines ownership and
 rotation. The executable interface is [canary_secrets.py](../../scripts/canary_secrets.py).
@@ -10,7 +11,8 @@ is configured. Lightsail explicitly requires the bundle.
 
 The [October 6 hardening review and activation checklist](../reviews/2026-10-06-secret-hardening.md)
 records the review findings, their resolutions, and the ordered production gates.
-Passing the unit tests is not approval to activate this deployment.
+The earlier activation checklist records its scope; new secret or infrastructure
+changes require their own release evidence.
 
 ## Tools and ownership
 
@@ -88,6 +90,10 @@ exporter; tooling cannot prove that one belongs to 1Password or that the backup
 has actually been saved. That is an operator acceptance check.
 
 ## 2. Inventory and encrypt
+
+The Fly export below records the original cutover and remains available for
+retained Fly recovery resources. Routine Lightsail changes use the encrypted
+bundle rotation procedure later in this document; they do not inventory Fly.
 
 Use `fly secrets list -a canary-web` for metadata. Reconcile staged versus active
 values and file delivery with the provider/password-manager records. Do not
@@ -216,7 +222,10 @@ the client address. Nginx must still replace client-supplied forwarding headers.
 Inside the container the entrypoint gives each process only its own credentials:
 LiteLLM receives provider keys, `LITELLM_MASTER_KEY`, `LITELLM_SALT_KEY` and its
 `DATABASE_URL`; the web process receives `LITELLM_API_KEY`, Supabase, Stripe,
-queue, R2 and operations credentials. The supervisor shell keeps both sets so it
+queue and operations credentials. Legacy R2 fields remain readable for encrypted
+bundle upgrades, but private exports have no R2 upload path. Retire those unused
+credentials during a reviewed rotation. Backup credentials belong to the separate
+container/infrastructure recovery setup. The supervisor shell keeps both sets so it
 can restart the gateway.
 
 This narrows inherited environments; it is not isolation between compromised

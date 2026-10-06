@@ -65,7 +65,7 @@ export function analyzeCompletePage(
   pageNumber: number,
 ): Promise<CompletePageDetail["analyses"][number]> {
   return apiFetch(`${projectPath(project)}/pages/${pageNumber}/analyze`, {
-    method: "POST",
+    paidAction: true, method: "POST",
   });
 }
 
@@ -98,7 +98,7 @@ export function recoverPageChecks(project: string, allowPaid = false, renders: R
   pages: Array<{ page_number: number; status: string; error?: string }>;
 }> {
   return apiFetch(`${projectPath(project)}/pages/checks/recover`, {
-    method: "POST", body: JSON.stringify({ allow_paid: allowPaid, renders, recovery_attempt_id: recoveryAttemptId }),
+    paidAction: allowPaid, method: "POST", body: JSON.stringify({ allow_paid: allowPaid, renders, recovery_attempt_id: recoveryAttemptId }),
   });
 }
 
@@ -110,7 +110,7 @@ export function getPageRedrawEstimate(project: string): Promise<CostEstimate & {
 export function redrawOutOfDatePages(project: string, pages: number[]): Promise<{
   status: "queued"; jobs: Array<{ page_number: number; job: GenerationJob }>;
 }> {
-  return apiFetch(`${projectPath(project)}/pages/redraws`, { method: "POST", body: JSON.stringify({ pages }) });
+  return apiFetch(`${projectPath(project)}/pages/redraws`, { paidAction: true, method: "POST", body: JSON.stringify({ pages }) });
 }
 
 export function generateCompletePage(
@@ -119,7 +119,7 @@ export function generateCompletePage(
   depiction: "canonical" | "less_graphic" = "canonical",
 ): Promise<{ status: "queued"; job: GenerationJob }> {
   return apiFetch(`${projectPath(project)}/pages/${pageNumber}/generate`, {
-    method: "POST",
+    paidAction: true, method: "POST",
     body: JSON.stringify({ depiction }),
   });
 }
@@ -297,7 +297,7 @@ export function submitPageCorrections(
   body: PageCorrectionBody,
 ): Promise<PageCorrectionSubmission> {
   return apiFetch(`${projectPath(project)}/pages/${pageNumber}/corrections`, {
-    method: "POST",
+    paidAction: true, method: "POST",
     body: JSON.stringify(body),
   });
 }
@@ -387,7 +387,7 @@ export interface CachedVisualReview {
 }
 
 export function reviewPageVisuals(project: string, pageNumber: number): Promise<VisualReviewReport> {
-  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/visual-review`, { method: "POST" });
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/visual-review`, { paidAction: true, method: "POST" });
 }
 
 /** Read-only cached visual review envelope; never spends. Report is null when none saved. */
@@ -414,7 +414,7 @@ export function getPageReplanEstimate(project: string, pageNumber: number): Prom
 
 /** Rewrite one page's plan; its artwork then needs a redraw from Pages. */
 export function replanPage(project: string, pageNumber: number): Promise<{ page_number: number; revision: number }> {
-  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/replan`, { method: "POST" });
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/replan`, { paidAction: true, method: "POST" });
 }
 
 /** Choose retained artwork without generating or charging. */

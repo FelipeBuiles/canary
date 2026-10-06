@@ -9,6 +9,7 @@ which the author regenerates or keeps from Cast.
 
 from __future__ import annotations
 
+
 from contextlib import contextmanager
 from typing import Any, Literal
 
@@ -178,7 +179,7 @@ def story_bible_editor(project=Depends(get_project)):
     }
 
 
-@router.post("/story-bible/undo")
+@router.post("/story-bible/undo", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def undo_story_bible_edit(body: Revisioned, project=Depends(get_project)):
     """Reverse the newest author edit, if nothing has changed the Bible since."""
     root, _config, _state = project
@@ -211,7 +212,7 @@ def draft_estimate(
     return {"mentioned": True, "estimate": estimate, "mentioned_scene_ids": scene_ids}
 
 
-@router.post("/story-bible/{kind}/draft")
+@router.post("/story-bible/{kind}/draft", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': False}})
 async def draft_story_bible_entity(
     kind: Kind, body: DraftRequest, project_id: str, project=Depends(get_project),
     user_id: str = Depends(get_current_user),
@@ -250,7 +251,7 @@ async def draft_story_bible_entity(
     }
 
 
-@router.post("/story-bible/visual-anchor")
+@router.post("/story-bible/visual-anchor", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def fill_visual_anchor(body: VisualAnchorFill, project=Depends(get_project)):
     """Add a missing visual anchor without resetting any stage.
 
@@ -267,7 +268,7 @@ def fill_visual_anchor(body: VisualAnchorFill, project=Depends(get_project)):
     return _saved(bible, missing_visual_anchors=blank_visual_anchors(bible))
 
 
-@router.patch("/story-bible/{kind}/{entity_id}")
+@router.patch("/story-bible/{kind}/{entity_id}", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def edit_story_bible_entity(kind: Kind, entity_id: str, body: EntityEdit, project=Depends(get_project)):
     root, config, _state = project
     with _edit_errors():
@@ -279,7 +280,7 @@ def edit_story_bible_entity(kind: Kind, entity_id: str, body: EntityEdit, projec
     return _saved(bible)
 
 
-@router.post("/story-bible/{kind}")
+@router.post("/story-bible/{kind}", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def add_story_bible_entity(kind: Kind, body: EntityAdd, project=Depends(get_project)):
     root, _config, _state = project
     added: dict[str, str] = {}
@@ -297,7 +298,7 @@ def add_story_bible_entity(kind: Kind, body: EntityAdd, project=Depends(get_proj
     return _saved(bible, entity_id=entity_id)
 
 
-@router.delete("/story-bible/{kind}/{entity_id}")
+@router.delete("/story-bible/{kind}/{entity_id}", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def remove_story_bible_entity(
     kind: Kind, entity_id: str, expected_revision: int = Query(ge=1), project=Depends(get_project),
 ):
@@ -312,7 +313,7 @@ def remove_story_bible_entity(
     return _saved(bible)
 
 
-@router.post("/story-bible/{kind}/{entity_id}/merge")
+@router.post("/story-bible/{kind}/{entity_id}/merge", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def merge_story_bible_entity(kind: Kind, entity_id: str, body: EntityMerge, project=Depends(get_project)):
     """Fold this entry into ``into``; its name becomes an alias there."""
     root, _config, _state = project
@@ -327,7 +328,7 @@ def merge_story_bible_entity(kind: Kind, entity_id: str, body: EntityMerge, proj
     return _saved(bible)
 
 
-@router.post("/story-bible/{kind}/{entity_id}/states")
+@router.post("/story-bible/{kind}/{entity_id}/states", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def add_story_bible_state(kind: Kind, entity_id: str, body: StateAdd, project=Depends(get_project)):
     root, _config, _state = project
     added: dict[str, str] = {}
@@ -345,7 +346,7 @@ def add_story_bible_state(kind: Kind, entity_id: str, body: StateAdd, project=De
     return _saved(bible, state_id=state_id)
 
 
-@router.patch("/story-bible/{kind}/{entity_id}/states/{state_id}")
+@router.patch("/story-bible/{kind}/{entity_id}/states/{state_id}", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def edit_story_bible_state(
     kind: Kind, entity_id: str, state_id: str, body: StateEdit, project=Depends(get_project),
 ):
@@ -360,7 +361,7 @@ def edit_story_bible_state(
     return _saved(bible)
 
 
-@router.delete("/story-bible/{kind}/{entity_id}/states/{state_id}")
+@router.delete("/story-bible/{kind}/{entity_id}/states/{state_id}", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def remove_story_bible_state(
     kind: Kind, entity_id: str, state_id: str, expected_revision: int = Query(ge=1),
     project=Depends(get_project),
@@ -377,7 +378,7 @@ def remove_story_bible_state(
     return _saved(bible)
 
 
-@router.delete("/story-bible/excluded/{kind}/{name}")
+@router.delete("/story-bible/excluded/{kind}/{name}", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def restore_story_bible_name(
     kind: Kind, name: str, expected_revision: int = Query(ge=1), project=Depends(get_project),
 ):

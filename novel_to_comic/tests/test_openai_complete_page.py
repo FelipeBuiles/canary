@@ -277,12 +277,14 @@ def test_sunburst_stage_and_batch_quotes_use_the_same_measured_page_cost(tmp_pat
     app.dependency_overrides[get_project] = lambda: (tmp_path, config, None)
     from novel_to_comic.server.auth import get_current_user
     app.dependency_overrides[get_current_user] = lambda: "owner"
-    from novel_to_comic.server.routers import projects as project_routes
+    from novel_to_comic.server import cover_operations as project_routes
     monkeypatch.setattr(project_routes, "needs_initial_project_cover", lambda *args: False)
     with (
         patch.object(TargetArtifacts, 'read_plan', return_value=SimpleNamespace(pages=[page])),
         patch('novel_to_comic.server.routers.pages.approved_visual_inventory', return_value=_inventory()),
         patch('novel_to_comic.server.routers.pages.approved_reference_files', return_value=files),
+        patch('novel_to_comic.server.page_operations.approved_visual_inventory', return_value=_inventory()),
+        patch('novel_to_comic.server.page_operations.approved_reference_files', return_value=files),
         patch('novel_to_comic.stages.s5_plan.approved_visual_inventory', return_value=_inventory()),
         patch('novel_to_comic.stages.s5_plan.approved_reference_files', return_value=files),
     ):
@@ -300,4 +302,5 @@ def reviewed_story_precondition(monkeypatch):
     # upstream fixtures. Real missing/stale review admission is tested in
     # test_narrative_review.py.
     monkeypatch.setattr("novel_to_comic.server.routers.pages.require_draw_narrative_reviews", lambda target: None)
+    monkeypatch.setattr("novel_to_comic.server.page_operations.require_draw_narrative_reviews", lambda target: None)
     monkeypatch.setattr("novel_to_comic.narrative_review.require_draw_narrative_reviews", lambda target: None)

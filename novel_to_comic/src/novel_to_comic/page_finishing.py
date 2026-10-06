@@ -33,6 +33,7 @@ from novel_to_comic.models.validation import InvariantFailure
 from novel_to_comic.page_drawing import page_profile_uses_native_dimensions
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
 from novel_to_comic.workspace import series_root
+from novel_to_comic.verified_files import verified_file, verified_stream
 
 
 _CREATIVE_FAILURES = {
@@ -108,6 +109,8 @@ def _appearance_diagnostics(
 def _load_active_render(
     artifacts: TargetArtifacts,
     page_number: int,
+    *,
+    load_image: bool = True,
 ) -> tuple[PageRenderRevision | None, bytes | None, list[InvariantFailure]]:
     revisions = artifacts.provenance_revisions(page_number)
     if not revisions:
@@ -171,11 +174,16 @@ def _load_active_render(
                 evidence=("Every complete-page render must retain Draw provenance.",),
             )
         )
-    try:
-        image = artifacts.read_render(page_number, render.revision)
-    except ArtifactMissing:
-        image = None
-    if image is None or hashlib.sha256(image).hexdigest() != render.image_sha256:
+    image = None
+    if load_image:
+        try:
+            image = artifacts.read_render(page_number, render.revision)
+        except ArtifactMissing:
+            pass
+        matches = image is not None and hashlib.sha256(image).hexdigest() == render.image_sha256
+    else:
+        matches = verified_file(artifacts.render_path(page_number, render.revision), render.image_sha256)
+    if not matches:
         failures.append(
             _failure(
                 page_number=page_number,
@@ -315,13 +323,69 @@ def package_is_current(artifacts: TargetArtifacts, package: ExportPackage) -> bo
     path = _safe_package_path(artifacts, package.relative_path)
     if path is None:
         return False
+    return verified_file(path, package.content_sha256, byte_size=package.byte_size)
+
+
+@locked_mutation
+def current_preflight(artifacts: TargetArtifacts, *, require_ready: bool = False) -> FinishPreflight:
+    """The shared validity gate for derived Finish reads."""
+    preflight = artifacts.read_preflight()
+    if preflight.validator_version != FINISH_PREFLIGHT_VALIDATOR_VERSION:
+        raise ValueError("Finish preflight must be refreshed")
+    if require_ready and not preflight.ready_to_export:
+        raise ValueError("Resolve the current Finish checks before exporting")
+    if require_ready:
+        edition, plan = artifacts.read_book_edition(), artifacts.read_plan()
+        if (edition.revision, edition.content_sha256) != (preflight.edition_revision, preflight.edition_sha256):
+            raise ValueError("The edition changed; refresh Finish")
+        if len(plan.pages) != len(preflight.pages):
+            raise ValueError("The plan changed; refresh Finish")
+        for selected, checked in zip(plan.pages, preflight.pages):
+            page = artifacts.read_page(selected.page_number)
+            render, _image, failures = _load_active_render(artifacts, selected.page_number, load_image=False)
+            if (failures or render is None
+                or (selected.page_number, selected.revision, selected.content_sha256)
+                   != (checked.page_number, checked.comic_page_revision, checked.comic_page_sha256)
+                or (page.revision, page.content_sha256) != (selected.revision, selected.content_sha256)
+                or (render.revision, render.image_sha256) != (checked.render_revision, checked.render_image_sha256)):
+                raise ValueError("Page inputs changed; refresh Finish")
+            if checked.lettering_sha256 is not None:
+                from novel_to_comic.lettering.service import composite_identity
+                lettering = artifacts.read_lettering(checked.page_number)
+                style = artifacts.read_lettering_style()
+                if (lettering.revision, lettering.content_sha256) != (checked.lettering_revision, checked.lettering_sha256) or composite_identity(render, lettering, style) != checked.composite_identity:
+                    raise ValueError("Lettering changed; refresh Finish")
+            normalized = artifacts.normalized_page_path(checked.page_number)
+            if not verified_file(normalized, checked.normalized_image_sha256):
+                raise ValueError(f"Normalized page {checked.page_number} changed; refresh Finish")
+    if any(not package_is_current(artifacts, package) for package in preflight.packages):
+        raise ValueError("An export package is unavailable; refresh Finish preflight")
+    return preflight
+
+
+@locked_mutation
+def open_verified_package(artifacts: TargetArtifacts, fmt: str):
+    """Open verified bytes while locked; the descriptor survives invalidation.
+
+    The caller owns closing the descriptor. Streaming it does not retain a
+    whole book in memory or reopen an invalidated path after verification.
+    """
+    preflight = current_preflight(artifacts, require_ready=True)
+    package = next((item for item in preflight.packages if item.format == fmt), None)
+    if package is None:
+        raise ValueError(f"No current {fmt} package is available. Run Finish first.")
+    path = _safe_package_path(artifacts, package.relative_path)
+    if path != artifacts.export_path(fmt).resolve():
+        raise ValueError("Export package path does not match its format. Refresh Finish.")
+    stream = path.open("rb")
     try:
-        if not path.is_file() or path.stat().st_size != package.byte_size:
-            return False
-        with path.open("rb") as stream:
-            return hashlib.file_digest(stream, "sha256").hexdigest() == package.content_sha256
-    except OSError:
-        return False
+        if not verified_stream(stream, package.content_sha256, byte_size=package.byte_size):
+            raise ValueError("Export bytes changed. Refresh Finish.")
+        stream.seek(0)
+        return stream, package, preflight
+    except BaseException:
+        stream.close()
+        raise
 
 
 def _reusable_packages(
