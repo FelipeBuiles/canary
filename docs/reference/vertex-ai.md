@@ -13,6 +13,13 @@ reasoning (default Medium). The gateway's built-in `vertex_ai` adapter calls
 `aiplatform.googleapis.com` using the configured project and Application Default
 Credentials (ADC). It does not use `GEMINI_API_KEY` or the Gemini Developer API.
 
+The operator-funded Labs image route `image-nano-banana-2.1` uses the custom
+`vertex-multimodal` handler and the Google Gen AI SDK from the gateway lock.
+Its route passes `project` and `location` (fixed to `global`) to the handler.
+LiteLLM reserves `vertex_project` and `vertex_location` for its built-in adapter
+and removes them from custom image-generation requests. The text route keeps
+those built-in adapter settings.
+
 Gemini now uses the successful medium-reasoning Labs tuning behavior:
 Extract, Brief, Adapt, and Plan receive their stage checklists after the source
 context, and Plan always uses the reviewed global map plus local detail workflow.

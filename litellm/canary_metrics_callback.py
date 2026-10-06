@@ -22,6 +22,7 @@ _MODELS = frozenset({
     "image-sunburst",
     "image-sunburst-openai",
     "image-flare",
+    "image-nano-banana-2.1",
 })
 _PROVIDERS = frozenset({
     "openai",
@@ -31,6 +32,7 @@ _PROVIDERS = frozenset({
     "openrouter",
     "together_ai",
     "vertex_ai",
+    "vertex-multimodal",
     "fal-queue",
     "openai-stream",
 })

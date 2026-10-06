@@ -84,26 +84,31 @@ def test_http_patch_is_present_idempotent_and_fails_closed():
         patch.patch_source("unreviewed upstream layout")
 
 
-def test_real_gateway_and_only_supported_custom_handler_are_loaded():
+def test_real_gateway_and_supported_custom_handlers_are_loaded():
     import yaml
     from litellm.llms.custom_llm import CustomLLM
 
     from litellm_handlers.fal_provider import FalQueueLLM
     from litellm_handlers.openai_image_stream import OpenAIImageStreamLLM
+    from litellm_handlers.vertex_multimodal import VertexMultimodalLLM
 
     assert version("litellm") == "1.101.0"
     assert issubclass(FalQueueLLM, CustomLLM)
     assert issubclass(OpenAIImageStreamLLM, CustomLLM)
+    assert issubclass(VertexMultimodalLLM, CustomLLM)
     config = yaml.safe_load((ROOT / "litellm/config.yaml").read_text())
     aliases = [route["model_name"] for route in config["model_list"]]
     assert len(aliases) == len(set(aliases)), "Each model alias must have exactly one route"
     assert {route["model_name"] for route in config["model_list"]} == {
         "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "claude-opus-5-5",
         "claude-sonnet-5-5", "mimo-v2.6-pro", "deepseek-v4.1-flash", "image-sunburst",
-        "image-sunburst-openai", "image-flare", "gemini-3.8-flash",
+        "image-sunburst-openai", "image-flare", "image-nano-banana-2.1", "gemini-3.8-flash",
         "bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5",
     }
     assert config["litellm_settings"]["custom_provider_map"] == [{
+        "provider": "vertex-multimodal",
+        "custom_handler": "litellm_handlers.vertex_multimodal.vertex_multimodal_llm",
+    }, {
         "provider": "fal-queue",
         "custom_handler": "litellm_handlers.fal_provider.fal_queue_llm",
     }, {
@@ -111,7 +116,9 @@ def test_real_gateway_and_only_supported_custom_handler_are_loaded():
         "custom_handler": "litellm_handlers.openai_image_stream.openai_image_stream_llm",
     }]
     for dockerfile in ("Dockerfile", "litellm/Dockerfile"):
-        assert "litellm_handlers/openai_image_stream.py" in (ROOT / dockerfile).read_text()
+        source = (ROOT / dockerfile).read_text()
+        for handler in ("fal_provider", "openai_image_stream", "vertex_multimodal"):
+            assert f"litellm_handlers/{handler}.py" in source
 
 
 def test_together_deepseek_route_disables_thinking_and_keeps_json_schema(monkeypatch):

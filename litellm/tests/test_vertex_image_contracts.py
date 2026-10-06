@@ -24,7 +24,7 @@ def test_nano_banana_gateway_preserves_native_controls_and_prices_reported_usage
 
     route = next(r for r in yaml.safe_load((ROOT / "litellm/config.yaml").read_text())["model_list"]
                  if r["model_name"] == "image-nano-banana-2.1")
-    route["litellm_params"]["vertex_project"] = "offline-test"
+    monkeypatch.setenv("VERTEXAI_PROJECT", "offline-test")
     manifest = {
         "discriminator": "canary.provider-wire/3", "schema_version": 3,
         "requested_alias": "image-nano-banana-2.1", "expected_route": "nano_banana_21",
@@ -64,11 +64,21 @@ def test_nano_banana_gateway_preserves_native_controls_and_prices_reported_usage
     ])
     custom_llm_setup()
     router = litellm.Router(model_list=[route], num_retries=0)
-    response = asyncio.run(router.aimage_generation(
-        model="image-nano-banana-2.1", prompt="A red circle.",
-        canary_wire_request=json.dumps(manifest), canary_requested_aspect=1.0,
-    ))
+    # The configured route must deliver the resolved project and location;
+    # ambient settings must not mask dropped custom-provider parameters.
+    monkeypatch.delenv("VERTEXAI_PROJECT")
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.setenv("VERTEXAI_LOCATION", "us-central1")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    payload = {
+        "model": "image-nano-banana-2.1", "prompt": "A red circle.",
+        "canary_wire_request": json.dumps(manifest), "canary_requested_aspect": 1.0,
+    }
+    response = asyncio.run(router.aimage_generation(**payload))
     assert len(sent) == 1
+    assert clients[0]["vertexai"] is True
+    assert clients[0]["project"] == "offline-test"
+    assert clients[0]["location"] == "global"
     assert clients[0]["http_options"].retry_options.attempts == 1
     assert sent[0]["model"] == "gemini-nano-banana-2.1"
     config = sent[0]["config"].model_dump(exclude_none=True)
