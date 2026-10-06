@@ -28,6 +28,20 @@ class _Record(SimpleNamespace):
 @pytest.fixture
 def sdk(monkeypatch, tmp_path):
     """Implement the supported low-level protocol, not generation or API fallback."""
+    errors = ModuleType("openai_codex.errors")
+
+    class JsonRpcError(Exception):
+        def __init__(self, code, message, data=None):
+            super().__init__(f"JSON-RPC error {code}: {message}")
+            self.code = code
+            self.message = message
+            self.data = data
+
+    class InvalidParamsError(JsonRpcError):
+        pass
+
+    errors.JsonRpcError = JsonRpcError
+    errors.InvalidParamsError = InvalidParamsError
     generated = ModuleType("openai_codex.generated.v2_all")
     for name in (
         "AgentMessageThreadItem", "ChatgptAccount", "ConfigReadResponse",
@@ -109,6 +123,7 @@ def sdk(monkeypatch, tmp_path):
         "openai_codex": ModuleType("openai_codex"),
         "openai_codex.async_client": ModuleType("openai_codex.async_client"),
         "openai_codex.client": ModuleType("openai_codex.client"),
+        "openai_codex.errors": errors,
         "openai_codex.generated": ModuleType("openai_codex.generated"),
         "openai_codex.generated.v2_all": generated,
     }
@@ -1040,7 +1055,7 @@ def test_child_text_still_has_absolute_deadline(monkeypatch, tmp_path):
         runtime._runtime_error(result['error'], result['metadata']))
 
 
-def test_sdk_rpc_rejection_keeps_its_safe_reason_through_child_and_database(monkeypatch, tmp_path):
+def test_sdk_rpc_rejection_keeps_its_safe_reason_through_child_and_database(sdk, monkeypatch, tmp_path):
     from openai_codex.errors import InvalidParamsError
     from novel_to_comic.ai.usage_payloads import compact_metadata
 
