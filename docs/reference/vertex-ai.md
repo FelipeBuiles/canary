@@ -108,8 +108,54 @@ route configuration, environment and credential mount before the selection can
 run; the backend needs the updated model catalog. For a native gateway, set
 `GOOGLE_APPLICATION_CREDENTIALS` to the ADC file and
 `GOOGLE_CLOUD_QUOTA_PROJECT` to the credited project instead of using the mount.
-Hosted gateways need their own credential delivery; credentials are never baked
-into either Docker image.
+Credentials are never baked into either Docker image.
+
+## Fly credentials
+
+The production gateway runs inside `canary-web`. `fly.toml` maps the
+base64-encoded `CANARY_VERTEX_ADC_B64` Fly secret to
+`/run/credentials/google-adc.json` at Machine startup. The local Compose
+`CANARY_VERTEX_CREDENTIALS_FILE` setting does not deliver credentials to Fly.
+
+From the repository root, upload the ADC file through stdin and stage the
+runtime settings. Replace the project ID, and adjust the file path if needed:
+
+```sh
+VERTEX_PROJECT_ID="YOUR_CREDITED_PROJECT_ID"
+python3 - <<'PY' | fly secrets import --stage -a canary-web
+import base64
+from pathlib import Path
+
+credentials = Path(".vertex-gcloud/application_default_credentials.json")
+print("CANARY_VERTEX_ADC_B64=" + base64.b64encode(credentials.read_bytes()).decode())
+PY
+fly secrets set --stage -a canary-web \
+  VERTEXAI_PROJECT="$VERTEX_PROJECT_ID" \
+  VERTEXAI_LOCATION=global \
+  GOOGLE_CLOUD_QUOTA_PROJECT="$VERTEX_PROJECT_ID" \
+  GOOGLE_APPLICATION_CREDENTIALS=/run/credentials/google-adc.json
+```
+
+Staging does not restart the running app. Apply the file mapping and secrets
+with the next deployment, following the drain and verification workflow in
+[deployment](../deploy.md). A credential-only deployment can reuse the running
+image with `fly deploy -a canary-web --image <current-image>`; this does not add
+Vertex routes to an older gateway image. Verify credential loading and token
+refresh separately from a paid model smoke call.
+
+Fly recreates the credential file at startup with platform-default permissions.
+Restrict it to its owner after deployment or a Machine restart:
+
+```sh
+fly ssh console -a canary-web -C 'chmod 600 /run/credentials/google-adc.json'
+```
+
+The impersonated ADC file relies on its source user's refresh credential and
+service-account impersonation permission. Reauthenticate and restage the file
+if that credential is revoked or expires. See
+[Fly secrets as files](https://docs.fly.io/apps/secrets#mounting-secrets-as-files).
+
+## Live probe
 
 For a single live structured, streaming request without starting or restarting
 servers, run the opt-in probe with the gateway's Python environment:

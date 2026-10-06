@@ -89,8 +89,9 @@ Two further production dependencies sit outside the container:
    `TOGETHER_API_KEY`, `FAL_KEY`). Only set the ones you actually use. These live as Fly
    secrets on `canary-web` now (they used to be on `litellm-gw`).
    Gemini uses project-scoped Vertex requests and runtime ADC credentials;
-   see [Vertex setup](reference/vertex-ai.md). Its local Compose credential mount
-   does not configure credential delivery on Fly.
+   see [Vertex setup and Fly credential delivery](reference/vertex-ai.md#fly-credentials).
+   Stage `CANARY_VERTEX_ADC_B64` before deploying: `fly.toml` writes it to the
+   runtime ADC path. Its local Compose credential mount does not configure Fly.
 
 ## Step 0 — prepare secret file (outside the repo)
 

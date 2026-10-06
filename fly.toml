@@ -29,6 +29,11 @@ kill_timeout = '30s'
   PULP_CREDITS_PER_PROVIDER_USD = '100'
   PULP_MODEL_COST_MARKUP = '2.0'
 
+# Fly decodes the staged secret into an ADC file at Machine startup.
+[[files]]
+  guest_path = '/run/credentials/google-adc.json'
+  secret_name = 'CANARY_VERTEX_ADC_B64'
+
 [[mounts]]
   source = 'canary_projects'
   destination = '/projects'
