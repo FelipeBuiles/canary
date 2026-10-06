@@ -26,22 +26,28 @@ def test_deployment_waits_for_all_checks_and_production_image():
     }
     assert 'needs' not in JOBS['release_image']  # Build alongside tests.
     for name in ('release_image', 'deploy'):
-        assert JOBS[name]['if'] == (
+        condition = (
             "github.ref == 'refs/heads/main' && "
             "(github.event_name == 'push' || github.event_name == 'workflow_dispatch')"
         )
+        if name == 'deploy':
+            condition = "vars.CANARY_DEPLOY_TARGET == 'lightsail' && " + condition
+        assert JOBS[name]['if'] == condition
         assert JOBS[name]['environment'] == 'production'
     assert JOBS['docker']['if'] == "github.event_name == 'pull_request'"
 
 
 def test_deploy_and_smoke_test_use_same_immutable_digest():
     image = JOBS['release_image']
-    assert image['outputs']['image'] == 'registry.fly.io/canary-web@${{ steps.image.outputs.digest }}'
+    assert image['outputs']['image'] == 'registry.depot.dev/js338b6zll@${{ steps.image.outputs.digest }}'
     smoke = next(s for s in image['steps'] if s.get('name') == 'Smoke test release image')
     assert smoke['env']['IMAGE'] == image['outputs']['image']
     deploy = next(s for s in JOBS['deploy']['steps'] if s.get('name') == 'Deploy exact release image')
-    assert deploy['env']['IMAGE'] == '${{ needs.release_image.outputs.image }}'
-    assert '--image "$IMAGE"' in deploy['run']
+    assert deploy['env']['CANARY_RELEASE_IMAGE'] == '${{ needs.release_image.outputs.image }}'
+    assert deploy['run'] == 'python3 scripts/deploy_lightsail.py'
+    assert 'FLY_API_TOKEN' not in str(WORKFLOW)
+    assert 'CANARY_OPS_TOKEN' not in str(WORKFLOW)
+    assert 'skip_drain' not in str(WORKFLOW)
 
 
 def test_deployment_lock_and_drain_order():
@@ -49,11 +55,11 @@ def test_deployment_lock_and_drain_order():
     assert deploy['concurrency']['group'] == 'production-deploy'
     assert deploy['concurrency']['cancel-in-progress'] is False
     names = [s.get('name', '') for s in deploy['steps']]
-    assert names.index('Drain production and wait for running work') < names.index('Deploy exact release image')
-    assert names.index('Deploy exact release image') < names.index('Verify deployed release')
-    verify = next(s for s in deploy['steps'] if s.get('name') == 'Verify deployed release')
-    assert verify['run'] == 'python scripts/verify_deployment.py --resume'
-    assert verify['env']['EXPECTED_CANARY_VERSION'] == '${{ github.sha }}'
+    assert names.index('Obtain scoped AWS firewall access') < names.index('Deploy exact release image')
+    assert names.index('Deploy exact release image') < names.index('Record deployed release')
+    release = next(s for s in deploy['steps'] if s.get('name') == 'Deploy exact release image')
+    assert release['env']['CANARY_RELEASE_VERSION'] == '${{ github.sha }}'
+    assert deploy['permissions']['id-token'] == 'write'
 
 
 def test_pr_checks_never_reference_production_secrets():

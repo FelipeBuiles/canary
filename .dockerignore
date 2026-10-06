@@ -19,3 +19,8 @@ novel_to_comic/tests
 .env
 .env.*
 !.env.example
+# Encrypted bundles and age identities never belong in an image, even by mistake.
+*.sops.json
+*.sops.yaml
+**/age.txt
+**/keys/

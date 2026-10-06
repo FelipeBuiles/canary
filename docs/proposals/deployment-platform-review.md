@@ -7,6 +7,11 @@ prices and account state were not rechecked here. The original July cost table
 was based on a retired two-app architecture; its ~$18/month total must not be
 used as a current budget or purchasing comparison.
 
+For the October 6 AWS migration request, see the proposed
+[Lightsail migration design](aws-lightsail-migration.md), including newly
+verified AWS prices and corrections to queue/release evidence below. It does
+not change the deployed platform.
+
 ## Decision
 
 Keep the checked-in Fly deployment for the first bounded self-service launch.

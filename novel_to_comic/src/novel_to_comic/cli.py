@@ -1,5 +1,6 @@
 """Click CLI entry point — project initialisation and server launch."""
 
+import os
 import shutil
 from pathlib import Path
 
@@ -137,7 +138,9 @@ def serve(host: str, port: int, projects_dir: str, dev: bool, proxy_headers: boo
     # proxy_headers + forwarded_allow_ips make Uvicorn honour X-Forwarded-Proto / -For
     # so that request.url.scheme and the client IP reflect the real caller. Only enable
     # when explicitly requested — behind no proxy these headers are client-spoofable.
-    forwarded_allow_ips = "*" if proxy_headers else None
+    # Trusting "*" makes Uvicorn take X-Forwarded-For's leftmost (client-supplied)
+    # entry; naming the proxy's address makes it take the rightmost untrusted hop.
+    forwarded_allow_ips = (os.environ.get("CANARY_FORWARDED_ALLOW_IPS") or "*") if proxy_headers else None
     uvicorn.run(
         app,
         host=host,

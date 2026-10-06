@@ -14,8 +14,26 @@
 # TOGETHER_API_KEY, FAL_KEY) and LITELLM_MASTER_KEY/LITELLM_SALT_KEY must
 # be set as Fly secrets on canary-web. They flow into the proxy's environment.
 # Gemini uses Vertex ADC with VERTEXAI_PROJECT and VERTEXAI_LOCATION instead.
+#
+# Each child receives only the credentials it consumes: provider keys stay out
+# of the web process that parses uploads, and billing/database/operator secrets
+# stay out of the gateway. This supervisor keeps the full set for restarts.
 
 set -e
+
+GATEWAY_ONLY_SECRETS=(
+  OPENAI_API_KEY ANTHROPIC_API_KEY FAL_KEY FAL_ADMIN_KEY OPENROUTER_API_KEY
+  TOGETHER_API_KEY AWS_BEARER_TOKEN_BEDROCK LITELLM_MASTER_KEY LITELLM_SALT_KEY
+  DATABASE_URL
+)
+WEB_ONLY_SECRETS=(
+  LITELLM_API_KEY CANARY_OPS_TOKEN SUPABASE_SECRET_KEY CANARY_QUEUE_DATABASE_URL
+  STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET R2_ACCESS_KEY R2_SECRET_KEY
+)
+WEB_ENV=(env)
+for name in "${GATEWAY_ONLY_SECRETS[@]}"; do WEB_ENV+=(-u "$name"); done
+GATEWAY_ENV=(env)
+for name in "${WEB_ONLY_SECRETS[@]}"; do GATEWAY_ENV+=(-u "$name"); done
 
 # Install traps before proxy setup so an intentional stop at any
 # startup phase exits successfully and cannot trigger Fly's on-failure policy.
@@ -58,6 +76,7 @@ wait $!
 #    --num_workers 1 keeps memory bounded; the proxy is not the throughput
 #    bottleneck for this product (one region, low concurrency).
 start_litellm() {
+  "${GATEWAY_ENV[@]}" \
   PATH="/app/.venv-litellm/bin:$PATH" \
   PYTHONPATH=/app:/app/litellm_handlers /app/.venv-litellm/bin/litellm \
     --host 127.0.0.1 \
@@ -108,7 +127,7 @@ fi
 
 # 3. Run uvicorn alongside LiteLLM. --proxy-headers trusts X-Forwarded-* from
 #    Fly's TLS proxy so secure cookies and client-IP detection work.
-/app/novel_to_comic/.venv/bin/pipeline serve \
+"${WEB_ENV[@]}" /app/novel_to_comic/.venv/bin/pipeline serve \
   --host 0.0.0.0 \
   --port 8000 \
   --projects-dir /projects \

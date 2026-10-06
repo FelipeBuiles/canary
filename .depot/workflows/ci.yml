@@ -6,13 +6,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch: # optional release rerun or offline recovery
-    inputs:
-      skip_drain:
-        description: "Offline recovery only: skip drain because production machines are stopped"
-        type: boolean
-        required: false
-        default: false
+  workflow_dispatch: # rerun a normal release; initial cutover is operator-managed
 
 permissions:
   contents: read
@@ -265,20 +259,18 @@ jobs:
     runs-on: depot-ubuntu-24.04
     timeout-minutes: 30
     outputs:
-      image: registry.fly.io/canary-web@${{ steps.image.outputs.digest }}
+      image: registry.depot.dev/js338b6zll@${{ steps.image.outputs.digest }}
+      loader_sha256: ${{ steps.release.outputs.loader_sha256 }}
       digest: ${{ steps.image.outputs.digest }}
-    env:
-      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - name: Validate deployment configuration
         env:
-          CANARY_OPS_TOKEN: ${{ secrets.CANARY_OPS_TOKEN }}
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
         run: |
           missing=()
-          for name in FLY_API_TOKEN CANARY_OPS_TOKEN VITE_SUPABASE_URL \
+          for name in VITE_SUPABASE_URL \
             VITE_SUPABASE_PUBLISHABLE_KEY; do
             if [ -z "${!name:-}" ]; then
               missing+=("$name")
@@ -288,19 +280,13 @@ jobs:
             echo "::error::Missing production secrets: ${missing[*]}"
             exit 1
           fi
-      - name: Set up Fly CLI
-        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-        with:
-          version: 0.4.104
       - name: Prepare release metadata
         id: release
         run: |
           echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-          echo "image=registry.fly.io/canary-web:${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+          echo "loader_sha256=$(sha256sum scripts/canary_secrets.py | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
       - name: Set up Depot builder
         uses: depot/setup-action@v1
-      - name: Authenticate to the Fly registry
-        run: flyctl auth docker
       # Build before draining so customers are not blocked during the build.
       # The pushed image is the exact artifact deployed and rolled back to.
       - name: Build and push release image
@@ -310,8 +296,9 @@ jobs:
           project: js338b6zll
           context: .
           file: ./Dockerfile
-          push: true
-          tags: ${{ steps.release.outputs.image }}
+          platforms: linux/amd64
+          save: true
+          save-tags: ${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           build-args: |
             CANARY_VERSION=${{ github.sha }}
             CANARY_BUILD_TIMESTAMP=${{ steps.release.outputs.timestamp }}
@@ -325,9 +312,13 @@ jobs:
             POSTHOG_API_KEY=${{ secrets.POSTHOG_API_KEY }}
       - name: Smoke test release image
         env:
-          IMAGE: registry.fly.io/canary-web@${{ steps.image.outputs.digest }}
+          IMAGE: registry.depot.dev/js338b6zll@${{ steps.image.outputs.digest }}
+          LOADER_SHA256: ${{ steps.release.outputs.loader_sha256 }}
         run: |
+          depot pull-token --project js338b6zll | docker login registry.depot.dev -u x-token --password-stdin
           docker pull "$IMAGE"
+          actual=$(docker run --rm --network none --entrypoint sha256sum "$IMAGE" /app/canary_secrets.py | cut -d ' ' -f 1)
+          test "$actual" = "$LOADER_SHA256"
           docker run --rm --entrypoint /app/novel_to_comic/.venv/bin/python "$IMAGE" \
             -c "import novel_to_comic.server.app, novel_to_comic.server.durable_queue"
           # The patched proxy and config callbacks import /app modules; plain
@@ -336,64 +327,50 @@ jobs:
             -c "import litellm.proxy.proxy_server, canary_metrics_callback"
 
   deploy:
-    name: Deploy production
+    name: Deploy production to Lightsail
     environment: production
     needs: [backend, web, gateway, tooling, database, release_image]
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    # Enable only after the operator has fenced Fly and completed the first cutover.
+    if: vars.CANARY_DEPLOY_TARGET == 'lightsail' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: depot-ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
     concurrency:
       group: production-deploy
       cancel-in-progress: false
       queue: max
-    env:
-      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
       - uses: actions/checkout@v7
-      - name: Set up Fly CLI
-        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - uses: depot/setup-action@v1
+      - name: Reject superseded release
+        # Tests/builds can finish out of order; never replace a newer release
+        # with an older main commit that reached the deployment queue later.
+        run: test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+      - name: Obtain scoped AWS firewall access
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          version: 0.4.104
-      - name: Drain production and wait for running work
-        if: ${{ !inputs.skip_drain }}
-        env:
-          CANARY_OPS_TOKEN: ${{ secrets.CANARY_OPS_TOKEN }}
-          # Direct Fly route, still protected by CANARY_OPS_TOKEN.
-          SCENEWRIGHT_APP_URL: https://canary-web.fly.dev
-        run: python scripts/check_deploy_safe.py
-      - name: Record offline recovery
-        if: ${{ inputs.skip_drain }}
-        run: echo 'Offline recovery requested by operator; deployment drain skipped because production machines are stopped.' >> "$GITHUB_STEP_SUMMARY"
-      - name: Record rollback target
-        env:
-          IMAGE: ${{ needs.release_image.outputs.image }}
-          DIGEST: ${{ needs.release_image.outputs.digest }}
-        run: |
-          {
-            echo "## Production deployment"
-            echo
-            echo "- Source SHA: \`${GITHUB_SHA}\`"
-            echo "- Release image: \`${IMAGE}\` (\`${DIGEST}\`)"
-            echo "- Roll back with \`flyctl deploy -a canary-web --image <previous image>\`. Previous releases:"
-            echo '```'
-            flyctl releases -a canary-web --image | head -n 3
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          role-to-assume: ${{ vars.LIGHTSAIL_CI_ROLE_ARN }}
+          aws-region: us-east-1
+          role-duration-seconds: 3600
       - name: Deploy exact release image
         env:
-          IMAGE: ${{ needs.release_image.outputs.image }}
-        run: flyctl deploy -a canary-web --image "$IMAGE"
-      - name: Verify deployed release
-        env:
-          EXPECTED_CANARY_VERSION: ${{ github.sha }}
-          SCENEWRIGHT_APP_URL: https://scenewright.ink
-          CANARY_OPS_TOKEN: ${{ secrets.CANARY_OPS_TOKEN }}
-        run: python scripts/verify_deployment.py --resume
+          CANARY_RELEASE_IMAGE: ${{ needs.release_image.outputs.image }}
+          CANARY_RELEASE_VERSION: ${{ github.sha }}
+          CANARY_LOADER_SHA256: ${{ needs.release_image.outputs.loader_sha256 }}
+          LIGHTSAIL_HOST: ${{ vars.LIGHTSAIL_HOST }}
+          LIGHTSAIL_SSH_KNOWN_HOSTS: ${{ vars.LIGHTSAIL_SSH_KNOWN_HOSTS }}
+          LIGHTSAIL_SSH_PRIVATE_KEY: ${{ secrets.LIGHTSAIL_SSH_PRIVATE_KEY }}
+        run: python3 scripts/deploy_lightsail.py
       - name: Record deployed release
         if: success()
+        env:
+          IMAGE: ${{ needs.release_image.outputs.image }}
         run: |
           {
-            echo
-            echo "- Deployment verification: passed"
-            echo "- Public URL: https://scenewright.ink"
+            echo "Lightsail release verified and admission resumed."
+            echo "Source: $GITHUB_SHA"
+            echo "Image: $IMAGE"
+            echo "Public URL: https://scenewright.ink"
           } >> "$GITHUB_STEP_SUMMARY"
