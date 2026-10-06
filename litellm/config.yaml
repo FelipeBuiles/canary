@@ -267,8 +267,10 @@ model_list:
 - model_name: image-nano-banana-2.1
   litellm_params:
     model: vertex-multimodal/gemini-nano-banana-2.1
-    vertex_project: os.environ/VERTEXAI_PROJECT
-    vertex_location: global
+    # LiteLLM reserves vertex_* settings for its built-in adapter and strips
+    # them from custom image generation. These names reach the native handler.
+    project: os.environ/VERTEXAI_PROJECT
+    location: global
     canary_image_pricing:
       input_cost_per_token: 1.5e-06
       cached_input_cost_per_token: 1.5e-07

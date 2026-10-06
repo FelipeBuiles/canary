@@ -158,17 +158,23 @@ def test_callback_models_match_gateway_routes():
     assert _MODELS == {route["model_name"] for route in config["model_list"]}
 
 
-@pytest.mark.parametrize("model", ["bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5"])
-@pytest.mark.parametrize("provider", ["bedrock", "bedrock_converse"])
-def test_bedrock_metrics_retain_selected_model_and_provider(model, provider):
+@pytest.mark.parametrize("model,provider,call_type", [
+    (model, provider, "acompletion")
+    for model in ("bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5")
+    for provider in ("bedrock", "bedrock_converse")
+] + [("image-nano-banana-2.1", "vertex-multimodal", "aimage_generation")])
+def test_metrics_retain_selected_model_and_provider(model, provider, call_type):
     client = FakeClient()
     configure_metrics(client)
     started = datetime.now(timezone.utc)
     asyncio.run(metrics_callback.async_log_success_event({
-        "call_type": "acompletion", "model": model,
+        "call_type": call_type, "model": model,
         "litellm_params": {"custom_llm_provider": provider},
     }, object(), started, started + timedelta(milliseconds=125)))
     assert client.metrics.calls[0][3]["provider"] == provider
+    assert client.metrics.calls[0][3]["operation"] == (
+        "image" if call_type == "aimage_generation" else "completion"
+    )
     assert client.metrics.calls[2][3]["model"] == model
 
 

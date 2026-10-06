@@ -131,7 +131,7 @@ RUN /app/.venv-litellm/bin/python /app/patch_http_errors.py
 COPY litellm/patch_anthropic_refusals.py /app/patch_anthropic_refusals.py
 RUN /app/.venv-litellm/bin/python /app/patch_anthropic_refusals.py
 
-# LiteLLM config + the single retained custom handler (fal-queue).
+# LiteLLM config and the configured custom image handlers.
 # PYTHONPATH makes the handlers importable; config.yaml's custom_provider_map
 # registers them with the proxy at boot.
 COPY litellm/config.yaml /app/config.yaml
