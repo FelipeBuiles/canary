@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -63,7 +64,7 @@ def get_brief(project=Depends(get_project)):
         raise _not_found(exc) from exc
 
 
-@router.put("/brief")
+@router.put("/brief", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def update_brief(body: BriefEdit, project=Depends(get_project)):
     project_dir, _config, state = project
     target = TargetArtifacts(project_dir)
@@ -160,7 +161,7 @@ def get_primary_refs(project=Depends(get_project)):
     return {"primary_refs": artifacts.read_primary_refs(project_dir)}
 
 
-@router.put("/cast/{char_id}/primary-ref")
+@router.put("/cast/{char_id}/primary-ref", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def set_primary_ref(char_id: str, body: dict, project=Depends(get_project)):
     project_dir, _config, _state = project
     pose = body.get("pose")

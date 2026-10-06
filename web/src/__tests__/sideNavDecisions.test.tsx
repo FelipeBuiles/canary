@@ -9,7 +9,7 @@ beforeEach(() => { readiness.documents = true; readiness.parts = []; });
 vi.mock("../api/queries", () => ({
   useProjectStatus: () => ({
     data: {
-      is_running: false,
+      is_running: false, part_busy: false, series_busy: false,
       style_selected: true,
       parts: readiness.parts,
       stages: {

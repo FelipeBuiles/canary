@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { signOut, useAuth } from "../hooks/useAuth";
 import { queryClient } from "../api/queryClient";
 import { useStyleGenStore } from "../store/styleGen";
@@ -8,13 +8,15 @@ import { usePipelineStore } from "../store/pipeline";
 import { useInsufficientCreditsStore } from "../store/insufficientCredits";
 import type { Session } from "@supabase/supabase-js";
 
-const auth = vi.hoisted(() => ({ callback: null as ((event: string, session: unknown) => void) | null }));
+const auth = vi.hoisted(() => ({ callback: null as ((event: string, session: unknown) => void) | null, signOut: vi.fn(async () => ({ error: null })) }));
 vi.mock("../lib/supabase", () => ({ supabase: { auth: {
   getSession: async () => ({ data: { session: null } }),
-  signOut: () => new Promise(() => {}),
+  signOut: auth.signOut,
   onAuthStateChange: (callback: typeof auth.callback) => { auth.callback = callback; return { data: { subscription: { unsubscribe: vi.fn() } } }; },
 } } }));
 vi.mock("../telemetry", () => ({ setTelemetryUser: vi.fn() }));
+vi.mock("../api/events", () => ({ recordAccountSeen: vi.fn(async () => {}) }));
+beforeEach(() => vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 }))));
 
 function PrivateContent() {
   const { data } = useQuery({ queryKey: ["credits", "balance"], queryFn: async () => "fresh account", staleTime: Infinity });
@@ -49,7 +51,19 @@ it("replaces every private cache and transient job/dialog state on account switc
   act(() => aliceClient.setQueryData(["credits", "balance"], "Alice's late rollback"));
   expect(screen.queryByText("Alice's late rollback")).toBeNull();
   const bobClient = queryClient;
-  act(() => { void signOut(); });
+  await act(async () => { await signOut(); });
   expect(queryClient).not.toBe(bobClient);
   expect(bobClient.getMutationCache().getAll()).toEqual([]);
+  expect(fetch).toHaveBeenCalledWith("/api/auth/logout", expect.objectContaining({ method: "POST", credentials: "same-origin" }));
+});
+
+it("keeps the account signed in if backend logout fails", async () => {
+  render(<AccountSurface />);
+  await waitFor(() => expect(auth.callback).not.toBeNull());
+  act(() => auth.callback!("SIGNED_IN", { user: { id: "alice" }, access_token: "alice-token" } as Session));
+  await act(async () => { await Promise.resolve(); });
+  vi.mocked(fetch).mockImplementation(async () => new Response(null, { status: 503 }));
+  auth.signOut.mockClear();
+  await expect(signOut()).rejects.toThrow("Sign out could not be completed");
+  expect(auth.signOut).not.toHaveBeenCalled();
 });

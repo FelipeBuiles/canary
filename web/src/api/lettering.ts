@@ -107,7 +107,7 @@ export function getLetteringTranslationEstimate(project: string, targetLocale: L
 
 export function translateProjectLettering(project: string, request: LetteringTranslationRequest) {
   return apiFetch<{ job: GenerationJob }>(`${root(project)}/lettering/translate`, {
-    method: "POST",
+    paidAction: true, method: "POST",
     body: JSON.stringify(request),
   });
 }

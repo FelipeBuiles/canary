@@ -7,6 +7,8 @@ when the author starts a part. Text edits follow the freeze rules in
 
 from __future__ import annotations
 
+
+import asyncio
 import shutil
 import tempfile
 from pathlib import Path
@@ -15,7 +17,6 @@ import re
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from novel_to_comic.book_map import part_entry, read_book_map
@@ -94,7 +95,7 @@ def _chapters(text: str) -> list[dict]:
     ]
 
 
-async def _submitted_text(root: Path, file: UploadFile | None, text: str | None) -> tuple[str, str]:
+def _submitted_text(root: Path, file: UploadFile | None, text: str | None) -> tuple[str, str]:
     """Read an uploaded file or pasted text within the upload budgets."""
     from .projects import _ALLOWED_EXTENSIONS, _save_upload_capped
 
@@ -130,6 +131,29 @@ async def _submitted_text(root: Path, file: UploadFile | None, text: str | None)
     raise HTTPException(422, "Upload a file or paste some text.")
 
 
+
+
+
+def _commit_text(root, file, text, operation):
+    from ..storage_budget import ingestion, require_capacity
+    from novel_to_comic.artifact_lock import production_lock
+    estimate = (getattr(file, 'size', None) or 0) + len((text or '').encode()) + 65536
+    kept = None
+    with ingestion(root, estimate) as budget, production_lock(root):
+        try:
+            content, origin = _submitted_text(root, file, text)
+            if file is not None and origin != 'paste':
+                kept = root / 'input' / 'parts' / origin
+            source_bytes = kept.stat().st_size if kept is not None else 0
+            require_capacity(root.parent, source_bytes + len(content.encode()) + 65536, budget=budget)
+            result = operation(content, origin)
+        except BaseException:
+            if kept is not None:
+                kept.unlink(missing_ok=True)
+            raise
+    return content, result
+
+
 def _rejected(exc: Exception) -> HTTPException:
     return HTTPException(409, {"code": "part_locked", "message": str(exc)})
 
@@ -139,7 +163,7 @@ def list_parts(project_dir: Path = Depends(get_project_dir)):
     return {"parts": part_summaries(project_dir)}
 
 
-@router.post("/parts")
+@router.post("/parts", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 async def add_part(
     title: str | None = Form(None),
     text: str | None = Form(None),
@@ -148,17 +172,18 @@ async def add_part(
     project_dir: Path = Depends(get_project_dir),
 ):
     """Append a manuscript, grouping long inputs at detected chapter headings."""
-    content, origin = await _submitted_text(project_dir, file, text)
-    pieces = group_chapters(content) if auto_split else [(None, content)]
-    if title:
-        pieces[0] = (title, pieces[0][1])
+    def append(content, origin):
+        pieces = group_chapters(content) if auto_split else [(None, content)]
+        if title:
+            pieces[0] = (title, pieces[0][1])
+        return append_parts(project_dir, pieces, origin=origin)
     try:
-        records = append_parts(project_dir, pieces, origin=origin)
+        content, records = await asyncio.to_thread(_commit_text, project_dir, file, text, append)
     except PartEditRejected as exc:
         raise HTTPException(422, str(exc)) from exc
-    return {"part": records[0].model_dump(), "chapters": _chapters(pieces[0][1]),
-            "created": [record.id for record in records],
-            "parts": part_summaries(project_dir)}
+    return {"part": records[0].model_dump(), "chapters": _chapters(TargetArtifacts(project_dir).read_part_text(records[0].id)),
+            "created": [record.id for record in records], "parts": part_summaries(project_dir)}
+
 
 
 @router.get("/parts/{part_id}/chapters")
@@ -176,7 +201,7 @@ class SplitRequest(BaseModel):
     titles: list[str | None] = Field(default_factory=list, max_length=501)
 
 
-@router.post("/parts/{part_id}/split")
+@router.post("/parts/{part_id}/split", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def split(part_id: str, body: SplitRequest, project_dir: Path = Depends(get_project_dir)):
     try:
         pieces = split_part(project_dir, part_id, body.boundaries, body.titles)
@@ -187,7 +212,7 @@ def split(part_id: str, body: SplitRequest, project_dir: Path = Depends(get_proj
     return {"parts": part_summaries(project_dir), "created": [piece.id for piece in pieces]}
 
 
-@router.put("/parts/{part_id}/text")
+@router.put("/parts/{part_id}/text", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 async def replace_text(
     part_id: str,
     text: str | None = Form(None),
@@ -200,9 +225,9 @@ async def replace_text(
         raise HTTPException(404, f"Part '{part_id}' not found") from None
     if reason:
         raise _rejected(PartEditRejected(reason))
-    content, origin = await _submitted_text(project_dir, file, text)
     try:
-        record = replace_part_text(project_dir, part_id, content, origin=origin)
+        content, record = await asyncio.to_thread(_commit_text, project_dir, file, text,
+            lambda content, origin: replace_part_text(project_dir, part_id, content, origin=origin))
     except PartEditRejected as exc:
         raise _rejected(exc) from exc
     return {"part": record.model_dump(), "chapters": _chapters(content),
@@ -213,7 +238,7 @@ class RenameRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
 
 
-@router.patch("/parts/{part_id}")
+@router.patch("/parts/{part_id}", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def rename(part_id: str, body: RenameRequest, project_dir: Path = Depends(get_project_dir)):
     try:
         record = rename_part(project_dir, part_id, body.title)
@@ -222,7 +247,7 @@ def rename(part_id: str, body: RenameRequest, project_dir: Path = Depends(get_pr
     return {"part": record.model_dump()}
 
 
-@router.delete("/parts/{part_id}")
+@router.delete("/parts/{part_id}", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def remove(part_id: str, project_dir: Path = Depends(get_project_dir)):
     try:
         delete_part(project_dir, part_id)
@@ -241,7 +266,7 @@ class CombinedExportRequest(BaseModel):
 _COMBINED_NAME = re.compile(r"part_\d{4}-part_\d{4}-[0-9a-f]{16}\.(pdf|cbz)")
 
 
-@router.post("/parts/export")
+@router.post("/parts/export", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def export_parts(body: CombinedExportRequest, project_dir: Path = Depends(get_project_dir)):
     """Combine consecutive finished parts into one book file."""
     from novel_to_comic.combined_export import CombinedExportRejected, combined_export
@@ -257,9 +282,11 @@ def export_parts(body: CombinedExportRequest, project_dir: Path = Depends(get_pr
 def download_combined_export(name: str, project_dir: Path = Depends(get_project_dir)):
     if not _COMBINED_NAME.fullmatch(name):
         raise HTTPException(404, "Export not found")
-    path = project_dir / "exports" / "combined" / name
-    if not path.is_file():
-        raise HTTPException(404, "Export not found")
+    from novel_to_comic.combined_export import CombinedExportRejected, open_combined_export
+    from ..export_stream import download_response
+    try:
+        stream, size = open_combined_export(project_dir, name)
+    except CombinedExportRejected as exc:
+        raise HTTPException(404, str(exc)) from exc
     media = "application/pdf" if name.endswith(".pdf") else "application/vnd.comicbook+zip"
-    return FileResponse(path, media_type=media, filename=name,
-                        headers={"Cache-Control": "private, no-cache"})
+    return download_response(stream, size=size, name=name, media_type=media)

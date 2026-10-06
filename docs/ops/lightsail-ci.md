@@ -377,3 +377,11 @@ failure/disconnect/reboot case listed above. Keep those limitations distinct
 from the isolated runtime and queue drills. The environment-scope diagnosis is
 supported by run `mcf4dgqxgk` skipping deploy and this run deploying after only
 the non-secret flag's environment selector was removed.
+
+## Recovery backups
+
+Backup scheduling, capture and retention belong to the deployed container and
+infrastructure setup. This application PR adds no host backup timer or tool.
+The [application restore contract](backup-restore.md) identifies the stores and
+checks that an isolated recovery must cover. Cutover evidence above records a
+historical recovery point, not the current backup configuration.

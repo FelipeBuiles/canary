@@ -192,7 +192,7 @@ export function getDraftEstimate(
 export function draftEntity(
   project: string, kind: EntityKind, request: { name: string; aliases?: string[]; note?: string },
 ): Promise<EntityDraft> {
-  return apiFetch(`${base(project)}/${kind}/draft`, { method: "POST", body: JSON.stringify(request) });
+  return apiFetch(`${base(project)}/${kind}/draft`, { paidAction: true, method: "POST", body: JSON.stringify(request) });
 }
 
 export function getCastFreshness(project: string): Promise<{ references: ReferenceFreshness[] }> {

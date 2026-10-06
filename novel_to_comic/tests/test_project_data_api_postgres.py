@@ -11,7 +11,7 @@ import pytest
 def query():
     url = os.environ.get("CREDIT_TEST_DATABASE_URL")
     if not url or not shutil.which("psql"):
-        pytest.skip("requires isolated PostgreSQL with base schema + security migration")
+        pytest.skip("requires isolated PostgreSQL with the canonical schema")
 
     def execute(sql):
         result = subprocess.run(
@@ -36,6 +36,16 @@ def test_browser_roles_have_no_project_write_grants(query, role):
 def test_service_role_retains_project_authority(query):
     for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
         assert query(f"select has_table_privilege('service_role', 'public.projects', '{privilege}');") == "t"
+
+
+def test_browser_accounting_access_is_limited_to_balance_columns(query):
+    for role in ("anon", "authenticated"):
+        assert query(f"select has_table_privilege('{role}', 'public.ai_usage_events', 'SELECT');") == "f"
+        assert query(f"select has_any_column_privilege('{role}', 'public.ai_usage_events', 'SELECT');") == "f"
+        assert query(f"select has_table_privilege('{role}', 'public.credit_ledger', 'SELECT');") == "f"
+    for column in ("user_id", "amount_credits", "status"):
+        assert query(f"select has_column_privilege('authenticated', 'public.credit_ledger', '{column}', 'SELECT');") == "t"
+    assert query("select has_column_privilege('authenticated', 'public.credit_ledger', 'description', 'SELECT');") == "f"
 
 
 def test_browser_cannot_call_money_mutation_rpc(query):

@@ -30,7 +30,7 @@ export function runPipeline(
   if (thenApprove) params.set("then_approve", "1");
   const query = params.toString();
   return apiFetch(`${projectPath(project)}/run${query ? `?${query}` : ""}`, {
-    method: "POST",
+    paidAction: true, method: "POST",
   });
 }
 
@@ -56,7 +56,7 @@ export function regenRef(
 ): Promise<{ status: string; job: GenerationJob; char_id: string }> {
   return apiFetch(
     `${seriesPath(project)}/regen-ref?char_id=${encodeURIComponent(charId)}`,
-    { method: "POST" },
+    { paidAction: true, method: "POST" },
   );
 }
 
@@ -67,7 +67,7 @@ export function regenStateRef(
 ): Promise<{ status: string; job: GenerationJob; char_id: string }> {
   return apiFetch(
     `${seriesPath(project)}/regen-state-ref?char_id=${encodeURIComponent(charId)}&state_id=${encodeURIComponent(stateId)}`,
-    { method: "POST" },
+    { paidAction: true, method: "POST" },
   );
 }
 
@@ -78,7 +78,7 @@ export function regenLocationState(
 ): Promise<{ status: string; job: GenerationJob; loc_id: string }> {
   return apiFetch(
     `${seriesPath(project)}/locations/${encodeURIComponent(locId)}/states/${encodeURIComponent(stateId)}/regenerate`,
-    { method: "POST" },
+    { paidAction: true, method: "POST" },
   );
 }
 
@@ -137,7 +137,7 @@ export function regenPlate(
 ): Promise<{ status: string; job: GenerationJob; loc_id: string }> {
   return apiFetch(
     `${seriesPath(project)}/regen-plate?loc_id=${encodeURIComponent(locId)}`,
-    { method: "POST" },
+    { paidAction: true, method: "POST" },
   );
 }
 
@@ -158,7 +158,7 @@ export function regenRefWithInstruction(
   return apiFetch(
     stateId ? `${seriesPath(project)}/characters/${encodeURIComponent(charId)}/states/${encodeURIComponent(stateId)}/regenerate-instructed` : `${seriesPath(project)}/regen-ref-instructed`,
     {
-      method: "POST",
+      paidAction: true, method: "POST",
       body: JSON.stringify({ ...(stateId ? {} : { char_id: charId }), instruction, reference_assets: referenceAssets }),
     },
   );
@@ -174,7 +174,7 @@ export function regenPlateWithInstruction(
   return apiFetch(
     stateId ? `${seriesPath(project)}/locations/${encodeURIComponent(locId)}/states/${encodeURIComponent(stateId)}/regenerate-instructed` : `${seriesPath(project)}/regen-plate-instructed`,
     {
-      method: "POST",
+      paidAction: true, method: "POST",
       body: JSON.stringify({ ...(stateId ? {} : { loc_id: locId }), instruction, reference_assets: referenceAssets }),
     },
   );
@@ -186,7 +186,7 @@ export function regenProp(
 ): Promise<{ status: string; job: GenerationJob; prop_id: string }> {
   return apiFetch(
     `${seriesPath(project)}/regen-prop?prop_id=${encodeURIComponent(propId)}`,
-    { method: "POST" },
+    { paidAction: true, method: "POST" },
   );
 }
 
@@ -200,7 +200,7 @@ export function regenPropWithInstruction(
   return apiFetch(
     stateId ? `${seriesPath(project)}/props/${encodeURIComponent(propId)}/states/${encodeURIComponent(stateId)}/regenerate-instructed` : `${seriesPath(project)}/regen-prop-instructed`,
     {
-      method: "POST",
+      paidAction: true, method: "POST",
       body: JSON.stringify({ ...(stateId ? {} : { prop_id: propId }), instruction, reference_assets: referenceAssets }),
     },
   );
@@ -218,7 +218,7 @@ export function approveStage(
 ): Promise<{ status: string; stage: string }> {
   return apiFetch(
     `${projectPath(project)}/approve/${encodeURIComponent(stage)}`,
-    { method: "POST" },
+    { paidAction: stage === "brief" || stage === "cast", method: "POST" },
   );
 }
 
@@ -227,7 +227,7 @@ export function regenExtract(
 ): Promise<{ status: string; stage: string }> {
   return apiFetch(
     `${projectPath(project)}/regen-extract`,
-    { method: "POST" },
+    { paidAction: true, method: "POST" },
   );
 }
 

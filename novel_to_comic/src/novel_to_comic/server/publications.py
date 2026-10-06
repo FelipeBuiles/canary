@@ -35,6 +35,23 @@ class PublicationInput(BaseModel):
     author: str = Field(min_length=1, max_length=120)
     description: str = Field(default="", max_length=600)
     allow_feature: bool = False
+    expected_publication_version: str | None = None
+
+
+class PublicationReplacementRequired(ValueError):
+    pass
+
+
+def owned_record(projects_dir: Path, user: str, project: str):
+    with production_lock(root(projects_dir)):
+        owner = read_json(owner_path(projects_dir, user, project))
+        if not owner:
+            return None
+        record = read_json(root(projects_dir) / owner["id"] / "current.json")
+        if record is None:
+            return None
+        return record | {"source_part_id": owner.get("source_part_id"),
+                         "source_part_title": owner.get("source_part_title")}
 
 
 def root(projects_dir: Path) -> Path:
@@ -56,8 +73,11 @@ def read_json(path: Path):
 def write_json(path: Path, data: dict):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(f".{uuid4().hex}.tmp")
-    temporary.write_text(json.dumps(data))
-    temporary.replace(path)
+    try:
+        temporary.write_text(json.dumps(data))
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _translated_pages(
@@ -101,7 +121,17 @@ def publish(
     metadata: PublicationInput,
     ctx: StageRuntime,
 ):
-    with production_lock(root(projects_dir)), production_lock(project_dir):
+    from .storage_budget import ingestion, require_capacity, _bytes
+    with ingestion(project_dir, 0) as budget, production_lock(root(projects_dir)), production_lock(project_dir):
+        from novel_to_comic.workspace import part_id_for_path
+        part = part_id_for_path(project_dir)
+        owner = owner_path(projects_dir, user, project)
+        prior = read_json(owner)
+        current = read_json(root(projects_dir) / prior["id"] / "current.json") if prior else None
+        if current and prior.get("source_part_id") != part and metadata.expected_publication_version != current["version"]:
+            raise PublicationReplacementRequired("Publishing this part replaces the series' current public book. Confirm the replacement after refreshing sharing settings.")
+        if metadata.expected_publication_version and (not current or metadata.expected_publication_version != current["version"]):
+            raise PublicationReplacementRequired("The published book changed. Refresh sharing settings before updating it.")
         target = TargetArtifacts(project_dir)
         with ctx.execute(total=1, estimated_cost_usd=0):
             result = finish_book(target, formats=(), clear_derived_outputs=False)
@@ -183,7 +213,7 @@ def publish(
                     root(projects_dir) / publication_id / "current.json"
                 )
                 record = {
-                    **metadata.model_dump(),
+                    **metadata.model_dump(exclude={"expected_publication_version"}),
                     "id": publication_id,
                     "version": version,
                     "published_at": datetime.now(timezone.utc).isoformat(),
@@ -198,9 +228,20 @@ def publish(
                     record["locale"] = languages["locale"]
                     record["translations"] = languages["translations"]
                 # Record the stable identity first; a failed initial publication is still private.
-                write_json(owner, {"id": publication_id})
+                title = next((item.title for item in target.read_part_manifest().parts if item.id == part), part) if part else None
+                require_capacity(project_dir.parent.parent.parent if part else project_dir.parent,
+                                 _bytes(destination) + 65536, budget=budget)
+                write_json(owner, {"id": publication_id, "account": user,
+                    "source_part_id": part, "source_part_title": title,
+                    "version": version, "previous_version": current.get("version") if current else None})
                 write_json(root(projects_dir) / publication_id / "current.json", record)
             except Exception:
+                # A manifest-write failure must retain the previous private
+                # source-part/version pointer as well as the previous reader.
+                if prior:
+                    write_json(owner, prior)
+                else:
+                    owner.unlink(missing_ok=True)
                 shutil.rmtree(destination, ignore_errors=True)
                 raise
             ctx.record_item_done()

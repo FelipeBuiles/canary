@@ -1,6 +1,6 @@
 # Canary agent context
 
-**Status: Current, October 2, 2026.** Canary generates complete lettered comic
+**Status: Current, October 6, 2026.** Canary generates complete lettered comic
 pages from novels through an eight-stage Python/FastAPI and React application.
 A project is a series of parts that share one Story Bible, Style and Cast
 ([ADR 0023](../adr/0023-series-parts-and-author-owned-story-bible.md)). Each part
@@ -36,7 +36,8 @@ process routing/funding controls from scoped live evidence, including experiment
   recovery preserves older drafts as separately labelled, selectable text
   with copy and confirmed discard, never silently merging them into a new Brief.
 - Passive Cast entry spends nothing. Explicit estimated Start/Resume generates
-  missing references; Style Continue can start Cast and a needed cover.
+  missing references; Style Continue can start Cast. The initial cover queues
+  after Draw's page jobs and is included in the Draw estimate.
 - Instructed Cast corrections enqueue before the text rewrite; the reserved job
   owns rewrite and image work. A queued receipt is not an applied correction.
   Pending/running work, durable failures/rejections, and instruction drafts remain
@@ -69,10 +70,12 @@ process routing/funding controls from scoped live evidence, including experiment
   Cast references; the author keeps or regenerates them. Drawn pages are flagged,
   never redrawn.
 - `/api/projects/{project_id}/jobs` returns live and persisted job observations.
-  Interrupted queued/running jobs appear failed/recoverable, never auto-requeued.
+  Valid unstarted commands resume after restart; interrupted started work remains
+  outcome-unknown. History is paginated and terminal commands are not deserialized.
   Pipeline/style SSE is bounded broadcast, not durable history; refetch status/jobs.
 - Cast (including instructed text rewrites), style work, and covers reserve before
-  paid work. Owned one-hour holds renew every 30 seconds. Startup requires the
+  paid execution; queued admission checks affordability without acquiring a hold.
+  Owned one-hour holds renew every 30 seconds. Startup requires the
   canonical SQL migration; only expired never-started holds reclaim automatically.
   Started-expired, legacy unowned, and ambiguous settlement need reconciliation.
   Never globally release holds at startup or reset.
@@ -90,12 +93,18 @@ process routing/funding controls from scoped live evidence, including experiment
   generated comic text in hybrid art (canonical wording in baked art), not
   visual correctness; uncertain order is nonblocking editorial
   evidence. Visual verification and paid artwork corrections remain separate.
-- Deployment is one uvicorn worker on one Fly Machine with persistent `/projects`
-  journals. Authenticated drain must precede the idle check; timeout stays drained.
-  The first upgrade from a binary without drain needs controlled maintenance, not
-  an idle-only fallback. Horizontal scaling requires distributed coordination.
-  See [deployment runbook](../deploy.md); these are requirements, not evidence of
-  production migration or deployment.
+- Deployment has one Uvicorn worker and one volume owner on Lightsail, with
+  persistent `/projects` journals. Fly is stopped and fenced. Drain closes every
+  mutation, including imports; queued commands remain paused and durable. Releases
+  use immutable images, host verification and explicit resume. See the
+  [deployment runbook](../deploy.md) and [backup contract](../ops/backup-restore.md).
+- Routes explicitly declare spend/dispatch policy. Queue/credit outages leave
+  idle local edits available; dependency rejections return `admitted: false` and
+  create no receipt. Accepted and uncertain paid actions keep their replay keys.
+- Artifact transactions lock the series root, including part-owned writes.
+  Provider work stays outside that short lock. Capacity checks acquire the
+  account lock before the series lock. Private downloads verify current Finish
+  input and package hashes, then stream the already-open descriptor.
 - Marketing must describe the actual workflow without quality/time guarantees.
   No finished-page showcase was added: the available asset was unsuitable.
 
@@ -188,7 +197,15 @@ word or page quotas. Review is metered text work and not a quality guarantee.
   preflight, package identity/byte validation, provider-free retry and export.
 - `config.py`, `model_costs.py`, `usage.py`: configured aliases and cost evidence.
 - `ai/client.py`: gateway calls and provider usage events.
-- `server/credited_job.py`, `server/credits.py`: credit reservation and settlement.
+- `server/credited_job.py`, `server/credits.py`, `server/async_credits.py`: durable
+  admission and bounded, cancellation-safe ledger I/O.
+- `server/job_commands.py`, `server/job_execution.py`, `server/durable_queue.py`,
+  `server/job_journal.py`: typed commands, one executor, dispatch and indexed history.
+- `server/page_operations.py`, `server/pipeline_operations.py`,
+  `server/cover_operations.py`, `server/page_admission.py`, `server/cast_admission.py`:
+  application operations; routers translate HTTP, stages never import routers.
+- `server/action_policy.py`, `server/storage_budget.py`: explicit readiness policy,
+  account ingestion budget and conservative drained housekeeping.
 - `server/admission.py`, `server/event_channel.py`, `server/generation_jobs.py`:
   durable action/job journal, process-local mutation/drain coordinator, bounded SSE.
   `server/deployment_status.py` and `scripts/check_deploy_safe.py`: authenticated

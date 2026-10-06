@@ -1,6 +1,7 @@
 """Provider-free editorial review, repair, freshness and admission regressions."""
 
 from __future__ import annotations
+from novel_to_comic.server import page_operations
 
 from .plan_detail_support import detail_response, plan_response
 
@@ -698,7 +699,7 @@ def test_draw_entry_points_stop_before_preparation_without_reviews(
     project = (tmp_path, Config(), runtime(tmp_path, "draw").state)
     with pytest.raises((ArtifactMissing, ValueError, HTTPException)):
         if entry == "batch":
-            pages.prepare_undrawn_pages(project_dir=tmp_path, config=Config())
+            page_operations.prepare_undrawn_pages(project_dir=tmp_path, config=Config())
         elif entry == "individual":
             pages._prepare_initial_generation(project, 1, "canonical")
         elif entry == "correction":

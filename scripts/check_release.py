@@ -146,8 +146,7 @@ def component(name):
         for file in [
             "novel_to_comic/tests/fixtures/security_database_bootstrap.sql",
             "docs/supabase-schema.sql",
-            "docs/sql/2026-09-19-project-trust-boundary.sql",
-            "docs/sql/2026-09-19-project-trust-boundary.sql",
+            "docs/supabase-schema.sql",
         ]:
             print("CHECK: disposable DB schema", file, flush=True)
             subprocess.run(

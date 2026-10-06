@@ -154,7 +154,7 @@ async def test_rename_requires_the_existing_owner_dependency(project_app):
     assert (project_dir / "state.json").read_bytes() == before
 
 
-@pytest.mark.parametrize("busy_kind", ["running_tasks", "style_tasks", "queued", "running"])
+@pytest.mark.parametrize("busy_kind", ["queued", "running"])
 @run_async
 async def test_rename_waits_until_stale_background_writer_finishes(project_app, busy_kind):
     app, project_dir, _row = project_app

@@ -52,8 +52,8 @@ def test_interrupted_journal_and_credit_evidence_is_private_read_only(tmp_path, 
     monkeypatch.setenv("CANARY_OPS_STORAGE_FREE_BYTES", "1")
     app = app_at(tmp_path)
     with app.state.admission.journal() as journal:
-        journal.execute("INSERT INTO requests VALUES(?,?,?,?,?,?)", ("private-email", "POST /api/projects/book/cover", "secret-key", "hash", None, None))
-        journal.execute("CREATE TABLE jobs (id TEXT PRIMARY KEY, project TEXT, payload TEXT)")
+        journal.execute("INSERT INTO requests VALUES(?,?,?,?,?,?)", ("private-email", "POST /api/projects/book/parts/part_0001/cover", "secret-key", "hash", None, None))
+        journal.execute("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, project TEXT, payload TEXT)")
         journal.execute("INSERT INTO jobs VALUES(?,?,?)", ("job-1", "private-email:book", json.dumps({"status": "running", "label": "SECRET MANUSCRIPT", "error": "API_KEY"})))
     db = Database({"credit_ledger": [dict(id="hold-1", job_id="job-1", project_id="book", status="reserved", reservation_started_at=OLD, reservation_expires_at=OLD),
         dict(id="unstarted", status="reserved", reservation_started_at=None, reservation_expires_at=OLD)]})
@@ -127,7 +127,7 @@ def test_dependency_outage_keeps_liveness_and_closes_admission(tmp_path, monkeyp
     with TestClient(app) as client:
         assert client.get("/api/health").status_code == 200
         assert client.get("/api/health/ready").status_code == 503
-        result = client.post("/api/projects/book/cover", headers={"Idempotency-Key": "test"})
+        result = client.post("/api/projects/book/parts/part_0001/cover", headers={"Idempotency-Key": "test"})
         assert result.status_code == 503
         assert result.json()["detail"]["code"] == "credits_unavailable"
         with app.state.admission.journal() as db:
@@ -149,7 +149,7 @@ def test_saved_output_marker_survives_publication_without_alerting_live_work(tmp
     assert len(first) == 1
     pending.rename(pending.with_suffix(".unfinished"))
     assert saved() == first
-    app.state.running_tasks["account:project"] = SimpleNamespace(done=lambda: False)
+    app.state.generation_jobs["running"] = SimpleNamespace(project_name="account:project", status="running", command=None, payload={})
     assert not saved()
 
 

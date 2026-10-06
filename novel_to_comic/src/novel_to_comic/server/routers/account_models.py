@@ -55,3 +55,9 @@ def patch_model_settings(body: ModelSettingsPatch, request: Request, user_id: st
         return _payload(update_selections(request.app.state.projects_dir, user_id, body.selections))
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/storage")
+def get_storage(request: Request, user_id: str = Depends(get_current_user)):
+    from ..storage_budget import usage
+    return usage(request.app.state.projects_dir / user_id)

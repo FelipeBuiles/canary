@@ -1,6 +1,7 @@
 """Explicit, estimated translation of saved lettering; never adaptation or artwork."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from dataclasses import dataclass
@@ -242,14 +243,14 @@ async def translate_project(artifacts: TargetArtifacts, config: Config, prepared
         latest = load_config(artifacts.project_dir)[0].model_copy(
             update={field: getattr(config, field) for field in STAGE_FIELDS.values()})
         return prepare_translation(artifacts, latest, prepared.target_locale)
-    assert_snapshot(current(), prepared.snapshot_sha256)
+    assert_snapshot(await asyncio.to_thread(current), prepared.snapshot_sha256)
     if not prepared.batches and prepared.settings.locale == prepared.target_locale and all(state.locale == prepared.target_locale for state in prepared.states):
         return
     artifacts.write_lettering_translation_evidence(attempt, "request", {"snapshot_sha256": prepared.snapshot_sha256, "target_locale": prepared.target_locale, "model": prepared.model, "batches": list(prepared.batches)})
     translated = {}
     try:
         for index, batch in enumerate(prepared.batches):
-            assert_snapshot(current(), prepared.snapshot_sha256)
+            assert_snapshot(await asyncio.to_thread(current), prepared.snapshot_sha256)
             def retain(result, index=index):
                 artifacts.write_lettering_translation_evidence(attempt, f"raw_{index:04d}", {"text": result.value, "usage": result.usage.model_dump(mode="json") if result.usage else None})
             result = await generate_json(config=config, model=prepared.model, system_prompt=SYSTEM_PROMPT,
@@ -265,13 +266,15 @@ async def translate_project(artifacts: TargetArtifacts, config: Config, prepared
                 raise ValueError("Translation omitted nonempty lettering; no pages were changed.")
             artifacts.write_lettering_translation_evidence(attempt, f"validated_{index:04d}", output.model_dump(mode="json"))
             translated.update(actual)
-        with production_lock(artifacts.project_dir):
-            assert_snapshot(current(), prepared.snapshot_sha256)
-            updates, settings = _localized(artifacts, prepared.states, prepared.style, prepared.settings, prepared.target_locale, translated)
-            artifacts.write_lettering_translation_evidence(attempt, "prepared", {"settings": settings.model_dump(mode="json"), "pages": [state.model_dump(mode="json") for state in updates]})
-            # All provider, validation and measurement work precedes the first publication.
-            artifacts.publish_lettering_translation(updates, prepared.style, settings)
-            artifacts.write_lettering_translation_evidence(attempt, "published", {"snapshot_sha256": prepared.snapshot_sha256})
+        def publish_translation():
+            with production_lock(artifacts.project_dir):
+                assert_snapshot(current(), prepared.snapshot_sha256)
+                updates, settings = _localized(artifacts, prepared.states, prepared.style, prepared.settings, prepared.target_locale, translated)
+                artifacts.write_lettering_translation_evidence(attempt, "prepared", {"settings": settings.model_dump(mode="json"), "pages": [state.model_dump(mode="json") for state in updates]})
+                # All provider, validation and measurement work precedes publication.
+                artifacts.publish_lettering_translation(updates, prepared.style, settings)
+                artifacts.write_lettering_translation_evidence(attempt, "published", {"snapshot_sha256": prepared.snapshot_sha256})
+        await asyncio.to_thread(publish_translation)
     except Exception as exc:
         artifacts.write_lettering_translation_evidence(attempt, "failed", {"error": str(exc), "snapshot_sha256": prepared.snapshot_sha256})
         raise

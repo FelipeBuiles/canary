@@ -440,8 +440,6 @@ def test_deployment_activity_counts_all_generation_work(tmp_path: Path):
     style_task.done.return_value = False
     queued_job = MagicMock(status="queued")
     running_job = MagicMock(status="running")
-    app.state.running_tasks["pipeline"] = pipeline_task
-    app.state.style_tasks["style"] = style_task
     app.state.generation_jobs.update(
         {"queued": queued_job, "running": running_job}
     )
@@ -456,8 +454,6 @@ def test_deployment_activity_counts_all_generation_work(tmp_path: Path):
         "draining": False,
         "counts": {
             "admitting_requests": 0,
-            "pipeline_tasks": 1,
-            "style_tasks": 1,
             "queued_generation_jobs": 1,
             "running_generation_jobs": 1,
             "queue_items": 1,

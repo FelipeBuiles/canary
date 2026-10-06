@@ -18,11 +18,12 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .auth import SESSION_COOKIE_NAME, get_current_user
+from .action_policy import request_policy
 from .body_limit import form_part_cap_bytes
 from .deps import project_key
+from .generation_jobs import generation_jobs_snapshot
 
 _PROJECT = re.compile(r"^/api/projects/([^/]+)(/.*)?$")
-_PAID = re.compile(r"^/(?:run|regen-[^/]+|cover|lettering/translate|approve/(?:brief|cast)|styles/(?:direction|suggest|generate-samples|validation)|pages/\d+/(?:generate|analyze|visual-review|corrections|replan)|(?:characters|locations)/[^/]+/states/[^/]+/(?:regenerate|regenerate-instructed)|story-changes/[^/]+/apply|story-bible/(?:characters|locations|props)/draft)$")
 # Correction previews read the same page inputs as submission and must remain
 # available while independent page jobs run. Submission owns same-page conflicts.
 _TARGETED = re.compile(r"^/(?:regen-(?!extract)[^/]+|cover|pages/\d+/(?:generate|analyze|visual-review|corrections(?:/preview)?)|(?:characters|locations)/[^/]+/states/[^/]+/(?:regenerate|regenerate-instructed))$")
@@ -64,14 +65,8 @@ def _job_part(job) -> str | None:
 
 
 def _active_jobs(app, key: str) -> list:
-    return [job for job in getattr(app.state, "generation_jobs", {}).values()
+    return [job for job in generation_jobs_snapshot(app)
             if job.project_name == key and job.status in {"queued", "running"}]
-
-
-def _live_task(app, key: str) -> bool:
-    # Legacy live tasks are exclusive during rolling/test compatibility.
-    return any(task is not None and not task.done() for task in
-               (getattr(app.state, name, {}).get(key) for name in ("running_tasks", "style_tasks")))
 
 
 def project_busy(app, key: str, part: str | None = None, *, series: bool = False) -> bool:
@@ -81,8 +76,6 @@ def project_busy(app, key: str, part: str | None = None, *, series: bool = False
     jobs and series work (Style, Cast), and a series stage waits only for
     series work. Without a part or series scope the whole project counts.
     """
-    if _live_task(app, key):
-        return True
     for job in _active_jobs(app, key):
         if series:
             if _job_part(job) is None:
@@ -99,8 +92,6 @@ def mutation_conflicts(app, key: str, suffix: str, part: str | None = None,
     ``part`` is the part a route addresses; another part's work never blocks it.
     """
     jobs = _active_jobs(app, key)
-    if _live_task(app, key):
-        return True
     if part is not None:
         if method == "PATCH" and suffix == "":
             return False  # renaming a part changes no work
@@ -170,6 +161,8 @@ class Admission:
         self.locks: dict[str, asyncio.Lock] = {}
         self.gate = asyncio.Lock()
         with self.journal() as db:
+            from .job_journal import initialize
+            initialize(db)
             db.execute("CREATE TABLE IF NOT EXISTS operational_intent (id INTEGER PRIMARY KEY CHECK(id=1), draining INTEGER NOT NULL)")
             row = db.execute("SELECT draining FROM operational_intent WHERE id=1").fetchone()
             self.draining = bool(row and row[0])
@@ -205,6 +198,9 @@ class Admission:
 
 
 async def admission_middleware(request, call_next):
+    creates_project = request.method == "POST" and request.url.path in {
+        "/api/projects", "/api/projects/", "/api/projects/import-story",
+    }
     match = _PROJECT.match(request.url.path)
     project_id, suffix = (match.group(1), match.group(2) or "") if match else ("", "")
     # Part routes share every suffix policy with their series-scoped forms.
@@ -212,10 +208,12 @@ async def admission_middleware(request, call_next):
     if part_route:
         suffix = part_route.group(2) or ""
     status_read = bool(match and request.method == "GET" and suffix == "/status")
-    if not match or (not status_read and request.method not in {"POST", "PUT", "PATCH", "DELETE"}):
+    if not creates_project and (not match or (not status_read and request.method not in {"POST", "PUT", "PATCH", "DELETE"})):
         return await call_next(request)
-    if project_id in {"import-story", "short-stories"}:
+    if not creates_project and project_id in {"import-story", "short-stories"}:
         return await call_next(request)
+    if creates_project:
+        project_id, suffix = "_creation", ""
     admission = request.app.state.admission
     try:
         auth = request.app.dependency_overrides.get(get_current_user, get_current_user)
@@ -231,30 +229,16 @@ async def admission_middleware(request, call_next):
             # Serialize before dependencies load state, including queue admission.
             async with admission.enter(project_key(account, project_id)):
                 return await call_next(request)
+        body = await request.body()
+        policy = request_policy(request, body)
         key = request.headers.get("idempotency-key")
-        if _PAID.fullmatch(suffix) and not key:
+        if policy.spends and not key:
             raise HTTPException(400, {"code": "idempotency_key_required", "message": "An Idempotency-Key is required for this action."})
         if key is not None and (not key.strip() or len(key) > 200):
             raise HTTPException(400, "Invalid Idempotency-Key")
-        # Finish preflight only rebuilds local derived artifacts. It must check
-        # current inputs again even when an older client retains an interrupted
-        # receipt; replaying a completed receipt could also return stale checks.
-        # Keep all paid and publishing mutations on the existing receipt path.
-        if request.method == "POST" and suffix == "/export/preflight":
+        if not policy.replay:
             key = None
         route = f"{request.method} {request.url.path}"
-        body = await request.body()
-        # Cache-only recovery cannot submit OCR. Recompute current evidence,
-        # including after a lost response, rather than replaying stale results.
-        if request.method == "POST" and suffix == "/pages/checks/recover":
-            try:
-                recovery_body = json.loads(body)
-            except ValueError:
-                recovery_body = None
-            if isinstance(recovery_body, dict) and recovery_body.get("allow_paid") is False:
-                key = None
-            elif not key:
-                raise HTTPException(400, {"code": "idempotency_key_required", "message": "An Idempotency-Key is required for this action."})
         try:
             canonical = json.dumps(json.loads(body), sort_keys=True, separators=(",", ":")).encode() if body else b""
         except ValueError:
@@ -292,10 +276,10 @@ async def admission_middleware(request, call_next):
             if admission.draining:
                 raise HTTPException(503, {"code": "server_draining", "message": "Generation is paused for deployment."})
             durable = getattr(request.app.state, "durable_queue", None)
-            if getattr(request.app.state, "durable_queue_required", False) is True and (durable is None or not durable.healthy):
+            if policy.dispatches and (durable is None or not durable.healthy):
                 raise HTTPException(503, {"code": "queue_unavailable", "message": "Generation queue is unavailable. Saved work is preserved."})
             from .credits import reservation_leases_healthy
-            if hasattr(request.app.state, "credit_leases_ready") and (
+            if policy.spends and hasattr(request.app.state, "credit_leases_ready") and (
                 not request.app.state.credit_leases_ready or not reservation_leases_healthy()
             ):
                 raise HTTPException(503, {"code": "credits_unavailable", "message": "Credit authorization is temporarily unavailable. Try again when service is ready."})
@@ -306,19 +290,16 @@ async def admission_middleware(request, call_next):
                 raise HTTPException(409, "This review's saved evidence is being updated. Other reviews remain available.")
             if not review_or_queue and any(job.project_name == pkey and getattr(job, "kind", None) == "lettering_translation" and job.status in {"queued", "running"}
                    and (part is None or _job_part(job) in {part, None})
-                   for job in getattr(request.app.state, "generation_jobs", {}).values()):
+                   for job in generation_jobs_snapshot(request.app)):
                 raise HTTPException(409, "Wait for project lettering translation to finish before changing this project.")
             if not review_or_queue and not _TARGETED.fullmatch(suffix) and mutation_conflicts(request.app, pkey, suffix, part, request.method):
                 raise HTTPException(409, "Wait for all project jobs to finish before changing this project.")
             if not review_or_queue and _TARGETED.fullmatch(suffix):
                 if any(job.project_name == pkey and job.status in {"queued", "running"}
                        and job.kind in {"pipeline_stage", "style_suggest"}
-                       for job in request.app.state.generation_jobs.values()):
+                       and (part is None or _job_part(job) in {part, None})
+                       for job in generation_jobs_snapshot(request.app)):
                     raise HTTPException(409, "Wait for the active project stage to finish.")
-                for name in ("running_tasks", "style_tasks"):
-                    task = getattr(request.app.state, name, {}).get(pkey)
-                    if task is not None and not task.done():
-                        raise HTTPException(409, "Wait for the active project stage to finish.")
             if key:
                 with admission.journal() as db:
                     db.execute("INSERT INTO requests(account,route,key,fingerprint) VALUES(?,?,?,?)", (account, route, key, fingerprint))
@@ -331,4 +312,5 @@ async def admission_middleware(request, call_next):
                 return Response(content, status_code=response.status_code, headers=dict(response.headers), media_type=response.media_type)
             return response
     except StarletteHTTPException as exc:
-        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
+        detail = exc.detail if isinstance(exc.detail, dict) else {"code": "action_rejected", "message": str(exc.detail)}
+        return JSONResponse({"detail": {**detail, "admitted": False}}, status_code=exc.status_code, headers=exc.headers)

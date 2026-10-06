@@ -23,11 +23,17 @@ retry. It does not replay action receipts, including pending receipts left by
 older clients after an interruption. Paid generation and publication retain
 their existing receipt handling. Check failures display the server error in Book.
 
+There is one publication per series. Its private owner index records the source
+part and title; anonymous metadata never exposes that ownership. Book shows which
+part is published. Replacing it with another part requires the current public
+version and an explicit author confirmation; an outdated version conflicts.
+Owner GET/DELETE use the series route, while publishing POST uses the chosen part.
+
 The owner can update or unpublish from Book. Deleting a project also unpublishes
 it. Public metadata, images, and downloads require a current manifest and use
 `Cache-Control: no-store`; superseded version URLs return 404. Unpublishing cannot
-revoke copies readers have already downloaded. Old version files are retained
-on disk; storage reclamation is not yet automated. This uses the same single
+revoke copies readers have already downloaded. Drained, idle housekeeping keeps the current and previous public version,
+then reclaims older snapshots. Author archives and unknown paid work stay retained. This uses the same single
 persistent-volume deployment model as working project artifacts, not R2.
 
 ## Reader languages
@@ -69,8 +75,11 @@ it does not unpublish any separate account-owned publication.
 
 ## Surfaces and routes
 
-- `GET/POST/DELETE /api/projects/{project_id}/publication`: authenticated owner
-  status, explicit publish/update, and unpublish.
+- `GET/DELETE /api/projects/{project_id}/publication`: authenticated series-owner
+  status and unpublish.
+- `POST /api/projects/{project_id}/parts/{part_id}/publication`: publish/update
+  from that part. The part route also exposes owner GET/DELETE. Replacement from
+  another part requires `expected_publication_version` from refreshed owner status.
 - `/read/{book_id}`: anonymous page-turning reader shared with the Book station, with
   left/right navigation, arrow keys, swipe gestures, single-page/spread layouts,
   fit-height/fit-width controls, native sharing or clipboard fallback, and a

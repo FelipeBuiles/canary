@@ -915,15 +915,33 @@ alter table public.credit_call_authorizations enable row level security;
 alter table public.product_events enable row level security;
 alter table public.credit_refunds enable row level security;
 
--- Projects: users see only their own; public projects visible to all.
+-- Project metadata is server-owned. Reconcile existing table AND column
+-- grants, so this canonical schema is sufficient for fresh installs/upgrades.
+revoke all on public.projects from public, anon, authenticated;
+do $$
+declare v_column text;
+begin
+  for v_column in
+    select attname from pg_attribute
+    where attrelid = 'public.projects'::regclass and attnum > 0 and not attisdropped
+  loop
+    execute format(
+      'revoke insert (%I), update (%I), references (%I) on public.projects from public, anon, authenticated',
+      v_column, v_column, v_column
+    );
+  end loop;
+end $$;
+grant select on public.projects to anon, authenticated;
+grant all on public.projects to service_role;
+drop policy if exists "own projects" on public.projects;
+create policy "own projects" on public.projects for select to authenticated
+  using (auth.uid() = user_id);
 do $$ begin
-  if not exists (
-    select 1 from pg_policies where tablename='projects' and policyname='own projects'
-  ) then
-    create policy "own projects"
-      on public.projects for all
-      using (auth.uid() = user_id)
-      with check (auth.uid() = user_id);
+  if not exists (select 1 from pg_constraint
+                 where conrelid = 'public.projects'::regclass
+                   and conname = 'projects_safe_storage_name') then
+    alter table public.projects add constraint projects_safe_storage_name
+      check (name ~ '^[A-Za-z0-9][A-Za-z0-9_-]*$' and name !~ E'[\\r\\n]') not valid;
   end if;
 end $$;
 
@@ -964,8 +982,25 @@ end $$;
 
 grant select on public.user_credits to authenticated;
 grant select on public.projects to authenticated;
-grant select on public.credit_ledger to authenticated;
-grant select on public.ai_usage_events to authenticated;
+-- The balance view needs only these three ledger columns. Provider accounting
+-- and request metadata are exposed through the redacted server APIs only.
+revoke all on public.credit_ledger from public, anon, authenticated;
+revoke all on public.ai_usage_events from public, anon, authenticated;
+do $$
+declare v_table text; v_column text;
+begin
+  foreach v_table in array array['credit_ledger', 'ai_usage_events'] loop
+    for v_column in select attname from pg_attribute
+      where attrelid = ('public.' || v_table)::regclass and attnum > 0 and not attisdropped
+    loop
+      execute format('revoke select (%I), insert (%I), update (%I), references (%I) on public.%I from public, anon, authenticated',
+                     v_column, v_column, v_column, v_column, v_table);
+    end loop;
+  end loop;
+end $$;
+grant select (user_id, amount_credits, status) on public.credit_ledger to authenticated;
+grant all on public.credit_ledger, public.ai_usage_events to service_role;
+grant select on public.user_credits to service_role;
 
 revoke all on public.product_events from public, anon, authenticated;
 revoke all on public.credit_refunds from public, anon, authenticated;

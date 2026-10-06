@@ -369,7 +369,7 @@ def test_incompatible_artifact_requires_rerun(tmp_path):
 
 def test_missing_design_rejected_before_correction_rewrite(tmp_path):
     from fastapi import HTTPException
-    from novel_to_comic.cast_instructions import apply_asset_instruction
+    from novel_to_comic.server.cast_admission import apply_asset_instruction
     config, _, _ = _project(tmp_path, "image-gemini-pro")
     with patch.object(design.text, "generate_json", new_callable=AsyncMock) as generate:
         with pytest.raises(HTTPException) as error:

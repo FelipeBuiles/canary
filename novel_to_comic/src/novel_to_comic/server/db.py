@@ -30,7 +30,8 @@ def get_db() -> Client:
         key = os.environ.get("SUPABASE_SECRET_KEY", "")
         if not url or not key:
             raise RuntimeError("SUPABASE_URL and SUPABASE_SECRET_KEY must be set")
-        _httpx_client = httpx.Client(http2=False, timeout=httpx.Timeout(120))
+        timeout = max(1, min(120, float(os.environ.get("CANARY_DATABASE_TIMEOUT_SECONDS", "30"))))
+        _httpx_client = httpx.Client(http2=False, timeout=httpx.Timeout(timeout, connect=5, pool=5))
         _client = create_client(
             url,
             key,

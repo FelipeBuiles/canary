@@ -7,8 +7,19 @@ class EventChannel:
     def __init__(self):
         self.history = deque(maxlen=128)
         self.subscribers: set[asyncio.Queue] = set()
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._loop = None
 
     def put_nowait(self, event: dict) -> None:
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        if self._loop is not None and not self._loop.is_closed() and current is not self._loop:
+            self._loop.call_soon_threadsafe(self.put_nowait, event)
+            return
         self.history.append(event)
         for queue in self.subscribers:
             if queue.full():
@@ -22,6 +33,10 @@ class EventChannel:
         finished run's begin/progress/fail events makes a fresh subscriber
         (opened because an unrelated job is running) re-live that run.
         """
+        try:
+            self._loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
         queue = asyncio.Queue(maxsize=256)
         history = list(self.history)
         finished = [index for index, event in enumerate(history) if event.get("type") == "pipeline_done"]

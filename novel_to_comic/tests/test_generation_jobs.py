@@ -274,7 +274,9 @@ def test_queued_fal_page_cancelled_while_waiting_never_enters_provider(tmp_path,
     app = SimpleNamespace(state=SimpleNamespace(
         admission=Admission(tmp_path), generation_jobs={}, generation_job_timeout_seconds=5,
     ))
-    spec = command("page_draw", tmp_path, Config(), request={"provider": "fal-queue"})
+    from tests.test_complete_page_draw import _compile, _page
+    spec = command("page_draw", tmp_path, Config(), request=_compile(tmp_path).request.model_dump(mode="json"),
+                   page=_page().model_dump(mode="json"), references=[])
     spec = spec.model_copy(update={"stage": "draw", "user_id": "user-1"})
     job = GenerationJob(
         id="waiting-fal-page", project_name="user-1:book", kind="complete_page_draw",
@@ -330,7 +332,19 @@ def test_text_only_translation_does_not_wait_behind_another_projects_image_job(t
     ))
 
     def job(identity, project, kind, operation, sequence):
-        spec = command(operation, tmp_path, Config()).model_copy(update={"stage": "style", "user_id": "user-1"})
+        # Scheduling tests substitute execution; commands must still be valid.
+        from tests.test_cast_asset_routes import _bible
+        if operation == "style_sample":
+            arguments = {"bible": _bible().model_dump(mode="json"), "candidate": {}, "index": 1}
+        else:
+            from novel_to_comic.lettering.translation import PreparedTranslation
+            from novel_to_comic.models.lettering import LetteringStyle, LetteringSettings
+            from novel_to_comic.server.job_commands import snapshot
+            prepared = PreparedTranslation(target_locale="es", snapshot_sha256="a" * 64,
+                model="fixture", states=(), style=LetteringStyle(revision=1),
+                settings=LetteringSettings(revision=1), batches=(), estimate={})
+            arguments = {"prepared": snapshot(prepared)}
+        spec = command(operation, tmp_path, Config(), **arguments).model_copy(update={"stage": "style", "user_id": "user-1"})
         created = GenerationJob(id=identity, project_name=f"user-1:{project}", kind=kind, label=identity,
                                 payload={}, sequence=sequence, runner=None, command=spec, user_id="user-1")
         app.state.generation_jobs[identity] = created

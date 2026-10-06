@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from ..page_operations import (_draw_success_callback, _generation_retry, _sync_draw_progress, enqueue_all_undrawn_pages, prepare_undrawn_pages)
+
+
 from novel_to_comic.style_reference import require_style_reference
 from novel_to_comic.server.codex_admission import visual_review_operations
 
@@ -21,13 +24,10 @@ from novel_to_comic.models.draw import (
 )
 from novel_to_comic.page_drawing import (
     complete_page_adapter,
-    initial_page_profile,
-    select_book_edition,
     analyze_complete_page,
     compile_page_generation_request,
     correction_credit_estimate,
     ensure_current_page_edition,
-    enqueue_complete_page_draw,
     prepare_page_correction,
 )
 from novel_to_comic.narrative_review import require_draw_narrative_reviews
@@ -47,16 +47,17 @@ from novel_to_comic.stages.s5_plan import (
     approved_reference_files,
     approved_visual_inventory,
 )
-from novel_to_comic.state import StageStatus, complete_stage, load_state, save_state
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
 
 from ..auth import get_current_user
 from novel_to_comic.codex_dev import classify_operations
 from ..codex_admission import draw_operations, page_check_operations
 from ..deps import event_key, get_project, project_key
-from ..generation_jobs import generation_job_payload
+from ..generation_jobs import generation_job_payload, generation_jobs_snapshot
 from ..page_outcomes import record_page_outcome
 
+
+from ..page_admission import enqueue_complete_page_draw
 
 router = APIRouter()
 
@@ -215,24 +216,6 @@ def _page_failure(target: TargetArtifacts, page_number: int):
     return failure
 
 
-def _generation_retry(target: TargetArtifacts, page_number: int) -> RetryProvenance:
-    """Resume an incomplete durable paid result before allocating a retry."""
-    resumable = target.resumable_generation_request(page_number)
-    if resumable is not None and resumable.correction is None:
-        return resumable.retry
-
-    prior_requests = [
-        target.read_request(page_number, revision)
-        for revision in target.request_revisions(page_number)
-    ]
-    prior_attempts = [request for request in prior_requests if request.correction is None]
-    if not prior_attempts:
-        return RetryProvenance(attempt=1)
-    prior = max(prior_attempts, key=lambda request: request.retry.attempt)
-    return RetryProvenance(
-        attempt=prior.retry.attempt + 1,
-        retries_request_sha256=prior.request_sha256,
-    )
 
 
 def _aggregated_correction_retry(
@@ -291,184 +274,14 @@ def _select_active_correction_job(jobs, *, pkey: str, page_number: int, request_
     return ("free", None)
 
 
-def _sync_draw_progress(project_dir, app=None) -> None:
-    """Reconcile Draw's stage state with the renders actually on disk.
-
-    Progress is recomputed from artifacts rather than incremented, so a state
-    write that loses a race with a concurrent job is corrected by the next call
-    instead of leaving Draw stuck in RUNNING with every page already drawn.
-    """
-
-    target = TargetArtifacts(project_dir)
-    try:
-        plan = target.read_plan()
-    except ArtifactMissing:
-        return
-    state = load_state(project_dir)
-    draw_state = state.stages["draw"]
-    if not plan.pages:
-        return
-    rendered = sum(
-        bool(target.provenance_revisions(page.page_number)) for page in plan.pages
-    )
-    def terminal(outcome):
-        if draw_state.attempt_id and draw_state.telemetry_terminal_outcome is None:
-            from ..lifecycle_events import capture, stage_properties
-            if capture(app, "stage_succeeded" if outcome == "awaiting_review" else "stage_failed", draw_state.attempt_id,
-                       user_id=draw_state.telemetry_user_id, project_id=draw_state.telemetry_project_id,
-                       properties=stage_properties(draw_state, "draw", outcome)):
-                draw_state.telemetry_terminal_outcome = outcome
-                save_state(state, project_dir)
-
-    jobs = getattr(getattr(app, "state", None), "generation_jobs", {})
-    expected = [jobs.get(job_id) for job_id in draw_state.telemetry_draw_jobs]
-    cohort_failed = any(job is not None and job.status in {"failed", "cancelled"} for job in expected)
-    if expected and all(job is not None and job.status in {"complete", "failed", "cancelled"} for job in expected):
-        terminal("outcome_unknown" if any(job.phase == "outcome_unknown" for job in expected) else
-                 "cancelled" if any(job.status == "cancelled" for job in expected) else
-                 "failed" if cohort_failed else "awaiting_review")
-    elif not expected and not draw_state.telemetry_draw_rerun and rendered == len(plan.pages) and draw_state.status in {StageStatus.AWAITING_REVIEW, StageStatus.COMPLETE}:
-        terminal("awaiting_review")
-    if draw_state.items_done == rendered and (
-        rendered < len(plan.pages) or draw_state.status != StageStatus.RUNNING
-    ):
-        return
-    draw_state.items_done = rendered
-    if rendered == len(plan.pages) and draw_state.status == StageStatus.RUNNING:
-        complete_stage(state, "draw")
-        if not expected and not draw_state.telemetry_draw_rerun:
-            terminal("awaiting_review")
-    save_state(state, project_dir)
-
-
-def _draw_success_callback(
-    request: Request,
-    *,
-    pkey: str,
-    project_dir,
-):
-    def callback(provenance) -> None:
-        from ..lifecycle_events import capture
-        from ..telemetry import context_fields
-        context = context_fields()
-        operation_id = context.get("operation_id")
-        job = request.app.state.generation_jobs.get(operation_id)
-        payload = job.payload if job else {}
-        capture(request.app, "page_ready", f"{operation_id}:{provenance.render.page_number}:{provenance.render.revision}", user_id=context.get("posthogDistinctId"),
-            project_id=context.get("project_id"), job_id=context.get("operation_id"),
-            properties={"page_number": provenance.render.page_number, "render_revision": provenance.render.revision,
-                        "run_id": payload.get("run_id") or operation_id, "attempt_id": operation_id,
-                        "stage_attempt_id": payload.get("stage_attempt_id")})
-        _sync_draw_progress(project_dir, request.app)
-        queue = request.app.state.event_queues.get(event_key(pkey, project_dir))
-        if queue is not None:
-            queue.put_nowait(
-                {
-                    "type": "page_done",
-                    "stage": "draw",
-                    "page_number": provenance.render.page_number,
-                    "revision": provenance.render.revision,
-                    "status": "ok",
-                    "duration_ms": provenance.render.latency_ms,
-                    "error": None,
-                }
-            )
-
-    return callback
 
 
 
 
-def prepare_undrawn_pages(*, project_dir, config, rerun: bool = False, pages: frozenset[int] | None = None):
-    """Preflight every selected page without writing an edition or placing holds.
-
-    ``pages`` limits the batch to an explicit set (out-of-date drawn pages),
-    drawn or not.
-    """
-    classify_operations(draw_operations(config))
-    target = TargetArtifacts(project_dir)
-    require_draw_narrative_reviews(target)
-    edition = (
-        ensure_current_page_edition(target, target.read_book_edition(), config, persist=False)
-        if target.book_edition_path.exists()
-        else select_book_edition(
-            edition_id="book-edition-001", profile=initial_page_profile(project_dir, config),
-        )
-    )
-    inventory = approved_visual_inventory(project_dir)
-    reference_files = approved_reference_files(project_dir)
-    adapter = complete_page_adapter(config, edition.capability_profile)
-    prepared = []
-    for selected in target.read_plan().pages:
-        page_number = selected.page_number
-        if pages is not None:
-            if page_number not in pages:
-                continue
-        elif target.provenance_revisions(page_number) and not rerun:
-            continue
-        page = target.read_page(page_number)
-        compiled = compile_page_generation_request(
-            page, edition, inventory, reference_files,
-            retry=_generation_retry(target, page_number),
-            style_template=config.style_template,
-            style_reference_path=require_style_reference(project_dir, config.style_template),
-        )
-        adapter.prepare(compiled)
-        prepared.append((page_number, page, compiled))
-    return target, adapter, prepared
 
 
-async def enqueue_all_undrawn_pages(
-    request: Request,
-    *,
-    project_id: str,
-    user_id: str,
-    project_dir,
-    config,
-    rerun: bool = False,
-    pages: frozenset[int] | None = None,
-):
-    """Queue missing pages, or explicit replacement revisions without deletion."""
-    target, adapter, prepared = await asyncio.to_thread(
-        prepare_undrawn_pages, project_dir=project_dir, config=config, rerun=rerun, pages=pages,
-    )
-    # Estimation can select an ephemeral first edition; submission requires
-    # Draw initialization to have durably pinned it first.
-    ensure_current_page_edition(target, target.read_book_edition(), config)
-    # No reservation or publication occurs until the entire batch is prepared.
-    pkey = project_key(user_id, project_id)
-    queue = request.app.state.event_queues.get(event_key(pkey, project_dir))
-    jobs = []
 
-    for page_number, page, compiled in prepared:
-        # Keep dispatch/heartbeats responsive during large batches. Publication
-        # stays on the event loop because it owns the in-memory job registry.
-        await asyncio.sleep(0)
-        job, _created = enqueue_complete_page_draw(
-            request.app,
-            project_name=pkey,
-            user_id=user_id,
-            project_id=project_id,
-            project_dir=project_dir,
-            config=config,
-            compiled=compiled,
-            adapter=adapter,
-            artifacts=target,
-            page=page,
-            ocr=page_read_adapter(config, target, page),
-            on_success=_draw_success_callback(
-                request,
-                pkey=pkey,
-                project_dir=project_dir,
-            ),
-        )
-        jobs.append(job)
-        if queue is not None:
-            queue.put_nowait(
-                {"type": "page_start", "stage": "draw", "page_number": page_number}
-            )
 
-    return tuple(jobs)
 
 
 @router.get("/pages")
@@ -535,7 +348,7 @@ class PageRenderSelect(BaseModel):
     expected_revision: int = Field(ge=1)
 
 
-@router.post("/pages/{page_number}/renders/{revision}/select")
+@router.post("/pages/{page_number}/renders/{revision}/select", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def select_page_render(
     page_number: int, revision: int, body: PageRenderSelect, request: Request,
     project_id: str, project=Depends(get_project),
@@ -547,10 +360,11 @@ def select_page_render(
     project_dir, _config, _state = project
     pkey = project_key(user_id, project_id)
     with production_lock(project_dir):
-        running = getattr(request.app.state, "running_tasks", {}).get(pkey)
-        if running is not None and not running.done():
+        from ..admission import mutation_conflicts
+        from novel_to_comic.workspace import part_id_for_path
+        if mutation_conflicts(request.app, pkey, f"/pages/{page_number}/versions/{revision}/select", part_id_for_path(project_dir)):
             raise HTTPException(409, "Wait for the running stage before selecting a version.")
-        jobs = getattr(request.app.state, "generation_jobs", {}).values()
+        jobs = generation_jobs_snapshot(request.app)
         decision, _ = _select_active_correction_job(
             jobs, pkey=pkey, page_number=page_number, request_sha256="",
         )
@@ -729,7 +543,7 @@ def estimate_remaining_page_generation(project=Depends(get_project), request: Re
     except (ArtifactMissing, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
     if request is not None:
-        from .projects import needs_initial_project_cover, _project_cover_credit_estimate
+        from ..cover_operations import needs_initial_project_cover, _project_cover_credit_estimate
         if needs_initial_project_cover(request, project_key(user_id, project_id), project_dir):
             cover = _project_cover_credit_estimate(_config)
             estimate["estimate_credits"] += cover["estimate_credits"]
@@ -821,7 +635,7 @@ def estimate_page_redraws(project=Depends(get_project)):
     return {**estimate, "pages": sorted(redraws)}
 
 
-@router.post("/pages/redraws")
+@router.post("/pages/redraws", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
 async def redraw_out_of_date_pages(
     body: PageRedrawBatch,
     request: Request,
@@ -892,8 +706,8 @@ def estimate_page_analysis(page_number: int, project=Depends(get_project)):
     ))
 
 
-@router.post("/pages/{page_number}/generate")
-def generate_page(
+@router.post("/pages/{page_number}/generate", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
+async def generate_page(
     page_number: int,
     request: Request,
     project_id: str,
@@ -915,7 +729,7 @@ def generate_page(
         queue.put_nowait(
             {"type": "page_start", "stage": "draw", "page_number": page_number}
         )
-    job, created = enqueue_complete_page_draw(
+    job, created = await enqueue_complete_page_draw(
         request.app,
         project_name=pkey,
         user_id=user_id,
@@ -973,7 +787,7 @@ def estimate_missing_page_checks(project=Depends(get_project)):
     return {**estimate, "pages": pages, "paid_pages": paid}
 
 
-@router.post("/pages/checks/recover")
+@router.post("/pages/checks/recover", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': False, 'paid_body_field': 'allow_paid'}})
 async def recover_missing_page_checks(
     project_id: str, body: PageCheckRecovery,
     project=Depends(get_project), user_id: str = Depends(get_current_user),
@@ -1016,7 +830,7 @@ async def recover_missing_page_checks(
     return {"pages": results}
 
 
-@router.post("/pages/{page_number}/analyze")
+@router.post("/pages/{page_number}/analyze", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': False}})
 async def analyze_page(
     page_number: int,
     project_id: str,
@@ -1082,7 +896,7 @@ async def analyze_page(
     return analysis
 
 
-@router.post("/pages/{page_number}/issues")
+@router.post("/pages/{page_number}/issues", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def create_page_issue(
     page_number: int,
     body: PageIssueCreate,
@@ -1125,7 +939,7 @@ def _find_issue(target: TargetArtifacts, page_number: int, issue_id: str) -> Pag
     return issue
 
 
-@router.post("/pages/{page_number}/issues/{issue_id}/accept")
+@router.post("/pages/{page_number}/issues/{issue_id}/accept", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def accept_page_issue(
     page_number: int,
     issue_id: str,
@@ -1158,7 +972,7 @@ def _record_issue_outcome(request: Request, outcome: str, *, user_id: str, proje
                         category=issue.issue_type if issue else None)
 
 
-@router.post("/pages/{page_number}/issues/{issue_id}/dismiss")
+@router.post("/pages/{page_number}/issues/{issue_id}/dismiss", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def dismiss_recorded_page_issue(
     page_number: int,
     issue_id: str,
@@ -1429,7 +1243,7 @@ def _correction_preview_payload(*, target: TargetArtifacts, page_number: int, pr
         "warnings": warnings,
         "estimate": dict(correction_credit_estimate(compiled, config=config, reserve=True)),
     }
-@router.post("/pages/{page_number}/corrections/preview")
+@router.post("/pages/{page_number}/corrections/preview", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def preview_page_correction(
     page_number: int,
     body: PageCorrectionCreate,
@@ -1445,8 +1259,8 @@ def preview_page_correction(
     return _correction_preview_payload(target=target, page_number=page_number, prepared=prepared, config=config)
 
 
-@router.post("/pages/{page_number}/corrections")
-def submit_page_correction(
+@router.post("/pages/{page_number}/corrections", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
+async def submit_page_correction(
     page_number: int,
     body: PageCorrectionCreate,
     request: Request,
@@ -1465,7 +1279,7 @@ def submit_page_correction(
     compiled = prepared.compiled
     pkey = project_key(user_id, project_id)
     decision, active_job = _select_active_correction_job(
-        request.app.state.generation_jobs.values(),
+        generation_jobs_snapshot(request.app),
         pkey=pkey,
         page_number=page_number,
         request_sha256=compiled.request.request_sha256,
@@ -1499,7 +1313,7 @@ def submit_page_correction(
         queue.put_nowait(
             {"type": "page_start", "stage": "draw", "page_number": page_number}
         )
-    job, created = enqueue_complete_page_draw(
+    job, created = await enqueue_complete_page_draw(
         request.app,
         project_name=pkey,
         user_id=user_id,
@@ -1550,7 +1364,7 @@ def visual_review_estimate(page_number: int, project=Depends(get_project)):
         funding=classify_operations(page_check_operations(project[1])),
     )
 
-@router.post("/pages/{page_number}/visual-review")
+@router.post("/pages/{page_number}/visual-review", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': False}})
 async def visual_review_page(page_number: int, project_id: str, request: Request,
                              project=Depends(get_project), user_id: str = Depends(get_current_user)):
     from ..credited_job import run_credited_page_check
@@ -1678,7 +1492,7 @@ def replan_page_estimate(page_number: int, project=Depends(get_project)):
     )
 
 
-@router.post("/pages/{page_number}/replan")
+@router.post("/pages/{page_number}/replan", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': False}})
 async def replan_one_page(page_number: int, project_id: str, request: Request,
                           project=Depends(get_project), user_id: str = Depends(get_current_user)):
     """Rewrite one page's plan to clear its validation failures.

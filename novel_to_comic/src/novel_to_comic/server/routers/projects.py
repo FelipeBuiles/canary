@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from ..cover_operations import (_cover_path, _latest_project_cover_job, _project_cover_credit_estimate, _recovered_cover_jobs, enqueue_project_cover)
+
+
+import asyncio
 import json
 import hashlib
 import logging
@@ -26,10 +30,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, ValidationError
 
-from novel_to_comic.ai import ai_request_context
-from novel_to_comic.ai.context import current_ai_request_context
-from novel_to_comic.config import Config, mock_mode_active, save_config
-from novel_to_comic.generation_input import GenerationPromptInput
+from novel_to_comic.config import Config, save_config
 from novel_to_comic.input_limits import (
     InputLimitError,
     InputLimits,
@@ -37,19 +38,7 @@ from novel_to_comic.input_limits import (
     read_source,
 )
 from novel_to_comic import sample_library
-from novel_to_comic.style_contract import (
-    page_style_template,
-    style_template_for_suggestion,
-)
-from novel_to_comic.models.generation import PromptAnchor, PromptSubject
 from novel_to_comic.models.story_bible import StoryBible
-from novel_to_comic.asset_generation import (
-    ProjectCoverInput,
-    compile_non_panel_request,
-    reference_plan_for_assets,
-    style_reference_plan,
-    submit_non_panel_request,
-)
 from novel_to_comic.state import (
     STAGE_NAMES,
     StageState,
@@ -59,17 +48,13 @@ from novel_to_comic.state import (
     save_state,
 )
 from novel_to_comic.series import initialize_series
-from novel_to_comic.usage import estimate_image_cost
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 from novel_to_comic.workspace import FIRST_PART_ID
 
 from ..auth import get_current_user
 from ..credits import (
-    credit_estimate_for_provider_cost,
     provider_usd_to_credits,
 )
-from novel_to_comic.codex_dev import classify_operations, is_subscription
-from ..codex_admission import image_operations
 from ..db import get_db
 from ..deps import _ensure_series_layout, get_project, get_project_dir, get_projects_dir, project_key
 from ..project_paths import project_directory
@@ -78,9 +63,7 @@ from ..product_events import capture_server_event
 from .styles import clear_style_failures_after_selection, is_style_selected
 from ..generation_jobs import (
     generation_job_payload,
-    generation_semaphore_for_config,
-    prune_finished_generation_jobs,
-    recovered_generation_jobs,
+    generation_jobs_snapshot,
 )
 
 router = APIRouter()
@@ -218,50 +201,16 @@ def _is_project_running(user_id: str, project_id: str, request: Request) -> bool
     return project_busy(request.app, project_key(user_id, project_id))
 
 
-def _cover_path(project_dir: Path) -> Path:
-    return project_dir / "cover" / "cover.png"
 
 
-def _cover_jobs(request: Request, pkey: str, project_dir: Path):
-    """Cover jobs for the part that ``project_dir`` addresses (each part has one)."""
-    from novel_to_comic.workspace import part_id_for_path
-    from ..generation_jobs import job_part_id
-
-    part = part_id_for_path(project_dir)
-    return [
-        job
-        for job in request.app.state.generation_jobs.values()
-        if job.project_name == pkey and job.kind == "project_cover" and job_part_id(job) == part
-    ]
 
 
-def _recovered_cover_jobs(request: Request, pkey: str, project_dir: Path) -> list[dict]:
-    from novel_to_comic.workspace import part_id_for_path
-
-    part = part_id_for_path(project_dir)
-    return [job for job in recovered_generation_jobs(request.app, pkey)
-            if job["kind"] == "project_cover" and job.get("part_id") == part]
 
 
-def _latest_project_cover_job(request: Request, pkey: str, project_dir: Path):
-    jobs = _cover_jobs(request, pkey, project_dir)
-    if not jobs:
-        return None
-    return max(jobs, key=lambda job: job.sequence)
 
 
-def _active_project_cover_job(request: Request, pkey: str, project_dir: Path):
-    return next((job for job in _cover_jobs(request, pkey, project_dir)
-                 if job.status in ("queued", "running")), None)
 
 
-def needs_initial_project_cover(request: Request, pkey: str, project_dir: Path) -> bool:
-    """Auto-create once; prior attempts require an explicit user retry."""
-    return (
-        not _cover_path(project_dir).exists()
-        and _latest_project_cover_job(request, pkey, project_dir) is None
-        and not _recovered_cover_jobs(request, pkey, project_dir)
-    )
 
 
 def _project_cover_job_payload(request: Request, pkey: str, project_dir: Path) -> dict | None:
@@ -275,22 +224,6 @@ def _project_cover_job_payload(request: Request, pkey: str, project_dir: Path) -
     )
 
 
-def _cover_characters(bible: StoryBible, project_dir: Path, limit: int = 3) -> list:
-    """The characters most present in this part's scenes, in story order."""
-    from novel_to_comic.workspace import part_id_for_path
-
-    part = part_id_for_path(project_dir)
-    if part is None:
-        return bible.characters[:limit]
-    counts: dict[str, int] = {}
-    for scene in bible.scenes:
-        if scene.part_id == part:
-            for character_id in scene.character_ids:
-                counts[character_id] = counts.get(character_id, 0) + 1
-    order = {character.id: index for index, character in enumerate(bible.characters)}
-    ranked = sorted(counts, key=lambda cid: (-counts[cid], order.get(cid, len(order))))
-    by_id = {character.id: character for character in bible.characters}
-    return [by_id[cid] for cid in ranked if cid in by_id][:limit] or bible.characters[:limit]
 
 
 def _story_bible_author(project_dir: Path) -> str | None:
@@ -336,132 +269,14 @@ def _incompatible_project_summary(row: dict, project_dir: Path) -> dict:
     }
 
 
-def _find_style_ref(project_dir: Path, style_template: str) -> Path | None:
-    from novel_to_comic.workspace import series_root
-
-    project_dir = series_root(project_dir)
-    suggestions_path = project_dir / "samples" / "style_suggestions.json"
-    if suggestions_path.exists():
-        try:
-            data = json.loads(suggestions_path.read_text())
-            active = page_style_template(style_template)
-            for i, suggestion in enumerate(data.get("suggestions", []), 1):
-                if (
-                    isinstance(suggestion, dict)
-                    and style_template_for_suggestion(suggestion) == active
-                ):
-                    sample = project_dir / "samples" / f"style_{i}.png"
-                    if sample.exists():
-                        return sample
-        except Exception:
-            pass
-    return None
 
 
 
 
 
 
-def _project_cover_credit_estimate(config: Config) -> dict:
-    funding = classify_operations(image_operations(config))
-    if is_subscription(funding):
-        return dict(credit_estimate_for_provider_cost(0.0, "cast", reserve=False, funding=funding))
-    if mock_mode_active(config):
-        return dict(credit_estimate_for_provider_cost(0.0, "cast", reserve=False))
-    return dict(credit_estimate_for_provider_cost(
-        estimate_image_cost(
-            config.effective_image_model(), 1, width=768, height=1024,
-            quality=getattr(config, "image_quality", None),
-        ),
-        "cast",
-        reserve=False,
-        zero_cost_estimate=1,
-    ))
 
 
-async def _generate_project_cover(
-    config: Config,
-    project_dir: Path,
-    user_id: str,
-    project_id: str | None,
-):
-    from novel_to_comic import artifacts as story_artifacts
-    from novel_to_comic.state import load_state, record_misc_usage, save_state
-
-    bible_path = story_artifacts.story_bible_path(project_dir)
-    if not bible_path.exists():
-        raise FileNotFoundError("Story bible not found")
-
-    bible = StoryBible.model_validate_json(bible_path.read_text())
-    output_path = _cover_path(project_dir)
-    style_ref = _find_style_ref(project_dir, config.style_template)
-    cover_cast = _cover_characters(bible, project_dir)
-    anchors = tuple(
-        PromptAnchor(kind="location", entity_id=loc.id, name=loc.name, text=loc.visual_anchor)
-        for loc in bible.locations[:2]
-    )
-    input_data = ProjectCoverInput(
-        asset_identity="project_cover:cover",
-        prompt=GenerationPromptInput(
-            anchors=anchors,
-            subjects=tuple(
-                PromptSubject(character_id=char.id, name=char.name, identity=char.visual_anchor)
-                for char in cover_cast
-            ),
-            visual_brief=(
-                f"Book cover illustration for {bible.title} by {bible.author}. "
-                "Feature the central mood and conflict without text, title, logos, captions, "
-                "or typography. Portrait cover composition, one strong focal image, cinematic "
-                "lighting, finished production art, no words."
-            ),
-            constraints="No lettering, title, logos, captions, typography, or readable words.",
-            width=768,
-            height=1024,
-            generation_width=768,
-            generation_height=1024,
-            generation_shape="portrait",
-        ),
-        selected_style_text=config.style_template,
-    )
-    from novel_to_comic import artifacts
-    from novel_to_comic.image_references import AuthorityScope, ReferenceAsset
-
-    references = list(style_reference_plan(config, style_ref).selected)
-    for char in cover_cast:
-        path = artifacts.character_ref_sheet_path(project_dir, char.id)
-        if not path.exists():
-            raise ValueError(f"Generate and approve the character reference for {char.name} before creating this cover.")
-        references.append(ReferenceAsset(
-            path=path, role="subject", entity_id=char.id, appearance_state_id=None,
-            authority_scope=AuthorityScope.FULL_APPEARANCE,
-            preserve_facets=("face", "hair", "build", "anatomy", "wardrobe"),
-            ignore_facets=(), pose=None,
-            content_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
-            lineage_parent_sha256=None, label=char.name,
-        ))
-    request = compile_non_panel_request(
-        config, input_data, reference_plan=reference_plan_for_assets(config, references)
-    )
-    with ai_request_context(
-        user_id=user_id,
-        project_id=project_id,
-        project_name=project_dir.name,
-        workspace_id=str(project_dir.parent),
-        stage="cover",
-        job_id=current_ai_request_context().job_id,
-    ):
-        submission = await submit_non_panel_request(
-            config=config, project_dir=project_dir, request=request,
-            output_path=output_path, feature="project.cover", kind="project_cover",
-        )
-    result = submission.result
-    if result is None:
-        raise RuntimeError("project cover request was queued without a result")
-    if result.usage:
-        state = load_state(project_dir)
-        record_misc_usage(state, result.usage)
-        save_state(state, project_dir)
-    return result
 
 
 _ALLOWED_EXTENSIONS = {".txt", ".md", ".markdown", ".docx", ".epub", ".pdf"}
@@ -498,7 +313,7 @@ def _max_projects_per_user() -> int:
     return _env_int("CANARY_MAX_PROJECTS_PER_USER", 25)
 
 
-def _save_upload_capped(file: UploadFile, dst: Path) -> None:
+def _save_upload_capped(file: UploadFile, dst: Path, *, account: Path | None = None, budget: dict | None = None) -> None:
     """Stream an upload to disk, aborting (and cleaning up) past the size cap.
 
     Rejecting via Content-Length alone is unsafe (chunked transfers omit it), so
@@ -506,6 +321,9 @@ def _save_upload_capped(file: UploadFile, dst: Path) -> None:
     """
     cap = _max_upload_bytes()
     written = 0
+    if account is not None and budget is None:
+        from ..storage_budget import usage
+        budget = usage(account)
     dst.parent.mkdir(parents=True, exist_ok=True)
     try:
         with open(dst, "wb") as f:
@@ -513,6 +331,9 @@ def _save_upload_capped(file: UploadFile, dst: Path) -> None:
                 chunk = file.file.read(1024 * 1024)
                 if not chunk:
                     break
+                if account is not None:
+                    from ..storage_budget import require_capacity
+                    require_capacity(account, written + len(chunk), budget=budget)
                 written += len(chunk)
                 if written > cap:
                     f.close()
@@ -522,6 +343,9 @@ def _save_upload_capped(file: UploadFile, dst: Path) -> None:
                         413, f"Uploaded file exceeds the {limit_mb} MB limit."
                     )
                 f.write(chunk)
+    except HTTPException:
+        dst.unlink(missing_ok=True)
+        raise
     except OSError:
         # Disk/permission failure mid-write: clean up the partial file and
         # surface a clean error instead of leaking an OSError traceback.
@@ -544,7 +368,7 @@ def _word_count(text: str) -> int:
     return len(text.split())
 
 
-@router.post("/source-preview")
+@router.post("/source-preview", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 @limiter.limit(preview_limit)
 async def preview_source(
     request: Request,
@@ -587,9 +411,32 @@ async def preview_source(
     }
 
 
-@router.post("/")
+@router.post("/", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 @limiter.limit(create_limit)
 async def create_project(
+    request: Request, file: UploadFile = File(...), name: str = Form(...),
+    config_overrides: str = Form(None), projects_dir: Path = Depends(get_projects_dir),
+    user_id: str = Depends(get_current_user),
+):
+    def commit():
+        from novel_to_comic.artifact_lock import production_lock
+        try:
+            directory = project_directory(projects_dir, user_id, _slugify(name))
+        except ValueError as exc:
+            raise HTTPException(409, "Project storage is unavailable") from exc
+        # Capacity and the project cap are atomic across all this account's imports.
+        with production_lock(directory.parent):
+            existed = directory.exists()
+            try:
+                return _create_project_commit(request, file, name, config_overrides, projects_dir, user_id)
+            except BaseException:
+                if not existed:
+                    shutil.rmtree(directory, ignore_errors=True)
+                raise
+    return await asyncio.to_thread(commit)
+
+
+def _create_project_commit(
     request: Request,
     file: UploadFile = File(...),
     name: str = Form(...),
@@ -638,11 +485,13 @@ async def create_project(
 
     user_dir = project_dir.parent
     user_dir.mkdir(parents=True, exist_ok=True)
+    from ..storage_budget import usage, require_capacity
+    budget = usage(user_dir)
     staging_dir = Path(tempfile.mkdtemp(prefix=".incoming-", dir=user_dir))
     safe_filename = Path(file.filename or f"source{suffix}").name
     staged_source = staging_dir / safe_filename
     try:
-        _save_upload_capped(file, staged_source)
+        _save_upload_capped(file, staged_source, account=user_dir, budget=budget)
         source_text = read_source(staged_source)
     except InputLimitError as exc:
         shutil.rmtree(staging_dir, ignore_errors=True)
@@ -657,6 +506,11 @@ async def create_project(
         shutil.rmtree(staging_dir, ignore_errors=True)
         raise HTTPException(422, "This manuscript has no text.")
 
+    try:
+        require_capacity(user_dir, staged_source.stat().st_size + len(source_text.encode()) + 65536, budget=budget)
+    except BaseException:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
     try:
         project_dir.mkdir()
     except FileExistsError:
@@ -793,7 +647,7 @@ class RenameProjectRequest(BaseModel):
     name: str
 
 
-@router.patch("/{project_id}")
+@router.patch("/{project_id}", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def rename_project(
     project_id: str,
     payload: RenameProjectRequest,
@@ -881,8 +735,13 @@ def _project_status_payload(
     from ..generation_jobs import job_part_id
     from .parts import part_summaries
 
-    running = _is_project_running(user_id, project_id, request)
-    if _reconcile_series_stages(root, config, running, series_state) and part_dir != root:
+    part = part_id_for_path(part_dir)
+    from ..admission import project_busy
+    key = project_key(user_id, project_id)
+    series_busy = project_busy(request.app, key, series=True)
+    part_busy = project_busy(request.app, key, part)
+    running = part_busy
+    if _reconcile_series_stages(root, config, series_busy, series_state) and part_dir != root:
         part_state = load_state(part_dir)
     state = series_state if part_dir == root else part_state
     if not running and _reopen_unapproved_brief(part_dir, state):
@@ -891,7 +750,7 @@ def _project_status_payload(
     part = part_id_for_path(part_dir)
 
     active_jobs = [generation_job_payload(request.app, job)
-                   for job in request.app.state.generation_jobs.values()
+                   for job in generation_jobs_snapshot(request.app)
                    if job.project_name == project_key(user_id, project_id)
                    and job.status in {"queued", "running"}
                    and job_part_id(job) in {None, part}]
@@ -930,6 +789,8 @@ def _project_status_payload(
         "misc_cost_credits": provider_usd_to_credits(misc_cost),
         "total_estimated_cost_credits": provider_usd_to_credits(total_estimated),
         "is_running": running,
+        "part_busy": part_busy,
+        "series_busy": series_busy,
         "active_jobs": active_jobs,
         "has_cover": _cover_path(part_dir).exists(),
         "style_selected": style_selected,
@@ -991,7 +852,7 @@ def project_cover_estimate(
     return _project_cover_credit_estimate(config)
 
 
-@router.post("/{project_id}/parts/{part_id}/cover")
+@router.post("/{project_id}/parts/{part_id}/cover", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
 @limiter.limit(cost_limit)
 async def generate_cover(
     request: Request,
@@ -1000,76 +861,12 @@ async def generate_cover(
     project=Depends(get_project),
     user_id: str = Depends(get_current_user),
 ):
-    return enqueue_project_cover(request, project_id, project, user_id, force=force)
+    return await enqueue_project_cover(request, project_id, project, user_id, force=force)
 
 
-def enqueue_project_cover(request: Request, project_id: str, project, user_id: str, *, force: bool = False):
-    """Shared HTTP and post-Draw-start orchestration; generation stays in its own job."""
-    from novel_to_comic.artifacts import character_ref_sheet_path
-
-    project_dir, config, state = project
-    pkey = project_key(user_id, project_id)
-
-    from novel_to_comic import artifacts as story_artifacts
-
-    cover_path = _cover_path(project_dir)
-    if cover_path.exists() and not force:
-        return {"status": "exists", "path": "cover/cover.png", "job": None}
-
-    bible_path = story_artifacts.story_bible_path(project_dir)
-    if not bible_path.exists():
-        raise HTTPException(404, "Story bible not found — run extract first.")
-
-    existing = _active_project_cover_job(request, pkey, project_dir)
-    if existing:
-        return {
-            "status": "queued",
-            "path": "cover/cover.png",
-            "job": generation_job_payload(request.app, existing),
-        }
-
-    # Reject missing inputs before publishing a paid job or reserving credits.
-    bible = StoryBible.model_validate_json(bible_path.read_text())
-    missing = [
-        char.name for char in _cover_characters(bible, project_dir)
-        if not character_ref_sheet_path(project_dir, char.id).exists()
-    ]
-    if missing:
-        raise HTTPException(409, "Generate character references before creating the cover: " + ", ".join(missing))
-    cover_estimate = _project_cover_credit_estimate(config)
-
-    async def _runner():
-        return await _generate_project_cover(config, project_dir, user_id, project_id)
-
-    prune_finished_generation_jobs(request.app)
-    from ..credited_job import enqueue_credited_job
-
-    from ..job_commands import command
-    job, _created = enqueue_credited_job(
-        request.app,
-        project_name=pkey,
-        kind="project_cover",
-        label=f"{state.project_name} cover",
-        payload={"path": "cover/cover.png"},
-        work=_runner,
-        command=command("cover", project_dir, config),
-        project_id=project_id,
-        project_dir=project_dir,
-        stage="cover",
-        estimate_credits=cover_estimate["estimate_credits"],
-        operations=image_operations(config),
-        debit_description="Model call: project cover",
-        user_id=user_id,
-        semaphore=generation_semaphore_for_config(request.app, config),
-    )
-    return {
-        "status": "queued",
-        "path": "cover/cover.png",
-        "job": generation_job_payload(request.app, job),
-    }
 
 
-@router.delete("/{project_id}")
+@router.delete("/{project_id}", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def delete_project(
     request: Request,
     project_id: str,
@@ -1121,7 +918,7 @@ async def _download_remote_story(url: str) -> bytes:
     return bytes(content)
 
 
-@router.post("/import-story")
+@router.post("/import-story", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 @limiter.limit(create_limit)
 async def import_short_story(
     request: Request,
@@ -1132,7 +929,7 @@ async def import_short_story(
     # Per-user project cap — same guard as POST /, applied here too so the labs
     # import path can't be used to bypass the disk-growth limit. Checked before
     # the external fetch to avoid wasted work for an over-cap user.
-    existing = _count_user_projects(user_id)
+    existing = await asyncio.to_thread(_count_user_projects, user_id)
     if existing >= _max_projects_per_user():
         raise HTTPException(
             409,
@@ -1188,75 +985,88 @@ async def import_short_story(
     if project_dir.exists():
         raise HTTPException(409, f"Project '{slug}' already exists")
 
-    project_dir.mkdir(parents=True)
-    (project_dir / "input").mkdir()
-    dst = project_dir / "input" / f"{story_code}.txt"
-    dst.write_text(story_text, encoding="utf-8")
+    def commit():
+        from ..storage_budget import ingestion
+        with ingestion(project_dir, 2 * len(story_text.encode()) + 65536):
+            if _count_user_projects(user_id) >= _max_projects_per_user():
+                raise HTTPException(409, "Project limit reached. Delete a project before importing another.")
+            if project_dir.exists():
+                raise HTTPException(409, f"Project '{slug}' already exists")
+            try:
+                project_dir.mkdir(parents=True)
+                (project_dir / "input").mkdir()
+                dst = project_dir / "input" / f"{story_code}.txt"
+                dst.write_text(story_text, encoding="utf-8")
 
-    save_config(config, project_dir)
-    initialize_series(
-        project_dir, project_name=payload.name, novel_path=dst,
-        text=read_source(dst), origin=dst.name,
-    )
-    if bundled or archive_entry:
-        entry = bundled[0] if bundled else archive_entry
-        assert entry is not None
-        (project_dir / "sample_source.json").write_text(
-            json.dumps({
-                "code": entry["code"],
-                "title": entry["title"],
-                "author": entry["author"],
-                "source_kind": "curated" if bundled else "archive",
-                "license": entry.get("license"),
-                "license_url": entry.get("license_url"),
-                "source_url": entry["source_url"],
-                "text_source_url": entry.get("text_source_url", f"https://www.libraryofshortstories.com/storiesgzip/{story_code}.txt"),
-                "attribution_url": entry.get("attribution_url"),
-                "sha256": entry["sha256"] if bundled else hashlib.sha256(story_text.encode("utf-8")).hexdigest(),
-                "source_note": entry.get("source_note"),
-                "rights_note": entry.get("rights_note"),
-            }, indent=2) + "\n",
-            encoding="utf-8",
-        )
+                save_config(config, project_dir)
+                initialize_series(
+                    project_dir, project_name=payload.name, novel_path=dst,
+                    text=read_source(dst), origin=dst.name,
+                )
+                if bundled or archive_entry:
+                    entry = bundled[0] if bundled else archive_entry
+                    assert entry is not None
+                    (project_dir / "sample_source.json").write_text(
+                        json.dumps({
+                            "code": entry["code"],
+                            "title": entry["title"],
+                            "author": entry["author"],
+                            "source_kind": "curated" if bundled else "archive",
+                            "license": entry.get("license"),
+                            "license_url": entry.get("license_url"),
+                            "source_url": entry["source_url"],
+                            "text_source_url": entry.get("text_source_url", f"https://www.libraryofshortstories.com/storiesgzip/{story_code}.txt"),
+                            "attribution_url": entry.get("attribution_url"),
+                            "sha256": entry["sha256"] if bundled else hashlib.sha256(story_text.encode("utf-8")).hexdigest(),
+                            "source_note": entry.get("source_note"),
+                            "rights_note": entry.get("rights_note"),
+                        }, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
 
-    (project_dir / ".env.example").write_text(
-        "# AI gateway keys — copy to a .env at your repo root (not per-project).\n"
-        "# The pipeline walks up from any project dir to find the nearest .env.\n"
-        "# Never commit the real .env — add it to your root .gitignore.\n\n"
-        "LITELLM_BASE_URL=http://localhost:4000\n"
-        "LITELLM_API_KEY=sk-local-canary\n"
-        "AI_BILL_FAILED_REQUESTS=provider_usage_only\n"
-    )
+                (project_dir / ".env.example").write_text(
+                    "# AI gateway keys — copy to a .env at your repo root (not per-project).\n"
+                    "# The pipeline walks up from any project dir to find the nearest .env.\n"
+                    "# Never commit the real .env — add it to your root .gitignore.\n\n"
+                    "LITELLM_BASE_URL=http://localhost:4000\n"
+                    "LITELLM_API_KEY=sk-local-canary\n"
+                    "AI_BILL_FAILED_REQUESTS=provider_usage_only\n"
+                )
 
-    try:
-        db_result = (
-            get_db()
-            .table("projects")
-            .insert({"user_id": user_id, "name": slug})
-            .execute()
-        )
-        inserted = _rows(db_result)
-        project_id = inserted[0]["id"] if inserted else None
-    except Exception as exc:
-        shutil.rmtree(project_dir, ignore_errors=True)
-        logger.exception(
-            "Failed to register imported project %s for user %s", slug, user_id
-        )
-        raise HTTPException(
-            500, "Failed to register project. Please try again."
-        ) from exc
+                try:
+                    db_result = (
+                        get_db()
+                        .table("projects")
+                        .insert({"user_id": user_id, "name": slug})
+                        .execute()
+                    )
+                    inserted = _rows(db_result)
+                    project_id = inserted[0]["id"] if inserted else None
+                except Exception as exc:
+                    shutil.rmtree(project_dir, ignore_errors=True)
+                    logger.exception(
+                        "Failed to register imported project %s for user %s", slug, user_id
+                    )
+                    raise HTTPException(
+                        500, "Failed to register project. Please try again."
+                    ) from exc
 
-    capture_server_event(
-        "project_created",
-        user_id=user_id,
-        project_id=project_id,
-        request_id=getattr(request.state, "request_id", None),
-        properties={"source": "sample", "file_type": "txt"},
-    )
+                capture_server_event(
+                    "project_created",
+                    user_id=user_id,
+                    project_id=project_id,
+                    request_id=getattr(request.state, "request_id", None),
+                    properties={"source": "sample", "file_type": "txt"},
+                )
 
-    return {
-        "id": project_id,
-        "name": slug,
-        "project_name": payload.name,
-        "status": "created",
-    }
+                return {
+                    "id": project_id,
+                    "name": slug,
+                    "project_name": payload.name,
+                    "status": "created",
+                }
+            except BaseException:
+                shutil.rmtree(project_dir, ignore_errors=True)
+                raise
+
+    return await asyncio.to_thread(commit)
