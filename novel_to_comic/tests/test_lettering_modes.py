@@ -86,9 +86,9 @@ def test_retained_integrated_edition_controls_presentation_not_default_config(tm
     artifacts = TargetArtifacts(tmp_path)
     artifacts.write_book_edition(edition)
     assert get_config((tmp_path, Config(), None))['lettering_mode'] == 'integrated'
-    # Presentation does not silently reauthorize old editions for generation.
-    with pytest.raises(ValueError, match='different page profile'):
-        ensure_current_page_edition(artifacts, edition, Config(lettering_mode='integrated'))
+    updated = ensure_current_page_edition(artifacts, edition, Config(lettering_mode='integrated'))
+    assert updated.capability_profile.exact_visible_lettering
+    assert updated.revision == 2
 
 
 def test_config_does_not_commit_if_edition_is_invalid(tmp_path):

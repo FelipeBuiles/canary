@@ -1,0 +1,60 @@
+name: Image cache verification
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  docker:
+    name: Docker image (build smoke test)
+    runs-on: depot-ubuntu-24.04
+    timeout-minutes: 30
+    # Build production end-to-end without publishing or deploying an image.
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Depot builder
+        uses: depot/setup-action@v1
+      - name: Prepare build metadata
+        id: build_meta
+        run: echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      - name: Build image
+        uses: depot/build-push-action@v1
+        with:
+          project: js338b6zll
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          tags: canary-ci-benchmark
+          build-args: |
+            CANARY_VERSION=${{ github.sha }}
+            CANARY_BUILD_TIMESTAMP=${{ steps.build_meta.outputs.timestamp }}
+            VITE_SUPABASE_URL=https://ci-smoke.supabase.co
+            VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_ci_smoke
+            VITE_CANARY_ENV=production
+
+      - name: Smoke test loaded application
+        run: |
+          docker run --rm --entrypoint /app/novel_to_comic/.venv/bin/python canary-ci-benchmark -c "import novel_to_comic.server.app, novel_to_comic.server.durable_queue"
+          docker run --rm --entrypoint /app/.venv-litellm/bin/python canary-ci-benchmark -c "import litellm.proxy.proxy_server, canary_metrics_callback"
+      - name: Warm build with changed release metadata
+        uses: depot/build-push-action@v1
+        with:
+          project: js338b6zll
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          tags: canary-ci-benchmark-warm
+          build-args: |
+            CANARY_VERSION=cache-verification-${{ github.run_id }}
+            CANARY_BUILD_TIMESTAMP=${{ steps.build_meta.outputs.timestamp }}
+            VITE_SUPABASE_URL=https://ci-smoke.supabase.co
+            VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_ci_smoke
+            VITE_CANARY_ENV=production
+      - name: Verify new release metadata survived cache reuse
+        env:
+          EXPECTED_VERSION: cache-verification-${{ github.run_id }}
+          EXPECTED_TIMESTAMP: ${{ steps.build_meta.outputs.timestamp }}
+        run: |
+          docker run --rm -e EXPECTED_VERSION -e EXPECTED_TIMESTAMP --entrypoint /app/novel_to_comic/.venv/bin/python canary-ci-benchmark-warm \
+            -c 'import os; assert os.environ["CANARY_VERSION"] == os.environ["EXPECTED_VERSION"]; assert os.environ["CANARY_BUILD_TIMESTAMP"] == os.environ["EXPECTED_TIMESTAMP"]'

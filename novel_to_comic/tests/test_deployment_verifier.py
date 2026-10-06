@@ -145,7 +145,7 @@ def test_resume_failure_cannot_report_success(monkeypatch, healthy_verifier, fai
 def test_ci_verifies_then_resumes_with_the_expected_release_and_ops_auth():
     import yaml
 
-    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text())
+    workflow = yaml.safe_load((REPO_ROOT / ".depot/workflows/ci.yml").read_text())
     steps = workflow["jobs"]["deploy"]["steps"]
     deploy = next(i for i, step in enumerate(steps) if step.get("name") == "Deploy exact release image")
     verify = next(i for i, step in enumerate(steps) if step.get("name") == "Verify deployed release")

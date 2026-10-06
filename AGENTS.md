@@ -36,8 +36,9 @@ resources, not a mandatory onboarding sequence; reuse context already loaded.
 - `TargetArtifacts` owns current full-page paths and typed reads/writes.
   Breaking schema changes are acceptable. Reject incompatible artifacts with
   a rerun instruction; do not add compatibility hash exceptions or shims.
-- Keep model aliases and pricing in configuration. A Draw edition has one
-  fixed profile; do not silently upgrade existing pages to a different model.
+- Keep model aliases and pricing in configuration. A Draw edition may advance to the configured
+  profile for new work, preserving existing pages and frozen request provenance.
+  Profile changes must preserve the project lettering mode.
 - Request hashes identify input, not guaranteed provider deduplication.
   Avoid automatic retries after ambiguous paid image submissions. The one
   approved exception (2026-09-28): `run_openai_first`

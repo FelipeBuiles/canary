@@ -1,0 +1,37 @@
+name: Build CI runner image
+
+# Run when tool versions change; application dependencies still follow lockfiles.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: depot-ubuntu-24.04-4
+    timeout-minutes: 20
+    steps:
+      # No repository checkout or production credentials in this image.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24.21.0"
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: "0.12.17"
+          enable-cache: false
+      - name: Preinstall browser and database tools
+        run: |
+          uv venv /tmp/canary-image-tools
+          uv pip install --python /tmp/canary-image-tools/bin/python playwright==1.63.0
+          /tmp/canary-image-tools/bin/playwright install --with-deps chromium
+          echo 1.63.0 | sudo tee /opt/canary-playwright-version
+          sudo apt-get install -y postgresql-client
+          docker pull postgres:17
+          rm -rf /tmp/canary-image-tools
+      - uses: depot/snapshot-action@v1
+        with:
+          image: 6ntrqswcbt.registry.depot.dev/canary-ci:py312-node24.21-pw1.63-v1

@@ -122,7 +122,7 @@ def test_production_profile_and_old_serialized_hashes_remain_compatible(monkeypa
     assert request.model_dump(mode="json") == legacy_request
 
 
-def test_profile_binds_reasoner_and_runtime_and_cannot_rewrite_an_edition(tmp_path, monkeypatch, dev_routes):
+def test_profile_binds_reasoner_and_runtime_and_advances_an_edition(tmp_path, monkeypatch, dev_routes):
     profile = page_drawing.current_page_capability_profile(_codex_config())
     assert (profile.provider, profile.model, profile.max_attempts) == ("codex-dev", "gpt-image-2", 1)
     assert dict(codex_runtime.image_execution_controls())["service_tier"] == "priority"
@@ -130,15 +130,16 @@ def test_profile_binds_reasoner_and_runtime_and_cannot_rewrite_an_edition(tmp_pa
     artifacts = TargetArtifacts(tmp_path)
     production = BookEdition(revision=1, id="production", capability_profile=page_drawing.production_page_capability_profile())
     artifacts.write_book_edition(production)
-    before = artifacts.book_edition_path.read_bytes()
-    with pytest.raises(ValueError):
-        page_drawing.ensure_current_page_edition(artifacts, production, _codex_config())
-    assert artifacts.book_edition_path.read_bytes() == before
+    updated = page_drawing.ensure_current_page_edition(artifacts, production, _codex_config())
+    assert updated.capability_profile == profile
+    assert updated.revision == 2
+    assert artifacts.read_book_edition() == updated
     edition = page_drawing.select_book_edition(edition_id="dev", profile=profile)
     other_reasoner = page_drawing.current_page_capability_profile(Config(draw_model="codex-dev/image/gpt-5.6-terra"))
     assert other_reasoner.id != profile.id
-    with pytest.raises(ValueError):
-        page_drawing.select_book_edition(edition_id=edition.id, profile=other_reasoner, existing=edition)
+    updated = page_drawing.select_book_edition(edition_id=edition.id, profile=other_reasoner, existing=edition)
+    assert updated.capability_profile == other_reasoner
+    assert updated.revision == 2
     controls = codex_runtime.image_execution_controls()
     monkeypatch.setattr(codex_runtime, "image_execution_controls", lambda: tuple(
         (key, "default" if key == "service_tier" else value) for key, value in controls))
@@ -582,8 +583,8 @@ def test_explicit_codex_draw_selection_cannot_reroute_frozen_request(tmp_path, d
     edition = page_drawing.select_book_edition(
         edition_id="fixed", profile=page_drawing.current_page_capability_profile(first),
     )
-    with pytest.raises(ValueError, match="different page profile"):
-        page_drawing.ensure_current_page_edition(TargetArtifacts(tmp_path), edition, second)
+    updated = page_drawing.ensure_current_page_edition(TargetArtifacts(tmp_path), edition, second, persist=False)
+    assert updated.capability_profile == page_drawing.current_page_capability_profile(second)
 
 
 @pytest.fixture(autouse=True)

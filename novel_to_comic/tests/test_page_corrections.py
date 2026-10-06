@@ -1291,7 +1291,7 @@ def test_interrupted_correction_route_resumes_original_parent_without_redraw(tmp
     from novel_to_comic.server.routers import pages
 
     artifacts, page, _render = _setup(tmp_path, issues=(_issue("issue-dark"),))
-    monkeypatch.setattr(pages, "ensure_current_page_edition", lambda *args: _edition())
+    monkeypatch.setattr(pages, "ensure_current_page_edition", lambda *args, **kwargs: _edition())
     monkeypatch.setattr(pages, "approved_visual_inventory", lambda *args: ApprovedVisualReferenceInventory(references=()))
     monkeypatch.setattr(pages, "approved_reference_files", lambda *args: {})
     body = pages.PageCorrectionCreate(

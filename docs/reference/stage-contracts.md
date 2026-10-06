@@ -1050,7 +1050,7 @@ Projects explicitly choose integrated or editable lettering at creation (see
 [ADR 0022](../adr/0022-project-lettering-choice.md)). New integrated profiles set
 `exact_visible_lettering=true`, send canonical copy to Draw, and export the
 original raster. Software lettering controls are unavailable for these projects.
-Mode changes require a new project; existing edition profiles stay fixed.
+Lettering mode changes require a new project.
 Editable profiles set `exact_visible_lettering=false`: their wire lettering
 array is empty and their prompt forbids balloons, caption boxes, SFX glyphs,
 placeholder words, pseudo-writing, and reserved blank areas. They request continuous
@@ -1058,9 +1058,11 @@ scene artwork; Plan placement reservations seed the editor only and are omitted
 from image requests. Canonical copy remains in Adapt/Plan; it
 is not a typesetting payload for the image provider. Excess
 references fail before submission. Less-graphic framing retains identity
-references. An edition keeps its selected model/profile; a different current
-profile rejects new spend without rewriting the existing edition. Retained
-baked profiles are accepted for read/review only. Use the explicit upstream
+references. An edition retains its profile while it remains spendable. Otherwise, new
+work advances the edition revision to the configured profile, preserving existing
+pages and frozen request provenance. Cost estimates select this revision without
+saving it. Profile changes must retain the lettering mode. Read/review keeps the
+saved edition profile. Use the explicit upstream
 Plan restart/new-edition lifecycle for hybrid generation from an old allocation;
 there is no raster-text removal or silent conversion. Request hashes identify input but do not guarantee
 provider deduplication. Ambiguous image submissions are not automatically retried.

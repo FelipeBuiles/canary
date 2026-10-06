@@ -13,7 +13,7 @@ rollout. The manifests, lockfiles, Dockerfiles and CI remain authoritative.
 | Browser application | `web/package.json`, `web/package-lock.json` | `npm ci` in `web` |
 | Browser automation tooling | Root `package.json`, `package-lock.json` | `npm ci` at repository root |
 | Observability | Python `web` extra and browser lockfile | PostHog SDKs and HTTP OTLP exporters; no local analytics services |
-| Runtime and release tools | `.nvmrc`, Dockerfiles, `.github/workflows/ci.yml` | Node 24.21.0, Python 3.12, uv 0.12.17, Fly CLI 0.4.104 |
+| Runtime and release tools | `.nvmrc`, Dockerfiles, `.depot/workflows/ci.yml`, `.depot/workflows/build-ci-image.yml` | Node 24.21.0, Python 3.12, uv 0.12.17, Fly CLI 0.4.104 |
 
 Do not install the gateway into the application's virtual environment. Its
 Rich and protobuf constraints differ from the application dependencies. The
