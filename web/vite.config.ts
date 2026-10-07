@@ -5,20 +5,21 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import posthog from '@posthog/rollup-plugin'
 
-export default defineConfig({
+export default defineConfig(({ isSsrBuild }) => ({
   resolve: { alias: {
     '@lettering-engine': fileURLToPath(new URL('../novel_to_comic/src/novel_to_comic/lettering/engine.mjs', import.meta.url)),
     '@lettering-voices': fileURLToPath(new URL('../novel_to_comic/src/novel_to_comic/lettering/voices.json', import.meta.url)),
   } },
-  plugins: [react(), tailwindcss(), ...(process.env.POSTHOG_API_KEY && process.env.POSTHOG_PROJECT_ID ? [posthog({
+  plugins: [react(), tailwindcss(), ...(!isSsrBuild && process.env.POSTHOG_API_KEY && process.env.POSTHOG_PROJECT_ID ? [posthog({
     personalApiKey: process.env.POSTHOG_API_KEY,
     projectId: process.env.POSTHOG_PROJECT_ID,
     host: process.env.POSTHOG_HOST,
     sourcemaps: { enabled: true, releaseName: 'canary-web', releaseVersion: process.env.VITE_CANARY_VERSION ?? 'dev', deleteAfterUpload: true },
   })] : [])],
   build: {
+    manifest: !isSsrBuild,
     sourcemap: Boolean(process.env.POSTHOG_API_KEY && process.env.POSTHOG_PROJECT_ID),
-    rolldownOptions: {
+    rolldownOptions: isSsrBuild ? {} : {
       output: {
         codeSplitting: {
           // Cache the shared framework and SDKs independently of app/translations.
@@ -59,4 +60,4 @@ export default defineConfig({
       },
     },
   },
-})
+}))

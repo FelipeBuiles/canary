@@ -5,7 +5,8 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { preload } from "react-dom";
 import { afterPageLoad } from "../lib/afterPageLoad";
 import { responsiveMarketingImage } from "../lib/marketingImages";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { homePaths } from "../lib/publicPages";
 import { BrandIdentity } from "../components/BrandIdentity";
 import { BrandMark } from "../components/BrandMark";
 import { LANGUAGES, useI18n, type LanguageCode } from "../i18n";
@@ -320,6 +321,7 @@ function StoryShelfPreview({ copy }: { copy: LandingCopy["sampleBook"] }) {
 
 export function HomePage() {
   const { language, setLanguage, t } = useI18n();
+  const navigate = useNavigate();
   const copy = landingCopy(t);
 
   return (
@@ -345,7 +347,7 @@ export function HomePage() {
           <LanguageSwitcher
             activeLanguage={language}
             label={copy.nav.language}
-            onChange={setLanguage}
+            onChange={next => { setLanguage(next); navigate(homePaths[next]); }}
           />
           <Link className="landing-sign-in" to="/login">
             {copy.nav.signIn}
@@ -527,11 +529,23 @@ export function HomePage() {
             <small>{copy.footer.line}</small>
           </span>
         </div>
+        <div className="landing-footer__links">
         <nav aria-label="Legal">
           <Link to="/legal/terms">{copy.footer.terms}</Link>
           <Link to="/legal/privacy">{copy.footer.privacy}</Link>
           <Link to="/legal/acceptable-use">{copy.footer.acceptableUse}</Link>
         </nav>
+        <nav aria-label={t("landing.footer.product")}>
+          <Link to="/how-it-works">{t("landing.footer.workflow")}</Link>
+          <Link to="/pricing">{t("landing.footer.pricing")}</Link>
+          <Link to="/guides/turn-a-novel-into-a-comic">{t("landing.footer.guide")}</Link>
+          <Link to="/examples/kaitlin-out-of-space">{t("landing.footer.example")}</Link>
+          <Link to="/about">{t("landing.footer.about")}</Link>
+        </nav>
+        <nav aria-label={copy.nav.language}>
+          {LANGUAGES.map(({ code, label }) => <Link key={code} to={homePaths[code]} lang={code} hrefLang={code}>{label}</Link>)}
+        </nav>
+        </div>
         <p>© 2026 Scenewright</p>
       </footer>
     </div>

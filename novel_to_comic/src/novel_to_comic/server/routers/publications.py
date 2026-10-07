@@ -4,6 +4,7 @@
 from pathlib import Path
 import os
 import html
+import json
 import re
 from typing import Literal
 import io
@@ -185,7 +186,7 @@ def download(
         for page in language_pages(record, locale)
     ]
     origin = os.environ.get(
-        "SCENEWRIGHT_APP_URL", "https://app.scenewright.ink"
+        "SCENEWRIGHT_APP_URL", "https://scenewright.ink"
     ).rstrip("/")
     url = f"{origin}/signup?ref=book-{book_id}"
     pages.append(bookend_image(pages[0], url))
@@ -242,17 +243,33 @@ def reader_html(book_id: str, base: Path, index: Path):
         if exc.status_code != 404:
             raise
         response = public_document(index, title="Book unavailable — Scenewright",
-                                   description="This book is not available.", path=f"/read/{book_id}")
+                                   description="This book is not available.", path=f"/read/{book_id}",
+                                   intro='<h1>Book unavailable</h1><p><a href="/">Return to Scenewright</a></p>', noindex=True)
         response.status_code = 404
         response.headers["X-Robots-Tag"] = "noindex"
         return response
     origin = public_origin()
+    intro = f"<h1>{html.escape(record['title'])}</h1><p>By {html.escape(record['author'])} · {len(record['pages'])} comic pages</p><p>{html.escape(record['description'])}</p>"
+    intro += '<p>Read this complete comic adaptation, inspect the preview pages, or open the interactive reader. Made with Scenewright, an AI-assisted comic studio for authors.</p>'
+    intro += '<div class="grid gap-4 sm:grid-cols-3">' + ''.join(
+        f'<figure><a href="{html.escape(page["url"], quote=True)}"><img src="{html.escape(page["url"], quote=True)}" width="{page["width"]}" height="{page["height"]}" alt="{html.escape(record["title"], quote=True)}, page {page["number"]}" loading="{"eager" if page["number"] == 1 else "lazy"}" style="max-width:100%;height:auto"></a><figcaption>Page {page["number"]}</figcaption></figure>'
+        for page in record["pages"][:3]) + '</div>'
+    credit = record.get("source_credit")
+    if credit:
+        intro += f'<p>Source: <a href="{html.escape(credit["source_url"], quote=True)}">{html.escape(credit["title"])}</a> by {html.escape(credit["author"])}. License: <a href="{html.escape(credit["license_url"], quote=True)}">{html.escape(credit["license"])}</a>.</p>'
+    if book_id == "df3a1b400a444815bddeca430360f0d9":
+        intro += '<p><a href="/samples?story=kaitlin-out-of-space">Read the original Kaitlin Out of Space story and its CC0 source license</a> · <a href="/examples/kaitlin-out-of-space">Compare the annotated adaptation example</a></p>'
+    intro += '<p>Generated art and lettering can need correction. Review the sequence at full size before adapting your own scene. <a href="/how-it-works">How it works</a> · <a href="/samples">Source stories</a> · <a href="/signup">Create your own comic</a></p>'
+    schema = {"@context": "https://schema.org", "@type": "Book", "name": record["title"],
+              "author": {"@type": "Person", "name": record["author"]}, "description": record["description"],
+              "url": origin + f"/read/{book_id}", "numberOfPages": len(record["pages"]), "image": origin + record["pages"][0]["url"]}
+    if credit:
+        schema.update(isBasedOn=credit["source_url"], license=credit["license_url"])
     return public_document(
         index, title=f"{record['title']} — Scenewright",
         description=record["description"] or f"By {record['author']} · Read on Scenewright",
         path=f"/read/{book_id}", image=origin + record["pages"][0]["url"], kind="book",
-        intro=f"<h1>{html.escape(record['title'])}</h1><p>{html.escape(record['author'])}</p>"
-              f"<p>{html.escape(record['description'])}</p>",
+        intro=intro, schema=schema, bootstrap={"book": record},
     )
 
 
@@ -261,27 +278,42 @@ def public_origin() -> str:
 
 
 def public_document(index: Path, *, title: str, description: str, path: str,
-                    image: str | None = None, kind: str = "website", intro: str = ""):
+                    image: str | None = None, kind: str = "website", intro: str = "",
+                    noindex: bool = False, schema: dict | None = None, bootstrap: dict | None = None):
     document = index.read_text()
     document = re.sub(r"<title\b[^>]*>.*?</title>", "", document, flags=re.S | re.I)
     document = re.sub(
-        r'<meta\b[^>]*(?:property|name)=["\'](?:description|og:[^"\']+|twitter:[^"\']+)["\'][^>]*>',
+        r'<meta\b[^>]*(?:property|name)=["\'](?:description|robots|og:[^"\']+|twitter:[^"\']+)["\'][^>]*>',
         "", document, flags=re.I,
     )
     document = re.sub(r'<link\b[^>]*rel=["\']canonical["\'][^>]*>', "", document, flags=re.I)
     url = public_origin() + path
-    metadata = {"description": description, "og:title": title, "og:description": description,
+    default_image = image is None
+    image = image or public_origin() + "/marketing/scenewright-social.png"
+    metadata = {"description": description, "robots": "noindex, follow" if noindex else "index, follow",
+                "og:site_name": "Scenewright", "og:title": title, "og:description": description,
                 "og:type": kind, "og:url": url, "twitter:title": title,
                 "twitter:description": description, "twitter:card": "summary_large_image" if image else "summary"}
-    if image:
-        metadata.update({"og:image": image, "twitter:image": image})
+    metadata.update({"og:image": image, "twitter:image": image,
+                     "og:image:alt": title, "twitter:image:alt": title})
+    if default_image:
+        metadata.update({"og:image:width": "1200", "og:image:height": "630"})
     tags = f"<title>{html.escape(title)}</title><link rel=\"canonical\" href=\"{html.escape(url, quote=True)}\">"
     tags += "".join(f'<meta {"property" if key.startswith("og:") else "name"}="{key}" content="{html.escape(value, quote=True)}">'
                     for key, value in metadata.items())
+    if schema:
+        tags += f'<script id="public-schema" type="application/ld+json">{_public_json(schema)}</script>'
     document = document.replace("</head>", tags + "</head>")
     if intro:
-        document = document.replace('<div id="root"></div>', f'<div id="root"><main>{intro}</main></div>')
-    return HTMLResponse(document, headers={"Cache-Control": "no-store"})
+        document = re.sub(r'<div id=["\']root["\']></div>', lambda _: '<div id="root"><main class="mx-auto max-w-[1100px] space-y-6 px-5 py-12 font-body leading-7">' + intro + '</main></div>', document)
+    if bootstrap:
+        document = document.replace('</body>', f'<script id="public-bootstrap" type="application/json">{_public_json(bootstrap)}</script></body>')
+    return HTMLResponse(document, headers={"Cache-Control": "no-store", **({"X-Robots-Tag": "noindex, follow"} if noindex else {})})
+
+
+def _public_json(value: dict) -> str:
+    # Public text must not terminate a script element or become executable HTML.
+    return json.dumps(value, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
 def samples_html(index: Path, story: str | None = None):
@@ -293,16 +325,40 @@ def samples_html(index: Path, story: str | None = None):
     description = (entry.get("description") or f"Read {entry['title']} by {entry['author']} in the Scenewright sample library.") if entry else "Explore selected stories, authors and themes in the Scenewright sample library."
     path = f"/samples?story={quote(entry['code'])}" if entry else "/samples"
     intro = f"<h1>{html.escape(title)}</h1><p>{html.escape(description)}</p>"
+    bootstrap = {"stories": sample_library.catalog()}
+    schema = None
+    if entry:
+        if sample := sample_library.find(entry["code"]):
+            text = sample[1]
+            body = re.sub(r'^.*\nBy [^\n]+\n+', '', text).strip()
+            intro += '<article>' + ''.join(f'<p style="white-space:pre-line">{html.escape(paragraph)}</p>' for paragraph in re.split(r'\n\s*\n', body)) + '</article>'
+            bootstrap["story"] = {"code": entry["code"], "text": text}
+        else:
+            bootstrap["stories"].append(entry)
+        for key in ("source_note", "rights_note", "content_note"):
+            if entry.get(key):
+                intro += f'<p>{html.escape(entry[key])}</p>'
+        for key, label in (("source_url", "Original source"), ("license_url", entry.get("license", "License"))):
+            if entry.get(key):
+                intro += f'<p><a href="{html.escape(entry[key], quote=True)}">{html.escape(label)}</a></p>'
+        intro += '<p><a href="/samples">Browse the sample library</a> · <a href="/how-it-works">How to adapt a story</a></p>'
+        schema = {"@context": "https://schema.org", "@type": "CreativeWork", "name": entry["title"], "description": description,
+                  "author": {"@type": "Person", "name": entry["author"]}, "url": public_origin() + path}
+        if entry.get("source_url"):
+            schema["isBasedOn"] = entry["source_url"]
+        if entry.get("license_url"):
+            schema["license"] = entry["license_url"]
     if not entry:
-        intro += "<ul>" + "".join(f'<li><a href="/samples?story={quote(item["code"])}">{html.escape(item["title"])}</a></li>' for item in sample_library.catalog()) + "</ul>"
-    return public_document(index, title=title, description=description, path=path, intro=intro)
+        intro += '<p>Read a complete licensed source story before starting an adaptation. Each curated entry identifies its author, source, and license. Classic archive rights vary by work and jurisdiction.</p><ul>' + "".join(f'<li><a href="/samples?story={quote(item["code"])}">{html.escape(item["title"])}</a> by {html.escape(item["author"])} — {html.escape(item.get("description", ""))}</li>' for item in sample_library.catalog()) + "</ul>"
+    return public_document(index, title=title, description=description, path=path, intro=intro, schema=schema, bootstrap=bootstrap)
 
 
 def sitemap_document():
     from novel_to_comic import sample_library
     from urllib.parse import quote
     # Discovery is deliberately curated; owner publications remain direct-link public.
-    paths = ["/", "/samples"]
+    paths = ["/", "/es", "/fr", "/how-it-works", "/pricing", "/guides/turn-a-novel-into-a-comic",
+             "/examples/kaitlin-out-of-space", "/about", "/legal/terms", "/legal/privacy", "/legal/acceptable-use", "/samples"]
     paths += [f"/read/{record['id']}" for record, _ in showcase.books()]
     paths += [f"/samples?story={quote(entry['code'])}" for entry in sample_library.catalog()]
     body = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
@@ -311,7 +367,7 @@ def sitemap_document():
 
 
 def robots_document():
-    return Response("User-agent: *\nDisallow: /api/\nDisallow: /project/\nDisallow: /backoffice\n"
+    return Response("User-agent: *\nDisallow: /api/\nAllow: /api/public/books$\nAllow: /api/public/books/\nDisallow: /project/\nDisallow: /backoffice\n"
                     "Disallow: /account\nDisallow: /credits\nDisallow: /auth/\n"
                     f"Sitemap: {public_origin()}/sitemap.xml\n", media_type="text/plain")
 
@@ -324,7 +380,7 @@ def preview_bookend(
     record = current(base, book_id)
     first = page_directory(base, book_id, record["version"]) / f"{record['pages'][0]['number']}.jpg"
     origin = os.environ.get(
-        "SCENEWRIGHT_APP_URL", "https://app.scenewright.ink"
+        "SCENEWRIGHT_APP_URL", "https://scenewright.ink"
     ).rstrip("/")
     return Response(
         bookend_image(first.read_bytes(), f"{origin}/signup?ref=book-{book_id}"),

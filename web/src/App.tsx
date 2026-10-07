@@ -7,6 +7,10 @@ import { I18nProvider } from "./i18n";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./api/queryClient";
 import { trackPageview } from "./telemetry";
+import { loadPublicPage } from "./lib/publicRoutes";
+import { publicPages, publicSchema, isPublicHome } from "./lib/publicPages";
+import { usePublicMetadata } from "./lib/publicMetadata";
+import { getPublicBootstrap } from "./lib/publicBootstrap";
 
 const Shell = lazy(() => import("./layout/Shell").then(({ Shell }) => ({ default: Shell })));
 const ProjectRooms = lazy(() =>
@@ -19,8 +23,9 @@ const ResetPasswordPage = lazy(() =>
   import("./pages/auth/ResetPasswordPage").then(({ ResetPasswordPage }) => ({ default: ResetPasswordPage })),
 );
 const PublicBookPage = lazy(() => import("./pages/PublicBookPage").then(({ PublicBookPage }) => ({ default: PublicBookPage })));
-const loadHomePage = () => import("./pages/HomePage").then(({ HomePage }) => ({ default: HomePage }));
+const loadHomePage = () => loadPublicPage("/");
 const HomePage = lazy(loadHomePage);
+const ProductPage = lazy(() => loadPublicPage("/how-it-works"));
 const SampleLibraryPage = lazy(() => import("./pages/SampleLibraryPage").then(({ SampleLibraryPage }) => ({ default: SampleLibraryPage })));
 const TermsPage = lazy(() => import("./pages/legal/TermsPage").then(({ TermsPage }) => ({ default: TermsPage })));
 const PrivacyPage = lazy(() => import("./pages/legal/PrivacyPage").then(({ PrivacyPage }) => ({ default: PrivacyPage })));
@@ -76,11 +81,21 @@ function RootRoute() {
     if (loading) void loadHomePage().catch(() => {});
   }, [loading]);
 
-  if (loading) {
+  if (loading && !getPublicBootstrap()?.prerendered) {
     return <LoadingBlock label="OPENING SCENEWRIGHT…" />;
   }
 
   return session ? lazyRoute(Shell) : lazyRoute(HomePage);
+}
+
+function RouteMetadata() {
+  const { pathname } = useLocation();
+  const { session } = useAuth();
+  const page = pathname === "/" && session ? undefined : publicPages[pathname];
+  const dynamicPublic = pathname === "/samples" || pathname.startsWith("/read/");
+  usePublicMetadata(dynamicPublic ? undefined : page?.title ?? "Scenewright", page?.description ?? "Scenewright comic studio.", pathname, undefined,
+    { noindex: !page, schema: page ? publicSchema(pathname) : undefined, alternates: !!page && isPublicHome(pathname) });
+  return null;
 }
 
 function BackofficeRoute() {
@@ -99,12 +114,19 @@ function PageviewTracker() {
 }
 
 export function App() {
+  const { pathname } = useLocation();
+  const { session } = useAuth();
+  const publicLanguage = pathname === "/" && session ? undefined : publicPages[pathname]?.language;
   return (
-    <I18nProvider>
+    <I18nProvider key={publicLanguage ?? "account"} initialLanguage={publicLanguage}>
+      <RouteMetadata />
       <PageviewTracker />
       <Routes>
         <Route path="/read/:id" element={lazyRoute(PublicBookPage)} />
         <Route path="/samples" element={lazyRoute(SampleLibraryPage)} />
+        <Route path="/es" element={lazyRoute(HomePage)} />
+        <Route path="/fr" element={lazyRoute(HomePage)} />
+        {["/how-it-works", "/pricing", "/guides/turn-a-novel-into-a-comic", "/examples/kaitlin-out-of-space", "/about"].map(path => <Route key={path} path={path} element={lazyRoute(ProductPage)} />)}
         {/* Public auth routes */}
         <Route path="/login" element={lazyRoute(LoginPage)} />
         <Route path="/signup" element={lazyRoute(SignupPage)} />
@@ -149,8 +171,8 @@ export function App() {
             <Route path="styles" element={lazyRoute(StyleRoom)} />
             <Route path="*" element={lazyRoute(NavigateToRoom)} />
           </Route>
-          <Route path="*" element={lazyRoute(NotFound)} />
         </Route>
+        <Route path="*" element={lazyRoute(NotFound)} />
       </Routes>
     </I18nProvider>
   );

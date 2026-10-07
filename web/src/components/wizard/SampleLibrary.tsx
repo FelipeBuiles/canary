@@ -1,3 +1,4 @@
+import { getPublicBootstrap } from "../../lib/publicBootstrap";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { readShortStory } from "../../api/projects";
@@ -34,7 +35,7 @@ export function SampleLibrary({ initialReadCode, selectedCode, onSelect, onReadA
   const [sort, setSort] = useState<SortKey>("relevance");
   const [page, setPage] = useState(0);
   const [readingCode, setReadingCode] = useState<string | null>(initialReadCode ?? null);
-  const [readingText, setReadingText] = useState<string | null>(null);
+  const [readingText, setReadingText] = useState<string | null>(() => { const story = getPublicBootstrap()?.story; return story && story.code === initialReadCode ? story.text : null; });
   const [readingError, setReadingError] = useState(false);
   const readerTitleRef = useRef<HTMLHeadingElement>(null);
   const readerTriggerRef = useRef<HTMLButtonElement | null>(null);

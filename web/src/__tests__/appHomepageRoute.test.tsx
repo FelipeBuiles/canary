@@ -1,12 +1,21 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const auth = vi.hoisted(() => ({ loading: false, session: null, user: null }));
+const auth = vi.hoisted(() => ({ loading: false, session: null as null | { user: { id: string } }, user: null as null | { id: string } }));
 vi.mock("../hooks/useAuth", () => ({ useAuth: () => auth }));
+vi.mock("../layout/Shell", async () => {
+  const { Outlet } = await import("react-router-dom");
+  return { Shell: () => <Outlet /> };
+});
+vi.mock("../pages/Library", async () => {
+  const { useI18n } = await import("../i18n");
+  return { Library: () => { const { language } = useI18n(); return <h1>Library: {language}</h1>; } };
+});
 
 import { AccountApp, App } from "../App";
+import { loadCatalog } from "../locales/messages";
 
 const values = new Map<string, string>();
 const storage: Storage = {
@@ -28,6 +37,8 @@ describe("public homepage routing", () => {
     });
     storage.clear();
     auth.loading = false;
+    auth.session = null;
+    auth.user = null;
     window.history.replaceState(null, "", "/");
   });
 
@@ -69,5 +80,20 @@ describe("public homepage routing", () => {
     render(<AccountApp />);
     expect(screen.getByText("Loading…")).toBeTruthy();
     expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+  });
+  it("keeps the signed-in root as Library with the stored application language", async () => {
+    auth.user = { id: "author" };
+    auth.session = { user: auth.user };
+    storage.setItem("canary.uiLanguage", "fr");
+    await act(async () => { await loadCatalog("fr"); render(<AccountApp />); });
+    expect(await screen.findByRole("heading", { name: "Library: fr" })).toBeTruthy();
+    expect(document.querySelector('meta[name="robots"]')?.getAttribute("content")).toBe("noindex, follow");
+  });
+  it("shows an unknown public URL without redirecting it to sign in", async () => {
+    window.history.replaceState(null, "", "/not-a-real-page");
+    render(<AccountApp />);
+    expect(await screen.findByRole("heading", { name: "THIS PAGE WAS LEFT ON THE CUTTING ROOM FLOOR" })).toBeTruthy();
+    expect(window.location.pathname).toBe("/not-a-real-page");
+    expect(document.querySelector('meta[name="robots"]')?.getAttribute("content")).toBe("noindex, follow");
   });
 });

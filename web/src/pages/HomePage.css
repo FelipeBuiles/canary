@@ -1319,6 +1319,12 @@
   gap: 1.2rem;
 }
 
+.landing-footer > .landing-footer__links {
+  display: grid;
+  min-width: 0;
+  gap: 0.7rem;
+}
+
 .landing-footer nav a,
 .landing-footer > p {
   margin: 0;

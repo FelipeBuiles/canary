@@ -25,26 +25,27 @@ function readStoredLanguage(): LanguageCode {
   return globalThis.navigator?.languages?.map(languageCode).find(Boolean) ?? "en";
 }
 
-export function I18nProvider({ children }: { children: ReactNode }) {
-  return <Suspense fallback={<LoadingBlock label="LOADING…" />}><LocalizedProvider>{children}</LocalizedProvider></Suspense>;
+export function I18nProvider({ children, initialLanguage }: { children: ReactNode; initialLanguage?: LanguageCode }) {
+  return <Suspense fallback={<LoadingBlock label="LOADING…" />}><LocalizedProvider initialLanguage={initialLanguage}>{children}</LocalizedProvider></Suspense>;
 }
 
-function LocalizedProvider({ children }: { children: ReactNode }) {
-  const [language, setLanguage] = useState<LanguageCode>(readStoredLanguage);
+function LocalizedProvider({ children, initialLanguage }: { children: ReactNode; initialLanguage?: LanguageCode }) {
+  const [language, setLanguage] = useState<LanguageCode>(() => initialLanguage ?? readStoredLanguage());
   // Keep reading the same promise on a suspended render's retry. Bypassing
   // use() once its catalog is cached can disrupt React's hook replay.
   const catalog = language === "en" ? loadedCatalog("en")! : use(loadCatalog(language));
   useEffect(() => {
-    try { globalThis.localStorage?.setItem(STORAGE_KEY, language); } catch { /* optional persistence */ }
+    try { if (!initialLanguage) globalThis.localStorage?.setItem(STORAGE_KEY, language); } catch { /* optional persistence */ }
     document.documentElement.lang = language;
-  }, [language]);
+  }, [language, initialLanguage]);
   useEffect(() => {
+    if (initialLanguage) return;
     const sync = (event: StorageEvent) => {
       if (event.key === STORAGE_KEY) startTransition(() => setLanguage(languageCode(event.newValue) ?? "en"));
     };
     window.addEventListener("storage", sync);
     return () => window.removeEventListener("storage", sync);
-  }, []);
+  }, [initialLanguage]);
   const value = useMemo<I18nValue>(() => {
     const t = createTranslator(language, catalog);
     return { language, setLanguage: (next: LanguageCode) => startTransition(() => setLanguage(next)), t,

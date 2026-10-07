@@ -3377,5 +3377,12 @@
   "↺ RETRY PANEL PREPARATION": "↺ RELANCER LA PRÉPARATION",
   "▶ DRAW ALL PANELS": "▶ DESSINER TOUTES LES CASES",
   "Published part": "Partie publiée",
-  "Replace the series public book with this part": "Remplacer le livre public de la série par cette partie"
+  "Replace the series public book with this part": "Remplacer le livre public de la série par cette partie",
+  "landing.footer.product": "Produit",
+  "landing.footer.workflow": "Fonctionnement",
+  "landing.footer.pricing": "Tarifs",
+  "landing.footer.guide": "Guide du roman à la BD",
+  "landing.footer.example": "Exemple de BD",
+  "landing.footer.about": "À propos",
+  "Please check the address, or return to Scenewright.": "Vérifiez l’adresse ou revenez à Scenewright."
 }

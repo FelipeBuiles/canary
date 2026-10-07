@@ -1,12 +1,15 @@
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { Surface } from "../components/ui/Surface";
 import { Button } from "../components/ui/Button";
 import { useI18n } from "../i18n";
+import { usePublicMetadata } from "../lib/publicMetadata";
 
 export function NotFound() {
   const navigate = useNavigate();
   const { t } = useI18n();
+  const { pathname } = useLocation();
+  usePublicMetadata("Page not found — Scenewright", "This page does not exist.", pathname, undefined, { noindex: true });
 
   return (
     <div className="flex min-h-[65vh] items-center justify-center bg-pulp-paper px-5 py-12 sm:py-16">
@@ -19,9 +22,9 @@ export function NotFound() {
           <h1 className="mt-5 max-w-[22ch] font-display text-[1.75rem] font-black uppercase leading-[1.05] tracking-[-0.04em] text-ink-black">
             {t("THIS PAGE WAS LEFT ON THE CUTTING ROOM FLOOR")}
           </h1>
-          <p className="mt-4 font-body text-base leading-7 text-ink-muted">{t("The link may be out of date, or the address may have a typo. Your library is a good place to start again.")}</p>
+          <p className="mt-4 font-body text-base leading-7 text-ink-muted">{t("Please check the address, or return to Scenewright.")}</p>
           <div className="mt-7 flex">
-            <Button onClick={() => navigate("/")}><ArrowLeft size={16} aria-hidden="true" />{t("BACK TO THE LIBRARY")}</Button>
+            <Button onClick={() => navigate("/")}><ArrowLeft size={16} aria-hidden="true" />{t("Back to home")}</Button>
           </div>
         </div>
       </Surface>

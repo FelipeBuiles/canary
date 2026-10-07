@@ -20,6 +20,7 @@ const pathPattern = /^\/[a-z/:_-]{0,80}$/;
 const staticPaths = new Set([
   "/", "/library", "/samples", "/login", "/signup", "/reset-password", "/account", "/credits", "/backoffice",
   "/legal/terms", "/legal/privacy", "/legal/acceptable-use",
+  "/es", "/fr", "/how-it-works", "/pricing", "/about", "/guides/turn-a-novel-into-a-comic", "/examples/kaitlin-out-of-space",
 ]);
 const projectRooms = new Set(["story", "cast", "pages", "book", "styles", "settings"]);
 

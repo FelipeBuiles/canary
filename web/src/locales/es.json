@@ -3377,5 +3377,12 @@
   "↺ RETRY PANEL PREPARATION": "↺ REINTENTAR PREPARACIÓN",
   "▶ DRAW ALL PANELS": "▶ DIBUJAR TODAS LAS VIÑETAS",
   "Published part": "Parte publicada",
-  "Replace the series public book with this part": "Reemplazar el libro público de la serie con esta parte"
+  "Replace the series public book with this part": "Reemplazar el libro público de la serie con esta parte",
+  "landing.footer.product": "Producto",
+  "landing.footer.workflow": "Cómo funciona",
+  "landing.footer.pricing": "Precios",
+  "landing.footer.guide": "Guía de novela a cómic",
+  "landing.footer.example": "Ejemplo de cómic",
+  "landing.footer.about": "Acerca de",
+  "Please check the address, or return to Scenewright.": "Comprueba la dirección o vuelve a Scenewright."
 }

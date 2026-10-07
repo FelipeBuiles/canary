@@ -12,7 +12,7 @@ FROM node:24.21.0-bookworm-slim AS frontend
 # They stay in the frontend builder; the final Python image copies only dist.
 # PostHog's source-map CLI needs the system CA bundle for HTTPS uploads.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates python3 make g++ pkg-config libcairo2-dev libpango1.0-dev \
+    ca-certificates fonts-dejavu-core python3 make g++ pkg-config libcairo2-dev libpango1.0-dev \
     libjpeg-dev libgif-dev librsvg2-dev \
     && test -s /etc/ssl/certs/ca-certificates.crt \
     && rm -rf /var/lib/apt/lists/*
@@ -21,6 +21,7 @@ COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
 COPY novel_to_comic/src/novel_to_comic/lettering/ /build/novel_to_comic/src/novel_to_comic/lettering/
+COPY novel_to_comic/src/novel_to_comic/sample_stories/ /build/novel_to_comic/src/novel_to_comic/sample_stories/
 # Release metadata must not invalidate dependency installation layers.
 ARG CANARY_VERSION=unknown
 ARG CANARY_BUILD_TIMESTAMP=unknown
