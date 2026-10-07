@@ -59,6 +59,8 @@ retained as current reference.
   audit, coverage-preserving trimming, and real-browser fixture reuse.
 - [Stage contracts](reference/stage-contracts.md): source-owned stage authority,
   user gates, correction jobs, recovery, and generated-output compatibility.
+- [Textract close-up OCR](reference/textract-ocr.md): opt-in hosted verification,
+  durable evidence, bounded submissions and Canary-funded costs.
 - [Local crop OCR experiment](reference/crop-ocr-experiment.md): opt-in blind
   PaddleOCR verification, provider-free replay and measured local limits.
 - [Agent context](reference/agent-context.md): concise workflow and code navigation.
@@ -73,6 +75,9 @@ retained as current reference.
 
 ## Active future work
 
+- [Textract second-pass OCR](proposals/textract-second-pass-ocr.md): October 7
+  architecture and cost exploration, account-specific credit-access limits,
+  and a bounded pilot proposal; no live OCR or production activation.
 - [AWS Lightsail migration design](proposals/aws-lightsail-migration.md): October 6
   decision history and original assumptions. The current deployment entry points
   above supersede its sequencing and export-delivery choices.

@@ -3435,5 +3435,8 @@
   "Check your details and try again.": "Vérifiez vos informations et réessayez.",
   "The connection was interrupted": "La connexion a été interrompue",
   "Check your connection and try again.": "Vérifiez votre connexion et réessayez.",
-  "This reference could not be completed.": "Cette référence n’a pas pu être terminée."
+  "This reference could not be completed.": "Cette référence n’a pas pu être terminée.",
+  "A close-up check did not return a result. Saved evidence is kept. You can retry the text check at no extra credit cost.": "Une vérification du texte en gros plan n’a pas renvoyé de résultat. Les résultats enregistrés sont conservés. Vous pouvez relancer la vérification sans dépenser de crédits supplémentaires.",
+  "Some close-up checks are unfinished. You can retry the text check at no extra credit cost.": "Certaines vérifications du texte en gros plan sont inachevées. Vous pouvez relancer la vérification sans dépenser de crédits supplémentaires.",
+  "Close-up result unavailable": "Résultat de la vérification en gros plan indisponible"
 }

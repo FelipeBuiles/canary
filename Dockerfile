@@ -138,6 +138,7 @@ RUN /app/.venv-litellm/bin/python /app/patch_anthropic_refusals.py
 COPY litellm/config.yaml /app/config.yaml
 COPY litellm_handlers/__init__.py litellm_handlers/provider_wire.py litellm_handlers/fal_provider.py litellm_handlers/openai_image_stream.py litellm_handlers/vertex_multimodal.py /app/litellm_handlers/
 COPY litellm_handlers/image_previews.py /app/litellm_handlers/
+COPY litellm_handlers/textract.py /app/litellm_handlers/
 
 # Copy the merged entrypoint (materializes GCP creds → starts litellm → waits
 # for readiness → supervises litellm and the web process together).

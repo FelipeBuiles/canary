@@ -34,7 +34,8 @@ def compact_params(params: dict[str, Any]) -> dict[str, Any]:
 
 def compact_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     result = _scalars(metadata, "page_number is_correction funding subscription_runtime "
-                      "codex_reasoning_model pricing_estimate_drift_pct api_equivalent_cost_usd")
+                      "codex_reasoning_model pricing_estimate_drift_pct api_equivalent_cost_usd "
+                      "cost_owner region crop_sha256")
     context = metadata.get("metadata")
     if isinstance(context, dict):
         result.update(_scalars(context, "source_scope"))
