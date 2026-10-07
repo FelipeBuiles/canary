@@ -164,13 +164,13 @@ it("keeps a failed proof retryable while a batch draws the others", () => {
 });
 
 it("reloads a saved proof image that failed to load", async () => {
-  const { container } = render(card());
+  render(card());
   await act(() => new Promise((resolve) => setTimeout(resolve, 2)));
-  const first = container.querySelector("img")!.getAttribute("src");
-  fireEvent.error(container.querySelector("img")!);
-  expect(screen.getAllByText("PROOF IMAGE UNAVAILABLE").length).toBeGreaterThan(0);
+  const first = screen.getByRole("img", { name: suggestion.label }).getAttribute("src");
+  fireEvent.error(screen.getByRole("img", { name: suggestion.label }));
+  expect(screen.getByText("PROOF IMAGE UNAVAILABLE")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "TRY SAMPLE AGAIN" })).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "RELOAD PROOF" }));
   expect(screen.queryByText("PROOF IMAGE UNAVAILABLE")).toBeNull();
-  expect(container.querySelector("img")!.getAttribute("src")).not.toBe(first);
+  expect(screen.getByRole("img", { name: suggestion.label }).getAttribute("src")).not.toBe(first);
 });

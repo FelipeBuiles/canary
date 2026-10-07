@@ -90,6 +90,11 @@ export function StyleProofCard({
     timestamp,
   );
 
+  const reloadProof = () => {
+    setImgFailed(false);
+    setTimestamp(Date.now());
+  };
+
   useEffect(() => {
     if (!suggestion.has_sample) return;
     const timer = window.setTimeout(() => setImgFailed(false), 0);
@@ -100,10 +105,7 @@ export function StyleProofCard({
     const wasGeneratingValue = wasGenerating.current;
     wasGenerating.current = isGenerating;
     if (!wasGeneratingValue || isGenerating) return;
-    const timer = window.setTimeout(() => {
-      setImgFailed(false);
-      setTimestamp(Date.now());
-    }, 0);
+    const timer = window.setTimeout(reloadProof, 0);
     return () => window.clearTimeout(timer);
   }, [isGenerating]);
 
@@ -167,7 +169,7 @@ export function StyleProofCard({
                 </Button>
               )}
               {suggestion.has_sample && (
-                <Button variant="outline" size="xs" onClick={() => { setImgFailed(false); setTimestamp(Date.now()); }}>
+                <Button variant="outline" size="xs" onClick={reloadProof}>
                   <RotateCcw size={14} aria-hidden="true" />{t("RELOAD PROOF")}
                 </Button>
               )}
