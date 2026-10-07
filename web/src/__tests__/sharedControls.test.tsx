@@ -82,6 +82,15 @@ describe("selection controls", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 
+  it("closes the open menu when the window resizes", async () => {
+    const user = userEvent.setup();
+    render(<Select aria-label="Look" value="a" options={[{ value: "a", label: "Analog" }, { value: "b", label: "Brush" }]} onValueChange={() => undefined} />);
+    await user.click(screen.getByRole("button", { name: "Look" }));
+    expect(screen.getByRole("listbox")).toBeTruthy();
+    fireEvent(window, new Event("resize"));
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
   it("preserves native field naming, required validation and submitted values", () => {
     const change = vi.fn();
     render(<form aria-label="Settings"><label htmlFor="language">Output language</label><SelectField id="language" name="target_language" required defaultValue="" onChange={change} aria-describedby="hint">
