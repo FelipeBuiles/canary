@@ -1,6 +1,6 @@
 import type { ComponentProps } from "react";
 import type * as ProjectLanguageModule from "../components/lettering/ProjectLetteringLanguage";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import type { LetteringStyle, PageLettering } from "@lettering-engine";
@@ -65,7 +65,7 @@ beforeEach(() => {
   api.style.mockResolvedValue({ style: initial().style, presets: { literary: initial().style } });
   api.put.mockImplementation(async (_project, _page, state) => ({ ...initial(), state: { ...state, revision: 2 }, saved_revision: 2 }));
 });
-afterEach(() => { clients.forEach(client => client.clear()); clients.length = 0; vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); clients.forEach(client => client.clear()); clients.length = 0; vi.restoreAllMocks(); });
 describe("Pages-room lettering", () => {
   it("asks the author to confirm placement instead of claiming an unreviewed page is saved", async () => {
     api.get.mockResolvedValue({ ...initial(), placement_review_needed: true });
@@ -279,7 +279,7 @@ describe("Pages-room lettering", () => {
     expect(api.put.mock.calls[0][2].elements[0].text_by_locale.source).toBe("A new sentence.");
     expect(api.put.mock.calls[0][2].comic_page_sha256).toBe(initial().state.comic_page_sha256);
     await waitFor(() => expect(screen.getByText("Saved")).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: /Undo/ }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Undo/ })); });
     expect((copy as HTMLTextAreaElement).value).toBe("The door opened.");
   });
   it("clears the recovery draft when undo returns to saved wording, including after reopening", async () => {
@@ -348,7 +348,7 @@ describe("Pages-room lettering", () => {
     expect(before).toBeLessThan(initial().state.elements[0].placement.width);
     fireEvent.keyDown(screen.getByRole("button", { name: "Resize selected lettering" }), { key: "ArrowRight" });
     expect(parseFloat(hit.style.width) / 100).toBeCloseTo(before + .001, 5);
-    fireEvent.click(screen.getByRole("button", { name: /Undo/ }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Undo/ })); });
     expect(parseFloat(hit.style.width) / 100).toBeCloseTo(before, 5);
   });
   it("allows clearing a numeric field without snapping back on the first key", () => {
@@ -422,7 +422,7 @@ describe("Pages-room lettering", () => {
     fireEvent.focus(size);
     fireEvent.change(size, { target: { value: "" } });
     expect(size.value).toBe("");
-    fireEvent.click(within(book.getByRole("radiogroup", { name: "Type of lettering" })).getByRole("radio", { name: "Sound effect" }));
+    await act(async () => { fireEvent.click(within(book.getByRole("radiogroup", { name: "Type of lettering" })).getByRole("radio", { name: "Sound effect" })); });
     expect((book.getByRole("spinbutton", { name: "Size" }) as HTMLInputElement).value).toBe(String(initial().style.roles.sfx.max_font_size));
   });
   it("keeps page edits locked until translated lettering is adopted", async () => {

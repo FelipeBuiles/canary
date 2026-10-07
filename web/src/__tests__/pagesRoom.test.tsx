@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -273,6 +273,7 @@ function renderRoom(url = "/project/demo/pages") {
       <I18nProvider>
         <Routes>
           <Route path="/project/:id/pages" element={<><PagesRoom /><LocationProbe /></>} />
+          <Route path="/project/:id/story" element={<h1>Story brief</h1>} />
         </Routes>
       </I18nProvider>
     </MemoryRouter></QueryClientProvider>,
@@ -334,6 +335,7 @@ describe("PagesRoom", () => {
   });
 
   afterEach(() => {
+    cleanup();
     usePipelineStore.setState(usePipelineStore.getInitialState());
   });
 
@@ -345,6 +347,7 @@ describe("PagesRoom", () => {
     expect(screen.getByText("Approve your brief first")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Start this step" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Review and approve brief" }));
+    expect(screen.getByRole("heading", { name: "Story brief" })).toBeTruthy();
     expect(runPipeline).not.toHaveBeenCalled();
   });
 
@@ -1126,7 +1129,7 @@ describe("PagesRoom", () => {
     expect(runPipeline).not.toHaveBeenCalled();
   });
 
-  it.each(["provider_blocked", "generation_error", "empty_response"] as const)("offers less-graphic recovery for %s without automatic generation", (classification) => {
+  it.each(["provider_blocked", "generation_error", "empty_response"] as const)("offers less-graphic recovery for %s without automatic generation", async (classification) => {
     includeUndrawnPage = true;
     generationJobResults = [{
       id: "job-page-16",
@@ -1147,7 +1150,7 @@ describe("PagesRoom", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "DRAW LESS GRAPHIC VERSION" }));
     expect(generatePage).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "CONFIRM DRAW" }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "CONFIRM DRAW" })); });
     expect(generatePage).toHaveBeenLastCalledWith(
       { project: "demo", pageNumber: 2, depiction: "less_graphic" },
       expect.any(Object),
@@ -1298,7 +1301,7 @@ describe("PagesRoom", () => {
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
-  it("does not let a historical generation failure mask recoverable evidence or recovered analysis", () => {
+  it("does not let a historical generation failure mask recoverable evidence or recovered analysis", async () => {
     analysisChecked = false;
     persistedRenderedFailure = {
       phase: "analysis", classification: "analysis_error", recoverable: true,
@@ -1315,7 +1318,7 @@ describe("PagesRoom", () => {
     room.unmount();
     analysisChecked = true;
     briefApproved = true;
-    renderRoom();
+    await act(async () => { renderRoom(); });
     expect(screen.queryByRole("button", { name: "RETRY TEXT CHECK" })).toBeNull();
     expect(screen.queryByText("Old generic failure")).toBeNull();
   });

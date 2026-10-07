@@ -1,6 +1,6 @@
 # Dependency maintenance
 
-**Status: Current.** Manifest and compatibility review: September 18, 2026.
+**Status: Current.** Manifest and compatibility review: October 7, 2026.
 Versions below describe the checked-in dependency refresh, not a production
 rollout. The manifests, lockfiles, Dockerfiles and CI remain authoritative.
 
@@ -69,6 +69,29 @@ not this selected-highlights table, contain the complete inventory.
 
 ## Compatibility decisions
 
+### Application TestClient dependencies
+
+The application lock selects Starlette 1.7.0. Its TestClient uses `httpx2` 2.5.0,
+installed through the `dev` extra, avoiding the deprecated legacy TestClient
+transport and AnyIO portal import. Provider transports continue to use
+`httpx` 0.28.1 with their existing exception and retry contracts.
+See the [Starlette release notes](https://starlette.dev/release-notes/).
+
+### Reviewed npm install scripts
+
+`web/package.json` explicitly allows the reviewed `@posthog/cli@0.16.2` binary
+installer and `canvas@3.2.3` native binding installer. It denies the `core-js`
+postinstall banner and `fsevents` lifecycle scripts; the macOS fsevents binding
+already ships in its package. Version-specific approvals require review when
+those installers change. Use `npm install-scripts ls` after a locked install
+to identify packages awaiting review.
+
+Canvas remains installed for real jsdom/canvas and lettering checks. Its
+transitive `prebuild-install@7.1.3` installer is deprecated upstream; canvas
+3.2.3 still uses it. Revisit this when canvas ships a supported replacement,
+and verify native drawing on macOS and the Linux image rather than suppressing
+the notice or removing graphics coverage.
+
 ### Keep TypeScript on the supported 6.0 line
 
 The reviewed registry publishes TypeScript 7, but `typescript-eslint` 8.70.0
@@ -110,15 +133,26 @@ some application tests. It covers multipart and buffered HTTP failures,
 Anthropic refusal metadata in streaming and non-streaming responses, Google
 image controls, input images, usage/cost mapping and retry classification.
 
-Both gateway patch scripts fail the build when their upstream anchors or
+The three gateway patch scripts fail the build when their upstream anchors or
 installed targets are missing. The HTTP patch preserves provider status/body
 without consuming or copying a submitted image into the sanitized exception.
 The refusal patch preserves metadata only; it does not change request policy.
+The stream-inspection patch excludes Pydantic metadata names before accessing
+instance getters, avoiding `model_fields` and `model_computed_fields`
+deprecations. Its regressions treat those deprecations as errors while checking
+empty, whitespace, text, tool, provider, finish and usage chunks. All three
+patches run in both Dockerfiles, local gateway checks and CI; changing a patch
+also changes the development gateway's build fingerprint.
 Reapplying a recognized patch is harmless. Unknown layouts require review.
 
-Sentry tests preserve disabled-by-default tracing/replay, masked replay media,
+LiteLLM's generic schemas still emit Pydantic `ReadOnly` dictionary notices.
+They describe an upstream runtime-validation limitation; Canary does not enable
+Langfuse because that generic callback schema mentions it. These notices remain
+visible, with no blanket warning filter or Pydantic downgrade.
+
+PostHog tests preserve disabled-by-default tracing/replay, masked replay media,
 bounded sample rates, sensitive-header redaction and identity clearing. They do
-not send telemetry. The frontend audit now delegates to npm without the old
+not send telemetry. The frontend audit delegates to npm without the old
 React Router advisory exception or a custom JSON parser that could hide errors.
 
 FastAPI route assertions use the public OpenAPI paths rather than assuming all
@@ -136,8 +170,35 @@ pointer handlers and moving connection-state transitions to user actions.
 Normal PR CI installs the checked-in locks, checks peer/dependency consistency,
 runs backend and browser tests, lints and compiles the frontend, builds the
 production Docker image, and tests/builds the real gateway. Python production environments are exported without the editable
-project and audited with `pip-audit`; npm audits cover application and tooling.
+project and audited with pinned `pip-audit --require-hashes --disable-pip`;
+the exported lock already includes hashes. npm audits cover application and tooling.
 An audit failure is not waived automatically.
+
+The complete local gate and the web CI job build before running browser tests
+and separately exercise backend built-page contracts. The source-only backend
+runner still hides the real frontend build. Use `./scripts/check_all.sh --verbose`
+to expose passing browser diagnostics as well as build output. Frontend fixtures
+unmount components before clearing their subscribed stores or query clients,
+and await asynchronous refresh/font state changes. Image-viewer preloads are
+deduplicated by URL, including the two-image previous/next case.
+
+October 7 warning remediation passed the complete local gate: 3,593 backend
+tests (63 explicit skips), 37 built-page contracts, 1,043 frontend tests and
+120 gateway tests. Audits, lint, docs reliability and the production web build
+passed. The backend also passed on isolated Python 3.12, matching CI, as well
+as local Python 3.13. Frontend diagnostics and the application's TestClient
+deprecations were absent; the gateway retained only four upstream `ReadOnly`
+notices. A clean npm install reported no unreviewed scripts, with native canvas,
+macOS fsevents and the PostHog CLI verified.
+
+The standalone gateway image and both database-free and disposable
+PostgreSQL-backed startup smokes passed. After disk space was freed, the local
+Linux ARM64 production image built and exported successfully, including the
+patched SDK, Linux canvas install, frontend build and Prisma generation.
+Application, queue, gateway proxy and callback imports passed in that image
+with networking disabled. CI still verifies the release's Linux AMD64 image.
+Prisma's existing `binaryTargets` support notice and canvas's installer
+deprecation remain upstream maintenance items.
 
 For a deliberate update, first inspect upstream release notes and peer ranges,
 then update the manifests and regenerate locks:
@@ -163,6 +224,7 @@ use `docker compose down -v` against persistent user data as an upgrade step.
 
 CI and disposable integration smoke tests do not prove live provider output
 quality, account authentication, Stripe payments, Sentry delivery or a production
-migration. Those remain credentialed, controlled rollout checks. Deployment
-still requires a human-triggered main-branch workflow, all validation jobs, the
+migration. Those remain credentialed, controlled rollout checks. Main-branch
+pushes and manually requested main-branch workflows build a release. With
+`CANARY_DEPLOY_TARGET=lightsail`, deployment follows all validation jobs, the
 existing drain/idle barrier and post-deployment version verification.

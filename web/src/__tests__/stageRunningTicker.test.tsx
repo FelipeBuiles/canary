@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { StagePlaceholder, StageRunning } from "../components/composites/StagePlaceholder";
@@ -10,6 +10,7 @@ function renderStage(stage: ReactElement) {
 }
 
 afterEach(() => {
+  cleanup();
   usePipelineStore.setState({ events: [] });
 });
 

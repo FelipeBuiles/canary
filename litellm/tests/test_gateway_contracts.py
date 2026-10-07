@@ -95,6 +95,54 @@ def test_proxy_preview_patch_compiles_and_is_idempotent():
         patch.patch_proxy_source("unreviewed upstream layout")
 
 
+def test_stream_metadata_patch_is_present_idempotent_and_fails_closed():
+    module = import_module("litellm.litellm_core_utils.model_response_utils")
+    source = Path(module.__file__).read_text()
+    patch = load_patch("patch_model_response")
+    original = source
+    for old, new in patch.PATCHES:
+        assert source.count(new) == 1
+        original = original.replace(new, old)
+    assert patch.patch_source(original) == source
+    assert patch.patch_source(source) == source
+    compile(source, module.__file__, "exec")
+    with pytest.raises(RuntimeError):
+        patch.patch_source("unreviewed upstream layout")
+    with pytest.raises(RuntimeError):
+        patch.patch_source(original.replace(patch.CHOICE_OLD, patch.CHOICE_NEW))
+    with pytest.raises(RuntimeError):
+        patch.patch_source(original + patch.DELTA_OLD)
+
+
+@pytest.mark.filterwarnings("error::pydantic.warnings.PydanticDeprecatedSince211")
+@pytest.mark.parametrize("content,empty", [(None, True), ("", True), (" ", False), ("\n", False), ("text", False)])
+def test_empty_stream_inspection_preserves_whitespace_without_instance_metadata(content, empty):
+    from litellm.litellm_core_utils.model_response_utils import is_model_response_stream_empty
+    from litellm.types.utils import Delta, ModelResponseStream, StreamingChoices
+
+    chunk = ModelResponseStream(choices=[StreamingChoices(delta=Delta(content=content))])
+    assert is_model_response_stream_empty(chunk) is empty
+
+
+@pytest.mark.filterwarnings("error::pydantic.warnings.PydanticDeprecatedSince211")
+@pytest.mark.parametrize("delta_fields,choice_fields,stream_fields", [
+    ({"tool_calls": [{"index": 0, "id": "tool-1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}]}, {}, {}),
+    ({"provider_specific_fields": {"reasoning": "fixture"}}, {}, {}),
+    ({}, {"finish_reason": "stop"}, {}),
+    ({}, {"provider_specific_fields": {"stop_details": "fixture"}}, {}),
+    ({}, {}, {"usage": {"prompt_tokens": 1, "completion_tokens": 0, "total_tokens": 1}}),
+])
+def test_empty_stream_inspection_retains_provider_tool_finish_and_usage_fields(delta_fields, choice_fields, stream_fields):
+    from litellm.litellm_core_utils.model_response_utils import is_model_response_stream_empty
+    from litellm.types.utils import Delta, ModelResponseStream, StreamingChoices
+
+    chunk = ModelResponseStream(
+        choices=[StreamingChoices(delta=Delta(content=None, **delta_fields), **choice_fields)],
+        **stream_fields,
+    )
+    assert not is_model_response_stream_empty(chunk)
+
+
 def test_real_gateway_and_supported_custom_handlers_are_loaded():
     import yaml
     from litellm.llms.custom_llm import CustomLLM

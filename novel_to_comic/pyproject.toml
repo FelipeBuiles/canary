@@ -37,6 +37,7 @@ web = [
   "psycopg[binary]>=3.3,<4",
 ]
 dev = [
+  "httpx2>=2.5.0,<3",
   "pytest>=9.1.1,<10",
   "pytest-xdist>=3.8,<4",
   "ruff>=0.16.8,<0.17",

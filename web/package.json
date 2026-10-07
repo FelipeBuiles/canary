@@ -56,6 +56,12 @@
     "vitest": "^5.0.1",
     "@posthog/rollup-plugin": "^1.6.1"
   },
+  "allowScripts": {
+    "@posthog/cli@0.16.2": true,
+    "canvas@3.2.3": true,
+    "core-js": false,
+    "fsevents": false
+  },
   "engines": {
     "node": ">=24.15.0 <25"
   }
