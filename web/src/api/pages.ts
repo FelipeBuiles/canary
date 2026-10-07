@@ -63,8 +63,11 @@ export function pageRenderPreviewUrl(
 export function analyzeCompletePage(
   project: string,
   pageNumber: number,
+  options: { secondLookOnly?: boolean } = {},
 ): Promise<CompletePageDetail["analyses"][number]> {
-  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/analyze`, {
+  // A second look retries only Canary-funded close-up reads; it never buys a primary read.
+  const query = options.secondLookOnly ? "?second_look_only=true" : "";
+  return apiFetch(`${projectPath(project)}/pages/${pageNumber}/analyze${query}`, {
     paidAction: true, method: "POST",
   });
 }

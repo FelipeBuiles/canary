@@ -3438,5 +3438,22 @@
   "This reference could not be completed.": "This reference could not be completed.",
   "A close-up check did not return a result. Saved evidence is kept. You can retry the text check at no extra credit cost.": "A close-up check did not return a result. Saved evidence is kept. You can retry the text check at no extra credit cost.",
   "Some close-up checks are unfinished. You can retry the text check at no extra credit cost.": "Some close-up checks are unfinished. You can retry the text check at no extra credit cost.",
-  "Close-up result unavailable": "Close-up result unavailable"
+  "Close-up result unavailable": "Close-up result unavailable",
+  "This was read the same way twice, so the artwork probably differs from the script. Compare it with the artwork before making changes.": "This was read the same way twice, so the artwork probably differs from the script. Compare it with the artwork before making changes.",
+  "A closer look matches the script, so the artwork is probably fine. If it looks right, choose Not a problem.": "A closer look matches the script, so the artwork is probably fine. If it looks right, choose Not a problem.",
+  "This lettering was hard to read. Compare the artwork with the script before making changes.": "This lettering was hard to read. Compare the artwork with the script before making changes.",
+  "Read the same way twice.": "Read the same way twice.",
+  "A closer look reads “{text}”, matching the script.": "A closer look reads “{text}”, matching the script.",
+  "Hard to read, even up close.": "Hard to read, even up close.",
+  "Not double-checked.": "Not double-checked.",
+  "Script:": "Script:",
+  "On the page:": "On the page:",
+  "SCRIPT": "SCRIPT",
+  "ON THE PAGE": "ON THE PAGE",
+  "CLOSER LOOK": "CLOSER LOOK",
+  "Probably a misread": "Probably a misread",
+  "Hard to read": "Hard to read",
+  "This lettering hasn’t been double-checked yet. Compare the artwork with the script, or double-check it now at no cost.": "This lettering hasn’t been double-checked yet. Compare the artwork with the script, or double-check it now at no cost.",
+  "DOUBLE-CHECK": "DOUBLE-CHECK",
+  "DOUBLE-CHECKING…": "DOUBLE-CHECKING…"
 }

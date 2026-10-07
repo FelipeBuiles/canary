@@ -374,11 +374,9 @@ def _crop_reader():
 
 def _analysis_validator_version(reader=None):
     from novel_to_comic.crop_ocr import validator_version
-    from novel_to_comic import textract_ocr
 
-    if textract_ocr.enabled():
-        return f"{DRAW_VALIDATOR_VERSION}:hosted-crop:{textract_ocr.fingerprint()}"
-
+    # Hosted close-up evidence is keyed by its own receipts and fingerprint, so
+    # enabling it or retuning its interpretation never stales saved checks.
     return validator_version(DRAW_VALIDATOR_VERSION, reader)
 
 

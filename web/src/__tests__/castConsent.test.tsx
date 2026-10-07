@@ -97,12 +97,14 @@ describe("cast consent", () => {
     expect(screen.getByRole("button", { name: "LOOKS RIGHT — CONTINUE →" }).hasAttribute("disabled")).toBe(false);
   });
 
-  it("keeps Continue disabled while a character sheet is being redrawn", () => {
+  it.each(["character redraw", "project job"])("hides Continue while a %s is active", (job) => {
     stageStatus = "awaiting_review";
-    redrawing = new Set(["a"]);
+    if (job === "character redraw") redrawing = new Set(["a"]);
+    else isRunning = true;
     renderCast();
-    expect(screen.getByText("A reference is still being drawn. Continue unlocks when it finishes.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "LOOKS RIGHT — CONTINUE →" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.queryByRole("button", { name: "LOOKS RIGHT — CONTINUE →" })).toBeNull();
+    expect(document.querySelector("footer")).toBeNull();
+    expect(approve).not.toHaveBeenCalled();
   });
 
   it("offers review instead of another generation once individually generated references are ready", () => {

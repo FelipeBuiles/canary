@@ -520,9 +520,13 @@ export function PagesRoom() {
     );
   }
 
+  const projectWorkActive = !!status?.is_running
+    || Object.values(status?.stages ?? {}).some((stage) => stage.status === "running")
+    || (generationJobs?.jobs ?? []).some((job) => job.status === "queued" || job.status === "running");
+
   // Starting over only makes sense once a first adaptation and page plan
   // have finished (or the plan failed); never while that first run is going.
-  const rerunAdaptation = id && status && status.stages.adapt?.status === "complete"
+  const rerunAdaptation = id && status && !projectWorkActive && status.stages.adapt?.status === "complete"
     && ["complete", "failed"].includes(status.stages.plan?.status ?? "pending") ? (
     <RerunStageAction
       project={id}
@@ -1097,7 +1101,7 @@ export function PagesRoom() {
         <p role="status" className="text-sm font-bold text-archive-sage">{t("No unresolved page findings. Read through the edition before export.")}</p>
       )}
 
-      {reviewIndex < 0 && <ApprovalBar
+      {reviewIndex < 0 && !projectWorkActive && drawingPages.size === 0 && !run.isPending && !generate.isPending && <ApprovalBar
         next={t("Run Finish preflight and export the book")}
         primaryLabel={t("CONTINUE TO BOOK")}
         onPrimary={continueToBook}

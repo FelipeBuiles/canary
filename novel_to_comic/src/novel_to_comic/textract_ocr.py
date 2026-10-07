@@ -10,8 +10,10 @@ import base64
 import hashlib
 import io
 import json
+import logging
 import math
 import os
+import re
 import threading
 import time
 import uuid
@@ -33,6 +35,9 @@ PREPROCESSING = "textract_png_crop_v1"
 CONVERTER = "textract_lines_v1"
 MAX_BYTES = 4_000_000
 _preparation = threading.Lock()
+logger = logging.getLogger(__name__)
+# A word split across lines at a hyphen: "WON-" / "DERFUL".
+_LINE_BREAK_HYPHEN = re.compile(r"(?<=[^\W\d_])- (?=[^\W\d_])")
 
 
 def enabled() -> bool:
@@ -151,6 +156,18 @@ def convert_lines(response: dict, width: int, height: int) -> tuple[CropOCRLine,
     return tuple(lines)
 
 
+def joined_variants(lines: tuple[CropOCRLine, ...]) -> tuple[str, ...]:
+    """Provider lines joined as written, plus forms rejoining hyphen-split words.
+
+    Lettering wraps inside balloons; a hyphenated wrap is one word, while a
+    compound broken at its hyphen keeps it. Any variant may match the first read.
+    """
+    plain = " ".join(line.text for line in lines)
+    if not _LINE_BREAK_HYPHEN.search(plain):
+        return (plain,)
+    return (plain, _LINE_BREAK_HYPHEN.sub("", plain), _LINE_BREAK_HYPHEN.sub("-", plain))
+
+
 def cached_report(*, page, render, extraction, disputed, artifacts) -> CropOCRReport:
     """No image preparation, network, SDK, or configuration subprocesses."""
     identity = plan_identity(render, extraction, disputed)
@@ -190,8 +207,9 @@ def cached_report(*, page, render, extraction, disputed, artifacts) -> CropOCRRe
                               else "unavailable" if attempts else "pending")
         verdict = "inconclusive"
         if status == "read" and lines and min(line.confidence for line in lines) >= TEXTRACT_MINIMUM_CONFIDENCE:
-            text = normalize_display_text(" ".join(line.text for line in lines))
-            verdict = "agrees" if text == normalize_display_text(item.text) else "disagrees"
+            primary = normalize_display_text(item.text)
+            verdict = ("agrees" if any(normalize_display_text(text) == primary for text in joined_variants(lines))
+                       else "disagrees")
         reads.append(CropOCRRead(observation_id=item.id, status=status, lines=lines,
             primary_text=item.text, verdict=verdict, bounds=crop.bounds if crop else None,
             crop_sha256=crop.sha256 if crop else None))
@@ -220,7 +238,7 @@ def _claim(*, artifacts, render, crop, expires_at, retry, retry_before) -> Textr
             return None
         resolver = get_pricing_resolver()
         price, _ = resolver._pricing_for(resolver.resolve_model(TEXTRACT_MODEL))
-        unit = Decimal(str(price["output_cost_per_document_page"]))
+        unit = Decimal(str((price or {}).get("output_cost_per_document_page", "NaN")))
         if not unit.is_finite() or unit <= 0:
             raise ValueError("Textract needs a configured positive unit price")
         attempt = TextractAttempt(attempt_id=uuid.uuid4().hex, page_number=render.page_number,
@@ -241,9 +259,17 @@ async def submit(config, image: bytes, attempt: TextractAttempt) -> dict:
     envelope = {"schema": "canary.crop-ocr/1", "image": base64.b64encode(image).decode(),
         "sha256": attempt.crop_sha256, "attempt_id": attempt.attempt_id, "expires_at": attempt.expires_at}
     async with asyncio.timeout(remaining), httpx.AsyncClient(timeout=remaining) as client:
-        response = await client.post(_base_url(config) + "/v1/chat/completions",
-            headers=_headers(config, attempt.attempt_id),
-            json={"model": attempt.model, "messages": [{"role": "user", "content": json.dumps(envelope)}], "stream": False})
+        try:
+            response = await client.post(_base_url(config) + "/v1/chat/completions",
+                headers=_headers(config, attempt.attempt_id),
+                json={"model": attempt.model, "messages": [{"role": "user", "content": json.dumps(envelope)}], "stream": False})
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            # No connection means the request never reached the gateway.
+            return {"status": "not_submitted", "error_code": "gateway_unreachable"}
+        # Gateway refusals (auth, validation, unknown route, rate limit) happen
+        # before the handler runs. A request timeout may not have.
+        if 400 <= response.status_code < 500 and response.status_code != 408:
+            return {"status": "not_submitted", "error_code": f"gateway_{response.status_code}"}
         response.raise_for_status()
         result = json.loads(response.json()["choices"][0]["message"]["content"])
     if (result.get("schema") != "canary.crop-ocr/1" or result.get("attempt_id") != attempt.attempt_id
@@ -280,12 +306,20 @@ def _record_usage(attempt, config):
 
 async def _execute(*, config, artifacts, attempt):
     from novel_to_comic.ai.client import _insert_event_async
-    # This record is a searchable projection. The durable artifact is authoritative.
+    # This record is a searchable projection. The durable artifact is authoritative,
+    # so a projection failure must not turn an unsent request into an unknown outcome.
     try:
         await _insert_event_async(event_id=attempt.attempt_id, model_alias=attempt.model, feature="draw.crop_ocr",
             operation="ocr", params_json={"region": attempt.region},
             request_summary_json={"crop_sha256": attempt.crop_sha256}, metadata_json={"funding": "api", "cost_owner": "canary"},
             estimated_cost_usd=float(Decimal(attempt.unit_price_usd)))
+    except asyncio.CancelledError:
+        artifacts.write_textract_attempt(attempt.model_copy(update={"status": "failed",
+            "finished_at": time.time(), "error_code": "cancelled_before_submission"}))
+        raise
+    except Exception:
+        logger.warning("Close-up OCR usage projection failed before submission", exc_info=True)
+    try:
         image = await asyncio.to_thread(artifacts.read_textract_crop, attempt.page_number,
             attempt.render_revision, attempt.recognition_sha256)
         if hashlib.sha256(image).hexdigest() != attempt.crop_sha256:

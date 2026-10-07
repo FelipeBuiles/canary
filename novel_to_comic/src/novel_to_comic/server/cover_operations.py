@@ -95,9 +95,13 @@ def needs_initial_project_cover(request: Request, pkey: str, project_dir: Path) 
 
 
 def _cover_characters(bible: StoryBible, project_dir: Path, limit: int = 3) -> list:
-    """The characters most present in this part's scenes, in story order."""
+    """The Cast identities most present in this part's scenes, in story order."""
+    from novel_to_comic.cast_roster import cast_story_bible
     from novel_to_comic.workspace import part_id_for_path
 
+    # Incidental source participants have no required image authority. Cover
+    # subjects must use the same roster that Cast designs and approves.
+    bible = cast_story_bible(bible, project_dir)
     part = part_id_for_path(project_dir)
     if part is None:
         return bible.characters[:limit]

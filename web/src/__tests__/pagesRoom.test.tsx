@@ -206,6 +206,7 @@ vi.mock("../api/queries", () => ({
   useAnalyzeCompletePage: () => ({ mutate: analyzePage, isPending: false }),
   useAcceptPageIssue: () => ({ mutate: vi.fn(), isPending: false }),
   useDismissPageIssue: () => ({ mutate: dismissIssue, isPending: false }),
+  useSecondLook: () => ({ mutate: vi.fn(), isPending: false, error: null }),
   useApproveStage: () => ({ mutate: continueToBook, isPending: false }),
   useRunPipeline: () => ({ mutate: runPipeline, isPending: false }),
   useCancelQueuedPageJobs: () => ({ mutate: cancelQueuedPages, isPending: false, error: null }),
@@ -351,8 +352,8 @@ describe("PagesRoom", () => {
     expect(runPipeline).not.toHaveBeenCalled();
   });
 
-  it("offers an adaptation rerun after drawing has begun, with explicit impact and consent", () => {
-    stageStatuses.draw = { status: "running", stale: true };
+  it("offers an adaptation rerun after drawing has stopped, with explicit impact and consent", () => {
+    stageStatuses.draw = { status: "failed", stale: true };
     renderRoom();
     expect(screen.getByRole("button", { name: /Start adaptation over/ }).closest("footer")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Start adaptation over/ }));
@@ -384,12 +385,37 @@ describe("PagesRoom", () => {
     expect((screen.getByRole("button", { name: /Start adaptation over/ }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it.each(["project", "page", "loading"])("disables adaptation rerun while %s work is active or unknown", (kind) => {
+  it.each(["project", "stage", "queued page", "running page"])("hides the action footer during %s work and restores it when work settles", (kind) => {
     projectRunning = kind === "project";
-    generationJobsLoading = kind === "loading";
-    if (kind === "page") generationJobResults = [{ id: "queued-page", status: "queued" }];
+    if (kind === "stage") stageStatuses.draw.status = "running";
+    if (kind === "queued page" || kind === "running page") {
+      generationJobResults = [{ id: "active-page", status: kind === "queued page" ? "queued" : "running", payload: { page_number: 1 } }];
+    }
+    const view = renderRoom();
+    expect(view.container.querySelector("footer")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Start adaptation over/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "CONTINUE TO BOOK" })).toBeNull();
+    view.unmount();
+    projectRunning = false;
+    stageStatuses.draw.status = "awaiting_review";
+    generationJobResults = [];
     renderRoom();
-    expect((screen.getByRole("button", { name: /Start adaptation over/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: /Start adaptation over/ }).closest("footer")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "CONTINUE TO BOOK" })).toBeTruthy();
+  });
+
+  it("hides the fallback footer while project work runs without loaded pages", () => {
+    projectRunning = true;
+    completePagesUnavailable = true;
+    const view = renderRoom();
+    expect(view.container.querySelector("footer")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Start adaptation over/ })).toBeNull();
+  });
+
+  it("disables adaptation rerun while generation jobs are loading", () => {
+    generationJobsLoading = true;
+    renderRoom();
+    expect(screen.getByRole("button", { name: /Start adaptation over/ })).toHaveProperty("disabled", true);
   });
 
   it.each(["loading", "failed"])("blocks rerun confirmation when the estimate is %s", (state) => {

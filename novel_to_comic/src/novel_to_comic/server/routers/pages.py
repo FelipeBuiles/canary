@@ -159,9 +159,8 @@ def _analysis_recovery(target: TargetArtifacts, page_number: int) -> dict:
         if (analysis.render_image_sha256 == render.image_sha256
                 and analysis.comic_page_sha256 == page.content_sha256
                 and analysis_is_current(analysis.validator_version)):
-            from novel_to_comic import textract_ocr
-            if textract_ocr.enabled() and analysis.crop_verification is not None and not analysis.crop_verification.complete:
-                return {"status": "requires_ocr", "requires_paid_call": True, "requires_primary_ocr": False}
+            # An unfinished optional second look never makes the page unchecked;
+            # the author retries it from the finding, at Canary's cost.
             return {"status": "checked", "requires_paid_call": False}
     except (ArtifactMissing, ArtifactInvalid):
         pass
@@ -700,8 +699,7 @@ def estimate_page_analysis(page_number: int, project=Depends(get_project)):
             raise HTTPException(409, "Page render is unavailable")
     except ArtifactMissing as exc:
         raise HTTPException(409, str(exc)) from exc
-    recovery = _analysis_recovery(target, page_number)
-    requires_call = recovery.get("requires_primary_ocr", recovery["requires_paid_call"])
+    requires_call = _analysis_recovery(target, page_number)["requires_paid_call"]
     funding = classify_operations(page_check_operations(project[1]) if requires_call else ())
     return dict(credit_estimate_for_provider_cost(
         float(PAGE_OCR_ESTIMATED_COST_USD) if requires_call else 0.0,
@@ -780,15 +778,14 @@ def estimate_missing_page_checks(project=Depends(get_project)):
         for selected in target.read_plan().pages
     ]
     paid = sum(item["requires_paid_call"] for item in pages)
-    charged = sum(item.get("requires_primary_ocr", item["requires_paid_call"]) for item in pages)
-    funding = classify_operations(page_check_operations(project[1]) if charged else ())
+    funding = classify_operations(page_check_operations(project[1]) if paid else ())
     estimate = dict(credit_estimate_for_provider_cost(
         float(PAGE_OCR_ESTIMATED_COST_USD), "draw", reserve=True,
         funding=funding,
     ))
     for key in ("estimate_credits", "reserved_credits"):
         if estimate.get(key) is not None:
-            estimate[key] *= charged
+            estimate[key] *= paid
     return {**estimate, "pages": pages, "paid_pages": paid}
 
 
@@ -843,12 +840,14 @@ async def analyze_page(
     user_id: str = Depends(get_current_user),
     allow_paid: bool = True,
     expected_image_sha256: str | None = None,
+    second_look_only: bool = False,
 ):
     """Read an existing render back without regenerating the page.
 
     Analysis runs automatically after every draw, but it is a second provider
     call that can fail on its own. Recovering must not cost another page: this
-    re-reads the render already on disk.
+    re-reads the render already on disk. ``second_look_only`` retries just the
+    Canary-funded close-up reads and refuses any work needing a primary read.
     """
 
     project_dir, config, _state = project
@@ -865,10 +864,10 @@ async def analyze_page(
         from ..credited_job import run_credited_page_check
         from novel_to_comic.config import PAGE_OCR_ESTIMATED_COST_USD
         from novel_to_comic import textract_ocr
-        recovery = _analysis_recovery(target, page_number)
-        # Reserve the primary read unless this is known to be hosted-only.
-        # Cached evidence may be missing/invalid by the time the lock is acquired.
-        primary_needed = recovery.get("requires_primary_ocr", True)
+        # Saved primary observations are immutable; without them, reserve the read.
+        primary_needed = not target.raw_ocr_path(page_number, active.render.revision).is_file()
+        if second_look_only and primary_needed:
+            raise HTTPException(409, "This page needs a full text check before a second look")
         def cached_work():
             if hashlib.sha256(image).hexdigest() != active.render.image_sha256:
                 raise HTTPException(409, "Saved artwork bytes do not match render lineage")

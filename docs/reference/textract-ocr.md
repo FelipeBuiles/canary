@@ -12,8 +12,9 @@ Set `CANARY_TEXTRACT_ENABLED=true` in the application process to add a blind
 second read of disputed integrated/baked lettering during an admitted page
 check. The default is false. When enabled this replaces the local Paddle
 experiment; hybrid unwanted-lettering checks keep their existing behavior.
-The author sees the existing first/close-up comparison and uncertainty, with
-unfinished-check guidance. Canary absorbs the fee; first-pass OCR retains its
+The author sees one plain-language conclusion per difference (read the same
+way twice, a closer look matches the script, or hard to read/not yet
+double-checked); the raw reads stay behind the full-comparison disclosure. Canary absorbs the fee; first-pass OCR retains its
 existing funding rules.
 
 Only cropped PNG pixels reach the gateway's internal `ocr-textract` route.
@@ -23,8 +24,11 @@ jobs. The saved raw answer retains LINE/WORD blocks, confidence, geometry,
 request ID and model version. Comparison happens locally afterward.
 
 The converter requires complete LINE/WORD evidence and valid geometry. It uses
-the minimum line/word confidence with an experimental 0.98 threshold; this is
-not a calibrated accuracy claim. Overlapping adjacent lines remain inconclusive.
+the minimum line/word confidence with a provisional 0.80 threshold; this is
+not a calibrated accuracy claim. The gate is deliberately below the pilot's
+correct ~84% reads because a conclusion also requires the blind read to equal
+the first read or the script. Lines joined at a hyphenated wrap are compared as
+one word and as a kept compound. Overlapping adjacent lines remain inconclusive.
 Disagreement or low confidence cannot certify artwork, rewrite canonical copy,
 resolve visual concerns, or reset author dismissals. Missing regions and
 oversized crops stay inconclusive.
@@ -44,10 +48,17 @@ oversized crops stay inconclusive.
 - No SDK retries, application repair loop or provider fallback. Each crop
   attempt is written atomically before submission. Identical pixels in the
   same render reuse successful recognition even after validator changes.
+  Enabling the reader or retuning its threshold does not change the Draw
+  validator version, so saved page checks stay current; new interpretation
+  applies when a page is next checked.
 - Crashes/timeouts leave an explicit unknown outcome. Automatic Draw recovery,
-  GETs and free recovery never resubmit it. An explicit text-check action can
-  retry missing/failed/unknown work after an active attempt's deadline;
-  successful crops are retained. A lost response may still incur AWS cost.
+  GETs and free recovery never resubmit it. An unfinished second look leaves
+  the page checked; the finding's free Double-check action
+  (`second_look_only`) can retry missing/failed/unknown work after an active
+  attempt's deadline; successful crops are retained. A lost response may
+  still incur AWS cost. Unreachable-gateway and gateway 4xx refusals (except
+  408) are known failures, and a usage-projection failure never blocks or
+  reclassifies submission.
 
 `TargetArtifacts` stores plans, cropped bytes and attempts under the render's
 analysis directory. The plan records source hash, bounds and dimensions;

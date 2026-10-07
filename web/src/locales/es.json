@@ -3438,5 +3438,22 @@
   "This reference could not be completed.": "No se ha podido completar esta referencia.",
   "A close-up check did not return a result. Saved evidence is kept. You can retry the text check at no extra credit cost.": "Una comprobación del texto ampliado no devolvió ningún resultado. Se conservan los resultados guardados. Puedes volver a comprobar el texto sin gastar créditos adicionales.",
   "Some close-up checks are unfinished. You can retry the text check at no extra credit cost.": "Algunas comprobaciones del texto ampliado están pendientes. Puedes volver a comprobar el texto sin gastar créditos adicionales.",
-  "Close-up result unavailable": "Resultado del texto ampliado no disponible"
+  "Close-up result unavailable": "Resultado del texto ampliado no disponible",
+  "This was read the same way twice, so the artwork probably differs from the script. Compare it with the artwork before making changes.": "La lectura coincidió dos veces, así que el dibujo probablemente difiere del guion. Compáralo con el dibujo antes de hacer cambios.",
+  "A closer look matches the script, so the artwork is probably fine. If it looks right, choose Not a problem.": "Una lectura más detallada coincide con el guion, así que el dibujo probablemente está bien. Si se ve correcto, elige No es un problema.",
+  "This lettering was hard to read. Compare the artwork with the script before making changes.": "Este rotulado era difícil de leer. Compara el dibujo con el guion antes de hacer cambios.",
+  "Read the same way twice.": "Leído igual dos veces.",
+  "A closer look reads “{text}”, matching the script.": "Una lectura más detallada dice «{text}», como el guion.",
+  "Hard to read, even up close.": "Difícil de leer, incluso de cerca.",
+  "Not double-checked.": "Sin verificar dos veces.",
+  "Script:": "Guion:",
+  "On the page:": "En la página:",
+  "SCRIPT": "GUION",
+  "ON THE PAGE": "EN LA PÁGINA",
+  "CLOSER LOOK": "LECTURA DETALLADA",
+  "Probably a misread": "Probablemente una lectura errónea",
+  "Hard to read": "Difícil de leer",
+  "This lettering hasn’t been double-checked yet. Compare the artwork with the script, or double-check it now at no cost.": "Este rotulado aún no se ha verificado dos veces. Compara el dibujo con el guion o verifícalo ahora sin coste.",
+  "DOUBLE-CHECK": "VERIFICAR DE NUEVO",
+  "DOUBLE-CHECKING…": "VERIFICANDO…"
 }
