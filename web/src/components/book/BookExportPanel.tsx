@@ -6,7 +6,6 @@ import type { FinishPreflight } from "../../types/api";
 import { ConfirmDrawer, EntityCard, SectionHeader } from "../composites";
 import { Button } from "../ui/Button";
 import { StatusPill } from "../ui/StatusPill";
-import { Surface } from "../ui/Surface";
 import { Stamp, useArrival } from "../ui/motion";
 
 type ExportFormat = "pdf" | "cbz";
@@ -48,9 +47,7 @@ export function BookExportPanel({
         <SectionHeader variant="underline" title={t("Take your book with you")} description={t("Choose a format for the way you read.")} />
       </div>
       {error && (
-        <Surface role="alert" tone="gold" padding="md" shadow="none" className="mb-4">
-          <p className="break-words font-body text-sm font-bold">{error.message}</p>
-        </Surface>
+        <ErrorNotice error={error} operation="export" />
       )}
       {!canExport && (
         <p className="mb-4 font-body text-sm leading-6 text-ink-muted">
@@ -141,3 +138,4 @@ function PrintedStamp({ saved }: { saved: boolean }) {
     </Stamp>
   );
 }
+import { ErrorNotice } from "../composites/ErrorNotice";

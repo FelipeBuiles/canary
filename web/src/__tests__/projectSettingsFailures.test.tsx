@@ -37,7 +37,7 @@ it("shows a failed save inline and announces a successful explicit reattempt", a
   const language = screen.getByRole("combobox", { name: "OUTPUT LANGUAGE" });
   await waitFor(() => expect((language as HTMLSelectElement).disabled).toBe(false));
   await user.selectOptions(language, "fr");
-  expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Could not save project settings");
+  expect((await screen.findByRole("alert")).textContent).toContain("Could not save project settings");
   expect(requests.save).toHaveBeenCalledTimes(1);
   await user.selectOptions(language, "fr");
   expect(await screen.findByRole("status")).toHaveProperty("textContent", "Settings saved.");
@@ -54,7 +54,8 @@ it("retains delete confirmation input on failure and only navigates after succes
   const input = within(dialog).getByRole("textbox");
   await user.type(input, "My project");
   await user.click(within(dialog).getByRole("button", { name: "Delete Project" }));
-  expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "Project is still draining");
+  expect((await within(dialog).findByRole("alert")).textContent).toContain("Project is still draining");
+  expect(within(dialog).getByText("Technical details").closest("details")?.open).toBe(false);
   expect(input).toHaveProperty("value", "My project");
   expect(requests.remove).toHaveBeenCalledTimes(1);
   await user.click(within(dialog).getByRole("button", { name: "Delete Project" }));
@@ -82,7 +83,7 @@ it("edits an existing project's model and restores account inheritance without s
   const select = await screen.findByRole("combobox", { name: "Adaptation" });
   expect(select).toHaveProperty("value", "opus");
   await user.selectOptions(select, "astra");
-  expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Could not save model choices");
+  expect((await screen.findByRole("alert")).textContent).toContain("Could not save model choices");
   expect(select).toHaveProperty("value", "opus");
   await user.selectOptions(select, "astra");
   await waitFor(() => expect(select).toHaveProperty("value", "astra"));

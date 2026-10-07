@@ -107,7 +107,8 @@ describe("Extraction refusal recovery", () => {
     setup(recovery);
     const select = await screen.findByRole("combobox", { name: "1. Extract" });
     fireEvent.change(select, { target: { value: "second" } });
-    await screen.findByText("API 503: Settings could not be saved");
+    const failure = await screen.findByText(/Settings could not be saved/);
+    expect(failure.closest("details")?.open).toBe(false);
     expect(screen.getByRole("button", { name: "Retry stage" })).toHaveProperty("disabled", true);
     expect(select).toHaveProperty("value", "first");
     saveError = false;

@@ -5,6 +5,7 @@ import { cn } from "../../lib/cn";
 import { Button } from "../ui/Button";
 import { TextField } from "../ui/Field";
 import { ShortcutHint } from "../ui/ShortcutHint";
+import { ErrorNotice } from "./ErrorNotice";
 
 export interface ConfirmModalProps {
   open: boolean;
@@ -13,7 +14,7 @@ export interface ConfirmModalProps {
   confirmInput?: string;
   confirmLabel?: string;
   busy?: boolean;
-  error?: string | null;
+  error?: Error | string | null;
   destructive?: boolean;
   onConfirm: () => void;
   onClose: () => void;
@@ -94,7 +95,7 @@ export function ConfirmModal({
           >
             {body}
           </p>
-          {error && <p role="alert" className="mt-4 text-sm text-hero-red">{error}</p>}
+          {error && <ErrorNotice error={error} operation="save" title="This action could not be completed." recovery="Check the current state before trying again." />}
 
           {confirmInput && (
             <div className="mt-4">

@@ -1,3 +1,4 @@
+import { ErrorNotice } from "./ErrorNotice";
 import { useState } from "react";
 import { Button } from "../ui/Button";
 import { useCreditBalance, useStageEstimate } from "../../api/queries";
@@ -32,7 +33,7 @@ export function CreditsGate({ project, stage, stageLabel, balance, required, rea
   const buyCredits = useBuyCredits();
   const { handleRun, isPending } = useRunAction();
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [startError, setStartError] = useState<string | null>(null);
+  const [startError, setStartError] = useState<Error | string | null>(null);
   const funded = shortfall === 0 && balanceQuery.data != null && !balanceQuery.isError;
   const unavailable = !funded || !estimate.data || estimate.isError || estimate.isFetching || isPending;
   const actionLabel = t("Resume {action}", { action: stageLabel });
@@ -45,7 +46,7 @@ export function CreditsGate({ project, stage, stageLabel, balance, required, rea
       actionLabel,
       onSuccess: () => setConfirmOpen(false),
       onError: (error) => {
-        setStartError(error.message);
+        setStartError(error);
         setConfirmOpen(false);
       },
     });
@@ -104,13 +105,13 @@ export function CreditsGate({ project, stage, stageLabel, balance, required, rea
             ) : <p className="font-body text-sm">{t("Credit packages are unavailable here. Open billing to try again.")}</p>}
           </div>
         )}
-        {buyCredits.error && <p role="alert" className="mt-4 font-body text-sm text-hero-red">{t("Checkout could not open. Your action is still paused. Try a package again or open billing.")} {buyCredits.error.message}</p>}
+        {buyCredits.error && <ErrorNotice error={buyCredits.error} operation="load" title="Checkout could not be opened." recovery="Checkout could not open. Your action is still paused. Try a package again or open billing." />}
         {buyCredits.data?.url && <a href={buyCredits.data.url} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex min-h-11 items-center font-body text-sm font-semibold underline underline-offset-4">{t("Open secure checkout")}</a>}
         <div className="mt-5 flex flex-wrap items-center gap-4">
           {reason === "persisted" && <Button className="min-h-11" disabled={unavailable} onClick={() => setConfirmOpen(true)}>{isPending ? t("Starting…") : actionLabel}</Button>}
           <a href="/credits" className="inline-flex min-h-11 items-center font-body text-sm font-semibold underline underline-offset-4">{t("Open billing")}</a>
         </div>
-        {startError && <p role="alert" className="mt-4 font-body text-sm text-hero-red">{startError}</p>}
+        {startError && <ErrorNotice error={startError} operation="generate" />}
         <ConfirmDrawer
           open={confirmOpen}
           title={actionLabel}

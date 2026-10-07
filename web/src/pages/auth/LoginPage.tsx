@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../../components/composites/ErrorNotice";
 import { useEffect, useState } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { getAuthProviders, supabase } from "../../lib/supabase";
@@ -44,7 +45,7 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
   const [studioName, setStudioName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -85,7 +86,7 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
         navigate(sampleDestination, { replace: true });
       }
     } catch (error) {
-      setError(error instanceof Error ? error.message : t("We couldn't complete that request. Please try again."));
+      setError(error instanceof Error ? error : new Error(t("We couldn't complete that request. Please try again.")));
     } finally {
       setSubmitting(false);
     }
@@ -106,7 +107,7 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
       if (mode === "signup") trackSignupSubmitted();
       window.location.assign(data.url);
     } catch (error) {
-      setError(error instanceof Error ? error.message : t("We couldn't start Google sign-in. Please try again."));
+      setError(error instanceof Error ? error : new Error(t("We couldn't start Google sign-in. Please try again.")));
       setSubmitting(false);
     }
   }
@@ -127,7 +128,7 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
       if (error) throw error;
       setMessage(t("Check {email} for a password-reset link.", { email: email.trim() }));
     } catch (error) {
-      setError(error instanceof Error ? error.message : t("We couldn't send the reset link. Please try again."));
+      setError(error instanceof Error ? error : new Error(t("We couldn't send the reset link. Please try again.")));
     } finally {
       setSubmitting(false);
     }
@@ -252,11 +253,7 @@ export function LoginPage({ initialMode = "signin" }: LoginPageProps) {
                   placeholder="••••••••"
                 />
 
-                {error && (
-                  <p role="alert" className="bg-chip-red/50 px-3 py-2 font-body text-sm font-semibold text-hero-red">
-                    {error}
-                  </p>
-                )}
+                {error && (typeof error === "string" ? <p role="alert" className="bg-chip-red/50 px-3 py-2 font-body text-sm font-semibold text-hero-red">{error}</p> : <ErrorNotice error={error} operation="auth" />)}
                 {message && (
                   <p role="status" className="bg-chip-gold px-3 py-2 font-body text-sm font-semibold text-ink-black">
                     {message}

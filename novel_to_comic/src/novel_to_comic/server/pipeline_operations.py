@@ -141,10 +141,12 @@ async def _run_stage(
                 state,
                 stage,
                 message,
+                detail=exc.detail if isinstance(exc, HTTPException) and isinstance(exc.detail, dict) else None,
                 error_detail=error_detail,
             )
             save_state(state, project_dir)
-            queue.put_nowait({"type": "stage_fail", "stage": stage, "message": message})
+            queue.put_nowait({"type": "stage_fail", "stage": stage, "message": message,
+                              "error_code": state.stages[stage].error_code})
         elif error_detail and not state.stages[stage].error_detail:
             state.stages[stage].error_detail = error_detail
             save_state(state, project_dir)

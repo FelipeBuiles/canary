@@ -4,6 +4,7 @@ import { Button } from "../ui/Button";
 import { useI18n } from "../../i18n";
 import { BottomBarPortal } from "../../layout/TopBarSlot";
 import { CreditAmount } from "../ui/CreditAmount";
+import { ErrorNotice } from "./ErrorNotice";
 
 interface ApprovalBarProps {
   /** Plain-language preview of what happens next, without the "Next:" prefix. */
@@ -19,7 +20,7 @@ interface ApprovalBarProps {
   /** Optional short status/warning line shown instead of the cost line. */
   note?: string;
   /** Why the primary action was refused, shown beside the button that caused it. */
-  error?: string | null;
+  error?: Error | string | null;
 }
 
 /**
@@ -67,9 +68,7 @@ export function ApprovalBar({
             {next}
           </div>
           {error ? (
-            <p role="alert" className="mt-1 font-body text-xs font-semibold leading-snug text-hero-red">
-              {error}
-            </p>
+            <ErrorNotice error={error} operation="approve" />
           ) : costLine && (
             <div className="mt-1 font-meta text-xs font-semibold tracking-[0.04em] text-ink-muted">
               {costLine}

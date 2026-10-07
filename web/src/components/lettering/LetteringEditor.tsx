@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../composites/ErrorNotice";
 import { useEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { defaultTailTarget, elementRect, canvasMeasure, fontCSS, loadFonts, placementChecks, renderOverlay, resolvePage, styleFor, textFor, translationStatus, type PlacementCheck } from "@lettering-engine";
@@ -41,7 +42,7 @@ export function LetteringEditor({ project, pageNumber, disabled = false }: {
   if (query.isPending)
     return <p role="status">{t("Opening lettering…")}</p>;
   if (query.isError)
-    return <Surface padding="lg" border="soft" shadow="none"><p role="alert">{message(query.error)}</p><Button className="mt-3" variant="outline" onClick={() => void query.refetch()}>{t("Try again")}</Button>{query.data?.mode !== "baked" && <div className="mt-4"><ProjectLetteringLanguage project={project} disabled={disabled} onApplied={async () => {
+    return <Surface padding="lg" border="soft" shadow="none"><ErrorNotice error={query.error} operation="load" onRetry={() => void query.refetch()} />{query.data?.mode !== "baked" && <div className="mt-4"><ProjectLetteringLanguage project={project} disabled={disabled} onApplied={async () => {
       const next = await query.refetch({ throwOnError: true });
       if (next.data?.mode !== "hybrid")
         throw new Error(next.data?.message);
@@ -59,7 +60,7 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
   const { t } = useI18n(), client = useQueryClient();
   const [base, setBase] = useState(initial), [history, dispatch] = useReducer(historyReducer, initial.state, initialHistory);
   const [selected, setSelected] = useState<string | null>(initial.state.elements.find(e => !e.hidden)?.id ?? null);
-  const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null), [fontsReady, setFontsReady] = useState(false), [fontAttempt, setFontAttempt] = useState(0);
+  const [busy, setBusy] = useState(false), [error, setError] = useState<Error | string | null>(null), [fontsReady, setFontsReady] = useState(false), [fontAttempt, setFontAttempt] = useState(0);
   const draftKey = letteringDraftKey(project, pageNumber);
   const [recovery, setRecovery] = useState(() => {
     const draft = readLetteringDraft(draftKey);
@@ -102,7 +103,7 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
         setFontsReady(true);
     }).catch(error => {
       if (live)
-        setError(message(error));
+        setError(error instanceof Error ? error : message(error));
     });
     return () => { live = false; };
   }, [fontAttempt]);
@@ -160,7 +161,7 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
     try {
       const aims = placementChecks(resolvePage(next, base.style, measure), engineEvidence(base.evidence)).filter(check => check.severity === "fix" && check.fix?.tail_target);
       next = withFixes(next, aims);
-    } catch (error) { setError(message(error)); return; }
+    } catch (error) { setError(error instanceof Error ? error : message(error)); return; }
     changeState(next);
     setFocusedCheck(null);
   }
@@ -201,7 +202,7 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
       acknowledge(await putPageLettering(project, pageNumber, layout.state, base, markReviewed));
     }
     catch (error) {
-      setError(message(error));
+      setError(error instanceof Error ? error : message(error));
     }
     finally {
       setBusy(false);
@@ -223,7 +224,7 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
       setError(null);
     }
     catch (error) {
-      setError(message(error));
+      setError(error instanceof Error ? error : message(error));
     }
     finally {
       setBusy(false);
@@ -239,7 +240,7 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
       setRecovery(null);
     }
     catch (error) {
-      setError(message(error));
+      setError(error instanceof Error ? error : message(error));
     }
     finally {
       setBusy(false);
@@ -312,7 +313,7 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
       setRecovery(null);
     }
     catch (error) {
-      setError(message(error));
+      setError(error instanceof Error ? error : message(error));
     }
   }
   function downloadRecovery() {
@@ -341,9 +342,9 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
         <Button data-lettering-save size="sm" disabled={pageLocked || !layout.state || (!dirty && !base.placement_review_needed)} onClick={() => void save(loadedArtUrl === artUrl)}>{reviewPending ? t("Confirm placement") : t("Save lettering")}</Button>
       </div>
     </Toolbar>
-    {error && <div role="alert" className="lettering-error"><p>{error}</p><div className="flex flex-wrap gap-2 mt-2"><Button variant="outline" size="xs" onClick={() => void reload()} disabled={busy}>{t("Reload saved version")}</Button>{!fontsReady && <Button size="xs" onClick={() => { setError(null); setFontAttempt(n => n + 1); }}>{t("Retry fonts")}</Button>}</div></div>}
+    {error && <div><ErrorNotice error={error} operation="save" /><div className="flex flex-wrap gap-2 mt-2"><Button variant="outline" size="xs" onClick={() => void reload()} disabled={busy}>{t("Reload saved version")}</Button>{!fontsReady && <Button size="xs" onClick={() => { setError(null); setFontAttempt(n => n + 1); }}>{t("Retry fonts")}</Button>}</div></div>}
     {!heads?.length && <p role="status" className="lettering-hint">{t("Face evidence is unavailable. Placement suggestions are approximate. Use Check page text in Checks to request a page read, then review balloon positions and tails yourself.")}</p>}
-    {layout.error && <p role="alert" className="lettering-error">{layout.error}</p>}
+    {layout.error && <ErrorNotice error={layout.error} operation="preview" />}
     {!draftStored && dirty && <p role="alert" className="lettering-error">{t("This browser could not store your recovery draft. Save before closing or changing pages.")}</p>}
     {recovery && <div className="lettering-notice"><h4 className="font-bold">{t("Unsaved lettering found on this device")}</h4><p>{canRestore ? t("Restore it before continuing, or keep the saved version.") : t("This draft belongs to an older page or style revision. It will not be applied to newer work. Download it to recover wording, then keep the saved version.")}</p>
       {recovery.imageSha !== base.render_image_sha256 && canRestore && <p>{t("The artwork has changed. Restored placement will need another visual check.")}</p>}
@@ -433,7 +434,7 @@ export function BookStyleEditor({ project, initial, pagePreview, disabled, onClo
   onClose: () => void;
   onApplied: () => Promise<void>;
 }) {
-  const { t } = useI18n(), [role, setRole] = useState<RoleName>("caption"), [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
+  const { t } = useI18n(), [role, setRole] = useState<RoleName>("caption"), [busy, setBusy] = useState(false), [error, setError] = useState<Error | string | null>(null);
   const [saved, setSaved] = useState(initial);
   const [history, setHistory] = useState({ past: [] as LetteringStyle[], present: initial, future: [] as LetteringStyle[] });
   const style = history.present;
@@ -445,7 +446,7 @@ export function BookStyleEditor({ project, initial, pagePreview, disabled, onClo
   }
   useEffect(() => {
     let live = true;
-    loadFonts().then(() => { if (live) setFontsReady(true); }).catch(error => { if (live) setError(message(error)); });
+    loadFonts().then(() => { if (live) setFontsReady(true); }).catch(error => { if (live) setError(error instanceof Error ? error : message(error)); });
     return () => { live = false; };
   }, [fontAttempt]);
   useEffect(() => {
@@ -501,7 +502,7 @@ export function BookStyleEditor({ project, initial, pagePreview, disabled, onClo
       await onApplied();
     }
       catch (error) {
-        setError(message(error));
+        setError(error instanceof Error ? error : message(error));
       }
       finally {
       setBusy(false);
@@ -514,12 +515,12 @@ export function BookStyleEditor({ project, initial, pagePreview, disabled, onClo
       <span role="status" className="lettering-hint">{t(dirty ? "Unsaved style changes" : "Saved style")}</span>
     </div>
     {!fontsReady && <p role="status">{t("Loading the book’s bundled typefaces…")}</p>}
-    {error && <p role="alert" className="lettering-error">{error}</p>}<div className="lettering-small-actions"><Button disabled={disabled || busy || !fontsReady || !!preview.error || !!pageSample?.error || !!preview.overflow} onClick={() => void apply()}>{busy ? t("Reflowing the book…") : t("Apply to book")}</Button><Button variant="outline" disabled={busy} onClick={close}>{t("Cancel")}</Button>{!fontsReady && error && <Button variant="outline" onClick={() => { setError(null); setFontAttempt(n => n + 1); }}>{t("Retry fonts")}</Button>}</div>
+    {error && <ErrorNotice error={error} operation="save" />}<div className="lettering-small-actions"><Button disabled={disabled || busy || !fontsReady || !!preview.error || !!pageSample?.error || !!preview.overflow} onClick={() => void apply()}>{busy ? t("Reflowing the book…") : t("Apply to book")}</Button><Button variant="outline" disabled={busy} onClick={close}>{t("Cancel")}</Button>{!fontsReady && error && <Button variant="outline" onClick={() => { setError(null); setFontAttempt(n => n + 1); }}>{t("Retry fonts")}</Button>}</div>
     <fieldset aria-label={t("Book lettering style")} disabled={disabled || busy} className="lettering-book-style-fields">
       <div className="lettering-book-controls">
         <div><span className="ui-field-label">{t("Book look")}</span><p className="lettering-hint mb-2">{presets.isPending ? t("Loading presets…") : presetName ? t("Starting from a preset. Fine-tune any role below.") : t("Custom style. Pick a look to start over from it.")}</p>
           {presets.data && <LetteringPresetTiles presets={presets.data.presets} value={presetName} measure={measure} onPick={name => { const preset = presets.data?.presets[name]; if (preset) { setStyle({ ...preset, source_direction: initial.source_direction, revision: initial.revision }); setPresetName(name); setPresetRevision(value => value + 1); } }} />}</div>
-        {presets.isError && <div role="alert"><p className="lettering-hint">{message(presets.error)}</p><Button variant="outline" size="xs" onClick={() => void presets.refetch()}>{t("Try again")}</Button></div>}
+        {presets.isError && <ErrorNotice error={presets.error} operation="load" onRetry={() => void presets.refetch()} />}
         <div><span className="ui-field-label">{t("Type of lettering")}</span><LetteringRoleTiles mode="choose" label={t("Type of lettering")} style={style} measure={measure} value={role} onPick={setRole} /></div>
         <LetteringStyleControls key={`${role}:${presetRevision}`} idPrefix="book-lettering" role={role} value={style.roles[role]} base={saved.roles[role]} baseLabel="Saved style" measure={measure} sample={sampleWords(sample, role)} onChange={value => { setStyle({ ...style, roles: { ...style.roles, [role]: value } }); setPresetName(""); }} />
         {initial.source_direction && <details><summary>{t("Selected creative direction")}</summary><p className="lettering-hint mt-2">{initial.source_direction}</p></details>}
@@ -532,8 +533,8 @@ export function BookStyleEditor({ project, initial, pagePreview, disabled, onClo
           </div>
         </div>
         <p className="lettering-hint my-3">{t("Preview only · local styles stay unchanged")}</p>
-        {pageSample.error && <p role="alert" className="lettering-error">{pageSample.error}</p>}
-      </>}<div className="lettering-book-preview-art" role="img" aria-label={`${t("Live sample")}: ${sample}`} dangerouslySetInnerHTML={{ __html: preview.svg }} />{preview.error && <p role="alert" className="lettering-error">{preview.error}</p>}{preview.overflow && <p role="status" className="lettering-warning">{t("The sample does not fit. Adjust the size or spacing.")}</p>}</figure>
+        {pageSample.error && <ErrorNotice error={pageSample.error} operation="preview" />}
+      </>}<div className="lettering-book-preview-art" role="img" aria-label={`${t("Live sample")}: ${sample}`} dangerouslySetInnerHTML={{ __html: preview.svg }} />{preview.error && <ErrorNotice error={preview.error} operation="preview" />}{preview.overflow && <p role="status" className="lettering-warning">{t("The sample does not fit. Adjust the size or spacing.")}</p>}</figure>
     </fieldset>
   </Surface>;
 }

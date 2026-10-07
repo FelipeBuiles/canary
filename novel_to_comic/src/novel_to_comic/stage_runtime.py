@@ -156,7 +156,8 @@ class StageRuntime:
             )
         except Exception:
             pass
-        self._emit({"type": "stage_fail", "stage": self.name, "message": error})
+        self._emit({"type": "stage_fail", "stage": self.name, "message": error,
+                    "error_code": self.stage_state.error_code})
         save_state(self._state, self._project_dir)
 
     @contextmanager
@@ -180,6 +181,10 @@ class StageRuntime:
                     for usage in exc.usage_records:
                         self.record_api_usage(usage)
                 from novel_to_comic.generation_budget import GenerationWorkLimitError
+                from starlette.exceptions import HTTPException
+
+                rejection_code = (exc.detail.get("code")
+                                  if isinstance(exc, HTTPException) and isinstance(exc.detail, dict) else None)
 
                 error_detail = None
                 if local_diagnostics_enabled():
@@ -191,7 +196,8 @@ class StageRuntime:
                 self.fail(
                     clean_exception_message(exc),
                     error_code=("model_refusal" if isinstance(exc, AIRefusalError)
-                                else "generation_work_limit" if isinstance(exc, GenerationWorkLimitError) else None),
+                                else "generation_work_limit" if isinstance(exc, GenerationWorkLimitError)
+                                else rejection_code),
                     error_detail=error_detail,
                 )
                 raise

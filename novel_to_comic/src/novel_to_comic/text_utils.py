@@ -6,6 +6,7 @@ import re
 import unicodedata
 
 import httpx
+from starlette.exceptions import HTTPException
 
 
 # Comparison-only normalizers.
@@ -100,6 +101,13 @@ def shorten(value: str, limit: int) -> str:
 
 def clean_exception_message(exc: Exception) -> str:
     """Format an exception to a clean, user-friendly string without verbose info like Mozilla URLs."""
+    if isinstance(exc, HTTPException):
+        if isinstance(exc.detail, str):
+            return exc.detail
+        if isinstance(exc.detail, dict) and isinstance(exc.detail.get("message"), str):
+            return exc.detail["message"]
+        return "This request could not be completed."
+
     if isinstance(exc, httpx.TimeoutException):
         return (
             f"{type(exc).__name__}: "

@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../composites/ErrorNotice";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { useSetActiveStyle } from "../../api/queries";
@@ -32,7 +33,7 @@ export function ProofFlipViewer({
 }) {
   const { t } = useI18n();
   const setActive = useSetActiveStyle();
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
   const stage = useRef<HTMLDivElement>(null);
   const safeIndex = Math.min(Math.max(index, 0), Math.max(suggestions.length - 1, 0));
   const current = suggestions[safeIndex];
@@ -52,7 +53,7 @@ export function ProofFlipViewer({
   const behind = [2, 1].map((age) => suggestions[safeIndex - age]).filter((item): item is StyleSuggestion => !!item);
   const select = () => {
     setError(null);
-    setActive.mutate({ project: projectName, id: current.id }, { onError: (failure) => setError(failure.message) });
+    setActive.mutate({ project: projectName, id: current.id }, { onError: (failure) => setError(failure) });
   };
 
   return (
@@ -116,7 +117,7 @@ export function ProofFlipViewer({
             {current.is_active && <Check size={16} aria-hidden="true" />}
             {setActive.isPending ? t("SELECTING…") : current.is_active ? t("YOUR STYLE") : t("SELECT THIS STYLE")}
           </Button>
-          {error && <p role="alert" className="mt-3 text-sm text-hero-red">{error}</p>}
+          {error && <ErrorNotice error={error} operation="save" />}
           <p className="mt-4 font-body text-xs leading-5 text-ink-muted">{t("Use ← and → to flip. Hold an arrow to flip quickly.")}</p>
         </div>
       </div>

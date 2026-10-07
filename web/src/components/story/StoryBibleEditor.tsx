@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../composites/ErrorNotice";
 import { useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowRight, ChevronRight, Search, Undo2 } from "lucide-react";
@@ -64,14 +65,14 @@ interface CardContext {
  */
 export function StoryBibleEditor({ project, story, focus, onFocusClosed }: Props) {
   const { t } = useI18n();
-  const { data: editor, error, isLoading } = useStoryBibleEditor(project);
+  const { data: editor, error, isLoading, refetch } = useStoryBibleEditor(project);
   const [tab, setTab] = useState<Tab>(focus?.kind ?? (story ? "scenes" : "characters"));
   const [opened, setOpened] = useState<Open | null>(null);
   const [showAllCharacters, setShowAllCharacters] = useState(false);
   const unavailable = isNotFoundError(error) || (!editor && !isLoading && !error);
   if (!story) {
     if (unavailable) return null;
-    if (error) return <p role="alert" className="font-body text-sm text-hero-red">{error.message}</p>;
+    if (error) return <ErrorNotice error={error} operation="load" onRetry={() => void refetch()} />;
     if (!editor) return null;
   }
   // Without the editor, this part's story still shows its entries, read-only.
@@ -102,7 +103,7 @@ export function StoryBibleEditor({ project, story, focus, onFocusClosed }: Props
           : t("Every part shares these entries. Open one to fix what extraction got wrong, merge a duplicate or remove it. You can undo your latest change.")}
         actions={editor && entityTab && <Button size="sm" variant="outline" onClick={() => setOpened({ mode: "edit", kind: entityTab })}>{t(KIND_LABELS[entityTab].add)}</Button>}
       />
-      {error && !isNotFoundError(error) && <p role="alert" className="font-body text-sm text-hero-red">{error.message}</p>}
+      {error && !isNotFoundError(error) && <ErrorNotice error={error} operation="load" onRetry={() => void refetch()} />}
       {editor && <UndoBar project={project} editor={editor} />}
       {editor && <ReferencesToUpdate project={project} editor={editor} />}
       {editor && <DuplicateSuggestions project={project} editor={editor}
@@ -181,7 +182,7 @@ function UndoBar({ project, editor }: { project: string; editor: Editor }) {
         {describeChange(change, t)}
         {blocked && <span className="mt-1 block text-xs text-ink-muted">{t("An adapted part now uses what this change added, so it can't be undone.")}</span>}
       </p>
-      {undo.error && <p role="alert" className="w-full font-body text-sm text-hero-red">{undo.error.message}</p>}
+      {undo.error && <ErrorNotice error={undo.error} operation="save" />}
       <Button size="sm" variant="outline" disabled={!!blocked || undo.isPending}
         onClick={() => undo.mutate({ project, revision: editor.revision })}>
         <Undo2 size={16} aria-hidden="true" className="mr-2 inline" />{undo.isPending ? t("Undoing…") : t("Undo")}
@@ -431,7 +432,7 @@ function ImpactState({ impact, isLoading, error, children }: {
   impact?: EditImpact; isLoading: boolean; error: Error | null; children: (impact: EditImpact) => ReactNode;
 }) {
   const { t } = useI18n();
-  if (error) return <p role="alert" className="font-body text-sm text-hero-red">{error.message}</p>;
+  if (error) return <ErrorNotice error={error} operation="load" />;
   if (isLoading || !impact) return <p className="font-body text-sm text-ink-muted">{t("Checking what this changes…")}</p>;
   if (impact.blocked) return <p role="alert" className="border-l-4 border-hero-red bg-surface-container px-4 py-3 font-body text-sm">{impact.blocked}</p>;
   return <>{children(impact)}</>;
@@ -474,7 +475,7 @@ function MergeSheet({ project, editor, kind, entry, initialInto, onClose, onSwap
     <Sheet open wide title={t("Merge {name}", { name: entry.name })} onClose={onClose}
       description={t("Use this when extraction found the same {kind} twice under different names. One entry stays; the other folds into it.", { kind: t(KIND_LABELS[kind].one) })}
       footer={<>
-        {merge.error && <p role="alert" className="mr-auto font-body text-sm text-hero-red">{merge.error.message}</p>}
+        {merge.error && <ErrorNotice error={merge.error} operation="save" />}
         <Button variant="outline" onClick={onClose} disabled={merge.isPending}>{t("Cancel")}</Button>
         <Button disabled={!ready} onClick={() => target && merge.mutate(
           { project, kind, id: entry.id, into: target.id, revision: editor.revision }, { onSuccess: onClose },
@@ -532,7 +533,7 @@ function RemoveSheet({ project, editor, kind, entry, onClose }: {
     <Sheet open title={t("Remove {name}?", { name: entry.name })} onClose={onClose}
       description={t("Use this for someone or something that isn't really in the story. Nothing is deleted: you can bring it back from Removed.")}
       footer={<>
-        {remove.error && <p role="alert" className="mr-auto font-body text-sm text-hero-red">{remove.error.message}</p>}
+        {remove.error && <ErrorNotice error={remove.error} operation="delete" />}
         <Button variant="outline" onClick={onClose} disabled={remove.isPending}>{t("Cancel")}</Button>
         <Button disabled={!ready} onClick={() => remove.mutate(
           { project, kind, id: entry.id, revision: editor.revision }, { onSuccess: onClose },
@@ -553,7 +554,7 @@ function RemovedEntries({ project, editor }: { project: string; editor: Editor }
   return (
     <div className="space-y-3">
       <p className="font-body text-sm text-ink-muted">{t("Later extractions skip these names. Bring one back to return it to the scenes it left, with its details, looks and Cast images.")}</p>
-      {restore.error && <p role="alert" className="font-body text-sm text-hero-red">{restore.error.message}</p>}
+      {restore.error && <ErrorNotice error={restore.error} operation="save" />}
       <ul className="divide-y-[2px] divide-ink-black/10 border-y-[2px] border-ink-black/10">
         {excluded.map((entry) => (
           <li key={`${entry.kind}:${entry.name}`} className="flex flex-wrap items-center gap-4 py-3">

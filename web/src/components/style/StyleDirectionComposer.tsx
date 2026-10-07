@@ -20,7 +20,7 @@ interface StyleDirectionComposerProps {
   /** Six new suggestions wait for running proofs; author directions can queue. */
   automaticDisabled?: boolean;
   onRetry?: () => void;
-  error?: string | null;
+  error?: Error | string | null;
   onAutomatic: () => void;
   onCustom: (input: { direction: string; image: File | null; mode: StyleDirectionMode }) => void;
 }
@@ -253,10 +253,9 @@ export function StyleDirectionComposer({
       {onRetry && <Button size="sm" onClick={onRetry} disabled={busy}>{t("TRY AGAIN")}</Button>}
 
       {error && (
-        <p role="alert" className="mt-5 border-[2px] border-hero-red bg-chip-red/30 px-3 py-2 text-[0.82rem] font-semibold text-hero-red">
-          {error}
-        </p>
+        <ErrorNotice error={error} operation="generate" />
       )}
     </Surface>
   );
 }
+import { ErrorNotice } from "../composites/ErrorNotice";

@@ -8,6 +8,7 @@ import pytest
 from PIL import Image
 
 from novel_to_comic.ai import client
+from novel_to_comic.ai import admission
 from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.ai.image_previews import image_preview_events, image_preview_target, post_image_request
 from novel_to_comic.server.event_channel import EventChannel
@@ -111,9 +112,14 @@ def test_vertex_gateway_stream_failure_retains_ambiguous_credit_hold(monkeypatch
 def test_stream_reuses_safe_retry_budget_but_never_retries_after_pixels(first, alias, monkeypatch, tmp_path):
     calls, pauses, retained = [], [], []
     monkeypatch.setattr("novel_to_comic.server.credits.retain_ambiguous_job", retained.append)
+    # The pacer and admission share Retry-After. Advance admission's clock
+    # along with the fake pacer instead of waiting seven real seconds.
+    now = [0.0]
+    monkeypatch.setattr(admission._controller, "clock", lambda: now[0])
 
     async def pause(self, **kwargs):
         pauses.append(kwargs)
+        now[0] += kwargs.get("retry_after") or 0
 
     monkeypatch.setattr(client._RetryPacer, "pause_or_raise", pause)
 

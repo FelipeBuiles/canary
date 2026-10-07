@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../composites/ErrorNotice";
 import { useState, useRef, useEffect, useMemo, lazy, Suspense } from "react";
 import { Card } from "../ui/Card";
 import { Button } from "../ui/Button";
@@ -18,7 +19,7 @@ interface UploadStepProps {
   onSubmit: (file: File, name: string, configOverrides?: Partial<ConfigOverrides>) => void;
   onSubmitImport: (urlOrCode: string, name: string, configOverrides?: Partial<ConfigOverrides>) => void;
   isPending: boolean;
-  error: string | null;
+  error: Error | string | null;
   onCancel?: () => void;
   initialStoryCode?: string | null;
 }
@@ -261,7 +262,7 @@ export function UploadStep({ onSubmit, onSubmitImport, isPending, error, onCance
           )}
         </div>
         <footer className="shrink-0 border-t-2 border-ink-black bg-bristol p-4 sm:px-7 sm:py-5">
-          {error && <p role="alert" className="mb-3 text-sm text-hero-red">{error}</p>}
+          {error && <ErrorNotice error={error} operation="upload" />}
           <div className="mb-3 min-w-0" aria-live="polite">
             <p className="truncate font-body text-sm font-bold">{sourceReady ? (step !== "source" ? name || sourceTitle : sourceTitle) : t("Choose a source to continue")}</p>
             {step === "lettering" && <p className="mt-1 text-sm"><strong>{t(letteringMode === "integrated" ? "Integrated lettering" : letteringMode === "editable" ? "Editable lettering" : "Select a lettering option to create your project.")}</strong>{letteringMode && <span className="text-ink-muted"> · {t("Can’t be changed after creating the project")}</span>}</p>}

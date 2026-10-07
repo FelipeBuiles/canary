@@ -58,6 +58,16 @@ class TestShorten:
 
 
 class TestCleanExceptionMessage:
+    def test_application_rejection_keeps_readable_message_without_api_metadata(self):
+        from fastapi import HTTPException
+
+        exc = HTTPException(413, {
+            "code": "storage_budget_exceeded", "message": "Account storage is full.",
+            "used_bytes": 7991982797, "limit_bytes": 5368709120, "admitted": False,
+        })
+        assert clean_exception_message(exc) == "Account storage is full."
+        assert clean_exception_message(HTTPException(403, "Select a visual direction first.")) == "Select a visual direction first."
+
     def test_generic_exception(self):
         exc = ValueError("Some standard error message")
         assert clean_exception_message(exc) == "Some standard error message"

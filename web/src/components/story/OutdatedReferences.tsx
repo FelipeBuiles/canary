@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../composites/ErrorNotice";
 import { useEffect, useRef } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useI18n } from "../../i18n";
@@ -87,7 +88,7 @@ export function OutdatedReferences({ project, bible, castStatus, onResume, resum
           );
         })}
       </ul>
-      {(keep.error || reopen.error) && <p role="alert" className="font-body text-sm text-hero-red">{(keep.error ?? reopen.error)?.message}</p>}
+      {(keep.error || reopen.error) && <ErrorNotice error={(keep.error ?? reopen.error)} operation="save" />}
       <div className="flex flex-wrap items-center justify-end gap-3">
         <p className="font-body text-xs text-ink-muted">{t("Cast makes the new images and regenerates every changed one you haven't kept. You'll see the cost first.")}</p>
         <Button size="sm" disabled={resumeDisabled || reopen.isPending} onClick={update}>{t("Update images")}</Button>

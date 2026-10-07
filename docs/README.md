@@ -55,6 +55,8 @@ retained as current reference.
 
 - [Dependency maintenance](reference/dependencies.md): lockfile authorities,
   supported version lines, upgrade contracts, and operational rollout checks.
+- [Backend test maintenance](reference/backend-tests.md): timing and duplication
+  audit, coverage-preserving trimming, and real-browser fixture reuse.
 - [Stage contracts](reference/stage-contracts.md): source-owned stage authority,
   user gates, correction jobs, recovery, and generated-output compatibility.
 - [Local crop OCR experiment](reference/crop-ocr-experiment.md): opt-in blind

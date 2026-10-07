@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../composites/ErrorNotice";
 import { useState } from "react";
 import { useI18n } from "../../i18n";
 import { msg } from "../../locales/messages";
@@ -68,7 +69,7 @@ export function PageChecks({
   const pageNumber = item.page.page_number;
   const accept = useAcceptPageIssue();
   const dismiss = useDismissPageIssue();
-  const [actionError, setActionError] = useState<{ issueId: string; message: string } | null>(null);
+  const [actionError, setActionError] = useState<{ issueId: string; error: Error } | null>(null);
   const textChecked = item.analysis_recovery?.status === "checked";
   const visualChecked = !!item.visual_reviewed;
   const active = item.issues.filter(isActive);
@@ -81,7 +82,7 @@ export function PageChecks({
       onError: (error) => {
         // Already cleared by a newer check: the refreshed list drops it, nothing to report.
         if (/was not found/.test(error.message)) return;
-        setActionError({ issueId: issue.id, message: error.message });
+        setActionError({ issueId: issue.id, error });
       },
     });
   }
@@ -154,9 +155,7 @@ export function PageChecks({
                       )}
                     </div>
                     {actionError?.issueId === issue.id && (
-                      <p role="alert" className="text-sm leading-6 text-hero-red">
-                        {actionError.message} {t("Your decision was not saved. Try again.")}
-                      </p>
+                      <ErrorNotice error={actionError.error} operation="save" />
                     )}
                   </div>
                 </Surface>
@@ -204,8 +203,8 @@ function VisualRetry({ project, pageNumber }: { project: string; pageNumber: num
           {estimate.data ? ` · ~${estimate.data.estimate_credits} ${t("credits")}` : ""}
         </Button>
       </div>
-      {estimate.error && <p role="alert" className="text-sm text-hero-red">{(estimate.error as Error).message}</p>}
-      {review.error && <p role="alert" className="text-sm text-hero-red">{(review.error as Error).message}</p>}
+      {estimate.error && <ErrorNotice error={(estimate.error as Error)} operation="estimate" />}
+      {review.error && <ErrorNotice error={(review.error as Error)} operation="generate" />}
     </div>
   );
 }

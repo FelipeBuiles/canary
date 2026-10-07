@@ -1,50 +1,13 @@
+import { ApiError, InsufficientCreditsError, type InsufficientCreditsInfo } from "./errors";
 import { supabase } from "../lib/supabase";
 import { accountEpoch, assertAccountEpoch, trackAccountRequest } from "../lib/accountEpoch";
 import { pendingAction } from "./paidAction";
 import { isCastReviewBlocker } from "../lib/castCheckpoint";
-import { beginApiObservation, finishApiObservation, type ErrorDiagnostics } from "../lib/telemetryDiagnostics";
+import { beginApiObservation, finishApiObservation } from "../lib/telemetryDiagnostics";
 
 const BASE = "/api";
 
-export interface InsufficientCreditsInfo {
-  balance_credits: number;
-  required_credits: number;
-  shortfall_credits: number;
-  stage: string | null;
-  action: string | null;
-  message: string;
-}
-
-export class InsufficientCreditsError extends Error {
-  diagnostics?: ErrorDiagnostics;
-  readonly insufficientCredits: InsufficientCreditsInfo;
-  constructor(info: InsufficientCreditsInfo) {
-    super(info.message);
-    this.name = "InsufficientCreditsError";
-    this.insufficientCredits = info;
-  }
-}
-
-export function isInsufficientCreditsError(err: unknown): err is InsufficientCreditsError {
-  return err instanceof InsufficientCreditsError;
-}
-
-/**
- * A non-2xx response, carrying the status so callers and the retry policy can
- * branch on it. The message keeps the historic `API <status>: <detail>` shape
- * because existing callers match on it.
- */
-export class ApiError extends Error {
-  diagnostics?: ErrorDiagnostics;
-  readonly status: number;
-  readonly code?: string;
-  constructor(status: number, message: string, code?: string) {
-    super(`API ${status}: ${message}`);
-    this.name = "ApiError";
-    this.status = status;
-    this.code = code;
-  }
-}
+export { ApiError, InsufficientCreditsError, isInsufficientCreditsError, type InsufficientCreditsInfo } from "./errors";
 
 /** A missing artifact is the normal pre-stage state, not a failure to retry. */
 export function isNotFoundError(err: unknown): boolean {

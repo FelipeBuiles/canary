@@ -84,7 +84,6 @@ def component(name):
     elif name == "backend":
         run([executable("uv"), "run", "--locked", "ruff", "check", "."], APP)
         backend(["-x", "-q"])
-        backend(["-q", "tests/test_full_page_contracts.py"])
     elif name == "web":
         npm = executable("npm")
         for args in [

@@ -15,3 +15,4 @@ export { RoomShell } from "./RoomShell";
 export { SceneSidebar } from "./SceneSidebar";
 export { StagePlaceholder } from "./StagePlaceholder";
 export { StaleStageNotice } from "./StaleStageNotice";
+export { ErrorNotice } from "./ErrorNotice";

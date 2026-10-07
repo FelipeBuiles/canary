@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../composites/ErrorNotice";
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useI18n } from "../../i18n";
@@ -89,7 +90,7 @@ function PartRow({ project, part, last, onSplit, onOpen }: {
   const [replacing, setReplacing] = useState(false);
   const [text, setText] = useState<PartText>({});
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | string | null>(null);
   const { id, part: openPart } = splitProjectKey(project);
   const isOpen = openPart === part.id;
 
@@ -109,7 +110,7 @@ function PartRow({ project, part, last, onSplit, onOpen }: {
             event.preventDefault();
             if (!title.trim() || title.trim() === part.title) return;
             setError(null);
-            rename.mutate({ project, part: part.id, title: title.trim() }, { onError: (err) => setError(err.message) });
+            rename.mutate({ project, part: part.id, title: title.trim() }, { onError: (err) => setError(err) });
           }}>
             <label className="sr-only" htmlFor={`part-title-${part.id}`}>{t("Part title")}</label>
             <TextField id={`part-title-${part.id}`} value={title} maxLength={200} onChange={(event) => setTitle(event.target.value)}
@@ -141,7 +142,7 @@ function PartRow({ project, part, last, onSplit, onOpen }: {
           setError(null);
           replace.mutate({ project, part: part.id, input: text }, {
             onSuccess: () => { setReplacing(false); setText({}); },
-            onError: (err) => setError(err.message),
+            onError: (err) => setError(err),
           });
         }}>
           <p className="font-body text-sm text-ink-muted">{t("Replacing the text clears this part's extraction, so Extract runs again when you start it.")}</p>
@@ -149,7 +150,7 @@ function PartRow({ project, part, last, onSplit, onOpen }: {
           <Button type="submit" size="sm" disabled={replace.isPending || !hasPartText(text)}>{t("Replace text")}</Button>
         </form>
       )}
-      {error && <p role="alert" className="mt-3 font-body text-sm text-hero-red">{error}</p>}
+      {error && <ErrorNotice error={error} operation="save" />}
       <ConfirmModal
         open={confirmingDelete}
         destructive
@@ -157,7 +158,7 @@ function PartRow({ project, part, last, onSplit, onOpen }: {
         body={t("This removes the part's text and anything extracted from it. Later parts move up.")}
         confirmLabel={t("Delete")}
         busy={remove.isPending}
-        error={remove.error?.message}
+        error={remove.error}
         onClose={() => setConfirmingDelete(false)}
         onConfirm={() => remove.mutate({ project, part: part.id }, {
           onSuccess: () => {
@@ -191,7 +192,7 @@ function AddPartPanel({ project, parts, onAdded, onCancel }: {
         {t("Part {number} continues the story. Adding it is free; extraction runs when you start the part, and only reads its new text.", { number: parts.length + 1 })}
       </p>
       <PartTextInput value={text} onChange={setText} withTitle disabled={add.isPending} />
-      {add.error && <p role="alert" className="font-body text-sm text-hero-red">{add.error.message}</p>}
+      {add.error && <ErrorNotice error={add.error} operation="save" />}
       <div className="flex flex-wrap justify-end gap-3">
         <Button variant="outline" onClick={onCancel} disabled={add.isPending}>{t("Cancel")}</Button>
         <Button type="submit" disabled={add.isPending || !hasPartText(text)}>{add.isPending ? t("Adding…") : t("Add part")}</Button>
@@ -227,7 +228,7 @@ function SplitPanel({ project, part, proposed, onDone }: {
         {t("Choose the chapters where a new part begins. {title} keeps the text before the first one.", { title: part.title })}
       </p>
       {isLoading && <p className="font-body text-sm">{t("Finding chapters…")}</p>}
-      {error && <p role="alert" className="font-body text-sm text-hero-red">{error.message}</p>}
+      {error && <ErrorNotice error={error} operation="load" />}
       {!isLoading && !candidates.length && <p className="font-body text-sm">{t("No chapter headings were found in this part's text.")}</p>}
       <ul className="space-y-3">
         {candidates.map((chapter) => (
@@ -250,7 +251,7 @@ function SplitPanel({ project, part, proposed, onDone }: {
           </li>
         ))}
       </ul>
-      {split.error && <p role="alert" className="font-body text-sm text-hero-red">{split.error.message}</p>}
+      {split.error && <ErrorNotice error={split.error} operation="save" />}
       <div className="flex flex-wrap justify-end gap-3">
         <Button variant="outline" onClick={onDone} disabled={split.isPending}>{proposed ? t("Keep as one part") : t("Cancel")}</Button>
         <Button type="submit" disabled={split.isPending || !boundaries.length}>

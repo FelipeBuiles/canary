@@ -18,8 +18,10 @@ from novel_to_comic.text_models import text_wire
 MODEL = "claude-opus-5-5"
 
 
-@pytest.fixture(autouse=True, params=["claude-opus-5-5", "claude-sonnet-5-5"])
+@pytest.fixture(params=["claude-opus-5-5", "claude-sonnet-5-5"])
 def selected_claude_model(request, monkeypatch):
+    # Model selection, catalog membership and tariffs vary by model. Generic
+    # transport failures, redaction and timeouts need one representative model.
     monkeypatch.setattr(sys.modules[__name__], "MODEL", request.param)
 
 _DEVELOPMENT = {
@@ -100,6 +102,7 @@ def _run(**kwargs):
     return asyncio.run(claude_runtime.run_text(**kwargs))
 
 
+@pytest.mark.usefixtures("selected_claude_model")
 def test_isolated_invocation_carries_model_controls_and_subscription_usage(fake_cli):
     capture = fake_cli([_init(), _assistant(), _result()])
     result = _run()
@@ -258,6 +261,7 @@ def _claude_process(monkeypatch, **settings):
     }))
 
 
+@pytest.mark.usefixtures("selected_claude_model")
 def test_explicit_claude_selector_routes_text_only(monkeypatch):
     _claude_process(monkeypatch)
     route = codex_dev.route_for("text", f"claude-dev/text/{MODEL}")
@@ -281,6 +285,7 @@ def test_claude_selector_requires_the_local_gate(monkeypatch, settings):
         codex_dev.route_for("text", f"claude-dev/text/{MODEL}")
 
 
+@pytest.mark.usefixtures("selected_claude_model")
 def test_classification_treats_claude_routes_as_zero_credit(monkeypatch):
     _claude_process(monkeypatch)
     selector = f"claude-dev/text/{MODEL}"
@@ -317,6 +322,7 @@ def claude_client(monkeypatch):
     return SimpleNamespace(events=events, calls=calls)
 
 
+@pytest.mark.usefixtures("selected_claude_model")
 def test_client_sends_api_route_controls_and_records_comparable_usage(claude_client):
     result = asyncio.run(client.generate_structured_object(
         config=Config(), model=f"claude-dev/text/{MODEL}", system_prompt="JSON please",

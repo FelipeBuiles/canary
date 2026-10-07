@@ -50,6 +50,10 @@ def test_persistent_drain_and_explicit_resume(tmp_path):
 
 def test_interrupted_journal_and_credit_evidence_is_private_read_only(tmp_path, monkeypatch):
     monkeypatch.setenv("CANARY_OPS_STORAGE_FREE_BYTES", "1")
+    # Other processes can change free disk space between these read-only
+    # snapshots. Keep that external evidence fixed, including the alert path.
+    monkeypatch.setattr("novel_to_comic.server.operations.shutil.disk_usage",
+                        lambda _: SimpleNamespace(total=1000, used=960, free=40))
     app = app_at(tmp_path)
     with app.state.admission.journal() as journal:
         journal.execute("INSERT INTO requests VALUES(?,?,?,?,?,?)", ("private-email", "POST /api/projects/book/parts/part_0001/cover", "secret-key", "hash", None, None))
@@ -60,7 +64,7 @@ def test_interrupted_journal_and_credit_evidence_is_private_read_only(tmp_path, 
     result = exception_snapshot(app, db=db, now=NOW)
     assert result["complete"]
     kinds = {o["kind"] for o in result["observations"]}
-    assert {"interrupted_job", "indeterminate_action", "credit_reconciliation"} <= kinds
+    assert {"interrupted_job", "indeterminate_action", "credit_reconciliation", "storage_pressure"} <= kinds
     serialized = json.dumps(result)
     assert all(secret not in serialized for secret in ("private-email", "secret-key", "SECRET MANUSCRIPT", "API_KEY", "unstarted"))
     assert all(o["safe_action"] and o["diagnostic_url"] for o in result["observations"])

@@ -171,16 +171,20 @@ async def _pipeline(app, job, directory, config):
         # before any child page job exists. Persist that failure too.
         from novel_to_comic.artifact_lock import production_lock
         from novel_to_comic.state import fail_stage, save_state
+        from novel_to_comic.text_utils import clean_exception_message
+        from fastapi import HTTPException
+        detail = exc.detail if isinstance(exc, HTTPException) and isinstance(exc.detail, dict) else None
         def persist_failure(message):
             with production_lock(directory):
                 latest = load_state(directory)
                 active_stage = job.payload.get("stage", spec.stage)
                 if latest.stages[active_stage].status == StageStatus.RUNNING:
-                    fail_stage(latest, active_stage, message)
+                    fail_stage(latest, active_stage, message, detail=detail)
                     save_state(latest, directory)
-                    return {"type": "stage_fail", "stage": active_stage, "message": message}
+                    return {"type": "stage_fail", "stage": active_stage, "message": message,
+                            "error_code": latest.stages[active_stage].error_code}
             return None
-        event = await asyncio.to_thread(persist_failure, str(exc) or type(exc).__name__)
+        event = await asyncio.to_thread(persist_failure, clean_exception_message(exc) or type(exc).__name__)
         if event is not None:
             channel.put_nowait(event)
         raise

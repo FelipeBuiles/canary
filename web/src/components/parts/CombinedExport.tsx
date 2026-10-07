@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../composites/ErrorNotice";
 import { useState } from "react";
 import { useI18n } from "../../i18n";
 import { SectionHeader } from "../composites/SectionHeader";
@@ -55,7 +56,7 @@ export function CombinedExport({ project, parts }: { project: string; parts: Par
       {unfinished.length > 0 && (
         <p className="font-body text-sm text-ink-muted">{t("Finish {titles} first.", { titles: unfinished.map((part) => part.title).join(", ") })}</p>
       )}
-      {combine.error && <p role="alert" className="font-body text-sm text-hero-red">{combine.error.message}</p>}
+      {combine.error && <ErrorNotice error={combine.error} operation="export" />}
       {combine.data && (
         <a href={combinedExportUrl(project, combine.data.file)} download
           className="inline-flex min-h-11 items-center font-meta text-sm font-bold underline underline-offset-4">

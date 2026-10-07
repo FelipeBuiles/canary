@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../../components/composites/ErrorNotice";
 import { trackProductEvent } from "../../api/events";
 import { PageVersions } from "../../components/pages/PageVersions";
 import { ArchivedArtwork } from "../../components/pages/ArchivedArtwork";
@@ -67,6 +68,8 @@ import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { seriesPath } from "../../api/projectScope";
 import { PartNotices } from "../../components/parts/PartNotices";
 import { describeRedrawChanges } from "../../components/pages/redrawChanges";
+import { isStorageLimitError } from "../../lib/storageLimit";
+import { StorageLimitNotice } from "../../components/composites/StorageLimitNotice";
 
 const LetteringEditor = lazy(() => import("../../components/lettering/LetteringEditor").then(module => ({ default: module.LetteringEditor })));
 
@@ -87,7 +90,7 @@ function PageSpendConsent({
   project: string;
   intent: PaidPageIntent;
   busy: boolean;
-  error: string | null;
+  error: Error | string | null;
   onConfirm: () => void;
   onClose: () => void;
 }) {
@@ -124,12 +127,10 @@ function PageSpendConsent({
         <div className="space-y-3">
           {!estimate.data && !estimate.error && <p role="status">{t("Loading immediate estimate and hold…")}</p>}
           {estimate.error && (
-            <div role="alert" className="space-y-2 text-sm text-hero-red">
-              <p>{t("The cost could not be loaded. Nothing has been started.")} {estimate.error.message}</p>
-              <Button variant="outline" size="sm" onClick={() => void estimate.refetch()}>{t("RETRY ESTIMATE")}</Button>
-            </div>
+            <ErrorNotice error={estimate.error} operation="estimate" title="The cost could not be loaded. Nothing has been started."
+              onRetry={() => void estimate.refetch()} retryLabel={t("RETRY ESTIMATE")} />
           )}
-          {error && <p role="alert" className="text-sm text-hero-red">{error}</p>}
+          {error && <ErrorNotice error={error} operation="generate" />}
         </div>
       )}
     />
@@ -166,7 +167,7 @@ function PageReview({
   onNavigate: (pageNumber: number) => void;
   onCheckText: () => void;
   checkingText: boolean;
-  checkError?: string;
+  checkError?: Error;
   deliberateView: boolean;
 }) {
   const { t } = useI18n();
@@ -420,9 +421,9 @@ export function PagesRoom() {
   const [batchPages, setBatchPages] = useState<number[]>([]);
   const [pageFailures, setPageFailures] = useState<Partial<Record<number, GenerationJob>>>({});
   const [paidIntent, setPaidIntent] = useState<PaidPageIntent | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [pageActionErrors, setPageActionErrors] = useState<Partial<Record<number, string>>>({});
-  const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<Error | null>(null);
+  const [pageActionErrors, setPageActionErrors] = useState<Partial<Record<number, Error>>>({});
+  const [approvalError, setApprovalError] = useState<Error | null>(null);
   const cancelQueued = useCancelQueuedPageJobs();
   const { data: generationJobs, isLoading: generationJobsLoading } = useGenerationJobs(id, [], true);
   const observedTerminalJobs = useRef(new Set<string>());
@@ -633,7 +634,7 @@ export function PagesRoom() {
       { project: id, stage: "draw" },
       {
         onSuccess: () => navigate(`/project/${encodeURIComponent(id)}/book`),
-        onError: (error) => setApprovalError(error.message),
+        onError: (error) => setApprovalError(error),
       },
     );
   }
@@ -667,8 +668,8 @@ export function PagesRoom() {
           }));
         },
         onError: (error) => {
-          setActionError(error.message);
-          setPageActionErrors((current) => ({ ...current, [pageNumber]: error.message }));
+          setActionError(error);
+          setPageActionErrors((current) => ({ ...current, [pageNumber]: error }));
           maybeShowInsufficientCredits(error, {
             actionLabel: `${t("Draw page")} ${pageNumber}`,
             onRetry: () => requestSpend({ kind: "page", pageNumber, depiction }),
@@ -693,7 +694,7 @@ export function PagesRoom() {
           setPaidIntent(null);
         },
         onError: (error) => {
-          setActionError(error.message);
+          setActionError(error);
           maybeShowInsufficientCredits(error, {
             actionLabel: t(retry ? "RETRY ALL INCOMPLETE PAGES" : "QUEUE ALL PAGES"),
             onRetry: () => requestSpend({ kind: "batch", retry }),
@@ -713,8 +714,8 @@ export function PagesRoom() {
         setPageActionErrors((current) => ({ ...current, [pageNumber]: undefined }));
       },
       onError: (error) => {
-        setActionError(error.message);
-        setPageActionErrors((current) => ({ ...current, [pageNumber]: error.message }));
+        setActionError(error);
+        setPageActionErrors((current) => ({ ...current, [pageNumber]: error }));
         maybeShowInsufficientCredits(error, {
           actionLabel: t("RETRY TEXT CHECK"),
           onRetry: () => requestSpend({ kind: "analysis", pageNumber }),
@@ -780,8 +781,10 @@ export function PagesRoom() {
             </>
           )}
         />
-        {drawStatus === "failed" && status?.stages.draw?.error && (
-          <p role="alert" className="mb-5 text-sm text-hero-red">{status.stages.draw.error}</p>
+        {drawStatus === "failed" && (status?.stages.draw?.error || status?.stages.draw?.error_code) && (
+          isStorageLimitError(status.stages.draw.error, status.stages.draw.error_code)
+            ? <StorageLimitNotice error={status.stages.draw.error} errorDetail={status.stages.draw.error_detail} />
+            : <ErrorNotice error={status.stages.draw.error} errorCode={status.stages.draw.error_code} errorDetail={status.stages.draw.error_detail} operation="generate" />
         )}
         {drawStatus === "pending" && (
           <Surface tone="pulp" padding="md" className="mb-5">
@@ -812,7 +815,7 @@ export function PagesRoom() {
                 </Button>
               </div>
             </div>
-            {actionError && !paidIntent && <p role="alert" className="mt-3 text-sm">{actionError}</p>}
+            {actionError && !paidIntent && <ErrorNotice error={actionError} operation="generate" />}
           </Surface>
         )}
         {drawStatus !== "pending" && !generationJobsLoading && pagesWaitingToDraw.length > 0 && (
@@ -859,7 +862,7 @@ export function PagesRoom() {
               >{cancelQueued.isPending ? t("CANCELLING QUEUED PAGES…") : t("CANCEL QUEUED PAGES")} ({queuedPageJobs.length})</Button>}
             </div>
             <p className="mt-1 text-sm text-ink-muted">{t("Completed pages are ready to inspect while the press continues.")}</p>
-            {cancelQueued.error && <p role="alert" className="mt-2 text-sm text-hero-red">{cancelQueued.error.message}</p>}
+            {cancelQueued.error && <ErrorNotice error={cancelQueued.error} operation="save" />}
             <div className="mt-3 flex gap-3 overflow-x-auto">
               {pages.filter((item) => item.active_render).map((item) => (
                 <button key={item.page.page_number} type="button" className="w-20 shrink-0 p-1 text-center text-xs font-bold" onClick={() => updateContext({ page: String(item.page.page_number), review: "page" })} aria-label={`${t("Inspect completed page")} ${item.page.page_number}`}>
@@ -967,7 +970,7 @@ export function PagesRoom() {
                             </p>
                           )}
                           {pageActionError && !paidIntent && (
-                            <p className="mt-3 text-xs leading-5 text-hero-red">{pageActionError}</p>
+                            <ErrorNotice error={pageActionError} operation="generate" />
                           )}
                         </div>
                         {pageFailure?.classification === "provider_blocked"
@@ -1012,7 +1015,7 @@ export function PagesRoom() {
                           <span className="font-meta text-xs font-bold">{t("READY TO DRAW")}</span>
                           <span className="font-body text-xs leading-6">{t("The page plan is ready. Artwork appears here once drawn.")}</span>
                           {pageActionError && !paidIntent && (
-                            <span role="alert" className="text-xs leading-5 text-hero-red">{pageActionError}</span>
+                            <ErrorNotice error={pageActionError} operation="generate" />
                           )}
                         </div>
                         {drawStatus !== "pending" && (
@@ -1085,7 +1088,7 @@ export function PagesRoom() {
           }}
         />
       )}
-      {approvalError && <p role="alert" className="text-sm text-hero-red">{approvalError}</p>}
+      {approvalError && <ErrorNotice error={approvalError} operation="approve" />}
       {/* Pages are checked as they are drawn; only offer a re-check once drawing has settled. */}
       {uncheckedPages.length > 0 && drawingPages.size === 0 && queuedPageJobs.length === 0 && drawStatus !== "running" && (
         <PageCheckRecovery project={projectId} unchecked={uncheckedPages.length} onRecovered={() => void refetch()} />

@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../composites/ErrorNotice";
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCompletePage } from "../../api/queries";
@@ -43,7 +44,7 @@ export function PageVersions({ project, pageNumber, activeRevision, disabled, on
           {select.isPending ? t("Selecting…") : revision === activeRevision ? t("Selected version") : t("Use this version")}
         </Button>
         {stale && <p className="text-sm">{t("This version belongs to an earlier page plan.")}</p>}
-        {select.error && <p role="alert" className="text-sm text-hero-red">{select.error.message}</p>}
+        {select.error && <ErrorNotice error={select.error} operation="save" />}
       </div>}
     </div>
     {detail.isLoading && <p role="status">{t("Loading…")}</p>}

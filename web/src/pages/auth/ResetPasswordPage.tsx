@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../../components/composites/ErrorNotice";
 import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
@@ -23,7 +24,7 @@ export function ResetPasswordPage() {
   useEffect(() => () => { if (redirectTimer.current) clearTimeout(redirectTimer.current); }, []);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -54,7 +55,7 @@ export function ResetPasswordPage() {
       setConfirm("");
       redirectTimer.current = setTimeout(() => navigate("/login", { replace: true }), 1500);
     } catch (error) {
-      setError(error instanceof Error ? error.message : t("We couldn't update your password. Please try again."));
+      setError(error instanceof Error ? error : new Error(t("We couldn't update your password. Please try again.")));
     } finally {
       setSubmitting(false);
     }
@@ -88,11 +89,7 @@ export function ResetPasswordPage() {
             <p className="font-body text-sm leading-6 text-ink-muted">{t("Choose a password you don't use elsewhere.")}</p>
           </div>
 
-          {error && (
-            <p role="alert" className="bg-chip-red/50 px-3 py-2 text-center font-body text-[0.85rem] font-semibold text-hero-red">
-              {error}
-            </p>
-          )}
+          {error && (typeof error === "string" ? <p role="alert" className="bg-chip-red/50 px-3 py-2 text-center font-body text-[0.85rem] font-semibold text-hero-red">{error}</p> : <ErrorNotice error={error} operation="auth" />)}
           {message && (
             <p role="status" className="bg-chip-sage px-3 py-2 text-center font-body text-[0.85rem] font-semibold text-ink-black">
               {message}

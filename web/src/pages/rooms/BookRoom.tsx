@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../../components/composites/ErrorNotice";
 import { BookPublication } from "../../components/book/BookPublication";
 import { BookOpen, ArrowDown } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
@@ -225,15 +226,8 @@ export function BookRoom() {
             </p>
           </Surface>
         ) : !preflight || preflightError ? (
-          <Surface padding="md" tone="red" border="hard" shadow="paper" role="alert">
-            <p className="font-body text-sm font-bold leading-6">
-              {t("The book could not be checked.")}
-            </p>
-            {preflightError && <p className="mt-2 break-words font-body text-sm leading-6">{preflightError.message}</p>}
-            <Button className="mt-3" variant="outline" disabled={isFetching} onClick={() => void refetch()}>
-              {isFetching ? t("Checking edition…") : t("Retry edition checks")}
-            </Button>
-          </Surface>
+          <ErrorNotice error={preflightError} operation="load" title="The book could not be checked."
+            onRetry={() => void refetch()} retryDisabled={isFetching} retryLabel={t("Retry edition checks")} />
         ) : (
           <ul className="space-y-3">
             {findings.map((finding) => (
@@ -311,7 +305,7 @@ export function BookRoom() {
             </ul>
           </details>
         )}
-        {retryPreflight.error && <p role="alert" className="mt-3 font-body text-sm text-hero-red">{retryPreflight.error.message}</p>}
+        {retryPreflight.error && <ErrorNotice error={retryPreflight.error} operation="generate" />}
       </section>
 
       <BookExportPanel project={id}
@@ -488,13 +482,13 @@ function ReplanPageAction({ project, pageNumber, disabled, onReplanned }: {
         {replan.isPending ? t("Re-planning…") : label}
       </Button>
       {replan.isSuccess && <p role="status" className="basis-full font-body text-sm">{t("Page {page} was re-planned. Redraw it from Pages so the art matches.", { page: String(pageNumber) })}</p>}
-      {replan.error && <p role="alert" className="basis-full font-body text-sm text-hero-red">{replan.error.message}</p>}
+      {replan.error && <ErrorNotice error={replan.error} operation="generate" />}
       <ConfirmDrawer
         open={open}
         title={label}
         body={t("Rewrites this page’s panel descriptions so every character keeps the look the story has reached. Its beats, lettering and the rest of the book stay as they are. The current artwork is kept until you redraw the page from Pages.")}
         cost={estimate.data}
-        extraBody={estimate.error ? <p role="alert" className="font-body text-sm text-hero-red">{estimate.error.message}</p> : undefined}
+        extraBody={estimate.error ? <ErrorNotice error={estimate.error} operation="estimate" /> : undefined}
         confirmLabel={label}
         busy={replan.isPending}
         disabled={!estimate.data}

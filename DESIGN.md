@@ -135,6 +135,25 @@ Design tokens (`@theme` variables: `--color-*`, `--font-*`, `--shadow-*`, `--spa
 Don't fork. Change the composite. If you find yourself reinventing a card or section header in a room, that is a signal that either (a) the composite's API needs a new slot or variant, or (b) you should add a new composite. Discuss before forking.
 
 
+## Error presentation
+
+Use `ErrorNotice` from `components/composites/` for failed requests in rooms,
+editors, settings, dialogs and account forms. Pass the original error object,
+an operation (`load`, `save`, `generate`, `estimate`, `delete`, `approve`,
+`export`, `preview`, `upload` or `auth`), and contextual copy when needed.
+It explains the failure and recovery beside the affected control. Storage,
+session, rate-limit and indeterminate-action errors have shared recovery copy.
+Readable application validation remains visible; JSON bodies, exceptions and
+diagnostic identifiers belong in the collapsed `ErrorDetails` disclosure.
+Authors can copy those details when reporting a problem.
+
+Supply `onRetry` only for provider-free reads, with the existing pending guard.
+Generation retains its estimate and explicit consent controls. An uncertain
+paid action directs the author to inspect progress before another submission.
+Preserve drafts and confirmation inputs. Local field validation stays next to
+its field; developer diagnostics and the specialized stage and page failure
+summaries keep their existing context and recovery controls.
+
 ## Page change requests
 
 Change requests start with words, not drawing. A user may review and submit a

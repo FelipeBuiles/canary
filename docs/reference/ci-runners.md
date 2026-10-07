@@ -35,6 +35,11 @@ deployment, and remote-build client jobs use 2 each. All runners use Ubuntu
   identities. The stable split key is `canary-backend-py312`. Later runs use those
   timings to balance the workload. Full-page contracts remain part of the suite;
   audits, documentation checks, and Ruff run once, on shard zero.
+- Backend lettering tests reuse Chromium processes with fresh contexts for each
+  operation. Provider-free billing/security regressions run in the backend shards
+  once; the database job owns the real PostgreSQL contracts. The release backend
+  command also runs full-page contracts only once, within the full suite. See
+  [backend test maintenance](backend-tests.md) for timing reports and trimming rules.
 - Release SHA, timestamp, and frontend configuration arguments appear after
   dependency installation in the Dockerfile. Changing release metadata rebuilds
   the frontend bundle and final image metadata, while dependency layers remain

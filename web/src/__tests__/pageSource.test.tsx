@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LetteringElement } from "@lettering-engine";
 import { PageSourcePanel } from "../components/pages/PageSourcePanel";
 import { I18nProvider } from "../i18n";
+import { ApiError } from "../api/client";
 import type { CompletePageSummary, PageSourceView } from "../types/api";
 
 let result: { data?: PageSourceView; error?: Error | null; isLoading?: boolean } = {};
@@ -139,10 +140,10 @@ describe("Page source view", () => {
   });
 
   it("explains a rejected lineage with the server's rerun instruction", () => {
-    result = { data: undefined, error: new Error("API 409: Page 1 was planned from an older adaptation. Re-run Plan."), isLoading: false };
+    result = { data: undefined, error: new ApiError(409, "Page 1 was planned from an older adaptation. Re-run Plan."), isLoading: false };
     renderPanel();
 
-    expect(screen.getByRole("alert").textContent).toBe("The source for this page is not available.");
-    expect(screen.getByText("Page 1 was planned from an older adaptation. Re-run Plan.")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("The source for this page is not available.");
+    expect(screen.getByText("Page 1 was planned from an older adaptation. Re-run Plan.").closest("details")).toBeNull();
   });
 });

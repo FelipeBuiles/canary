@@ -88,6 +88,8 @@ provider-free; paid generation and ambiguous submissions retain the guardrails a
 
 - Backend: start with `novel_to_comic/.venv/bin/python -m pytest novel_to_comic/tests/test_<area>.py -q`
   (substitute the relevant test file; use `-k` to narrow further).
+  For suite speed or duplicate coverage, use the JUnit audit and trimming rules
+  in [backend test maintenance](docs/reference/backend-tests.md).
 - Frontend: in `web/`, use `npm test -- src/__tests__/<area>.test.tsx` for the
   affected behavior. Run `npm run build` for TypeScript/bundling changes and
   `npm run lint` for frontend source changes.

@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../composites/ErrorNotice";
 import { useState, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { Sheet } from "../composites/Sheet";
@@ -86,7 +87,7 @@ export function EntitySheet({ project, editor, kind, entityId, onClose, actions 
   const [castRequired, setCastRequired] = useState(entity?.cast_required === true);
   const savedForm = (entity?.reference_form as ReferenceForm | undefined) ?? "figure";
   const [referenceForm, setReferenceForm] = useState<ReferenceForm>(savedForm);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | string | null>(null);
   const edit = useEditEntity();
   const add = useAddEntity();
   const busy = edit.isPending || add.isPending;
@@ -121,7 +122,7 @@ export function EntitySheet({ project, editor, kind, entityId, onClose, actions 
   function save() {
     setError(null);
     const details = payload();
-    const onError = (err: Error) => setError(err.message);
+    const onError = (err: Error) => setError(err);
     if (adding) {
       add.mutate({ project, kind, revision: editor.revision, details, sceneIds: scenes }, { onSuccess: onClose, onError });
     } else if (Object.keys(details).length) {
@@ -142,7 +143,7 @@ export function EntitySheet({ project, editor, kind, entityId, onClose, actions 
         ? t("Add someone or something extraction missed. New entries need Cast references before a part can use them.")
         : t("Changing a description marks this entry's Cast images out of date; you choose to regenerate or keep them. Drawn pages are flagged, never redrawn.")}
       footer={<>
-        {error && <p role="alert" className="mr-auto font-body text-sm text-hero-red">{error}</p>}
+        {error && <ErrorNotice error={error} operation="save" />}
         <Button variant="outline" onClick={onClose} disabled={busy}>{t("Cancel")}</Button>
         <Button onClick={save} disabled={busy || missing.length > 0 || needsScene}>
           {busy ? t("Saving…") : adding ? t("Add to the Story Bible") : t("Save changes")}
@@ -235,7 +236,7 @@ function DraftFromSource({ project, kind, name, aliases, onDraft }: {
         {draft.isPending ? t("Drafting…") : t("Draft from source")}
         {estimate.data?.estimate && <CreditAmount value={estimate.data.estimate.estimate_credits} approximate />}
       </Button>
-      {draft.error && <p role="alert" className="w-full font-body text-sm text-hero-red">{draft.error.message}</p>}
+      {draft.error && <ErrorNotice error={draft.error} operation="generate" />}
     </div>
   );
 }

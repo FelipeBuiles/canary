@@ -76,7 +76,7 @@ export function OutOfDatePages({ project, redraws, disabled, onQueued }: {
         {busy ? t("Queuing redraw…") : label}
       </Button>
       {(error || estimate.error) && (
-        <p role="alert" className="mt-2 font-body text-sm text-hero-red">{error ?? estimate.error?.message}</p>
+        <ErrorNotice error={error ?? estimate.error} operation={error ? "generate" : "estimate"} />
       )}
       <ConfirmDrawer
         open={open}
@@ -92,3 +92,4 @@ export function OutOfDatePages({ project, redraws, disabled, onQueued }: {
     </section>
   );
 }
+import { ErrorNotice } from "../composites/ErrorNotice";

@@ -106,10 +106,10 @@ export function StyleRoom() {
   const connect = usePipelineStore((s) => s.connect);
   const clearEvents = usePipelineStore((s) => s.clearEvents);
   const [letteringOpen, setLetteringOpen] = useState(false);
-  const [sampleError, setSampleError] = useState<string | null>(null);
+  const [sampleError, setSampleError] = useState<Error | string | null>(null);
   const [suggestionJobId, setSuggestionJobId] = useState<string | null>(null);
   const [suggestionStatus, setSuggestionStatus] = useState<"idle" | "running" | "failed">("idle");
-  const [suggestionError, setSuggestionError] = useState<string | null>(null);
+  const [suggestionError, setSuggestionError] = useState<Error | string | null>(null);
   const [showSuggestConfirm, setShowSuggestConfirm] = useState(false);
   const [showDirectionComposer, setShowDirectionComposer] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
@@ -181,7 +181,7 @@ export function StyleRoom() {
         onSuccess: (data) => { setSuggestionJobId(data.job?.id ?? null); connect(projectName); },
         onError: (err) => {
           setSuggestionStatus("failed");
-          setSuggestionError(err.message);
+          setSuggestionError(err);
         },
       },
     );
@@ -355,7 +355,7 @@ export function StyleRoom() {
         },
         onError: (error) => {
           setSuggestionStatus("failed");
-          setSuggestionError(error.message);
+          setSuggestionError(error);
         },
       },
     );
@@ -457,9 +457,7 @@ export function StyleRoom() {
               </span>
             )}
             {sampleError && (
-              <span role="alert" className="text-[0.75rem] font-semibold text-hero-red">
-                {sampleError}
-              </span>
+              <ErrorNotice error={sampleError} operation="generate" />
             )}
             <div className="flex flex-col items-end gap-1">
               <Button
@@ -480,10 +478,7 @@ export function StyleRoom() {
       {letteringOpen && <div className="mt-5"><BookLetteringPanel project={projectName} disabled={isStageGenerating} onClose={() => setLetteringOpen(false)} /></div>}
 
       {suggestionStatus === "failed" ? (
-        <div className="mt-4 border-[2px] border-ink-black bg-hero-red p-3 text-bristol" role="alert">
-          <span className="font-meta text-[0.7rem] font-bold tracking-[0.08em]">{t("STYLE SUGGESTION FAILED")}</span>
-          <div className="mt-1 font-body text-[0.84rem] leading-relaxed">{suggestionError}</div>
-        </div>
+        <ErrorNotice error={suggestionError} operation="generate" />
       ) : (isSuggesting || isStageGenerating) && (
         <StyleGenerationProgress
           job={activeBatchJob}
@@ -560,7 +555,7 @@ export function StyleRoom() {
             automaticDisabled={batchInFlight || proofsInFlight}
             disabled={estimatesMissing || !!estimateError}
             onRetry={estimateError ? retryEstimates : undefined}
-            error={suggestionError ?? estimateError?.message}
+            error={suggestionError ?? estimateError}
             onAutomatic={() => setShowSuggestConfirm(true)}
             onCustom={setPendingCustomInput}
           />
@@ -592,7 +587,7 @@ export function StyleRoom() {
                 automaticDisabled={batchInFlight || proofsInFlight}
                 disabled={estimatesMissing || !!estimateError}
                 onRetry={estimateError ? retryEstimates : undefined}
-                error={suggestionError ?? estimateError?.message}
+                error={suggestionError ?? estimateError}
                 onAutomatic={() => setShowSuggestConfirm(true)}
                 onCustom={setPendingCustomInput}
               />
@@ -781,7 +776,7 @@ export function StyleRoom() {
                   actionLabel: pending.kind === "retry" ? "Retry style proofs" : "Refresh style proof",
                   onRetry: () => setPendingProofs(pending),
                 })) return;
-                setSampleError(error.message);
+                setSampleError(error);
                 setPendingProofs(null);
               },
             },
@@ -849,7 +844,7 @@ export function StyleRoom() {
                   actionLabel: "Generate action audition",
                   onRetry: () => setPendingValidation(suggestion),
                 })) return;
-                setSampleError(error.message);
+                setSampleError(error);
                 setPendingValidation(null);
               },
             },
@@ -860,3 +855,4 @@ export function StyleRoom() {
     </RoomShell>
   );
 }
+import { ErrorNotice } from "../../components/composites/ErrorNotice";

@@ -253,7 +253,7 @@ def fail_stage(
 ) -> None:
     """Mark a stage as failed and retain bounded local diagnostic detail.
 
-    ``detail`` is the structured credit-failure payload. ``error_detail`` is a
+    ``detail`` is the structured rejection payload. ``error_detail`` is a
     traceback or other developer-facing explanation and must never contain
     prompts or provider credentials.
     """
@@ -268,8 +268,10 @@ def fail_stage(
         s.required_credits = detail.get("required_credits")
         s.shortfall_credits = detail.get("shortfall_credits")
     else:
-        s.error_code = (detail["error"] if detail and detail.get("error")
-                        in {"model_refusal", "generation_work_limit"} else None)
+        code = (detail.get("error") or detail.get("code")) if detail else None
+        s.error_code = code if code in {
+            "model_refusal", "generation_work_limit", "storage_budget_exceeded",
+        } else None
         s.balance_credits = None
         s.required_credits = None
         s.shortfall_credits = None

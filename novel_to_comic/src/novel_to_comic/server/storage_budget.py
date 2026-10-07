@@ -53,7 +53,7 @@ def require_capacity(account: Path, additional: int, *, budget: dict | None = No
             413,
             {
                 "code": "storage_budget_exceeded",
-                "message": "Account storage is full. Remove unused projects or uploads before adding more.",
+                "message": "Account storage is full. Delete projects you no longer need from their settings, then try again.",
                 "admitted": False,
                 **budget,
             },

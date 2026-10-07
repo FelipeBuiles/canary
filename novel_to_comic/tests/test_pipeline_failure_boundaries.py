@@ -345,6 +345,34 @@ async def test_stage_exception_reaches_error_tracking_with_its_stage(tmp_path, m
 
 
 @run_async
+@pytest.mark.parametrize("runtime_scope", [False, True])
+async def test_storage_rejection_keeps_its_type_and_message_after_reload(tmp_path, monkeypatch, runtime_scope):
+    state, artifact = existing_project(tmp_path)
+    message = "Account storage is full."
+
+    class Full:
+        async def run(self, config, project_dir, ctx):
+            error = HTTPException(413, {
+                "code": "storage_budget_exceeded", "message": message, "admitted": False,
+                "used_bytes": 101, "limit_bytes": 100, "remaining_bytes": 0,
+            })
+            if runtime_scope:
+                with ctx.execute(total=1):
+                    raise error
+            raise error
+
+    monkeypatch.setitem(pipeline_operations.REGISTRY, "plan", Full())
+    events = EventChannel()
+    await pipeline_operations._run_stage("plan", Config(), tmp_path, state, events)
+    final = load_state(tmp_path).stages["plan"]
+    assert final.status == StageStatus.FAILED
+    assert final.error == message
+    assert final.error_code == "storage_budget_exceeded"
+    assert any(event.get("error_code") == "storage_budget_exceeded" for event in events.history)
+    assert artifact.read_text() == '{"paid": "prior output"}'
+
+
+@run_async
 async def test_plan_estimate_rejects_a_blank_visual_anchor_with_an_instruction(tmp_path, monkeypatch):
     from novel_to_comic.artifacts import write_story_bible
     from novel_to_comic.models.story_bible import Character, StoryBible
