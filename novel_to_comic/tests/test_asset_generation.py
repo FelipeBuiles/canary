@@ -234,7 +234,7 @@ def test_character_requests_preserve_nonhuman_canonical_anatomy():
 
 
 def test_cover_style_lookup_never_substitutes_an_unselected_sample(tmp_path):
-    from novel_to_comic.server.routers.projects import _find_style_ref
+    from novel_to_comic.server.cover_operations import _find_style_ref
     from novel_to_comic.style_contract import style_template_for_suggestion
 
     samples = tmp_path / "samples"

@@ -1,4 +1,5 @@
 """Plan restarts retain paid work even when old artifact schemas cannot load."""
+from novel_to_comic.server import pipeline_operations
 from pathlib import Path
 from types import SimpleNamespace
 import asyncio
@@ -28,7 +29,7 @@ def test_plan_archive_keeps_art_accessible_and_does_not_rebind_it(tmp_path):
     files = old_book(tmp_path)
     target = TargetArtifacts(tmp_path)
     assert target.drawn_page_count() == 1
-    pipeline._clear_outputs_for_rerun(tmp_path, "plan")
+    pipeline_operations._clear_outputs_for_rerun(tmp_path, "plan")
     archive, = target.restart_archives()
     assert archive["page_count"] == 1
     assert not target.plan_path.exists()
@@ -53,7 +54,7 @@ def test_archive_failure_rolls_back_every_move(tmp_path, monkeypatch):
         return rename(source, destination)
     monkeypatch.setattr(Path, "rename", failing)
     with pytest.raises(OSError, match="disk error"):
-        pipeline._clear_outputs_for_rerun(tmp_path, "plan")
+        pipeline_operations._clear_outputs_for_rerun(tmp_path, "plan")
     assert all((tmp_path / name).read_bytes() == data for name, data in files.items())
     assert TargetArtifacts(tmp_path).restart_archives() == []
 

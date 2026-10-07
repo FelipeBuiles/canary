@@ -16,6 +16,7 @@ from novel_to_comic.config import Config
 from novel_to_comic.state import load_state
 from novel_to_comic.target_artifacts import TargetArtifacts
 from .job_commands import read_blob
+from .async_credits import ledger_call, release_unstarted_hold
 
 
 class PipelineStageFailed(RuntimeError):
@@ -48,10 +49,11 @@ async def execute_command(app, job):
     if spec.operation == "pipeline":
         return await _pipeline(app, job, directory, config)
     db = get_db()
-    reservation, ledger_id = reserve_credits(db, spec.user_id, spec.project_id, spec.stage,
-                                            spec.reservation_credits, job_id=spec.ledger_job_id)
+    reservation, ledger_id = await ledger_call(reserve_credits, db, spec.user_id, spec.project_id, spec.stage,
+                                            spec.reservation_credits, job_id=spec.ledger_job_id,
+                                            cancel_cleanup=lambda result: release_unstarted_hold(db, result))
     try:
-        assert_reservation_active(db, reservation)
+        await ledger_call(assert_reservation_active, db, reservation)
         from .image_previews import preview_events
 
         with ai_request_context(user_id=spec.user_id, project_id=spec.project_id,
@@ -64,16 +66,16 @@ async def execute_command(app, job):
         if result is not None:
             for usage in (result.usage, *result.additional_usage):
                 if usage is not None:
-                    debit_model_usage(db, spec.user_id, spec.project_id, usage,
+                    await ledger_call(debit_model_usage, db, spec.user_id, spec.project_id, usage,
                                       stage=spec.stage, description=spec.debit_description, job_id=ledger_id)
             if settled is not None:
-                settled(result)
+                await asyncio.to_thread(settled, result)
     except asyncio.CancelledError:
         retain_ambiguous_job(ledger_id)
         raise
     finally:
         if reservation:
-            release_reservation(db, reservation)
+            await ledger_call(release_reservation, db, reservation)
 
 
 async def _operate(app, job, directory, config):
@@ -87,12 +89,14 @@ async def _operate(app, job, directory, config):
         from novel_to_comic.models.draw import FrozenPageGenerationRequest
         from novel_to_comic.models.page import ComicPage
         from novel_to_comic.models.draw import PageIssue
-        from .routers.pages import _draw_success_callback
+        from .page_operations import _draw_success_callback
 
         frozen = FrozenPageGenerationRequest.model_validate(args["request"])
         page = ComicPage.model_validate(args["page"])
-        current = next((p for p in target.read_plan().pages if p.page_number == page.page_number), None)
-        if current is None or frozen.is_stale_for(current):
+        selected = next((p for p in target.read_plan().pages if p.page_number == page.page_number), None)
+        current = target.read_page(page.page_number)
+        if (selected is None or selected.revision != current.revision
+                or selected.content_sha256 != current.content_sha256 or frozen.is_stale_for(current)):
             raise ValueError("Queued page input changed; explicitly prepare a new draw")
         compiled = CompiledPageGeneration(frozen,
             tuple(read_blob(directory, digest) for digest in args["references"]),
@@ -110,7 +114,7 @@ async def _operate(app, job, directory, config):
         )
         return await work(), settled
     if spec.operation == "cover":
-        from .routers.projects import _generate_project_cover
+        from .cover_operations import _generate_project_cover
         return await _generate_project_cover(config, directory, spec.user_id, spec.project_id), None
     if spec.operation == "cast_asset":
         from novel_to_comic.stages import s3_cast
@@ -138,22 +142,6 @@ async def _operate(app, job, directory, config):
         prepared = TypeAdapter(PreparedTranslation).validate_python(args["prepared"])
         await translate_project(target, config, prepared)
         return None, None
-    if spec.operation == "frozen_asset":
-        from novel_to_comic.asset_generation import NonPanelRequest, persist_non_panel_provenance
-        from novel_to_comic.frozen_requests import execute_frozen_request
-        request = TypeAdapter(NonPanelRequest).validate_python(args["request"])
-        output = directory / args["output_path"]
-        output.resolve().relative_to(directory.resolve())
-        try:
-            result = await execute_frozen_request(project_dir=directory,
-                request_id=args["frozen_request_id"], config=config, output_path=output, feature=args["feature"])
-        except BaseException as exc:
-            persist_non_panel_provenance(request=request, output_path=output, project_dir=directory,
-                                        request_id=args["frozen_request_id"], error=exc)
-            raise
-        persist_non_panel_provenance(request=request, output_path=output, project_dir=directory,
-                                    request_id=args["frozen_request_id"], result=result)
-        return result, None
     if spec.operation in {"style_sample", "style_validation", "style_suggest", "style_direction"}:
         from .style_jobs import execute_style
         await execute_style(app, job, directory, config)
@@ -162,7 +150,7 @@ async def _operate(app, job, directory, config):
 
 
 async def _pipeline(app, job, directory, config):
-    from .routers.pipeline import _run_stage_with_credits
+    from .pipeline_operations import _run_stage_with_credits
     from .event_channel import EventChannel
     from novel_to_comic.state import StageStatus
     spec = job.command
@@ -183,14 +171,18 @@ async def _pipeline(app, job, directory, config):
         # before any child page job exists. Persist that failure too.
         from novel_to_comic.artifact_lock import production_lock
         from novel_to_comic.state import fail_stage, save_state
-        with production_lock(directory):
-            latest = load_state(directory)
-            active_stage = job.payload.get("stage", spec.stage)
-            if latest.stages[active_stage].status == StageStatus.RUNNING:
-                message = str(exc) or type(exc).__name__
-                fail_stage(latest, active_stage, message)
-                save_state(latest, directory)
-                channel.put_nowait({"type": "stage_fail", "stage": active_stage, "message": message})
+        def persist_failure(message):
+            with production_lock(directory):
+                latest = load_state(directory)
+                active_stage = job.payload.get("stage", spec.stage)
+                if latest.stages[active_stage].status == StageStatus.RUNNING:
+                    fail_stage(latest, active_stage, message)
+                    save_state(latest, directory)
+                    return {"type": "stage_fail", "stage": active_stage, "message": message}
+            return None
+        event = await asyncio.to_thread(persist_failure, str(exc) or type(exc).__name__)
+        if event is not None:
+            channel.put_nowait(event)
         raise
     finally:
         channel.put_nowait({"type": "pipeline_done"})

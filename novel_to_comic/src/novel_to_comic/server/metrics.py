@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi.responses import PlainTextResponse
+from .generation_jobs import generation_jobs_snapshot
 
 
 @dataclass
@@ -172,7 +173,7 @@ def render_metrics(app) -> str:
             lines.append(f"{name}_sum{_format_labels(labels)} {total:g}")
             lines.append(f"{name}_count{_format_labels(labels)} {count}")
 
-    jobs = list(getattr(app.state, "generation_jobs", {}).values())
+    jobs = generation_jobs_snapshot(app)
     job_counts = {status: sum(1 for job in jobs if job.status == status) for status in ("queued", "running")}
     queue_size = getattr(getattr(app.state, "generation_queue", None), "qsize", lambda: 0)()
     lines.extend((

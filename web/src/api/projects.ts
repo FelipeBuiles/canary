@@ -52,7 +52,7 @@ export function generateProjectCover(
   projectId: string,
 ): Promise<{ status: string; path: string; job: GenerationJob | null }> {
   return apiFetch(`${projectPath(projectId)}/cover`, {
-    method: "POST",
+    paidAction: true, method: "POST",
   });
 }
 

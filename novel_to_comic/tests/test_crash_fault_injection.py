@@ -14,18 +14,16 @@ import sys
 import httpx
 import pytest
 
-from novel_to_comic.server.generation_jobs import recovered_generation_jobs
 from novel_to_comic.target_artifacts import TargetArtifacts
 from tests.test_server_admission import app_at
 
 
 def _child(root: Path, phase: str):
-    from novel_to_comic.server import credited_job
+    from novel_to_comic.server import credited_job, credits
     from novel_to_comic.server.generation_jobs import persist_generation_job
-    from novel_to_comic.usage import ApiResult
     from tests.test_complete_page_draw import (
         _compile, _page, _provider_result, _RecordingTransport, _vertex_adapter,
-        draw_complete_page,
+        _make_app,
     )
 
     root.mkdir(parents=True, exist_ok=True)
@@ -48,22 +46,30 @@ def _child(root: Path, phase: str):
 
     app = app_at(root)
     app.state.generation_queue = asyncio.Queue()
-    artifacts = TargetArtifacts(root / "book")
+    native = _make_app(root)
+    app.state.projects_dir = root
+    app.state.durable_queue = native.state.durable_queue
+    app.state.durable_queue.app = app
+    app.state.durable_queue_required = True
+    artifacts = TargetArtifacts(root / "user-1" / "project")
     credited_job.get_db = lambda: None
+    credited_job.assert_sufficient_credits = lambda *a, **k: None
+    from novel_to_comic.server import db
+    db.get_db = lambda: None
 
-    def reserve(*args):
+    def reserve(*args, **kwargs):
         (root / "hold").write_text("reserved")
         return "hold", "ledger-job"
 
-    credited_job.reserve_credits = reserve
-    credited_job.assert_reservation_active = lambda *args: None
-    credited_job.release_reservation = lambda *args: (root / "hold").write_text("released")
+    credits.reserve_credits = reserve
+    credits.assert_reservation_active = lambda *args: None
+    credits.release_reservation = lambda *args: (root / "hold").write_text("released")
 
     def settle(*args, **kwargs):
         assert phase == "saved_before_settlement"
         os._exit(73)
 
-    credited_job.debit_model_usage = settle
+    credits.debit_model_usage = settle
 
     transport = _RecordingTransport(_provider_result())
     (root / "usage-call-id").write_text(transport.result.usage.call_id)
@@ -78,27 +84,30 @@ def _child(root: Path, phase: str):
 
     adapter.generate = generate
 
-    async def work():
-        if phase == "before_submission":
-            os._exit(73)
-        saved = await draw_complete_page(
-            _compile(root), adapter=adapter, artifacts=artifacts, page=_page(),
-            defer_completion=True,
-        )
-        return ApiResult(value=saved, usage=saved.usage)
+    from novel_to_comic.server.page_admission import enqueue_complete_page_draw
+    from novel_to_comic.server.job_execution import execute_command
+    from novel_to_comic.config import Config
+    from unittest.mock import patch
 
-    @app.post("/api/projects/book/pages/7/generate")
+    @app.post("/api/projects/book/pages/7/generate", openapi_extra={"x-canary-action": {"spends": True, "dispatches": True}})
     async def paid():
-        job, _ = credited_job.enqueue_reserved_generation_job(
-            app, project_name="account:book", user_id="account", project_id="book",
-            project_dir=root / "book", stage="draw", kind="complete_page_draw",
-            label="Page 7", payload={"page_number": 7}, work=work,
-            debit_description="Page", reservation_credits=2,
-            operations=(("complete_page", "image-gemini-pro"),),
+        job, _ = await enqueue_complete_page_draw(
+            app, project_name="account:book", user_id="user-1", project_id="book",
+            project_dir=artifacts.project_dir, config=Config(), compiled=_compile(root),
+            adapter=adapter, artifacts=artifacts, page=_page(),
         )
         job.status = "running"
+        from datetime import datetime, timezone
+        job.started_at = datetime.now(timezone.utc)
         persist_generation_job(app, job)
-        await job.runner()
+        if phase == "before_submission":
+            # Obtain the real execution hold, then hard-exit before dispatch.
+            def held_before_submission(*args, **kwargs):
+                reserve(*args, **kwargs)
+                os._exit(73)
+            credits.reserve_credits = held_before_submission
+        with patch("novel_to_comic.page_drawing.complete_page_adapter", return_value=adapter):
+            await execute_command(app, job)
         raise AssertionError("fault was not reached")
 
     async def run():
@@ -132,7 +141,11 @@ def test_hard_exit_never_replays_paid_action_or_releases_hold(tmp_path, phase):
         assert response.status_code == 409
         assert response.json()["detail"]["code"] == "idempotency_indeterminate"
     assert calls == []
-    jobs = recovered_generation_jobs(app, "account:book")
+    app.state.projects_dir = tmp_path
+    from novel_to_comic.server.durable_queue import DurableQueue
+    asyncio.run(DurableQueue(app, "postgresql://unused").restore())
+    jobs = list(app.state.generation_jobs.values())
+    jobs = [__import__("novel_to_comic.server.generation_jobs", fromlist=["generation_job_payload"]).generation_job_payload(app, job) for job in jobs]
     assert len(jobs) == 1 and jobs[0]["status"] == "failed"
     assert jobs[0]["payload"]["page_number"] == 7
     assert (tmp_path / "hold").read_text() == "reserved"
@@ -140,7 +153,7 @@ def test_hard_exit_never_replays_paid_action_or_releases_hold(tmp_path, phase):
     assert (submissions.read_text() if submissions.exists() else "0") == ("0" if phase == "before_submission" else "1")
     if phase == "saved_before_settlement":
         from tests.test_complete_page_draw import _provider_result
-        artifacts = TargetArtifacts(tmp_path / "book")
+        artifacts = TargetArtifacts(tmp_path / "user-1" / "project")
         assert artifacts.read_render(7, 1) == _provider_result().image_bytes
         assert artifacts.read_provenance(7, 1).usage.model_dump(exclude={"call_id"}) == _provider_result().usage.model_dump(exclude={"call_id"})
         assert artifacts.read_provenance(7, 1).usage.call_id == (tmp_path / "usage-call-id").read_text()

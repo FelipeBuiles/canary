@@ -1,5 +1,6 @@
 """Generated software styles, clean reference proofs and insertion affordances."""
 from __future__ import annotations
+from novel_to_comic.server import pipeline_operations
 
 import asyncio
 import copy
@@ -21,7 +22,7 @@ from novel_to_comic.lettering.proof import (
 )
 from novel_to_comic.models.lettering import LetteringDesign, LetteringStyle
 from novel_to_comic.models.page import PinnedGeometry
-from novel_to_comic.server.routers import lettering, pipeline, styles
+from novel_to_comic.server.routers import lettering, styles
 from novel_to_comic.stages.s2_style import (
     StyleProduction, build_style_sample_request, generate_sample_image,
     normalize_suggestion, save_suggestions,
@@ -111,7 +112,7 @@ def test_style_saved_before_pages_survives_downstream_reruns(tmp_path, stage):
     original_bytes = target.lettering_style_path.read_bytes()
     target.lettering_path(1).parent.mkdir(parents=True, exist_ok=True)
     target.lettering_path(1).write_text("obsolete layout")
-    pipeline._clear_outputs_for_rerun(tmp_path, stage)
+    pipeline_operations._clear_outputs_for_rerun(tmp_path, stage)
     assert target.lettering_style_path.read_bytes() == original_bytes
     assert not target.lettering_path(1).exists()
     assert service.ensure_style(target) == saved

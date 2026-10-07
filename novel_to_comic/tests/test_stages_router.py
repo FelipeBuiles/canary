@@ -1,4 +1,5 @@
 from __future__ import annotations
+from novel_to_comic.server import pipeline_operations
 
 import json
 from pathlib import Path
@@ -216,7 +217,7 @@ def test_cast_approval_does_not_start_adapt_with_a_draft_brief(
     async def record_started_stage(stage, *_args, **_kwargs):
         started.append(stage)
 
-    monkeypatch.setattr(pipeline, "_run_stage_with_credits", record_started_stage)
+    monkeypatch.setattr(pipeline_operations, "_run_stage_with_credits", record_started_stage)
     client = _client(tmp_path, project_dir, state)
 
     response = client.post("/api/projects/test_project/parts/part_0001/approve/cast")
@@ -239,7 +240,7 @@ def test_run_adapt_rejects_a_draft_brief_before_enqueuing(
     async def record_started_stage(stage, *_args, **_kwargs):
         started.append(stage)
 
-    monkeypatch.setattr(pipeline, "_run_stage_with_credits", record_started_stage)
+    monkeypatch.setattr(pipeline_operations, "_run_stage_with_credits", record_started_stage)
     monkeypatch.setattr(styles, "is_style_selected", lambda *_args: True)
     monkeypatch.setattr(
         pipeline,
@@ -306,7 +307,7 @@ def test_brief_reapproval_resumes_adapt_when_cast_is_already_complete(
     async def record_started_stage(stage, *_args, **_kwargs):
         started.append(stage)
 
-    monkeypatch.setattr(pipeline, "_run_stage_with_credits", record_started_stage)
+    monkeypatch.setattr(pipeline_operations, "_run_stage_with_credits", record_started_stage)
     client = _client(tmp_path, project_dir, state)
 
     response = client.post("/api/projects/test_project/parts/part_0001/approve/brief")
@@ -315,7 +316,10 @@ def test_brief_reapproval_resumes_adapt_when_cast_is_already_complete(
     assert response.json()["auto_started"] == "adapt"
     assert state.stages["brief"].status == StageStatus.COMPLETE
     assert TargetArtifacts(project_dir).read_brief().status == "approved"
-    assert started == ["adapt"]
+    assert started == []  # The accepted command runs only after durable dispatch.
+    queued = list(client.app.state.generation_jobs.values())
+    assert len(queued) == 1
+    assert queued[0].status == "queued" and queued[0].command.stage == "adapt"
 
 
 def test_brief_stage_repairs_an_invalid_inference_with_one_retry(
@@ -429,7 +433,7 @@ def test_cast_reapproval_does_not_restart_completed_adapt_and_plan(tmp_path, mon
     state.stages["adapt"] = StageState(status=StageStatus.COMPLETE)
     state.stages["plan"] = StageState(status=StageStatus.COMPLETE)
     start = AsyncMock()
-    monkeypatch.setattr(pipeline, "_run_stage_with_credits", start)
+    monkeypatch.setattr(pipeline_operations, "_run_stage_with_credits", start)
     response = _client(tmp_path, project_dir, state).post("/api/projects/test_project/parts/part_0001/approve/cast")
     assert response.status_code == 200
     assert "auto_started" not in response.json()
@@ -519,9 +523,9 @@ def _continued_cast_run(tmp_path, monkeypatch, blocker):
         state.stages[stage].status = StageStatus.AWAITING_REVIEW if stage == "cast" else StageStatus.COMPLETE
         save_state(state, project_dir)
 
-    monkeypatch.setattr(pipeline, "run_credited_stage", fake_credited_stage)
+    monkeypatch.setattr(pipeline_operations, "run_credited_stage", fake_credited_stage)
     monkeypatch.setattr(s3_cast, "cast_approval_blocker", lambda *_args: blocker)
-    asyncio.run(pipeline._run_stage_with_credits(
+    asyncio.run(pipeline_operations._run_stage_with_credits(
         "cast", Config(), project_dir, state, asyncio.Queue(), "user", "test_project",
         approve_part=str(project_dir)))
     return state, ran

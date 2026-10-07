@@ -1,0 +1,69 @@
+{
+  "reviewed_commit": "7885e84a13568467911776601a2a91c5abe9f5fd",
+  "cases": [
+    {
+      "case": "logout_cookie",
+      "result": {
+        "bearer_read": 200,
+        "without_bearer_after_local_signout": 200,
+        "same_account": true,
+        "read_cookie_present": true
+      }
+    },
+    {
+      "case": "invalid_export",
+      "result": {
+        "preflight": 404,
+        "cached_export": "exists",
+        "download": 200,
+        "corrupt_bytes_returned": true
+      }
+    },
+    {
+      "case": "queue_outage_local_edit",
+      "result": {
+        "queue_down_local_put": 503,
+        "code": "queue_unavailable",
+        "queue_healthy_same_put": 200
+      }
+    },
+    {
+      "case": "ledger_event_loop",
+      "result": {
+        "injected_synchronous_ledger_delay_ms": 200,
+        "10ms_timer_observed_after_ms": 217
+      }
+    },
+    {
+      "case": "series_style_lock",
+      "result": {
+        "concurrent_part_writers_still_blocked": 2,
+        "errors": [],
+        "stack_tails": [
+          [
+            "artifact_lock.py:48:locked",
+            "target_artifacts.py:669:write_lettering_style",
+            "artifact_lock.py:47:locked",
+            "contextlib.py:137:__enter__",
+            "artifact_lock.py:25:production_lock"
+          ],
+          [
+            "artifact_lock.py:48:locked",
+            "target_artifacts.py:669:write_lettering_style",
+            "artifact_lock.py:47:locked",
+            "contextlib.py:137:__enter__",
+            "artifact_lock.py:25:production_lock"
+          ]
+        ]
+      }
+    },
+    {
+      "case": "publication_part_scope",
+      "result": {
+        "stable_publication_id_reused_across_parts": true,
+        "part_one_ownership_view_after_publishing_part_two": "Part two",
+        "part_two_publication_after_unpublish_via_part_one": null
+      }
+    }
+  ]
+}

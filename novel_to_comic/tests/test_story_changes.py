@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 from uuid import uuid4
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from starlette.testclient import TestClient
@@ -466,18 +467,16 @@ def test_apply_guards_unknown_stale_applied_and_busy(tmp_path: Path):
         "/api/projects/test_project/parts/part_0001/story-changes/preview",
         json={"instruction": "Slow the pacing.", "stage": "plan"},
     ).json()
-    loop = asyncio.new_event_loop()
-    pending = loop.create_future()
-    app.state.running_tasks["test-user:test_project"] = pending
+    app.state.generation_jobs["active"] = SimpleNamespace(
+        id="active", project_name="test-user:test_project", kind="pipeline_stage",
+        status="running", command=None, payload={"stage": "plan"})
     try:
         res = client.post(
             f"/api/projects/test_project/parts/part_0001/story-changes/{fresh['id']}/apply",
             json={"expected_revision": fresh["revision"]},
         )
     finally:
-        app.state.running_tasks.pop("test-user:test_project", None)
-        pending.cancel()
-        loop.close()
+        app.state.generation_jobs.pop("active", None)
     assert res.status_code == 409
     by_id = {
         item["id"]: item

@@ -29,7 +29,7 @@ describe("paid action receipts", () => {
       }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: "started", stage: "draw" })));
     vi.stubGlobal("fetch", fetcher);
-    const send = () => apiFetch("/projects/demo/run?stage=draw", { method: "POST" });
+    const send = () => apiFetch("/projects/demo/run?stage=draw", { paidAction: true, method: "POST" });
     await expect(send()).rejects.toThrow("Connection lost");
     await expect(send()).rejects.toThrow("API 409");
     expect(fetcher).toHaveBeenCalledTimes(2);
@@ -47,7 +47,7 @@ describe("paid action receipts", () => {
       }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: "started", stage: "adapt" })));
     vi.stubGlobal("fetch", fetcher);
-    const send = () => apiFetch("/projects/demo/run?stage=adapt", { method: "POST" });
+    const send = () => apiFetch("/projects/demo/run?stage=adapt", { paidAction: true, method: "POST" });
     await expect(send()).rejects.toThrow("Connection lost");
     await expect(send()).rejects.toThrow("Adapt requires an approved adaptation brief");
     expect(fetcher).toHaveBeenCalledTimes(2); // No automatic paid retry.
@@ -65,7 +65,7 @@ describe("paid action receipts", () => {
       new Response(JSON.stringify({ detail }), { status: 409 }),
     ));
     vi.stubGlobal("fetch", fetcher);
-    const send = () => apiFetch("/projects/demo/run?stage=draw", { method: "POST" });
+    const send = () => apiFetch("/projects/demo/run?stage=draw", { paidAction: true, method: "POST" });
     await expect(send()).rejects.toThrow("API 409");
     await expect(send()).rejects.toThrow("API 409");
     expect(fetcher.mock.calls[1][1].headers["Idempotency-Key"])
@@ -78,14 +78,14 @@ describe("paid action receipts", () => {
     vi.stubGlobal("fetch", fetcher);
     const client = createAccountQueryClient(auth.id);
     const firstObserver = new MutationObserver(client, {
-      mutationFn: () => apiFetch("/projects/demo/regen-ref?char_id=one", { method: "POST" }),
+      mutationFn: () => apiFetch("/projects/demo/regen-ref?char_id=one", { paidAction: true, method: "POST" }),
     });
     await expect(firstObserver.mutate()).rejects.toThrow("Connection lost");
     expect(fetcher).toHaveBeenCalledTimes(1);
     const firstKey = fetcher.mock.calls[0][1].headers["Idempotency-Key"];
     // A fresh observer is what a remounted room creates. No component-local key survives.
     const remounted = new MutationObserver(client, {
-      mutationFn: () => apiFetch("/projects/demo/regen-ref?char_id=one", { method: "POST" }),
+      mutationFn: () => apiFetch("/projects/demo/regen-ref?char_id=one", { paidAction: true, method: "POST" }),
     });
     await expect(remounted.mutate()).resolves.toEqual({ job: { id: "accepted" } });
     expect(fetcher.mock.calls[1][1].headers["Idempotency-Key"]).toBe(firstKey);
@@ -98,7 +98,7 @@ describe("paid action receipts", () => {
   it("keeps indeterminate receipts but separates accounts and changed instructions", async () => {
     const fetcher = vi.fn().mockImplementation(() => Promise.resolve(new Response("indeterminate", { status: 409 })));
     vi.stubGlobal("fetch", fetcher);
-    const send = (instruction: string) => apiFetch("/projects/demo/regen-ref-instructed", { method: "POST", body: JSON.stringify({ instruction }) });
+    const send = (instruction: string) => apiFetch("/projects/demo/regen-ref-instructed", { paidAction: true, method: "POST", body: JSON.stringify({ instruction }) });
     await expect(send("red coat")).rejects.toThrow();
     await expect(send("red coat")).rejects.toThrow();
     await expect(send("blue coat")).rejects.toThrow();
@@ -132,7 +132,7 @@ it.each([
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail }), { status: 409 }))
     .mockResolvedValueOnce(new Response(JSON.stringify({ status: "approved" })));
   vi.stubGlobal("fetch", fetcher);
-  const send = () => apiFetch("/projects/demo/approve/cast", { method: "POST" });
+  const send = () => apiFetch("/projects/demo/approve/cast", { paidAction: true, method: "POST" });
   await expect(send()).rejects.toThrow("API 409");
   expect(fetcher).toHaveBeenCalledTimes(1);
   await expect(send()).resolves.toMatchObject({ status: "approved" });
@@ -160,7 +160,7 @@ it("rechecks cached page evidence without receipts while retaining interrupted p
     .mockResolvedValueOnce(new Response(JSON.stringify({ detail: { code: "idempotency_indeterminate", message: "Interrupted" } }), { status: 409 }));
   vi.stubGlobal("fetch", fetcher);
   const check = (allow_paid: boolean) => apiFetch("/projects/demo/pages/checks/recover", {
-    method: "POST", body: JSON.stringify({ allow_paid, renders: {} }),
+    paidAction: allow_paid, method: "POST", body: JSON.stringify({ allow_paid, renders: {} }),
   });
   await expect(check(false)).rejects.toThrow("Connection lost");
   await expect(check(false)).resolves.toEqual({ pages: [] });

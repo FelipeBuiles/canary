@@ -21,7 +21,7 @@ from novel_to_comic.stages.s2_style import (
     save_suggestions,
 )
 from novel_to_comic.style_contract import style_template_for_suggestion
-from tests.test_style_routes import _project, _request, install_style_ledger
+from tests.test_style_routes import _project, _request, install_style_ledger, tmp_path as tmp_path
 
 
 @pytest.fixture
@@ -48,10 +48,10 @@ def _run_direction(tmp_path, *, label=None, naming=None):
     naming = naming or AsyncMock(return_value=SimpleNamespace(value=DESCRIPTION, usage=None))
 
     async def scenario():
-        request = _request()
+        request = _request(tmp_path)
         with (
-            patch("novel_to_comic.server.routers.styles.ensure_style_sample_brief", new=AsyncMock()),
-            patch("novel_to_comic.server.routers.styles.generate_sample_image", side_effect=_write_proof),
+            patch("novel_to_comic.stages.s2_style.ensure_style_sample_brief", new=AsyncMock()),
+            patch("novel_to_comic.stages.s2_style.generate_sample_image", side_effect=_write_proof),
             patch("novel_to_comic.stages.s2_style.text_client.generate_json", naming),
         ):
             response = await create_style_direction(
@@ -216,7 +216,7 @@ def test_back_to_back_directions_queue_as_independent_durable_jobs(tmp_path, sty
 
     monkeypatch.setattr(credited_job, "assert_sufficient_credits", lambda *_args, **_kwargs: None)
     published = []
-    request = _request()
+    request = _request(tmp_path)
     request.app.state.durable_queue_required = True
     request.app.state.durable_queue = SimpleNamespace(publish=published.append, healthy=True)
     project = _project(tmp_path)
@@ -236,7 +236,7 @@ def test_back_to_back_directions_queue_as_independent_durable_jobs(tmp_path, sty
     assert [r["suggestion"]["index"] for r in responses] == [1, 2, 3]
     assert len(published) == 3
     assert [job.command.arguments["index"] for job in published] == [1, 2, 3]
-    assert not request.app.state.style_tasks
+    assert not any(j.status == "running" for j in request.app.state.generation_jobs.values())
     stored = load_suggestions(tmp_path)
     assert [s["template"] for s in stored] == [
         "claymation, falling snow", "woodcut with red ink", "soft pastel moths",

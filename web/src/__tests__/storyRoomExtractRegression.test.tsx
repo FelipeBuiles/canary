@@ -55,7 +55,7 @@ function projectStatus(
     total_cost_credits: 0,
     misc_cost_credits: 0,
     total_estimated_cost_credits: 0,
-    is_running: true,
+    is_running: true, part_busy: true, series_busy: false,
     has_cover: false,
     style_selected: true,
     is_public: false,

@@ -68,21 +68,13 @@ function parseInsufficientCredits(detail: unknown): InsufficientCreditsInfo | nu
 
 export async function apiFetch<T>(
   path: string,
-  options?: RequestInit,
+  options?: RequestInit & { paidAction?: boolean },
 ): Promise<T> {
   const epoch = accountEpoch();
   const { data: { session } } = await supabase.auth.getSession();
   assertAccountEpoch(epoch);
   const method = options?.method?.toUpperCase() ?? "GET";
-  // Provider-free Finish checks are safe to recompute after an interruption.
-  // Do not retain a paid-action receipt that would block an explicit retry.
-  const isFinishCheck = method === "POST" && /^\/projects\/[^/]+(?:\/parts\/[^/]+)?\/export\/preflight(?:\?|$)/.test(path);
-  let isCachedPageCheck = false;
-  if (method === "POST" && /^\/projects\/[^/]+(?:\/parts\/[^/]+)?\/pages\/checks\/recover(?:\?|$)/.test(path)
-    && typeof options?.body === "string") {
-    try { isCachedPageCheck = JSON.parse(options.body)?.allow_paid === false; } catch { /* Server validates malformed bodies. */ }
-  }
-  const action = session && !isFinishCheck && !isCachedPageCheck && !["GET", "HEAD", "OPTIONS"].includes(method) && path.startsWith("/projects/")
+  const action = session && options?.paidAction
     ? await pendingAction(session.user.id, method, path, options?.body)
     : null;
   assertAccountEpoch(epoch);
@@ -127,6 +119,8 @@ export async function apiFetch<T>(
     } catch {
       // Keep the raw response body when the server did not return JSON.
     }
+    if (typeof detail === "object" && detail !== null
+      && (detail as { admitted?: unknown }).admitted === false) action?.complete();
     // Adapt's approval gate runs before job creation or provider submission.
     // Release this definite rejection, including a replay saved before the
     // user approved the brief. A subsequent explicit click is a new action.

@@ -16,7 +16,7 @@ function show(path: string) {
 
 describe("floating job activity", () => {
   const runningCast = {
-    is_running: true,
+    is_running: true, part_busy: true, series_busy: false,
     stages: { cast: { status: "running", items_done: 2, items_total: 5 } },
     active_jobs: [{ stage: "cast", status: "running" }],
   };
@@ -42,7 +42,7 @@ describe("floating job activity", () => {
   });
 
   it("follows the actual Style job despite an unfinished Draw checkpoint", () => {
-    data.status = { is_running: true, stages: {
+    data.status = { is_running: true, part_busy: true, series_busy: false, stages: {
       draw: { status: "running", items_done: 1, items_total: 60 },
       style: { status: "awaiting_review", items_done: 0, items_total: 0 },
     }, active_jobs: [{ stage: "style", status: "running" }] };
@@ -55,7 +55,7 @@ describe("floating job activity", () => {
   });
 
   it("reports a Style batch by step, and counts only the proofs being painted", () => {
-    const style = (payload: Record<string, unknown>) => ({ is_running: true, stages: {
+    const style = (payload: Record<string, unknown>) => ({ is_running: true, part_busy: true, series_busy: false, stages: {
       style: { status: "running", items_done: 0, items_total: 6 },
     }, active_jobs: [{ stage: "style", status: "running", payload }] });
     data.status = style({ style_phase: "directions" });
@@ -73,7 +73,7 @@ describe("floating job activity", () => {
   });
 
   it("does not invent a running job from a checkpoint", () => {
-    data.status = { is_running: true, stages: { draw: { status: "running" } }, active_jobs: [] };
+    data.status = { is_running: true, part_busy: true, series_busy: false, stages: { draw: { status: "running" } }, active_jobs: [] };
     show("/project/book/styles");
     expect(screen.queryByRole("status")).toBeNull();
   });

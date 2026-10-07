@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from math import gcd
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from novel_to_comic.config import (
     COMPLETE_PAGE_BASE_COST_USD,
@@ -70,9 +70,7 @@ from novel_to_comic.rendering_fidelity import RENDERING_FIDELITY_BLOCK
 from novel_to_comic.usage import ApiResult, UsageRecord, calculate_cost, calculate_cost_breakdown
 
 if TYPE_CHECKING:
-    from fastapi import FastAPI
     from novel_to_comic.page_review import OCRAdapter, PageCorrectionContext
-    from novel_to_comic.server.generation_jobs import GenerationJob
 
 
 logger = logging.getLogger(__name__)
@@ -1818,7 +1816,7 @@ async def draw_complete_page(
     unfinished = artifacts.resumable_generation_request(page.page_number)
     if unfinished is not None and unfinished.request_sha256 != compiled.request.request_sha256:
         raise ValueError("Resume the unfinished paid generation before submitting different page input")
-    artifacts.recover_generated_pages(page.page_number)
+    await asyncio.to_thread(artifacts.recover_generated_pages, page.page_number)
     for revision in reversed(artifacts.provenance_revisions(page.page_number)):
         saved = artifacts.read_provenance(page.page_number, revision)
         if (saved.render.request_sha256 == compiled.request.request_sha256
@@ -1897,7 +1895,7 @@ async def draw_complete_page(
         response_metadata=provider_result.response_metadata,
         ai_trace_id=current_ai_trace_id(),
     )
-    artifacts.persist_generated_page(provenance, provider_result.image_bytes)
+    await asyncio.to_thread(artifacts.persist_generated_page, provenance, provider_result.image_bytes)
     if ocr is not None:
         await _read_back(page=page, render=render, image=provider_result.image_bytes, ocr=ocr, artifacts=artifacts)
     if not defer_completion and calculate_cost_breakdown(provenance.usage).source != "unknown_provider_usage":
@@ -1960,7 +1958,7 @@ async def analyze_complete_page(
         ocr=ocr,
         artifacts=artifacts,
     )
-    record_analysis_issues(artifacts, analyzed.analysis)
+    await asyncio.to_thread(record_analysis_issues, artifacts, analyzed.analysis)
     return analyzed.analysis
 
 
@@ -2045,7 +2043,7 @@ async def correct_complete_page(
             raise ValueError("copy changes must return to Adapt and Plan")
     from novel_to_comic.page_review import ensure_correction_issues
 
-    ensure_correction_issues(artifacts, correction=correction)
+    await asyncio.to_thread(ensure_correction_issues, artifacts, correction=correction)
 
     provenance = await draw_complete_page(
         compiled,
@@ -2072,7 +2070,7 @@ async def correct_complete_page(
             and corrected.id.startswith("page-issue-draw-page-")
             and analysis is not None and analysis.lettering_valid
         )
-        resolve_page_issue(
+        await asyncio.to_thread(resolve_page_issue,
             artifacts, issue_id=corrected.id, page_number=page.page_number,
             resolution_revision=provenance.render.revision, verified=verified,
         )
@@ -2161,7 +2159,7 @@ def page_draw_execution(
                 if analysis_failed
                 else user_message_for_image_failure(classification)
             )
-            artifacts.write_page_failure(
+            await asyncio.to_thread(artifacts.write_page_failure,
                 PageGenerationFailure(
                     page_number=compiled.request.page_number,
                     request_sha256=compiled.request.request_sha256,
@@ -2215,86 +2213,3 @@ def page_visual_check(config: Config, project_dir: Path, artifacts: TargetArtifa
         )
 
     return review
-
-
-def enqueue_complete_page_draw(
-    app: FastAPI,
-    *,
-    project_name: str,
-    user_id: str,
-    project_id: str | None,
-    project_dir: Path,
-    config: Config,
-    compiled: CompiledPageGeneration,
-    adapter: CompletePageAdapter,
-    artifacts: TargetArtifacts,
-    page: ComicPage,
-    ocr: "OCRAdapter | None" = None,
-    request_revision: int | None = None,
-    render_revision: int | None = None,
-    parent_render_revision: int | None = None,
-    issue: PageIssue | None = None,
-    on_success: Callable[[PageGenerationProvenance], None] | None = None,
-) -> tuple[GenerationJob, bool]:
-    """Estimate, reserve, execute, settle, and release one complete-page job."""
-
-    # This is deliberately before the credited-job call: capability, geometry,
-    # reference capacity, identity, and selected bytes must fail before cost.
-    adapter.prepare(compiled)
-    from novel_to_comic.server.credited_job import enqueue_reserved_generation_job
-    from novel_to_comic.server.credits import credit_estimate_for_provider_cost
-    from novel_to_comic.codex_dev import classify_operations
-    from novel_to_comic.server.codex_admission import draw_operations
-
-    visual_review = page_visual_check(config, project_dir, artifacts, page)
-    operations = draw_operations(config, checks=ocr is not None)
-    funding = classify_operations(operations)
-
-    estimate = credit_estimate_for_provider_cost(
-        estimate_draw_api_cost(config, compiled, checks=ocr is not None),
-        "draw",
-        reserve=True,
-        zero_cost_estimate=0,
-        funding=funding,
-    )
-
-    _work, _settled = page_draw_execution(
-        project_dir=project_dir, compiled=compiled, adapter=adapter, artifacts=artifacts,
-        page=page, ocr=ocr, visual_review=visual_review if ocr is not None else None,
-        request_revision=request_revision, render_revision=render_revision,
-        parent_render_revision=parent_render_revision, issue=issue, on_success=on_success,
-    )
-    from novel_to_comic.server.job_commands import command, save_blob
-    descriptor = command("page_draw", project_dir, config,
-        request=compiled.request.model_dump(mode="json"),
-        references=[save_blob(project_dir, data) for data in compiled.reference_bytes],
-        edit_source=save_blob(project_dir, compiled.edit_source_bytes),
-        page=page.model_dump(mode="json"), ocr=ocr is not None,
-        request_revision=request_revision, render_revision=render_revision,
-        parent_render_revision=parent_render_revision,
-        issue=issue.model_dump(mode="json") if issue else None,
-    )
-
-    return enqueue_reserved_generation_job(
-        app,
-        project_name=project_name,
-        user_id=user_id,
-        project_id=project_id,
-        project_dir=project_dir,
-        stage="draw",
-        kind="complete_page_draw",
-        label=f"Page {compiled.request.page_number}",
-        payload={
-            "page_number": compiled.request.page_number,
-            "request_sha256": compiled.request.request_sha256,
-            "retry_attempt": compiled.request.retry.attempt,
-            "issue_id": issue.id if issue is not None else None,
-            "issue_ids": list(compiled.request.correction.issue_ids) if compiled.request.correction else [],
-        },
-        work=_work,
-        debit_description=f"Complete page {compiled.request.page_number}",
-        reservation_credits=estimate["reserved_credits"] or 0,
-        operations=operations,
-        on_settled=_settled,
-        command=descriptor,
-    )

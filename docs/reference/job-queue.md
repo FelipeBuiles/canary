@@ -47,8 +47,11 @@ thread so preparing many pages cannot starve the queue heartbeat. Page publicati
 yields between items and emits page-start events only after durable admission.
 Failures while publishing child jobs also fail the parent stage visibly.
 
-The legacy closure executor exists for focused route fixtures only. `create_app`
-always requires the durable queue; missing PostgreSQL never selects a memory queue.
+All credited generation reconstructs typed commands through one executor. Route
+fixtures replace dispatch transport and provider operations while using that same
+command/settlement path. Generic lifecycle fixtures can still supply a provider-free
+runner. `create_app` always requires the durable queue; missing PostgreSQL never
+selects a memory queue.
 
 ## Failure contract
 
@@ -98,6 +101,34 @@ success would miss domain failures. Back up PostgreSQL and the whole artifact
 volume, including its journal and `.jobs` inputs. Do not delete queued dispatches
 or edit operation statuses directly. Restoring mismatched database/volume backups
 requires explicit reconciliation; it is not an automatic replay mechanism.
+
+## History and retained inputs
+
+Each operation has a validated versioned argument model; unknown operations and
+extra inputs fail admission. Startup reads every live command and at most 200
+terminal summaries. It never deserializes terminal commands. Incompatible unstarted
+commands are quarantined as `incompatible_command`, explicitly rerunnable; started
+work remains outcome-unknown. Indexed SQLite history survives memory pruning.
+`DurableQueue.restore()` reads and constructs detached records in a worker, then
+merges them on the event loop. It rechecks each ID at merge time so an existing
+live object wins over the journal snapshot. Reconciliation runs in a worker after
+the merge and retries terminal journal writes that previously failed.
+Once these writes begin, cancellation waits for them to finish before releasing
+volume ownership; a write failure remains logged without replacing cancellation.
+Production registry insertion/pruning belongs to the loop. Code that iterates
+registry entries uses `generation_jobs_snapshot()`, including synchronous
+HTTP handlers and queued-job serialization. The snapshot captures registry
+membership; the job objects remain live.
+`GET /jobs` accepts up to 200 IDs, `limit` (default 100, maximum 200), and a numeric
+`before` cursor; `next_cursor` continues older observations. Draw cohorts resolve
+pruned operations from the journal, so a large book still settles its progress.
+
+The account storage endpoint reports retained bytes. Drained, idle housekeeping
+can remove old completed/unstarted-cancelled command payloads, unreachable input
+blobs, and public snapshots outside the current/prior version. Original uploads,
+receipts, outcomes, unknown paid attempts and author archives remain authorities. Malformed
+author manifests prevent cleanup of that project. See [backup/restore](../ops/backup-restore.md)
+before reclaiming or moving volume data.
 
 ## Author interactions
 
@@ -162,10 +193,10 @@ docker compose --profile prod run --rm --no-deps --entrypoint python canary-prod
 docker compose --profile prod up canary-prod
 ```
 
-For Fly, follow [deploy runbook Step 1b](../deploy.md#step-1b--generation-queue-database):
+For production, follow the [deployment contract](../deploy.md#generation-queue-database):
 provision a dedicated PostgreSQL database or Supabase's private `canary_queue`
 schema and login role (never Supabase's `public` schema), set
-`CANARY_QUEUE_DATABASE_URL` as a Fly secret and bootstrap it with the locked
+`CANARY_QUEUE_DATABASE_URL` in the encrypted application bundle and bootstrap it with the locked
 dependency version before deployment.
 The existing persistent projects volume remains required. `/api/health/ready`
 includes `generation_queue`; an unavailable worker returns HTTP 503.

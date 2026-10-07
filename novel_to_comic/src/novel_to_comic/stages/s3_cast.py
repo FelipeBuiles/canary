@@ -822,7 +822,7 @@ async def _generate_character_refs(
                         submission = await submit_non_panel_request(
                             config=config, project_dir=project_dir, request=request,
                             output_path=output_path, feature="cast.character_ref",
-                            kind="character_ref", semaphore=semaphore,
+                            kind="character_ref",
                         )
                     flux_result = submission.result
                     assert flux_result is not None

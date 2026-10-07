@@ -85,7 +85,7 @@ export function getStyles(project: string): Promise<StylesData> {
 
 export function suggestStyles(project: string, directionId?: string): Promise<{ status: string; job?: GenerationJob }> {
   return apiFetch(`${seriesPath(project)}/styles/suggest`, {
-    method: "POST",
+    paidAction: true, method: "POST",
     body: directionId ? JSON.stringify({ direction_id: directionId }) : undefined,
   });
 }
@@ -99,7 +99,7 @@ export function createStyleDirection(
   if (input.image) form.append("image", input.image);
   form.append("with_neighbors", String(input.withNeighbors));
   return apiFetch(`${seriesPath(project)}/styles/direction`, {
-    method: "POST",
+    paidAction: true, method: "POST",
     headers: {},
     body: form,
   });
@@ -122,7 +122,7 @@ export function generateStyleSamples(
   ids: string[],
 ): Promise<{ status: string; indices: number[]; jobs: GenerationJob[] }> {
   return apiFetch(`${seriesPath(project)}/styles/generate-samples`, {
-    method: "POST",
+    paidAction: true, method: "POST",
     body: JSON.stringify({ ids }),
   });
 }
@@ -132,7 +132,7 @@ export function generateStyleValidation(
   id: string,
 ): Promise<{ status: "queued"; id: string; url: string; job: GenerationJob }> {
   return apiFetch(`${seriesPath(project)}/styles/validation`, {
-    method: "POST",
+    paidAction: true, method: "POST",
     body: JSON.stringify({ id }),
   });
 }

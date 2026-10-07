@@ -15,6 +15,7 @@ from pathlib import Path
 import logging
 import os
 import time
+from contextvars import copy_context
 from datetime import datetime, timezone
 
 from .job_commands import JobCommand
@@ -69,47 +70,109 @@ class DurableQueue:
             db.execute("INSERT INTO jobs VALUES(?,?,?)", (job.id, job.project_name, json.dumps(generation_job_payload(self.app, job))))
             db.execute("INSERT INTO operation_outbox(id,command) VALUES(?,?)", (job.id, job.command.model_dump_json()))
 
-    def restore(self):
-        from .generation_jobs import GenerationJob, persist_generation_job
+    async def restore(self):
+        """Load detached journal records in a worker; merge on the owning loop."""
+        from .generation_jobs import generation_jobs_snapshot
+
+        records = await asyncio.to_thread(self._load_saved_jobs)
+        quarantined = []
+        for job, interrupted in records:
+            # Recheck after loading: a live object can appear while IO runs.
+            existing = self.app.state.generation_jobs.get(job.id)
+            if existing is not None:
+                if interrupted and existing.status in {"complete", "failed", "cancelled"}:
+                    # Retry a terminal write that failed after a previous merge.
+                    quarantined.append(existing)
+                continue
+            self.app.state.generation_jobs[job.id] = job
+            if interrupted:
+                quarantined.append(job)
+        jobs = generation_jobs_snapshot(self.app)
+        # These writes own the volume until they finish, including cancellation.
+        # An executor Future is not a separately cancellable asyncio Task.
+        work = asyncio.get_running_loop().run_in_executor(
+            None, copy_context().run, self._reconcile_restored_jobs, quarantined, jobs,
+        )
+        cancelled = None
+        while not work.done():
+            try:
+                await asyncio.shield(work)
+            except asyncio.CancelledError as exc:
+                cancelled = cancelled or exc
+            except Exception:
+                break
+        try:
+            work.result()
+        except Exception as exc:
+            if cancelled is None:
+                raise
+            logger.warning("Restore reconciliation failed during cancellation type=%s", type(exc).__name__)
+        if cancelled is not None:
+            raise cancelled
+
+    def _load_saved_jobs(self):
+        """Read/validate records without reading or changing the live registry."""
+        from .generation_jobs import GenerationJob
 
         with self.app.state.admission.journal() as db:
-            rows = db.execute("SELECT j.payload,o.command FROM jobs j JOIN operation_outbox o ON o.id=j.id ORDER BY o.rowid").fetchall()
-        for sequence, (raw, command_json) in enumerate(rows, 1):
+            live = db.execute("SELECT j.payload,o.command,COALESCE(o.rowid,j.rowid) FROM jobs j LEFT JOIN operation_outbox o ON o.id=j.id "
+                "WHERE json_extract(j.payload,'$.status') IN ('queued','running') ORDER BY o.rowid").fetchall()
+            recent = db.execute("SELECT payload,NULL,rowid FROM jobs "
+                "WHERE json_extract(payload,'$.status') NOT IN ('queued','running') ORDER BY rowid DESC LIMIT 200").fetchall()
+        records = []
+        for raw, command_json, sequence in [*recent, *live]:
             p = json.loads(raw)
+            spec = None
+            invalid = p["status"] in {"queued", "running"} and command_json is None
+            if command_json is not None:
+                try:
+                    spec = JobCommand.model_validate_json(command_json)
+                except ValueError:
+                    invalid = True
             job = GenerationJob(id=p["id"], project_name=p["project_name"], kind=p["kind"], label=p["label"],
-                                payload=p["payload"], sequence=sequence, runner=None,
-                                command=JobCommand.model_validate_json(command_json), status=p["status"])
-            job.user_id = job.command.user_id
+                payload=p["payload"], sequence=sequence, runner=None, command=spec,
+                status=p["status"], summary=p if spec is None else None)
+            job.user_id = spec.user_id if spec else None
             for key in ("queued_at", "started_at", "finished_at"):
                 if p.get(key):
                     setattr(job, key, datetime.fromisoformat(p[key]))
             for key in ("error", "classification", "user_message", "recoverable", "phase"):
                 setattr(job, key, p.get(key))
-            if job.status == "running":
+            interrupted = job.status == "running" or invalid
+            if interrupted:
+                started = job.status == "running" or job.started_at is not None
                 job.status = "failed"
-                job.phase = "outcome_unknown"
-                job.error = "Execution interrupted before its outcome was recorded."
-                job.user_message = "Inspect saved output and provider evidence before explicitly retrying."
-                job.recoverable = False
+                job.phase = "outcome_unknown" if started else "incompatible_command"
+                job.error = ("Execution interrupted before its outcome was recorded." if started else
+                             "Saved operation is incompatible with this release; explicitly prepare it again.")
+                job.user_message = ("Inspect saved output and provider evidence before explicitly retrying." if started else
+                                    "This operation never started. Refresh and explicitly rerun it.")
+                job.recoverable = not started
                 job.finished_at = datetime.now(timezone.utc)
-                persist_generation_job(self.app, job)
-            self.app.state.generation_jobs[job.id] = job
-        self._settle_interrupted_styles()
+            records.append((job, interrupted))
+        return records
+
+    def _reconcile_restored_jobs(self, quarantined, jobs):
+        from .generation_jobs import persist_generation_job
+
+        for job in quarantined:
+            persist_generation_job(self.app, job)
+        self._settle_interrupted_styles(jobs)
         # Reconcile only after every expected job has been restored, including
         # cohorts whose final page was interrupted before terminal telemetry.
-        from .routers.pages import _sync_draw_progress
-        for directory in {job.command.project_dir for job in self.app.state.generation_jobs.values() if job.command and job.command.stage == "draw"}:
+        from .page_operations import _sync_draw_progress
+        for directory in {job.command.project_dir for job in jobs if job.command and job.command.stage == "draw"}:
             try:
                 _sync_draw_progress(Path(directory), self.app)
             except Exception as exc:
                 logger.warning("Draw telemetry reconciliation deferred type=%s", type(exc).__name__)
 
-    def _settle_interrupted_styles(self):
+    def _settle_interrupted_styles(self, jobs):
         """Close the Style stage of work a hard stop interrupted (see settle_interrupted_style)."""
         from .project_paths import project_directory
         from .style_jobs import STYLE_OPERATIONS, settle_interrupted_style
 
-        jobs = [job for job in self.app.state.generation_jobs.values() if job.command.operation in STYLE_OPERATIONS]
+        jobs = [job for job in jobs if job.command and job.command.operation in STYLE_OPERATIONS]
         waiting = {job.command.project_dir for job in jobs if job.status == "queued"}
         for job in jobs:
             if job.status != "failed" or job.phase != "outcome_unknown" or job.command.project_dir in waiting:
@@ -139,11 +202,11 @@ class DurableQueue:
 
     async def cancel_queued_pages(self, *, project_name: str, user_id: str) -> list[str]:
         """Cancel only page operations that have not begun a provider call."""
-        from .generation_jobs import job_transition_lock, persist_generation_job
+        from .generation_jobs import generation_jobs_snapshot, job_transition_lock, persist_generation_job
 
         cancelled = []
         async with job_transition_lock(self.app, user_id):
-            jobs = [job for job in self.app.state.generation_jobs.values()
+            jobs = [job for job in generation_jobs_snapshot(self.app)
                     if job.project_name == project_name and job.kind == "complete_page_draw"
                     and job.status == "queued" and job.started_at is None]
             with self.app.state.admission.journal() as db:
@@ -163,7 +226,7 @@ class DurableQueue:
                 job.phase = "cancelled"
                 job.user_message = "Cancelled before the image request started. No generation charge was made."
                 job.recoverable = True
-                persist_generation_job(self.app, job)
+                await asyncio.to_thread(persist_generation_job, self.app, job)
                 cancelled.append(job.id)
         return cancelled
 
@@ -177,7 +240,7 @@ class DurableQueue:
             self.owner.close()
             raise RuntimeError("Another server owns this artifact volume") from None
         try:
-            self.restore()
+            await self.restore()
             async with self.backend.open_async():
                 # Schema creation is an explicit deployment action, never an
                 # implicit production migration inside a request or worker.
@@ -195,8 +258,8 @@ class DurableQueue:
                             raise RuntimeError("Generation worker exited unexpectedly")
                         await self.dispatch()
                         from .telemetry import metric_gauge
-                        # Snapshot first: worker threads may add jobs mid-count.
-                        jobs = list(self.app.state.generation_jobs.values())
+                        from .generation_jobs import generation_jobs_snapshot
+                        jobs = generation_jobs_snapshot(self.app)
                         metric_gauge("jobs.queue_depth", sum(job.status == "queued" for job in jobs))
                         self.last_healthy = time.monotonic()
                         self.ready = True
@@ -222,7 +285,7 @@ class DurableQueue:
         if not self.app.state.credit_leases_ready:
             return
         with self.app.state.admission.journal() as db:
-            rows = db.execute("SELECT id,dispatched FROM operation_outbox WHERE dispatched IS NULL ORDER BY rowid").fetchall()
+            rows = db.execute("SELECT id,dispatched FROM operation_outbox WHERE dispatched IS NULL ORDER BY rowid LIMIT 200").fetchall()
         for operation_id, dispatched in rows:
             job = self.app.state.generation_jobs.get(operation_id)
             if job is None or job.status != "queued" or dispatched is not None:
@@ -254,7 +317,8 @@ class DurableQueue:
 
         with self.app.state.admission.journal() as db:
             dispatched = dict(db.execute(
-                "SELECT id,dispatched FROM operation_outbox WHERE dispatched IS NOT NULL"
+                "SELECT o.id,o.dispatched FROM operation_outbox o JOIN jobs j ON j.id=o.id "
+                "WHERE o.dispatched IS NOT NULL AND json_extract(j.payload,'$.status')='queued'"
             ))
         pending = {
             dispatch_id: operation_id for operation_id, dispatch_id in dispatched.items()
@@ -280,7 +344,7 @@ class DurableQueue:
             job.error = f"Queue dispatch {row['id']} ended as {row['status']} before generation started."
             job.user_message = "This page never started drawing because its queued task stopped. Try again."
             job.finished_at = datetime.now(timezone.utc)
-            persist_generation_job(self.app, job)
+            await asyncio.to_thread(persist_generation_job, self.app, job)
             logger.warning("Reconciled unstarted operation %s: %s", job.id, job.error)
 
 

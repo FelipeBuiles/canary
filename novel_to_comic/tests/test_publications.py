@@ -4,7 +4,7 @@ import zipfile
 from unittest.mock import patch
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from pypdf import PdfReader
 
@@ -86,8 +86,44 @@ def test_failed_update_preserves_previous_publication(setup):
             json={"title": "Broken", "author": "Author"},
         )
     assert response.status_code == 422
-    assert client.get(f"/api/public/books/{book['id']}").json() == book
+    assert client.get(f"/api/public/books/{book['id']}").json() == {k:v for k,v in book.items() if k not in {"source_part_id", "source_part_title"}}
     assert client.get(book["pages"][0]["url"]).status_code == 200
+
+
+def test_failed_manifest_commit_restores_private_owner_pointer(setup, tmp_path, monkeypatch):
+    from novel_to_comic.server import publications as store
+    client, _ = setup
+    original = publish(client)
+    owner = store.owner_path(tmp_path, "owner", "project")
+    before = store.read_json(owner)
+    write = store.write_json
+    def fail_manifest(path, value):
+        if path.name == "current.json":
+            raise OSError("manifest commit failed")
+        return write(path, value)
+    monkeypatch.setattr(store, "write_json", fail_manifest)
+    with pytest.raises(OSError, match="manifest commit"):
+        client.post("/api/projects/project/publication", json={"title": "Replacement", "author": "Author"})
+    assert store.read_json(owner) == before
+    assert client.get("/api/projects/project/publication").json()["version"] == original["version"]
+    assert client.get(original["pages"][0]["url"]).status_code == 200
+    snapshots = [path for path in (store.root(tmp_path) / original["id"]).iterdir() if path.is_dir()]
+    assert [path.name for path in snapshots] == [original["version"]]
+
+
+def test_republishing_counts_the_replacement_and_preserves_current_when_full(setup, tmp_path, monkeypatch):
+    from novel_to_comic.server.storage_budget import usage
+    from novel_to_comic.server import publications as store
+
+    client, target = setup
+    original = publish(client)
+    account = target.project_dir.parent
+    monkeypatch.setenv("CANARY_ACCOUNT_STORAGE_BYTES", str(usage(account)["used_bytes"] + 1))
+    response = client.post("/api/projects/project/publication", json={"title": "Replacement", "author": "Author"})
+    assert response.status_code == 413, response.text
+    assert client.get(f"/api/public/books/{original['id']}").json()["version"] == original["version"]
+    snapshots = [path for path in (store.root(tmp_path) / original["id"]).iterdir() if path.is_dir()]
+    assert [path.name for path in snapshots] == [original["version"]]
 
 
 def test_public_download_bookend_is_always_last(setup):
@@ -155,6 +191,63 @@ def test_owner_metadata_is_account_scoped(setup):
         client.get("/api/projects/project/publication").json()["title"]
         == "A public book"
     )
+
+
+def test_two_part_publication_requires_current_version_and_keeps_provenance_private(tmp_path, monkeypatch):
+    from novel_to_comic.models.parts import PartManifest, PartRecord
+    from novel_to_comic.target_artifacts import TargetArtifacts
+    from novel_to_comic.workspace import create_part_workspace
+
+    monkeypatch.setenv("CANARY_SHOWCASE_DIR", str(tmp_path / "showcase"))
+    monkeypatch.setattr(publications.limiter, "enabled", False)
+    root = tmp_path / "owner" / "book"
+    parts = {}
+    records = []
+    for ordinal in (1, 2):
+        identifier = f"part_{ordinal:04d}"
+        directory = create_part_workspace(root, identifier)
+        _write_valid_book(directory)
+        state = PipelineState(project_name="Book", novel_path="source.txt", created_at="2026-10-06T00:00:00Z")
+        parts[identifier] = (directory, Config(), state)
+        records.append(PartRecord(id=identifier, ordinal=ordinal, title=f"Part {ordinal}",
+                                  text_sha256="a" * 64, characters=1, created_at=state.created_at.isoformat()))
+    TargetArtifacts(root).write_part_manifest(PartManifest(parts=tuple(records)))
+    app = FastAPI()
+    app.include_router(publications.router, prefix="/api/projects/{project_id}/parts/{part_id}")
+    app.include_router(publications.owner_router, prefix="/api/projects/{project_id}")
+    app.include_router(publications.public_router, prefix="/api/public/books")
+    app.dependency_overrides[get_current_user] = lambda: "owner"
+    app.dependency_overrides[get_projects_dir] = lambda: tmp_path
+    app.dependency_overrides[get_project_dir] = lambda: root
+
+    def project_for_request(request: Request):
+        return parts[request.path_params["part_id"]]
+
+    app.dependency_overrides[get_project] = project_for_request
+    with TestClient(app) as client:
+        paths = [f"/api/projects/book/parts/{part}/publication" for part in parts]
+        metadata = {"title": "Public book", "author": "Author"}
+        first = client.post(paths[0], json=metadata)
+        assert first.status_code == 200, first.text
+        first = first.json()
+        owner_path = "/api/projects/book/publication"
+        assert client.get(owner_path).json()["source_part_title"] == "Part 1"
+        assert client.post(paths[1], json=metadata).status_code == 409
+        assert client.get(owner_path).json()["version"] == first["version"]
+        replacement = client.post(paths[1], json=metadata | {"expected_publication_version": first["version"]})
+        assert replacement.status_code == 200, replacement.text
+        second = replacement.json()
+        assert second["id"] == first["id"] and second["version"] != first["version"]
+        assert second["source_part_id"] == "part_0002"
+        assert client.get(paths[0]).json()["source_part_title"] == "Part 2"
+        stale = client.post(paths[0], json=metadata | {"expected_publication_version": first["version"]})
+        assert stale.status_code == 409
+        public = client.get(f"/api/public/books/{first['id']}").json()
+        assert not {"source_part_id", "source_part_title", "account", "expected_publication_version"} & public.keys()
+        assert public["version"] == second["version"]
+        assert client.delete(owner_path).status_code == 200
+        assert client.get(paths[1]).json() is None
+        assert client.get(f"/api/public/books/{first['id']}").status_code == 404
 
 
 def test_rejects_unfinished_book(setup):

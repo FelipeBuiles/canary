@@ -1,4 +1,5 @@
 from __future__ import annotations
+from novel_to_comic.server.page_admission import enqueue_complete_page_draw
 
 from .plan_detail_support import with_reservations
 from .style_reference_support import write_style_proof
@@ -36,23 +37,8 @@ from novel_to_comic.models.page import (
     LetteringReservation,
     PageContent,
 )
-from novel_to_comic.page_drawing import (
-    ApprovedReferenceFile,
-    analyze_complete_page,
-    GoogleVertexCompletePageTransport,
-    VertexCompletePageAdapter,
-    compile_page_generation_request,
-    draw_complete_page,
-    estimate_draw_api_cost,
-    ensure_current_page_edition,
-    current_page_capability_profile,
-    enqueue_complete_page_draw,
-    fal_sunburst_page_capability_profile,
-    production_page_capability_profile,
-    select_book_edition,
-)
+from novel_to_comic.page_drawing import ApprovedReferenceFile, analyze_complete_page, GoogleVertexCompletePageTransport, VertexCompletePageAdapter, compile_page_generation_request, draw_complete_page, estimate_draw_api_cost, ensure_current_page_edition, current_page_capability_profile, fal_sunburst_page_capability_profile, production_page_capability_profile, select_book_edition
 from novel_to_comic.server.routers.pages import _aggregated_correction_retry, _generation_retry
-from novel_to_comic.server.credited_job import enqueue_reserved_generation_job
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 from novel_to_comic.usage import ApiResult, UsageRecord
 
@@ -764,81 +750,66 @@ def test_draw_persists_immutable_request_render_usage_cost_and_lineage(
         )
 
 
-def _make_app() -> MagicMock:
-    app = MagicMock()
-    app.state.generation_jobs = {}
-    app.state.generation_queue = asyncio.Queue()
+def _make_app(tmp_path):
+    from tests.queue_fixtures import create_app
+    from novel_to_comic.state import create_initial_state, save_state
+    from novel_to_comic.models.page import BookPlan, PlannedPageRevision
+    app = create_app(tmp_path)
+    directory = tmp_path / "user-1" / "project"
+    directory.mkdir(parents=True)
+    save_state(create_initial_state("Project", "input/source.txt"), directory)
+    target = TargetArtifacts(directory)
+    page = _page()
+    pages = [ComicPage.model_validate(page.model_dump() | {"page_number": n, "content_sha256": ""}) for n in range(1,8)]
+    for current in pages:
+        target.write_page(current)
+    target.write_plan(BookPlan(revision=1, adaptation_revision=3, adaptation_sha256="a" * 64,
+        target_page_min=7, target_page_max=7,
+        pages=[PlannedPageRevision(page_number=p.page_number, revision=p.revision, content_sha256=p.content_sha256) for p in pages]))
     return app
 
 
-def test_reserved_generation_job_reserves_executes_debits_and_releases(
-    tmp_path: Path,
-) -> None:
-    app = _make_app()
-    usage = _provider_result().usage
+def _enqueue_draw(*args, **kwargs):
+    """Inject provider transports only; retain production command reconstruction and billing."""
+    from novel_to_comic.server.job_execution import execute_command
+    app = args[0]
+    job, created = asyncio.run(enqueue_complete_page_draw(*args, **kwargs))
+    async def execute():
+        with patch("novel_to_comic.page_drawing.complete_page_adapter", return_value=kwargs["adapter"]), \
+             patch("novel_to_comic.lettering.page_read.page_read_adapter", return_value=kwargs.get("ocr")):
+            return await execute_command(app, job)
+    job.runner = execute
+    return job, created
 
-    async def work() -> ApiResult[str]:
-        return ApiResult(value="done", usage=usage)
-
-    with (
-        patch("novel_to_comic.server.credited_job.get_db", return_value=object()),
-        patch(
-            "novel_to_comic.server.credited_job.reserve_credits",
-            return_value=("reservation-1", "ledger-job-1"),
-        ) as reserve,
-        patch("novel_to_comic.server.credited_job.assert_reservation_active"),
-        patch("novel_to_comic.server.credited_job.release_reservation") as release,
-        patch("novel_to_comic.server.credited_job.debit_model_usage") as debit,
-        patch("novel_to_comic.server.credited_job.ai_request_context"),
-    ):
-        job, created = enqueue_reserved_generation_job(
-            app,
-            project_name="project",
-            user_id="user-1",
-            project_id="project-1",
-            project_dir=tmp_path,
-            stage="draw",
-            kind="complete_page_draw",
-            label="Page 7",
-            payload={"request_sha256": "f" * 64},
-            work=work,
-            debit_description="Complete page 7",
-            reservation_credits=38,
-            operations=(("complete_page", "image-gemini-pro"),),
-        )
-        asyncio.run(job.runner())
-
-    assert created is True
-    reserve.assert_called_once()
-    debit.assert_called_once()
-    release.assert_called_once()
 
 
 def test_complete_page_enqueue_uses_credited_lifecycle_and_persists_result(
     tmp_path: Path,
 ) -> None:
-    app = _make_app()
+    app = _make_app(tmp_path)
     compiled = _compile(tmp_path)
-    artifacts = TargetArtifacts(tmp_path / "project")
+    artifacts = TargetArtifacts(tmp_path / "user-1" / "project")
     adapter = _vertex_adapter(_RecordingTransport(_provider_result()))
 
     with (
         patch("novel_to_comic.server.credited_job.get_db", return_value=object()),
+        patch("novel_to_comic.server.db.get_db", return_value=object()),
+        patch("novel_to_comic.server.credited_job.assert_sufficient_credits"),
         patch(
-            "novel_to_comic.server.credited_job.reserve_credits",
+            "novel_to_comic.server.credits.reserve_credits",
             return_value=("reservation-1", "ledger-job-1"),
         ) as reserve,
-        patch("novel_to_comic.server.credited_job.assert_reservation_active"),
-        patch("novel_to_comic.server.credited_job.release_reservation") as release,
-        patch("novel_to_comic.server.credited_job.debit_model_usage") as debit,
-        patch("novel_to_comic.server.credited_job.ai_request_context"),
+        patch("novel_to_comic.server.credits.assert_reservation_active"),
+        patch("novel_to_comic.server.credits.release_reservation") as release,
+        patch("novel_to_comic.server.credits.debit_model_usage") as debit,
+        patch("novel_to_comic.server.job_execution.ai_request_context"),
     ):
-        job, created = enqueue_complete_page_draw(
+        job, created = _enqueue_draw(
             app,
             project_name="project",
             user_id="user-1",
             project_id="project-1",
-            project_dir=tmp_path / "project",
+            project_dir=tmp_path / "user-1" / "project",
             config=Config(),
             compiled=compiled,
             adapter=adapter,
@@ -871,8 +842,8 @@ def test_failed_complete_page_persists_a_user_facing_failure(
     tmp_path: Path,
     provider_error: str,
 ) -> None:
-    app = _make_app()
-    artifacts = TargetArtifacts(tmp_path / "project")
+    app = _make_app(tmp_path)
+    artifacts = TargetArtifacts(tmp_path / "user-1" / "project")
     submissions = []
 
     class _BlockedTransport:
@@ -882,21 +853,23 @@ def test_failed_complete_page_persists_a_user_facing_failure(
 
     with (
         patch("novel_to_comic.server.credited_job.get_db", return_value=object()),
+        patch("novel_to_comic.server.db.get_db", return_value=object()),
+        patch("novel_to_comic.server.credited_job.assert_sufficient_credits"),
         patch(
-            "novel_to_comic.server.credited_job.reserve_credits",
+            "novel_to_comic.server.credits.reserve_credits",
             return_value=("reservation-1", "ledger-job-1"),
         ),
-        patch("novel_to_comic.server.credited_job.assert_reservation_active"),
-        patch("novel_to_comic.server.credited_job.release_reservation"),
-        patch("novel_to_comic.server.credited_job.debit_model_usage"),
-        patch("novel_to_comic.server.credited_job.ai_request_context"),
+        patch("novel_to_comic.server.credits.assert_reservation_active"),
+        patch("novel_to_comic.server.credits.release_reservation"),
+        patch("novel_to_comic.server.credits.debit_model_usage"),
+        patch("novel_to_comic.server.job_execution.ai_request_context"),
     ):
-        job, _ = enqueue_complete_page_draw(
+        job, _ = _enqueue_draw(
             app,
             project_name="project",
             user_id="user-1",
             project_id="project-1",
-            project_dir=tmp_path / "project",
+            project_dir=tmp_path / "user-1" / "project",
             config=Config(),
             compiled=_compile(tmp_path),
             adapter=_vertex_adapter(_BlockedTransport()),
@@ -917,8 +890,8 @@ def test_failed_complete_page_persists_a_user_facing_failure(
 def test_a_failed_read_back_does_not_fail_the_paid_page(
     tmp_path: Path,
 ) -> None:
-    app = _make_app()
-    artifacts = TargetArtifacts(tmp_path / "project")
+    app = _make_app(tmp_path)
+    artifacts = TargetArtifacts(tmp_path / "user-1" / "project")
 
     class _BrokenOCR:
         async def extract(self, image: bytes):
@@ -926,21 +899,23 @@ def test_a_failed_read_back_does_not_fail_the_paid_page(
 
     with (
         patch("novel_to_comic.server.credited_job.get_db", return_value=object()),
+        patch("novel_to_comic.server.db.get_db", return_value=object()),
+        patch("novel_to_comic.server.credited_job.assert_sufficient_credits"),
         patch(
-            "novel_to_comic.server.credited_job.reserve_credits",
+            "novel_to_comic.server.credits.reserve_credits",
             return_value=("reservation-1", "ledger-job-1"),
         ),
-        patch("novel_to_comic.server.credited_job.assert_reservation_active"),
-        patch("novel_to_comic.server.credited_job.release_reservation"),
-        patch("novel_to_comic.server.credited_job.debit_model_usage"),
-        patch("novel_to_comic.server.credited_job.ai_request_context"),
+        patch("novel_to_comic.server.credits.assert_reservation_active"),
+        patch("novel_to_comic.server.credits.release_reservation"),
+        patch("novel_to_comic.server.credits.debit_model_usage"),
+        patch("novel_to_comic.server.job_execution.ai_request_context"),
     ):
-        job, _ = enqueue_complete_page_draw(
+        job, _ = _enqueue_draw(
             app,
             project_name="project",
             user_id="user-1",
             project_id="project-1",
-            project_dir=tmp_path / "project",
+            project_dir=tmp_path / "user-1" / "project",
             config=Config(),
             compiled=_compile(tmp_path),
             adapter=_vertex_adapter(
@@ -964,9 +939,9 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
     # Generating a page and reading it back are two provider calls. Both are
     # billable, settled under one ledger job so credits round once.
     from novel_to_comic.server.credits import credit_estimate_for_provider_cost
-    app = _make_app()
+    app = _make_app(tmp_path)
     compiled = _compile(tmp_path)
-    artifacts = TargetArtifacts(tmp_path / "project")
+    artifacts = TargetArtifacts(tmp_path / "user-1" / "project")
     analysis_usage = UsageRecord(
         provider="gemini",
         model="ocr-balanced",
@@ -994,36 +969,38 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
 
     with (
         patch("novel_to_comic.server.credited_job.get_db", return_value=object()),
+        patch("novel_to_comic.server.db.get_db", return_value=object()),
+        patch("novel_to_comic.server.credited_job.assert_sufficient_credits"),
         patch(
-            "novel_to_comic.server.credited_job.reserve_credits",
+            "novel_to_comic.server.credits.reserve_credits",
             return_value=("reservation-1", "ledger-job-1"),
-        ) as reserve,
-        patch("novel_to_comic.server.credited_job.assert_reservation_active"),
-        patch("novel_to_comic.server.credited_job.release_reservation"),
-        patch("novel_to_comic.server.credited_job.debit_model_usage") as debit,
-        patch("novel_to_comic.server.credited_job.ai_request_context"),
+        ),
+        patch("novel_to_comic.server.credits.assert_reservation_active"),
+        patch("novel_to_comic.server.credits.release_reservation"),
+        patch("novel_to_comic.server.credits.debit_model_usage") as debit,
+        patch("novel_to_comic.server.job_execution.ai_request_context"),
         patch("novel_to_comic.page_visual_review.review_drawn_page", new_callable=AsyncMock,
               return_value=ApiResult(value=SimpleNamespace(usage=review_usage))) as review,
     ):
-        unanalysed, _ = enqueue_complete_page_draw(
+        unanalysed, _ = _enqueue_draw(
             app,
             project_name="project",
             user_id="user-1",
             project_id="project-1",
-            project_dir=tmp_path / "project",
+            project_dir=tmp_path / "user-1" / "project",
             config=Config(),
             compiled=compiled,
             adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
             artifacts=TargetArtifacts(tmp_path / "unanalysed"),
             page=_page(),
         )
-        without_analysis = reserve.call_args.args[-1]
-        job, _ = enqueue_complete_page_draw(
+        without_analysis = unanalysed.command.reservation_credits
+        job, _ = _enqueue_draw(
             app,
             project_name="project-analysed",
             user_id="user-1",
             project_id="project-1",
-            project_dir=tmp_path / "project",
+            project_dir=tmp_path / "user-1" / "project",
             config=Config(),
             compiled=compiled,
             adapter=_vertex_adapter(_RecordingTransport(_provider_result())),
@@ -1031,7 +1008,7 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
             page=_page(),
             ocr=_OCR(),
         )
-        with_analysis = reserve.call_args.args[-1]
+        with_analysis = job.command.reservation_credits
         asyncio.run(job.runner())
 
     assert unanalysed is not job
@@ -1058,45 +1035,6 @@ def test_render_analysis_is_reserved_for_and_debited_as_its_own_call(
     assert artifacts.read_analysis(7, 1).analysis_usage == analysis_usage
 
 
-def test_reserved_generation_job_releases_without_debit_on_cancellation(
-    tmp_path: Path,
-) -> None:
-    app = _make_app()
-
-    async def work() -> ApiResult[str]:
-        raise asyncio.CancelledError
-
-    with (
-        patch("novel_to_comic.server.credited_job.get_db", return_value=object()),
-        patch(
-            "novel_to_comic.server.credited_job.reserve_credits",
-            return_value=("reservation-1", "ledger-job-1"),
-        ),
-        patch("novel_to_comic.server.credited_job.assert_reservation_active"),
-        patch("novel_to_comic.server.credited_job.release_reservation") as release,
-        patch("novel_to_comic.server.credited_job.debit_model_usage") as debit,
-        patch("novel_to_comic.server.credited_job.ai_request_context"),
-    ):
-        job, _ = enqueue_reserved_generation_job(
-            app,
-            project_name="project",
-            user_id="user-1",
-            project_id="project-1",
-            project_dir=tmp_path,
-            stage="draw",
-            kind="complete_page_draw",
-            label="Page 7",
-            payload={"request_sha256": "f" * 64},
-            work=work,
-            debit_description="Complete page 7",
-            reservation_credits=38,
-            operations=(("complete_page", "image-gemini-pro"),),
-        )
-        with pytest.raises(asyncio.CancelledError):
-            asyncio.run(job.runner())
-
-    debit.assert_not_called()
-    release.assert_called_once()
 
 
 def _ordered_page(*, state_first: bool) -> ComicPage:
@@ -1611,14 +1549,15 @@ def test_batch_quote_skips_paid_pages_and_sums_individual_holds(tmp_path: Path) 
     app.dependency_overrides[get_project] = lambda: (tmp_path, Config(), None)
     app.dependency_overrides[get_current_user] = lambda: "test-user"
     # This fixture isolates page holds from the separately quoted first cover.
-    with patch("novel_to_comic.server.routers.projects.needs_initial_project_cover", return_value=False), \
+    with patch("novel_to_comic.server.cover_operations.needs_initial_project_cover", return_value=False), \
          patch.object(TargetArtifacts, "read_plan", return_value=SimpleNamespace(pages=[first, *remaining])), \
-         patch("novel_to_comic.server.routers.pages.approved_visual_inventory", return_value=_inventory()), \
-         patch("novel_to_comic.server.routers.pages.approved_reference_files", return_value=files):
+         patch("novel_to_comic.server.page_operations.approved_visual_inventory", return_value=_inventory()), \
+         patch("novel_to_comic.server.page_operations.approved_reference_files", return_value=files):
+        with patch("novel_to_comic.server.routers.pages.approved_visual_inventory", return_value=_inventory()), patch("novel_to_comic.server.routers.pages.approved_reference_files", return_value=files):
+            single = TestClient(app).get("/pages/8/generate/estimate")
         client = TestClient(app)
         batch = client.get("/pages/generate/estimate")
-        single = client.get("/pages/8/generate/estimate")
-        assert batch.status_code == single.status_code == 200
+        assert batch.status_code == single.status_code == 200, batch.text
         assert batch.json()["estimate_credits"] == single.json()["estimate_credits"] * 2
         assert batch.json()["reserved_credits"] == single.json()["reserved_credits"] * 2
     assert artifacts.provenance_revisions(7) == (1,)
@@ -1871,6 +1810,7 @@ def reviewed_story_precondition(monkeypatch):
     # upstream fixtures. Real missing/stale review admission is tested in
     # test_narrative_review.py.
     monkeypatch.setattr("novel_to_comic.server.routers.pages.require_draw_narrative_reviews", lambda target: None)
+    monkeypatch.setattr("novel_to_comic.server.page_operations.require_draw_narrative_reviews", lambda target: None)
     monkeypatch.setattr("novel_to_comic.narrative_review.require_draw_narrative_reviews", lambda target: None)
 
 

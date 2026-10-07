@@ -9,6 +9,7 @@ stale guards, StageRuntime execution).
 
 from __future__ import annotations
 
+
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -156,7 +157,7 @@ def get_editorial_source(
     return {"units": [{"id": uid, "text": by_id[uid].text} for uid in wanted]}
 
 
-@router.post("/editorial/decisions")
+@router.post("/editorial/decisions", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def post_editorial_decisions(body: DecisionBody, project=Depends(get_project)):
     project_dir, _config, _state = project
     target = TargetArtifacts(project_dir)
@@ -204,7 +205,7 @@ def _preview_estimate_credits(config, project_dir, state, stage: str) -> int:
         raise HTTPException(409, str(exc)) from exc
 
 
-@router.post("/story-changes/preview")
+@router.post("/story-changes/preview", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def preview_story_change(body: StoryChangePreviewBody, project=Depends(get_project)):
     project_dir, config, state = project
     target = TargetArtifacts(project_dir)
@@ -252,7 +253,7 @@ def preview_story_change(body: StoryChangePreviewBody, project=Depends(get_proje
     return proposal.model_dump(mode="json")
 
 
-@router.post("/story-changes/{proposal_id}/apply")
+@router.post("/story-changes/{proposal_id}/apply", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
 @limiter.limit(cost_limit)
 async def apply_story_change(
     proposal_id: str,
@@ -303,17 +304,12 @@ async def apply_story_change(
             },
         )
     pkey = project_key(user_id, project_id)
-    running = request.app.state.running_tasks.get(pkey)
-    if running is not None and not running.done():
+    from ..admission import project_busy
+    from novel_to_comic.workspace import part_id_for_path
+    if project_busy(request.app, pkey, part_id_for_path(project_dir)):
         raise HTTPException(
             409,
             {"detail": "a stage is already running for this project", "revision": revision},
-        )
-    style_task = getattr(request.app.state, "style_tasks", {}).get(pkey)
-    if style_task is not None and not style_task.done():
-        raise HTTPException(
-            409,
-            {"detail": "a style operation is already running", "revision": revision},
         )
     admit_stage_action(config, proposal.stage)
     # The directive lives outside the stage clean cascade, so the explicit

@@ -10,8 +10,11 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 
 | Method | Path | Handler | File |
 |--------|------|---------|------|
+| `POST` | `/api/auth/session` | `synchronize_session` | `auth.py` |
+| `POST` | `/api/auth/logout` | `logout` | `auth.py` |
 | `GET` | `/api/account/model-settings` | `get_model_settings` | `account_models.py` |
 | `PATCH` | `/api/account/model-settings` | `patch_model_settings` | `account_models.py` |
+| `GET` | `/api/account/storage` | `get_storage` | `account_models.py` |
 | `GET` | `/api/ops/backoffice` | `backoffice_snapshot` | `backoffice.py` |
 | `GET` | `/api/ops/backoffice/models` | `operator_model_settings` | `backoffice.py` |
 | `PATCH` | `/api/ops/backoffice/models` | `patch_operator_model_settings` | `backoffice.py` |
@@ -132,6 +135,7 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `GET` | `/api/projects/{project}/events` | `event_stream` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/jobs/cancel-queued-pages` | `cancel_queued_page_jobs` | `pipeline.py` |
 | `GET` | `/api/projects/{project}/generation-jobs` | `get_generation_jobs` | `pipeline.py` |
+| `GET` | `/api/projects/{project}/jobs` | `get_generation_jobs` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/approve/{stage}` | `approve` | `pipeline.py` |
 | `POST` | `/api/projects/{project}/reset/{stage}` | `reset_stage` | `pipeline.py` |
 | `GET` | `/api/projects/{project}/stage-error/{stage}` | `get_stage_error` | `pipeline.py` |
@@ -148,8 +152,10 @@ Routes from `pipeline.py`, `stages.py` and `files.py` serve under both `/api/pro
 | `DELETE` | `/api/projects/{project_id}` | `delete_project` | `projects.py` |
 | `POST` | `/api/projects/import-story` | `import_short_story` | `projects.py` |
 | `GET` | `/api/projects/{project}/parts/{part_id}/publication` | `owned` | `publications.py` |
+| `GET` | `/api/projects/{project}/publication` | `owned` | `publications.py` |
 | `POST` | `/api/projects/{project}/parts/{part_id}/publication` | `publish` | `publications.py` |
 | `DELETE` | `/api/projects/{project}/parts/{part_id}/publication` | `unpublish` | `publications.py` |
+| `DELETE` | `/api/projects/{project}/publication` | `unpublish` | `publications.py` |
 | `GET` | `/api/public/books` | `featured` | `publications.py` |
 | `GET` | `/api/public/books/{book_id}` | `book` | `publications.py` |
 | `GET` | `/api/public/books/{book_id}/{version}/pages/{number}` | `page` | `publications.py` |

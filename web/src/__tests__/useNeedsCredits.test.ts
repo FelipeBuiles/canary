@@ -49,7 +49,7 @@ function status(stages: Record<string, StageInfo>): ProjectStatus {
     total_cost_credits: 0,
     misc_cost_credits: 0,
     total_estimated_cost_credits: 0,
-    is_running: false,
+    is_running: false, part_busy: false, series_busy: false,
     has_cover: false,
     style_selected: true,
     is_public: false,
