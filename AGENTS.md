@@ -102,6 +102,11 @@ provider-free; paid generation and ambiguous submissions retain the guardrails a
 
 The user manages development servers. Do not start or restart them unless
 explicitly asked; use provider-free tests and offline inspection for verification.
+For a stale local gateway, `./scripts/gateway.sh --check` inspects loaded source,
+image, settings, and model routes without mutations. When a refresh is authorized,
+`./scripts/gateway.sh` (or `./scripts/dev.sh --refresh-gateway`) chooses rebuild
+versus recreate and preserves credential mounts; see
+[gateway refresh](docs/reference/gateway-refresh.md).
 
 Carry authorized work through implementation and relevant verification. Make
 routine reversible decisions locally; ask when missing information affects

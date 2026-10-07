@@ -102,20 +102,30 @@ CANARY_VERTEX_CREDENTIALS_FILE=/absolute/path/to/canary/.vertex-gcloud/applicati
 `scripts/dev.sh` includes `docker-compose.vertex.yml` when the credential-file
 setting is present. The override mounts only the ADC JSON file, read-only, and
 sets its quota project explicitly. A missing file fails startup rather than
-creating an empty credentials directory. For direct Docker commands, include
-both Compose files:
+creating an empty credentials directory. Refresh the local gateway with:
 
 ```sh
-docker compose -f docker-compose.yml -f docker-compose.vertex.yml build litellm
-docker compose -f docker-compose.yml -f docker-compose.vertex.yml up -d litellm
+./scripts/gateway.sh
 ```
 
+The [refresh command](gateway-refresh.md) preserves the existing ADC mount,
+detects changed routes and image inputs, and rebuilds only when needed. Use
+`./scripts/gateway.sh --check` for a read-only check or
+`./scripts/dev.sh --refresh-gateway` when launching the development stack.
 The operator owns server restarts. A running gateway needs its updated image,
 route configuration, environment and credential mount before the selection can
 run; the backend needs the updated model catalog. For a native gateway, set
 `GOOGLE_APPLICATION_CREDENTIALS` to the ADC file and
 `GOOGLE_CLOUD_QUOTA_PROJECT` to the credited project instead of using the mount.
 Credentials are never baked into either Docker image.
+
+Nano Banana image previews use one native streaming request. Thought images
+are transient previews; the final image and terminal usage metadata determine
+the saved result. The gateway supplies an owned HTTPX client to the Google SDK
+for this stream: its default aiohttp reader has an 8 MiB SSE-line limit, which
+a final 2K PNG can exceed, and a separate connection-error retry path.
+The HTTPX stream accepts large image frames with SDK retries disabled. A lost
+stream remains an ambiguous submission and is never automatically repeated.
 
 ## Fly credentials
 

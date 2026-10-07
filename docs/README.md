@@ -58,6 +58,8 @@ retained as current reference.
 - [Agent context](reference/agent-context.md): concise workflow and code navigation.
 - [Model settings](reference/account-model-settings.md): production operator
   defaults, development account controls, API routes, and Draw profiles.
+- [Local gateway refresh](reference/gateway-refresh.md): freshness checks,
+  automatic rebuild/recreate decisions, and retained credential mounts.
 - [Codex development capability report](reference/codex-dev-capabilities.md):
   implemented local adapter configuration, restricted execution/funding contracts,
   and scoped live evidence, including experimental complete-page Draw. This is

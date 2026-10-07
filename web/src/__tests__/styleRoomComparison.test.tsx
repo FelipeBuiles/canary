@@ -121,6 +121,34 @@ it("renders all six base proofs with their selection actions", () => {
   expect(within(grid).getAllByRole("button", { name: "SELECT THIS STYLE" })).toHaveLength(6);
 });
 
+it("restores all six saved proofs when a model change replaces failed cached preview URLs", async () => {
+  state.estimateError = null;
+  state.suggestions = Array.from({ length: 6 }, (_, index) => ({
+    id: `style-${index}`, index: index + 1, label: `Look ${index + 1}`, origin: "generated",
+    template: "Ink", has_sample: true, sample_stale: false, is_active: false,
+    sample_preview_url: `/api/projects/book/styles/style-${index}/proof/sample?style=current`,
+  }));
+  const room = () => <I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
+    <Route path="/projects/:id/style" element={<StyleRoom />} />
+  </Routes></MemoryRouter></I18nProvider>;
+  const view = render(room());
+  const grid = within(screen.getByTestId("style-proof-grid"));
+  await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+  grid.getAllByRole("img").forEach((image) => fireEvent.error(image));
+  expect(grid.getAllByText("PROOF IMAGE UNAVAILABLE")).toHaveLength(6);
+
+  state.suggestions = state.suggestions.map((item) => ({ ...item, sample_preview_url: null, sample_stale: true }));
+  view.rerender(room());
+  expect(grid.queryAllByText("PROOF IMAGE UNAVAILABLE")).toHaveLength(0);
+  const images = grid.getAllByRole("img");
+  expect(images).toHaveLength(6);
+  images.forEach((image, index) => {
+    expect(image.getAttribute("src")).toContain(`/files/samples/style_${index + 1}.png?t=`);
+  });
+  expect(grid.getAllByRole("button", { name: "SELECT THIS STYLE" }).every((button) => !button.hasAttribute("disabled"))).toBe(true);
+  state.suggestions = undefined;
+});
+
 it("does not surface an unrelated historic cover failure as a style audition failure", async () => {
   state.labels = ["Ink", "Watercolor"];
   state.jobs = [{ id: "old-cover", kind: "project_cover", status: "failed", error: "Approve references before creating this cover.", payload: {}, queued_at: "2026-09-01" } as GenerationJob];

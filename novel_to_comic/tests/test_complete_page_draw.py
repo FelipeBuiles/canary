@@ -454,6 +454,96 @@ def test_edition_accepts_changes_to_current_profile_after_the_model_changes(tmp_
     assert artifacts.read_book_edition() == selected
 
 
+@pytest.mark.parametrize("lettering_mode", ["editable", "integrated"])
+def test_selecting_nano_banana_compiles_a_native_page_and_advances_only_new_work(tmp_path: Path, lettering_mode: str) -> None:
+    from novel_to_comic.page_drawing import complete_page_adapter, page_image_quality, request_page_profile
+
+    config = Config(draw_model="image-nano-banana-2.1", lettering_mode=lettering_mode, image_quality="high")
+    profile = current_page_capability_profile(config)
+    assert profile.provider == "vertex-multimodal"
+    assert profile.model == "gemini-nano-banana-2.1"
+    assert profile.max_image_references == 14 and profile.max_attempts == 1
+    assert page_image_quality(profile.id, profile.provider) == "low"
+    assert profile.exact_visible_lettering == (lettering_mode == "integrated")
+    compiled = compile_page_generation_request(
+        _page(), _edition(profile), _inventory(), _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
+    )
+    assert bool(compiled.request.lettering) == (lettering_mode == "integrated")
+    assert (compiled.request.output_width, compiled.request.output_height) == (848, 1264)
+    adapter = complete_page_adapter(config, request=compiled.request)
+    assert isinstance(adapter, VertexCompletePageAdapter)
+    assert adapter._transport._gateway_model == "image-nano-banana-2.1"
+    assert adapter.prepare(compiled).model == "gemini-nano-banana-2.1"
+
+    artifacts = TargetArtifacts(tmp_path)
+    old = _edition(current_page_capability_profile(Config(lettering_mode=lettering_mode)))
+    artifacts.write_book_edition(old)
+    old_request = compile_page_generation_request(
+        _page(), old, _inventory(), _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
+    ).request
+    artifacts.write_request(old_request, request_revision=1)
+    existing_art = artifacts.render_path(7, 1)
+    existing_art.parent.mkdir(parents=True, exist_ok=True)
+    existing_art.write_bytes(b"saved page pixels")
+    selected = ensure_current_page_edition(artifacts, old, config, persist=False)
+    assert artifacts.read_book_edition() == old
+    assert selected.revision == old.revision + 1
+    assert selected.capability_profile == profile
+    assert ensure_current_page_edition(artifacts, old, config) == selected
+    assert existing_art.read_bytes() == b"saved page pixels"
+    assert artifacts.read_request(7, 1) == old_request
+    assert old_request.model == "gpt-image-2.5-sunburst"
+    with pytest.raises(ValueError, match="prepare a new draw"):
+        request_page_profile(config, old_request)
+
+
+@pytest.mark.parametrize("authority_count,edit,style,allowed", [
+    (14, False, False, True), (15, False, False, False),
+    (13, True, False, True), (14, True, False, False),
+    (12, True, True, True), (13, True, True, False),
+])
+def test_nano_banana_counts_edit_parent_and_style_proof_in_14_input_limit(
+    tmp_path: Path, authority_count: int, edit: bool, style: bool, allowed: bool,
+) -> None:
+    from novel_to_comic.page_drawing import complete_page_adapter
+
+    config = Config(draw_model="image-nano-banana-2.1")
+    profile = current_page_capability_profile(config)
+    entities = [f"subject-{index}" for index in range(authority_count)]
+    raw = _page().model_dump()
+    raw["content"][0].update(entity_ids=entities, appearance_states={})
+    raw["content_sha256"] = ""
+    page = ComicPage.model_validate(raw)
+    inventory = ApprovedVisualReferenceInventory(references=[
+        ApprovedVisualReference(id=entity + "-ref", entity_id=entity, visual_anchor="Keep the approved figure.")
+        for entity in entities
+    ])
+    files = {}
+    for ref in inventory.references:
+        path = tmp_path / (ref.id + ".png")
+        path.write_bytes(ref.id.encode())
+        files[ref.id] = ApprovedReferenceFile(reference_id=ref.id, path=path, media_type="image/png")
+    correction = PageRenderCorrection(
+        issue_ids=("issue-hand",), page_number=page.page_number,
+        comic_page_revision=page.revision, comic_page_sha256=page.content_sha256,
+        parent_render_revision=1, parent_render_image_sha256=hashlib.sha256(b"parent").hexdigest(),
+        mode="instructed", instruction="Correct the hand.",
+    ) if edit else None
+    style_path = tmp_path / "style.png" if style else None
+    if style_path:
+        style_path.write_bytes(b"style proof")
+    options = {"retry": RetryProvenance(attempt=1), "correction": correction,
+               "edit_source_bytes": b"parent" if edit else None, "style_reference_path": style_path}
+    if not allowed:
+        with pytest.raises(ValueError, match="Identity references will not be silently dropped"):
+            compile_page_generation_request(page, _edition(profile), inventory, files, **options)
+    else:
+        compiled = compile_page_generation_request(page, _edition(profile), inventory, files, **options)
+        prepared = complete_page_adapter(config).prepare(compiled)
+        assert len(prepared.reference_bytes) + int(prepared.edit_source_bytes is not None) == 14
+        assert {ref.entity_id for ref in prepared.references if ref.entity_id} == set(entities)
+
+
 def test_edition_accepts_changes_after_current_model_was_saved_with_wrong_dimensions(tmp_path: Path) -> None:
     artifacts = TargetArtifacts(tmp_path)
     old = _edition(_profile(output_width=2048, output_height=3072))

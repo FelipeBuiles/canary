@@ -196,6 +196,7 @@ def estimate_image_cost(
     height: int | None = None,
     ref_image_sizes: list[tuple[int, int]] | None = None,
     basis: Literal["reservation", "expected"] = "reservation",
+    include_previews: bool = True,
 ) -> float:
     """Pre-call cost estimate for count images.
 
@@ -221,6 +222,7 @@ def estimate_image_cost(
         height=height,
         ref_image_sizes=ref_image_sizes,
         basis=basis,
+        include_previews=include_previews,
     )
     if breakdown.source == "unknown_pricing":
         _warn_unknown_model(model)

@@ -36,6 +36,7 @@ from novel_to_comic.config import (
     MUSE_PAGE_ESTIMATED_COST_USD,
     Config,
 )
+from novel_to_comic.image_models import GATEWAY_IMAGE_NANO_BANANA_21
 from novel_to_comic.image_route_fallback import (
     FAL_SUNBURST_GATEWAY_MODEL,
     OPENAI_SUNBURST_GATEWAY_MODEL,
@@ -148,17 +149,20 @@ def legacy_vertex_page_capability_profile() -> PageCapabilityProfile:
     )
 
 
+_NANO_BANANA_21_PAGE_PROFILE_ID = "nano-banana-2.1-complete-page-1k-hybrid-v1"
+
+
 def nano_banana_21_page_capability_profile() -> PageCapabilityProfile:
-    """Labs-only native Vertex page profile; production selection stays separate."""
+    """Native Vertex 1K portrait profile (2:3 output is 848x1264)."""
     from novel_to_comic.usage import get_pricing_resolver
 
     pricing, _ = get_pricing_resolver()._pricing_for("gemini-nano-banana-2.1")
     return PageCapabilityProfile(
-        id="nano-banana-2.1-complete-page-medium-hybrid-v1", exact_visible_lettering=False,
+        id=_NANO_BANANA_21_PAGE_PROFILE_ID, exact_visible_lettering=False,
         provider="vertex-multimodal", model="gemini-nano-banana-2.1",
         max_image_references=14, reference_ordering="ordered",
         editing_modes=("instructed", "region_targeted"),
-        output_width=1696, output_height=2528, max_prompt_characters=32_000,
+        output_width=848, output_height=1264, max_prompt_characters=32_000,
         retry_semantics="bounded_submission", max_attempts=1,
         price_per_page_usd=Decimal(str(pricing["estimated_output_cost_per_image"])),
         price_per_reference_usd=Decimal(str(pricing["estimated_input_cost_per_reference"])),
@@ -221,8 +225,18 @@ def sunburst_fallback_page_capability_profile() -> PageCapabilityProfile:
 _EDIT_SOURCE_COUNTS_AS_REFERENCE = frozenset({"openai", "openrouter", "fal-queue", SUNBURST_FALLBACK_PROVIDER})
 
 
+def _edit_source_counts_as_reference(profile: PageCapabilityProfile) -> bool:
+    return (
+        page_profile_uses_native_dimensions(profile)
+        or profile.provider in _EDIT_SOURCE_COUNTS_AS_REFERENCE
+        or (profile.provider == "vertex-multimodal" and profile.model == "gemini-nano-banana-2.1")
+    )
+
+
 def page_image_quality(profile_id: str, provider: str) -> str | None:
     """The image quality an edition's profile submits, fixed by its identity."""
+    if provider == "vertex-multimodal" and profile_id.removesuffix("-integrated-v1") == _NANO_BANANA_21_PAGE_PROFILE_ID:
+        return "low"
     if profile_id.removesuffix("-integrated-v1") in {_FAL_SUNBURST_PAGE_PROFILE_ID, _SUNBURST_FALLBACK_PAGE_PROFILE_ID}:
         return "medium"
     if provider == "openai" and profile_id.removesuffix("-integrated-v1") in {
@@ -256,7 +270,7 @@ def estimate_page_request_cost_usd(
 
 
 def production_page_capability_profile() -> PageCapabilityProfile:
-    """Return the only complete-page profile offered for new API work."""
+    """Return the default complete-page profile for new API work."""
     return sunburst_fallback_page_capability_profile()
 
 
@@ -319,6 +333,8 @@ def _editable_page_capability_profile(config: Config | None = None) -> PageCapab
     from novel_to_comic.codex_dev import route_for
 
     selected = getattr(config, "draw_model", COMPLETE_PAGE_GATEWAY_MODEL)
+    if selected == GATEWAY_IMAGE_NANO_BANANA_21:
+        return nano_banana_21_page_capability_profile()
     if selected == "image-sunburst":
         return sunburst_fallback_page_capability_profile()
     if selected != COMPLETE_PAGE_GATEWAY_MODEL and not selected.startswith("codex-dev/image/"):
@@ -946,7 +962,7 @@ def compile_page_generation_request(
     text_authorities = tuple(authority for authority in authorities if not authority.requires_image)
     authorities = tuple(authority for authority in authorities if authority.requires_image)
     max_references = selected_edition.capability_profile.max_image_references
-    if (page_profile_uses_native_dimensions(selected_edition.capability_profile) or selected_edition.capability_profile.provider in _EDIT_SOURCE_COUNTS_AS_REFERENCE) and correction is not None:
+    if correction is not None and _edit_source_counts_as_reference(selected_edition.capability_profile):
         max_references -= 1  # The parent is an input image, never an authority replacement.
     if style_reference_path is not None:
         max_references -= 1  # Keep the proof separate from subject transport sheets.
@@ -1233,7 +1249,7 @@ def _validate_compiled_page(
     ):
         raise ValueError("Frozen complete-page request does not match the selected profile")
     total = len(request.references)
-    if (page_profile_uses_native_dimensions(profile) or profile.provider in _EDIT_SOURCE_COUNTS_AS_REFERENCE) and request.correction is not None:
+    if request.correction is not None and _edit_source_counts_as_reference(profile):
         total += 1
     if total > profile.max_image_references:
         raise ValueError("Complete-page image inputs exceed profile capacity; references cannot be dropped")
@@ -1343,7 +1359,7 @@ class GoogleVertexCompletePageTransport:
     def __init__(self, config: Config, profile: PageCapabilityProfile | None = None) -> None:
         self._config = config
         self._profile = profile or current_page_capability_profile(config)
-        self._gateway_model = ("image-nano-banana-2.1" if self._profile.model == "gemini-nano-banana-2.1"
+        self._gateway_model = (GATEWAY_IMAGE_NANO_BANANA_21 if self._profile.model == "gemini-nano-banana-2.1"
                                else COMPLETE_PAGE_GATEWAY_MODEL)
         # The provider and upstream model this transport submits to. A
         # single-route profile's route is the profile itself.
@@ -1485,20 +1501,22 @@ class GoogleVertexCompletePageTransport:
                 retain_ambiguous_job(ai_client.current_ai_request_context().job_id)
 
         try:
+            from novel_to_comic.ai.image_previews import post_image_request
+
             if files:
-                response = await ai_client._post_with_retry(
+                response = await post_image_request(
                     url,
                     headers=headers,
                     data=request_data,
                     files=files,
-                    retry_ambiguous=False,
+                    target=f"page:{json.loads(request.frozen_request_json)['page_number']}",
                 )
             else:
-                response = await ai_client._post_with_retry(
+                response = await post_image_request(
                     url,
                     headers=headers,
                     json=request_data,
-                    retry_ambiguous=False,
+                    target=f"page:{json.loads(request.frozen_request_json)['page_number']}",
                 )
             if response.status_code >= 400:
                 raise ai_client._gateway_http_error(

@@ -9,13 +9,14 @@ page. An arm is an image target (model and route) plus a prompt variant:
 - ``sheet_form`` / ``sheet_formation``: a recorded character or state sheet
   restated by ``reference_form_variants`` for entities a turnaround misdescribes.
 
-Otherwise every arm of an item uses the same references in the same order;
-only the target and prompt differ. Each cell is one submission to exactly one route: no
+Every arm of an item uses the same references in the same order. Nano Banana
+uses its native 1K tier; other asset arms retain recorded quality. Each cell is
+one submission to exactly one route: no
 fallback and no retry. Calls run without a user in the AI request context, so
 they are operator-funded (API) or use the local Codex subscription allowance.
 
 A failed cell can be retried by hand. Each cell records an input fingerprint
-(prompt, size, target and reference bytes); a retry recomputes it and refuses
+(prompt, size, quality, target and reference bytes); a retry recomputes it and refuses
 to submit if anything changed, so a retry resends exactly the same request.
 
 Subscription calls report no billable usage. Their ``api_equivalent_usd`` prices
@@ -36,7 +37,12 @@ from typing import Any, Literal
 from novel_to_comic.ai.context import ai_request_context
 from novel_to_comic.server.telemetry import ai_span
 from novel_to_comic.config import Config, load_config
-from novel_to_comic.image_models import GATEWAY_IMAGE_FLARE, GATEWAY_IMAGE_SUNBURST, GATEWAY_IMAGE_NANO_BANANA_21
+from novel_to_comic.image_models import (
+    GATEWAY_IMAGE_FLARE,
+    GATEWAY_IMAGE_SUNBURST,
+    GATEWAY_IMAGE_NANO_BANANA_21,
+    image_quality_for_model,
+)
 from novel_to_comic.image_route_fallback import FAL_SUNBURST_GATEWAY_MODEL, OPENAI_SUNBURST_GATEWAY_MODEL
 from novel_to_comic.usage import UsageRecord, calculate_cost_breakdown, estimate_image_cost
 
@@ -44,7 +50,7 @@ from . import prompt_restructure, reference_form_variants, storage
 
 KIND = "image_compare"
 PROMPTS = ("production", "restructured", *reference_form_variants.VARIANTS)
-_CONCURRENCY = {"api": 3, "codex_subscription": 2}
+_CONCURRENCY = {"api": 12, "codex_subscription": 2}
 _ASSET_LABELS = {
     "style_sample": "Style proof", "style_calibration": "Style board", "character_ref": "Character sheet",
     "location_plate": "Location plate", "prop_ref": "Prop", "project_cover": "Cover",
@@ -74,7 +80,7 @@ def image_targets() -> list[ImageTarget]:
                     gateway_model=GATEWAY_IMAGE_FLARE, model_alias=GATEWAY_IMAGE_FLARE),
         ImageTarget("sunburst-fal", "GPT Image 2.5 Sunburst", "FAL API", "api", True,
                     gateway_model=FAL_SUNBURST_GATEWAY_MODEL),
-        ImageTarget("nano-banana-2.1-vertex", "Nano Banana 2.1", "Vertex AI", "api", True,
+        ImageTarget("nano-banana-2.1-vertex", "Nano Banana 2.1 (1K)", "Vertex AI", "api", True,
                     gateway_model=GATEWAY_IMAGE_NANO_BANANA_21, model_alias=GATEWAY_IMAGE_NANO_BANANA_21),
     ]
     targets += [
@@ -104,10 +110,11 @@ class Prepared:
     submit: Any  # async (output_path) -> UsageRecord
     reference_sha256: tuple[str, ...] = ()
     pricing_model: str = OPENAI_SUNBURST_GATEWAY_MODEL
+    quality: str | None = None
 
     def fingerprint(self, target: ImageTarget) -> str:
-        """Identifies the exact request: target, prompt, size and reference bytes in order."""
-        payload = json.dumps([target.id, self.prompt, self.width, self.height, list(self.reference_sha256)])
+        """Identifies the request, including quality changes that alter native size."""
+        payload = json.dumps([target.id, self.prompt, self.width, self.height, list(self.reference_sha256), self.quality])
         return hashlib.sha256(payload.encode()).hexdigest()
 
     def api_equivalent_usd(self, quality: str | None) -> float:
@@ -124,16 +131,18 @@ class Prepared:
         Flare and Nano Banana 2.1 have no measured consumption yet, so each uses its configured
         allowances instead of Sunburst's measurements.
         """
+        quality = self.quality or quality
         if self.pricing_model in {GATEWAY_IMAGE_FLARE, GATEWAY_IMAGE_NANO_BANANA_21}:
             return estimate_image_cost(
                 self.pricing_model, 1, quality=quality, width=self.width, height=self.height,
                 ref_count=self.references, prompt_text=self.prompt, basis="expected",
+                include_previews=False,
             )
         width, height = _measured_size(quality, self.width, self.height)
 
         def cost(**kwargs: Any) -> float:
             return estimate_image_cost(OPENAI_SUNBURST_GATEWAY_MODEL, 1, quality=quality, width=width,
-                                       height=height, basis="expected", **kwargs)
+                                       height=height, basis="expected", include_previews=False, **kwargs)
 
         output = cost(ref_count=0, prompt_text="")
         scale = (self.width * self.height) / (width * height)
@@ -203,7 +212,8 @@ class AssetItem:
 
         return Prepared(prompt, wire.width, wire.height, len(wire.references), missing, submit,
                         tuple(ref.content_sha256 for ref in wire.references),
-                        target.gateway_model or OPENAI_SUNBURST_GATEWAY_MODEL)
+                        target.gateway_model or OPENAI_SUNBURST_GATEWAY_MODEL,
+                        quality=dict(wire.controls).get("quality"))
 
     def _wire_for(self, target: ImageTarget, prompt: str, *, restructured: bool):
         references = []
@@ -246,7 +256,7 @@ class AssetItem:
                                  f"this request has {len(references)}")
             wire = replace(wire, provider_key=description.provider_key, requested_alias=target.gateway_model,
                            configured_provider_model=description.provider_model, expected_route=description.route.value,
-                           controls=(("quality", self.quality),))
+                           controls=(("quality", image_quality_for_model(target.model_alias, self.quality)),))
         return replace(wire, execution_fingerprint=wire.recompute_execution_fingerprint())
 
 
@@ -298,7 +308,7 @@ class PageItem:
 
     def prepare(self, config: Config, target: ImageTarget, variant: str) -> Prepared:
         from novel_to_comic.models.draw import FrozenPageGenerationRequest
-        from novel_to_comic.page_drawing import CompiledPageGeneration
+        from novel_to_comic.page_drawing import CompiledPageGeneration, page_image_quality
 
         config = config.model_copy(update={"draw_model": target.codex_selector or target.model_alias})
         profile, compiled = self._compile(config)
@@ -316,7 +326,7 @@ class PageItem:
         async def submit(output_path: Path) -> UsageRecord:
             from novel_to_comic import page_drawing
 
-            if target.codex_selector or target.model_alias == GATEWAY_IMAGE_FLARE:
+            if target.codex_selector or target.model_alias in {GATEWAY_IMAGE_FLARE, GATEWAY_IMAGE_NANO_BANANA_21}:
                 adapter = page_drawing.complete_page_adapter(config, profile)
                 result = await adapter.generate(adapter.prepare(compiled))
             else:
@@ -331,7 +341,8 @@ class PageItem:
         return Prepared(prompt, request.output_width, request.output_height, len(request.references),
                         missing, submit,
                         tuple(hashlib.sha256(data).hexdigest() for data in compiled.reference_bytes),
-                        target.gateway_model or OPENAI_SUNBURST_GATEWAY_MODEL)
+                        target.gateway_model or OPENAI_SUNBURST_GATEWAY_MODEL,
+                        quality=page_image_quality(profile.id, profile.provider))
 
 
 # ── Listing and running ──────────────────────────────────────────────────────

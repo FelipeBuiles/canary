@@ -125,6 +125,47 @@ def test_model_change_does_not_change_existing_job_snapshot(client, tmp_path):
     assert account_config(Config(), tmp_path, "alice").plan_model == "gpt-6-luna"
 
 
+@pytest.mark.parametrize("scope", ["operator", "account"])
+def test_nano_banana_is_selectable_for_style_cast_and_draw_and_reaches_job_config(client, tmp_path, monkeypatch, scope):
+    from novel_to_comic.model_catalog import STAGE_FIELDS
+    from novel_to_comic.page_drawing import current_page_capability_profile, page_image_quality
+
+    alias = "image-nano-banana-2.1"
+    headers = {}
+    path = "/api/account/model-settings"
+    if scope == "operator":
+        from novel_to_comic.server.routers.backoffice import router as operator_router
+        monkeypatch.setattr(codex_dev, "_PROCESS", MappingProxyType({"CANARY_ENV": "production"}))
+        monkeypatch.setenv("CANARY_OPS_TOKEN", "operator-secret")
+        client.app.include_router(operator_router, prefix="/api/ops/backoffice")
+        path = "/api/ops/backoffice/models"
+        headers = {"X-Canary-Ops-Token": "operator-secret"}
+    snapshot = account_config(Config(), tmp_path, "alice")
+    catalog = client.get(path, headers=headers).json()
+    model = next(model for model in catalog["models"] if model["id"] == alias)
+    assert model["label"] == "Nano Banana 2.1"
+    assert model["provider"] == "Google Vertex AI"
+    assert model["kind"] == "image" and model["funding"] == "api"
+    assert {stage["id"] for stage in catalog["stages"] if alias in stage["model_ids"]} == {"image", "draw"}
+    response = client.patch(path, headers=headers, json={"selections": {"image": alias, "draw": alias}})
+    assert response.status_code == 200
+    assert client.get(path, headers=headers).json()["selections"]["image"] == alias
+    assert client.get(path, headers=headers).json()["selections"]["draw"] == alias
+    for mode in ("editable", "integrated"):
+        config = account_config(Config(lettering_mode=mode, image_quality="high"), tmp_path, "alice")
+        assert config.effective_image_model() == config.draw_model == alias
+        assert config.image_quality == "high"
+        profile = current_page_capability_profile(config)
+        assert profile.model == "gemini-nano-banana-2.1"
+        assert profile.exact_visible_lettering == (mode == "integrated")
+        assert page_image_quality(profile.id, profile.provider) == "low"
+        assert (profile.output_width, profile.output_height) == (848, 1264)
+    assert snapshot.image_model == snapshot.draw_model == "image-sunburst"
+    assert account_config(Config(), tmp_path, "bob").draw_model == (alias if scope == "operator" else "image-sunburst")
+    for stage in STAGE_FIELDS.keys() - {"image", "draw"}:
+        assert client.patch(path, headers=headers, json={"selections": {stage: alias}}).status_code == 400
+
+
 def test_retired_project_model_does_not_block_open_or_change_project_files(client, tmp_path, monkeypatch):
     from starlette.requests import Request
     from novel_to_comic.server import deps
@@ -551,6 +592,26 @@ def test_existing_project_models_update_and_reset_to_account(client, tmp_path, p
     assert response.json()["adapt_model"] == "mimo-v2.6-pro"
     assert response.json()["plan_model"] == "gpt-6-sol"
     assert load_config(project_settings)[0].dev_model_selections == {}
+
+
+def test_project_nano_banana_choices_preserve_saved_edition_and_account_defaults(client, tmp_path, project_settings):
+    from novel_to_comic.models.draw import BookEdition
+    from novel_to_comic.page_drawing import current_page_capability_profile
+    from novel_to_comic.target_artifacts import TargetArtifacts
+
+    alias = "image-nano-banana-2.1"
+    artifacts = TargetArtifacts(project_settings)
+    edition = BookEdition(revision=1, id="edition-001", capability_profile=current_page_capability_profile(Config()))
+    artifacts.write_book_edition(edition)
+    response = client.patch("/api/projects/novel/config/", json={"dev_model_selections": {"image": alias, "draw": alias}})
+    assert response.status_code == 200
+    assert response.json()["image_model"] == response.json()["draw_model"] == alias
+    assert alias in response.json()["image_model_aliases"]
+    loaded, _ = load_config(project_settings)
+    assert loaded.dev_model_selections == {"image": alias, "draw": alias}
+    assert account_config(loaded, tmp_path, "alice").effective_image_model() == alias
+    assert artifacts.read_book_edition() == edition
+    assert read_selections(tmp_path, "alice")["image"] == "image-sunburst"
 
 
 def test_project_model_edit_preserves_unrelated_retired_choice(client, project_settings):

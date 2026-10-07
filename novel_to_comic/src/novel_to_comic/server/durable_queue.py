@@ -183,7 +183,7 @@ class DurableQueue:
                 # implicit production migration inside a request or worker.
                 await self.backend.connector.execute_query_one_async("SELECT EXISTS(SELECT 1 FROM procrastinate_jobs)")
                 self.worker = asyncio.create_task(self.backend.run_worker_async(
-                    queues=[self.queue_name], concurrency=max(1, int(os.getenv("CANARY_GENERATION_WORKERS", "5"))),
+                    queues=[self.queue_name], concurrency=max(1, int(os.getenv("CANARY_GENERATION_WORKERS", "16"))),
                     install_signal_handlers=False, listen_notify=False, fetch_job_polling_interval=0.5,
                 ))
                 try:

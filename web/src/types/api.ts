@@ -335,6 +335,22 @@ export interface PipelineEvent {
   status?: "ok" | "failed";
   duration_ms?: number;
   error?: string | null;
+  // Temporary image previews. These never count as saved artwork or progress.
+  target?: string;
+  request_id?: string;
+  preview_index?: number;
+  preview_total?: number;
+  image_url?: string;
+  reset?: boolean;
+  settled?: boolean;
+}
+
+export interface ImagePreview {
+  request_id: string;
+  preview_index: number;
+  image_url: string;
+  /** The job finished; these completed pixels await only the saved file. */
+  settled?: boolean;
 }
 
 export type GenerationJobStatus = "queued" | "running" | "complete" | "failed" | "cancelled";

@@ -24,6 +24,17 @@ page_start       stage: str, page_number: int, started_at: str (ISO-8601 UTC)
 page_done        stage: str, page_number: int, revision: int,
                  status: "ok" | "failed", duration_ms: int,
                  error: str | None
+image_preview    stage: str, target: str (project-relative asset path or page:N),
+                 request_id: str, preview_index: int (0..3; 3 = completed pixels), preview_total: int,
+                 image_url: str (bounded WebP data URL)
+                   Advisory pixels only; never saved artwork, item completion,
+                   provider success, or visual-review evidence.
+image_preview_clear stage: str, target: str, request_id: str, reset: bool | absent,
+                    settled: bool | absent
+                   Discard on failure, fallback or job termination. A reset
+                   starts a new request; other clears match the request ID.
+                   settled marks completed pixels from a successful job: the
+                   UI may hold them only until the saved file loads.
 
 Example usage in a stage
 -------------------------

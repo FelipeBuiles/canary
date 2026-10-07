@@ -305,6 +305,8 @@ def enqueue_reserved_generation_job(
                 on_terminal()
 
     async def _runner() -> None:
+        from .image_previews import preview_events
+
         try:
             assert_reservation_active(db, reservation_id)
             with ai_request_context(
@@ -316,7 +318,7 @@ def enqueue_reserved_generation_job(
                 job_id=ledger_job_id,
                 page_number=payload.get("page_number"),
                 is_correction=bool(payload.get("issue_ids") or payload.get("issue_id")),
-            ):
+            ), preview_events(app, project_name, project_dir, stage):
                 result = await work()
             # Some multi-call operations settle each provider call themselves.
             if result is None:

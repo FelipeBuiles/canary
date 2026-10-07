@@ -21,7 +21,11 @@ from novel_to_comic.frozen_requests import (
     submit_frozen_request,
 )
 from novel_to_comic.generation_input import GenerationPromptInput
-from novel_to_comic.image_models import describe_image_model, image_model_profile_for_config
+from novel_to_comic.image_models import (
+    describe_image_model,
+    image_model_profile_for_config,
+    image_quality_for_model,
+)
 from novel_to_comic.image_provenance import (
     common_image_provenance,
     failed_image_provenance,
@@ -194,7 +198,7 @@ def compile_non_panel_request(
     model = config.effective_image_model()
     codex_route = route_for("image", model)
     controls = GenerationControls(
-        quality=config.image_quality if profile.supports_control("quality") else None,
+        quality=image_quality_for_model(model, config.image_quality) if profile.supports_control("quality") else None,
     )
     plan = reference_plan or reference_plan_for_assets(config, [])
     compiled = compile_generation_request(
@@ -229,7 +233,7 @@ def estimate_non_panel_request(
     request = compile_non_panel_request(config, input_data, reference_plan=reference_plan)
     cost = 0.0 if request.wire.provider_key == "codex-dev" else estimate_image_cost(
         config.effective_image_model(), 1,
-        quality=getattr(config, "image_quality", None),
+        quality=dict(request.wire.controls).get("quality"),
         ref_count=request.reference_plan.ref_count,
         prompt_text=request.compiled.final_prompt,
         width=request.wire.width,

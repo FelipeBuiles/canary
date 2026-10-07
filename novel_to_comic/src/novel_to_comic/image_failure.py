@@ -109,6 +109,8 @@ def classify_image_failure(
         "vertexai_project is not set",
         "fal_key is not set",
         "requires canary_wire_request",
+        "model_not_loaded",
+        "invalid model name passed",
         "not implemented",
         "unsupported wire",
     )):

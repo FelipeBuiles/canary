@@ -10,8 +10,14 @@ def test_gpt25_uses_explicit_allowance_instead_of_gpt2_token_estimate(variant):
     estimate = resolver.estimate_image_cost(
         f"image-{variant}", 2, ref_count=3, prompt_tokens=1000, quality="high",
     )
-    assert estimate.cost_usd == pytest.approx(0.535)
+    # Two calls include three 100-token OpenAI previews apiece.
+    assert estimate.cost_usd == pytest.approx(0.535 + 2 * 300 * 30e-6)
     assert estimate.source == "configured_reservation_allowance"
+    final_only = resolver.estimate_image_cost(
+        f"image-{variant}", 2, ref_count=3, prompt_tokens=1000, quality="high",
+        include_previews=False,
+    )
+    assert final_only.cost_usd == pytest.approx(0.535)
     measured = resolver.calculate(
         model_alias=f"image-{variant}", operation="image", image_count=2,
         provider_cost_usd=0.123, provider_cost_source="provider_reported_cost",

@@ -29,9 +29,12 @@ from novel_to_comic.ai.context import (
     generation_probe,
     mark_generation_executing,
     mark_generation_first_content,
-    notify_execution_started,
 )
 from novel_to_comic.ai.errors import AIEmptyResponseError, AIRefusalError, AITransportError
+from novel_to_comic.ai.admission import (
+    AdmissionRejected, cancelled_before_submission,
+    post as admitted_post, stream as admitted_stream,
+)
 from novel_to_comic.ai.finalisation import (
     begin_image_call,
     finalise_image_cancelled,
@@ -221,13 +224,13 @@ async def _post_with_retry(
         retry_after: float | None = None
         try:
             if files:
-                response = await _http.post(
-                    url, headers=headers, data=data, files=files
+                response = await admitted_post(
+                    _http, url, headers=headers, data=data, files=files
                 )
             elif data is not None:
-                response = await _http.post(url, headers=headers, data=data)
+                response = await admitted_post(_http, url, headers=headers, data=data)
             else:
-                response = await _http.post(url, headers=headers, json=json)
+                response = await admitted_post(_http, url, headers=headers, json=json)
             if not retry_ambiguous and response.status_code >= 500:
                 if not _fal_definitely_unsubmitted(response):
                     from novel_to_comic.server.credits import retain_ambiguous_job
@@ -238,8 +241,8 @@ async def _post_with_retry(
             rate_limited = response.status_code == 429
             retry_after = _retry_after_seconds(response)
             pacer.record_retryable_status(response)
-        except asyncio.CancelledError:
-            if not retry_ambiguous:
+        except asyncio.CancelledError as exc:
+            if not retry_ambiguous and not cancelled_before_submission(exc):
                 from novel_to_comic.server.credits import retain_ambiguous_job
                 retain_ambiguous_job(current_ai_request_context().job_id)
             raise
@@ -392,9 +395,11 @@ async def _read_chat_stream(
     back fully read so the caller's raise_for_status/_gateway_http_error path
     can still inspect the body.
     """
-    async with _http.stream("POST", url, headers=headers, json=payload) as response:
+    async with admitted_stream(_http, "POST", url, headers=headers, json=payload) as (response, lease):
         if response.status_code >= 400:
             await response.aread()
+            if lease:
+                lease.observe_response(response)
             if response.status_code in _RETRYABLE_STATUS_CODES:
                 raise httpx.HTTPStatusError(
                     f"Server returned {response.status_code}",
@@ -445,6 +450,8 @@ async def _read_chat_stream(
                 return False
             if not isinstance(chunk, dict):
                 return False
+            if lease:
+                lease.observe(chunk)
             chunks.append(chunk)
             content_chars = _chunk_content_length(chunk)
             has_reasoning = _chunk_has_reasoning(chunk)
@@ -525,6 +532,8 @@ async def _read_chat_stream(
             except ValueError:
                 buffered = None
             if isinstance(buffered, dict) and (buffered.get("choices") or buffered.get("error") is not None):
+                if lease:
+                    lease.observe(buffered)
                 return buffered, response
         collapsed = _collapse_chat_chunks(chunks)
         # Carried so a downstream JSON parse failure can say whether the text
@@ -574,8 +583,8 @@ async def _stream_with_retry(
                 ) from exc
             pacer.record_exception(exc)
             slow_timeout = isinstance(exc, _SLOW_TIMEOUT_ERRORS)
-        except asyncio.CancelledError:
-            if not retry_ambiguous:
+        except asyncio.CancelledError as exc:
+            if not retry_ambiguous and not cancelled_before_submission(exc):
                 from novel_to_comic.server.credits import retain_ambiguous_job
                 retain_ambiguous_job(current_ai_request_context().job_id)
             raise
@@ -1824,9 +1833,6 @@ async def _chat_completion_once(
             funding=metadata.get("funding", "api"), config=config,
         )
         endpoint = "/v1/chat/completions"
-        if route is None:
-            # The Codex runtime notifies when its serialized queue releases.
-            notify_execution_started()
         # Keep a local breadcrumb alongside the queued Langfuse observation.
         logger.debug(
             "AI request issued feature=%s model=%s streaming=%s event_id=%s",
@@ -1908,8 +1914,8 @@ async def _chat_completion_once(
                         **({"retry_ambiguous": False} if paid_call else {}),
                     )
                 else:
-                    response = await _http.post(
-                        f"{_base_url(config)}{endpoint}",
+                    response = await admitted_post(
+                        _http, f"{_base_url(config)}{endpoint}",
                         headers=_headers(config, event_id),
                         json=payload,
                     )
@@ -1985,7 +1991,7 @@ async def _chat_completion_once(
                 call_id=event_id,
             )
     except asyncio.CancelledError as exc:
-        if paid_call and provider_submission_started:
+        if paid_call and provider_submission_started and not cancelled_before_submission(exc):
             from novel_to_comic.server.credits import retain_ambiguous_job
             retain_ambiguous_job(current_ai_request_context().job_id)
         if route is not None:
@@ -2039,6 +2045,8 @@ async def _chat_completion_once(
         raise
     except Exception as exc:
         usage = _codex_error_usage(event_id, model, route, exc) if route else None
+        if isinstance(exc, AdmissionRejected):
+            provider_submission_started = False
         if route is None and data.get("usage"):
             usage = _extract_usage(data, event_id, model, operation,
                                    response.headers if response is not None else None)
@@ -2188,7 +2196,9 @@ async def generate_wire_image_on_route(
 async def _generate_wire_image_once(
     *, config: Config, wire: "ProviderWireRequest", output_path: Path, feature: str,
 ) -> ApiResult[Path]:
-    with generation_probe() as probe:
+    from novel_to_comic.ai.image_previews import image_preview_target
+
+    with generation_probe() as probe, image_preview_target(output_path):
         probe.wire_schema_version = wire.schema_version
         return await _generate_wire_image_attempt(
             config=config, wire=wire, output_path=output_path, feature=feature,

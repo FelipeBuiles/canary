@@ -20,7 +20,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Literal, TypeVar
 
-from novel_to_comic.image_models import IMAGE_PROVIDER_OPENAI_FAL
+from novel_to_comic.image_models import GATEWAY_IMAGE_SUNBURST_OPENAI, IMAGE_PROVIDER_OPENAI_FAL
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 SUNBURST_FALLBACK_PROVIDER = IMAGE_PROVIDER_OPENAI_FAL
 #: Gateway deployments for each route. ``image-sunburst`` stays the FAL
 #: deployment so retained FAL editions and frozen FAL wires keep their route.
-OPENAI_SUNBURST_GATEWAY_MODEL = "image-sunburst-openai"
+OPENAI_SUNBURST_GATEWAY_MODEL = GATEWAY_IMAGE_SUNBURST_OPENAI
 FAL_SUNBURST_GATEWAY_MODEL = "image-sunburst"
 
 Surface = Literal["draw", "asset"]

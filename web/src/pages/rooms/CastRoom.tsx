@@ -41,7 +41,7 @@ import { LazyImage } from "../../components/ui/LazyImage";
 import type { AppearanceState, CastFailure, CastReferenceInput, Character, ContentTrigger, GenerationJob, Location, Prop } from "../../types/api";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { useI18n } from "../../i18n";
-import { FlowingDotsPlaceholder } from "../../components/ui/FlowingDotsPlaceholder";
+import { ImageGenerationPreview } from "../../components/composites/ImageGenerationPreview";
 import { StaleStageNotice } from "../../components/composites";
 import { getCastCheckpointAction, isCastReviewBlocker } from "../../lib/castCheckpoint";
 import { missingVisualAnchors, readableAnchor, type MissingVisualAnchor } from "../../lib/visualAnchor";
@@ -277,6 +277,7 @@ function StateAppearanceModal({ projectName, entityId, kind, state, failure, sta
   };
   return <ImageModal isOpen onClose={onClose} src={src} alt={state.label} title={state.label}
     imageAvailable={!job.imgFailed} emptyLabel={t("NOT GENERATED")}
+    generationStatus={busy || (stageRegenerating && job.imgFailed) ? (job.activeJob?.status === "queued" ? t("QUEUED") : t("DRAWING…")) : undefined}
     sidebar={<div className="space-y-5">
       <AnchorSection anchor={state.visual_anchor} />
       {failure && !busy && <p role="alert" className="border-l-4 border-hero-red pl-3 font-body text-sm leading-6 text-ink-black">
@@ -295,7 +296,8 @@ function StateAppearanceModal({ projectName, entityId, kind, state, failure, sta
 /**
  * Re-roll history for a character or location (main or alternate appearance). Renders
  * nothing until at least one prior version has been archived, so it stays out
- * of the way until you've actually re-rolled. Clicking a thumbnail restores it.
+ * of the way until you've actually re-rolled. Includes the selected version;
+ * clicking another thumbnail restores it.
  */
 function RefVersionHistory({
   projectName,
@@ -317,42 +319,46 @@ function RefVersionHistory({
   const { t } = useI18n();
   const { data, error, isPending } = useCastAssetVersions(projectName, assetType, assetId, stateId, refreshKey);
   const restore = useRestoreCastAssetVersion();
-  const archived = (data?.versions ?? []).filter((v) => !v.current);
+  const versions = data?.versions ?? [];
   if (isPending) return <p className="font-body text-sm text-ink-muted">{t("Loading version history…")}</p>;
   if (error) return <p role="alert" className="font-body text-sm text-hero-red">{t("Version history could not be loaded.")}</p>;
-  if (archived.length === 0) return null;
+  if (!versions.some((v) => !v.current)) return null;
 
   const fileUrl = (relPath: string) =>
     `/api${seriesPath(projectName)}/files/${relPath}`;
 
   return (
-    <div className="mt-1.5">
-      <div className="font-meta text-xs tracking-[0.1em] text-ink-muted">
-        {t("PREVIOUS VERSIONS")} ({archived.length})
-      </div>
-      <div className="mt-2 flex flex-wrap gap-2">
-        {archived.map((v) => (
+    <section aria-label={t("Versions")} className="mt-1.5">
+      <h3 className="font-meta text-xs uppercase tracking-[0.1em] text-ink-muted">
+        {t("Versions")} ({versions.length})
+      </h3>
+      <div className="mt-2 flex flex-wrap items-start gap-2">
+        {versions.map((v) => (
           <button
             key={`${v.version}-${v.image_path}`}
             type="button"
-            title={t("Restore") + ` v${v.version}`}
-            aria-label={t("Restore") + ` v${v.version}`}
-            disabled={busy || restore.isPending}
+            title={`${v.current ? t("Selected version") : t("Restore")} v${v.version}`}
+            aria-label={`${v.current ? t("Selected version") : t("Restore")} v${v.version}`}
+            aria-pressed={!!v.current}
+            disabled={!!v.current || busy || restore.isPending}
             onClick={() =>
               restore.mutate(
                 { project: projectName, assetType, assetId, version: v.version, stateId },
                 { onSuccess: () => onRestored?.() },
               )
             }
-            className="relative w-14 overflow-hidden border border-ink-black/20 transition-colors hover:border-ink-black focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red disabled:opacity-50"
+            className={`relative w-20 overflow-hidden border-[2px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-hero-red ${v.current ? "border-ink-black shadow-ink" : "border-ink-black/20 hover:border-ink-black"} ${busy || restore.isPending ? "opacity-50" : ""}`}
           >
-            <img src={fileUrl(v.image_path)} alt="" className="aspect-square w-full object-cover" />
-            <span className="block bg-bristol px-1 py-1 font-meta text-xs text-ink-muted">v{v.version}</span>
+            <img src={`${fileUrl(v.image_path)}${v.current ? `?t=${encodeURIComponent(String(refreshKey ?? "current"))}` : ""}`} alt="" className="aspect-square w-full object-cover" />
+            <span className={`block bg-bristol px-1 py-1 font-meta text-xs ${v.current ? "text-ink-black" : "text-ink-muted"}`}>
+              v{v.version}
+              {v.current && <span className="mt-1 block break-words font-bold">{t("Selected")}</span>}
+            </span>
           </button>
         ))}
       {restore.error && <p role="alert" className="mt-2 font-body text-sm text-hero-red">{restore.error.message}</p>}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -450,14 +456,10 @@ function CastCard({
         aria-label={`${t("Open image")} · ${name}`}
       >
         {probe}
-        {generating ? (
-          <FlowingDotsPlaceholder
-            aspect={ratio}
-            className="h-full"
-            label={queued ? t("QUEUED") : t("DRAWING…")}
-            caption={generatingCaption}
-          />
-        ) : missing ? (
+        <ImageGenerationPreview project={projectName} target={decodeURIComponent(imageSrc.split("/files/")[1]?.split("?")[0] ?? "")}
+          active={generating} finalSrc={!missing ? imageSrc : undefined} aspect={ratio}
+          label={queued ? t("QUEUED") : t("DRAWING…")} caption={generatingCaption}>
+        {missing ? (
           <div className={`flex ${ratioClass} h-full w-full flex-col items-center justify-center gap-2 p-4 text-center`}>
             <div className={`font-meta text-xs font-bold tracking-[0.08em] ${failure ? "text-hero-red" : "text-ink-muted"}`}>
               {failure ? t("LAST ATTEMPT FAILED") : missingLabel}
@@ -486,6 +488,7 @@ function CastCard({
             </span>
           </>
         )}
+        </ImageGenerationPreview>
       </button>
 
       <div className="min-w-0 px-5 pt-4">
@@ -686,6 +689,7 @@ function CharacterCastCard({
         src={imageSrc}
         imageAvailable={!imgFailed || hasImage}
         emptyLabel={t("NO REF IMAGE")}
+        generationStatus={isGenerating ? (isQueued ? t("QUEUED") : t("DRAWING…")) : undefined}
         alt={character.name}
         title={character.name.toUpperCase()}
         sidebar={(
@@ -900,6 +904,7 @@ function LocationPlateCard({
         src={imageSrc}
         imageAvailable={!imgFailed || hasImage}
         emptyLabel={t("NO PLATE IMAGE")}
+        generationStatus={isGenerating ? (isQueued ? t("QUEUED") : t("DRAWING…")) : undefined}
         alt={location.name}
         title={location.name.toUpperCase()}
         sidebar={(
@@ -1075,6 +1080,7 @@ function PropRefCard({
         src={imageSrc}
         imageAvailable={!imgFailed || hasImage}
         emptyLabel={t("NO REF IMAGE")}
+        generationStatus={isGenerating ? (isQueued ? t("QUEUED") : t("DRAWING…")) : undefined}
         alt={prop.name}
         title={prop.name.toUpperCase()}
         sidebar={(

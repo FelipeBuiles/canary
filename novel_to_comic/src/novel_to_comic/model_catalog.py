@@ -1,7 +1,7 @@
 """Explicit account model choices shared by validation and the settings API."""
 from novel_to_comic.config import Config
 from novel_to_comic.codex_dev import claude_selectable_models, claude_selector_available, selectable_models, selector_available, model_has_vision, process_setting, validate_local_runtime, CodexRoutingError
-from novel_to_comic.image_models import IMAGE_MODEL_ALIASES, describe_image_model
+from novel_to_comic.image_models import GATEWAY_IMAGE_NANO_BANANA_21, GATEWAY_IMAGE_SUNBURST, IMAGE_MODEL_ALIASES, describe_image_model
 from novel_to_comic.text_models import TEXT_MODELS
 
 CODEX_CHOICES = {("text", "gpt-6-luna"), ("text", "gpt-6-sol"), ("text", "gpt-6.1-sol"), ("image", "gpt-5.5")}
@@ -36,7 +36,7 @@ STAGE_DESCRIPTIONS = {
     "ocr": "After a page is drawn, reads its lettering to check for missing or incorrect text.",
     "visual_review": "Reviews drawn pages against approved references for visual issues such as character or costume changes.",
 }
-DRAW_MODELS = ("image-sunburst",)
+DRAW_MODELS = (GATEWAY_IMAGE_SUNBURST, GATEWAY_IMAGE_NANO_BANANA_21)
 
 
 def codex_models() -> list[dict]:

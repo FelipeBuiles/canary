@@ -203,6 +203,12 @@ class StageRuntime:
     def progress(self, done: int, total: int) -> None:
         self._emit({"type": "stage_progress", "stage": self.name, "done": done, "total": total})
 
+    def image_previews(self):
+        """Observe temporary images without changing stage progress or artifacts."""
+        from novel_to_comic.ai.image_previews import image_preview_events
+
+        return image_preview_events(self._project_dir, self.name, self._emit)
+
     def set_progress_total(self, total: int) -> None:
         """Update the total when a stage discovers its actual work.
 

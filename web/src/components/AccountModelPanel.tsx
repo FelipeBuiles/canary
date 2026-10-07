@@ -49,7 +49,7 @@ export function AccountModelPanel() {
     <header>
       <h2 className="font-display text-2xl font-black tracking-tight">{t("Models for your account")}</h2>
       <p className="mt-2 font-body text-sm leading-6 text-ink-muted">{t("Choose account defaults for each part of production. New work uses these defaults unless a project has its own model choice.")}</p>
-      <p className="mt-2 font-body text-sm leading-6 text-ink-muted">{t("Changing the Draw model requires a new edition or project. Existing pages are never switched automatically.")}</p>
+      <p className="mt-2 font-body text-sm leading-6 text-ink-muted">{t("New Draw jobs use the selected model. Existing pages keep their artwork and lettering mode.")}</p>
       <p className="mt-2 font-body text-sm leading-6 text-ink-muted">{t("Saving settings does not start generation. Mix API and Codex models freely; only API calls use credits.")}</p>
       {settings.codex_enabled === false && <p className="mt-2 font-body text-sm leading-6 text-ink-muted">{t("Codex is disabled on this server. Start local development with --codex to enable its model choices.")}</p>}
     </header>

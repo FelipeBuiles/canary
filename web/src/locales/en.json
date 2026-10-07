@@ -450,7 +450,7 @@
   "Changes the name shown in your library and studio. Your story, artwork, and exports stay unchanged.": "Changes the name shown in your library and studio. Your story, artwork, and exports stay unchanged.",
   "Changing a description marks this entry's Cast images out of date; you choose to regenerate or keep them. Drawn pages are flagged, never redrawn.": "Changing a description marks this entry''s Cast images out of date; you choose to regenerate or keep them. Drawn pages are flagged, never redrawn.",
   "Changing a word means redrawing the page. It uses credits and can change the art.": "Changing a word means redrawing the page. It uses credits and can change the art.",
-  "Changing the Draw model requires a new edition or project. Existing pages are never switched automatically.": "Changing the Draw model requires a new edition or project. Existing pages are never switched automatically.",
+  "New Draw jobs use the selected model. Existing pages keep their artwork and lettering mode.": "New Draw jobs use the selected model. Existing pages keep their artwork and lettering mode.",
   "Chapter": "Chapter",
   "Character and place designs": "Character and place designs",
   "Character and scene continuity": "Character and scene continuity",

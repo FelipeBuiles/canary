@@ -72,8 +72,8 @@ def _looks_like_timeout_cancellation(exc: BaseException, elapsed: float, timeout
 # Complete-page providers whose pages may render in parallel for one account.
 # Each call is one independent paid submission; provider rate limits answer
 # with 429s, which are retried before anything is generated.
-PARALLEL_PAGE_PROVIDERS = frozenset({"fal-queue", "openai", "openai-fal"})
-PARALLEL_PAGES_PER_ACCOUNT = 3
+PARALLEL_PAGE_PROVIDERS = frozenset({"fal-queue", "openai", "openai-fal", "vertex-multimodal"})
+PARALLEL_PAGES_PER_ACCOUNT = 12
 
 
 def is_parallel_page_draw(job: GenerationJob) -> bool:

@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from litellm_handlers.image_previews import publish_partial_image, requested_partial_images
 try:
     from litellm.llms.custom_llm import CustomLLM, CustomLLMError
     from litellm.types.utils import ImageObject, ImageResponse, ImageUsage, ImageUsageInputTokensDetails
@@ -204,6 +205,7 @@ class OpenAIImageStreamLLM(CustomLLM):
         model_response._hidden_params["response_cost"] = None
         model_response.provider_request_id = request_id
         model_response.model = f"openai/{upstream_model}"
+        model_response.image_previews_requested = int(fields["partial_images"])
         return model_response
 
 
@@ -249,9 +251,7 @@ def request_fields(model: str, prompt: str, params: dict[str, Any]) -> dict[str,
         "prompt": prompt,
         "size": f"{width}x{height}",
         "stream": "true",
-        # Partial images would add billed output tokens. The fallback treats
-        # a lost request the same whether or not generation had started.
-        "partial_images": "0",
+        "partial_images": str(requested_partial_images()),
         "moderation": MODERATION,
     }
     for key, value in controls.items():
@@ -375,7 +375,7 @@ async def _stream_request(
 def _json_body(fields: dict[str, str]) -> dict[str, Any]:
     body: dict[str, Any] = dict(fields)
     body["stream"] = True
-    body["partial_images"] = 0
+    body["partial_images"] = int(fields["partial_images"])
     if "n" in body:
         body["n"] = int(body["n"])
     return body
@@ -394,6 +394,8 @@ async def _read_completed_event(
                 "created_at": body.get("created") if isinstance(body, dict) else None}
     async for event in iter_sse_events(response.aiter_lines()):
         kind = str(event.get("type") or "")
+        if kind in {"image_generation.partial_image", "image_edit.partial_image"}:
+            publish_partial_image(event)
         if kind.endswith(".completed"):
             return event
         if kind == "error" or "error" in event:

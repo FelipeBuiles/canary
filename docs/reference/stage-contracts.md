@@ -279,8 +279,10 @@ Successful image metadata stores the applied art direction. Draw carries that
 direction with the selected reference, so source descriptions do not undo Cast
 edits. Failed drafts are not treated as approved art direction. Main and alternate
 location references expose version history and reversible restoration, including
-the corresponding image metadata; restoring a main reference marks dependent
-states stale without automatically regenerating them.
+the corresponding image metadata. Version numbers identify distinct saved images;
+restoring an image selects its existing version without adding another history
+entry. Restoring a main reference marks dependent states stale without
+automatically regenerating them.
 
 Missing/unreadable images, unknown identifiers, self-attachments and reference
 overflow fail before the rewrite spends credits. Accepted attachments are saved
@@ -1049,6 +1051,14 @@ reader for the old location-state artifact layout.
 
 ### Frozen pages and corrections
 
+The model catalog offers Sunburst and Nano Banana 2.1 for Style/Cast images and
+complete-page Draw. Sunburst remains the default. Nano Banana 2.1 uses the direct
+Vertex route with a 1K portrait Draw profile (848×1264) and 14 total ordered image
+inputs, including a correction parent; overflow is rejected before submission.
+Nano Banana Style/Cast requests freeze `quality=low`, selecting native 1K;
+Sunburst Style/Cast quality remains configurable. Both Draw choices preserve the
+project's integrated or editable lettering mode.
+
 Draw compiles selected references, distinct subject labels, panel assignments,
 geometry and mode-specific lettering instructions into one frozen request.
 Projects explicitly choose integrated or editable lettering at creation (see
@@ -1549,6 +1559,34 @@ the whole scoped history, independent of pagination. A visual review that did
 not finish during the draw is re-run with `/pages/{page_number}/visual-review`
 and its `/estimate` endpoint. Restart the
 gateway after changing its retry configuration.
+
+OpenAI image calls observed by a running stage/job request up to three partial
+images. The gateway relays them around the existing authenticated Images route;
+its final response, usage and failure phases retain their normal contract.
+Transient `image_preview` events carry a bounded WebP preview keyed by the asset
+path or part-scoped page number and the usage event ID. Event replay keeps only
+the latest preview per target; previews never enter persisted artifacts, stage
+progress, generation success, or review evidence. They clear on failure, fallback
+and job termination. Style, Cast and Pages crossfade decoded previews with
+decreasing blur, show completed provider pixels sharp while validation finishes,
+and reveal saved artwork when it loads, respecting reduced motion. Quotes include
+the configured allowance of 300 extra image output tokens
+for three OpenAI previews. Actual provider usage remains authoritative; FAL's
+expected-charge estimate excludes OpenAI previews. Calls without an observer
+keep final-only streaming. Loading this gateway middleware requires a gateway
+restart; no paid live-preview quality claim follows from provider-free tests.
+
+Observed `image-nano-banana-2.1` calls use Vertex's native GenerateContent stream
+with thought images included, retaining the model's default thinking level.
+Only image parts marked `thought` become transient drafts; reasoning text is
+discarded, and only a non-thought final image may become an artifact. The gateway
+consumes the whole stream for terminal usage and refusals, prices the latest
+cumulative usage through the configured modality tariff, and never resubmits
+after a lost stream. Vertex drafts use the same Style, Cast and Pages preview
+effect; they may change composition and are not guaranteed to arrive before the
+final image. If none arrive, the normal final result still completes. Vertex
+does not use the OpenAI preview-token allowance. Calls without an observer
+retain the existing buffered Vertex request.
 
 ## Book readiness and package recovery
 

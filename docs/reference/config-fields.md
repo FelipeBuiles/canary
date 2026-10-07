@@ -36,11 +36,12 @@ Production stage models are overlaid from operator settings when a job config is
 | `target_language` | `Language` | `'en'` |  |
 | `lettering_mode` | `Literal['editable', 'integrated']` | `'editable'` |  |
 | `dev_mode` | `bool` | `False` |  |
-| `dev_image_concurrency` | `int` | `5` |  |
+| `dev_image_concurrency` | `int` | `DEFAULT_IMAGE_CONCURRENCY` |  |
 | `image_quality` | `str` | `'medium'` | OpenAI GPT Image quality: auto | low | medium | high |
-| `image_concurrency` | `int | None` | `None` |  |
+| `image_concurrency` | `int | None` | `DEFAULT_IMAGE_CONCURRENCY` |  |
 | `style_sample_brief_enabled` | `bool` | `True` |  |
 | `style_template` | `str` | `'High quality visual storytelling. Dramatic natural light...` |  |
-| `parallel_batch_size` | `int` | `5` |  |
-| `max_concurrent_requests` | `int` | `5` | Parallel Adapt/Plan text requests; image fallback when image_concurrency is unset |
+| `parallel_batch_size` | `int` | `DEFAULT_TEXT_CONCURRENCY` |  |
+| `max_concurrent_requests` | `int` | `DEFAULT_TEXT_CONCURRENCY` | Text ceiling; transport admission also enforces provider budgets |
+| `adapt_concurrency` | `int` | `DEFAULT_ADAPT_CONCURRENCY` |  |
 | `cost_limit_usd` | `Optional[float]` | `None` |  |

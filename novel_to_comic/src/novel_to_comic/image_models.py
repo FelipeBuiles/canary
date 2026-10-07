@@ -10,6 +10,7 @@ GATEWAY_IMAGE_FAST = "image-gemini-flash-lite"
 GATEWAY_IMAGE_BALANCED = "image-gemini-pro"
 GATEWAY_IMAGE_QUALITY = "image-gpt-2"
 GATEWAY_IMAGE_SUNBURST = "image-sunburst"
+GATEWAY_IMAGE_SUNBURST_OPENAI = "image-sunburst-openai"
 GATEWAY_IMAGE_FLARE = "image-flare"
 GATEWAY_IMAGE_NANO_BANANA_21 = "image-nano-banana-2.1"
 GATEWAY_IMAGE_MUSE = "image-muse"
@@ -17,7 +18,16 @@ GATEWAY_IMAGE_SEEDREAM_TEST = "image-seedream-v5-lite"
 
 IMAGE_MODEL_ALIASES = (
     GATEWAY_IMAGE_SUNBURST,
+    GATEWAY_IMAGE_NANO_BANANA_21,
 )
+
+#: Gateway routes whose handlers can stream advisory partial images. Their
+#: billed preview tokens are priced in litellm_pricing_overrides.yaml.
+PREVIEW_IMAGE_ALIASES = frozenset({
+    GATEWAY_IMAGE_SUNBURST_OPENAI,
+    GATEWAY_IMAGE_FLARE,
+    GATEWAY_IMAGE_NANO_BANANA_21,
+})
 
 _GEMINI_FLASH_LITE_MODEL = "vertex-multimodal/gemini-3.1-flash-lite-image"
 _GEMINI_PRO_IMAGE_MODEL = "vertex-multimodal/gemini-3-pro-image"
@@ -273,6 +283,17 @@ _SUPPORTED_CONTROLS: dict[ImageRoute, frozenset[str]] = {
     ImageRoute.MUSE_IMAGE: frozenset(),
     ImageRoute.UNKNOWN: frozenset(),
 }
+
+
+def image_quality_for_model(model: str, quality: str | None) -> str | None:
+    """Nano Banana uses native 1K; other models retain their configured quality.
+
+    The Vertex adapter maps the wire's ``low`` quality to its native 1K tier.
+    Select it before compilation so the frozen request records the resolution.
+    """
+    if describe_image_model(model).route == ImageRoute.NANO_BANANA_21:
+        return "low"
+    return quality
 
 
 @dataclass(frozen=True, slots=True)

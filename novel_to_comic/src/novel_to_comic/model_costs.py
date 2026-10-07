@@ -232,6 +232,7 @@ class PricingResolver:
         height: int | None = None,
         ref_image_sizes: list[tuple[int, int]] | None = None,
         basis: Literal["reservation", "expected"] = "reservation",
+        include_previews: bool = True,
     ) -> CostBreakdown:
         """Project the USD cost of `count` image requests.
 
@@ -239,6 +240,8 @@ class PricingResolver:
         settles a completed request whose provider charge was not reported: it
         uses central measured consumption when configured for the exact
         quality/geometry, otherwise the reservation estimate.
+        Interactive requests include the configured preview allowance; offline
+        comparisons that request only final pixels can exclude it.
 
         For models priced per-token (e.g. gpt-image-2), translates the request
         into estimated input/output tokens and uses the same per-token math the
@@ -260,6 +263,12 @@ class PricingResolver:
         input_per_token = float(pricing.get("input_cost_per_token") or 0.0)
         output_per_token = float(pricing.get("output_cost_per_token") or 0.0)
 
+        preview_prefix = "expected" if basis == "expected" else "estimated"
+        preview_cost = (
+            count * float(pricing.get(f"{preview_prefix}_preview_output_tokens") or 0) * output_per_token
+            if include_previews else 0.0
+        )
+
         # Measured consumption applies only to the observed quality/geometry.
         # Unknown settings retain the conservative allowance below; these
         # estimates never participate in actual-usage settlement.
@@ -275,7 +284,7 @@ class PricingResolver:
         if output_estimate is not None:
             return CostBreakdown(
                 cost_usd=(
-                    count * float(output_estimate) * output_per_token
+                    count * float(output_estimate) * output_per_token + preview_cost
                     + ref_count * float(pricing.get(f"{prefix}_input_tokens_per_reference") or 0)
                     * float(pricing.get("image_input_cost_per_token") or input_per_token)
                     + prompt_tokens * input_per_token
@@ -293,7 +302,7 @@ class PricingResolver:
         if allowance is not None:
             return CostBreakdown(
                 cost_usd=(
-                    count * float(allowance)
+                    count * float(allowance) + preview_cost
                     + ref_count * float(pricing.get("estimated_input_cost_per_reference") or 0.0)
                     + prompt_tokens * input_per_token
                 ),

@@ -92,7 +92,7 @@ services:
       R2_SECRET_KEY: ${R2_SECRET_KEY:-}
       R2_BUCKET: ${R2_BUCKET:-}
       R2_PUBLIC_URL: ${R2_PUBLIC_URL:-}
-      CANARY_GENERATION_WORKERS: ${CANARY_GENERATION_WORKERS:-5}
+      CANARY_GENERATION_WORKERS: ${CANARY_GENERATION_WORKERS:-16}
       CANARY_QUEUE_DATABASE_URL: postgresql://canary:${CANARY_QUEUE_PASSWORD:-canary-local}@queue-db:5432/canary_queue
       CANARY_OPS_TOKEN: ${CANARY_OPS_TOKEN:-local-ops-token}
     volumes:
