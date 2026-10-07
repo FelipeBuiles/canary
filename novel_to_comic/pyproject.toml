@@ -36,7 +36,11 @@ web = [
   "procrastinate>=3.8,<4",
   "psycopg[binary]>=3.3,<4",
 ]
-dev = ["pytest>=9.1.1,<10", "ruff>=0.16.8,<0.17"]
+dev = [
+  "pytest>=9.1.1,<10",
+  "pytest-xdist>=3.8,<4",
+  "ruff>=0.16.8,<0.17",
+]
 
 
 [project.scripts]

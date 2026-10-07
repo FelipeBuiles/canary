@@ -8,11 +8,13 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "novel_to_comic"
+VERBOSE = False
 
 
 def executable(name):
@@ -22,14 +24,24 @@ def executable(name):
     return path
 
 
-def run(args, cwd=ROOT, stdout=None):
+def run(args, cwd=ROOT, stdout=None, *, quiet=False):
     print("CHECK:", " ".join(map(str, args)), flush=True)
-    subprocess.run(args, cwd=cwd, check=True, stdout=stdout)
+    if not quiet or VERBOSE:
+        subprocess.run(args, cwd=cwd, check=True, stdout=stdout)
+        return
+    # Keep complete diagnostics on disk while suppressing successful chatter.
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as output:
+        try:
+            subprocess.run(args, cwd=cwd, check=True, stdout=output, stderr=subprocess.STDOUT)
+        except subprocess.CalledProcessError:
+            output.seek(0)
+            shutil.copyfileobj(output, sys.stderr)
+            sys.stderr.flush()
+            raise
+    print("PASS:", " ".join(map(str, args)), flush=True)
 
 
 def audit(project):
-    import tempfile
-
     uv = executable("uv")
     run([uv, "pip", "check", "--python", str(ROOT / project / ".venv/bin/python")])
     with tempfile.TemporaryDirectory(prefix="canary-audit-") as folder:
@@ -68,6 +80,10 @@ def backend(args):
             executable("uv"),
             "run",
             "--locked",
+            "--extra",
+            "web",
+            "--extra",
+            "dev",
             "python",
             str(ROOT / "scripts/run_backend_checks.py"),
             *args,
@@ -82,8 +98,9 @@ def component(name):
     elif name == "audit-gateway":
         audit("litellm")
     elif name == "backend":
-        run([executable("uv"), "run", "--locked", "ruff", "check", "."], APP)
-        backend(["-x", "-q"])
+        run([executable("uv"), "run", "--locked", "--extra", "dev", "ruff", "check", "."], APP)
+        workers = os.environ.get("CANARY_BACKEND_WORKERS", str(min(4, os.cpu_count() or 1)))
+        backend(["-x", "-q", "-n", workers, "--dist", "worksteal"])
     elif name == "web":
         npm = executable("npm")
         for args in [
@@ -94,11 +111,11 @@ def component(name):
             ["run", "lint"],
             ["run", "build"],
         ]:
-            run([npm, *args], ROOT / "web")
+            run([npm, *args], ROOT / "web", quiet=args in (["ls", "--all"], ["run", "build"]))
     elif name == "root":
         for args in [["ls", "--all"], ["audit", "--audit-level=high"]]:
-            run([executable("npm"), *args])
-    elif name == "gateway":
+            run([executable("npm"), *args], quiet=args == ["ls", "--all"])
+    elif name == "gateway-tests":
         uv = executable("uv")
         run([uv, "sync", "--project", "litellm", "--locked"])
         python = str(ROOT / "litellm/.venv/bin/python")
@@ -108,6 +125,8 @@ def component(name):
         ]:
             run([python, script])
         run([python, "-m", "pytest", "litellm/tests", "-q"])
+    elif name == "gateway":
+        component("gateway-tests")
         docker = executable("docker")
         run(
             [
@@ -180,7 +199,7 @@ def component(name):
                 ".",
             ]
         )
-    elif name in {"fast", "full"}:
+    elif name in {"fast", "local", "full"}:
         for item in ["audit-app", "audit-gateway"]:
             component(item)
         run([sys.executable, "scripts/check_docs_reliability.py"])
@@ -217,8 +236,11 @@ def component(name):
                 ["run", "lint"],
                 ["run", "build"],
             ]:
-                run([executable("npm"), *args], ROOT / "web")
+                run([executable("npm"), *args], ROOT / "web", quiet=args == ["run", "build"])
             component("root")
+        elif name == "local":
+            for item in ["backend", "web", "root", "gateway-tests"]:
+                component(item)
         else:
             # Validate disposal target before spending time on expensive suites.
             parsed = urlsplit(os.environ.get("CREDIT_TEST_DATABASE_URL", ""))
@@ -239,11 +261,16 @@ def component(name):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--verbose", action="store_true",
+        help="Stream successful npm dependency checks and frontend build output too.",
+    )
+    parser.add_argument(
         "component",
         nargs="?",
         default="fast",
         choices=[
             "fast",
+            "local",
             "full",
             "audit-app",
             "audit-gateway",
@@ -251,12 +278,15 @@ if __name__ == "__main__":
             "web",
             "root",
             "gateway",
+            "gateway-tests",
             "database",
             "docker",
         ],
     )
     try:
-        component(parser.parse_args().component)
+        options = parser.parse_args()
+        VERBOSE = options.verbose
+        component(options.component)
     except (RuntimeError, subprocess.CalledProcessError, OSError) as error:
         print(f"FAIL/BLOCKED: {error}", file=sys.stderr)
         raise SystemExit(1)

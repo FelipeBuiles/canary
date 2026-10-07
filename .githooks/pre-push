@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+echo "[pre-push] Running the complete local checks; a failure blocks this push."
+exec "$REPO_ROOT/scripts/check_all.sh" </dev/null

@@ -1,5 +1,9 @@
 """Evidence that the suite's speed tools retain isolation and useful identities."""
 
+import os
+from pathlib import Path
+import subprocess
+import sys
 import threading
 from types import SimpleNamespace
 
@@ -7,6 +11,45 @@ import pytest
 
 from scripts.audit_backend_tests import format_report, inventory, timings
 from tests import browser_support
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+def test_backend_runner_hides_checkout_build_in_every_process_but_keeps_fixture_builds(tmp_path, workers):
+    root = Path(__file__).resolve().parents[2]
+    # Simulate an existing ignored build without creating or changing repo files.
+    (tmp_path / "conftest.py").write_text(f'''
+from pathlib import Path
+import sys
+sys.path.insert(0, {str(root / "novel_to_comic")!r})
+from tests.conftest import pytest_addoption, pytest_configure
+dist = Path({str(root / "web" / "dist")!r})
+original_is_dir = Path.is_dir
+Path.is_dir = lambda path: path == dist or original_is_dir(path)
+''')
+    probe = tmp_path / "test_source_checkout.py"
+    probe.write_text(f'''
+from pathlib import Path
+import pytest
+from starlette.routing import Mount
+from novel_to_comic.server.app import create_app
+
+@pytest.mark.parametrize("case", range(4))
+def test_routes_ignore_local_build(tmp_path, case):
+    assert not Path({str(root / "web" / "dist")!r}).is_dir()
+    fixture_dist = tmp_path / "web" / "dist"
+    fixture_dist.mkdir(parents=True)
+    assert fixture_dist.is_dir()
+    app = create_app(tmp_path, dev=False)
+    assert not any(isinstance(route, Mount) and route.name == "frontend" for route in app.routes)
+''')
+    env = {key: value for key, value in os.environ.items() if not key.startswith("PYTEST_XDIST_")}
+    result = subprocess.run(
+        [sys.executable, str(root / "scripts/run_backend_checks.py"),
+         str(probe), "--rootdir", str(tmp_path), "-q", "-n", str(workers)],
+        cwd=root, env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "4 passed" in result.stdout
 
 
 def test_inventory_compares_bodies_without_erasing_cases_or_fixtures(tmp_path):

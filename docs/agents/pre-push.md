@@ -1,16 +1,52 @@
 # Pre-push and release checks
 
-Status: Current. These checks do not push, deploy, migrate production or activate
-Git hooks. Run them from any directory using the script’s absolute path, or use
-these root package commands:
+Status: Current. Run the complete local gate from the repository root:
+
+```sh
+./scripts/check_all.sh
+```
+
+The script also works from another directory using its absolute path. It selects
+the Node version in `.nvmrc` from an existing nvm installation when needed, supplies
+non-secret Supabase CI placeholders, and disables source-map uploads for this
+process. It runs the full provider-free backend, frontend, and gateway unit
+suites, dependency compatibility/audits, docs reliability, Ruff, frontend lint,
+and the production frontend build. A failed check exits nonzero and stops the
+gate. It does not start development servers, build Docker images, or run the
+separate real PostgreSQL contracts.
+
+Successful npm dependency-tree checks and web builds show only check/pass status.
+Their complete stdout and stderr are printed if they fail. Use
+`./scripts/check_all.sh --verbose` to stream that output on successful runs too;
+the same flag is supported by `scripts/check_release.py` components.
+
+These root package commands are also available:
 
 ```sh
 npm run check:push
 npm run check:release
 ```
 
-`check:push` is the bounded default (about one minute on the development Mac,
-excluding initial package/audit downloads). It audits both locked production
+`check:push` invokes the complete local gate above. Expect several minutes;
+browser-heavy backend tests and initial package/audit downloads dominate runtime.
+
+The full backend suite runs in up to four isolated pytest workers. Set
+`CANARY_BACKEND_WORKERS=0` for serial debugging, or another worker count to limit
+local resource use. For backend lint and tests alone, run
+`python3 scripts/check_release.py backend`. Focused pytest commands remain serial;
+see [backend test maintenance](../reference/backend-tests.md) for profiling.
+
+Frontend tests use compact progress and show console output for failed tests.
+The `ui` project uses isolated VM workers to reuse jsdom initialization; real
+PostHog SDK reload tests run separately in the `sdk-reloads` project with fresh
+processes. For verbose debugging from `web/`, run:
+
+```sh
+npm test -- --reporter=verbose --silent=false
+```
+
+For a focused check, `python3 scripts/check_release.py fast` retains the earlier
+bounded gate. It audits both locked production
 Python dependency sets with the same pinned pip-audit command used by CI; checks
 installed Python package compatibility; runs docs reliability and backend Ruff;
 runs all publication, auth, security-boundary, lifecycle, observability, job,
@@ -26,8 +62,7 @@ catches both working-directory dependencies and tests accidentally satisfied by
 a previous frontend build. CI uses that same runner for backend/security tests,
 and uses the same dependency-audit and disposable-database components as the local command.
 
-`check:release` adds the full backend and page-contract suites, all frontend
-checks, root checks, gateway dependency/provider tests and PostgreSQL-backed
+`check:release` runs the full local test/build coverage plus gateway PostgreSQL-backed
 startup smoke checks, the production Docker build, and real database authorization,
 ledger, purchase-outbox and auth-signup-outbox tests. Expect several minutes and substantial Docker
 CPU/network use. It requires an **explicitly disposable**, fresh PostgreSQL
@@ -45,12 +80,20 @@ packages. Full release also needs Docker and psql in PATH. Individual components
 are available via `python3 scripts/check_release.py --help`, so CI jobs can retain
 their existing provisioning and parallelism.
 
-No existing Git hooks or `core.hooksPath` were changed. To opt in, invoke
-`python3 scripts/check_release.py fast` from your existing pre-push hook, preserving
-its existing checks, or create a hook if none exists. The command is also suitable
-for a release checklist without installing a hook.
+The tracked [pre-push hook](../../.githooks/pre-push) invokes
+[check_all.sh](../../scripts/check_all.sh) and blocks the push on any failed
+check. Activate it once per checkout:
 
-Validation: the fast path passed 67 backend regressions and 33 focused frontend
+```sh
+git config --local core.hooksPath .githooks
+```
+
+Git does not activate tracked hooks automatically on clone. If a checkout already
+has hooks, preserve those checks and invoke `scripts/check_all.sh` from its existing
+pre-push hook instead of replacing its hook configuration. Hook activation does
+not push or deploy.
+
+Earlier validation: the fast path passed 67 backend regressions and 33 focused frontend
 tests, audits, docs, Ruff, lint and build. Temporary files containing the earlier
 vulnerable lock were rejected for CVE-2026-101918; the earlier build-dependent
 crawler test failed while the ignored local build remained intact. Missing uv

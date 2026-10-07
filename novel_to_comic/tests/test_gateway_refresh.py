@@ -5,8 +5,7 @@ import sys
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import gateway_refresh as refresh
 from gateway_state import (
     BUILD_ENV, BUILD_INPUTS, BUILD_LABEL, RUNTIME_INPUTS, SCHEMA_VERSION,

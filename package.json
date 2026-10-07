@@ -6,7 +6,7 @@
     "node": ">=24.15.0 <25"
   },
   "scripts": {
-    "check:push": "python3 scripts/check_release.py fast",
+    "check:push": "./scripts/check_all.sh",
     "check:release": "python3 scripts/check_release.py full"
   }
 }
