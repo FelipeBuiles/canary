@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { homePaths, PUBLIC_IMAGE, PUBLIC_ORIGIN, publicPages } from "./publicPages";
+import { homePaths, PUBLIC_IMAGE, PUBLIC_ORIGIN, publicPages, publicSearchMetadata } from "./publicPages";
 
 interface MetadataOptions { noindex?: boolean; schema?: unknown; alternates?: boolean }
 function setNode(tag: string, key: string, value: string, attribute: string, content: string) {
@@ -13,8 +13,9 @@ function apply(title: string, description: string, path: string, image: string |
   const url = PUBLIC_ORIGIN + path;
   const cover = new URL(image ?? PUBLIC_IMAGE, PUBLIC_ORIGIN).href;
   setNode("link", "rel", "canonical", "href", url);
-  document.head.querySelectorAll('meta[property^="og:image:"], meta[name="twitter:image:alt"]').forEach(node => node.remove());
-  for (const [key, content] of Object.entries({ description, robots: options.noindex ? "noindex, follow" : "index, follow",
+  document.head.querySelectorAll('meta[property^="og:image:"], meta[name="twitter:image:alt"], meta[property="og:locale"]').forEach(node => node.remove());
+  for (const [key, content] of Object.entries({ description, robots: "index, follow",
+    ...publicSearchMetadata(path), ...(options.noindex ? { robots: "noindex, follow" } : {}),
     "og:type": path.startsWith("/read/") ? "book" : "website", "og:site_name": "Scenewright", "og:title": title,
     "og:description": description, "og:url": url, "og:image": cover,
     "twitter:title": title, "twitter:description": description, "twitter:image": cover, "twitter:card": "summary_large_image",

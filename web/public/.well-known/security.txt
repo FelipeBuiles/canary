@@ -1,0 +1,4 @@
+Contact: mailto:security@scenewright.ink
+Expires: 2027-09-30T23:59:59Z
+Canonical: https://scenewright.ink/.well-known/security.txt
+Preferred-Languages: en

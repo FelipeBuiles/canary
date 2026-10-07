@@ -53,6 +53,12 @@ and the three existing legal pages. Product/editorial pages publish in English.
 Only translated landing pages advertise reciprocal English/Spanish/French and
 x-default hreflang.
 
+Prerendered public pages and client navigation share preview directives
+(`max-snippet:-1`, `max-image-preview:large`) and localized `og:locale` through
+`publicSearchMetadata`. These opt-ins apply to the static public inventory,
+not author-owned reader/story content. Utility pages retain `noindex, follow`;
+navigation to readers or utility pages clears the previous marketing locale.
+
 The pricing table must agree with billing pack configuration; the built-page
 test checks those independent contracts. Credits buy generation capacity,
 not a fixed number of pages. The annotated example is a development
@@ -79,6 +85,19 @@ Build/client canonicals target `https://scenewright.ink`. Reader HTML uses
 `SCENEWRIGHT_PUBLIC_URL`, defaulting to that origin. Alternate-origin deployments
 need a matching public build. `SCENEWRIGHT_APP_URL` separately controls exported
 signup referrals and defaults to the working public origin.
+
+The Lightsail Nginx configuration permanently redirects the `www` host to
+`https://scenewright.ink`, preserving path and query. HTTP requests redirect
+directly to that canonical HTTPS origin. ACME challenge handling remains
+separate. This host configuration must be installed and validated with
+`nginx -t` before an operator reload; application image releases do not install
+Nginx configuration.
+
+`web/public/.well-known/security.txt` ships as a plain-text public asset with
+`security@scenewright.ink` as the reporting contact. The operator confirmed that
+domain mail is monitored. Before the fixed September 30, 2027 expiry, verify
+the contact still works and update the expiry in source; builds and requests
+do not automatically renew it.
 
 ## Verification and release
 

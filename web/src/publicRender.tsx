@@ -9,6 +9,7 @@ import { publicPages, publicSchema, homePaths, isPublicHome } from "./lib/public
 import { setPublicBootstrap, type PublicBootstrap } from "./lib/publicBootstrap";
 
 export { publicPages, publicSchema, homePaths, isPublicHome };
+export { publicSearchMetadata } from "./lib/publicPages";
 /** Build-time only. Uses the same components and Suspense boundaries as App. */
 export async function renderPublicPage(path: string, bootstrap: PublicBootstrap) {
   const language = publicPages[path].language;

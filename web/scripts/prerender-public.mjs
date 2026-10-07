@@ -11,7 +11,7 @@ const escape = value => String(value).replace(/[&<>"']/g, character => ({ '&': '
 const json = value => JSON.stringify(value).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026')
 try {
   await build({ build: { ssr: 'src/publicRender.tsx', outDir: output, sourcemap: false } })
-  const { publicPages, publicSchema, homePaths, isPublicHome, renderPublicPage } = await import(pathToFileURL(resolve(output, 'publicRender.js')).href)
+  const { publicPages, publicSchema, publicSearchMetadata, homePaths, isPublicHome, renderPublicPage } = await import(pathToFileURL(resolve(output, 'publicRender.js')).href)
   const template = await readFile('dist/index.html', 'utf8')
   // Public styles must arrive with HTML, before its lazy route is requested.
   const manifest = JSON.parse(await readFile('dist/.vite/manifest.json', 'utf8'))
@@ -47,7 +47,7 @@ try {
     const image = `${origin}/marketing/scenewright-social.png`
     let document = template.replace(/<title\b[^>]*>.*?<\/title>/gis, '').replace(/<meta\b[^>]*(?:name|property)="(?:description|robots|og:[^"]+|twitter:[^"]+)"[^>]*>/gi, '').replace(/<link\b[^>]*rel="canonical"[^>]*>/gi, '')
     const head = `<title>${escape(metadata.title)}</title><link rel="canonical" href="${url}">` +
-      Object.entries({ description: metadata.description, robots: 'index, follow', 'og:type': 'website', 'og:site_name': 'Scenewright', 'og:title': metadata.title, 'og:description': metadata.description, 'og:url': url, 'og:image': image, 'og:image:width': '1200', 'og:image:height': '630', 'og:image:alt': 'Scenewright — AI comic studio for authors', 'twitter:card': 'summary_large_image', 'twitter:title': metadata.title, 'twitter:description': metadata.description, 'twitter:image': image, 'twitter:image:alt': 'Scenewright — AI comic studio for authors' })
+      Object.entries({ description: metadata.description, ...publicSearchMetadata(path), 'og:type': 'website', 'og:site_name': 'Scenewright', 'og:title': metadata.title, 'og:description': metadata.description, 'og:url': url, 'og:image': image, 'og:image:width': '1200', 'og:image:height': '630', 'og:image:alt': 'Scenewright — AI comic studio for authors', 'twitter:card': 'summary_large_image', 'twitter:title': metadata.title, 'twitter:description': metadata.description, 'twitter:image': image, 'twitter:image:alt': 'Scenewright — AI comic studio for authors' })
         .map(([key, value]) => `<meta ${key.startsWith('og:') ? 'property' : 'name'}="${key}" content="${escape(value)}">`).join('') +
       (isPublicHome(path) ? [...Object.entries(homePaths), ['x-default', '/']].map(([language, target]) => `<link rel="alternate" hreflang="${language}" href="${origin}${target}">`).join('') : '') +
       `<script id="public-schema" type="application/ld+json">${json(publicSchema(path))}</script>`

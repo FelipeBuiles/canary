@@ -19,6 +19,8 @@ export function BrandMark({
     <img
       className={className}
       src={BRAND_MARK_SOURCES[variant]}
+      width={100}
+      height={100}
       alt={title ?? ""}
       aria-hidden={title ? undefined : true}
       draggable={false}
