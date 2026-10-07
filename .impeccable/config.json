@@ -57,6 +57,15 @@
         ],
         "createdAt": "2026-10-02T23:33:13.926Z",
         "reason": "Agent: the only side border in this file marks the existing conditional LAST ATTEMPT FAILED role=alert paragraph, confirmed in HEAD. It communicates an actionable generation error rather than decorating a card; preserve the error indicator."
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "web/src/components/lettering/lettering.css"
+        ],
+        "createdAt": "2026-10-07T03:41:22.015Z",
+        "reason": "Agent review: PlacementCheckPanel list items map check.severity to red is-fix and amber is-consider markers. The border is an actionable validation-severity indicator introduced in commit 3dd7afb27 on 2026-09-24, not decorative card styling. Preserve this existing semantic state affordance during the Web Vitals optimization."
       }
     ]
   }

@@ -107,7 +107,8 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
     return () => { live = false; };
   }, [fontAttempt]);
   useEffect(() => {
-    if (recovery) return;
+    // Persist committed edits, not every intermediate pointer preview.
+    if (recovery || history.gesture) return;
     if (!dirty) {
       clearLetteringDraft(draftKey);
       return;
@@ -118,7 +119,7 @@ function LetteringWorkspace({ project, pageNumber, initial, disabled }: {
     });
     // Storage can be disabled or full. This is a safety signal, never a claim of server persistence.
     queueMicrotask(() => setDraftStored(saved));
-  }, [history.present, base, draftKey, dirty, recovery]);
+  }, [history.present, history.gesture, base, draftKey, dirty, recovery]);
   useEffect(() => {
     if (!dirty)
       return;

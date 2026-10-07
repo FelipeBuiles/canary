@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -66,12 +67,14 @@ class SPAStaticFiles(StaticFiles):
     _ASSET_SUFFIXES = frozenset(
         {".js", ".mjs", ".css", ".map", ".html", ".htm", ".json", ".txt",
          ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".avif",
-         ".woff", ".woff2", ".ttf", ".eot", ".otf", ".wasm"}
+         ".woff", ".woff2", ".ttf", ".eot", ".otf", ".wasm",
+         ".mp4", ".webm", ".mp3", ".ogg", ".wav"}
     )
 
     async def get_response(self, path: str, scope):
+        document = path in {"", ".", "index.html"} or path.lower().endswith(".html")
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
         except StarletteHTTPException as exc:
             if exc.status_code != 404:
                 raise
@@ -85,7 +88,18 @@ class SPAStaticFiles(StaticFiles):
                 raise
             # Looks like a client-side route — serve the SPA shell so the
             # browser's history/router can render it.
-            return await super().get_response("index.html", scope)
+            response = await super().get_response("index.html", scope)
+            document = True
+        if response.status_code in {200, 206, 304}:
+            if document or response.headers.get("content-type", "").startswith("text/html"):
+                # Revalidate the shell so releases never strand readers on old chunks.
+                response.headers["Cache-Control"] = "no-cache"
+            elif path.startswith("assets/") and re.search(r"-[\w-]{8,}\.[\w]+$", path):
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            else:
+                # Unfingerprinted marketing files can change at the same URL.
+                response.headers["Cache-Control"] = "public, max-age=3600"
+        return response
 
 
 class MetricsAwareTrustedHostMiddleware(TrustedHostMiddleware):

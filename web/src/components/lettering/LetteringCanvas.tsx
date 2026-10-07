@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent, type KeyboardEvent, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent, type KeyboardEvent, type CSSProperties } from "react";
 import { elementRect, renderOverlay, type LetteringElement, type PageLettering, type LetteringStyle, type Rect } from "@lettering-engine";
 import { Button } from "../ui/Button";
 import { Toolbar } from "../composites/Toolbar";
@@ -47,6 +47,23 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
     left: number;
     top: number;
   } | null>(null);
+  const pending = useRef<{ id: string; patch: Partial<LetteringElement> } | null>(null);
+  const frame = useRef<number | null>(null);
+  const overlay = useMemo(() => renderOverlay(state, style), [state, style]);
+  useEffect(() => () => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+  }, []);
+  function flushPreview() {
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+    frame.current = null;
+    const next = pending.current;
+    pending.current = null;
+    if (next) preview(next.id, next.patch);
+  }
+  function queuePreview(id: string, patch: Partial<LetteringElement>) {
+    pending.current = { id, patch };
+    if (frame.current === null) frame.current = requestAnimationFrame(flushPreview);
+  }
   const [size, setSize] = useState({ width: 800, height: 670 }), [zoom, setZoom] = useState(1), [panMode, setPanMode] = useState(false);
   const [artFailed, setArtFailed] = useState(false);
   useEffect(() => {
@@ -85,7 +102,7 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
     const dx = (event.clientX - current.x) / current.rect.width, dy = (event.clientY - current.y) / current.rect.height;
     const original = current.original;
     if (current.mode === "move")
-      preview(current.id, {
+      queuePreview(current.id, {
         placement: {
           ...original.placement,
           x: clamp(original.placement.x + dx, 0, 1 - elementRect(original).width), width: Math.min(original.placement.width, 1 - clamp(original.placement.x + dx, 0, 1 - elementRect(original).width)), y: clamp(original.placement.y + dy, 0, 1 - elementRect(original).height), height: Math.min(original.placement.height, 1 - clamp(original.placement.y + dy, 0, 1 - elementRect(original).height))
@@ -95,7 +112,7 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
       const angle = -original.rotation * Math.PI / 180, aspect = state.canvas_aspect_ratio;
       const localX = (dx * Math.cos(angle) - dy / aspect * Math.sin(angle)) / original.scale;
       const localY = (dx * aspect * Math.sin(angle) + dy * Math.cos(angle)) / original.scale;
-      preview(current.id, {
+      queuePreview(current.id, {
         tight_box: false, placement: {
           ...original.placement,
           width: clamp(elementRect(original).width + localX, .045, 1 - original.placement.x),
@@ -104,16 +121,21 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
       });
     }
     else
-      preview(current.id, { tail_target: { x: clamp((event.clientX - current.rect.left) / current.rect.width, 0, 1), y: clamp((event.clientY - current.rect.top) / current.rect.height, 0, 1) } });
+      queuePreview(current.id, { tail_target: { x: clamp((event.clientX - current.rect.left) / current.rect.width, 0, 1), y: clamp((event.clientY - current.rect.top) / current.rect.height, 0, 1) } });
   }
   function end() {
     if (drag.current) {
+      // Commit the final pointer position even if its frame has not painted yet.
+      flushPreview();
       drag.current = null;
       commit();
     }
   }
   function abort() {
     if (drag.current) {
+      if (frame.current !== null) cancelAnimationFrame(frame.current);
+      frame.current = null;
+      pending.current = null;
       drag.current = null;
       cancel();
     }
@@ -160,7 +182,7 @@ export function LetteringCanvas({ state, style, artUrl, selected, disabled, onAr
             select(null);
         }}>
           <img key={artUrl} src={artUrl} alt={t("Immutable base artwork")} className="lettering-base-art" draggable={false} onError={() => { setArtFailed(true); onArtReady(null); }} onLoad={() => { setArtFailed(false); onArtReady(artUrl); }} />
-          <div className="lettering-svg" aria-hidden="true" dangerouslySetInnerHTML={{ __html: renderOverlay(state, style) }} />
+          <div className="lettering-svg" aria-hidden="true" dangerouslySetInnerHTML={{ __html: overlay }} />
           {guides && <div className="lettering-guides" aria-hidden="true">
             {guides.faces.map((face, index) => <span key={index} className="lettering-guide-face" style={at(face)}><span>{face.label}</span></span>)}
             {guides.focus && <span className={`lettering-guide-focus is-${guides.focus.severity}`} style={at(guides.focus)} />}

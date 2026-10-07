@@ -1,7 +1,5 @@
 import { IntlMessageFormat } from "intl-messageformat";
 import en from "./en.json";
-import es from "./es.json";
-import fr from "./fr.json";
 import type { LanguageCode } from "./languages";
 
 export type MessageKey = keyof typeof en;
@@ -9,17 +7,36 @@ export type MessageKey = keyof typeof en;
 export const msg = (message: MessageKey) => message;
 export type MessageValues = Record<string, string | number | Date>;
 export type Translator = (message: string, values?: MessageValues) => string;
-const catalogs: Record<LanguageCode, Record<string, string>> = { en, es, fr };
+type Catalog = Record<string, string>;
+const englishCatalog: Catalog = en;
+const catalogs: Partial<Record<LanguageCode, Catalog>> = { en };
+const loads = new Map<LanguageCode, Promise<Catalog>>();
+export const loadedCatalog = (locale: LanguageCode) => catalogs[locale];
+
+/** Keep unused languages out of the startup bundle; cache each requested catalog. */
+export function loadCatalog(locale: LanguageCode): Promise<Catalog> {
+  let load = loads.get(locale);
+  if (!load) {
+    load = (locale === "en" ? Promise.resolve({ default: en })
+      : locale === "es" ? import("./es.json") : import("./fr.json"))
+      .then(({ default: catalog }) => {
+        catalogs[locale] = catalog;
+        return catalog;
+      });
+    loads.set(locale, load);
+  }
+  return load;
+}
 
 /** One formatter/cache per provider locale, with no mutable global language. */
-export function createTranslator(locale: LanguageCode): Translator {
+export function createTranslator(locale: LanguageCode, catalog: Catalog = catalogs[locale] ?? englishCatalog): Translator {
   const cache = new Map<string, IntlMessageFormat>();
   return (message, values) => {
     // Server/user text is data, not ICU syntax. Only catalog messages are parsed.
     if (!Object.hasOwn(en, message)) return message;
     let formatter = cache.get(message);
     if (!formatter) {
-      formatter = new IntlMessageFormat(catalogs[locale][message] ?? catalogs.en[message], locale, undefined, { ignoreTag: true });
+      formatter = new IntlMessageFormat(catalog[message] ?? englishCatalog[message], locale, undefined, { ignoreTag: true });
       cache.set(message, formatter);
     }
     return String(formatter.format(values));

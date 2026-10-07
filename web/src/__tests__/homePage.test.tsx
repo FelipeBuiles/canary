@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
@@ -108,11 +108,11 @@ describe("Scenewright homepage", () => {
     expect(screen.getByText(/not a fixed number of pages/)).toBeTruthy();
   });
 
-  it("localizes the new entry point and sample links in French", () => {
+  it("localizes the new entry point and sample links in French", async () => {
     renderHomePage();
-    fireEvent.click(screen.getByRole("button", { name: "FR" }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "FR" })); });
 
-    expect(screen.getByRole("heading", { level: 1, name: "Votre récit. Sa première scène de BD." })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Votre récit. Sa première scène de BD." })).toBeTruthy();
     expect(screen.getAllByRole("link", { name: /Créer ma première scène/ })[0].getAttribute("href")).toBe("/signup");
     expect(screen.getAllByRole("link", { name: "Lire la page 12 en taille réelle" })[0].getAttribute("href")).toBe("/marketing/elm-and-keep-page-12.webp");
     expect(screen.getByRole("link", { name: "Aller au contenu" })).toBeTruthy();
@@ -128,13 +128,13 @@ describe("Scenewright homepage", () => {
     expect(screen.getByText(/Purely generated imagery may have limited copyright protection/)).toBeTruthy();
   });
 
-  it("lets public visitors switch the marketing page to Spanish", () => {
+  it("lets public visitors switch the marketing page to Spanish", async () => {
     renderHomePage();
 
-    fireEvent.click(screen.getByRole("button", { name: "ES" }));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "ES" })); });
 
     expect(
-      screen.getByRole("heading", {
+      await screen.findByRole("heading", {
         level: 1,
         name: "Tu historia. Su primera escena de cómic.",
       }),
@@ -166,16 +166,20 @@ describe("Scenewright homepage", () => {
 
   it("plays a muted, silent hero loop that can be paused", () => {
     stubReducedMotion(false);
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
     const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
     const { container } = renderHomePage();
 
     const video = container.querySelector(".landing-hero video") as HTMLVideoElement;
-    expect(video.getAttribute("src")).toBe("/marketing/masque-flipbook.mp4");
+    // The poster can paint without competing with a multi-megabyte video.
+    expect(video.getAttribute("src")).toBeNull();
     expect(video.getAttribute("poster")).toBe("/marketing/masque-flipbook-poster.webp");
     expect(video.muted).toBe(true);
     expect(video.loop).toBe(true);
     expect(video.autoplay).toBe(true);
     expect(screen.getByRole("figure", { name: /Looping video: one scene from The Masque of the Red Death/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Play" }));
+    expect(video.getAttribute("src")).toBe("/marketing/masque-flipbook.mp4");
 
     Object.defineProperty(video, "paused", { configurable: true, value: false });
     fireEvent.playing(video);
@@ -250,15 +254,15 @@ describe("Scenewright homepage", () => {
     expect(document.querySelector(".landing-hero__visual")?.textContent).not.toMatch(/credit|cost|free/i);
   });
 
-  it("localizes the new showcase blocks in Spanish and French", () => {
+  it("localizes the new showcase blocks in Spanish and French", async () => {
     renderHomePage();
 
-    fireEvent.click(screen.getByRole("button", { name: "ES" }));
-    expect(screen.getByRole("heading", { level: 3, name: "Descríbelo, muéstralo o pide seis" })).toBeTruthy();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "ES" })); });
+    expect(await screen.findByRole("heading", { level: 3, name: "Descríbelo, muéstralo o pide seis" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "Una historia, tres libros." })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "FR" }));
-    expect(screen.getByRole("heading", { level: 3, name: "Décrivez-le, montrez-le ou demandez-en six" })).toBeTruthy();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "FR" })); });
+    expect(await screen.findByRole("heading", { level: 3, name: "Décrivez-le, montrez-le ou demandez-en six" })).toBeTruthy();
     expect(screen.getByRole("region", { name: "Lisez la nouvelle. Puis lisez le livre qu’elle est devenue." })).toBeTruthy();
   });
 });

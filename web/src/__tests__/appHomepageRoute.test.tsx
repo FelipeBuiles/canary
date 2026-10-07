@@ -3,11 +3,10 @@ import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../hooks/useAuth", () => ({
-  useAuth: () => ({ loading: false, session: null, user: null }),
-}));
+const auth = vi.hoisted(() => ({ loading: false, session: null, user: null }));
+vi.mock("../hooks/useAuth", () => ({ useAuth: () => auth }));
 
-import { App } from "../App";
+import { AccountApp, App } from "../App";
 
 const values = new Map<string, string>();
 const storage: Storage = {
@@ -28,6 +27,8 @@ describe("public homepage routing", () => {
       value: storage,
     });
     storage.clear();
+    auth.loading = false;
+    window.history.replaceState(null, "", "/");
   });
 
   it("shows the homepage at the signed-out root", async () => {
@@ -53,5 +54,20 @@ describe("public homepage routing", () => {
     );
 
     expect(await screen.findByRole("form", { name: "Sign in" })).toBeTruthy();
+  });
+
+  it("renders public pages while authentication is still restoring", async () => {
+    auth.loading = true;
+    window.history.replaceState(null, "", "/legal/terms");
+    render(<AccountApp />);
+    expect(await screen.findByRole("heading", { level: 1, name: "Terms of Service" })).toBeTruthy();
+  });
+
+  it("keeps protected content gated while authentication is restoring", () => {
+    auth.loading = true;
+    window.history.replaceState(null, "", "/credits");
+    render(<AccountApp />);
+    expect(screen.getByText("Loading…")).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
   });
 });

@@ -7,6 +7,7 @@
 import type { PostHog, CaptureResult } from "posthog-js/dist/module.no-external";
 import { apiRouteTemplate, observeApiRequests, safeExceptionMessage, type ErrorDiagnostics } from "./lib/telemetryDiagnostics";
 import { applicationStylesheet, replayClasses, replayStylesheet, replayText, safeReplayLabel } from "./lib/replayPrivacy";
+import { afterPageLoad } from "./lib/afterPageLoad";
 
 let client: PostHog | undefined;
 let loading: Promise<void> | undefined;
@@ -17,7 +18,7 @@ const campaignPattern = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const labelPattern = /^[A-Za-z0-9 ._-]{1,40}$/;
 const pathPattern = /^\/[a-z/:_-]{0,80}$/;
 const staticPaths = new Set([
-  "/", "/samples", "/login", "/signup", "/reset-password", "/account", "/credits", "/backoffice",
+  "/", "/library", "/samples", "/login", "/signup", "/reset-password", "/account", "/credits", "/backoffice",
   "/legal/terms", "/legal/privacy", "/legal/acceptable-use",
 ]);
 const projectRooms = new Set(["story", "cast", "pages", "book", "styles", "settings"]);
@@ -239,7 +240,7 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
   if (!event) return null;
   try {
     if (!["$exception", "$identify", "$create_alias", "$pageview", "signup_submitted", "$autocapture", "$rageclick",
-      "$snapshot", "api_request_completed"].includes(event.event)) return null;
+      "$snapshot", "$web_vitals", "api_request_completed"].includes(event.event)) return null;
     const source = event.properties ?? {};
     const properties: Record<string, unknown> = {
       $geoip_disable: true,
@@ -295,6 +296,25 @@ export function scrubEvent(event: CaptureResult | null): CaptureResult | null {
       $current_url: window.location.origin + currentPath,
       $host: window.location.host,
     });
+    if (event.event === "$web_vitals") {
+      // Entries/attribution can expose manuscript text, private image URLs or
+      // DOM selectors. Retain numeric measurements only.
+      let measurements = 0;
+      for (const metric of ["LCP", "INP", "CLS", "FCP"] as const) {
+        const key = `$web_vitals_${metric}_value`;
+        const value = source[key];
+        if (typeof value !== "number" || !Number.isFinite(value) || value < 0) continue;
+        properties[key] = value;
+        measurements++;
+      }
+      if (!measurements) return null;
+      // Measurements can flush after navigation: preserve their sanitized URL.
+      if (typeof source.$current_url === "string") {
+        const url = canonicalUrl(source.$current_url);
+        properties.$current_url = url;
+        properties.$pathname = new URL(url).pathname;
+      }
+    }
     if (typeof source.$session_entry_url === "string") {
       const entry = new URL(canonicalUrl(source.$session_entry_url));
       properties.$session_entry_url = entry.href;
@@ -380,10 +400,14 @@ export function initTelemetry(): Promise<void> {
   const host = import.meta.env.VITE_POSTHOG_HOST;
   if (!key || !["https://us.i.posthog.com", "https://eu.i.posthog.com"].includes(host)) return Promise.resolve();
   loading = (async () => {
-    await import("posthog-js/dist/exception-autocapture");
+    await new Promise<void>(resolve => { afterPageLoad(resolve); });
     // The no-external build never fetches scripts; bundle the replay recorder.
-    await import("posthog-js/dist/posthog-recorder");
-    const { default: posthog } = await import("posthog-js/dist/module.no-external");
+    const [, , , { default: posthog }] = await Promise.all([
+      import("posthog-js/dist/exception-autocapture"),
+      import("posthog-js/dist/posthog-recorder"),
+      import("posthog-js/dist/web-vitals"),
+      import("posthog-js/dist/module.no-external"),
+    ]);
     let persistentIdentity = false;
     try {
       const probeKey = "canary:telemetry-storage-test";
@@ -414,6 +438,7 @@ export function initTelemetry(): Promise<void> {
       },
       capture_pageview: false,
       capture_pageleave: false,
+      capture_performance: { web_vitals: true, web_vitals_attribution: false, network_timing: false },
       disable_surveys: true,
       enable_heatmaps: false,
       capture_dead_clicks: false,
