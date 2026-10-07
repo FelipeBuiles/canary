@@ -528,6 +528,7 @@ def test_anthropic_and_bedrock_choices_coexist_for_every_text_and_vision_stage(c
     monkeypatch.setenv("CANARY_OPS_TOKEN", "operator-secret")
     expected = {
         "claude-opus-5-5": "Anthropic", "claude-sonnet-5-5": "Anthropic",
+        "claude-haiku-5-5": "Anthropic", "bedrock-claude-haiku-5-5": "AWS Bedrock",
         "bedrock-claude-opus-5-5": "AWS Bedrock", "bedrock-claude-sonnet-5-5": "AWS Bedrock",
     }
     for catalog in [client.get("/api/account/model-settings").json(), client.get(

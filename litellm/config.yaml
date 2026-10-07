@@ -153,6 +153,35 @@ model_list:
     output_cost_per_token: 1.0e-05
     cache_read_input_token_cost: 2.0e-07
     cache_creation_input_token_cost: 2.5e-06
+- model_name: claude-haiku-5-5
+  litellm_params:
+    model: anthropic/claude-haiku-5-5
+    api_key: os.environ/ANTHROPIC_API_KEY
+    # Same shape as Opus 5.5: visible summaries keep the first-content
+    # watchdog fed, and effort travels in the app's output_config.
+    thinking:
+      type: adaptive
+      display: summarized
+  model_info:
+    mode: chat
+    supports_output_config: true
+    supports_native_structured_output: true
+    supports_adaptive_thinking: true
+    supports_reasoning: true
+    supports_vision: true
+    supports_sampling_params: false
+    supports_assistant_prefill: false
+    max_input_tokens: 1000000
+    max_output_tokens: 128000
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 5.0e-07
+    cache_read_input_token_cost: 1.0e-08
+    cache_creation_input_token_cost: 1.25e-07
+
+    input_cost_per_token_above_100k_tokens: 5.0e-07
+    output_cost_per_token_above_100k_tokens: 2.5e-06
+    cache_read_input_token_cost_above_100k_tokens: 5.0e-08
+    cache_creation_input_token_cost_above_100k_tokens: 6.25e-07
 - model_name: bedrock-claude-opus-5-5
   litellm_params:
     # Global inference profiles use base pricing and can route worldwide.
@@ -205,6 +234,35 @@ model_list:
     output_cost_per_token: 1.0e-05
     cache_read_input_token_cost: 2.0e-07
     cache_creation_input_token_cost: 2.5e-06
+- model_name: bedrock-claude-haiku-5-5
+  litellm_params:
+    model: bedrock/converse/global.anthropic.claude-haiku-5-5
+    aws_region_name: os.environ/AWS_REGION_NAME
+    thinking:
+      type: adaptive
+      display: summarized
+  model_info:
+    id: bedrock_converse/global.anthropic.claude-haiku-5-5
+    mode: chat
+    supports_output_config: true
+    supports_native_structured_output: true
+    supports_response_schema: true
+    supports_adaptive_thinking: true
+    supports_reasoning: true
+    supports_vision: true
+    supports_sampling_params: false
+    supports_assistant_prefill: false
+    max_input_tokens: 1000000
+    max_output_tokens: 128000
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 5.0e-07
+    cache_read_input_token_cost: 1.0e-08
+    cache_creation_input_token_cost: 1.25e-07
+    input_cost_per_token_above_100k_tokens: 5.0e-07
+    output_cost_per_token_above_100k_tokens: 2.5e-06
+    cache_read_input_token_cost_above_100k_tokens: 5.0e-08
+    cache_creation_input_token_cost_above_100k_tokens: 6.25e-07
+
 - model_name: mimo-v2.6-pro
   litellm_params:
     model: openrouter/xiaomi/mimo-v2.6-pro

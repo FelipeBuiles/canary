@@ -97,7 +97,8 @@ def read_run(user_root: Path, run_id: str) -> dict[str, Any] | None:
 
 
 def _total_cost(cells: list[dict[str, Any]]) -> float | None:
-    costs = [cell.get("cost_usd") for cell in cells]
+    """Spend across every cell, including earlier attempts a retry replaced."""
+    costs = [entry.get("cost_usd") for cell in cells for entry in (cell, *cell.get("attempts", []))]
     known = [cost for cost in costs if isinstance(cost, (int, float))]
     return round(sum(known), 6) if known else None
 

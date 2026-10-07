@@ -123,6 +123,70 @@ def test_a_failed_stage_stops_its_arm(root, monkeypatch):
     assert cell["status"] == "failed" and cell["stages"][0]["error"] == "adapt broke"
 
 
+def _failed_extract_arm(root, monkeypatch, **kwargs):
+    _fake_stages(monkeypatch, fail="extract")
+    run = storage.create_run(root, kind=stage_models.KIND, label="t", spec={"project": "story"})
+    asyncio.run(stage_models.run_arm(root, run["run_id"], "story", "extract_brief", SONNET, **kwargs))
+    return run["run_id"]
+
+
+def _retry(root, run_id, cell_ids=None):
+    cells = stage_models.failed_cells(root, run_id, cell_ids)
+    asyncio.run(stage_models.retry(root, run_id, cells))
+    (cell,) = storage.read_run(root, run_id)["cells"]
+    return cell
+
+
+def test_retrying_a_failed_arm_reruns_its_phase_and_keeps_the_failed_attempt(root, monkeypatch):
+    run_id = _failed_extract_arm(root, monkeypatch, reasoning_efforts={"extract": "high"}, variant="repeat")
+    (failed,) = storage.read_run(root, run_id)["cells"]
+    seen = _fake_stages(monkeypatch)
+
+    cell = _retry(root, run_id)
+
+    assert [(call["stage"], call["model"], call["reasoning"]["extract"]) for call in seen] == [
+        ("extract", SONNET, "high"), ("brief", SONNET, "high")]
+    assert cell["status"] == "ok" and cell["variant"] == "repeat"
+    assert cell["input_sha256"] == failed["input_sha256"]
+    (attempt,) = cell["attempts"]
+    assert attempt["error"] == "extract broke" and attempt["stages"] == failed["stages"]
+    assert attempt["cost_usd"] == failed["cost_usd"]
+    kept = storage.run_file(root, run_id, attempt["workspace"])
+    assert kept.is_dir() and (kept / "input" / "story.txt").exists()
+    assert storage.read_run(root, run_id)["total_cost_usd"] == pytest.approx(cell["cost_usd"] + failed["cost_usd"])
+
+
+def test_a_retry_refuses_to_run_when_the_source_inputs_changed(root, monkeypatch):
+    run_id = _failed_extract_arm(root, monkeypatch)
+    (root / "story" / "input" / "story.txt").write_text("A different novel.")
+    seen = _fake_stages(monkeypatch)
+
+    cell = _retry(root, run_id)
+
+    assert not seen
+    assert cell["status"] == "failed" and "changed since the run" in cell["error"]
+    assert len(cell["attempts"]) == 1
+
+
+def test_arms_recorded_before_fingerprints_retry_against_their_kept_novel_and_config(root, monkeypatch):
+    run_id = _failed_extract_arm(root, monkeypatch)
+    (failed,) = storage.read_run(root, run_id)["cells"]
+    storage.write_cell(root, run_id, failed["cell_id"], {k: v for k, v in failed.items() if k != "input_sha256"})
+    seen = _fake_stages(monkeypatch)
+
+    assert _retry(root, run_id)["status"] == "ok" and seen
+
+
+def test_only_failed_arms_can_be_retried(root, monkeypatch):
+    _fake_stages(monkeypatch)
+    run = storage.create_run(root, kind=stage_models.KIND, label="t", spec={"project": "story"})
+    asyncio.run(stage_models.run_arm(root, run["run_id"], "story", "extract_brief", SONNET))
+    (cell,) = storage.read_run(root, run["run_id"])["cells"]
+    assert stage_models.failed_cells(root, run["run_id"], None) == []
+    with pytest.raises(ValueError, match="Only failed"):
+        stage_models.failed_cells(root, run["run_id"], [cell["cell_id"]])
+
+
 @pytest.mark.parametrize("phases,models,message", [
     (["adapt_plan"], [OPUS], "two and six"),
     (["adapt_plan"], [OPUS, OPUS], "two and six"),
@@ -265,3 +329,45 @@ def test_text_comparison_accepts_six_models_and_rejects_seven(root):
     stage_models.validate_spec(root / "story", ["adapt_plan"], models[:6])
     with pytest.raises(ValueError, match="two and six"):
         stage_models.validate_spec(root / "story", ["adapt_plan"], models[:7])
+
+
+@pytest.mark.parametrize("model", ["claude-haiku-5-5", "bedrock-claude-haiku-5-5"])
+@pytest.mark.parametrize("input_tokens,input_rate,output_rate", [
+    (100_000, 1e-7, 5e-7), (100_001, 5e-7, 2.5e-6), (300_000, 5e-7, 2.5e-6),
+])
+def test_haiku_catalog_and_prompt_pricing(model, input_tokens, input_rate, output_rate):
+    from novel_to_comic.model_costs import PricingResolver
+
+    choices = {entry["id"]: entry for entry in stage_models.selectable_models()}
+    assert choices[model]["default_reasoning"] == "medium"
+    assert choices[model]["reasoning_options"] == ["low", "medium", "high"]
+    expected = input_tokens * input_rate + 1000 * output_rate
+    cost = PricingResolver().estimate_text_cost(model, input_tokens, 1000)
+    assert cost.cost_usd == pytest.approx(expected)
+    assert stage_models.api_equivalent_usd([{
+        "provider_model": "claude-haiku-5-5", "input_tokens": input_tokens,
+        "output_tokens": 1000,
+    }]) == pytest.approx(expected, abs=1e-6)
+
+
+def test_haiku_gateway_routes_match_catalog():
+    from pathlib import Path
+
+    import yaml
+
+    from novel_to_comic import codex_dev
+    from novel_to_comic.text_models import text_wire
+
+    config = yaml.safe_load((Path(__file__).resolve().parents[2] / "litellm/config.yaml").read_text())
+    routes = {entry["model_name"]: entry for entry in config["model_list"]}
+    for alias, provider_model in [
+        ("claude-haiku-5-5", "anthropic/claude-haiku-5-5"),
+        ("bedrock-claude-haiku-5-5", "bedrock/converse/global.anthropic.claude-haiku-5-5"),
+    ]:
+        route = routes[alias]
+        assert route["litellm_params"]["model"] == provider_model
+        assert route["litellm_params"]["thinking"] == {"type": "adaptive", "display": "summarized"}
+        assert route["model_info"]["supports_native_structured_output"] is True
+        assert route["model_info"]["max_output_tokens"] == text_wire(alias).max_output_tokens
+        assert route["model_info"]["input_cost_per_token_above_100k_tokens"] == 5e-7
+    assert "claude-haiku-5-5" in codex_dev._DEFAULT_CLAUDE_MODELS

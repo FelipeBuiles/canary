@@ -10,7 +10,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from typing import Any, Iterator
 
-from novel_to_comic.text_models import is_gemini_model
+from novel_to_comic.text_models import is_gemini_model, text_wire
 
 _ENABLED: ContextVar[bool] = ContextVar("gemini_tuning_enabled", default=True)
 
@@ -87,16 +87,16 @@ def tuned_user_content(model: str, feature: str, content: str) -> str:
 
 def tuned_request(model: str, request: dict[str, Any]) -> dict[str, Any]:
     """Use the same effective input for paid checkpoints and the HTTP request."""
-    if not is_gemini_model(model):
+    if not is_gemini_model(model) and not text_wire(model).schema_instructions:
         return request
     from novel_to_comic.ai.gemini_schema import gemini_output_schema, schema_instructions
 
     result = dict(request)
     if isinstance(result.get("user_content"), str):
         result["user_content"] = tuned_user_content(model, result.get("feature", ""), result["user_content"])
-    if result.get("json_schema"):
-        # Every Gemini structured call uses JSON mode with the compiled schema
-        # as instructions; see ai/gemini_schema.py for why native decoding is not used.
+    if result.get("json_schema") and text_wire(model).schema_instructions:
+        # These routes send every structured call as JSON mode with the compiled
+        # schema as instructions; see ai/gemini_schema.py and TextModel.
         result["system_prompt"] = schema_instructions(
             result.get("system_prompt", ""), gemini_output_schema(result["json_schema"]),
         )

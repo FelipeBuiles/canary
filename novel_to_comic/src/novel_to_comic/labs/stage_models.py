@@ -12,11 +12,18 @@ with the phase's model fields pinned to the arm's model. Calls are
 made without a user in the AI request context: API models are operator-funded
 and priced from provider usage; Claude and Codex subscription models use the
 local subscription allowance and cost no credits or USD.
+
+A failed arm can be retried by hand. The retry rebuilds the arm's workspace
+from the source project and reruns every stage of its phase; it refuses to run
+if the prepared inputs no longer match the fingerprint the arm recorded, so
+the retried arm compares against the same inputs as the rest of the run. The
+failed attempt's workspace and spend stay on the cell, never hidden.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -153,6 +160,51 @@ def prepare_workspace(source_dir: Path, workspace: Path, phase: str) -> None:
     save_state(state, workspace)
 
 
+def input_fingerprint(workspace: Path, *, only: tuple[str, ...] | None = None) -> str:
+    """Hash the files a freshly prepared workspace starts from.
+
+    ``state.json`` carries the workspace's own absolute paths and ``.canary``
+    holds run diagnostics, so neither describes the arm's inputs. ``only``
+    limits the hash to these top-level entries.
+    """
+    digest = hashlib.sha256()
+    for path in sorted(workspace.rglob("*")):
+        relative = path.relative_to(workspace)
+        if not path.is_file() or relative.parts[0] in {"state.json", ".canary"}:
+            continue
+        if only is not None and relative.parts[0] not in only:
+            continue
+        digest.update(relative.as_posix().encode() + b"\0")
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
+class ChangedInputError(ValueError):
+    """A retry would no longer start from the inputs the run recorded."""
+
+
+# Arms recorded before fingerprints existed: their workspaces still hold the
+# untouched config and novel, though later stage outputs share the directory.
+_LEGACY_INPUTS = ("config.yaml", "input")
+
+
+def _require_same_inputs(previous: dict[str, Any], previous_workspace: Path, workspace: Path) -> str:
+    fingerprint = input_fingerprint(workspace)
+    recorded = previous.get("input_sha256")
+    if recorded:
+        same = recorded == fingerprint
+    else:
+        same = previous_workspace.exists() and (
+            input_fingerprint(previous_workspace, only=_LEGACY_INPUTS)
+            == input_fingerprint(workspace, only=_LEGACY_INPUTS)
+        )
+    if not same:
+        raise ChangedInputError(
+            "The source project's inputs for this arm changed since the run; start a new run to compare them"
+        )
+    return fingerprint
+
+
 def summarize_outputs(workspace: Path, stage: str) -> dict[str, Any]:
     """Counts and validator results a reader can compare across arms."""
     target = TargetArtifacts(workspace)
@@ -215,6 +267,8 @@ def api_equivalent_usd(log: list[dict[str, Any]]) -> float | None:
         input_tokens, output_tokens = entry.get("input_tokens") or 0, entry.get("output_tokens") or 0
         cached = 0 if model.startswith("claude") else min(entry.get("cached_text_tokens") or 0, input_tokens)
         suffix = "_above_272k_tokens" if input_tokens > 272_000 else ""
+        if input_tokens > 100_000 and "input_cost_per_token_above_100k_tokens" in pricing:
+            suffix = "_above_100k_tokens"
         input_rate = pricing.get(f"input_cost_per_token{suffix}", pricing["input_cost_per_token"])
         cache_rate = pricing.get(f"cache_read_input_token_cost{suffix}",
                                  pricing.get("cache_read_input_token_cost", input_rate))
@@ -241,9 +295,11 @@ def _usage_summary(state: PipelineState, stage: str) -> dict[str, Any]:
 
 
 async def run_arm(user_root: Path, run_id: str, source: str, phase: str, model: str,
-                  reasoning_efforts: dict[str, str] | None = None, variant: str | None = None) -> None:
+                  reasoning_efforts: dict[str, str] | None = None, variant: str | None = None,
+                  *, retry_of: dict[str, Any] | None = None) -> None:
     """Run one arm. ``variant`` names an arm of a model already in the run,
-    such as another reasoning effort or a repeat, with its own cell and workspace."""
+    such as another reasoning effort or a repeat, with its own cell and workspace.
+    ``retry_of`` is the failed cell being retried, if any."""
     from novel_to_comic.server.telemetry import ai_span
     from novel_to_comic.stage_runtime import StageRuntime
     from novel_to_comic.text_utils import clean_exception_message
@@ -251,12 +307,29 @@ async def run_arm(user_root: Path, run_id: str, source: str, phase: str, model: 
     reasoning_efforts = resolve_reasoning([phase], [model], {model: reasoning_efforts or {}})[model]
     cell_id = arm_id(phase, model) + (f".{re.sub(r'[^A-Za-z0-9._-]', '-', variant)}" if variant else "")
     workspace = storage.run_file(user_root, run_id, f"workspaces/{cell_id}")
+    attempts: list[dict[str, Any]] = []
+    previous_workspace = workspace
+    if retry_of is not None:
+        attempts = list(retry_of.get("attempts", []))
+        kept = f"workspaces/{cell_id}.attempt{len(attempts) + 1}"
+        previous_workspace = storage.run_file(user_root, run_id, kept)
+        if workspace.exists():
+            workspace.rename(previous_workspace)
+        stage_error = next((stage["error"] for stage in retry_of.get("stages", []) if stage.get("error")), None)
+        attempts.append({key: retry_of.get(key) for key in (
+            "started_at", "finished_at", "seconds", "cost_usd", "api_equivalent_usd", "input_sha256", "stages",
+        )} | {"error": retry_of.get("error") or stage_error, "workspace": kept})
     cell: dict[str, Any] = {"phase": phase, "model": model, "funding": _funding(model), "status": "running",
                             "reasoning_efforts": reasoning_efforts, **({"variant": variant} if variant else {}),
-                            "started_at": storage.now(), "workspace": f"workspaces/{cell_id}", "stages": []}
+                            "started_at": storage.now(), "workspace": f"workspaces/{cell_id}", "stages": [],
+                            "attempts": attempts}
     storage.write_cell(user_root, run_id, cell_id, cell)
     try:
         prepare_workspace(user_root / source, workspace, phase)
+        if retry_of is not None:
+            cell["input_sha256"] = _require_same_inputs(retry_of, previous_workspace, workspace)
+        else:
+            cell["input_sha256"] = input_fingerprint(workspace)
         config, _ = load_config(workspace)
         config = config.model_copy(update={
             STAGE_MODEL_FIELDS[stage]: model for stage in PHASES[phase]
@@ -311,6 +384,34 @@ async def run(user_root: Path, run_id: str, source: str, phases: list[str], mode
             await run_arm(user_root, run_id, source, phase, model, **kwargs)
 
     await asyncio.gather(*(bounded(phase, model) for phase in phases for model in models))
+
+
+def failed_cells(user_root: Path, run_id: str, cell_ids: list[str] | None) -> list[dict[str, Any]]:
+    """The failed arms to retry: the named ones, or every failed arm."""
+    run = storage.read_run(user_root, run_id)
+    if run is None or run.get("kind") != KIND:
+        raise ValueError("Run not found")
+    failed = [cell for cell in run["cells"] if cell.get("status") == "failed"]
+    if cell_ids is None:
+        return failed
+    selected = [cell for cell in failed if cell["cell_id"] in set(cell_ids)]
+    if len(selected) != len(set(cell_ids)):
+        raise ValueError("Only failed cells can be retried")
+    return selected
+
+
+async def retry(user_root: Path, run_id: str, cells: list[dict[str, Any]]) -> None:
+    """Rerun failed arms with the model, reasoning and variant each one recorded."""
+    run = storage.read_run(user_root, run_id) or {}
+    source = (run.get("spec") or {})["project"]
+    semaphores = {funding: asyncio.Semaphore(limit) for funding, limit in _CONCURRENCY.items()}
+
+    async def bounded(cell: dict[str, Any]) -> None:
+        async with semaphores[_funding(cell["model"])]:
+            await run_arm(user_root, run_id, source, cell["phase"], cell["model"],
+                          cell.get("reasoning_efforts"), cell.get("variant"), retry_of=cell)
+
+    await asyncio.gather(*(bounded(cell) for cell in cells))
 
 
 def estimate_usd(source_dir: Path, phases: list[str], models: list[str]) -> dict[str, float | None]:

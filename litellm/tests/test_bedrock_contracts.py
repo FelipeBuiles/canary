@@ -14,7 +14,7 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-MODELS = ["bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5"]
+MODELS = ["bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5", "bedrock-claude-haiku-5-5"]
 
 
 def configure_login(monkeypatch, tmp_path, *, expired=False):

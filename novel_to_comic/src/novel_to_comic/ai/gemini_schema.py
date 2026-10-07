@@ -1,4 +1,8 @@
-"""The one Gemini output contract: a compiled schema carried as JSON-mode instructions.
+"""The schema-instructions output contract: a compiled schema carried as JSON-mode instructions.
+
+Routes with ``TextModel.schema_instructions`` use it: Vertex Gemini (below) and
+Claude Haiku 5.5, whose native grammar rejects full-size stage schemas such as
+Extract's Story Bible ("compiled grammar is too large", 2026-10-07).
 
 Every Gemini structured call goes through ``gemini_output_schema`` and
 ``schema_instructions`` (applied by ``gemini_tuning.tuned_request``); no feature

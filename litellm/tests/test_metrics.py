@@ -160,9 +160,12 @@ def test_callback_models_match_gateway_routes():
 
 @pytest.mark.parametrize("model,provider,call_type", [
     (model, provider, "acompletion")
-    for model in ("bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5")
+    for model in ("bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5", "bedrock-claude-haiku-5-5")
     for provider in ("bedrock", "bedrock_converse")
-] + [("image-nano-banana-2.1", "vertex-multimodal", "aimage_generation")])
+] + [
+    ("claude-haiku-5-5", "anthropic", "acompletion"),
+    ("image-nano-banana-2.1", "vertex-multimodal", "aimage_generation"),
+])
 def test_metrics_retain_selected_model_and_provider(model, provider, call_type):
     client = FakeClient()
     configure_metrics(client)

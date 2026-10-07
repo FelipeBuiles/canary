@@ -86,13 +86,16 @@ def test_every_gemini_structured_request_carries_its_compiled_schema_as_json_mod
                "feature": "extract.story_bible", "json_schema": extraction_schema()}
     for model in ("gpt-6.1-sol", "claude-opus-5-5", "mimo-v2.6-pro", "deepseek-v4.1-flash"):
         assert tuned_request(model, request) is request
-    for feature in ("extract.story_bible", "extract.sequences", "brief.infer", "plan.detail", "text.generate"):
-        tuned = tuned_request("gemini-3.8-flash", {**request, "feature": feature})
-        assert tuned["json_schema"] is None and tuned["json_mode"] is True
-        assert tuned["system_prompt"].startswith("Rules.\n\nOUTPUT CONTRACT:")
-        assert json.loads(tuned["system_prompt"].split("\n")[-1]) == gemini_output_schema(request["json_schema"])
-    plain = tuned_request("gemini-3.8-flash", {**request, "json_schema": None})
-    assert plain["system_prompt"] == "Rules." and "json_mode" not in plain
+    for model in ("gemini-3.8-flash", "claude-haiku-5-5", "bedrock-claude-haiku-5-5"):
+        for feature in ("extract.story_bible", "extract.sequences", "brief.infer", "plan.detail", "text.generate"):
+            tuned = tuned_request(model, {**request, "feature": feature})
+            assert tuned["json_schema"] is None and tuned["json_mode"] is True
+            assert tuned["system_prompt"].startswith("Rules.\n\nOUTPUT CONTRACT:")
+            assert json.loads(tuned["system_prompt"].split("\n")[-1]) == gemini_output_schema(request["json_schema"])
+            if model.startswith("claude") or model.startswith("bedrock"):
+                assert tuned["user_content"] == "Source."
+        plain = tuned_request(model, {**request, "json_schema": None})
+        assert plain["system_prompt"] == "Rules." and "json_mode" not in plain
 
 
 def _registry_section_schema():

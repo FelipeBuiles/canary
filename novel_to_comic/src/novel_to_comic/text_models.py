@@ -26,6 +26,11 @@ class TextModel:
     # Claude routes use native ``output_config`` JSON; the pinned gateway turns
     # a Claude ``response_format`` into forced tool calls, which these routes do not use.
     claude_native_json: bool = False
+    # Structured calls send JSON mode with the compiled schema as instructions
+    # (``ai/gemini_schema.py``) instead of provider constrained decoding. Vertex
+    # Gemini and Claude Haiku 5.5 reject full-size stage schemas before
+    # generation ("compiled grammar is too large"); validators decide acceptance.
+    schema_instructions: bool = False
     # OpenRouter and Together document ``max_tokens``; the gateway forwards the
     # newer OpenAI spelling to them unchanged.
     token_limit_field: Literal["max_completion_tokens", "max_tokens"] = "max_completion_tokens"
@@ -48,7 +53,8 @@ TEXT_MODELS = (
     TextModel("gpt-6-luna", "GPT-6 Luna", "OpenAI", "openai", temperature=False, effort="medium"),
     TextModel("gemini-3.8-flash", "Gemini 3.8 Flash", "Google Vertex AI", "vertex_ai",
               temperature=False, effort="medium", thinking_headroom_tokens=16_384,
-              estimated_thinking_tokens=4_096, max_output_tokens=65_536),
+              estimated_thinking_tokens=4_096, max_output_tokens=65_536,
+              schema_instructions=True),
     # Text routes default to medium effort; Claude defaults (``high`` on Sonnet,
     # ``medium`` on Opus 5.5) are never left implicit.
     # Thinking is always on (disabling it is a 400 at every effort).
@@ -61,6 +67,10 @@ TEXT_MODELS = (
               temperature=False, claude_native_json=True, effort="medium",
               thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
               max_output_tokens=128_000),
+    TextModel("claude-haiku-5-5", "Claude Haiku 5.5", "Anthropic", "anthropic",
+              temperature=False, claude_native_json=True, effort="medium",
+              thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
+              max_output_tokens=128_000, schema_instructions=True),
     # Distinct aliases preserve the selected billing/provider route in job snapshots.
     # Converse maps the shared Claude output_config to Bedrock's native JSON format.
     TextModel("bedrock-claude-opus-5-5", "Claude Opus 5.5 · Bedrock", "AWS Bedrock", "bedrock",
@@ -71,6 +81,10 @@ TEXT_MODELS = (
               temperature=False, claude_native_json=True, effort="medium",
               thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
               max_output_tokens=128_000),
+    TextModel("bedrock-claude-haiku-5-5", "Claude Haiku 5.5 · Bedrock", "AWS Bedrock", "bedrock",
+              temperature=False, claude_native_json=True, effort="medium",
+              thinking_headroom_tokens=16_384, estimated_thinking_tokens=4_096,
+              max_output_tokens=128_000, schema_instructions=True),
     TextModel("mimo-v2.6-pro", "MiMo V2.6 Pro", "OpenRouter", "openrouter",
               token_limit_field="max_tokens"),
     TextModel("deepseek-v4.1-flash", "DeepSeek V4.1 Flash", "Together AI", "together_ai",
