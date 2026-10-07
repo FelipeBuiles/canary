@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../composites/ErrorNotice";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { textFor, type PlacementCheck } from "@lettering-engine";
@@ -104,9 +105,9 @@ export function PlacementCheckPanel({ project, pageNumber, state, evidence, chec
           {running === "check" ? t("Checking this page…") : t("Check this page")}{estimate.data ? ` · ~${estimate.data.estimate_credits} ${t("credits")}` : ""}
         </Button>
         <p className="lettering-hint">{t("Finds faces for balloons and tails, and any words drawn into the art. New pages get this automatically.")}</p>
-        {estimate.error && <p role="alert" className="lettering-error">{(estimate.error as Error).message}</p>}
+        {estimate.error && <ErrorNotice error={(estimate.error as Error)} operation="estimate" />}
       </div>}
-      {error && <p role="alert" className="lettering-error">{error}</p>}
+      {error && <ErrorNotice error={error} operation="generate" />}
       <p className="lettering-hint">{t("Hints, not verdicts. You still confirm placement against the artwork.")}</p>
     </div>
   </details>;

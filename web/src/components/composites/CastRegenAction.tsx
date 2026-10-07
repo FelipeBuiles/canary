@@ -1,3 +1,4 @@
+import { ErrorNotice } from "./ErrorNotice";
 import { useId, useRef, useState, type ComponentProps } from "react";
 import { Upload, X } from "lucide-react";
 import { useAssetRegenEstimate, useStoryBible } from "../../api/queries";
@@ -40,7 +41,7 @@ export function CastRegenAction({ projectName, assetType, assetId, stateId, onRe
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadLabels, setUploadLabels] = useState<Record<string, string>>({});
   const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<Error | string | null>(null);
   const { data: bible } = useStoryBible(projectName);
   const { referenceDraft } = useReferenceJob(projectName, assetType === "character" ? "char_id" : assetType === "location" ? "loc_id" : "prop_id", assetId, stateId);
   const [selection, setSelection] = useState<CastReferenceInput[] | null>(null);
@@ -74,7 +75,7 @@ export function CastRegenAction({ projectName, assetType, assetId, stateId, onRe
         setSelection([...selected, { upload_id: upload.upload_id }]);
       }
     } catch (error) {
-      setUploadError(error instanceof Error ? error.message : t("The image could not be uploaded."));
+      setUploadError(error instanceof Error ? error : new Error(t("The image could not be uploaded.")));
     } finally {
       setUploading(false);
     }
@@ -115,7 +116,7 @@ export function CastRegenAction({ projectName, assetType, assetId, stateId, onRe
             <Upload size={16} aria-hidden="true" />
             {uploading ? t("Uploading…") : t("Upload an image")}
           </button>
-          {uploadError && <p role="alert" className="font-body text-xs text-hero-red">{uploadError}</p>}
+          {uploadError && <ErrorNotice error={uploadError} operation="upload" />}
           {available.length > 0 && <div>
             <label htmlFor={selectId} className="block font-body text-xs text-ink-muted">{t("Or choose one from this project")}</label>
             <select id={selectId} value="" disabled={props.busy || props.disabled}

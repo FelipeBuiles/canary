@@ -27,8 +27,79 @@ from novel_to_comic.models.adaptation import LetteringItem
 from novel_to_comic.models.draw import PageRenderRevision
 from novel_to_comic.models.page import ComicPage, PageContent
 from novel_to_comic.page_ocr import _PageOCRDraft, build_extraction
+from novel_to_comic.page_review import _unmatched_observations
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.text_utils import normalize_display_text
+
+
+def prepare_case(entry: dict, output: Path):
+    """Build isolated artifact lineage for one saved-image replay."""
+    image = Path(entry["image"]).read_bytes()
+    with Image.open(entry["image"]) as opened:
+        pixel_width, pixel_height = opened.size
+    page = ComicPage(
+        revision=1,
+        page_number=1,
+        adaptation_revision=1,
+        adaptation_sha256="a" * 64,
+        page_turn_role="setup",
+        spread_role="right",
+        emphasis="establisher",
+        density_intent="standard",
+        layout_intent="Offline crop verification fixture.",
+        content=[
+            PageContent(
+                id="panel",
+                order=1,
+                beat_ids=["beat"],
+                visual_intent="Fixture",
+                lettering=[
+                    LetteringItem(
+                        id="caption",
+                        kind="caption",
+                        text=entry["expected"],
+                        source_unit_ids=["source"],
+                    )
+                ],
+            )
+        ],
+        reading_order=["panel", "caption"],
+    )
+    render = PageRenderRevision(
+        page_number=1,
+        revision=1,
+        comic_page_revision=1,
+        comic_page_sha256=page.content_sha256,
+        request_sha256="b" * 64,
+        image_sha256=hashlib.sha256(image).hexdigest(),
+        width=pixel_width,
+        height=pixel_height,
+        provider="offline-fixture",
+        model="offline-fixture",
+        latency_ms=0,
+        cost_usd="0",
+    )
+    x, y, width, height = entry["box"]
+    extraction = build_extraction(
+        _PageOCRDraft.model_validate(
+            {
+                "lettering": [
+                    {
+                        "text": entry["primary"],
+                        "box": {
+                            "x": x,
+                            "y": y,
+                            "width": width,
+                            "height": height,
+                        },
+                    }
+                ]
+            }
+        )
+    )
+    artifacts = TargetArtifacts(output / entry["id"])
+    artifacts.write_render(page_number=1, render_revision=1, image=image)
+    return page, render, extraction, artifacts
 
 
 def main() -> None:
@@ -50,71 +121,7 @@ def main() -> None:
     results = []
     try:
         for entry in entries:
-            image = Path(entry["image"]).read_bytes()
-            with Image.open(entry["image"]) as opened:
-                pixel_width, pixel_height = opened.size
-            page = ComicPage(
-                revision=1,
-                page_number=1,
-                adaptation_revision=1,
-                adaptation_sha256="a" * 64,
-                page_turn_role="setup",
-                spread_role="right",
-                emphasis="establisher",
-                density_intent="standard",
-                layout_intent="Offline crop verification fixture.",
-                content=[
-                    PageContent(
-                        id="panel",
-                        order=1,
-                        beat_ids=["beat"],
-                        visual_intent="Fixture",
-                        lettering=[
-                            LetteringItem(
-                                id="caption",
-                                kind="caption",
-                                text=entry["expected"],
-                                source_unit_ids=["source"],
-                            )
-                        ],
-                    )
-                ],
-                reading_order=["panel", "caption"],
-            )
-            render = PageRenderRevision(
-                page_number=1,
-                revision=1,
-                comic_page_revision=1,
-                comic_page_sha256=page.content_sha256,
-                request_sha256="b" * 64,
-                image_sha256=hashlib.sha256(image).hexdigest(),
-                width=pixel_width,
-                height=pixel_height,
-                provider="offline-fixture",
-                model="offline-fixture",
-                latency_ms=0,
-                cost_usd="0",
-            )
-            x, y, width, height = entry["box"]
-            extraction = build_extraction(
-                _PageOCRDraft.model_validate(
-                    {
-                        "lettering": [
-                            {
-                                "text": entry["primary"],
-                                "box": {
-                                    "x": x,
-                                    "y": y,
-                                    "width": width,
-                                    "height": height,
-                                },
-                            }
-                        ]
-                    }
-                )
-            )
-            artifacts = TargetArtifacts(args.output / entry["id"])
-            artifacts.write_render(page_number=1, render_revision=1, image=image)
+            page, render, extraction, artifacts = prepare_case(entry, args.output)
             started = time.perf_counter()
             report = verify_mismatches(
                 page=page,
@@ -122,6 +129,7 @@ def main() -> None:
                 extraction=extraction,
                 artifacts=artifacts,
                 reader=reader,
+                disputed=_unmatched_observations(page, extraction),
             )
             recognized = " ".join(read.text for read in report.readings)
             actual = entry.get("actual", entry["expected"])
@@ -164,7 +172,8 @@ def main() -> None:
             usage.ru_maxrss / (1024 * 1024 if sys.platform == "darwin" else 1024), 1
         ),
         "child_cpu_seconds": round(usage.ru_utime + usage.ru_stime, 3),
-        "note": "Local host measurements include initialization; they are not Lightsail benchmarks.",
+        "platform": sys.platform,
+        "note": "Measurements include initialization and describe only the host running this command.",
     }
     (args.output / "metrics.json").write_text(json.dumps(metrics, indent=2) + "\n")
     print(json.dumps(metrics), flush=True)

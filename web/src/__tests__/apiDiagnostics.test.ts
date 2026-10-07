@@ -32,6 +32,19 @@ it("keeps successful calls working when the telemetry observer fails", async () 
   await expect(apiFetch("/account")).resolves.toEqual({ ok: true });
 });
 
+it("displays a readable storage message while retaining the rejection code for diagnostics", async () => {
+  observeApiRequests(() => {}, () => undefined);
+  const message = "Account storage is full. Delete projects you no longer need from their settings, then try again.";
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: {
+    code: "storage_budget_exceeded", message, admitted: false,
+    used_bytes: 7991982797, limit_bytes: 5368709120, remaining_bytes: 0,
+  } }), { status: 413 })));
+  const error = await apiFetch("/projects/book/run?stage=draw", { method: "POST" }).catch(error => error);
+  if (!(error instanceof ApiError)) throw error;
+  expect(error).toMatchObject({ message, status: 413, code: "storage_budget_exceeded" });
+  expect(error.diagnostics).toMatchObject({ http_status: 413, error_code: "storage_budget_exceeded" });
+});
+
 it("drops late responses after the account changes", async () => {
   const events = vi.fn();
   observeApiRequests(events, () => undefined);

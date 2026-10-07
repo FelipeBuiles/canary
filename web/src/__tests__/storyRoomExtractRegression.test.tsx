@@ -191,7 +191,7 @@ describe("StoryRoom Extract background loading (regression)", () => {
     // Nothing has run yet — pending docket, not a load error.
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Start Story analysis" })).toBeTruthy();
-      expect(screen.queryByText("API 404: story not found")).toBeNull();
+      expect(screen.queryByText("story not found")).toBeNull();
     });
 
     // Extract running: artifact still 404 — still progress, not a load error.
@@ -202,7 +202,7 @@ describe("StoryRoom Extract background loading (regression)", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Work in progress")).toBeTruthy();
-      expect(screen.queryByText("API 404: story not found")).toBeNull();
+      expect(screen.queryByText("story not found")).toBeNull();
     });
 
     // Extract done, Brief running: artifact still 404 — still progress.
@@ -211,7 +211,7 @@ describe("StoryRoom Extract background loading (regression)", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Work in progress")).toBeTruthy();
-      expect(screen.queryByText("API 404: story not found")).toBeNull();
+      expect(screen.queryByText("story not found")).toBeNull();
     });
 
     // Brief ready and the artifact written: the editor appears on the same mount.
@@ -228,7 +228,7 @@ describe("StoryRoom Extract background loading (regression)", () => {
     statusResult = { ...projectStatus("complete", "complete"), is_running: false };
     renderRoom();
 
-    const error = await screen.findByText("API 404: story not found");
+    const error = await screen.findByText("story not found");
     const details = error.closest("details")!;
     fireEvent.click(details.querySelector("summary")!);
     expect(details.open).toBe(true);
@@ -239,12 +239,12 @@ describe("StoryRoom Extract background loading (regression)", () => {
     statusError = new ApiError(500, "status boom");
     const client = renderRoom();
 
-    const error = await screen.findByText("API 500: status boom");
+    const error = await screen.findByText("status boom");
     const details = error.closest("details")!;
     fireEvent.click(details.querySelector("summary")!);
     expect(details.open).toBe(true);
     expect(screen.queryByRole("button", { name: "Start Story analysis" })).toBeNull();
-    expect(screen.queryByText("API 404: story not found")).toBeNull();
+    expect(screen.queryByText("story not found")).toBeNull();
 
     // A successful status refresh unlocks the artifact query on the same
     // mount, without a hook mock or manual story invalidation.
@@ -255,7 +255,7 @@ describe("StoryRoom Extract background loading (regression)", () => {
 
     expect(await screen.findByText("The Last Incantation")).toBeTruthy();
     expect(screen.getByText("The investigation closes its causal loop")).toBeTruthy();
-    expect(screen.queryByText("API 500: status boom")).toBeNull();
+    expect(screen.queryByText("status boom")).toBeNull();
   });
 
   it("surfaces the failed Brief error instead of a missing-artifact error", async () => {
@@ -271,7 +271,7 @@ describe("StoryRoom Extract background loading (regression)", () => {
     fireEvent.click(details.querySelector("summary")!);
     expect(details.open).toBe(true);
     expect(screen.getByRole("button", { name: "Retry stage" })).toBeTruthy();
-    expect(screen.queryByText("API 404: story not found")).toBeNull();
+    expect(screen.queryByText("story not found")).toBeNull();
   });
 
   it("keeps a real API failure actionable once the stage is ready", async () => {
@@ -281,7 +281,7 @@ describe("StoryRoom Extract background loading (regression)", () => {
     statusResult = { ...projectStatus("complete", "awaiting_review"), is_running: false };
     renderRoom();
 
-    const error = await screen.findByText("API 500: boom");
+    const error = await screen.findByText("boom");
     const details = error.closest("details")!;
     fireEvent.click(details.querySelector("summary")!);
     expect(details.open).toBe(true);

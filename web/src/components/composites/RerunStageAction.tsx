@@ -10,6 +10,7 @@ import { DestructiveButton } from "../ui/DestructiveButton";
 import type { StageName } from "../../types/api";
 import { Button } from "../ui/Button";
 import { invalidateProject } from "../../api/projectScope";
+import { ErrorNotice } from "./ErrorNotice";
 
 interface RerunStageActionProps {
   project: string;
@@ -34,7 +35,7 @@ export function RerunStageAction({
   const queryClient = useQueryClient();
   const { handleRun, isPending } = useRunAction();
   const [open, setOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
   const estimate = useStageEstimate(project, stage, open, true);
   const actionLabel = stage === "adapt" ? t("Start adaptation over") : t(`Rerun ${label}`);
   const unavailable = disabled || isPending || !estimate.data || !!estimate.error || estimate.isFetching;
@@ -50,7 +51,7 @@ export function RerunStageAction({
         setOpen(false);
         void invalidateProject(queryClient, project);
       },
-      onError: (failure) => setError(failure.message),
+      onError: (failure) => setError(failure),
     });
   }
 
@@ -67,7 +68,7 @@ export function RerunStageAction({
           </Button>
         </div>
       )}
-      {error && <p role="alert" className="text-hero-red">{error}</p>}
+      {error && <ErrorNotice error={error} operation="generate" />}
     </div>
   );
 

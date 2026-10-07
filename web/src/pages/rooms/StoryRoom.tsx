@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../../components/composites/ErrorNotice";
 import { accountIdentity } from "../../lib/accountEpoch";
 import { castCharacters } from "../../lib/castRoster";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -188,7 +189,7 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const earlierDrafts = storedDrafts.filter((entry) => entry.revision !== savedBrief.revision || entry.contentSha !== savedBrief.content_sha256);
   const [restored, setRestored] = useState(() => Object.keys(changes).length > 0);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<Error | string | null>(null);
   const [saving, setSaving] = useState(false);
   const operation = useRef(false);
   const draft = { ...savedBrief, ...changes };
@@ -262,7 +263,7 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
       onError: (error) => {
         operation.current = false;
         setSaving(false);
-        setSaveError(error.message);
+        setSaveError(error);
       },
     });
   }
@@ -280,7 +281,7 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
         { project: id, stage: "brief" },
         {
           onSuccess: () => navigate(`/project/${encodeURIComponent(id)}/styles`),
-          onError: (error) => { operation.current = false; setSaveError(error.message); },
+          onError: (error) => { operation.current = false; setSaveError(error); },
         },
       );
     });
@@ -360,7 +361,7 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
             <Button type="submit" size="sm" variant="outline" disabled={busy || !dirty || invalidRange || conflict}>{t("SAVE BRIEF")}</Button>
           </>}
         />
-        {saveError && <p role="alert" className="font-body text-sm text-hero-red">{saveError}</p>}
+        {saveError && <ErrorNotice error={saveError} operation="save" />}
         {storageError && <p role="alert" className="font-body text-sm text-hero-red">{t("Draft recovery is unavailable in this browser. Save before leaving.")}</p>}
         {conflict && <p role="alert" className="font-body text-sm text-hero-red">{t("This brief changed elsewhere. Your draft is preserved; reload to review the latest revision before saving.")}</p>}
         {invalidRange && <p role="alert" className="font-body text-sm text-hero-red">{t("Choose a minimum of at least 1 page and a maximum no smaller than the minimum.")}</p>}

@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../components/composites/ErrorNotice";
 import { lazy, Suspense, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useProjectConfig, useProjectStatus, useUpdateProjectConfig, useDeleteProject, useRenameProject } from "../api/queries";
@@ -99,7 +100,7 @@ function ProjectNameForm({ project, projectName }: { project: string; projectNam
             </div>
             <div aria-live="polite" aria-atomic="true">
               {rename.isPending && <p className="text-sm">{t("Saving…")}</p>}
-              {rename.isError && !serverFieldError && <p role="alert" className="text-sm text-hero-red">{rename.error.message}</p>}
+              {rename.isError && !serverFieldError && <ErrorNotice error={rename.error} operation="save" />}
               {rename.isSuccess && <p role="status" className="text-sm">{t("Project name saved.")}</p>}
             </div>
           </div>
@@ -113,8 +114,8 @@ export function ProjectSettingsPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { language, setLanguage, t } = useI18n();
-  const { data: config, error: configError } = useProjectConfig(id);
-  const { data: status, error: statusError } = useProjectStatus(id);
+  const { data: config, error: configError, refetch: refetchConfig } = useProjectConfig(id);
+  const { data: status, error: statusError, refetch: refetchStatus } = useProjectStatus(id);
   const updateConfig = useUpdateProjectConfig();
   const deleteMutation = useDeleteProject();
   const [showDevContent, setShowDevContent] = useShowDevContent();
@@ -146,11 +147,11 @@ export function ProjectSettingsPage() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
       >
-        {configError && <p role="alert" className="text-sm text-hero-red">{configError.message}</p>}
+        {configError && <ErrorNotice error={configError} operation="load" onRetry={() => void refetchConfig()} />}
         {activeTab !== "delete" && activeTab !== "general" && (
           <div aria-live="polite" aria-atomic="true">
             {updateConfig.isPending && <p className="text-sm">{t("Saving…")}</p>}
-            {updateConfig.isError && <p role="alert" className="text-sm text-hero-red">{updateConfig.error.message}</p>}
+            {updateConfig.isError && <ErrorNotice error={updateConfig.error} operation="save" />}
             {updateConfig.isSuccess && <p role="status" className="text-sm">{t("Settings saved.")}</p>}
           </div>
         )}
@@ -163,7 +164,7 @@ export function ProjectSettingsPage() {
           {id && status ? (
             <ProjectNameForm key={id} project={id} projectName={status.project_name} />
           ) : statusError ? (
-            <p role="alert" className="text-sm text-hero-red">{statusError.message}</p>
+            <ErrorNotice error={statusError} operation="load" onRetry={() => void refetchStatus()} />
           ) : (
             <p role="status" className="text-sm">{t("Loading project…")}</p>
           )}
@@ -278,7 +279,7 @@ export function ProjectSettingsPage() {
         confirmInput={projectTitle}
         confirmLabel="Delete Project"
         busy={deleteMutation.isPending}
-        error={deleteMutation.error?.message}
+        error={deleteMutation.error}
         destructive
         onConfirm={handleDelete}
         onClose={() => setShowDeleteConfirm(false)}

@@ -31,7 +31,7 @@ describe("paid action receipts", () => {
     vi.stubGlobal("fetch", fetcher);
     const send = () => apiFetch("/projects/demo/run?stage=draw", { paidAction: true, method: "POST" });
     await expect(send()).rejects.toThrow("Connection lost");
-    await expect(send()).rejects.toThrow("API 409");
+    await expect(send()).rejects.toMatchObject({ status: 409 });
     expect(fetcher).toHaveBeenCalledTimes(2);
     await expect(send()).resolves.toMatchObject({ status: "started" });
     const keys = fetcher.mock.calls.map((call) => call[1].headers["Idempotency-Key"]);
@@ -66,8 +66,8 @@ describe("paid action receipts", () => {
     ));
     vi.stubGlobal("fetch", fetcher);
     const send = () => apiFetch("/projects/demo/run?stage=draw", { paidAction: true, method: "POST" });
-    await expect(send()).rejects.toThrow("API 409");
-    await expect(send()).rejects.toThrow("API 409");
+    await expect(send()).rejects.toMatchObject({ status: 409 });
+    await expect(send()).rejects.toMatchObject({ status: 409 });
     expect(fetcher.mock.calls[1][1].headers["Idempotency-Key"])
       .toBe(fetcher.mock.calls[0][1].headers["Idempotency-Key"]);
   });
@@ -133,7 +133,7 @@ it.each([
     .mockResolvedValueOnce(new Response(JSON.stringify({ status: "approved" })));
   vi.stubGlobal("fetch", fetcher);
   const send = () => apiFetch("/projects/demo/approve/cast", { paidAction: true, method: "POST" });
-  await expect(send()).rejects.toThrow("API 409");
+  await expect(send()).rejects.toMatchObject({ status: 409 });
   expect(fetcher).toHaveBeenCalledTimes(1);
   await expect(send()).resolves.toMatchObject({ status: "approved" });
   expect(fetcher.mock.calls[1][1].headers["Idempotency-Key"])

@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../composites/ErrorNotice";
 import { useState, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { Button } from "../ui/Button";
@@ -36,12 +37,12 @@ export function LooksEditor({ project, editor, kind, entityId }: {
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<LookDraft>(EMPTY);
   const [startsAt, setStartsAt] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | string | null>(null);
   const add = useAddLook();
   const edit = useEditLook();
   const remove = useRemoveLook();
   const busy = add.isPending || edit.isPending || remove.isPending;
-  const onError = (err: Error) => setError(err.message);
+  const onError = (err: Error) => setError(err);
 
   function details(value: LookDraft, original?: AppearanceState) {
     return {
@@ -59,7 +60,7 @@ export function LooksEditor({ project, editor, kind, entityId }: {
         {!adding && <Button size="xs" variant="outline" onClick={() => { setAdding(true); setDraft(EMPTY); setEditing(null); }}>{t("Add a look")}</Button>}
       </div>
       <p className="font-body text-xs text-ink-muted">{t("A look is a lasting change in appearance, such as a new outfit or an injury. Describe the whole look, not only what changed.")}</p>
-      {error && <p role="alert" className="font-body text-sm text-hero-red">{error}</p>}
+      {error && <ErrorNotice error={error} operation="save" />}
       <ul className="space-y-3">
         {looks.map((look) => {
           const usedBy = cited[look.id] ?? [];

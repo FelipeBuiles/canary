@@ -4,6 +4,7 @@ import { useI18n } from "../../i18n";
 import { Button } from "../ui/Button";
 import { CreditAmount } from "../ui/CreditAmount";
 import { ConfirmDrawer } from "./ConfirmDrawer";
+import { ErrorNotice } from "./ErrorNotice";
 
 interface RegenActionProps {
   assetLabel: string;
@@ -17,7 +18,7 @@ interface RegenActionProps {
   busy?: boolean;
   busyLabel?: string;
   disabled?: boolean;
-  error?: string | null;
+  error?: Error | string | null;
   lastInstruction?: string | null;
   instruction?: string;
   onInstructionChange?: (instruction: string) => void;
@@ -170,17 +171,7 @@ export function RegenAction({
         )}
       </Button>
 
-      {error && (
-        <div
-          role="alert"
-          className="mt-3 border-[2px] border-hero-red bg-hero-red/8 p-3 text-[0.76rem] leading-5 text-ink-black"
-        >
-          <strong className="block font-meta text-xs tracking-[0.08em] text-hero-red">
-            {t("REGENERATION FAILED")}
-          </strong>
-          <span className="mt-1 block break-words">{error}</span>
-        </div>
-      )}
+      {error && <ErrorNotice error={error} operation="generate" />}
 
       <ConfirmDrawer
         open={confirmMode !== null}

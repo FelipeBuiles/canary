@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../components/composites/ErrorNotice";
 import { lazy, Suspense, useState } from "react";
 import { Mail, KeyRound } from "lucide-react";
 import { supabase } from "../lib/supabase";
@@ -8,7 +9,7 @@ import { Surface } from "../components/ui/Surface";
 import { FieldLabel, TextField } from "../components/ui/Field";
 import { Button } from "../components/ui/Button";
 
-type FormMessage = { type: "ok" | "err"; text: string } | null;
+type FormMessage = { type: "ok" | "err"; text: string; error?: Error } | null;
 
 const AccountModelPanel = import.meta.env.DEV
   ? lazy(() => import("../components/AccountModelPanel").then((module) => ({ default: module.AccountModelPanel })))
@@ -34,6 +35,7 @@ export function AccountPage() {
 
 function Feedback({ message }: { message: FormMessage }) {
   if (!message) return null;
+  if (message.error) return <ErrorNotice error={message.error} operation="auth" title={message.text} />;
   return <p role={message.type === "err" ? "alert" : "status"}
     className={`px-4 py-3 font-body text-sm leading-6 ${message.type === "ok" ? "bg-chip-sage text-ink-black" : "bg-chip-red/40 text-hero-red"}`}>
     {message.text}
@@ -57,7 +59,7 @@ function EmailTab({ email }: { email: string }) {
       setMessage({ type: "ok", text: t("Check your inbox to confirm the new email.") });
       setNewEmail("");
     } catch (error) {
-      setMessage({ type: "err", text: error instanceof Error ? error.message : t("We couldn't update your email. Please try again.") });
+      setMessage({ type: "err", text: t("We couldn't update your email. Please try again."), error: error instanceof Error ? error : new Error(t("We couldn't update your email. Please try again.")) });
     } finally {
       setBusy(false);
     }
@@ -118,7 +120,7 @@ function PasswordTab() {
       setPassword("");
       setConfirm("");
     } catch (error) {
-      setMessage({ type: "err", text: error instanceof Error ? error.message : t("We couldn't update your password. Please try again.") });
+      setMessage({ type: "err", text: t("We couldn't update your password. Please try again."), error: error instanceof Error ? error : new Error(t("We couldn't update your password. Please try again.")) });
     } finally {
       setBusy(false);
     }

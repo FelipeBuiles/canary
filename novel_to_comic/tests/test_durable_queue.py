@@ -629,25 +629,36 @@ def test_draw_batch_preparation_keeps_heartbeat_alive_and_announces_only_queued_
     asyncio.run(exercise())
 
 
-def test_draw_dispatch_failure_persists_stage_failure(tmp_path, monkeypatch):
+@pytest.mark.parametrize("storage_full", [False, True])
+def test_draw_dispatch_failure_persists_stage_failure(tmp_path, monkeypatch, storage_full):
+    from fastapi import HTTPException
     from novel_to_comic.server import job_execution
     from novel_to_comic.state import create_initial_state, save_state, load_state, begin_stage, StageStatus
     state = create_initial_state("book", "novel.txt")
     save_state(state, tmp_path)
+    message = "Account storage is full." if storage_full else "Durable generation queue is unavailable"
+    error = HTTPException(413, {
+        "code": "storage_budget_exceeded", "message": message,
+        "used_bytes": 7991982797, "limit_bytes": 5368709120, "admitted": False,
+    }) if storage_full else RuntimeError(message)
     async def initialize_then_fail(stage, config, directory, state, *args, **kwargs):
         begin_stage(state, "draw", 63)
         save_state(state, directory)
-        raise RuntimeError("Durable generation queue is unavailable")
+        raise error
     monkeypatch.setattr(pipeline_operations, "_run_stage_with_credits", initialize_then_fail)
     spec = command("pipeline", tmp_path, Config(), queue_pages=True).model_copy(update={"stage": "draw"})
     job = SimpleNamespace(command=spec, project_name="account:book", payload={"stage": "draw"})
     app = make_app(tmp_path)
-    with pytest.raises(RuntimeError, match="queue is unavailable"):
+    with pytest.raises(type(error)):
         asyncio.run(job_execution._pipeline(app, job, tmp_path, Config()))
     final = load_state(tmp_path).stages["draw"]
     assert final.status == StageStatus.FAILED
     assert final.items_done == 0 and final.items_total == 63
-    assert final.error == "Durable generation queue is unavailable"
+    assert final.error == message
+    assert final.error_code == ("storage_budget_exceeded" if storage_full else None)
+    event = app.state.event_queues["account:book"].history[0]
+    assert event == {"type": "stage_fail", "stage": "draw", "message": message,
+                     "error_code": final.error_code}
 
 
 def test_failed_stage_raises_stage_specific_error(tmp_path, monkeypatch):

@@ -7,6 +7,7 @@ import json
 import importlib.util
 import time
 import signal
+import shlex
 from pathlib import Path
 
 
@@ -16,6 +17,38 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 def _write_executable(path: Path, contents: str) -> None:
     path.write_text(contents)
     path.chmod(0o755)
+
+
+def _entrypoint_environment(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    # Supervision tests assert lifecycle transitions, not wall-clock sleeps.
+    # Exact recovery delays have deterministic coverage below. Keep genuine
+    # child processes/signals, with short polling/restart/shutdown intervals.
+    _write_executable(bin_dir / "sleep", '''#!/bin/sh
+case "$1" in
+  1|2|3) exec /bin/sleep 0.02 ;;
+  *) exec /bin/sleep "$@" ;;
+esac
+''')
+    recovery_python = bin_dir / "recovery-python"
+    _write_executable(recovery_python, f'''#!/bin/sh
+# Health probes fail immediately; never contact a developer's live server.
+if [ "$1" = "-c" ]; then exit 1; fi
+exec {shlex.quote(sys.executable)} "$@"
+''')
+    env = os.environ.copy()
+    env.pop("GCP_CREDENTIALS_B64", None)
+    env.pop("VERTEXAI_PROJECT", None)
+    env.update(
+        PATH=str(bin_dir) + os.pathsep + env.get("PATH", ""),
+        CANARY_RECOVERY_PYTHON=str(recovery_python),
+        CANARY_RECOVERY_SCRIPT=str(REPO_ROOT / "litellm/recovery.py"),
+        CANARY_RECOVERY_STATE=str(tmp_path / "recovery.json"),
+        CANARY_RESTART_BACKOFF_SECONDS="0.01",
+        CANARY_SHUTDOWN_TIMEOUT_SECONDS="1",
+    )
+    return env
 
 
 def test_entrypoint_restarts_litellm_after_child_exit(tmp_path: Path) -> None:
@@ -71,12 +104,7 @@ exit 0
     test_entrypoint = tmp_path / "entrypoint.sh"
     _write_executable(test_entrypoint, entrypoint)
 
-    env = os.environ.copy()
-    env.pop("GCP_CREDENTIALS_B64", None)
-    env.pop("VERTEXAI_PROJECT", None)
-    env["CANARY_RECOVERY_PYTHON"] = sys.executable
-    env["CANARY_RECOVERY_SCRIPT"] = str(REPO_ROOT / "litellm/recovery.py")
-    env["CANARY_RECOVERY_STATE"] = str(tmp_path / "recovery.json")
+    env = _entrypoint_environment(tmp_path)
     env["LITELLM_READY_TIMEOUT_SECONDS"] = "2"
     env["LITELLM_RESTART_LIMIT"] = "3"
     env["LITELLM_RESTART_WINDOW_SECONDS"] = "30"
@@ -151,15 +179,8 @@ def _fake_entrypoint(tmp_path, pipeline="exit 17", proxy="while :; do sleep 1; d
         script = script.replace(source, str(target))
     entrypoint = tmp_path / "entrypoint.sh"
     _write_executable(entrypoint, script)
-    env = os.environ.copy()
-    env.pop("GCP_CREDENTIALS_B64", None)
-    env.pop("VERTEXAI_PROJECT", None)
-    env.update(CANARY_RECOVERY_PYTHON=sys.executable,
-               CANARY_RECOVERY_SCRIPT=str(REPO_ROOT / "litellm/recovery.py"),
-               CANARY_RECOVERY_STATE=str(tmp_path / "recovery.json"),
-               CANARY_RESTART_BACKOFF_SECONDS="0.01",
-               LITELLM_READY_TIMEOUT_SECONDS="1", LITELLM_RESTART_LIMIT="1",
-               CANARY_SHUTDOWN_TIMEOUT_SECONDS="1")
+    env = _entrypoint_environment(tmp_path)
+    env.update(LITELLM_READY_TIMEOUT_SECONDS="1", LITELLM_RESTART_LIMIT="1")
     return entrypoint, env
 
 
@@ -215,7 +236,9 @@ def test_deliberate_termination_during_readiness_exits_successfully(tmp_path):
 
 
 def test_dependency_failure_exhausts_gateway_without_restarting_web(tmp_path):
-    entrypoint, env = _fake_entrypoint(tmp_path, pipeline="sleep 5; exit 0", proxy="exit 18", ready=False)
+    # Stop on the observed terminal event, not after an arbitrary five seconds.
+    pipeline = f'''while ! grep -q '"gateway_status": "exhausted"' '{tmp_path / "recovery.json"}'; do sleep 0.02; done; exit 0'''
+    entrypoint, env = _fake_entrypoint(tmp_path, pipeline=pipeline, proxy="exit 18", ready=False)
     result = subprocess.run(["bash", str(entrypoint)], env=env, capture_output=True, timeout=10)
     assert result.returncode == 0
     state = json.loads((tmp_path / "recovery.json").read_text())

@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../composites/ErrorNotice";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { getPageCheckEstimate, recoverPageChecks, runFinishPreflight, type PageCheckEstimate } from "../../api/pages";
@@ -14,7 +15,7 @@ export function PageCheckRecovery({ project, unchecked, onRecovered, requested =
   const client = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [estimate, setEstimate] = useState<PageCheckEstimate | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | string | null>(null);
   const [interrupted, setInterrupted] = useState(false);
   const [results, setResults] = useState<Array<{ page_number: number; status: string; error?: string }>>([]);
 
@@ -58,7 +59,7 @@ export function PageCheckRecovery({ project, unchecked, onRecovered, requested =
         setEstimate(await getPageCheckEstimate(project));
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(cause instanceof Error ? cause : new Error(String(cause)));
     } finally {
       setBusy(false);
     }
@@ -81,7 +82,7 @@ export function PageCheckRecovery({ project, unchecked, onRecovered, requested =
     {!(results.length && !failed) && <Button size="xs" variant="outline" disabled={busy} onClick={() => void recover()}>
       {interrupted ? t("Refresh saved checks") : failed ? t("Try again") : t("Check again")}
     </Button>}
-    {error && <p role="alert" className="w-full text-sm text-hero-red">{error}</p>}
+    {error && <ErrorNotice error={error instanceof Error ? error : null} recovery={typeof error === "string" ? error : undefined} operation="generate" />}
     {estimate && <ConfirmDrawer open title={t("Check the remaining pages?")}
       body={`${estimate.paid_pages} ${t("pages need a new check. Artwork will not be redrawn. Saved checks are free.")}${interrupted ? ` ${t("The interrupted check may still be charged. Confirm only if you want to start a new check for pages without saved results.")}` : ""}`}
       cost={estimate} confirmLabel={t("CHECK PAGES")} busy={busy}

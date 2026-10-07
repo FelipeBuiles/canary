@@ -33,8 +33,8 @@ describe("isNotFoundError", () => {
     expect(isNotFoundError(new ApiError(500, "boom"))).toBe(false);
   });
 
-  it("keeps the historic message shape callers matched on", () => {
-    expect(new ApiError(404, "gone").message).toBe("API 404: gone");
+  it("keeps messages readable and still recognizes older untyped errors", () => {
+    expect(new ApiError(404, "gone").message).toBe("gone");
     expect(isNotFoundError(new Error("API 404: gone"))).toBe(true);
   });
 });

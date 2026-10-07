@@ -8,6 +8,7 @@ import { SHOW_DEV_CONTENT_KEY } from "../lib/devContent";
 import { usePipelineStore } from "../store/pipeline";
 import type * as PagesApi from "../api/pages";
 import type { CostEstimate, EditorialIssue, StageStatus, StageValidation } from "../types/api";
+import { ApiError } from "../api/client";
 
 const productEvent = vi.fn();
 vi.mock("../api/events", () => ({ trackProductEvent: (...args: unknown[]) => productEvent(...args) }));
@@ -29,6 +30,7 @@ type TestStageInfo = {
   status: StageStatus;
   stale: boolean;
   error?: string;
+  error_code?: string | null;
   items_done?: number;
   items_total?: number;
 };
@@ -1602,5 +1604,39 @@ describe("PagesRoom", () => {
     renderRoom();
     expect(screen.getByRole("alert").textContent).toContain("Durable generation queue is unavailable");
     expect(screen.getByRole("button", { name: /DRAW REMAINING PAGES/ })).toBeTruthy();
+  });
+
+  it.each([true, false])("explains a storage rejection in the gallery, including saved raw failures (structured: %s)", (structured) => {
+    includeUndrawnPage = true;
+    const raw = "413: {'code': 'storage_budget_exceeded', 'used_bytes': 7991982797, 'limit_bytes': 5368709120}";
+    stageStatuses.draw = { status: "failed", stale: false,
+      error: structured ? "Account storage is full." : raw,
+      error_code: structured ? "storage_budget_exceeded" : null,
+    };
+    renderRoom();
+    expect(screen.getByRole("heading", { name: "Account storage is full" })).toBeTruthy();
+    expect(screen.getByText("Delete projects you no longer need from their settings, then return here to try again.")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Manage projects" }).getAttribute("href")).toBe("/");
+    expect(screen.getByText("Technical details").closest("details")?.open).toBe(false);
+    if (!structured) expect(screen.getByText(raw, { exact: false }).closest("details")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Complete page thumbnail 1, revision 2" })).toBeTruthy();
+    expect(generatePage).not.toHaveBeenCalled();
+    expect(runPipeline).not.toHaveBeenCalled();
+  });
+
+  it("offers project management for an immediate storage rejection without retrying the draw", () => {
+    includeUndrawnPage = true;
+    generatePage.mockImplementation((_variables, options) => options.onError(new ApiError(413,
+      "Account storage is full. Delete projects you no longer need from their settings, then try again.",
+      "storage_budget_exceeded",
+    )));
+    renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: "GENERATE COMPLETE PAGE" }));
+    fireEvent.click(screen.getByRole("button", { name: "CONFIRM DRAW" }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).getByRole("heading", { name: "Account storage is full" })).toBeTruthy();
+    expect(within(dialog).getByRole("link", { name: "Manage projects" }).getAttribute("href")).toBe("/");
+    expect(within(dialog).queryByText(/API 413/)).toBeNull();
+    expect(generatePage).toHaveBeenCalledOnce();
   });
 });

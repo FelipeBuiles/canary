@@ -2,7 +2,7 @@ import { MemoryRouter } from "react-router-dom";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { StageCostEstimate } from "../types/api";
-import { I18nProvider } from "../i18n";
+import { I18nProvider, preloadLanguage } from "../i18n";
 
 const run = vi.fn();
 const reloadEstimate = vi.fn();
@@ -266,4 +266,29 @@ describe("Model refusal recovery", () => {
     expect(screen.getByText("Technical details").closest("details")?.open).toBe(false);
     expect(run).not.toHaveBeenCalled();
   });
+});
+
+it("gives a structured storage failure a recovery action without displaying an API payload", () => {
+  render(<MemoryRouter><I18nProvider><StagePlaceholder project="demo" stage="draw" status="failed"
+    errorCode="storage_budget_exceeded" error="Account storage is full."
+  /></I18nProvider></MemoryRouter>);
+  expect(screen.getByText("Your saved work is still available. Free up space before continuing.")).toBeTruthy();
+  expect(screen.getByRole("link", { name: "Manage projects" }).getAttribute("href")).toBe("/");
+  expect(screen.getByText("Technical details").closest("details")?.open).toBe(false);
+  expect(screen.queryByText("This step stopped before it could finish. You can try it again below.")).toBeNull();
+  expect(run).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["es", "Gestionar proyectos", "El almacenamiento de tu cuenta está lleno"],
+  ["fr", "Gérer les projets", "L’espace de stockage de votre compte est plein"],
+] as const)("localizes storage recovery in %s", async (language, action, title) => {
+  await preloadLanguage(language);
+  render(<MemoryRouter><I18nProvider pageLanguage={language}><StagePlaceholder project="demo" stage="draw" status="failed"
+    errorCode="storage_budget_exceeded"
+  /></I18nProvider></MemoryRouter>);
+  expect((await screen.findByRole("link", { name: action })).getAttribute("href")).toBe("/");
+  expect(screen.getByRole("heading", { name: title })).toBeTruthy();
+  expect(screen.queryByText("Account storage is full")).toBeNull();
+  expect(run).not.toHaveBeenCalled();
 });

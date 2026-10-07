@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../composites/ErrorNotice";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "../../api/client";
@@ -77,6 +78,6 @@ export function BookPublication({ project, title, ready, onPreview }: { project:
     </EntityCard>}
     {message && <p className="mt-4 font-body text-sm" role="status">{message}</p>}
     {leftOut.length > 0 && <p className="mt-2 font-body text-sm">{t("Not published in {languages}. Readers only see languages where every page has a saved translation that fits.", { languages: leftOut.join(", ") })}</p>}
-    {mutation.error && <p className="mt-4 font-body text-sm text-hero-red" role="alert">{mutation.error.message}</p>}
+    {mutation.error && <ErrorNotice error={mutation.error} operation="save" />}
   </section>;
 }

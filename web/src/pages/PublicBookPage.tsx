@@ -136,8 +136,7 @@ export function PublicBookPage() {
       {query.isPending && <p className="p-8" role="status">{t("Loading book…")}</p>}
       {query.isError && <section className="p-8">
         <h1 className="font-display text-3xl">{t("Book unavailable")}</h1>
-        <p role="alert">{t(query.error.message)}</p>
-        <Button onClick={() => void query.refetch()}>{t("Try again")}</Button>
+        <ErrorNotice error={query.error} operation="load" onRetry={() => void query.refetch()} />
       </section>}
       {book && <>
         {!readerOpen && <>
@@ -177,3 +176,4 @@ export function PublicBookPage() {
     </main>
   </div>;
 }
+import { ErrorNotice } from "../components/composites/ErrorNotice";

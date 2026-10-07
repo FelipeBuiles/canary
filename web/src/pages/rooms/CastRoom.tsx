@@ -1,3 +1,5 @@
+import { ErrorNotice } from "../../components/composites/ErrorNotice";
+import { ErrorDetails } from "../../components/composites/ErrorDetails";
 import { CastRegenAction } from "../../components/composites/CastRegenAction";
 import { CastIdentityReview } from "../../components/composites/CastIdentityReview";
 import { useCastReview, useRedrawingCharacters } from "../../api/castReview";
@@ -280,8 +282,7 @@ function StateAppearanceModal({ projectName, entityId, kind, state, failure, sta
     generationStatus={busy || (stageRegenerating && job.imgFailed) ? (job.activeJob?.status === "queued" ? t("QUEUED") : t("DRAWING…")) : undefined}
     sidebar={<div className="space-y-5">
       <AnchorSection anchor={state.visual_anchor} />
-      {failure && !busy && <p role="alert" className="border-l-4 border-hero-red pl-3 font-body text-sm leading-6 text-ink-black">
-        <span className="block font-meta text-xs font-bold text-hero-red">{t("LAST ATTEMPT FAILED")}</span>{failure.message}</p>}
+      {failure && !busy && <ErrorNotice error={failure.message} operation="generate" title="This reference could not be completed." />}
       <img src={src} alt="" className="hidden" onError={() => job.setImgFailed(true)} />
       <CastRegenAction projectName={projectName} assetType={kind} assetId={entityId} stateId={state.id}
         assetLabel={state.label} cost={estimate} hasImage={!job.imgFailed} busy={busy}
@@ -356,7 +357,7 @@ function RefVersionHistory({
             </span>
           </button>
         ))}
-      {restore.error && <p role="alert" className="mt-2 font-body text-sm text-hero-red">{restore.error.message}</p>}
+      {restore.error && <ErrorNotice error={restore.error} operation="save" />}
       </div>
     </section>
   );
@@ -524,11 +525,7 @@ function CastCard({
           {t("Edit details")}
         </Link>
         {error && (
-          <div role="alert" className="mt-3 border-[2px] border-ink-black bg-hero-red p-2 text-sm leading-relaxed text-bristol">
-            <strong className="block">{t("REGENERATION FAILED")}</strong>
-            {error}
-            <span className="mt-1 block">{t("The current reference has not been replaced. Review your change and try again.")}</span>
-          </div>
+          <ErrorNotice error={error} operation="generate" />
         )}
       </div>
     </EntityCard>
@@ -1158,7 +1155,7 @@ export function MissingAnchorsNotice({ projectId, missing }: { projectId: string
           );
         })}
       </ul>
-      {fill.error && <p role="alert" className="mt-2 font-body text-sm text-hero-red">{fill.error.message}</p>}
+      {fill.error && <ErrorNotice error={fill.error} operation="generate" />}
     </section>
   );
 }
@@ -1212,7 +1209,8 @@ export function CastFailureNotice({ failures, onResume, resumeDisabled = false, 
           return (
             <li key={failure.item_id} className="font-body text-sm leading-6 text-ink-black">
               <a href={anchor(failure)} className="font-bold underline decoration-hero-red underline-offset-4">{failure.label}</a>
-              <span className="block text-ink-black/80">{failure.message}</span>
+              <span className="block text-ink-black/80">{declined ? t("Model declined this content") : t("This reference could not be completed.")}</span>
+              <ErrorDetails error={failure.message} />
               {declined && triggers.length > 0 && (
                 <div className="mt-2">
                   <p className="font-meta text-[0.65rem] font-bold uppercase tracking-[0.12em] text-ink-muted">{t("Likely cause")}</p>
@@ -1261,7 +1259,7 @@ export function CastRoom() {
   const suggestionContext = useMemo(() => ({ suggestion: castSuggestion, clear: clearCastSuggestion }), [castSuggestion, clearCastSuggestion]);
   // Set when Continue re-checked the cast; the server approves it if nothing is left to review.
   const [continuing, setContinuing] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<Error | string | null>(null);
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: sourceBible, isLoading } = useStoryBible(id);
@@ -1300,7 +1298,7 @@ export function CastRoom() {
     handleRun(id, "cast", {
       actionLabel: canStartCast ? t("Start cast characters & places") : t("Resume cast characters & places"),
       onSuccess: () => setConfirmCast(false),
-      onError: (error) => { setConfirmCast(false); setActionError(error.message); },
+      onError: (error) => { setConfirmCast(false); setActionError(error); },
     });
   }
 
@@ -1322,7 +1320,7 @@ export function CastRoom() {
     handleRun(id, "cast", {
       thenApprove: true,
       actionLabel: t("Continue"),
-      onError: (error) => { setContinuing(false); setActionError(error.message); },
+      onError: (error) => { setContinuing(false); setActionError(error); },
     });
   }
 
@@ -1340,7 +1338,7 @@ export function CastRoom() {
           onSuccess: () => {
             navigate(`/project/${id}/pages`);
           },
-          onError: (error) => setActionError(error.message),
+          onError: (error) => setActionError(error),
         },
       );
     } else if (checkpointAction === "continue") {
@@ -1527,7 +1525,7 @@ export function CastRoom() {
       </section>
       </CastSuggestionContext.Provider>
 
-      {resetError && <p role="alert" className="font-body text-sm text-hero-red">{resetError.message}</p>}
+      {resetError && <ErrorNotice error={resetError} operation="save" />}
       {!status?.style_selected && <p className="font-body text-sm text-ink-muted">{t("Choose a style before starting cast references.")}</p>}
       <ConfirmDrawer
         open={confirmCast}

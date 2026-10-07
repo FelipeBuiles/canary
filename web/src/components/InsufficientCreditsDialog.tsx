@@ -226,9 +226,7 @@ function OpenInsufficientCreditsDialog() {
             </div>
           )}
           {checkout.error && (
-            <p role="alert" className="mt-4 font-body text-sm text-hero-red">
-              {t("Checkout could not open. Your action is still paused. Try a package again or open billing.")} {checkout.error.message}
-            </p>
+            <ErrorNotice error={checkout.error} operation="load" title="Checkout could not be opened." recovery="Checkout could not open. Your action is still paused. Try a package again or open billing." />
           )}
           {checkoutUrl && (
             <a href={checkoutUrl} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex min-h-11 items-center font-body text-sm font-semibold underline underline-offset-4">
@@ -281,3 +279,4 @@ function OpenInsufficientCreditsDialog() {
     </div>
   );
 }
+import { ErrorNotice } from "./composites/ErrorNotice";

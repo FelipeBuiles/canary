@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from tests.queue_fixtures import create_app
+from novel_to_comic.server.app import _labs_enabled
 
 
 def _has_labs_routes(app) -> bool:
@@ -28,10 +29,10 @@ def test_labs_disabled_by_default(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("value", ["false", "0", "no", "off", "FALSE"])
-def test_labs_disabled_when_flag_false(monkeypatch, tmp_path, value):
+def test_labs_disabled_when_flag_false(monkeypatch, value):
+    _original_process(monkeypatch, CANARY_ENV="development")
     monkeypatch.setenv("CANARY_LABS_ENABLED", value)
-    app = create_app(Path(str(tmp_path)), dev=True)
-    assert not _has_labs_routes(app), (
+    assert not _labs_enabled(), (
         f"Labs should be hidden when CANARY_LABS_ENABLED={value!r}"
     )
 
@@ -47,11 +48,18 @@ def _original_process(monkeypatch, **settings):
 
 
 @pytest.mark.parametrize("value", ["true", "1", "yes", "on"])
-def test_labs_enabled_when_flag_true(monkeypatch, tmp_path, value):
+def test_labs_enabled_when_flag_true(monkeypatch, value):
     _original_process(monkeypatch, CANARY_ENV="development")
     monkeypatch.setenv("CANARY_LABS_ENABLED", value)
+    assert _labs_enabled()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_labs_router_mount_matches_gate(monkeypatch, tmp_path, enabled):
+    _original_process(monkeypatch, CANARY_ENV="development")
+    monkeypatch.setenv("CANARY_LABS_ENABLED", str(enabled))
     app = create_app(Path(str(tmp_path)), dev=True)
-    assert _has_labs_routes(app)
+    assert _has_labs_routes(app) is enabled
 
 
 def test_labs_flag_cannot_enable_labs_outside_original_process_development(monkeypatch, tmp_path):

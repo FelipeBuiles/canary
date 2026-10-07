@@ -69,10 +69,10 @@ export function StyleProofCard({
   const presentation = useUpdateStylePresentation();
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState(name);
-  const [presentationError, setPresentationError] = useState<string | null>(null);
+  const [presentationError, setPresentationError] = useState<Error | string | null>(null);
   const sampleUrl = proofImageUrl(projectName, suggestion);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
-  const [selectionError, setSelectionError] = useState<string | null>(null);
+  const [selectionError, setSelectionError] = useState<Error | string | null>(null);
   const [selectionConfirmed, setSelectionConfirmed] = useState(false);
   const [timestamp, setTimestamp] = useState(() => Date.now());
   const displayedProofUrl = `${sampleUrl}${sampleUrl.includes("?") ? "&" : "?"}t=${timestamp}`;
@@ -115,7 +115,7 @@ export function StyleProofCard({
     setPresentationError(null);
     presentation.mutate(
       { project: projectName, id: suggestion.id, changes },
-      { onSuccess, onError: (error) => setPresentationError(error.message) },
+      { onSuccess, onError: (error) => setPresentationError(error) },
     );
   };
   const saveName = () => {
@@ -134,7 +134,7 @@ export function StyleProofCard({
       { project: projectName, id: suggestion.id },
       {
         onSuccess: () => setSelectionConfirmed(true),
-        onError: (error) => setSelectionError(error.message),
+        onError: (error) => setSelectionError(error),
       },
     );
   };
@@ -304,9 +304,7 @@ export function StyleProofCard({
             </Button>
           </div>
           {(selectionError || presentationError) && (
-            <p role="alert" className="mt-3 bg-hero-red/10 p-3 text-sm leading-6 text-hero-red">
-              {selectionError ?? presentationError}
-            </p>
+            <ErrorNotice error={selectionError ?? presentationError} operation="save" />
           )}
         </div>
 
@@ -407,3 +405,4 @@ export function StyleProofCard({
     </>
   );
 }
+import { ErrorNotice } from "../composites/ErrorNotice";

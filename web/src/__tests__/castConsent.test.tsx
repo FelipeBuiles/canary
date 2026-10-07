@@ -123,7 +123,9 @@ describe("cast consent", () => {
     await user.click(continueButton);
     expect(approve).toHaveBeenCalledWith({ project: "demo", stage: "cast" }, expect.anything());
     const alert = within(continueButton.closest("footer")!).getByRole("alert");
-    expect(alert.textContent).toBe("Wait for all project jobs to finish before changing this project.");
+    expect(alert.textContent).toContain("Approval could not be confirmed.");
+    expect(alert.textContent).toContain("Wait for all project jobs to finish before changing this project.");
+    expect(within(alert).getByText("Technical details").closest("details")?.open).toBe(false);
   });
 
   it("does not spend on entry and requires confirmation after showing the estimate and hold", async () => {

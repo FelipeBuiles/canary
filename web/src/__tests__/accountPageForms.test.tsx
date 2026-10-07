@@ -78,7 +78,7 @@ describe("Account page forms", () => {
       fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value: "retry-secret" } });
     }
     fireEvent.submit(screen.getByRole("form", { name: `Change ${tab.toLowerCase()}` }));
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("Connection interrupted"));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Connection interrupted"));
     expect(screen.getByRole("button", { name: `Update ${tab.toLowerCase()}` })).toHaveProperty("disabled", false);
     expect(screen.getByLabelText(tab === "Email" ? "New email address" : "New password"))
       .toHaveProperty("value", tab === "Email" ? "retry@example.com" : "retry-secret");

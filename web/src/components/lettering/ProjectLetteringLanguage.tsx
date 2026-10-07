@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../composites/ErrorNotice";
 import { useCallback, useEffect, useId, useRef, startTransition, useState } from "react";
 import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, isInsufficientCreditsError } from "../../api/client";
@@ -172,10 +173,10 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
                 );
               })}
               {switchLocale.isPending && <span role="status" className="text-xs text-ink-muted">{t("Switching language…")}</span>}
-              {switchLocale.isError && <span role="alert" className="text-xs text-hero-red">{switchLocale.error.message}</span>}
+              {switchLocale.isError && <ErrorNotice error={switchLocale.error} operation="save" />}
             </div>
           )}
-          {stored.isError && <p role="alert">{stored.error.message}</p>}
+          {stored.isError && <ErrorNotice error={stored.error} operation="load" />}
           <p className="text-ink-muted">{t("Translate saved lettering across the whole project. Save drafts on every page first.")}</p>
           <div className="flex flex-wrap items-end gap-3">
             <div className="min-w-0 flex-1">
@@ -197,10 +198,8 @@ function LanguageControl({ project, disabled, onApplied, onBusyChange }: Project
           {target && !busy && estimate.isFetching && <p role="status">{t("Estimating translation…")}</p>}
           {!busy && counts && <p>{counts}</p>}
           {estimate.data?.translate_count === 0 && <p>{t("This language is already stored. Select it above to review the wording.")}</p>}
-          {target && !busy && estimate.isError && <div role="alert">
-            <p>{estimate.error.message}</p>
-            <Button size="sm" variant="outline" disabled={disabled || estimate.isFetching} onClick={() => void estimate.refetch()}>{t("Retry estimate")}</Button>
-          </div>}
+          {target && !busy && estimate.isError && <ErrorNotice error={estimate.error} operation="estimate" retryLabel={t("Retry estimate")}
+            onRetry={() => void estimate.refetch()} retryDisabled={disabled || estimate.isFetching} />}
           {!busy && insufficient && <p role="alert">{t("Not enough credits for the temporary hold.")} <a className="underline" href="/credits">{t("Get credits")}</a></p>}
           {!busy && balanceUnavailable && <div role="alert">
             <p>{t("Credit balance is unavailable. Check it before translating.")}</p>

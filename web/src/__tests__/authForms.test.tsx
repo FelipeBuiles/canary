@@ -57,7 +57,7 @@ describe("Auth forms", () => {
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "author@example.com" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "secret" } });
     fireEvent.submit(screen.getByRole("form", { name: "Sign in" }));
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("Connection interrupted"));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Connection interrupted"));
     expect(screen.getByRole("button", { name: "SIGN IN" })).toHaveProperty("disabled", false);
     expect(screen.getByLabelText("Password")).toHaveProperty("value", "secret");
     fireEvent.submit(screen.getByRole("form", { name: "Sign in" }));
@@ -111,7 +111,7 @@ describe("Auth forms", () => {
     expect(auth.resetPasswordForEmail).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "author@example.com" } });
     fireEvent.click(screen.getByRole("button", { name: "Forgot password?" }));
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("Try again later"));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Try again later"));
     fireEvent.click(screen.getByRole("button", { name: "Forgot password?" }));
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("password-reset link"));
     expect(auth.resetPasswordForEmail).toHaveBeenLastCalledWith("author@example.com", { redirectTo: `${window.location.origin}/reset-password` });
@@ -143,7 +143,7 @@ describe("Auth forms", () => {
     expect(auth.updateUser).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value: "new-secret" } });
     fireEvent.submit(screen.getByRole("form", { name: "Set a new password" }));
-    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("Recovery expired"));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Recovery expired"));
     expect(screen.getByRole("button", { name: "UPDATE PASSWORD" })).toHaveProperty("disabled", false);
     fireEvent.submit(screen.getByRole("form", { name: "Set a new password" }));
     await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Password updated."));

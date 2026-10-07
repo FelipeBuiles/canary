@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../composites/ErrorNotice";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
@@ -51,7 +52,7 @@ export function StaleRenderRedraw({ project, pageNumber, disabled, onJobQueued, 
         <RotateCcw size={14} aria-hidden="true" />
         {generate.isPending ? t("Queuing redraw…") : label}
       </Button>
-      {error && <p role="alert" className="mt-2 font-body text-sm text-hero-red">{error.message}</p>}
+      {error && <ErrorNotice error={error} operation="generate" />}
       <ConfirmDrawer
         open={open}
         title={label}

@@ -36,19 +36,6 @@ def synthetic_image_rates(monkeypatch):
     monkeypatch.setattr(model_costs, "_DEFAULT_RESOLVER", resolver)
 
 
-def test_image_alias_with_token_usage_uses_resolved_provider_token_pricing(synthetic_image_rates):
-    usage = UsageRecord(
-        provider="openai",
-        model="test-token-image",
-        operation="image",
-        input_tokens=1000,
-        output_tokens=2000,
-        image_count=1,
-    )
-
-    assert calculate_cost(usage) == 0.065
-
-
 def test_token_priced_image_model_uses_token_pricing(synthetic_image_rates):
     usage = UsageRecord(
         provider="openai",

@@ -8,6 +8,7 @@ import type { CompletePageSummary, PageSourceLettering, PageSourceSegment, PageS
 import { SectionHeader } from "../composites/SectionHeader";
 import { Surface } from "../ui/Surface";
 import { InspectButton } from "../ui/InspectButton";
+import { ErrorNotice } from "../composites/ErrorNotice";
 
 const metaClass = "font-meta text-[0.65rem] font-bold uppercase tracking-[0.12em] text-ink-muted";
 const markClass: Record<"lettering" | "depicted", string> = {
@@ -59,16 +60,14 @@ function geometryMatches(data: PageSourceView, item: CompletePageSummary): boole
 export function PageSourcePanel({ project, item }: { project: string; item: CompletePageSummary }) {
   const { t } = useI18n();
   const pageNumber = item.page.page_number;
-  const { data, error, isLoading } = usePageSource(project, pageNumber);
+  const { data, error, isLoading, refetch } = usePageSource(project, pageNumber);
   const [active, setActive] = useState<string[]>([]);
   const revision = item.active_render?.render.revision;
 
   if (isLoading) return <p role="status" className="font-body text-sm text-ink-muted">{t("Loading source passages…")}</p>;
   if (error || !data) {
-    const detail = error instanceof Error ? error.message.replace(/^API \d+:\s*/, "") : "";
     return <Surface padding="lg" border="soft" shadow="none">
-      <p role="alert" className="font-body text-sm font-semibold">{t("The source for this page is not available.")}</p>
-      {detail && <p className="mt-2 font-body text-xs text-ink-muted">{detail}</p>}
+      <ErrorNotice error={error} operation="load" title="The source for this page is not available." onRetry={() => void refetch()} />
     </Surface>;
   }
 

@@ -104,7 +104,7 @@ function NewProjectModal({ isOpen, onClose, initialStoryCode }: { isOpen: boolea
           onSubmit={handleCreate}
           onSubmitImport={handleImport}
           isPending={createProject.isPending || importStory.isPending}
-          error={createProject.error?.message || importStory.error?.message || null}
+          error={createProject.error || importStory.error || null}
           onCancel={onClose}
           initialStoryCode={initialStoryCode}
         />
@@ -147,13 +147,9 @@ export function Library() {
 
   if (error) {
     return (
-      <StateBlock
-        tone="danger"
-        icon="alert"
-        title={t("THE LIBRARY COULD NOT OPEN")}
-        description={error.message}
-        action={<Button variant="outline" size="sm" onClick={() => refetch()}>{t("TRY AGAIN")}</Button>}
-      />
+      <div className="mx-auto flex min-h-[40vh] max-w-lg items-center px-4">
+        <ErrorNotice error={error} operation="load" title="Projects could not be loaded." onRetry={() => void refetch()} />
+      </div>
     );
   }
 
@@ -260,3 +256,4 @@ export function Library() {
     </div>
   );
 }
+import { ErrorNotice } from "../components/composites/ErrorNotice";

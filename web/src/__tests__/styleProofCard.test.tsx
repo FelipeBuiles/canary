@@ -130,7 +130,8 @@ describe("StyleProofCard", () => {
     render(card());
     await userEvent.click(screen.getByRole("button", { name: "SELECT THIS STYLE" }));
     act(() => mutation.mutate.mock.calls[0][1].onError(new Error("Selection could not be saved")));
-    expect(screen.getByRole("alert").textContent).toBe("Selection could not be saved");
+    expect(screen.getByRole("alert").textContent).toContain("Your changes could not be saved.");
+    expect(screen.getByText("Selection could not be saved").closest("details")?.open).toBe(false);
     expect(screen.getByRole("button", { name: "SELECT THIS STYLE" }).getAttribute("aria-pressed")).toBe("false");
     expect(screen.queryByText("YOUR STYLE")).toBeNull();
   });

@@ -95,9 +95,7 @@ export function CastIdentityReview({ projectId, characters, onShowCharacter, onU
                         </Button>
                       </dd>
                       {dismiss.isError && dismiss.variables === issue && (
-                        <dd role="alert" className="mt-2 font-body text-sm text-hero-red">
-                          {dismiss.error instanceof Error ? dismiss.error.message : t("Could not save. Try again.")}
-                        </dd>
+                        <dd><ErrorNotice error={dismiss.error} operation="save" /></dd>
                       )}
                     </div>
                   </dl>
@@ -122,3 +120,4 @@ export function CastIdentityReview({ projectId, characters, onShowCharacter, onU
     </section>
   );
 }
+import { ErrorNotice } from "./ErrorNotice";

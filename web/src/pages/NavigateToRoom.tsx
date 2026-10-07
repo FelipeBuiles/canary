@@ -4,10 +4,11 @@ import { useProjectStatus } from "../api/queries";
 import { BACKEND_STAGE_TO_STATION_ROUTE } from "../lib/stations";
 import { STAGE_ORDER } from "../types/api";
 import { accessibleRoom } from "../lib/stationAccess";
+import { ErrorNotice } from "../components/composites/ErrorNotice";
 
 export function NavigateToRoom() {
   const { id } = useParams<{ id: string }>();
-  const { data: status, isLoading, error } = useProjectStatus(id);
+  const { data: status, isLoading, error, refetch } = useProjectStatus(id);
 
   const activeStage = useMemo(() => {
     if (!status) return null;
@@ -21,20 +22,14 @@ export function NavigateToRoom() {
   }, [status]);
 
   if (!id) return null;
+  if (error) return <div className="mx-auto flex min-h-[60vh] max-w-lg items-center px-4">
+    <ErrorNotice error={error} operation="load" title="The project could not be opened." onRetry={() => void refetch()} />
+  </div>;
   if (isLoading || !activeStage) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <p className="font-meta text-sm tracking-[0.28em] text-ink-black/40">
           OPENING PROJECT…
-        </p>
-      </div>
-    );
-  }
-  if (error) {
-    return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <p className="font-meta text-sm tracking-[0.28em] text-hero-red">
-          ERROR: {error.message}
         </p>
       </div>
     );

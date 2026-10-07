@@ -1,6 +1,6 @@
 # Local crop OCR experiment
 
-**Status: Current, experimental and disabled by default.** This branch adds a
+**Status: Current, experimental and disabled by default.** The pilot adds a
 provider-free PaddleOCR second read. Production dependencies and deployment
 configuration do not enable it.
 
@@ -86,6 +86,28 @@ The output directory holds typed crop reports, original image copies,
 are untouched. Identical inputs reuse reports, including inconclusive reports.
 Use a fresh output directory for an intentional new offline attempt.
 
+For a provider-free resource and contention test, use the same prepared inputs
+with the load harness. It verifies lazy startup and report reuse, then measures
+fresh serial reads, 1/4/16 simultaneous pages, one/six crops per page, and a
+90-second sustained run. Multi-crop cases repeat a known region and are workload
+fixtures, not additional accuracy examples:
+
+```sh
+CANARY_CROP_OCR_CACHE="$PWD/work/ocr-experiment/cache" \
+  novel_to_comic/.venv/bin/python scripts/ocr_crop_benchmark.py \
+  --manifest work/ocr-experiment/pilot-manifest.json \
+  --models work/ocr-experiment/models \
+  --python "$PWD/work/ocr-experiment/.venv/bin/python" \
+  --output work/ocr-experiment/benchmark-1 \
+  --label local-host
+```
+
+Use a fresh output directory; the harness refuses an existing one so cached
+reports cannot masquerade as new inference. `--worker /path/to/shadow_worker.py`
+can compare an experimental worker without changing the app; its source bytes
+are included in the reader fingerprint. Native startup failure stops the load
+test after its pilot, with diagnostic reports and metrics preserved.
+
 To enable the already-implemented app integration on a future local server
 start, set these variables in the backend environment:
 
@@ -125,8 +147,14 @@ one crop reader. CPU and memory headroom must be measured before enabling it.
 No GPU or external inference
 endpoint is required. Burst CPU limits still apply to the instance.
 
-Native dependencies and container startup have **not** been tested on
-Lightsail. The Python environment occupies about 832 MB on this Mac; model
+Native dependencies, offline read-only-container startup and contention were
+tested on the existing Lightsail host on October 7, 2026. The stock image lacks
+`libgomp.so.1`; an isolated Linux OCR runtime also needs Debian `libgomp1`.
+With that library supplied, the pinned models initialize offline. The original
+worker settings exceed the page read budget under concurrency; see the
+[measured hardware evidence](../reviews/2026-10-07-ocr-lightsail-benchmark.md)
+for resource limits, workload outcomes and deployment implications.
+The Python environment occupies about 832 MB on the pilot Mac; model
 files occupy about 12 MB. There is no additional per-image provider charge,
 but memory and sustained CPU are material deployment costs.
 
@@ -151,8 +179,10 @@ three reads plus initialization. These are Mac measurements, not Lightsail
 benchmarks. The small English sample demonstrates this failure mode and
 preservation of a real typo; it does not establish general accuracy, a calibrated
 confidence threshold or performance on stylized balloons and other languages.
-Broader human-labelled artwork and a Linux resource benchmark are needed before
-production enablement.
+The [Linux resource benchmark](../reviews/2026-10-07-ocr-lightsail-benchmark.md)
+is now recorded. Broader human-labelled artwork, a deployment-ready optional
+runtime and acceptable contention behavior are still required before production
+enablement.
 
 Paddle's [official OCR pipeline documentation](https://www.paddleocr.ai/latest/en/version3.x/pipeline_usage/OCR.html)
 describes CPU execution and `rec_texts`, `rec_scores` and box outputs.

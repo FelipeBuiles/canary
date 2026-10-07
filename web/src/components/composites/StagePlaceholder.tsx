@@ -1,3 +1,4 @@
+import { ErrorNotice } from "./ErrorNotice";
 import { useNow } from "../../hooks/useNow";
 import { Link } from "react-router-dom";
 import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
@@ -21,6 +22,8 @@ import { Button } from "../ui/Button";
 import { CreditsGate } from "./CreditsGate";
 import { fundingLabel } from "../../modelFunding";
 import { useI18n } from "../../i18n";
+import { isStorageLimitError } from "../../lib/storageLimit";
+import { StorageLimitNotice } from "./StorageLimitNotice";
 
 const ProjectModelControls = import.meta.env.DEV ? lazy(() => import("../wizard/ProjectModelControls")) : null;
 
@@ -288,7 +291,7 @@ export function StageStartAction({
   const freshStart = stage === "adapt" && (rerun || restartOpen);
   const estimate = useStageEstimate(project, stage, true, freshStart || rerun);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [startError, setStartError] = useState<string | null>(null);
+  const [startError, setStartError] = useState<Error | string | null>(null);
   const actionLabel = label ?? (freshStart ? t("Start adaptation over") : rerun
     ? t("Restart this step")
     : retry
@@ -311,7 +314,7 @@ export function StageStartAction({
       actionLabel,
       onSuccess: () => { setConfirmOpen(false); setRestartOpen(false); onStarted?.(); },
       onError: (error) => {
-        setStartError(error.message);
+        setStartError(error);
         setConfirmOpen(false);
         setRestartOpen(false);
       },
@@ -355,7 +358,7 @@ export function StageStartAction({
           </Button>
         </div>
       )}
-      {startError && <p role="alert" className="w-full font-body text-sm text-hero-red">{startError}</p>}
+      {startError && <ErrorNotice error={startError} operation="generate" />}
       {freshStart ? (
         <AdaptRestartDrawer
           open={confirmOpen}
@@ -570,10 +573,7 @@ function ExtractionRetry({ project, rerun }: { project: string; rerun: boolean }
   const update = useUpdateProjectConfig();
   return <div className="mt-5">
     {config.isPending && <p role="status">{t("Loading model settings…")}</p>}
-    {config.isError && <div role="alert">
-      <p className="font-body text-sm text-hero-red">{config.error.message}</p>
-      <Button variant="outline" onClick={() => void config.refetch()} disabled={config.isFetching}>{t("Try again")}</Button>
-    </div>}
+    {config.isError && <ErrorNotice error={config.error} operation="load" onRetry={() => void config.refetch()} retryDisabled={config.isFetching} />}
     {config.data && ProjectModelControls && <Suspense fallback={<p role="status">{t("Loading model settings…")}</p>}>
       <ProjectModelControls
         stageIds={["extract"]}
@@ -583,7 +583,7 @@ function ExtractionRetry({ project, rerun }: { project: string; rerun: boolean }
       />
     </Suspense>}
     {update.isPending && <p role="status">{t("Saving…")}</p>}
-    {update.isError && <p role="alert" className="font-body text-sm text-hero-red">{update.error.message}</p>}
+    {update.isError && <ErrorNotice error={update.error} operation="save" />}
     {update.isSuccess && <p role="status">{t("Settings saved.")}</p>}
     <StageStartAction project={project} stage="extract" retry rerun={rerun} disabled={!config.data || config.isError || update.isPending || update.isError} />
   </div>;
@@ -600,6 +600,12 @@ interface StageFailedProps {
 
 function StageFailed({ project, stage, rerun, error, errorDetail, errorCode }: StageFailedProps) {
   const { t } = useI18n();
+  if (isStorageLimitError(error, errorCode)) {
+    return <StageDocket stage={stage} state="STORAGE FULL" tone="failed" failureTitle={t("Account storage is full")}>
+      <StorageLimitNotice error={error} errorDetail={errorDetail} showHeading={false} />
+      <StageStartAction project={project} stage={stage} retry rerun={rerun} />
+    </StageDocket>;
+  }
   const refused = errorCode === "model_refusal" || /^runtime_turn_error: stream disconnected before completion: Incomplete response returned, reason: content_filter$/.test(error ?? "") || /^AI (?:image )?request was refused by gateway\/provider/.test(error ?? "");
   const creditBlocked = errorCode === "credit_reservation_reconciliation" || /Expired credit reservation requires reconciliation|An earlier credit hold is blocking new work/.test(error ?? "");
   const validationFailure = /invariant|validation/i.test(error ?? "");

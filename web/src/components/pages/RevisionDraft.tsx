@@ -1,3 +1,4 @@
+import { ErrorNotice } from "../composites/ErrorNotice";
 import { isOcrIssue } from "./lettering";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
@@ -73,7 +74,7 @@ function SubmittedCorrection({
         <p className="mt-1 font-body text-xs text-ink-muted">{t("Loading submitted correction…")}</p>
       )}
       {submitted.error && (
-        <p role="alert" className="mt-1 font-body text-xs text-hero-red">{(submitted.error as Error).message}</p>
+        <ErrorNotice error={(submitted.error as Error)} operation="load" />
       )}
       {!submitted.isLoading && !submitted.error && !correction && (
         <p className="mt-1 font-body text-xs leading-5 text-ink-muted">
@@ -245,7 +246,7 @@ export function RevisionDraft({
   );
   const [focusId, setFocusId] = useState<string | null>(null);
   const [previewHash, setPreviewHash] = useState<string | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<Error | string | null>(null);
   const [submittedJobId, setSubmittedJobId] = useState<string | null>(() => loadRevisionDraft(project, pageNumber, target)?.submittedJobId ?? null);
   const submittedJob = useSubmittedCorrectionJob(project, submittedJobId);
   const job = submittedJob.data?.jobs.find((item) => item.id === submittedJobId);
@@ -450,7 +451,7 @@ export function RevisionDraft({
           onJobQueued(job.id);
         },
         onError: (error) => {
-          setSubmitError(error instanceof Error ? error.message : String(error));
+          setSubmitError(error instanceof Error ? error : new Error(String(error)));
           maybeShowInsufficientCredits(error, {
             actionLabel: t("SUBMIT ONE CORRECTION"),
             onRetry: runSubmit,
@@ -1041,9 +1042,7 @@ export function RevisionDraft({
           )}
 
           {(submitError || preview.error) && !submittedJobId && (
-            <p role="alert" className="border-l-[3px] border-hero-red pl-3 font-body text-xs font-bold leading-5 text-hero-red">
-              {submitError ?? (preview.error as Error).message}
-            </p>
+            <ErrorNotice error={submitError ?? preview.error} operation={submitError ? "generate" : "estimate"} />
           )}
         </div>
         )}
