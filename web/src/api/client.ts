@@ -52,6 +52,12 @@ export function isNotFoundError(err: unknown): boolean {
   return err instanceof Error && err.message.startsWith("API 404:");
 }
 
+/** The request got no response: the connection or the server is down. */
+export function isNetworkError(err: unknown): boolean {
+  return err instanceof TypeError
+    && (err as { diagnostics?: ErrorDiagnostics }).diagnostics?.error_code === "network_error";
+}
+
 function parseInsufficientCredits(detail: unknown): InsufficientCreditsInfo | null {
   if (!detail || typeof detail !== "object") return null;
   const d = detail as Record<string, unknown>;

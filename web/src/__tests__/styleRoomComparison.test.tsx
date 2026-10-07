@@ -95,6 +95,18 @@ it("shows estimate failures with a retry instead of claiming generation is runni
     expect(state.mutation.mutate).not.toHaveBeenCalled();
  });
 
+it("replaces a raw connection failure with a clear estimate message", () => {
+  state.labels = [];
+  state.estimateError = Object.assign(new TypeError("Failed to fetch"), { diagnostics: { error_code: "network_error" } });
+  render(<I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
+    <Route path="/projects/:id/style" element={<StyleRoom />} />
+  </Routes></MemoryRouter></I18nProvider>);
+  const alert = screen.getByRole("alert").textContent;
+  expect(alert).toContain("The style room could not reach Canary.");
+  expect(alert).not.toContain("Failed to fetch");
+  expect(screen.getByRole("button", { name: "TRY AGAIN" })).toBeTruthy();
+});
+
 it("starts Cast with its bundled cover estimate without requesting a cover before references exist", async () => {
   state.castStatus = "pending";
   state.estimateError = null;

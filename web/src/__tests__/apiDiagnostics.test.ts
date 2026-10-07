@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { apiFetch, ApiError } from "../api/client";
+import { apiFetch, ApiError, isNetworkError } from "../api/client";
 import { observeApiRequests } from "../lib/telemetryDiagnostics";
 import { clearAccountRequests } from "../lib/accountEpoch";
 
@@ -41,4 +41,15 @@ it("drops late responses after the account changes", async () => {
   }));
   await expect(apiFetch("/account")).rejects.toMatchObject({ name: "AbortError" });
   expect(events).not.toHaveBeenCalled();
+});
+
+it("marks a request with no response as a network error, but not a server error", async () => {
+  observeApiRequests(() => undefined, () => undefined);
+  vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("Failed to fetch"); }));
+  const dropped = await apiFetch("/projects/book/styles/suggest-estimate").catch(error => error);
+  expect(isNetworkError(dropped)).toBe(true);
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("down", { status: 503 })));
+  const failed = await apiFetch("/projects/book/styles/suggest-estimate").catch(error => error);
+  expect(isNetworkError(failed)).toBe(false);
+  expect(isNetworkError(new TypeError("Cannot read properties of undefined"))).toBe(false);
 });
