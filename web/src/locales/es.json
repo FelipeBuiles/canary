@@ -3384,5 +3384,14 @@
   "landing.footer.guide": "Guía de novela a cómic",
   "landing.footer.example": "Ejemplo de cómic",
   "landing.footer.about": "Acerca de",
-  "Please check the address, or return to Scenewright.": "Comprueba la dirección o vuelve a Scenewright."
+  "Please check the address, or return to Scenewright.": "Comprueba la dirección o vuelve a Scenewright.",
+  "CLOSE-UP READ": "LECTURA AMPLIADA",
+  "First read:": "Primera lectura:",
+  "Text check is uncertain": "La comprobación del texto es incierta",
+  "The close-up text check was inconclusive. Compare the saved artwork with the script before making changes.": "La comprobación del texto ampliado no fue concluyente. Compara el dibujo guardado con el guion antes de hacer cambios.",
+  "The text checks disagree. Compare the saved artwork with the script before making changes.": "Las comprobaciones del texto no coinciden. Compara el dibujo guardado con el guion antes de hacer cambios.",
+  "Close-up:": "Ampliada:",
+  "Both reads match": "Ambas lecturas coinciden",
+  "The reads differ": "Las lecturas difieren",
+  "Close-up read unclear": "Lectura ampliada poco clara"
 }

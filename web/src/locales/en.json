@@ -3384,5 +3384,14 @@
   "landing.footer.guide": "Novel to comic guide",
   "landing.footer.example": "Comic example",
   "landing.footer.about": "About",
-  "Please check the address, or return to Scenewright.": "Please check the address, or return to Scenewright."
+  "Please check the address, or return to Scenewright.": "Please check the address, or return to Scenewright.",
+  "CLOSE-UP READ": "CLOSE-UP READ",
+  "First read:": "First read:",
+  "Text check is uncertain": "Text check is uncertain",
+  "The close-up text check was inconclusive. Compare the saved artwork with the script before making changes.": "The close-up text check was inconclusive. Compare the saved artwork with the script before making changes.",
+  "The text checks disagree. Compare the saved artwork with the script before making changes.": "The text checks disagree. Compare the saved artwork with the script before making changes.",
+  "Close-up:": "Close-up:",
+  "Both reads match": "Both reads match",
+  "The reads differ": "The reads differ",
+  "Close-up read unclear": "Close-up read unclear"
 }

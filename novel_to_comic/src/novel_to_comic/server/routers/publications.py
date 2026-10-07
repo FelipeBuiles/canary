@@ -30,6 +30,11 @@ public_router = APIRouter()
 ops_router = APIRouter(dependencies=[Depends(require_ops_token)])
 
 
+# The curated showcase book linked from /examples/kaitlin-out-of-space
+# (KAITLIN_EXAMPLE_BOOK_ID in web/src/lib/publicPages.ts).
+KAITLIN_EXAMPLE_BOOK_ID = "df3a1b400a444815bddeca430360f0d9"
+
+
 def current(base: Path, book_id: str):
     if len(book_id) != 32 or any(c not in "0123456789abcdef" for c in book_id):
         raise HTTPException(404, "Book not available")
@@ -257,7 +262,7 @@ def reader_html(book_id: str, base: Path, index: Path):
     credit = record.get("source_credit")
     if credit:
         intro += f'<p>Source: <a href="{html.escape(credit["source_url"], quote=True)}">{html.escape(credit["title"])}</a> by {html.escape(credit["author"])}. License: <a href="{html.escape(credit["license_url"], quote=True)}">{html.escape(credit["license"])}</a>.</p>'
-    if book_id == "df3a1b400a444815bddeca430360f0d9":
+    if book_id == KAITLIN_EXAMPLE_BOOK_ID:
         intro += '<p><a href="/samples?story=kaitlin-out-of-space">Read the original Kaitlin Out of Space story and its CC0 source license</a> · <a href="/examples/kaitlin-out-of-space">Compare the annotated adaptation example</a></p>'
     intro += '<p>Generated art and lettering can need correction. Review the sequence at full size before adapting your own scene. <a href="/how-it-works">How it works</a> · <a href="/samples">Source stories</a> · <a href="/signup">Create your own comic</a></p>'
     schema = {"@context": "https://schema.org", "@type": "Book", "name": record["title"],
@@ -305,7 +310,7 @@ def public_document(index: Path, *, title: str, description: str, path: str,
         tags += f'<script id="public-schema" type="application/ld+json">{_public_json(schema)}</script>'
     document = document.replace("</head>", tags + "</head>")
     if intro:
-        document = re.sub(r'<div id=["\']root["\']></div>', lambda _: '<div id="root"><main class="mx-auto max-w-[1100px] space-y-6 px-5 py-12 font-body leading-7">' + intro + '</main></div>', document)
+        document = re.sub(r'<div id=["\']root["\']></div>', lambda _: '<div id="root"><main class="server-intro mx-auto max-w-[1100px] space-y-6 px-5 py-12 font-body leading-7">' + intro + '</main></div>', document)
     if bootstrap:
         document = document.replace('</body>', f'<script id="public-bootstrap" type="application/json">{_public_json(bootstrap)}</script></body>')
     return HTMLResponse(document, headers={"Cache-Control": "no-store", **({"X-Robots-Tag": "noindex, follow"} if noindex else {})})

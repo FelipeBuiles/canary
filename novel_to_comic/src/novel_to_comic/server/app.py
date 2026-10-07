@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.requests import HTTPConnection
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 from novel_to_comic.model_costs import DEFAULT_COST_MAP_PATH, refresh_litellm_cost_cache
@@ -49,6 +50,11 @@ from .metrics import metrics_response
 from .release import release_identity
 
 FONTS_DIR = Path(__file__).resolve().parents[1] / "fonts"
+
+
+# Mirrors web/src/lib/sessionHint.ts. A presentation hint only: it selects the
+# document for `/` and never authorizes anything.
+SESSION_HINT_COOKIE = "sw_signed_in"
 
 
 class SPAStaticFiles(StaticFiles):
@@ -88,8 +94,15 @@ class SPAStaticFiles(StaticFiles):
         if public_path in self.public_pages:
             if path.endswith("/") and public_path != "/":
                 return RedirectResponse(public_path, status_code=308)
-            response = await super().get_response(self.public_pages[public_path], scope)
+            # A signed-in browser's `/` is its Library: send the app shell so
+            # the public homepage never flashes before the account loads.
+            signed_in = public_path == "/" and HTTPConnection(scope).cookies.get(SESSION_HINT_COOKIE) == "1"
+            response = await super().get_response(
+                "index.html" if signed_in else self.public_pages[public_path], scope
+            )
             response.headers["Cache-Control"] = "no-cache"
+            if public_path == "/":
+                response.headers["Vary"] = "Cookie"
             return response
         document = path in {"", ".", "index.html"} or path.lower().endswith(".html")
         try:

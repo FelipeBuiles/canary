@@ -1,6 +1,9 @@
 import type { LanguageCode } from "../locales/languages";
 
-export const PUBLIC_ORIGIN = "https://scenewright.ink";
+/** Build-time public origin; mirrors the server's SCENEWRIGHT_PUBLIC_URL. */
+export const PUBLIC_ORIGIN = (import.meta.env.VITE_PUBLIC_URL as string | undefined)?.replace(/\/$/, "") || "https://scenewright.ink";
+/** The curated Kaitlin Out of Space showcase book used by the example page. */
+export const KAITLIN_EXAMPLE_BOOK_ID = "df3a1b400a444815bddeca430360f0d9";
 export const PUBLIC_IMAGE = "/marketing/scenewright-social.png";
 export interface PublicPageMetadata {
   title: string;
@@ -37,7 +40,7 @@ export function publicSchema(path: string) {
     name: page.title, ...(path.startsWith("/guides/") ? { headline: page.title, author: { "@id": organization["@id"] } } : {}),
     description: page.description, inLanguage: page.language, isPartOf: { "@id": `${PUBLIC_ORIGIN}/#website` } });
   if (path === "/examples/kaitlin-out-of-space") graph.push({ "@type": "CreativeWork", name: "Kaitlin Out of Space comic adaptation",
-    url: `${PUBLIC_ORIGIN}/read/df3a1b400a444815bddeca430360f0d9`, isBasedOn: { "@type": "CreativeWork", name: "Kaitlin Out of Space",
+    url: `${PUBLIC_ORIGIN}/read/${KAITLIN_EXAMPLE_BOOK_ID}`, isBasedOn: { "@type": "CreativeWork", name: "Kaitlin Out of Space",
       author: { "@type": "Person", name: "Krishan Coupland" }, url: "https://krishancoupland.co.uk/portfolio/kaitlin-out-of-space/", license: "https://creativecommons.org/publicdomain/zero/1.0/" } });
   return { "@context": "https://schema.org", "@graph": graph };
 }

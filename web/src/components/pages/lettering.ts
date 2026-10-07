@@ -26,6 +26,34 @@ export function readTextEvidence(issue: PageIssue, prefix: string): string[] | n
   }
 }
 
+export function cropCheckStatus(issue: PageIssue): "agrees" | "disagrees" | "inconclusive" | null {
+  const entry = issue.evidence.find((item) => item.startsWith("crop_check_status="));
+  const value = entry?.slice("crop_check_status=".length);
+  return value === "agrees" || value === "disagrees" || value === "inconclusive" ? value : null;
+}
+
+export type CropVerdict = "agrees" | "disagrees" | "inconclusive";
+export interface CropReading { first: string; closeUp: string; verdict: CropVerdict }
+
+/** Per-line close-up evidence; each line keeps its own verdict. */
+export function cropReadings(issue: PageIssue): CropReading[] {
+  const prefix = "crop_readings=";
+  const entry = issue.evidence.find((item) => item.startsWith(prefix));
+  if (!entry) return [];
+  try {
+    const parsed = JSON.parse(entry.slice(prefix.length)) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((item: unknown) => {
+      const row = item as { first?: unknown; close_up?: unknown; verdict?: unknown };
+      return typeof row.first === "string" && typeof row.close_up === "string"
+        && (row.verdict === "agrees" || row.verdict === "disagrees" || row.verdict === "inconclusive")
+        ? [{ first: row.first, closeUp: row.close_up, verdict: row.verdict }] : [];
+    });
+  } catch {
+    return [];
+  }
+}
+
 export interface SegmentDifference {
   type: "same" | "changed" | "missing" | "extra" | "moved";
   expected?: string;
@@ -246,6 +274,8 @@ const OCR_TITLES: Record<string, string> = {
 };
 
 export function ocrIssueTitle(issue: PageIssue): string {
+  const cropStatus = cropCheckStatus(issue);
+  if (cropStatus === "disagrees" || cropStatus === "inconclusive") return "Text check is uncertain";
   return OCR_TITLES[issue.issue_type] ?? issue.requested_correction;
 }
 

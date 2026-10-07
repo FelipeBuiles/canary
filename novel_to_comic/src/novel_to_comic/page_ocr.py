@@ -288,6 +288,19 @@ def _figures(
     return tuple(result)
 
 
+def _observation_id(index: int) -> str:
+    return f"ocr_{index:03d}"
+
+
+def tight_region_id(observation_id: str) -> str:
+    """The tight text box recorded for one observation.
+
+    ``detected_region_id`` may name the containing panel instead (proven
+    reading order); close-up checks need this tight box.
+    """
+    return observation_id.replace("ocr_", "region_", 1)
+
+
 def build_extraction(
     draft: _PageOCRDraft, subjects: frozenset[str] | None = None
 ) -> OCRExtraction:
@@ -315,16 +328,16 @@ def build_extraction(
     )
     observations = tuple(
         OCRTextObservation(
-            id=f"ocr_{index:03d}", text=item.text, role=item.role,
+            id=_observation_id(index), text=item.text, role=item.role,
             detected_region_id=(
                 f"panel_{assignments[index]:03d}" if proven and index in assignments
-                else f"region_{index:03d}"
+                else tight_region_id(_observation_id(index))
             ),
         )
         for index, item in indexed
     )
     regions = tuple(
-        ObservedRegion(id=f"region_{index:03d}", polygon=item.box.polygon())
+        ObservedRegion(id=tight_region_id(_observation_id(index)), polygon=item.box.polygon())
         for index, item in indexed
     ) + tuple(
         ObservedRegion(id=f"panel_{index:03d}", polygon=panel.polygon())

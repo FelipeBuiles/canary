@@ -1,6 +1,14 @@
 @import "tailwindcss";
 @import "./fonts.css";
 
+/* Server documents for /read, /samples and 404s carry a readable intro for
+   crawlers and no-script readers. With scripting, the app replaces it on
+   start; hiding it avoids a different page flashing first. Its eager images
+   still download, warming the reader's first page. */
+@media (scripting: enabled) {
+  #root > .server-intro { display: none; }
+}
+
 /* Generation previews. Each draft is laid down like a pass through the page
    press: a feathered edge sweeps down the card, carrying a halftone bar, while
    the draft settles from coarse to its own blur. Completed pixels then lose

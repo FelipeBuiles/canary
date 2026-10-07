@@ -143,3 +143,27 @@ def test_prerender_manifest_serves_complete_public_documents_and_revalidates(tmp
     unchanged = client.get("/pricing", headers={"If-None-Match": response.headers["etag"]})
     assert unchanged.status_code == 304
     assert unchanged.headers["cache-control"] == "no-cache"
+
+
+@pytest.fixture
+def public_static_client(tmp_path):
+    (tmp_path / "index.html").write_text('<html><div id="root"></div></html>')
+    (tmp_path / "public").mkdir()
+    (tmp_path / "public" / "home.html").write_text('<html><div id="root" data-prerendered="true">Home</div></html>')
+    (tmp_path / "public" / "pricing.html").write_text('<html><div id="root" data-prerendered="true">Pricing</div></html>')
+    (tmp_path / "public-pages.json").write_text('{"/": "public/home.html", "/pricing": "public/pricing.html"}')
+    return TestClient(Starlette(routes=[Mount("/", SPAStaticFiles(directory=tmp_path, html=True))]))
+
+
+def test_signed_in_browsers_get_the_app_shell_at_root(public_static_client):
+    anonymous = public_static_client.get("/")
+    assert "data-prerendered" in anonymous.text
+    assert anonymous.headers["vary"] == "Cookie"
+    public_static_client.cookies.set("sw_signed_in", "1")
+    signed_in = public_static_client.get("/")
+    assert signed_in.status_code == 200
+    assert "data-prerendered" not in signed_in.text
+    assert signed_in.headers["cache-control"] == "no-cache"
+    assert signed_in.headers["vary"] == "Cookie"
+    # Other public pages stay public documents for everyone.
+    assert "Pricing" in public_static_client.get("/pricing").text

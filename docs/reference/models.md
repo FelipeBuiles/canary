@@ -230,6 +230,42 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `themes` | `list[str]` | `[]` |
 | `motifs` | `list[str]` | `[]` |
 
+## CropOCRLine _(crop_ocr.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `text` | `str` | `Field(min_length=1)` |
+| `confidence` | `float` | `Field(ge=0, le=1, allow_inf_nan=False)` |
+| `box` | `tuple[int, int, int, int]` |  |
+
+## CropOCRRead _(crop_ocr.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `observation_id` | `str` |  |
+| `status` | `Literal['read', 'no_region', 'over_budget', 'unavailable']` |  |
+| `crop_sha256` | `str | None` | `None` |
+| `bounds` | `tuple[int, int, int, int] | None` | `None` |
+| `lines` | `tuple[CropOCRLine, ...]` | `()` |
+| `primary_text` | `str` |  |
+| `verdict` | `Literal['agrees', 'disagrees', 'inconclusive']` | `'inconclusive'` |
+
+## CropOCRReport _(crop_ocr.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `schema_version` | `Literal[2]` | `2` |
+| `page_number` | `int` | `Field(ge=1)` |
+| `render_revision` | `int` | `Field(ge=1)` |
+| `render_image_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `comic_page_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `input_sha256` | `str` | `Field(min_length=64, max_length=64)` |
+| `reader_fingerprint` | `str` |  |
+| `minimum_confidence` | `float` | `Field(ge=0, le=1)` |
+| `status` | `Literal['agrees', 'disagrees', 'inconclusive']` |  |
+| `complete` | `bool` | `True` |
+| `readings` | `tuple[CropOCRRead, ...]` | `()` |
+
 ## PageCapabilityProfile _(draw.py)_
 
 | Field | Type | Default |
@@ -456,6 +492,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `invariant_failures` | `tuple[InvariantFailure, ...]` | `()` |
 | `editorial_issues` | `tuple[EditorialIssue, ...]` | `()` |
 | `evidence` | `tuple[str, ...]` | `()` |
+| `crop_verification` | `CropOCRReport | None` | `None` |
 | `analysis_usage` | `UsageRecord | None` | `None` |
 
 ## AnnotationPoint _(draw.py)_

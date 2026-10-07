@@ -5,6 +5,7 @@ import { setTelemetryUser } from "../telemetry";
 import { recordAccountSeen } from "../api/events";
 import { clearAccountRequests } from "../lib/accountEpoch";
 import { replaceAccountQueryClient } from "../api/queryClient";
+import { setSessionHint } from "../lib/sessionHint";
 import { usePipelineStore } from "../store/pipeline";
 import { useStyleGenStore } from "../store/styleGen";
 import { useInsufficientCreditsStore } from "../store/insufficientCredits";
@@ -42,6 +43,7 @@ function receiveSession(session: Session | null) {
     // OAuth completes first-touch metadata before recording the account milestone.
     if (session && window.location.pathname !== "/auth/callback") void recordAccountSeen();
   }
+  setSessionHint(!!session);
   snapshot = { session, user: session?.user ?? null, loading: false };
   setTelemetryUser(snapshot.user?.id ?? null);
   listeners.forEach((listener) => listener());

@@ -2,6 +2,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { BrandIdentity } from "../components/BrandIdentity";
 import { SampleLibrary } from "../components/wizard/SampleLibrary";
 import { usePublicMetadata } from "../lib/publicMetadata";
+import { PUBLIC_ORIGIN } from "../lib/publicPages";
 import { useShortStories } from "../api/queries";
 import { useI18n } from "../i18n";
 
@@ -15,7 +16,7 @@ export function SampleLibraryPage() {
     story ? `/samples?story=${encodeURIComponent(story.code)}` : "/samples", undefined,
     { schema: story ? { "@context": "https://schema.org", "@type": "CreativeWork", name: story.title,
       author: { "@type": "Person", name: story.author }, description: story.description,
-      url: `https://scenewright.ink/samples?story=${encodeURIComponent(story.code)}`,
+      url: `${PUBLIC_ORIGIN}/samples?story=${encodeURIComponent(story.code)}`,
       ...(story.source_url ? { isBasedOn: story.source_url } : {}), ...(story.license_url ? { license: story.license_url } : {}) } : undefined });
   return (
     <div className="min-h-svh bg-pulp-paper text-ink-black">
