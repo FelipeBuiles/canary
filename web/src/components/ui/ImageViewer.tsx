@@ -316,8 +316,8 @@ export function ImageViewer({ images, index, onIndexChange, onClose }: {
           <ChromeButton label={t("Next image")} onClick={() => go(1)} className="absolute right-3 top-1/2 -translate-y-1/2 bg-ink-black/70 px-0">
             <ChevronRight size={18} aria-hidden="true" />
           </ChromeButton>
-          {[images[(index + 1) % images.length], images[(index - 1 + images.length) % images.length]].map((next) => (
-            <link key={next.src} rel="preload" as="image" href={next.src} />
+          {[...new Set([images[(index + 1) % images.length].src, images[(index - 1 + images.length) % images.length].src])].map((src) => (
+            <link key={src} rel="preload" as="image" href={src} />
           ))}
         </>}
 

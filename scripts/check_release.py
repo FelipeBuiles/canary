@@ -68,7 +68,7 @@ def audit(project):
                 "pip-audit==2.10.1",
                 "-r",
                 str(requirements),
-                "--no-deps",
+                "--require-hashes",
                 "--disable-pip",
             ]
         )
@@ -92,6 +92,20 @@ def backend(args):
     )
 
 
+def require_web_build():
+    dist = ROOT / "web/dist"
+    required = [
+        "index.html", "public-pages.json", "public/home.html", "public/es.html",
+        "public/fr.html", "public/pricing.html", "public/legal-terms.html",
+    ]
+    missing = [name for name in required if not (dist / name).is_file()]
+    if missing:
+        raise RuntimeError(
+            "BLOCKED: built web contracts require npm run build in web; missing "
+            + ", ".join(missing)
+        )
+
+
 def component(name):
     if name == "audit-app":
         audit("novel_to_comic")
@@ -107,11 +121,18 @@ def component(name):
             ["ls", "--all"],
             ["run", "audit:production"],
             ["audit", "--audit-level=high"],
-            ["test"],
             ["run", "lint"],
             ["run", "build"],
         ]:
             run([npm, *args], ROOT / "web", quiet=args in (["ls", "--all"], ["run", "build"]))
+        component("web-contracts")
+        run([npm, "test", *(["--", "--silent=false"] if VERBOSE else [])], ROOT / "web")
+    elif name == "web-contracts":
+        require_web_build()
+        run([
+            executable("uv"), "run", "--locked", "--extra", "web", "--extra", "dev",
+            "python", "-m", "pytest", "tests/test_public_site.py", "tests/test_spa_static.py", "-q",
+        ], APP)
     elif name == "root":
         for args in [["ls", "--all"], ["audit", "--audit-level=high"]]:
             run([executable("npm"), *args], quiet=args == ["ls", "--all"])
@@ -122,6 +143,7 @@ def component(name):
         for script in [
             "litellm/patch_http_errors.py",
             "litellm/patch_anthropic_refusals.py",
+            "litellm/patch_model_response.py",
         ]:
             run([python, script])
         run([python, "-m", "pytest", "litellm/tests", "-q"])
@@ -224,6 +246,7 @@ def component(name):
                 [
                     "test",
                     "--",
+                    *(["--silent=false"] if VERBOSE else []),
                     "src/__tests__/telemetry.test.ts",
                     "src/__tests__/authContext.test.ts",
                     "src/__tests__/authForms.test.tsx",
@@ -262,7 +285,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--verbose", action="store_true",
-        help="Stream successful npm dependency checks and frontend build output too.",
+        help="Stream successful npm dependency/build output and passing frontend test diagnostics too.",
     )
     parser.add_argument(
         "component",
@@ -276,6 +299,7 @@ if __name__ == "__main__":
             "audit-gateway",
             "backend",
             "web",
+            "web-contracts",
             "root",
             "gateway",
             "gateway-tests",

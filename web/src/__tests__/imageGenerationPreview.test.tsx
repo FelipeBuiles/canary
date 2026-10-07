@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImageGenerationPreview } from "../components/composites/ImageGenerationPreview";
 import { usePipelineStore } from "../store/pipeline";
@@ -28,7 +28,10 @@ const card = (active = true, finalSrc: string | null = "/final.png") => <ImageGe
   <span>Saved artwork or failure</span>
 </ImageGenerationPreview>;
 
-afterEach(() => usePipelineStore.setState({ projectId: null, imagePreviews: {} }));
+afterEach(() => {
+  cleanup();
+  usePipelineStore.setState({ projectId: null, imagePreviews: {} });
+});
 
 describe("ImageGenerationPreview", () => {
   it("keeps decoded pixels visible until each sharper preview and the final image load", async () => {
@@ -154,7 +157,7 @@ describe("ImageGenerationPreview", () => {
     const saved = screen.getByAltText("saved") as HTMLImageElement;
     Object.defineProperty(saved, "complete", { value: true });
     Object.defineProperty(saved, "naturalWidth", { value: 800 });
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); });
     expect(view.container.querySelector(".image-preview-release")).toBeNull();
     saved.style.opacity = "1";
     await waitFor(() => expect(view.container.querySelector(".image-preview-release")).toBeTruthy());

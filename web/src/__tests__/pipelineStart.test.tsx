@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError, apiFetch } from "../api/client";
 import type * as ApiClient from "../api/client";
@@ -34,7 +34,10 @@ beforeEach(() => {
     throw new Error(`Unexpected request: ${path}`);
   });
 });
-afterEach(() => usePipelineStore.setState(usePipelineStore.getInitialState()));
+afterEach(() => {
+  cleanup();
+  usePipelineStore.setState(usePipelineStore.getInitialState());
+});
 
 function StartControl() {
   const { handleRun, isPending } = useRunAction();

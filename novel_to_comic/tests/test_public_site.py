@@ -12,7 +12,10 @@ from novel_to_comic.server.app import SPAStaticFiles
 from novel_to_comic.server.routers.billing import CREDIT_PACKAGES
 
 DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
-pytestmark = pytest.mark.skipif(not (DIST / "public-pages.json").exists(), reason="Build the web frontend first")
+pytestmark = pytest.mark.skipif(
+    not DIST.is_dir() or not (DIST / "public-pages.json").exists(),
+    reason="Build the web frontend first (source-only backend checks hide it)",
+)
 
 
 @pytest.fixture

@@ -75,7 +75,7 @@ jobs:
           --report-path novel_to_comic/reports/pytest.xml
 
   web:
-    name: Web (vitest + build)
+    name: Web (build + contracts + vitest)
     runs-on:
       size: 8x32
       image: 6ntrqswcbt.registry.depot.dev/canary-ci:py312-node24.21-pw1.63-v1
@@ -103,15 +103,27 @@ jobs:
         run: |
           npm run audit:production
           npm audit --audit-level=high
-      - name: Vitest
-        working-directory: web
-        run: npm run test
       - name: ESLint
         working-directory: web
         run: npm run lint
       - name: Build
         working-directory: web
         run: npm run build
+      - name: Set up Python for built-page contracts
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          version: "0.12.17"
+          enable-cache: true
+          cache-dependency-glob: novel_to_comic/uv.lock
+      - name: Check built public pages and application mounts
+        run: python scripts/check_release.py web-contracts
+      - name: Vitest including production hydration
+        working-directory: web
+        run: npm run test
 
   docker:
     # Main releases build the production image instead of a second smoke image.
@@ -166,6 +178,7 @@ jobs:
         run: |
           litellm/.venv/bin/python litellm/patch_http_errors.py
           litellm/.venv/bin/python litellm/patch_anthropic_refusals.py
+          litellm/.venv/bin/python litellm/patch_model_response.py
           litellm/.venv/bin/python -m pytest litellm/tests -q
       - uses: depot/setup-action@v1
       - name: Build the gateway image

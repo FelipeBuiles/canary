@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../i18n";
@@ -38,6 +38,7 @@ function renderHomePage() {
 
 describe("Scenewright homepage", () => {
   afterEach(() => {
+    cleanup();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -198,8 +199,10 @@ describe("Scenewright homepage", () => {
     const { container } = renderHomePage();
     const video = container.querySelector("video")!;
 
-    fireEvent.click(screen.getByRole("button", { name: "Play" }));
-    await play.mock.results[0].value.catch(() => undefined);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Play" }));
+      await play.mock.results[0].value.catch(() => undefined);
+    });
     expect(screen.getByRole("button", { name: "Play" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Play" }));
     expect(play).toHaveBeenCalledTimes(2);

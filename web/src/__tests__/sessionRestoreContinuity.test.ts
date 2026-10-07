@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// Cache ownership tests reload modules without creating another auth client.
+vi.mock("../lib/supabase", () => ({ supabase: { auth: { getSession: vi.fn() } } }));
+
 afterEach(() => {
   vi.resetModules();
   document.cookie = "sw_signed_in=; Path=/; Max-Age=0";

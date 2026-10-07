@@ -18,6 +18,7 @@ BUILD_INPUTS = (
     "litellm/uv.lock",
     "litellm/patch_http_errors.py",
     "litellm/patch_anthropic_refusals.py",
+    "litellm/patch_model_response.py",
     "scripts/gateway_state.py",
 )
 RUNTIME_INPUTS = (

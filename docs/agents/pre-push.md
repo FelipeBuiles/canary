@@ -11,14 +11,18 @@ the Node version in `.nvmrc` from an existing nvm installation when needed, supp
 non-secret Supabase CI placeholders, and disables source-map uploads for this
 process. It runs the full provider-free backend, frontend, and gateway unit
 suites, dependency compatibility/audits, docs reliability, Ruff, frontend lint,
-and the production frontend build. A failed check exits nonzero and stops the
+and the production frontend build. The web component builds before running
+Vitest, so production hydration and session-restore tests execute on a fresh
+checkout. It also runs the backend public-page and SPA mount contracts against
+that build. A failed check exits nonzero and stops the
 gate. It does not start development servers, build Docker images, or run the
 separate real PostgreSQL contracts.
 
 Successful npm dependency-tree checks and web builds show only check/pass status.
 Their complete stdout and stderr are printed if they fail. Use
 `./scripts/check_all.sh --verbose` to stream that output on successful runs too;
-the same flag is supported by `scripts/check_release.py` components.
+it also exposes passing frontend test console diagnostics. The same flag is
+supported by `scripts/check_release.py` components.
 
 These root package commands are also available:
 
@@ -61,6 +65,10 @@ probe. Fixture builds remain visible. No build files are moved or deleted. This
 catches both working-directory dependencies and tests accidentally satisfied by
 a previous frontend build. CI uses that same runner for backend/security tests,
 and uses the same dependency-audit and disposable-database components as the local command.
+The web CI job runs `python3 scripts/check_release.py web-contracts` after its
+build to cover the real HTML and application mounts separately. That component
+rejects a missing or incomplete build before invoking pytest; it does not use
+the source-only runner.
 
 `check:release` runs the full local test/build coverage plus gateway PostgreSQL-backed
 startup smoke checks, the production Docker build, and real database authorization,

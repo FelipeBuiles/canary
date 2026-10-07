@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useLocation } from "react-router-dom";
@@ -51,7 +51,7 @@ beforeEach(() => {
     throw new Error(`Unexpected fixture API: ${path}`);
   });
 });
-afterEach(() => { usePipelineStore.setState(usePipelineStore.getInitialState()); localStorage.clear(); });
+afterEach(() => { cleanup(); usePipelineStore.setState(usePipelineStore.getInitialState()); localStorage.clear(); });
 
 describe("book strip", () => {
   it("reads each part's progress from its own stages", () => {
