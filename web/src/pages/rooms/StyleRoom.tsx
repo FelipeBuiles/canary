@@ -42,6 +42,7 @@ import { usePipelineStore } from "../../store/pipeline";
 import { isAuthorDirection, styleName, type StyleSuggestion } from "../../api/styles";
 import type { CostEstimate, StoryBible } from "../../types/api";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
+import { isNetworkError } from "../../api/client";
 import { seriesPath, splitProjectKey } from "../../api/projectScope";
 
 function buildFallbackStyleSamplePrompt(suggestion: StyleSuggestion, storyBible: StoryBible | undefined): string {
@@ -164,6 +165,9 @@ export function StyleRoom() {
   const { data: sampleEstimate } = useStyleSampleEstimate(id, !!pendingProofs);
 
   const estimateError = suggestEstimateError ?? directionEstimateError;
+  const estimateMessage = isNetworkError(estimateError)
+    ? t("The style room could not reach Canary. It tries again automatically. Your existing work is unchanged.")
+    : estimateError?.message;
   const estimatesMissing = !suggestEstimate || !directionEstimate;
   const retryEstimates = () => {
     void refetchSuggestEstimate();
@@ -560,7 +564,7 @@ export function StyleRoom() {
             automaticDisabled={batchInFlight || proofsInFlight}
             disabled={estimatesMissing || !!estimateError}
             onRetry={estimateError ? retryEstimates : undefined}
-            error={suggestionError ?? estimateError?.message}
+            error={suggestionError ?? estimateMessage}
             onAutomatic={() => setShowSuggestConfirm(true)}
             onCustom={setPendingCustomInput}
           />
@@ -592,7 +596,7 @@ export function StyleRoom() {
                 automaticDisabled={batchInFlight || proofsInFlight}
                 disabled={estimatesMissing || !!estimateError}
                 onRetry={estimateError ? retryEstimates : undefined}
-                error={suggestionError ?? estimateError?.message}
+                error={suggestionError ?? estimateMessage}
                 onAutomatic={() => setShowSuggestConfirm(true)}
                 onCustom={setPendingCustomInput}
               />

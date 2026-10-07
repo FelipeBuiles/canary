@@ -166,6 +166,11 @@ export function StyleProofCard({
                   <RotateCcw size={14} aria-hidden="true" />{t("TRY SAMPLE AGAIN")}
                 </Button>
               )}
+              {suggestion.has_sample && (
+                <Button variant="outline" size="xs" onClick={() => { setImgFailed(false); setTimestamp(Date.now()); }}>
+                  <RotateCcw size={14} aria-hidden="true" />{t("RELOAD PROOF")}
+                </Button>
+              )}
             </div>
           ) : (
             <Loupe>
