@@ -221,6 +221,8 @@ export interface ProjectStatus {
   misc_cost_credits: number;
   total_estimated_cost_credits: number;
   is_running: boolean;
+  part_busy: boolean;
+  series_busy: boolean;
   has_cover: boolean;
   style_selected: boolean;
   is_public: boolean;

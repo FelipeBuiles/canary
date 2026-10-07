@@ -1,4 +1,5 @@
 """Provider-free terminal delivery, restart and privacy regression tests."""
+from novel_to_comic.server import page_operations
 from types import SimpleNamespace
 from unittest.mock import patch
 import json
@@ -48,7 +49,6 @@ def test_unobserved_cost_is_unknown_not_zero():
 
 
 def test_draw_terminal_follows_all_artifacts_and_is_idempotent(tmp_path, monkeypatch):
-    from novel_to_comic.server.routers import pages
     from novel_to_comic.state import create_initial_state, save_state, StageStatus
     state = create_initial_state("fixture", "fixture.txt")
     draw = state.stages["draw"]
@@ -58,13 +58,13 @@ def test_draw_terminal_follows_all_artifacts_and_is_idempotent(tmp_path, monkeyp
     revisions = {1: (1,), 2: ()}
     target = SimpleNamespace(read_plan=lambda: SimpleNamespace(pages=[SimpleNamespace(page_number=1), SimpleNamespace(page_number=2)]),
                              provenance_revisions=lambda number: revisions[number])
-    monkeypatch.setattr(pages, "TargetArtifacts", lambda directory: target)
+    monkeypatch.setattr(page_operations, "TargetArtifacts", lambda directory: target)
     app = SimpleNamespace(state=SimpleNamespace(admission=Admission(tmp_path)))
-    pages._sync_draw_progress(tmp_path, app)
+    page_operations._sync_draw_progress(tmp_path, app)
     assert lifecycle_events.flush(app) == 0
     revisions[2] = (1,)
-    pages._sync_draw_progress(tmp_path, app)
-    pages._sync_draw_progress(tmp_path, app)
+    page_operations._sync_draw_progress(tmp_path, app)
+    page_operations._sync_draw_progress(tmp_path, app)
     with patch.object(lifecycle_events, "record_product_event") as record:
         assert lifecycle_events.flush(app) == 1
     assert record.call_args.kwargs["event_name"] == "stage_succeeded"
@@ -73,19 +73,17 @@ def test_draw_terminal_follows_all_artifacts_and_is_idempotent(tmp_path, monkeyp
 
 
 def test_empty_plan_does_not_prove_draw_success(tmp_path, monkeypatch):
-    from novel_to_comic.server.routers import pages
     target = SimpleNamespace(read_plan=lambda: SimpleNamespace(pages=[]))
-    monkeypatch.setattr(pages, "TargetArtifacts", lambda directory: target)
+    monkeypatch.setattr(page_operations, "TargetArtifacts", lambda directory: target)
     from novel_to_comic.state import create_initial_state, save_state
     save_state(create_initial_state("fixture", "fixture.txt"), tmp_path)
     with patch.object(lifecycle_events, "capture") as capture:
-        pages._sync_draw_progress(tmp_path)
+        page_operations._sync_draw_progress(tmp_path)
     capture.assert_not_called()
 
 
 @pytest.mark.parametrize("status,phase,outcome", [("failed", None, "failed"), ("failed", "outcome_unknown", "outcome_unknown"), ("cancelled", None, "cancelled"), ("complete", None, "awaiting_review")])
 def test_draw_rerun_waits_for_jobs_not_existing_artwork(tmp_path, monkeypatch, status, phase, outcome):
-    from novel_to_comic.server.routers import pages
     from novel_to_comic.state import create_initial_state, save_state, StageStatus
     state = create_initial_state("fixture", "fixture.txt")
     draw = state.stages["draw"]
@@ -95,17 +93,17 @@ def test_draw_rerun_waits_for_jobs_not_existing_artwork(tmp_path, monkeypatch, s
     draw.telemetry_draw_rerun, draw.telemetry_draw_jobs = True, ["job"]
     save_state(state, tmp_path)
     target = SimpleNamespace(read_plan=lambda: SimpleNamespace(pages=[SimpleNamespace(page_number=1)]), provenance_revisions=lambda number: (1,))
-    monkeypatch.setattr(pages, "TargetArtifacts", lambda directory: target)
+    monkeypatch.setattr(page_operations, "TargetArtifacts", lambda directory: target)
     job = SimpleNamespace(status="running", phase=None)
     app = SimpleNamespace(state=SimpleNamespace(admission=Admission(tmp_path), generation_jobs={"job": job}))
-    pages._sync_draw_progress(tmp_path, app)
+    page_operations._sync_draw_progress(tmp_path, app)
     assert lifecycle_events.flush(app) == 0
     job.status, job.phase = status, phase
-    pages._sync_draw_progress(tmp_path, app)
+    page_operations._sync_draw_progress(tmp_path, app)
     with patch.object(lifecycle_events, "record_product_event") as record:
         assert lifecycle_events.flush(app) == 1
     assert record.call_args.kwargs["properties"]["outcome"] == outcome
-    pages._sync_draw_progress(tmp_path, app)
+    page_operations._sync_draw_progress(tmp_path, app)
     assert lifecycle_events.flush(app) == 0
 
 
@@ -113,6 +111,32 @@ def test_stage_has_one_terminal_identity_even_after_crash_reconciliation(tmp_pat
     app = SimpleNamespace(state=SimpleNamespace(admission=Admission(tmp_path)))
     lifecycle_events.capture(app, "stage_succeeded", "attempt", user_id="synthetic", properties={"stage": "extract", "outcome": "succeeded"})
     lifecycle_events.capture(app, "stage_failed", "attempt", user_id="synthetic", properties={"stage": "extract", "outcome": "outcome_unknown"})
+    with patch.object(lifecycle_events, "record_product_event") as record:
+        assert lifecycle_events.flush(app) == 1
+    assert record.call_args.kwargs["event_name"] == "stage_succeeded"
+
+
+def test_draw_cohort_reads_terminal_jobs_beyond_in_memory_history(tmp_path, monkeypatch):
+    from novel_to_comic.state import create_initial_state, load_state, save_state, StageStatus
+    state = create_initial_state("book", "source.txt")
+    draw = state.stages["draw"]
+    draw.status = StageStatus.AWAITING_REVIEW
+    draw.items_done = 1
+    draw.attempt_id = "large-draw"
+    draw.telemetry_user_id, draw.telemetry_project_id = "owner", "book"
+    draw.telemetry_draw_rerun = True
+    draw.telemetry_draw_jobs = [f"draw-{n}" for n in range(450)]
+    save_state(state, tmp_path)
+    app = SimpleNamespace(state=SimpleNamespace(admission=Admission(tmp_path), generation_jobs={}))
+    with app.state.admission.journal() as db:
+        for identity in draw.telemetry_draw_jobs:
+            db.execute("INSERT INTO jobs VALUES(?,?,?)", (identity, "owner:book", json.dumps({
+                "id": identity, "status": "complete", "phase": "complete"})))
+    target = SimpleNamespace(read_plan=lambda: SimpleNamespace(pages=[SimpleNamespace(page_number=1)]),
+                             provenance_revisions=lambda number: (1,))
+    monkeypatch.setattr(page_operations, "TargetArtifacts", lambda directory: target)
+    page_operations._sync_draw_progress(tmp_path, app)
+    assert load_state(tmp_path).stages["draw"].telemetry_terminal_outcome == "awaiting_review"
     with patch.object(lifecycle_events, "record_product_event") as record:
         assert lifecycle_events.flush(app) == 1
     assert record.call_args.kwargs["event_name"] == "stage_succeeded"

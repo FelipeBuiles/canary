@@ -1,5 +1,6 @@
 """Config view and edit."""
 
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from novel_to_comic.config import LANGUAGE_NAMES, image_model_aliases, save_config
@@ -47,7 +48,7 @@ def get_config(project=Depends(get_project)):
     return data
 
 
-@router.patch("/")
+@router.patch("/", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def update_config(body: dict, request: Request, project=Depends(get_project), user_id: str = Depends(get_current_user)):
     project_dir, config, state = project
     if "lettering_mode" in body and body["lettering_mode"] != config.lettering_mode:

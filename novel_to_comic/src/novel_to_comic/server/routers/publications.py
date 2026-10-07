@@ -1,5 +1,6 @@
 """Owner publishing controls and allowlisted anonymous book reads."""
 
+
 from pathlib import Path
 import os
 import html
@@ -23,6 +24,7 @@ from .. import showcase
 from ..publication_bookend import bookend_image
 
 router = APIRouter()
+owner_router = APIRouter()
 public_router = APIRouter()
 ops_router = APIRouter(dependencies=[Depends(require_ops_token)])
 
@@ -48,21 +50,17 @@ def page_directory(base: Path, book_id: str, version: str) -> Path:
 
 
 @router.get("/publication")
+@owner_router.get("/publication")
 def owned(
     project_id: str,
     project=Depends(get_project_dir),
     user: str = Depends(get_current_user),
     base: Path = Depends(get_projects_dir),
 ):
-    owner = store.read_json(store.owner_path(base, user, project_id))
-    return (
-        store.read_json(store.root(base) / owner["id"] / "current.json")
-        if owner
-        else None
-    )
+    return store.owned_record(base, user, project_id)
 
 
-@router.post("/publication")
+@router.post("/publication", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 @limiter.limit(export_limit)
 def publish(
     request: Request,
@@ -74,7 +72,7 @@ def publish(
 ):
     directory, _config, state = project
     try:
-        return store.publish(
+        result = store.publish(
             base,
             directory,
             user,
@@ -82,11 +80,15 @@ def publish(
             body,
             StageRuntime("finish", state, directory),
         )
+        return result | {key: value for key, value in store.owned_record(base, user, project_id).items() if key.startswith("source_part_")}
+    except store.PublicationReplacementRequired as exc:
+        raise HTTPException(409, {"code": "publication_replacement_required", "message": str(exc), "admitted": False}) from exc
     except (ValueError, ArtifactMissing, ArtifactInvalid) as exc:
         raise HTTPException(422, str(exc)) from exc
 
 
-@router.delete("/publication")
+@router.delete("/publication", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
+@owner_router.delete("/publication", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def unpublish(
     project_id: str,
     project=Depends(get_project_dir),

@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
+
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse, RedirectResponse
 
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.stages import REGISTRY
-from novel_to_comic.storage import r2_configured, upload_export
-from novel_to_comic.models.finish import FINISH_PREFLIGHT_VALIDATOR_VERSION
-from novel_to_comic.page_finishing import package_is_current
+from novel_to_comic.page_finishing import current_preflight, open_verified_package
 from novel_to_comic.target_artifacts import (
     ArtifactInvalid,
     ArtifactMissing,
@@ -19,6 +17,7 @@ from novel_to_comic.target_artifacts import (
 )
 
 from ..auth import get_current_user
+from ..export_stream import download_response
 from ..deps import get_project
 from ..product_events import capture_server_event
 from ..ratelimit import export_limit, limiter
@@ -46,17 +45,13 @@ def get_preflight(
     project_dir, _config, _state = project
     try:
         target = TargetArtifacts(project_dir)
-        preflight = target.read_preflight()
-    except (ArtifactMissing, ArtifactInvalid) as exc:
+        preflight = current_preflight(target)
+    except (ArtifactMissing, ArtifactInvalid, ValueError) as exc:
         raise HTTPException(404, "No current Finish preflight is available") from exc
-    if preflight.validator_version != FINISH_PREFLIGHT_VALIDATOR_VERSION:
-        raise HTTPException(404, "Finish preflight must be refreshed")
-    if any(not package_is_current(target, package) for package in preflight.packages):
-        raise HTTPException(404, "An export package is unavailable; refresh Finish preflight")
     return preflight
 
 
-@router.post("/preflight")
+@router.post("/preflight", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False, 'replay': False}})
 @limiter.limit(export_limit)
 async def run_preflight(
     request: Request,
@@ -67,7 +62,7 @@ async def run_preflight(
     """Run Finish checks without creating an export package."""
 
     project_dir, config, state = project
-    lock = _get_export_lock(request.app, project_dir.name)
+    lock = _get_export_lock(request.app, str(project_dir.resolve()))
     if lock.locked():
         raise HTTPException(
             409, "An export or preflight for this project is already running"
@@ -86,7 +81,7 @@ async def run_preflight(
     return {"status": "done", "preflight": result.preflight}
 
 
-@router.post("/")
+@router.post("/", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 @limiter.limit(export_limit)
 async def trigger_export(
     request: Request,
@@ -102,23 +97,19 @@ async def trigger_export(
         raise HTTPException(400, "Format must be 'pdf' or 'cbz'")
     target = TargetArtifacts(project_dir)
     export_path = target.export_path(fmt)
-    if export_path.exists() and not force:
-        data = export_path.read_bytes()
-        capture_server_event("export_package_ready", user_id=user_id, project_id=project_id, properties={"format": fmt, "cached": True})
-        return {
-            "status": "exists",
-            "path": export_path.name,
-            "url": (
-                upload_export(user_id, project_dir.name, export_path.name, data)
-                if r2_configured()
-                else None
-            ),
-        }
-
-    lock = _get_export_lock(request.app, project_dir.name)
+    lock = _get_export_lock(request.app, str(project_dir.resolve()))
     if lock.locked():
         raise HTTPException(409, "An export for this project is already running")
     async with lock:
+        if export_path.exists() and not force:
+            try:
+                stream, _package, _preflight = await asyncio.to_thread(open_verified_package, target, fmt)
+                stream.close()
+            except (ArtifactMissing, ArtifactInvalid, ValueError, OSError):
+                pass  # Rebuild stale derived output through provider-free Finish.
+            else:
+                capture_server_event("export_package_ready", user_id=user_id, project_id=project_id, properties={"format": fmt, "cached": True})
+                return {"status": "exists", "path": export_path.name, "url": None}
         try:
             result = await REGISTRY["finish"].run(
                 config,
@@ -137,14 +128,6 @@ async def trigger_export(
                 },
             )
 
-    url = None
-    if r2_configured():
-        url = upload_export(
-            user_id,
-            project_dir.name,
-            export_path.name,
-            export_path.read_bytes(),
-        )
     capture_server_event(
         "export_package_ready",
         user_id=user_id,
@@ -155,7 +138,7 @@ async def trigger_export(
     return {
         "status": "done",
         "path": export_path.name,
-        "url": url,
+        "url": None,
         "preflight": result.preflight,
     }
 
@@ -170,20 +153,10 @@ def download_export(
     project_dir, _config, _state = project
     if fmt not in {"pdf", "cbz"}:
         raise HTTPException(400, "Format must be 'pdf' or 'cbz'")
-    export_path = TargetArtifacts(project_dir).export_path(fmt)
-    if not export_path.exists():
-        raise HTTPException(404, f"No {fmt} export found. Run Finish first.")
+    try:
+        stream, package, _preflight = open_verified_package(TargetArtifacts(project_dir), fmt)
+    except (ArtifactMissing, ArtifactInvalid, ValueError, OSError) as exc:
+        raise HTTPException(404, str(exc)) from exc
     capture_server_event("export_download_requested", user_id=user_id, project_id=project_id, properties={"format": fmt})
-    if r2_configured():
-        return RedirectResponse(upload_export(
-            user_id,
-            project_dir.name,
-            export_path.name,
-            export_path.read_bytes(),
-        ))
     media_type = "application/pdf" if fmt == "pdf" else "application/zip"
-    return FileResponse(
-        export_path,
-        media_type=media_type,
-        filename=export_path.name,
-    )
+    return download_response(stream, size=package.byte_size, name=f"comic.{fmt}", media_type=media_type)

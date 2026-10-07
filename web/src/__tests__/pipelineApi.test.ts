@@ -31,7 +31,7 @@ describe("generation API", () => {
 
     expect(mockedApiFetch).toHaveBeenCalledWith(
       "/projects/proj%20one/locations/great%20hall/states/after%20fire/regenerate",
-      { method: "POST" },
+      { method: "POST", paidAction: true },
     );
   });
 
@@ -67,11 +67,11 @@ describe("generation API", () => {
     await setActiveStyle("proj", "style-1");
 
     expect(mockedApiFetch).toHaveBeenNthCalledWith(1, "/projects/proj/styles/suggest", {
-      method: "POST",
+      paidAction: true, method: "POST",
       body: JSON.stringify({ direction_id: "direction-1" }),
     });
     expect(mockedApiFetch).toHaveBeenNthCalledWith(2, "/projects/proj/styles/generate-samples", {
-      method: "POST",
+      paidAction: true, method: "POST",
       body: JSON.stringify({ ids: ["style-1"] }),
     });
     expect(mockedApiFetch).toHaveBeenNthCalledWith(3, "/projects/proj/styles/active", {
@@ -84,7 +84,7 @@ describe("generation API", () => {
     await generateStyleValidation("proj", "style-1");
 
     expect(mockedApiFetch).toHaveBeenCalledWith("/projects/proj/styles/validation", {
-      method: "POST",
+      paidAction: true, method: "POST",
       body: JSON.stringify({ id: "style-1" }),
     });
   });

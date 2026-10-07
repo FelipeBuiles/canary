@@ -1598,6 +1598,14 @@ download URL is not readiness evidence. Package reuse also requires matching
 edition, production settings, canonical page, render, lettering, locale, style,
 and compositor identities.
 
+Cached export triggers and authenticated PDF/CBZ downloads use the same
+verification boundary. The download streams its verified open file descriptor
+and closes it on completion/cancellation, with `private, no-store` caching.
+Combined exports verify a sidecar binding the selected parts' current Finish
+inputs to the output checksum. A stale, orphaned or damaged file requires a
+refresh/rebuild. Artifact transactions lock the owning series, including when
+the caller addresses a part workspace.
+
 `POST /export/preflight` retries provider-free checks without creating packages,
 retaining valid packages when their inputs still match. Explicit export/rebuild
 uses `/export/?format=pdf|cbz` (`force=true` for rebuild), reruns Finish, and

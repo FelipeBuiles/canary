@@ -53,6 +53,34 @@ def test_valid_signed_bearer_and_native_cookie_reads(signing):
         assert "Secure" in response.headers["set-cookie"]
 
 
+def test_native_cookie_expires_with_the_access_token(signing):
+    key, claims = signing
+    claims["exp"] = int(time.time()) + 60
+    _, response = _authenticate(jwt.encode(claims, key, algorithm="ES256"))
+    from http.cookies import SimpleCookie
+    cookies = SimpleCookie(response.headers["set-cookie"])
+    assert 0 < int(cookies[auth.SESSION_COOKIE_NAME]["max-age"]) <= 60
+
+
+def test_logout_clears_cookie_without_requiring_a_live_token(signing):
+    from fastapi import Depends, FastAPI
+    from fastapi.testclient import TestClient
+    key, claims = signing
+    app = FastAPI()
+    app.include_router(auth.router, prefix="/api/auth")
+
+    @app.get("/private")
+    def private(user=Depends(auth.get_current_user)):
+        return {"user": user}
+
+    with TestClient(app, base_url="https://testserver") as client:
+        assert client.get("/private", headers={"Authorization": f"Bearer {jwt.encode(claims, key, algorithm='ES256')}"}).status_code == 200
+        assert client.get("/private").status_code == 200
+        assert client.post("/api/auth/logout", headers={"Authorization": "Bearer expired"}).status_code == 204
+        assert client.get("/private").status_code == 401
+        assert client.post("/api/auth/logout").status_code == 204
+
+
 @pytest.mark.parametrize("claim", ["exp", "iss", "sub"])
 def test_signed_token_missing_required_claim_rejected(signing, claim):
     key, claims = signing

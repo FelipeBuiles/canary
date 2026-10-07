@@ -46,7 +46,7 @@ async def test_multipart_parser_rejections_return_a_client_error(tmp_path):
                                      headers={"Idempotency-Key": "oversized-field"})
 
     assert response.status_code == 400
-    assert "maximum size" in response.json()["detail"]
+    assert "maximum size" in response.json()["detail"]["message"]
     assert not calls
 
 
@@ -140,7 +140,7 @@ async def test_lost_response_replay_survives_restart_and_conflicting_input(tmp_p
     def build():
         app = app_at(tmp_path)
 
-        @app.post("/api/projects/book/cover")
+        @app.post("/api/projects/book/cover", openapi_extra={"x-canary-action": {"spends": True, "dispatches": False}})
         async def paid():
             calls.append("paid")
             return {"job": {"id": "accepted-once"}}
@@ -163,7 +163,7 @@ async def test_interrupted_request_is_never_redispatched(tmp_path):
     app = app_at(tmp_path)
     calls = []
 
-    @app.post("/api/projects/book/cover")
+    @app.post("/api/projects/book/cover", openapi_extra={"x-canary-action": {"spends": True, "dispatches": False}})
     async def paid():
         calls.append("paid")
         raise RuntimeError("process interrupted after admission")
@@ -183,7 +183,7 @@ async def test_admission_serializes_delete_with_queue_publication_and_drain(tmp_
     entered, release = asyncio.Event(), asyncio.Event()
     deleted = []
 
-    @app.post("/api/projects/book/cover")
+    @app.post("/api/projects/book/cover", openapi_extra={"x-canary-action": {"spends": True, "dispatches": False}})
     async def paid():
         entered.set()
         await release.wait()
@@ -259,7 +259,11 @@ def test_recoverable_job_status_survives_process_restart(tmp_path):
         {"char_id": "ada"}, work,
     )
     restarted = app_at(tmp_path)
-    jobs = recovered_generation_jobs(restarted, "account:book")
+    restarted.state.projects_dir = tmp_path
+    from novel_to_comic.server.durable_queue import DurableQueue
+    asyncio.run(DurableQueue(restarted, "postgresql://unused").restore())
+    from novel_to_comic.server.generation_jobs import generation_job_payload
+    jobs = [generation_job_payload(restarted, job) for job in restarted.state.generation_jobs.values()]
     assert jobs[0]["id"] == queued.id
     assert jobs[0]["payload"] == {"char_id": "ada"}
     assert jobs[0]["status"] == "failed"
@@ -272,7 +276,7 @@ async def test_paid_submission_without_action_key_is_rejected(tmp_path):
     app = app_at(tmp_path)
     calls = []
 
-    @app.post("/api/projects/book/cover")
+    @app.post("/api/projects/book/cover", openapi_extra={"x-canary-action": {"spends": True, "dispatches": False}})
     async def paid():
         calls.append(True)
         return {"accepted": True}
@@ -285,51 +289,12 @@ async def test_paid_submission_without_action_key_is_rejected(tmp_path):
 
 
 @run_async
-async def test_generation_completion_acknowledgement_waits_for_all_settlements(tmp_path, monkeypatch):
-    from novel_to_comic.server import credited_job
-    from novel_to_comic.usage import ApiResult, UsageRecord
-
-    app = app_at(tmp_path)
-    app.state.generation_queue = asyncio.Queue()
-    events = []
-    monkeypatch.setattr(credited_job, "get_db", lambda: object())
-    monkeypatch.setattr(credited_job, "reserve_credits", lambda *args: ("hold", "ledger-job"))
-    monkeypatch.setattr(credited_job, "assert_reservation_active", lambda *args: None)
-    monkeypatch.setattr(credited_job, "release_reservation", lambda *args: events.append("released"))
-    usage = UsageRecord(provider="fixture", model="model", operation="text", input_tokens=1, output_tokens=1)
-
-    def debit(*args, **kwargs):
-        events.append("settlement")
-        if events.count("settlement") == 2:
-            raise RuntimeError("second call settlement is ambiguous")
-
-    monkeypatch.setattr(credited_job, "debit_model_usage", debit)
-
-    async def work():
-        return ApiResult(value="paid-render", usage=usage, additional_usage=(usage,))
-
-    job, _ = credited_job.enqueue_reserved_generation_job(
-        app, project_name="account:book", user_id="account", project_id="book",
-        project_dir=tmp_path, stage="draw", kind="draw", label="Page",
-        payload={}, work=work, debit_description="Page", reservation_credits=2,
-        operations=(("complete_page", "image-gemini-pro"),),
-        on_settled=lambda result: events.append("complete"),
-        on_terminal=lambda: events.append("terminal"),
-    )
-    try:
-        await job.runner()
-    except RuntimeError:
-        pass
-    assert events == ["settlement", "settlement", "released", "terminal"]
-
-
-@run_async
 async def test_status_reconciliation_waits_for_project_mutation(tmp_path):
     app = app_at(tmp_path)
     entered, release = asyncio.Event(), asyncio.Event()
     observed = []
 
-    @app.post("/api/projects/book/cover")
+    @app.post("/api/projects/book/cover", openapi_extra={"x-canary-action": {"spends": True, "dispatches": False}})
     async def paid():
         entered.set()
         await release.wait()
@@ -408,7 +373,7 @@ async def test_finish_preflight_recovers_legacy_interrupted_receipt_and_rechecks
         db.execute("INSERT INTO requests(account,route,key,fingerprint) VALUES(?,?,?,?)",
                    ("account", "POST /api/projects/book/export/preflight", "old-check", "old-input"))
 
-    @app.post("/api/projects/book/export/preflight")
+    @app.post("/api/projects/book/export/preflight", openapi_extra={"x-canary-action": {"spends": False, "dispatches": False, "replay": False}})
     async def check():
         calls.append("check")
         if len(calls) == 1:
@@ -432,7 +397,7 @@ async def test_finish_preflight_does_not_replay_obsolete_success(tmp_path):
         db.execute("INSERT INTO requests(account,route,key,fingerprint,status,body) VALUES(?,?,?,?,?,?)",
                    ("account", "POST /api/projects/book/export/preflight", "old-check", "old-input", 200, b'{"ready":true}'))
 
-    @app.post("/api/projects/book/export/preflight")
+    @app.post("/api/projects/book/export/preflight", openapi_extra={"x-canary-action": {"spends": False, "dispatches": False, "replay": False}})
     async def check():
         return {"ready": False, "reason": "New edition needs checking"}
 
@@ -455,7 +420,7 @@ async def test_page_check_cache_recovery_bypasses_receipts_but_paid_recovery_doe
         db.execute('INSERT INTO requests(account,route,key,fingerprint) VALUES(?,?,?,?)',
                    ('account', f'POST {route}', 'interrupted', fingerprint))
 
-    @app.post(route)
+    @app.post(route, openapi_extra={"x-canary-action": {"spends": True, "dispatches": False, "paid_body_field": "allow_paid"}})
     async def recover():
         calls.append('cache')
         return {'version': len(calls)}

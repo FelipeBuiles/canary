@@ -1,6 +1,7 @@
 """Ticket 07: active backend cutover to the eight-stage page pipeline."""
 
 from __future__ import annotations
+from novel_to_comic.server import pipeline_operations
 
 import json
 
@@ -99,7 +100,7 @@ def test_rerun_resets_exact_target_dependency_graph(rerun: str, reset: set[str])
     for stage in TARGET_STAGES:
         state.stages[stage].status = StageStatus.COMPLETE
 
-    pipeline._reset_stage_and_downstream(state, rerun)
+    pipeline_operations._reset_stage_and_downstream(state, rerun)
 
     assert {
         stage
@@ -114,7 +115,7 @@ def test_rerun_removes_only_the_stage_target_artifacts_and_dependants(tmp_path) 
         directory.mkdir()
         (directory / "marker").write_text(root)
 
-    pipeline._clear_outputs_for_rerun(tmp_path, "plan")
+    pipeline_operations._clear_outputs_for_rerun(tmp_path, "plan")
 
     assert all((tmp_path / root / "marker").exists() for root in ("source", "brief", "samples", "refs", "plates", "adapt"))
     assert all(not (tmp_path / root).exists() for root in ("plan", "lettering", "draw", "finish", "exports"))

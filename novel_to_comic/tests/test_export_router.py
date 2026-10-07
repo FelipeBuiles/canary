@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
 
@@ -129,32 +129,78 @@ def test_preflight_requires_available_matching_packages_without_removing_them(tm
     assert client.get("/api/projects/demo/parts/part_0001/export/preflight").status_code == 404
     assert export.read_bytes() == b"x" * len(data)
     assert target.read_preflight() == preflight
+    base = "/api/projects/demo/parts/part_0001/export"
+    assert client.get(base + "/pdf").status_code == 404
+    # Trigger now attempts a free rebuild; this fixture has no source inputs.
+    assert client.post(base + "/?format=pdf").status_code == 422
 
     export.unlink()
     assert client.get("/api/projects/demo/parts/part_0001/export/preflight").status_code == 404
 
 
-def test_export_download_uploads_the_current_bytes_to_r2_when_configured(
-    tmp_path: Path,
-    monkeypatch,
-):
+def test_private_download_uses_a_verified_descriptor_even_after_invalidation(tmp_path: Path, monkeypatch):
+    from novel_to_comic.page_finishing import open_verified_package
     client = _client(tmp_path)
     target = TargetArtifacts(tmp_path / "demo")
-    export = target.export_path("pdf")
-    export.parent.mkdir(parents=True)
-    export.write_bytes(b"finalized PDF")
-    upload = MagicMock(return_value="https://media.scenewright.ink/export.pdf")
-    monkeypatch.setattr(
-        "novel_to_comic.server.routers.export.r2_configured",
-        lambda: True,
-    )
-    monkeypatch.setattr(
-        "novel_to_comic.server.routers.export.upload_export",
-        upload,
-    )
-
+    from .test_page_finishing import _write_valid_book
+    from novel_to_comic.page_finishing import finish_book
+    target, _ = _write_valid_book(tmp_path / "demo")
+    finish_book(target,formats=("pdf",))
+    data = target.export_path("pdf").read_bytes()
+    def open_then_invalidate(artifacts, fmt):
+        result = open_verified_package(artifacts, fmt)
+        artifacts.invalidate_finish()
+        return result
+    monkeypatch.setattr("novel_to_comic.server.routers.export.open_verified_package", open_then_invalidate)
+    monkeypatch.setenv("R2_PUBLIC_URL", "https://public.example.test")
     response = client.get("/api/projects/demo/parts/part_0001/export/pdf", follow_redirects=False)
+    assert response.status_code == 200
+    assert response.content == data
+    assert response.headers["cache-control"] == "private, no-store"
+    assert "location" not in response.headers
 
-    assert response.status_code == 307
-    assert response.headers["location"] == "https://media.scenewright.ink/export.pdf"
-    upload.assert_called_once_with("test-user", "demo", "comic.pdf", b"finalized PDF")
+
+def test_orphaned_export_is_rejected(tmp_path: Path):
+    client = _client(tmp_path)
+    path = TargetArtifacts(tmp_path / "demo").export_path("pdf")
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"orphan")
+    assert client.get("/api/projects/demo/parts/part_0001/export/pdf").status_code == 404
+
+
+def test_export_lock_uses_full_workspace_identity(tmp_path: Path):
+    from novel_to_comic.server.routers.export import _get_export_lock
+    client = _client(tmp_path)
+    first = _get_export_lock(client.app, str(tmp_path / "alice/book/parts/part_0001"))
+    second = _get_export_lock(client.app, str(tmp_path / "bob/book/parts/part_0001"))
+    assert first is not second
+
+
+def test_stale_cached_export_is_rebuilt_in_the_same_request(tmp_path: Path):
+    from .test_page_finishing import _write_valid_book
+    from novel_to_comic.page_finishing import finish_book
+
+    client = _client(tmp_path)
+    target, _ = _write_valid_book(tmp_path / "demo")
+    finish_book(target, formats=("pdf",))
+    expected_page = target.normalized_page_path(1).read_bytes()
+    target.export_path("pdf").write_bytes(b"corrupt")
+    response = client.post("/api/projects/demo/parts/part_0001/export/?format=pdf")
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "done"
+    download = client.get("/api/projects/demo/parts/part_0001/export/pdf")
+    assert download.status_code == 200
+    from pypdf import PdfReader
+    from PIL import Image
+    import io
+    assert len(PdfReader(io.BytesIO(download.content)).pages) == 1
+    actual_page = target.normalized_page_path(1).read_bytes()
+    # Regenerated ICC profiles can have different creation timestamps.
+    with Image.open(io.BytesIO(expected_page)) as expected, Image.open(io.BytesIO(actual_page)) as actual:
+        assert actual.size == expected.size
+        assert actual.mode == expected.mode
+        assert actual.tobytes() == expected.tobytes()
+    preflight = target.read_preflight()
+    assert hashlib.sha256(actual_page).hexdigest() == preflight.pages[0].normalized_image_sha256
+    package = preflight.packages[0]
+    assert hashlib.sha256(download.content).hexdigest() == package.content_sha256

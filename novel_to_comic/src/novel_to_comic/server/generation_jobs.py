@@ -181,6 +181,7 @@ class GenerationJob:
     sequence: int
     runner: GenerationJobRunner | None
     command: JobCommand | None = None
+    summary: dict[str, Any] | None = None
     user_id: str | None = None
     semaphore: asyncio.Semaphore | None = None
     status: GenerationJobStatus = "queued"
@@ -193,6 +194,12 @@ class GenerationJob:
     recoverable: bool | None = None
     phase: str | None = None
     on_cancel: Callable[[], None] | None = None
+
+
+def generation_jobs_snapshot(app: FastAPI | None) -> tuple[GenerationJob, ...]:
+    """Capture registry entries before a threaded reader inspects job fields."""
+    jobs = getattr(app.state, "generation_jobs", {}) if app is not None else _global_jobs
+    return tuple(jobs.values())
 
 
 def enqueue_generation_job(
@@ -208,7 +215,7 @@ def enqueue_generation_job(
     command: JobCommand | None = None,
 ) -> GenerationJob:
     global _global_sequence
-    sequence = (max((job.sequence for job in app.state.generation_jobs.values()), default=0) + 1
+    sequence = (max((job.sequence for job in generation_jobs_snapshot(app)), default=0) + 1
                 if app is not None else _global_sequence)
     _global_sequence += 1
 
@@ -239,6 +246,7 @@ def enqueue_generation_job(
     if durable is not None and getattr(app.state, "durable_queue_required", False) is True:
         durable.publish(job)
         app.state.generation_jobs[job.id] = job
+        prune_finished_generation_jobs(app)
         return job
     if app is not None and getattr(app.state, "durable_queue_required", False) is True:
         raise RuntimeError("Durable generation queue is unavailable")
@@ -261,14 +269,18 @@ def enqueue_generation_job(
 
 
 def generation_job_payload(app: FastAPI | None, job: GenerationJob) -> dict[str, Any]:
+    if job.summary is not None:
+        return {**job.summary, "status": job.status, "phase": job.phase,
+                "error": job.error, "user_message": job.user_message, "recoverable": job.recoverable,
+                "finished_at": _iso(job.finished_at), "queue_position": None}
     queue_position: int | None = None
     waiting_for_other_project = False
     if job.status == "queued":
-        jobs = app.state.generation_jobs if app is not None else _global_jobs
+        jobs = generation_jobs_snapshot(app)
         queued = sorted(
             (
                 candidate
-                for candidate in jobs.values()
+                for candidate in jobs
                 if candidate.status == "queued"
                 and candidate.project_name == job.project_name
             ),
@@ -283,7 +295,7 @@ def generation_job_payload(app: FastAPI | None, job: GenerationJob) -> dict[str,
             candidate.status == "running" and candidate.user_id == job.user_id
             and candidate.project_name != job.project_name
             and account_lane_key(candidate) == account_lane_key(job)
-            for candidate in jobs.values()
+            for candidate in jobs
         )
 
     stage = (job.payload.get("stage") or job.command.stage) if job.command else (
@@ -338,8 +350,7 @@ def find_active_generation_job(
             return {key: item for key, item in value.items() if key not in {"instruction", "reference_assets"}}
         return value
 
-    jobs = app.state.generation_jobs if app is not None else _global_jobs
-    for job in jobs.values():
+    for job in generation_jobs_snapshot(app):
         if (
             job.project_name == project_name
             and job.kind == kind
@@ -376,7 +387,7 @@ def project_work_precedes(app: FastAPI, job: GenerationJob) -> bool:
     during them must wait too. Check both directions so a later text job cannot
     overtake an earlier correction. Different parts retain independent work.
     """
-    for other in list(getattr(app.state, "generation_jobs", {}).values()):
+    for other in generation_jobs_snapshot(app):
         if (other is job or other.project_name != job.project_name
                 or other.status not in {"queued", "running"}
                 or is_light_job(other) == is_light_job(job)
@@ -556,7 +567,7 @@ async def _run_generation_job(app: FastAPI, job: GenerationJob) -> None:
     finally:
         if job.status in {"complete", "failed", "cancelled"}:
             job.finished_at = _now()
-        persist_generation_job(app, job)
+        await asyncio.to_thread(persist_generation_job, app, job)
 
 
 
@@ -635,7 +646,7 @@ def persist_generation_job(app, job: GenerationJob) -> None:
     payload = generation_job_payload(app, job)
     with admission.journal() as db:
         db.execute("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, project TEXT NOT NULL, payload TEXT NOT NULL)")
-        db.execute("INSERT OR REPLACE INTO jobs VALUES(?,?,?)",
+        db.execute("INSERT INTO jobs VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET project=excluded.project,payload=excluded.payload",
                    (job.id, job.project_name, json.dumps(payload)))
         if job.status in {"complete", "failed", "cancelled"}:
             from .lifecycle_events import enqueue
@@ -644,7 +655,7 @@ def persist_generation_job(app, job: GenerationJob) -> None:
                     project_id=project_id, job_id=job.id,
                     properties={"operation": job.command.operation if job.command else job.kind, "operation_id": job.id, "run_id": job.payload.get("run_id") or job.id, "attempt_id": job.id,
                                 "stage_attempt_id": job.payload.get("stage_attempt_id"),
-                                "stage": payload["stage"], "status": job.status,
+                                    "stage": payload.get("stage"), "status": job.status,
                                 "outcome": "outcome_unknown" if job.phase == "outcome_unknown" else job.status,
                                 "phase": job.phase,
                                 "queue_ms": max(0, (job.started_at - job.queued_at).total_seconds() * 1000) if job.started_at else None,
@@ -656,47 +667,19 @@ def persist_generation_job(app, job: GenerationJob) -> None:
                                     "attempt_id": job.payload["stage_attempt_id"],
                                     "outcome": "outcome_unknown" if job.phase == "outcome_unknown" else job.status})
     if job.command and job.command.stage == "draw" and job.status in {"complete", "failed", "cancelled"}:
-        from .routers.pages import _sync_draw_progress
+        from .page_operations import _sync_draw_progress
         try:
             _sync_draw_progress(Path(job.command.project_dir), app)
         except Exception as exc:  # analytics reconciliation cannot fail the job
             logger.warning("Draw terminal reconciliation deferred type=%s", type(exc).__name__)
 
 
-def recovered_generation_jobs(app, pkey: str) -> list[dict]:
-    admission = getattr(app.state, "admission", None)
-    if admission is None:
+def recovered_generation_jobs(app, pkey: str, *, ids=None, part=None, limit=100) -> list[dict]:
+    if getattr(app.state, "admission", None) is None:
         return []
-    with admission.journal() as db:
-        db.execute("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, project TEXT NOT NULL, payload TEXT NOT NULL)")
-        has_outbox = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='operation_outbox'").fetchone()
-        rows = db.execute("SELECT payload FROM jobs WHERE project=?", (pkey,)).fetchall()
-        durable_ids = {row[0] for row in db.execute("SELECT id FROM operation_outbox")} if has_outbox else set()
-        payloads = [json.loads(row[0]) for row in rows]
-        for payload in payloads:
-            if payload["id"] in app.state.generation_jobs or payload["kind"] not in REFERENCE_JOB_KINDS or not has_outbox:
-                continue
-            # Read only recovered reference commands; page commands can contain
-            # large frozen inputs, and live jobs already hold their own config.
-            row = db.execute("SELECT command FROM operation_outbox WHERE id=?", (payload["id"],)).fetchone()
-            if row is not None:
-                config = json.loads(row[0])["config"]
-                payload["reference_style_hash"] = hash_style_template(config["style_template"])
-    recovered = []
-    for payload in payloads:
-        if payload["id"] in app.state.generation_jobs:
-            continue
-        if payload["status"] == "queued" and payload["id"] in durable_ids:
-            payload["queue_position"] = None
-        elif payload["status"] in {"queued", "running"}:
-            payload.update(
-                status="failed", error="Server restarted before this job's outcome was recorded.",
-                user_message="Inspect existing output before explicitly retrying this interrupted action.",
-                classification="generation_error", recoverable=payload["status"] == "queued",
-                phase="outcome_unknown" if payload["status"] == "running" else None, queue_position=None,
-            )
-        recovered.append(payload)
-    return recovered
+    from .job_journal import history
+    records, _ = history(app, pkey, ids=ids, part=part, limit=limit)
+    return [record for record in records if record["id"] not in app.state.generation_jobs]
 
 
 def _per_user_generation_limit() -> int:
@@ -736,7 +719,7 @@ def prune_finished_generation_jobs(app: FastAPI | None, max_finished: int = 200)
     finished = sorted(
         (
             job
-            for job in jobs.values()
+            for job in generation_jobs_snapshot(app)
             if job.status in ("complete", "failed", "cancelled")
         ),
         key=lambda job: job.finished_at or job.queued_at,

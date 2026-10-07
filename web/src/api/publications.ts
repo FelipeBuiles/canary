@@ -23,6 +23,12 @@ export interface Publication {
   unpublished_locales?: Partial<Record<Exclude<PublicationLocale, "source">, string>>;
 }
 
+/** Private owner projection; these fields never appear in the public record. */
+export interface OwnedPublication extends Publication {
+  source_part_id: string | null;
+  source_part_title: string | null;
+}
+
 export interface PublicationLanguage { locale: PublicationLocale; pages: PublicationPage[] }
 
 /** Every published language, primary first; empty when the book has no language choice. */

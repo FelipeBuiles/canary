@@ -129,6 +129,25 @@ describe("public books", () => {
     expect(screen.getByRole("group", { name: "Book language" })).toBeTruthy();
   });
 
+  it("labels the shared published part and requires confirmation before replacing it", async () => {
+    const published = { ...book, source_part_id: "part_0001", source_part_title: "Part one" };
+    vi.mocked(apiFetch).mockResolvedValue(published);
+    wrapper(<BookPublication project="project~part_0002" title="Part two" ready />);
+    await screen.findByText("Published part: Part one");
+    expect(vi.mocked(apiFetch).mock.calls[0][0]).toBe("/projects/project/publication");
+    fireEvent.click(screen.getByRole("button", { name: "Edit publication" }));
+    const submit = screen.getByRole("button", { name: "Update published version" });
+    expect(submit.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(screen.getByLabelText("Replace the series public book with this part"));
+    expect(submit.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(submit);
+    await waitFor(() => {
+      const call = vi.mocked(apiFetch).mock.calls.find(([, options]) => options?.method === "POST");
+      expect(call?.[0]).toBe("/projects/project/parts/part_0002/publication");
+      expect(JSON.parse(call![1]!.body as string).expected_publication_version).toBe("v1");
+    });
+  });
+
   it("opens in the viewer's stored language and ignores one this book lacks", async () => {
     window.localStorage.setItem("canary.readerLanguage", "fr");
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => multilingual }));

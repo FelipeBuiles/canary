@@ -598,12 +598,13 @@ class TargetArtifacts:
         cannot promise crash atomicity across multiple filesystem replacements.
         """
         paths = [*(self.lettering_path(state.page_number) for state in states),
-                 self.lettering_style_path, self.lettering_settings_path]
+                 self.lettering_settings_path]
+        if self.read_lettering_style().content_sha256 != style.content_sha256:
+            raise ValueError("Book lettering style changed. Refresh the translation estimate.")
         previous = {path: path.read_bytes() if path.exists() else None for path in paths}
         try:
             for state in states:
                 self.write_lettering(state)
-            self.write_lettering_style(style)
             self.write_lettering_settings(settings)
         except Exception:
             for path, data in previous.items():
@@ -1216,9 +1217,12 @@ class TargetArtifacts:
         # Written through a temporary sibling: a crash mid-write would otherwise
         # leave a truncated canonical artifact that no stage can read.
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_name(f".{path.name}.tmp")
-        temporary.write_text(artifact.model_dump_json(indent=2))
-        os.replace(temporary, path)
+        temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+        try:
+            temporary.write_text(artifact.model_dump_json(indent=2))
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     @classmethod
     def _write_immutable_model(

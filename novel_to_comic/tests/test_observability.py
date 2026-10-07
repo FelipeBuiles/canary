@@ -1,3 +1,4 @@
+from novel_to_comic.server import pipeline_operations
 import asyncio
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,7 +11,6 @@ from fastapi.testclient import TestClient
 from novel_to_comic.config import Config
 from novel_to_comic.server import metrics
 from tests.queue_fixtures import create_app
-from novel_to_comic.server.routers import pipeline
 from novel_to_comic.state import StageStatus, create_initial_state
 from novel_to_comic.server.product_events import (
     _clean_properties,
@@ -104,12 +104,12 @@ def test_stage_success_is_accepted_with_nullable_uuid_job_id(
         return "00000000-0000-0000-0000-000000000003"
 
     with (
-        patch.object(pipeline, "_run_stage", new=finish_stage),
-        patch.object(pipeline, "run_credited_stage", new=run_credited_stage),
+        patch.object(pipeline_operations, "_run_stage", new=finish_stage),
+        patch.object(pipeline_operations, "run_credited_stage", new=run_credited_stage),
         patch("novel_to_comic.server.product_events.get_db", return_value=db),
     ):
         asyncio.run(
-            pipeline._run_stage_with_credits(
+            pipeline_operations._run_stage_with_credits(
                 stage,
                 Config(),
                 tmp_path,
@@ -218,10 +218,10 @@ def test_stage_that_handles_its_exception_is_recorded_as_failed(tmp_path):
 
     metrics.reset_metrics_for_tests()
     with (
-        patch.object(pipeline, "run_credited_stage", new=fake_run_credited_stage),
-        patch.object(pipeline, "_run_stage", new=fail_stage),
+        patch.object(pipeline_operations, "run_credited_stage", new=fake_run_credited_stage),
+        patch.object(pipeline_operations, "_run_stage", new=fail_stage),
         patch.object(
-            pipeline,
+            pipeline_operations,
             "capture_lifecycle",
             side_effect=lambda app, name, identity, **kwargs: captured.append(
                 (name, kwargs.get("properties") or {})
@@ -229,7 +229,7 @@ def test_stage_that_handles_its_exception_is_recorded_as_failed(tmp_path):
         ),
     ):
         asyncio.run(
-            pipeline._run_stage_with_credits(
+            pipeline_operations._run_stage_with_credits(
                 "extract",
                 Config(),
                 tmp_path,

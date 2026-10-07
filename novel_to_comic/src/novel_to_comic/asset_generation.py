@@ -140,8 +140,6 @@ class NonPanelSubmission:
     request_id: str
     execution_fingerprint: str
     result: ApiResult[Any] | None = None
-    job: Any | None = None
-    created: bool = True
 
 
 def reference_plan_for_assets(config: Config, references: list[ReferenceAsset]) -> ReferencePlan:
@@ -435,72 +433,31 @@ def persist_non_panel_provenance(
         artifacts.asset_failure_path(output_path).unlink(missing_ok=True)
 
 
-async def submit_non_panel_request(
-    *, config: Config, project_dir: Path, request: NonPanelRequest, output_path: Path,
-    app: Any | None = None, project_name: str | None = None, user_id: str | None = None,
-    project_id: str | None = None, stage: str = "cast", kind: str = "asset_regen",
-    label: str | None = None, payload: dict[str, Any] | None = None,
-    debit_description: str = "Model call: generate image asset",
-    idempotency_key: str | None = None, feature: str = "image.non_panel",
-    semaphore: Any | None = None, estimate_credits: int = 0,
-) -> NonPanelSubmission:
-    if app is None:
-        frozen = submit_frozen_request(
-            project_dir,
-            request.wire,
-            idempotency_key=idempotency_key,
-            request_context=compiled_request_context(request.compiled),
+async def submit_non_panel_request(*, config: Config, project_dir: Path,
+    request: NonPanelRequest, output_path: Path, kind: str = "asset_regen",
+    idempotency_key: str | None = None, feature: str = "image.non_panel") -> NonPanelSubmission:
+    frozen = submit_frozen_request(
+        project_dir,
+        request.wire,
+        idempotency_key=idempotency_key,
+        request_context=compiled_request_context(request.compiled),
+    )
+    try:
+        result = await execute_frozen_request(
+            project_dir=project_dir, request_id=frozen.request_id,
+            config=config, output_path=output_path, feature=feature,
         )
-        try:
-            result = await execute_frozen_request(
-                project_dir=project_dir, request_id=frozen.request_id,
-                config=config, output_path=output_path, feature=feature,
-            )
-        except BaseException as error:
-            persist_non_panel_provenance(
-                request=request, output_path=output_path, project_dir=project_dir,
-                request_id=frozen.request_id, error=error,
-            )
-            raise
-        persist_non_panel_provenance(
-            request=request, output_path=output_path, project_dir=project_dir,
-            request_id=frozen.request_id, result=result,
-        )
-        return NonPanelSubmission(frozen.request_id, frozen.execution_fingerprint, result=result)
-
-    if not project_name or user_id is None:
-        raise ValueError("queued non-panel submission requires project_name and user_id")
-    from novel_to_comic.server.credited_job import enqueue_frozen_generation_job
-    from novel_to_comic.server.codex_admission import image_operations
-
-    async def _complete(result: ApiResult[Any], frozen: Any) -> None:
-        persist_non_panel_provenance(
-            request=request, output_path=output_path, project_dir=project_dir,
-            request_id=frozen.request_id, result=result,
-        )
-
-    async def _failure(error: BaseException, frozen: Any) -> None:
+    except BaseException as error:
         persist_non_panel_provenance(
             request=request, output_path=output_path, project_dir=project_dir,
             request_id=frozen.request_id, error=error,
         )
-
-    from novel_to_comic.server.job_commands import command, snapshot
-    job, created = enqueue_frozen_generation_job(
-        app, project_name=project_name, user_id=user_id, project_id=project_id,
-        project_dir=project_dir, config=config, stage=stage, kind=kind,
-        label=label or kind, payload=payload or {}, wire=request.wire,
-        output_path=output_path, debit_description=debit_description,
-        idempotency_key=idempotency_key, feature=feature, semaphore=semaphore,
-        estimate_credits=estimate_credits, on_complete=_complete, on_failure=_failure,
-        request_context=compiled_request_context(request.compiled),
-        operations=image_operations(config),
-        command=command("frozen_asset", project_dir, config, request=snapshot(request)),
+        raise
+    persist_non_panel_provenance(
+        request=request, output_path=output_path, project_dir=project_dir,
+        request_id=frozen.request_id, result=result,
     )
-    return NonPanelSubmission(
-        job.payload["frozen_request_id"], request.wire.execution_fingerprint,
-        job=job, created=created,
-    )
+    return NonPanelSubmission(frozen.request_id, frozen.execution_fingerprint, result=result)
 
 
 __all__ = [

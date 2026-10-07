@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import zipfile
 from pathlib import Path
@@ -20,15 +21,51 @@ import img2pdf
 from PIL import Image, ImageCms
 
 from novel_to_comic.models.finish import FinishProductionSpec
-from novel_to_comic.page_finishing import source_credit_page
+from novel_to_comic.page_finishing import current_preflight, source_credit_page
+from novel_to_comic.artifact_lock import locked_mutation
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing, TargetArtifacts
 from novel_to_comic.workspace import part_workspace, series_root
+from novel_to_comic.verified_files import verified_stream
 
 ExportFormat = Literal["pdf", "cbz"]
 
 
 class CombinedExportRejected(ValueError):
     """The selected parts cannot be combined yet; the message says why."""
+
+
+def _source_fingerprint(root: Path, part_ids: list[str]) -> str:
+    return hashlib.sha256(json.dumps([
+        current_preflight(TargetArtifacts(part_workspace(root, part)), require_ready=True).model_dump(mode="json")
+        for part in part_ids
+    ], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def open_combined_export(root: Path, name: str):
+    """Open verified bytes while the series' current Finish inputs are locked."""
+    from novel_to_comic.artifact_lock import production_lock
+
+    root = series_root(root)
+    if Path(name).name != name:
+        raise CombinedExportRejected("Export not found.")
+    with production_lock(root):
+        path = root / "exports" / "combined" / name
+        try:
+            metadata = json.loads(path.with_suffix(path.suffix + ".json").read_text())
+            if metadata["source_sha256"] != _source_fingerprint(root, metadata["part_ids"]):
+                raise CombinedExportRejected("Finish inputs changed; combine the parts again.")
+            stream = path.open("rb")
+            try:
+                size = os.fstat(stream.fileno()).st_size
+                if not verified_stream(stream, metadata["sha256"], byte_size=metadata["byte_size"]):
+                    raise CombinedExportRejected("Export bytes changed; combine the parts again.")
+                stream.seek(0)
+                return stream, size
+            except BaseException:
+                stream.close()
+                raise
+        except (OSError, KeyError, TypeError, ArtifactMissing, ArtifactInvalid, ValueError) as exc:
+            raise CombinedExportRejected("No current verified export; combine the parts again.") from exc
 
 
 def _blank_page(width: int, height: int, production: FinishProductionSpec | None) -> bytes:
@@ -45,9 +82,11 @@ def _blank_page(width: int, height: int, production: FinishProductionSpec | None
 def _verified_pages(workspace: Path, title: str) -> tuple[list[bytes], FinishProductionSpec | None]:
     target = TargetArtifacts(workspace)
     try:
-        preflight = target.read_preflight()
+        preflight = current_preflight(target, require_ready=True)
     except (ArtifactMissing, ArtifactInvalid):
         raise CombinedExportRejected(f"Finish {title} before combining it.") from None
+    except ValueError as exc:
+        raise CombinedExportRejected(f"Refresh Finish for {title}: {exc}") from exc
     if not preflight.ready_to_export:
         raise CombinedExportRejected(f"{title} has open Finish checks.")
     pages = []
@@ -64,6 +103,12 @@ def combined_export(root: Path, part_ids: list[str], export_format: ExportFormat
     """Build one export from consecutive parts, in reading order."""
 
     root = series_root(root)
+    return _combined_export(TargetArtifacts(root), part_ids, export_format)
+
+
+@locked_mutation
+def _combined_export(artifacts: TargetArtifacts, part_ids: list[str], export_format: ExportFormat) -> Path:
+    root = artifacts.series_dir
     manifest = TargetArtifacts(root).read_part_manifest()
     ordinals = []
     for identifier in part_ids:
@@ -104,4 +149,10 @@ def combined_export(root: Path, part_ids: list[str], export_format: ExportFormat
     temporary = output.with_name(f".{output.name}.tmp")
     temporary.write_bytes(data)
     os.replace(temporary, output)
+    metadata = {"part_ids": part_ids, "source_sha256": _source_fingerprint(root, part_ids),
+                "byte_size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+    sidecar = output.with_suffix(output.suffix + ".json")
+    temporary = sidecar.with_name(f".{sidecar.name}.tmp")
+    temporary.write_text(json.dumps(metadata))
+    os.replace(temporary, sidecar)
     return output

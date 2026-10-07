@@ -1,27 +1,30 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "../../api/client";
-import { publicationLanguages, type Publication } from "../../api/publications";
+import { publicationLanguages, type OwnedPublication } from "../../api/publications";
 import { EntityCard, SectionHeader } from "../composites";
 import { FieldLabel, TextAreaField, TextField } from "../ui/Field";
 import { Button } from "../ui/Button";
 import { useI18n } from "../../i18n";
-import { projectPath } from "../../api/projectScope";
+import { projectPath, seriesPath, splitProjectKey } from "../../api/projectScope";
 
 export function BookPublication({ project, title, ready, onPreview }: { project: string; title: string; ready: boolean; onPreview?: () => void }) {
   const { t } = useI18n();
   const cache = useQueryClient();
-  const key = ["publication", project];
-  const query = useQuery({ queryKey: key, queryFn: () => apiFetch<Publication | null>(`${projectPath(project)}/publication`) });
+  const { id, part } = splitProjectKey(project);
+  const key = ["publication", id];
+  const [replaceConfirmed, setReplaceConfirmed] = useState(false);
+  const query = useQuery({ queryKey: key, queryFn: () => apiFetch<OwnedPublication | null>(`${seriesPath(project)}/publication`) });
   const [draft, setDraft] = useState<{ title: string; author: string; description: string; allow_feature: boolean } | null>(null);
   const [editing, setEditing] = useState(false);
   const [message, setMessage] = useState("");
   const [leftOut, setLeftOut] = useState<string[]>([]);
   const values = draft ?? { title: query.data?.title ?? title, author: query.data?.author ?? "", description: query.data?.description ?? "", allow_feature: query.data?.allow_feature ?? false };
   const update = (change: Partial<typeof values>) => setDraft({ ...values, ...change });
+  const replacesPart = !!query.data && query.data.source_part_id !== part;
   const mutation = useMutation({
-    mutationFn: (remove: boolean) => apiFetch<Publication | null>(`${projectPath(project)}/publication`, { method: remove ? "DELETE" : "POST", ...(remove ? {} : { body: JSON.stringify(values) }) }),
-    onSuccess: (result, remove) => { setLeftOut(Object.keys(result?.unpublished_locales ?? {}).map(code => code.toUpperCase())); setDraft(null); setEditing(false); setMessage(t(remove ? "Your book is no longer public." : "Your finished book is now public. Copy the link to share it.")); void cache.invalidateQueries({ queryKey: key }); },
+    mutationFn: (remove: boolean) => apiFetch<OwnedPublication | null>(`${remove ? seriesPath(project) : projectPath(project)}/publication`, { method: remove ? "DELETE" : "POST", ...(remove ? {} : { body: JSON.stringify({ ...values, expected_publication_version: query.data?.version }) }) }),
+    onSuccess: (result, remove) => { setLeftOut(Object.keys(result?.unpublished_locales ?? {}).map(code => code.toUpperCase())); setDraft(null); setReplaceConfirmed(false); setEditing(false); setMessage(t(remove ? "Your book is no longer public." : "Your finished book is now public. Copy the link to share it.")); void cache.invalidateQueries({ queryKey: key }); },
   });
   const url = query.data ? `${window.location.origin}/read/${query.data.id}` : "";
   const readerLanguages = query.data ? publicationLanguages(query.data) : [];
@@ -43,6 +46,7 @@ export function BookPublication({ project, title, ready, onPreview }: { project:
         <div className="min-w-0 flex-[1_1_16rem]">
           <h3 className="break-words font-display text-xl font-black uppercase leading-tight">{query.data.title}</h3>
           <p className="mt-2 font-meta text-xs text-ink-muted">{query.data.author} · {query.data.pages.length} {t("pages")}</p>
+          {query.data.source_part_title && <p className="mt-2 font-body text-sm">{t("Published part")}: {query.data.source_part_title}</p>}
           {readerLanguages.length > 1 && <p className="mt-2 font-body text-sm">{t("Reader languages")}: {readerLanguages.map(item => item.locale === "source" ? t("Original") : item.locale.toUpperCase()).join(" · ")}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -59,8 +63,9 @@ export function BookPublication({ project, title, ready, onPreview }: { project:
         <div><FieldLabel htmlFor={`${project}-description`}>{t("Short description")}</FieldLabel><TextAreaField id={`${project}-description`} maxLength={600} rows={3} value={values.description} onChange={e => update({ description: e.target.value })} /></div>
         <label className="flex min-h-11 items-center gap-3 font-body text-sm"><input type="checkbox" className="h-4 w-4 accent-ink-black" checked={values.allow_feature} onChange={e => update({ allow_feature: e.target.checked })} />{t("Allow Scenewright to feature this book on the homepage")}</label>
         <p className="font-body text-xs leading-5 text-ink-muted">{t("The public reader includes a Made with Scenewright credit and a closing invitation to create a book.")}</p>
+        {replacesPart && <label className="flex min-h-11 items-center gap-3 font-body text-sm"><input type="checkbox" className="h-4 w-4 accent-ink-black" checked={replaceConfirmed} onChange={e => setReplaceConfirmed(e.target.checked)} />{t("Replace the series public book with this part")}</label>}
         <div className="flex flex-wrap items-center gap-3">
-          <Button type="submit" disabled={!ready || mutation.isPending || !values.title.trim() || !values.author.trim()}>{mutation.isPending ? t("Saving…") : query.data ? t("Update published version") : t("Publish book")}</Button>
+          <Button type="submit" disabled={!ready || (replacesPart && !replaceConfirmed) || mutation.isPending || !values.title.trim() || !values.author.trim()}>{mutation.isPending ? t("Saving…") : query.data ? t("Update published version") : t("Publish book")}</Button>
           <Button variant="outline" disabled={!onPreview} onClick={onPreview}>{t("Preview all pages")}</Button>
           {!ready && <p className="font-body text-sm text-ink-muted">{t("Resolve the edition checks before publishing or updating your book.")}</p>}
         </div>

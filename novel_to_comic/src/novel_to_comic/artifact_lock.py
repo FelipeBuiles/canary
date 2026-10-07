@@ -19,6 +19,11 @@ _local = threading.local()
 
 @contextmanager
 def production_lock(project_dir: Path):
+    # A series is the artifact transaction boundary. Part writes and shared
+    # look/style writes must never acquire independent locks in reverse order.
+    # Provider execution remains outside this short commit/read lock.
+    from .workspace import series_root
+    project_dir = series_root(Path(project_dir)).resolve()
     key = str(project_dir.resolve())
     with _registry_guard:
         lock = _thread_locks.setdefault(key, threading.RLock())

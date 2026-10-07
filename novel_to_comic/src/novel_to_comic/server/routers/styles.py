@@ -1,5 +1,6 @@
 """Style suggestion, sample generation, and active style selection."""
 
+
 import asyncio
 import hashlib
 import json
@@ -15,12 +16,10 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from novel_to_comic import artifacts
 from novel_to_comic.artifact_lock import production_lock
 from novel_to_comic.uploaded_images import (
-    IMAGE_SUFFIXES, MAX_IMAGE_BYTES, UploadedImageError, decode_uploaded_image, image_suffix,
+    IMAGE_SUFFIXES, MAX_IMAGE_BYTES, decode_uploaded_image, image_suffix,
 )
 from novel_to_comic.target_artifacts import TargetArtifacts, ArtifactMissing
 from novel_to_comic.lettering.service import style_from_template, project_lettering_mode
-from novel_to_comic.ai import ai_request_context
-from novel_to_comic.ai.errors import AITransportError
 from novel_to_comic.config import Config, mock_mode_active, save_config
 from novel_to_comic.codex_dev import CodexRoutingError, classify_operations, is_subscription
 from ..codex_admission import image_operations, prompt_image_operations, style_sample_operations
@@ -33,7 +32,7 @@ from novel_to_comic.style_contract import (
     style_template_for_suggestion,
 )
 from novel_to_comic.state import (
-    StageState, StageStatus, begin_stage, complete_stage, fail_stage, record_item_done, save_state, load_state,
+    StageState, StageStatus, begin_stage, fail_stage, save_state, load_state,
 )
 from novel_to_comic.stages import REGISTRY
 from novel_to_comic.stages.s2_style import (
@@ -41,14 +40,9 @@ from novel_to_comic.stages.s2_style import (
     NEIGHBOR_COUNT,
     STYLE_VALIDATION_ACTION,
     STYLE_VALIDATION_COMPOSITION,
-    ensure_style_sample_brief,
-    generate_sample_image,
-    generate_samples_for_indices,
-    generate_suggestions,
     proof_copy_for_sample,
     style_proof_copy,
     custom_direction_candidate,
-    describe_custom_direction,
     estimate_custom_direction_naming_cost_usd,
     update_suggestion_fields,
     DISPLAY_LABEL_MAX_CHARS,
@@ -70,17 +64,17 @@ from ..auth import get_current_user
 from ..credits import (
     assert_sufficient_credits,
     credit_estimate_for_provider_cost,
-    release_reservation,
-    reserve_credits,
 )
 from ..credited_job import enqueue_reserved_generation_job
 from ..event_channel import EventChannel
 from ..db import get_db
+from ..async_credits import ledger_call
 from ..deps import get_project, project_key
 from ..job_commands import command
 from ..generation_jobs import (
     find_active_generation_job,
     generation_job_payload,
+    generation_jobs_snapshot,
     generation_semaphore_for_config,
     prune_finished_generation_jobs,
 )
@@ -313,16 +307,8 @@ def _assert_usable_style_direction(config: Config, text: str, has_image: bool) -
         )
 
 
-def _assert_no_pipeline_task(request: Request, pkey: str) -> None:
-    existing = request.app.state.running_tasks.get(pkey)
-    if existing and not existing.done():
-        raise HTTPException(409, "A stage is already running for this project")
 
 
-def _assert_no_style_task(request: Request, pkey: str) -> None:
-    existing = request.app.state.style_tasks.get(pkey)
-    if existing and not existing.done():
-        raise HTTPException(409, "A style operation is already running for this project")
 
 
 @router.get("/styles")
@@ -343,7 +329,7 @@ def get_styles(project_id: str, project=Depends(get_project), request: Request =
         from ..generation_jobs import recovered_generation_jobs
         pkey = project_key(user_id, project_id)
         jobs = recovered_generation_jobs(request.app, pkey) + [
-            generation_job_payload(request.app, job) for job in request.app.state.generation_jobs.values()
+            generation_job_payload(request.app, job) for job in generation_jobs_snapshot(request.app)
             if job.project_name == pkey and job.kind in {"style_sample", "style_suggest"}]
         for job in sorted(jobs, key=lambda item: item.get("queued_at") or ""):
             if job["kind"] not in {"style_sample", "style_suggest"}:
@@ -453,10 +439,7 @@ def get_style_lettering_proof(
         copy = proof_copy_for_sample(style_proof_copy(project[1], _get_bible(project[0]), project[0]), source)
     # The overlay is a content-addressed derivative: render it outside the lock
     # so a cold proof never stalls the rest of the project (or the other proofs).
-    try:
-        data, identity = render_style_proof(TargetArtifacts(project[0]), style, art, copy)
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
+    data, identity = render_style_proof(TargetArtifacts(project[0]), style, art, copy)
     return Response(data, media_type="image/png", headers={
         "Cache-Control": "private, no-cache", "ETag": f'"{identity}"',
     })
@@ -517,17 +500,18 @@ async def _prepare_style_direction(
     suffix = ""
     reference_size = None
     if image is not None:
+        from novel_to_comic.uploaded_images import UploadedImageError
         try:
             suffix = image_suffix(image.content_type)
-        except UploadedImageError:
-            raise HTTPException(400, "Style reference must be PNG, JPEG, or WebP") from None
+        except UploadedImageError as exc:
+            raise HTTPException(400, str(exc)) from exc
         image_bytes = await image.read(_MAX_STYLE_REFERENCE_BYTES + 1)
         if len(image_bytes) > _MAX_STYLE_REFERENCE_BYTES:
             raise HTTPException(413, "Style reference exceeds the 10 MiB limit")
         try:
-            reference_size = decode_uploaded_image(image_bytes, suffix)
-        except UploadedImageError:
-            raise HTTPException(400, "Uploaded style reference is not a valid image") from None
+            reference_size = await asyncio.to_thread(decode_uploaded_image, image_bytes, suffix)
+        except UploadedImageError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     image_reference_supported = _supports_style_reference(config)
     _assert_usable_style_direction(config, text, bool(image_bytes))
@@ -553,34 +537,36 @@ async def _prepare_style_direction(
         "image_bytes": image_bytes, "reference_size": reference_size,
     }
     if persist:
-        _persist_style_direction(project_dir, bible, prepared)
+        await asyncio.to_thread(_persist_style_direction, project_dir, bible, prepared)
     return prepared
 
 
 def _persist_style_direction(project_dir: Path, bible: StoryBible, prepared: dict) -> None:
-    direction = prepared["direction"]
-    candidate = prepared["candidate"]
-    image_path = prepared["image_path"]
-    direction_path = artifacts.style_direction_path(project_dir, direction["id"])
-    direction_path.parent.mkdir(parents=True, exist_ok=True)
-    if image_path:
-        image_path.write_bytes(prepared["image_bytes"])
-    direction_path.write_text(json.dumps(direction, indent=2, sort_keys=True))
-    # Directions can be admitted while other proofs run; appends are
-    # serialized so every queued proof keeps the index it was given.
-    with production_lock(project_dir):
-        suggestions = load_suggestions(project_dir)
-        existing_index = suggestion_index_by_id(suggestions, candidate["id"])
-        if existing_index is None:
-            suggestions.append(candidate)
-            save_suggestions(project_dir, suggestions, bible.title)
-            index = len(suggestions)
-        else:
-            index = existing_index
-    prepared["index"] = index
+    from ..storage_budget import ingestion
+    with ingestion(project_dir, len(prepared["image_bytes"] or b"") + 16384):
+        direction = prepared["direction"]
+        candidate = prepared["candidate"]
+        image_path = prepared["image_path"]
+        direction_path = artifacts.style_direction_path(project_dir, direction["id"])
+        direction_path.parent.mkdir(parents=True, exist_ok=True)
+        if image_path:
+            image_path.write_bytes(prepared["image_bytes"])
+        direction_path.write_text(json.dumps(direction, indent=2, sort_keys=True))
+        # Directions can be admitted while other proofs run; appends are
+        # serialized so every queued proof keeps the index it was given.
+        with production_lock(project_dir):
+            suggestions = load_suggestions(project_dir)
+            existing_index = suggestion_index_by_id(suggestions, candidate["id"])
+            if existing_index is None:
+                suggestions.append(candidate)
+                save_suggestions(project_dir, suggestions, bible.title)
+                index = len(suggestions)
+            else:
+                index = existing_index
+        prepared["index"] = index
 
 
-@router.post("/styles/direction")
+@router.post("/styles/direction", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
 async def create_style_direction(
     request: Request,
     project_id: str,
@@ -596,8 +582,6 @@ async def create_style_direction(
     operations = _direction_operations(config, with_neighbors=with_neighbors)
     classify_operations(operations)
     pkey = project_key(user_id, project_id)
-    _assert_no_pipeline_task(request, pkey)
-    _assert_no_style_task(request, pkey)
     bible = _get_bible(project_dir)
     if not bible:
         raise HTTPException(404, "Story bible not found — run extract first.")
@@ -614,46 +598,27 @@ async def create_style_direction(
     # streamed UploadFile byte cap enforced in _prepare_style_direction.
     content_length = request.headers.get("content-length")
     if content_length:
-        try:
-            if int(content_length) > _MAX_STYLE_MULTIPART_BYTES:
-                raise HTTPException(413, "Style direction request exceeds the upload limit")
-        except ValueError:
-            raise HTTPException(400, "Invalid Content-Length header") from None
-    style_guard = asyncio.get_running_loop().create_future()
-    request.app.state.style_tasks[pkey] = style_guard
-    reservation_id = None
-    db = None
-    try:
-        prepared = await _prepare_style_direction(
-            project_dir=project_dir, config=config, bible=bible,
-            text=text, label=label, image=image, persist=False,
-        )
-        estimates = _direction_credit_estimates(
-            config,
-            project_dir,
-            has_style_reference=prepared["reference_supported"],
-            template=style_template_for_suggestion(prepared["candidate"]),
-            candidate_id=prepared["candidate"]["id"],
-            reference_size=prepared["reference_size"],
-        )
-        operation_estimate = estimates[
-            "faithful_with_neighbors" if with_neighbors else "faithful"
-        ]
-        required = operation_estimate["reserved_credits"] or operation_estimate["estimate_credits"]
-        db = get_db()
-        assert_sufficient_credits(db, user_id, required, action="style_direction")
-        reservation_id, job_id = reserve_credits(
-            db, user_id, project_id, "style", required,
-        )
-        _persist_style_direction(project_dir, bible, prepared)
-    except BaseException:
-        if reservation_id and db is not None:
-            release_reservation(db, reservation_id)
-        if request.app.state.style_tasks.get(pkey) is style_guard:
-            request.app.state.style_tasks.pop(pkey, None)
-        if not style_guard.done():
-            style_guard.set_result(None)
-        raise
+        if int(content_length) > _MAX_STYLE_MULTIPART_BYTES:
+            raise HTTPException(413, "Style direction request exceeds the upload limit")
+    prepared = await _prepare_style_direction(
+        project_dir=project_dir, config=config, bible=bible,
+        text=text, label=label, image=image, persist=False,
+    )
+    estimates = _direction_credit_estimates(
+        config,
+        project_dir,
+        has_style_reference=prepared["reference_supported"],
+        template=style_template_for_suggestion(prepared["candidate"]),
+        candidate_id=prepared["candidate"]["id"],
+        reference_size=prepared["reference_size"],
+    )
+    operation_estimate = estimates[
+        "faithful_with_neighbors" if with_neighbors else "faithful"
+    ]
+    required = operation_estimate["reserved_credits"] or operation_estimate["estimate_credits"]
+    db = get_db()
+    await ledger_call(assert_sufficient_credits, db, user_id, required, action="style_direction")
+    await asyncio.to_thread(_persist_style_direction, project_dir, bible, prepared)
     direction = prepared["direction"]
     candidate = prepared["candidate"]
     index = prepared["index"]
@@ -661,107 +626,35 @@ async def create_style_direction(
     reference_supported = prepared["reference_supported"]
     sample_path = artifacts.style_sample_path(project_dir, index)
 
-    try:
-        lifecycle_owned = state.stages["style"].status not in (
-            StageStatus.RUNNING, StageStatus.AWAITING_REVIEW, StageStatus.COMPLETE,
-        )
-        if lifecycle_owned:
-            begin_stage(state, "style", SAMPLE_COUNT if with_neighbors else 1)
-            save_state(state, project_dir)
-    except BaseException:
-        if reservation_id:
-            release_reservation(db, reservation_id)
-        if request.app.state.style_tasks.get(pkey) is style_guard:
-            request.app.state.style_tasks.pop(pkey, None)
-        if not style_guard.done():
-            style_guard.set_result(None)
-        raise
+    lifecycle_owned = state.stages["style"].status not in (
+        StageStatus.RUNNING, StageStatus.AWAITING_REVIEW, StageStatus.COMPLETE,
+    )
+    if lifecycle_owned:
+        begin_stage(state, "style", SAMPLE_COUNT if with_neighbors else 1)
+        save_state(state, project_dir)
 
-    def _terminal() -> None:
-        try:
-            if lifecycle_owned and state.stages["style"].status == StageStatus.RUNNING:
-                fail_stage(state, "style", "Style generation did not complete")
-                save_state(state, project_dir)
-        finally:
-            if not style_guard.done():
-                style_guard.set_result(None)
-            if request.app.state.style_tasks.get(pkey) is style_guard:
-                request.app.state.style_tasks.pop(pkey, None)
 
-    async def _runner() -> None:
-        try:
-            with ai_request_context(
-                user_id=user_id, project_id=project_id, project_name=project_dir.name,
-                workspace_id=str(project_dir.parent), stage="style", job_id=job_id,
-            ):
-                brief = await ensure_style_sample_brief(config, bible, project_dir)
-                await generate_sample_image(
-                    config.model_copy(
-                        update={"style_template": style_template_for_suggestion(candidate)}
-                    ),
-                    bible, sample_path, brief=brief, candidate_id=candidate["id"],
-                    style_reference=image_path,
-                )
-                await describe_custom_direction(config, project_dir, candidate, sample_path, bible.title)
-                if with_neighbors:
-                    current = load_suggestions(project_dir)
-                    neighbors, _usage = await generate_suggestions(
-                        config, bible, existing_suggestions=current,
-                        custom_direction=direction,
-                    )
-                    merged = current + neighbors
-                    start = len(current) + 1
-                    await generate_samples_for_indices(
-                        config, bible, project_dir, merged,
-                        list(range(start, len(merged) + 1)),
-                    )
-                    # Commit the neighbors only after every proof succeeds.
-                    # A failed attempt may leave replaceable image files, but a
-                    # retry cannot append duplicate suggestion records. Re-read
-                    # so renames and hides made meanwhile are not reverted.
-                    with production_lock(project_dir):
-                        save_suggestions(project_dir, load_suggestions(project_dir) + neighbors, bible.title)
-            if lifecycle_owned:
-                for _ in range(SAMPLE_COUNT if with_neighbors else 1):
-                    record_item_done(state, "style")
-                complete_stage(state, "style")
-                save_state(state, project_dir)
-        except BaseException as exc:
-            if lifecycle_owned:
-                fail_stage(state, "style", str(exc) or type(exc).__name__)
-                save_state(state, project_dir)
-            raise
 
     try:
         prune_finished_generation_jobs(request.app)
-        job, _created = enqueue_reserved_generation_job(
+        job, _created = await enqueue_reserved_generation_job(
             request.app, project_name=pkey, kind="style_sample",
             label=candidate["label"], payload={"id": candidate["id"], "index": index, "with_neighbors": with_neighbors},
-            work=_runner, user_id=user_id, project_id=project_id,
+             user_id=user_id, project_id=project_id,
             project_dir=project_dir, stage="style",
             debit_description="Style direction", reservation_credits=required,
             operations=operations,
             command=command("style_direction", project_dir, config,
                 bible=bible.model_dump(mode="json"), candidate=candidate, index=index,
                 direction=direction, with_neighbors=with_neighbors, lifecycle_owned=lifecycle_owned),
-            existing_hold=(reservation_id, job_id), on_terminal=_terminal,
+
             semaphore=generation_semaphore_for_config(request.app, config),
         )
     except BaseException:
         if lifecycle_owned:
             fail_stage(state, "style", "Failed to enqueue style generation")
             save_state(state, project_dir)
-        if reservation_id and not style_guard.done():
-            release_reservation(db, reservation_id)
-        if request.app.state.style_tasks.get(pkey) is style_guard:
-            request.app.state.style_tasks.pop(pkey, None)
-        if not style_guard.done():
-            style_guard.set_result(None)
         raise
-    if getattr(request.app.state, "durable_queue_required", False) is True:
-        if not style_guard.done():
-            style_guard.set_result(None)
-        request.app.state.style_tasks.pop(pkey, None)
     return {
         "status": "queued",
         "with_neighbors": with_neighbors,
@@ -775,7 +668,7 @@ async def create_style_direction(
     }
 
 
-@router.post("/styles/suggest")
+@router.post("/styles/suggest", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
 async def suggest_styles(
     request: Request,
     project_id: str,
@@ -788,9 +681,6 @@ async def suggest_styles(
     classify_operations(operations)
     pkey = project_key(user_id, project_id)
 
-    _assert_no_pipeline_task(request, pkey)
-    _assert_no_style_task(request, pkey)
-    style_running = request.app.state.style_tasks
 
     bible = _get_bible(project_dir)
     if not bible:
@@ -810,135 +700,12 @@ async def suggest_styles(
     )
     required = estimate["reserved_credits"] or estimate["estimate_credits"]
     db = get_db()
-    assert_sufficient_credits(db, user_id, required, action="style_suggest")
-    # Share one job_id across reservation + every per-call debit so the credit
-    # ledger collapses the batch into a single grouped row.
-    reservation_id, job_id = reserve_credits(db, user_id, project_id, "style", required)
+    await ledger_call(assert_sufficient_credits, db, user_id, required, action="style_suggest")
     queue: EventChannel | None = None
     lifecycle_owned = False
     lifecycle_started = False
-    style_guard = asyncio.get_running_loop().create_future()
 
-    def _terminal() -> None:
-        try:
-            if not any(
-                event["type"] in ("stage_complete", "stage_fail")
-                for event in queue.history
-            ):
-                message = "Style suggestion job did not complete"
-                queue.put_nowait({"type": "stage_fail", "stage": "style_suggest", "message": message})
-                if lifecycle_owned:
-                    fail_stage(state, "style", message)
-                    save_state(state, project_dir)
-        finally:
-            if not style_guard.done():
-                style_guard.set_result(None)
-            if style_running.get(pkey) is style_guard:
-                style_running.pop(pkey, None)
 
-    async def _job():
-        operation_feature = "style.suggestions"
-        operation_model = config.effective_prompt_model()
-        queue.put_nowait({"type": "stage_begin", "stage": "style_suggest", "total": 1})
-        try:
-            queue.put_nowait({
-                "type": "log", "stage": "style_suggest", "level": "info",
-                "message": "Generating style suggestions...",
-            })
-            existing_suggestions = load_suggestions(project_dir)
-            existing_count = len(existing_suggestions)
-            with ai_request_context(
-                user_id=user_id,
-                project_id=project_id,
-                project_name=project_dir.name,
-                workspace_id=str(project_dir.parent),
-                stage="style",
-                job_id=job_id,
-            ):
-                new_suggestions, _usage = await generate_suggestions(
-                    config, bible, existing_suggestions=existing_suggestions,
-                    custom_direction=direction,
-                )
-                with production_lock(project_dir):
-                    # Re-read so directions, names and hides saved meanwhile survive.
-                    existing_suggestions = load_suggestions(project_dir)
-                    existing_count = len(existing_suggestions)
-                    merged = existing_suggestions + new_suggestions
-                    save_suggestions(project_dir, merged, bible.title)
-                
-                total_samples = len(new_suggestions)
-                queue.put_nowait({
-                    "type": "stage_progress", "stage": "style_suggest",
-                    "done": 0, "total": total_samples,
-                })
-                
-                queue.put_nowait({
-                    "type": "log", "stage": "style_suggest", "level": "info",
-                    "message": f"Generating {total_samples} sample images...",
-                })
-                operation_feature = "style.sample"
-                operation_model = config.effective_image_model()
-                
-                done_count = 0
-
-                async def _on_sample_done(_idx: int, result) -> None:
-                    nonlocal done_count
-                    done_count += 1
-                    queue.put_nowait({
-                        "type": "stage_progress", "stage": "style_suggest",
-                        "done": done_count, "total": total_samples,
-                    })
-
-                new_indices = list(range(existing_count + 1, len(merged) + 1))
-                await generate_samples_for_indices(
-                    config, bible, project_dir, merged, new_indices,
-                    on_sample_done=_on_sample_done,
-                )
-            queue.put_nowait({"type": "stage_progress", "stage": "style_suggest", "done": total_samples, "total": total_samples})
-            queue.put_nowait({"type": "stage_complete", "stage": "style_suggest", "done": total_samples, "total": total_samples})
-            if lifecycle_owned:
-                for _ in range(total_samples):
-                    record_item_done(state, "style")
-                complete_stage(state, "style")
-                save_state(state, project_dir)
-        except BaseException as exc:
-            from novel_to_comic.text_utils import clean_exception_message
-
-            cancelled = isinstance(exc, asyncio.CancelledError)
-            message = (
-                "Style suggestion job cancelled"
-                if cancelled else clean_exception_message(exc)
-            )
-            queue.put_nowait({
-                "type": "stage_fail", "stage": "style_suggest",
-                "message": message,
-            })
-            if lifecycle_owned:
-                fail_stage(state, "style", message)
-                save_state(state, project_dir)
-            if cancelled:
-                raise
-            log_args = (
-                project_dir.name,
-                project_id,
-                operation_feature,
-                operation_model,
-                message,
-            )
-            if isinstance(exc, AITransportError):
-                logger.warning(
-                    "Style suggestion failed (handled AI transport error) "
-                    "project=%s project_id=%s stage=style_suggest "
-                    "feature=%s model=%s error=%s",
-                    *log_args,
-                )
-            else:
-                logger.exception(
-                    "Style suggestion failed project=%s project_id=%s "
-                    "stage=style_suggest feature=%s model=%s error=%s",
-                    *log_args,
-                )
-            raise
 
     try:
         queue = EventChannel()
@@ -950,17 +717,16 @@ async def suggest_styles(
             begin_stage(state, "style", NEIGHBOR_COUNT if direction else SAMPLE_COUNT)
             lifecycle_started = True
             save_state(state, project_dir)
-        style_running[pkey] = style_guard
-        queued_job, _created = enqueue_reserved_generation_job(
+        queued_job, _created = await enqueue_reserved_generation_job(
             request.app, project_name=pkey, user_id=user_id,
             project_id=project_id, project_dir=project_dir, stage="style",
             kind="style_suggest", label="Style suggestions",
-            payload={"direction_id": direction_id}, work=_job,
+            payload={"direction_id": direction_id},
             debit_description="Style suggestions", reservation_credits=required,
             operations=operations,
             command=command("style_suggest", project_dir, config,
                 bible=bible.model_dump(mode="json"), direction=direction, lifecycle_owned=lifecycle_owned),
-            existing_hold=(reservation_id, job_id), on_terminal=_terminal,
+
             semaphore=generation_semaphore_for_config(request.app, config),
         )
     except BaseException as exc:
@@ -972,18 +738,11 @@ async def suggest_styles(
                 pass
         if request.app.state.event_queues.get(pkey) is queue:
             request.app.state.event_queues.pop(pkey, None)
-        style_running.pop(pkey, None)
-        if not style_guard.done():
-            release_reservation(db, reservation_id)
         raise
-    if getattr(request.app.state, "durable_queue_required", False) is True:
-        if not style_guard.done():
-            style_guard.set_result(None)
-        style_running.pop(pkey, None)
     return {"status": "started", "job": generation_job_payload(request.app, queued_job)}
 
 
-@router.post("/styles/generate-samples")
+@router.post("/styles/generate-samples", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
 async def generate_style_samples(
     request: Request,
     project_id: str,
@@ -995,8 +754,6 @@ async def generate_style_samples(
     project_dir, config, _state = project
     pkey = project_key(user_id, project_id)
 
-    _assert_no_pipeline_task(request, pkey)
-    _assert_no_style_task(request, pkey)
 
     suggestions = load_suggestions(project_dir)
     ids = body.get("ids", [])
@@ -1039,7 +796,6 @@ async def generate_style_samples(
         direction = load_style_direction(project_dir, s.get("direction_id")) if s.get("direction_id") else None
         style_reference = style_direction_image(project_dir, direction)
         sample_config = config.model_copy(update={"style_template": template})
-        sample_path = artifacts.style_sample_path(project_dir, idx)
         estimate = _style_sample_credit_estimate(
             sample_config, reserve=True, has_style_reference=style_reference is not None,
             exact_cost_usd=estimate_style_proof_cost_usd(
@@ -1049,26 +805,14 @@ async def generate_style_samples(
             ),
         )
 
-        async def _runner(
-            sample_config=sample_config, sample_path=sample_path,
-            candidate_id=candidate_id, style_reference=style_reference,
-            style_reference_mode=s["style_reference_mode"],
-        ) -> None:
-            # Brief generation is paid too: keep it inside the queued hold.
-            brief = await ensure_style_sample_brief(sample_config, bible, project_dir)
-            await generate_sample_image(
-                sample_config, bible, sample_path, brief=brief,
-                candidate_id=candidate_id, style_reference=style_reference,
-                style_reference_mode=style_reference_mode,
-            )
 
-        job, _created = enqueue_reserved_generation_job(
+        job, _created = await enqueue_reserved_generation_job(
             request.app,
             project_name=pkey,
             kind="style_sample",
             label=f"style {idx}",
             payload={"index": idx},
-            work=_runner, user_id=user_id, project_id=project_id,
+             user_id=user_id, project_id=project_id,
             project_dir=project_dir, stage="style",
             debit_description=f"Style sample {idx}",
             reservation_credits=estimate["reserved_credits"] or estimate["estimate_credits"],
@@ -1085,7 +829,7 @@ async def generate_style_samples(
     }
 
 
-@router.post("/styles/validation")
+@router.post("/styles/validation", openapi_extra={'x-canary-action': {'spends': True, 'dispatches': True}})
 async def generate_style_validation(
     request: Request,
     project_id: str,
@@ -1098,8 +842,6 @@ async def generate_style_validation(
     operations = image_operations(config)
     classify_operations(operations)
     pkey = project_key(user_id, project_id)
-    _assert_no_pipeline_task(request, pkey)
-    _assert_no_style_task(request, pkey)
     suggestions = load_suggestions(project_dir)
     suggestion_id = str(body.get("id") or "")
     index = suggestion_index_by_id(suggestions, suggestion_id)
@@ -1143,27 +885,15 @@ async def generate_style_validation(
         exact_cost_usd=exact_cost,
         validation=True,
     )
-    brief = style_validation_brief(bible)
-    output_path = artifacts.style_validation_path(project_dir, suggestion_id)
     sample_config = config.model_copy(
         update={"style_template": style_template_for_suggestion(suggestion)}
     )
 
-    async def _runner() -> None:
-        await generate_sample_image(
-            sample_config, bible, output_path, brief=brief,
-            candidate_id=f"{suggestion_id}:validation",
-            style_reference=style_reference,
-            style_reference_mode=suggestion["style_reference_mode"],
-            project_dir=project_dir,
-            subject_action=STYLE_VALIDATION_ACTION,
-            composition=STYLE_VALIDATION_COMPOSITION,
-        )
 
-    job, _created = enqueue_reserved_generation_job(
+    job, _created = await enqueue_reserved_generation_job(
         request.app, project_name=pkey, kind="style_validation",
         label=f"{suggestion['label']} validation",
-        payload=payload, work=_runner, user_id=user_id,
+        payload=payload,  user_id=user_id,
         project_id=project_id, project_dir=project_dir, stage="style",
         debit_description="Style validation",
         reservation_credits=estimate["reserved_credits"] or estimate["estimate_credits"],
@@ -1179,7 +909,7 @@ async def generate_style_validation(
     }
 
 
-@router.patch("/styles/active")
+@router.patch("/styles/active", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def set_active_style(
     project_id: str,
     body: dict,
@@ -1241,7 +971,7 @@ def set_active_style(
         return result
 
 
-@router.patch("/styles/{suggestion_id}")
+@router.patch("/styles/{suggestion_id}", openapi_extra={'x-canary-action': {'spends': False, 'dispatches': False}})
 def update_style_presentation(
     suggestion_id: str,
     body: dict,

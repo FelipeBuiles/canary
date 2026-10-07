@@ -159,6 +159,7 @@ def _extract_routes() -> list[dict]:
     part = "/api/projects/{project}/parts/{part_id}"
     prefix_map = {
         "account_models.py": "/api/account",
+        "auth.py": "/api/auth",
         "backoffice.py": "/api/ops/backoffice",
         "operator_billing.py": "/api/ops/billing",
         "projects.py": "/api/projects",
@@ -177,33 +178,32 @@ def _extract_routes() -> list[dict]:
         "stages.py": "/api/projects/{project}",   # NO /data/ — mounted at project root
     }
 
-    for path in sorted(router_dir.glob("*.py")):
+    for path in sorted([*router_dir.glob("*.py"), SRC / "server" / "auth.py"]):
         if path.name == "__init__.py":
             continue
         source = path.read_text()
         prefix = prefix_map.get(path.name, f"/api/{path.stem}")
 
-        pattern = re.compile(
-            r'@(router|public_router|ops_router)\.(get|post|put|patch|delete)\("([^"]*)"[^)]*\)\s*\n'
-            r'(?:@[^\n]+\n)*'
-            r'(?:async\s+)?def (\w+)',
-            re.MULTILINE,
-        )
-        for m in pattern.finditer(source):
-            router_name = m.group(1)
-            method = m.group(2).upper()
-            route_path = m.group(3)
-            func_name = m.group(4)
-            route_prefix = prefix
-            if path.name == "publications.py":
-                route_prefix = {"router": prefix, "public_router": "/api/public/books", "ops_router": "/api/ops/publications"}[router_name]
-            full_path = route_prefix + route_path if route_path != "/" else route_prefix
-            routes.append({
-                "method": method,
-                "path": full_path,
-                "func": func_name,
-                "file": path.name,
-            })
+        for node in ast.walk(ast.parse(source)):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for decorator in node.decorator_list:
+                if not (isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Attribute)
+                        and isinstance(decorator.func.value, ast.Name) and decorator.args
+                        and isinstance(decorator.args[0], ast.Constant)
+                        and isinstance(decorator.args[0].value, str)):
+                    continue
+                router_name, method = decorator.func.value.id, decorator.func.attr
+                if router_name not in {"router", "owner_router", "public_router", "ops_router"} or method not in {"get", "post", "put", "patch", "delete"}:
+                    continue
+                route_path = decorator.args[0].value
+                route_prefix = prefix
+                if path.name == "publications.py":
+                    route_prefix = {"router": prefix, "owner_router": "/api/projects/{project}",
+                                    "public_router": "/api/public/books", "ops_router": "/api/ops/publications"}[router_name]
+                routes.append({"method": method.upper(),
+                               "path": route_prefix + route_path if route_path != "/" else route_prefix,
+                               "func": node.name, "file": path.name})
 
     return routes
 
@@ -273,7 +273,7 @@ def main() -> None:
     if force_all or touched("models/"):
         write_models_doc(_extract_models())
 
-    if force_all or touched("server/routers/") or touched("server/app.py"):
+    if force_all or touched("server/routers/") or touched("server/app.py") or touched("server/auth.py"):
         write_api_routes_doc(_extract_routes())
 
     if not (force_all or touched("config.py") or touched("models/") or touched("server/")):

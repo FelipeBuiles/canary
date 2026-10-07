@@ -166,7 +166,7 @@ def test_otlp_logs_receive_only_selected_safe_fields(monkeypatch):
 
 def test_queue_context_serializes_without_changing_arguments():
     from novel_to_comic.server.job_commands import JobCommand
-    spec = JobCommand(operation="page_draw", project_dir="/tmp/project", config={},
+    spec = JobCommand(operation="cover", project_dir="/tmp/project", config={},
         traceparent="00-0123456789abcdef0123456789abcdef-0123456789abcdef-01", request_id=USER)
     assert JobCommand.model_validate_json(spec.model_dump_json()) == spec
     assert spec.arguments == {}

@@ -19,6 +19,8 @@ export function AppTopBar() {
   const { user } = useAuth();
   const { data: balance } = useCreditBalance();
   const [open, setOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState("");
   const menuRef = useRef<HTMLDivElement | null>(null);
   const registerSlot = useTopBarSlotRegister();
 
@@ -114,12 +116,21 @@ export function AppTopBar() {
               ))}
               <button
                 type="button"
-                onClick={() => void signOut()}
+                disabled={signingOut}
+                onClick={() => {
+                  setSigningOut(true);
+                  setSignOutError("");
+                  void signOut().then(result => {
+                    if (result.error) setSignOutError(result.error.message);
+                  }).catch(error => setSignOutError(error instanceof Error ? error.message : "Sign out could not be completed. Try again."))
+                    .finally(() => setSigningOut(false));
+                }}
                 className="flex min-h-12 w-full items-center gap-4 border-t border-ink-black/10 px-5 text-left font-body text-[0.88rem] font-bold tracking-[0.04em] text-hero-red hover:bg-chip-red/40"
               >
                 <span className="font-meta text-[0.62rem]">→</span>
-                Sign Out
+                {signingOut ? "Signing Out…" : "Sign Out"}
               </button>
+              {signOutError && <p role="alert" className="px-5 pb-4 font-body text-sm text-hero-red">{signOutError}</p>}
             </div>
           )}
         </div>

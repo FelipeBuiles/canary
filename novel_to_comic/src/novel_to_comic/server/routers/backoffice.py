@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..db import get_db
 from ..deployment_status import require_ops_token
-from ..generation_jobs import GenerationJob
+from ..generation_jobs import GenerationJob, generation_jobs_snapshot
 from ..product_events import capture_server_event
 from ..release import release_identity
 from ..runtime_environment import stripe_environment_snapshot
@@ -218,7 +218,7 @@ def _project_snapshot(
     app: Any,
     row: dict[str, Any],
     *,
-    jobs: list[GenerationJob],
+    jobs: Sequence[GenerationJob],
 ) -> dict[str, Any]:
     user_id = str(row.get("user_id") or "")
     project_id = str(row.get("id") or "")
@@ -228,11 +228,7 @@ def _project_snapshot(
     pkey = f"{user_id}:{project_id}"
     related_jobs = [job for job in jobs if job.project_name == pkey]
     active_jobs = [job for job in related_jobs if job.status in {"queued", "running"}]
-    pipeline_task = getattr(app.state, "running_tasks", {}).get(pkey)
-    style_task = getattr(app.state, "style_tasks", {}).get(pkey)
-    live_task = any(
-        task is not None and not task.done() for task in (pipeline_task, style_task)
-    )
+    live_task = bool(active_jobs)
 
     errors: list[dict[str, Any]] = []
     stages: list[dict[str, Any]] = []
@@ -445,7 +441,7 @@ def _make_user(
     ledger_rows: list[dict[str, Any]],
     usage_rows: list[dict[str, Any]],
     events: list[dict[str, Any]],
-    jobs: list[GenerationJob],
+    jobs: Sequence[GenerationJob],
     app: Any,
 ) -> dict[str, Any]:
     user_id = str(_value(user, "id"))
@@ -627,7 +623,7 @@ def _load_snapshot(request: Request) -> dict[str, Any]:
             "Operator data is unavailable. Check Supabase service credentials and schema.",
         ) from exc
 
-    jobs = list(getattr(request.app.state, "generation_jobs", {}).values())
+    jobs = generation_jobs_snapshot(request.app)
     users = [
         _make_user(
             user,
