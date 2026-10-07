@@ -57,6 +57,8 @@ retained as current reference.
   supported version lines, upgrade contracts, and operational rollout checks.
 - [Stage contracts](reference/stage-contracts.md): source-owned stage authority,
   user gates, correction jobs, recovery, and generated-output compatibility.
+- [Local crop OCR experiment](reference/crop-ocr-experiment.md): opt-in blind
+  PaddleOCR verification, provider-free replay and measured local limits.
 - [Agent context](reference/agent-context.md): concise workflow and code navigation.
 - [Model settings](reference/account-model-settings.md): production operator
   defaults, development account controls, API routes, and Draw profiles.

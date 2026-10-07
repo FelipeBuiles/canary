@@ -22,11 +22,21 @@ only verified curated story metadata. Reader and story bootstraps contain only
 already-public fields or shipped, hash-verified licensed text. JSON escapes
 HTML delimiters.
 
-The client loads the current route and requested catalog before hydrating,
-keeping the original content visible. A restored session switches `/` to
-Library and its stored application language. Public URL language does not
-write the application preference. Account changes retain cache replacement and
-request-epoch isolation.
+The client loads the current route and requested catalog before hydrating or
+rendering, keeping the original content visible; if either fails it renders
+client-side instead of leaving a static page. Public URL language does not
+write the application preference, and the i18n provider is never remounted:
+a language change keeps the current screen until its catalog is ready.
+
+Restoring a session never remounts the page. Public queries (`short-stories`,
+`public-book`) are hashed without an account; the first restored session binds
+the startup query client in place, dropping only account-scoped entries. Later
+account switches still replace the client and remount, with request-epoch
+isolation. Browsers with a session carry a presentation-only `sw_signed_in`
+cookie; for it, `/` serves the SPA shell (`Vary: Cookie`) so Library opens
+without the homepage appearing first. It authorizes nothing. Server documents
+for `/read`, `/samples` and 404s keep a crawler-readable `.server-intro`, hidden
+under `@media (scripting: enabled)` so the app's own view is the first one seen.
 
 `SPAStaticFiles` serves known public documents with HTML revalidation, immutable
 fingerprinted assets, and short marketing caches. File aliases redirect to

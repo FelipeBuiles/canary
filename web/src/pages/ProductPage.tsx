@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { BrandIdentity } from "../components/BrandIdentity";
 import { responsiveMarketingImage } from "../lib/marketingImages";
-import { publicPages } from "../lib/publicPages";
+import { KAITLIN_EXAMPLE_BOOK_ID, publicPages } from "../lib/publicPages";
 import type { ReactNode } from "react";
 
 const navigation = [
@@ -42,7 +42,7 @@ function Guide() {
 function Example() {
   return <>
     <p>This development example adapts <em>Kaitlin Out of Space</em> by Krishan Coupland into a 52-page comic. A figure in a scorched spacesuit arrives in an older woman’s garden; the story follows the visitor’s gradual change. The example demonstrates the studio’s output and gives you pages to inspect.</p>
-    <p><Link to="/samples?story=kaitlin-out-of-space">Read the complete source story</Link> · <Link to="/read/df3a1b400a444815bddeca430360f0d9">Read the finished comic</Link></p>
+    <p><Link to="/samples?story=kaitlin-out-of-space">Read the complete source story</Link> · <Link to={`/read/${KAITLIN_EXAMPLE_BOOK_ID}`}>Read the finished comic</Link></p>
     <Section title="Compare three points in the adaptation"><div className="grid gap-8 sm:grid-cols-3">{[
       [1, "Establish the scene", "Compare the opening page with the source’s setting and arrival. Check how much information the composition communicates before you read the dialogue."],
       [12, "Check continuity", "Compare the recurring figures and locations with the opening pages. Inspect costume, scale, face, and spatial relationships rather than relying on a thumbnail."],

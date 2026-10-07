@@ -11,6 +11,7 @@ import { LANGUAGES, useI18n } from "../i18n";
 import { cn } from "../lib/cn";
 import "./PublicBookPage.css";
 import { usePublicMetadata } from "../lib/publicMetadata";
+import { KAITLIN_EXAMPLE_BOOK_ID, PUBLIC_ORIGIN } from "../lib/publicPages";
 
 /** One reading-language preference per viewer, shared by every public book. */
 const READER_LANGUAGE_KEY = "canary.readerLanguage";
@@ -45,8 +46,8 @@ export function PublicBookPage() {
   usePublicMetadata(book ? `${book.title} — Scenewright` : query.isError ? "Book unavailable — Scenewright" : undefined,
     book?.description || (query.isError ? "This book is not available." : `By ${book?.author ?? ""} · Read on Scenewright`), `/read/${id}`, book?.pages[0]?.url,
     { noindex: query.isError, schema: book ? { "@context": "https://schema.org", "@type": "Book", name: book.title,
-      author: { "@type": "Person", name: book.author }, description: book.description, url: `https://scenewright.ink/read/${id}`,
-      numberOfPages: book.pages.length, image: new URL(book.pages[0].url, "https://scenewright.ink").href,
+      author: { "@type": "Person", name: book.author }, description: book.description, url: `${PUBLIC_ORIGIN}/read/${id}`,
+      numberOfPages: book.pages.length, image: new URL(book.pages[0].url, PUBLIC_ORIGIN).href,
       ...(book.source_credit ? { isBasedOn: book.source_credit.source_url, license: book.source_credit.license_url } : {}) } : undefined });
   const referral = `/signup?ref=book-${encodeURIComponent(id)}`;
   const languages = useMemo(() => book ? publicationLanguages(book) : [], [book]);
@@ -102,7 +103,7 @@ export function PublicBookPage() {
       <h2 className="font-display text-3xl">{book.title}</h2>
       <p className="mt-3">{book.author} · {book.pages.length} {t("pages")}</p>
       {book.description && <p className="mx-auto mt-4 max-w-prose">{book.description}</p>}
-      {book.id === "df3a1b400a444815bddeca430360f0d9" && <p className="mt-4 flex flex-wrap justify-center gap-5">
+      {book.id === KAITLIN_EXAMPLE_BOOK_ID && <p className="mt-4 flex flex-wrap justify-center gap-5">
         <Link className="underline" to="/samples?story=kaitlin-out-of-space">{t("READ THE ORIGINAL")}</Link>
         <Link className="underline" to="/examples/kaitlin-out-of-space">{t("landing.footer.example")}</Link>
       </p>}

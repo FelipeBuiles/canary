@@ -395,13 +395,17 @@ export function setTelemetryUser(userId: string | null): void {
   if (userId) client.identify(userId);
 }
 
+let startNow: (() => void) | undefined;
+
 export function initTelemetry(): Promise<void> {
   if (loading) return loading;
   const key = import.meta.env.VITE_POSTHOG_PROJECT_TOKEN;
   const host = import.meta.env.VITE_POSTHOG_HOST;
   if (!key || !["https://us.i.posthog.com", "https://eu.i.posthog.com"].includes(host)) return Promise.resolve();
   loading = (async () => {
-    await new Promise<void>(resolve => { afterPageLoad(resolve); });
+    // Optional startup work waits for an idle slot, unless an error arrives
+    // first: then load now, so a visitor who leaves still reports it.
+    await new Promise<void>(resolve => { startNow = resolve; afterPageLoad(resolve); });
     // The no-external build never fetches scripts; bundle the replay recorder.
     const [, , , { default: posthog }] = await Promise.all([
       import("posthog-js/dist/exception-autocapture"),
@@ -480,5 +484,7 @@ export function captureUiError(error: unknown): void {
   const value = error as { status?: number; code?: string; diagnostics?: ErrorDiagnostics; name?: string } | null;
   const properties = { ...value?.diagnostics, http_status: value?.status ?? value?.diagnostics?.http_status,
     error_code: value?.code ?? (value?.name === "InsufficientCreditsError" ? "insufficient_credits" : value?.diagnostics?.error_code) };
-  void initTelemetry().then(() => client?.captureException(error, properties));
+  const ready = initTelemetry();
+  startNow?.();
+  void ready.then(() => client?.captureException(error, properties));
 }

@@ -21,7 +21,14 @@ export function loadCatalog(locale: LanguageCode): Promise<Catalog> {
       : locale === "es" ? import("./es.json") : import("./fr.json"))
       .then(({ default: catalog }) => {
         catalogs[locale] = catalog;
+        // React's use() reads a settled thenable synchronously, so a
+        // preloaded catalog never shows a Suspense fallback.
+        Object.assign(load!, { status: "fulfilled", value: catalog });
         return catalog;
+      }, (error: unknown) => {
+        // A failed chunk may load after a retry (e.g. after a deploy reload).
+        loads.delete(locale);
+        throw error;
       });
     loads.set(locale, load);
   }

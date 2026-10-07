@@ -5,6 +5,8 @@ import { createHash } from 'node:crypto'
 import { build } from 'vite'
 
 const output = resolve('node_modules/.tmp/public-render')
+// Matches PUBLIC_ORIGIN in src/lib/publicPages.ts and the server's SCENEWRIGHT_PUBLIC_URL.
+const origin = (process.env.VITE_PUBLIC_URL || 'https://scenewright.ink').replace(/\/$/, '')
 const escape = value => String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character])
 const json = value => JSON.stringify(value).replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026')
 try {
@@ -41,13 +43,13 @@ try {
     let markup = await renderPublicPage(path, bootstrap)
     let preloads = ''
     markup = markup.replace(/<link\b[^>]*rel="preload"[^>]*>/g, node => { preloads += node; return '' })
-    const url = `https://scenewright.ink${path}`
-    const image = 'https://scenewright.ink/marketing/scenewright-social.png'
+    const url = `${origin}${path}`
+    const image = `${origin}/marketing/scenewright-social.png`
     let document = template.replace(/<title\b[^>]*>.*?<\/title>/gis, '').replace(/<meta\b[^>]*(?:name|property)="(?:description|robots|og:[^"]+|twitter:[^"]+)"[^>]*>/gi, '').replace(/<link\b[^>]*rel="canonical"[^>]*>/gi, '')
     const head = `<title>${escape(metadata.title)}</title><link rel="canonical" href="${url}">` +
       Object.entries({ description: metadata.description, robots: 'index, follow', 'og:type': 'website', 'og:site_name': 'Scenewright', 'og:title': metadata.title, 'og:description': metadata.description, 'og:url': url, 'og:image': image, 'og:image:width': '1200', 'og:image:height': '630', 'og:image:alt': 'Scenewright — AI comic studio for authors', 'twitter:card': 'summary_large_image', 'twitter:title': metadata.title, 'twitter:description': metadata.description, 'twitter:image': image, 'twitter:image:alt': 'Scenewright — AI comic studio for authors' })
         .map(([key, value]) => `<meta ${key.startsWith('og:') ? 'property' : 'name'}="${key}" content="${escape(value)}">`).join('') +
-      (isPublicHome(path) ? [...Object.entries(homePaths), ['x-default', '/']].map(([language, target]) => `<link rel="alternate" hreflang="${language}" href="https://scenewright.ink${target}">`).join('') : '') +
+      (isPublicHome(path) ? [...Object.entries(homePaths), ['x-default', '/']].map(([language, target]) => `<link rel="alternate" hreflang="${language}" href="${origin}${target}">`).join('') : '') +
       `<script id="public-schema" type="application/ld+json">${json(publicSchema(path))}</script>`
     const module = isPublicHome(path) ? 'src/pages/HomePage.tsx' : path.startsWith('/legal/') ? { '/legal/terms': 'src/pages/legal/TermsPage.tsx', '/legal/privacy': 'src/pages/legal/PrivacyPage.tsx', '/legal/acceptable-use': 'src/pages/legal/AcceptableUsePage.tsx' }[path] : 'src/pages/ProductPage.tsx'
     document = document.replace('<html lang="en">', `<html lang="${metadata.language}">`).replace('</head>', head + stylesFor(module) + preloads + '</head>')

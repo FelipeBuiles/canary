@@ -9,7 +9,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { homePaths } from "../lib/publicPages";
 import { BrandIdentity } from "../components/BrandIdentity";
 import { BrandMark } from "../components/BrandMark";
-import { LANGUAGES, useI18n, type LanguageCode } from "../i18n";
+import { LANGUAGES, preloadLanguage, useI18n, type LanguageCode } from "../i18n";
 import { landingCopy, type LandingCopy, type LandingFaq, type LandingStep } from "./landingCopy";
 import "./HomePage.css";
 
@@ -347,7 +347,11 @@ export function HomePage() {
           <LanguageSwitcher
             activeLanguage={language}
             label={copy.nav.language}
-            onChange={next => { setLanguage(next); navigate(homePaths[next]); }}
+            onChange={next => {
+              setLanguage(next);
+              // Arrive at the translated page with its copy ready, not a re-render.
+              void preloadLanguage(next).then(() => navigate(homePaths[next]));
+            }}
           />
           <Link className="landing-sign-in" to="/login">
             {copy.nav.signIn}
@@ -543,7 +547,8 @@ export function HomePage() {
           <Link to="/about">{t("landing.footer.about")}</Link>
         </nav>
         <nav aria-label={copy.nav.language}>
-          {LANGUAGES.map(({ code, label }) => <Link key={code} to={homePaths[code]} lang={code} hrefLang={code}>{label}</Link>)}
+          {LANGUAGES.map(({ code, label }) => <Link key={code} to={homePaths[code]} lang={code} hrefLang={code}
+            onPointerEnter={() => void preloadLanguage(code)} onFocus={() => void preloadLanguage(code)}>{label}</Link>)}
         </nav>
         </div>
         <p>© 2026 Scenewright</p>

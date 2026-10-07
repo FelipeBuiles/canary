@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, startTransition, Suspense, use, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, startTransition, Suspense, use, useContext, useDeferredValue, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { StageName, StageStatus } from "./types/api";
 import { createTranslator, loadCatalog, loadedCatalog, type Translator } from "./locales/messages";
@@ -17,7 +17,7 @@ interface I18nValue {
 }
 const I18nContext = createContext<I18nValue | null>(null);
 
-function readStoredLanguage(): LanguageCode {
+export function readStoredLanguage(): LanguageCode {
   try {
     const stored = languageCode(globalThis.localStorage?.getItem(STORAGE_KEY));
     if (stored) return stored;
@@ -25,30 +25,41 @@ function readStoredLanguage(): LanguageCode {
   return globalThis.navigator?.languages?.map(languageCode).find(Boolean) ?? "en";
 }
 
-export function I18nProvider({ children, initialLanguage }: { children: ReactNode; initialLanguage?: LanguageCode }) {
-  return <Suspense fallback={<LoadingBlock label="LOADING…" />}><LocalizedProvider initialLanguage={initialLanguage}>{children}</LocalizedProvider></Suspense>;
+/** Start fetching a catalog on intent (hover/focus) so switching never waits. */
+export function preloadLanguage(language: LanguageCode): Promise<unknown> {
+  return loadCatalog(language).catch(() => {});
 }
 
-function LocalizedProvider({ children, initialLanguage }: { children: ReactNode; initialLanguage?: LanguageCode }) {
-  const [language, setLanguage] = useState<LanguageCode>(() => initialLanguage ?? readStoredLanguage());
-  // Keep reading the same promise on a suspended render's retry. Bypassing
-  // use() once its catalog is cached can disrupt React's hook replay.
+/**
+ * `pageLanguage` pins a public page's language (its URL decides it, for
+ * search engines); elsewhere the reader's stored preference applies. The
+ * provider is never remounted: switching language keeps the current screen
+ * until the next catalog is ready, rather than flashing a loading state.
+ */
+export function I18nProvider({ children, pageLanguage }: { children: ReactNode; pageLanguage?: LanguageCode }) {
+  return <Suspense fallback={<LoadingBlock label="LOADING…" />}><LocalizedProvider pageLanguage={pageLanguage}>{children}</LocalizedProvider></Suspense>;
+}
+
+function LocalizedProvider({ children, pageLanguage }: { children: ReactNode; pageLanguage?: LanguageCode }) {
+  const [preferred, setPreferred] = useState<LanguageCode>(readStoredLanguage);
+  const language = useDeferredValue(pageLanguage ?? preferred);
   const catalog = language === "en" ? loadedCatalog("en")! : use(loadCatalog(language));
   useEffect(() => {
-    try { if (!initialLanguage) globalThis.localStorage?.setItem(STORAGE_KEY, language); } catch { /* optional persistence */ }
-    document.documentElement.lang = language;
-  }, [language, initialLanguage]);
+    try { globalThis.localStorage?.setItem(STORAGE_KEY, preferred); } catch { /* optional persistence */ }
+  }, [preferred]);
   useEffect(() => {
-    if (initialLanguage) return;
+    document.documentElement.lang = language;
+  }, [language]);
+  useEffect(() => {
     const sync = (event: StorageEvent) => {
-      if (event.key === STORAGE_KEY) startTransition(() => setLanguage(languageCode(event.newValue) ?? "en"));
+      if (event.key === STORAGE_KEY) startTransition(() => setPreferred(languageCode(event.newValue) ?? "en"));
     };
     window.addEventListener("storage", sync);
     return () => window.removeEventListener("storage", sync);
-  }, [initialLanguage]);
+  }, []);
   const value = useMemo<I18nValue>(() => {
     const t = createTranslator(language, catalog);
-    return { language, setLanguage: (next: LanguageCode) => startTransition(() => setLanguage(next)), t,
+    return { language, setLanguage: (next: LanguageCode) => startTransition(() => setPreferred(next)), t,
       stageName: (stage) => t(`stage.${stage}`),
       statusName: (status) => t(`status.${status}`),
     };

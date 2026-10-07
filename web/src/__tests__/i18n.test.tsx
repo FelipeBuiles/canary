@@ -14,7 +14,7 @@ afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); });
 describe("ICU localization", () => {
   it("keeps public URL languages independent of the stored application preference", async () => {
     localStorage.setItem("canary.uiLanguage", "es");
-    await act(async () => { render(<I18nProvider initialLanguage="en"><LanguageProbe /></I18nProvider>); });
+    await act(async () => { render(<I18nProvider pageLanguage="en"><LanguageProbe /></I18nProvider>); });
     expect(screen.getByTestId("locale").textContent).toBe("en");
     expect(localStorage.getItem("canary.uiLanguage")).toBe("es");
     await act(async () => { window.dispatchEvent(new StorageEvent("storage", { key: "canary.uiLanguage", newValue: "fr" })); });

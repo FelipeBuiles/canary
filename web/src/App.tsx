@@ -3,16 +3,18 @@ import { BrowserRouter, Navigate, Routes, Route, useLocation } from "react-route
 import { AuthGuard } from "./components/AuthGuard";
 import { LoadingBlock } from "./components/ui/StateBlock";
 import { useAuth } from "./hooks/useAuth";
-import { I18nProvider } from "./i18n";
+import { I18nProvider, type LanguageCode } from "./i18n";
+import { hasSessionHint } from "./lib/sessionHint";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { queryClient } from "./api/queryClient";
+import { queryClient, queryClientEpoch } from "./api/queryClient";
 import { trackPageview } from "./telemetry";
 import { loadPublicPage } from "./lib/publicRoutes";
 import { publicPages, publicSchema, isPublicHome } from "./lib/publicPages";
 import { usePublicMetadata } from "./lib/publicMetadata";
 import { getPublicBootstrap } from "./lib/publicBootstrap";
 
-const Shell = lazy(() => import("./layout/Shell").then(({ Shell }) => ({ default: Shell })));
+const loadShell = () => import("./layout/Shell").then(({ Shell }) => ({ default: Shell }));
+const Shell = lazy(loadShell);
 const ProjectRooms = lazy(() =>
   import("./layout/ProjectRooms").then(({ ProjectRooms }) => ({ default: ProjectRooms })),
 );
@@ -77,15 +79,17 @@ function lazyRoute(Component: ComponentType): ReactElement {
 function RootRoute() {
   const { session, loading } = useAuth();
   useEffect(() => {
-    // Fetch the landing route alongside session restoration, not after it.
-    if (loading) void loadHomePage().catch(() => {});
+    // Fetch the likely destination alongside session restoration, not after it.
+    if (loading) void (hasSessionHint() ? loadShell() : loadHomePage()).catch(() => {});
   }, [loading]);
 
-  if (loading && !getPublicBootstrap()?.prerendered) {
-    return <LoadingBlock label="OPENING SCENEWRIGHT…" />;
-  }
+  // A prerendered homepage is only served to visitors without a session hint;
+  // keep it on screen while auth restores instead of swapping in a spinner.
+  const opening = <LoadingBlock label="OPENING SCENEWRIGHT…" />;
+  if (loading && !getPublicBootstrap()?.prerendered) return opening;
 
-  return session ? lazyRoute(Shell) : lazyRoute(HomePage);
+  // One loading state from restore to the first screen, not two labels.
+  return <Suspense fallback={opening}>{session ? <Shell /> : <HomePage />}</Suspense>;
 }
 
 function RouteMetadata() {
@@ -113,12 +117,24 @@ function PageviewTracker() {
   return null;
 }
 
+/**
+ * Public URLs carry their own language. `/` is the homepage only for visitors
+ * without a session: while auth restores, a hydrating homepage keeps its
+ * language and the app shell keeps the reader's, so nothing re-renders in
+ * another language once the session is known.
+ */
+function usePageLanguage(pathname: string): LanguageCode | undefined {
+  const { session, loading } = useAuth();
+  if (pathname !== "/") return publicPages[pathname]?.language;
+  if (session || (loading && !getPublicBootstrap()?.prerendered)) return undefined;
+  return publicPages["/"].language;
+}
+
 export function App() {
   const { pathname } = useLocation();
-  const { session } = useAuth();
-  const publicLanguage = pathname === "/" && session ? undefined : publicPages[pathname]?.language;
+  const pageLanguage = usePageLanguage(pathname);
   return (
-    <I18nProvider key={publicLanguage ?? "account"} initialLanguage={publicLanguage}>
+    <I18nProvider pageLanguage={pageLanguage}>
       <RouteMetadata />
       <PageviewTracker />
       <Routes>
@@ -180,10 +196,12 @@ export function App() {
 
 export function AccountApp() {
   // Public readers/auth/legal pages need not wait for session restoration.
-  // RootRoute and AuthGuard retain their gates; account changes replace caches.
-  const { user } = useAuth();
+  // RootRoute and AuthGuard retain their gates. Restoring the first session
+  // binds the startup cache in place; only a later account switch replaces
+  // the client and remounts (useAuth re-renders this on every change).
+  useAuth();
   return (
-    <QueryClientProvider key={user?.id ?? "signed-out"} client={queryClient}>
+    <QueryClientProvider key={queryClientEpoch} client={queryClient}>
       <BrowserRouter>
         <App />
       </BrowserRouter>

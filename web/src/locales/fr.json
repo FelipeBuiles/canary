@@ -3384,5 +3384,14 @@
   "landing.footer.guide": "Guide du roman à la BD",
   "landing.footer.example": "Exemple de BD",
   "landing.footer.about": "À propos",
-  "Please check the address, or return to Scenewright.": "Vérifiez l’adresse ou revenez à Scenewright."
+  "Please check the address, or return to Scenewright.": "Vérifiez l’adresse ou revenez à Scenewright.",
+  "CLOSE-UP READ": "LECTURE EN GROS PLAN",
+  "First read:": "Première lecture :",
+  "Text check is uncertain": "La vérification du texte est incertaine",
+  "The close-up text check was inconclusive. Compare the saved artwork with the script before making changes.": "La vérification du texte en gros plan est non concluante. Comparez le dessin enregistré au script avant de faire des modifications.",
+  "The text checks disagree. Compare the saved artwork with the script before making changes.": "Les vérifications du texte ne concordent pas. Comparez le dessin enregistré au script avant de faire des modifications.",
+  "Close-up:": "Gros plan :",
+  "Both reads match": "Les deux lectures concordent",
+  "The reads differ": "Les lectures diffèrent",
+  "Close-up read unclear": "Lecture en gros plan incertaine"
 }

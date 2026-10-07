@@ -41,7 +41,7 @@ from novel_to_comic.page_review import (
     record_page_issue,
     summarize_page_issues,
     revalidate_cached_page_render,
-    DRAW_VALIDATOR_VERSION,
+    analysis_is_current,
 )
 from novel_to_comic.stages.s5_plan import (
     approved_reference_files,
@@ -158,7 +158,7 @@ def _analysis_recovery(target: TargetArtifacts, page_number: int) -> dict:
         analysis = target.read_analysis(page_number, render.revision)
         if (analysis.render_image_sha256 == render.image_sha256
                 and analysis.comic_page_sha256 == page.content_sha256
-                and analysis.validator_version == DRAW_VALIDATOR_VERSION):
+                and analysis_is_current(analysis.validator_version)):
             return {"status": "checked", "requires_paid_call": False}
     except (ArtifactMissing, ArtifactInvalid):
         pass
