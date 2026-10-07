@@ -106,8 +106,8 @@ reader requests. Frontend deployments that serve HTML independently must proxy
 `/read/*` to this handler to get crawler previews. The Vite dev server uses its
 ordinary SPA document.
 
-`SCENEWRIGHT_APP_URL` supplies the absolute application origin for social metadata,
-QR codes, and export links (default `https://app.scenewright.ink`). Reader CTAs carry
+`SCENEWRIGHT_APP_URL` supplies the absolute application origin for
+QR codes and export referral links (default `https://scenewright.ink`). Reader CTAs carry
 `ref=book-{id}` into signup; valid IDs are retained as `referred_by_book` signup
 metadata. This is attribution only, not a referral rewards or analytics dashboard.
 The public UI supports the existing English, Spanish, and French interface
@@ -125,18 +125,26 @@ the language toggle, and explicit owner publishing/unpublishing.
 
 Public reader documents replace the SPA's homepage title, description, canonical
 and social metadata with the frozen publication's public title, author and
-synopsis. The initial HTML includes a short public introduction; React updates
-existing head nodes during client navigation. Unavailable/unpublished reader
+synopsis. The initial HTML includes the public synopsis, author, page count, three preview
+images, source/license context when present, and links to the workflow and source
+library. Book JSON-LD and an escaped public-only bootstrap retain the reader
+data while React initializes. React updates existing head nodes during client
+navigation. Unavailable/unpublished reader
 URLs return 404 with `X-Robots-Tag: noindex`.
 
 The public sample shelf and recognized story deep links also receive unique
-metadata and a crawler-visible introduction. `/sitemap.xml` is real XML and
-lists the homepage, sample shelf, curated bundled sample stories and valid
-showcase books only. Owner publications remain accessible by direct public
+metadata and complete, hash-verified curated story text with source and license
+links. Classic archive deep links retain public metadata; their external text
+is fetched by the interactive reader. `/sitemap.xml` is real XML and
+lists the public landing languages, product/guide/example/legal pages, sample
+shelf, curated bundled sample stories and valid showcase books only. Owner publications remain accessible by direct public
 link but are not automatically listed for discovery. Private projects,
 unpublished snapshots and the uncurated classic archive are not enumerated.
 `/robots.txt` points to the sitemap and disallows private app/API paths; access
-control remains the authority for private content.
+control remains the authority for private content. The read-only public-book
+collection, manifests and images are explicitly allowed beneath the private
+API exclusion. These rules do not change publication consent or curation.
+See [public search rendering](public-search.md) for the built HTML contract.
 
 Server canonical URLs default to `https://scenewright.ink`; deployments can set
 `SCENEWRIGHT_PUBLIC_URL` for the server's public origin. This is separate from

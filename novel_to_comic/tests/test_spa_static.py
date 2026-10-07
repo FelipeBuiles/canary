@@ -110,3 +110,36 @@ def test_missing_media_and_assets_never_return_the_html_shell(static_client, pat
     response = static_client.get(path)
     assert response.status_code == 404
     assert "cache-control" not in response.headers
+
+
+def test_unknown_document_is_a_real_404(static_client):
+    response = static_client.get("/not-a-scenewright-route")
+    assert response.status_code == 404
+    assert "Page not found" in response.text
+    assert response.headers["x-robots-tag"] == "noindex, follow"
+
+
+@pytest.mark.parametrize("path", ["/login", "/signup", "/reset-password", "/auth/callback", "/account", "/credits", "/project/example/pages"])
+def test_private_and_auth_routes_are_not_indexable(static_client, path):
+    response = static_client.get(path)
+    assert response.status_code == 200
+    assert response.headers["x-robots-tag"] == "noindex, follow"
+
+
+def test_prerender_manifest_serves_complete_public_documents_and_revalidates(tmp_path):
+    import json
+    (tmp_path / "index.html").write_text('<html><div id="root"></div></html>')
+    (tmp_path / "public").mkdir()
+    (tmp_path / "public" / "home.html").write_text('<html><h1>Comic studio for authors</h1></html>')
+    (tmp_path / "public" / "pricing.html").write_text('<html><h1>Generation credits</h1></html>')
+    (tmp_path / "public-pages.json").write_text(json.dumps({"/": "public/home.html", "/pricing": "public/pricing.html"}))
+    client = TestClient(Starlette(routes=[Mount("/", SPAStaticFiles(directory=tmp_path, html=True))]))
+    assert "Comic studio for authors" in client.get("/").text
+    response = client.get("/pricing")
+    assert response.status_code == 200
+    assert "Generation credits" in response.text
+    assert response.headers["cache-control"] == "no-cache"
+    assert "x-robots-tag" not in response.headers
+    unchanged = client.get("/pricing", headers={"If-None-Match": response.headers["etag"]})
+    assert unchanged.status_code == 304
+    assert unchanged.headers["cache-control"] == "no-cache"

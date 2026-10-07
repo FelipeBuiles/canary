@@ -42,8 +42,12 @@ export function PublicBookPage() {
   const [readerOpen, setReaderOpen] = useState(true);
   const [message, setMessage] = useState("");
   const book = query.data;
-  usePublicMetadata(book ? `${book.title} — Scenewright` : undefined,
-    book?.description || `By ${book?.author ?? ""} · Read on Scenewright`, `/read/${id}`, book?.pages[0]?.url);
+  usePublicMetadata(book ? `${book.title} — Scenewright` : query.isError ? "Book unavailable — Scenewright" : undefined,
+    book?.description || (query.isError ? "This book is not available." : `By ${book?.author ?? ""} · Read on Scenewright`), `/read/${id}`, book?.pages[0]?.url,
+    { noindex: query.isError, schema: book ? { "@context": "https://schema.org", "@type": "Book", name: book.title,
+      author: { "@type": "Person", name: book.author }, description: book.description, url: `https://scenewright.ink/read/${id}`,
+      numberOfPages: book.pages.length, image: new URL(book.pages[0].url, "https://scenewright.ink").href,
+      ...(book.source_credit ? { isBasedOn: book.source_credit.source_url, license: book.source_credit.license_url } : {}) } : undefined });
   const referral = `/signup?ref=book-${encodeURIComponent(id)}`;
   const languages = useMemo(() => book ? publicationLanguages(book) : [], [book]);
   const [preferredLanguage, setPreferredLanguage] = useState<string | null>(() => storedReaderLanguage() ?? language ?? null);
@@ -95,6 +99,13 @@ export function PublicBookPage() {
 
   const closingPage = book && (
     <section className="public-book-end" aria-labelledby="bookend-title">
+      <h2 className="font-display text-3xl">{book.title}</h2>
+      <p className="mt-3">{book.author} · {book.pages.length} {t("pages")}</p>
+      {book.description && <p className="mx-auto mt-4 max-w-prose">{book.description}</p>}
+      {book.id === "df3a1b400a444815bddeca430360f0d9" && <p className="mt-4 flex flex-wrap justify-center gap-5">
+        <Link className="underline" to="/samples?story=kaitlin-out-of-space">{t("READ THE ORIGINAL")}</Link>
+        <Link className="underline" to="/examples/kaitlin-out-of-space">{t("landing.footer.example")}</Link>
+      </p>}
       <BrandMark className="mx-auto h-14 w-14" />
       <p className="mt-4 font-meta">{t("Made with Scenewright")}</p>
       <h2 id="bookend-title" className="mt-5 font-display text-3xl">{t("Every book starts with a story.")}</h2>
@@ -147,7 +158,7 @@ export function PublicBookPage() {
           </section>
           {closingPage}
         </>}
-        {readerOpen && <BookReader
+        {readerOpen && <><h1 className="sr-only">{book.title}</h1><BookReader
           key={`${book.id}-${book.version}`}
           pages={pages}
           title={book.title}
@@ -160,7 +171,7 @@ export function PublicBookPage() {
             {message && <span role="status" className="max-w-64 text-sm text-bristol">{message}</span>}
           </>}
           endContent={closingPage}
-        />}
+        /></>}
       </>}
     </main>
   </div>;

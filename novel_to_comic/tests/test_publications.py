@@ -656,6 +656,46 @@ def test_sample_metadata_deep_link_and_escaping(tmp_path):
     assert "private" not in body
 
 
+def test_sample_initial_html_has_verified_text_and_source_license(tmp_path):
+    import json
+    import re
+    from novel_to_comic import sample_library
+    index = tmp_path / "index.html"
+    index.write_text('<html><head></head><body><div id="root"></div></body></html>')
+    body = publications.samples_html(index, "kaitlin-out-of-space").body.decode()
+    entry, text = sample_library.find("kaitlin-out-of-space")
+    assert "<article>" in body and len(body.split()) > len(text.split())
+    assert entry["source_url"] in body and entry["license_url"] in body
+    schema = json.loads(re.search(r'id="public-schema"[^>]*>(.*?)</script>', body, re.S).group(1))
+    assert schema["name"] == entry["title"]
+    assert schema["license"] == entry["license_url"]
+
+
+def test_reader_json_ld_and_bootstrap_escape_public_text(tmp_path, monkeypatch):
+    import json
+    import re
+    title = 'A </script><script>alert("example")</script> story'
+    record = {"id": "a" * 32, "title": title, "author": "Author", "description": "Public synopsis", "pages": [{"number": 1, "width": 100, "height": 150, "url": "/api/public/books/preview.jpg"}]}
+    monkeypatch.setattr(publications, "current", lambda base, book_id: record)
+    index = tmp_path / "index.html"
+    index.write_text('<html><head></head><body><div id="root"></div></body></html>')
+    body = publications.reader_html(record["id"], tmp_path, index).body.decode()
+    assert '<script>alert(' not in body
+    assert '<img src="/api/public/books/preview.jpg"' in body
+    schema = json.loads(re.search(r'id="public-schema"[^>]*>(.*?)</script>', body, re.S).group(1))
+    bootstrap = json.loads(re.search(r'id="public-bootstrap"[^>]*>(.*?)</script>', body, re.S).group(1))
+    assert schema["name"] == title and bootstrap["book"]["title"] == title
+    assert schema["numberOfPages"] == 1
+
+
+def test_public_resource_robots_exception_keeps_private_api_excluded():
+    body = publications.robots_document().body.decode()
+    assert "Disallow: /api/" in body
+    assert "Allow: /api/public/books$" in body
+    assert "Allow: /api/public/books/" in body
+    assert "Allow: /api/projects" not in body
+
+
 @pytest.fixture
 def spa_dist(tmp_path, monkeypatch):
     from novel_to_comic.server import app as app_module
@@ -698,7 +738,11 @@ def test_empty_curation_and_untrusted_request_host_are_safe(tmp_path, monkeypatc
     response = client.get("/sitemap.xml", headers={"Host": "attacker.invalid", "X-Forwarded-Host": "attacker.invalid"})
     root = ElementTree.fromstring(response.text)
     urls = [node.text for node in root.iter("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")]
-    assert urls == ["https://scenewright.ink/", "https://scenewright.ink/samples"]
+    assert len(urls) == 12
+    assert "https://scenewright.ink/" in urls
+    assert "https://scenewright.ink/samples" in urls
+    assert "https://scenewright.ink/pricing" in urls
+    assert all(url.startswith("https://scenewright.ink/") for url in urls)
     assert "attacker.invalid" not in response.text
     response = client.get('/samples?story=%22%3E%3Cscript%3Ealert(1)%3C/script%3E', headers={"Host": "attacker.invalid"})
     assert 'href="https://scenewright.ink/samples"' in response.text

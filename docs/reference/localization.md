@@ -5,7 +5,7 @@ Status: Current. Implementation and provider-free tests are authoritative.
 ## UI messages
 
 `web/src/locales/{en,es,fr}.json` are the only UI translation catalogs, including
-landing-page copy. The React provider owns UI preference only. Storage failure
+landing-page copy. The React provider owns UI preference and a separate explicit public-route language. Storage failure
 keeps the preference in memory; regional browser preferences are matched with
 `Intl.Locale`, and storage events synchronize open tabs. UI preference never
 writes project settings or translates book content. Project generation language
@@ -45,6 +45,16 @@ with cached promises and a provider loading boundary for a stored non-English
 preference. Language changes use a React transition so the current screen stays
 usable during the download. Replay's safe-label allowlist indexes only trusted
 catalogs already loaded by the UI; it never fetches another language for recording.
+
+## Public landing languages
+
+`/`, `/es`, and `/fr` have stable English, Spanish, and French public landing
+content. Their initial HTML, metadata, self-canonicals, and reciprocal hreflang
+are emitted at build time from the existing catalogs. Public URL language does
+not overwrite `canary.uiLanguage` or follow cross-tab application preference
+changes. A signed-in Library at `/` continues to use the stored application
+preference. Product, guide, example, and legal pages currently publish in English;
+only translated landing pages advertise language alternates.
 
 ## Editable book lettering
 

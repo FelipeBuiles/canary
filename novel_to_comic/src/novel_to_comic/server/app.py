@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import json
 import os
 import re
 import time
@@ -9,7 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -51,19 +52,19 @@ FONTS_DIR = Path(__file__).resolve().parents[1] / "fonts"
 
 
 class SPAStaticFiles(StaticFiles):
-    """Static files that fall back to ``index.html`` for unknown routes.
+    """Complete public documents and SPA fallback for recognized app routes.
 
     The React app uses client-side routing (e.g. ``/login``, ``/project/123``);
     those paths exist only in the browser, not as files on disk. A plain
     ``StaticFiles(html=True)`` mount returns ``{"detail":"Not Found"}`` for any
     such path, breaking deep links and refreshes. Here we catch the 404 for
-    non-asset requests and serve ``index.html`` so the client router can take
+    recognized non-asset requests and serve ``index.html`` so the client router can take
     over. Real missing assets (``*.js``, ``*.css``, …) still 404 so broken
     links surface instead of silently returning the HTML shell.
     """
 
     # Extensions that should always be served as real files (or 404). Anything
-    # without one of these is treated as a client-side route.
+    # without one of these is checked against recognized client routes.
     _ASSET_SUFFIXES = frozenset(
         {".js", ".mjs", ".css", ".map", ".html", ".htm", ".json", ".txt",
          ".svg", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".avif",
@@ -71,7 +72,25 @@ class SPAStaticFiles(StaticFiles):
          ".mp4", ".webm", ".mp3", ".ogg", ".wav"}
     )
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        manifest = Path(self.directory) / "public-pages.json"
+        self.public_pages = json.loads(manifest.read_text()) if manifest.is_file() else {}
+
+    @staticmethod
+    def _client_route(path: str) -> bool:
+        return path in {"login", "signup", "reset-password", "auth/callback", "account", "credits", "backoffice", "labs", "dev/primitives"} or bool(re.fullmatch(r"project/[^/]+(?:/.*)?", path))
+
     async def get_response(self, path: str, scope):
+        public_path = "/" + ("" if path == "." else path.strip("/"))
+        if path in self.public_pages.values():
+            return RedirectResponse(next(route for route, file in self.public_pages.items() if file == path), status_code=308)
+        if public_path in self.public_pages:
+            if path.endswith("/") and public_path != "/":
+                return RedirectResponse(public_path, status_code=308)
+            response = await super().get_response(self.public_pages[public_path], scope)
+            response.headers["Cache-Control"] = "no-cache"
+            return response
         document = path in {"", ".", "index.html"} or path.lower().endswith(".html")
         try:
             response = await super().get_response(path, scope)
@@ -86,8 +105,12 @@ class SPAStaticFiles(StaticFiles):
                 or path_lc.startswith("api/")
             ):
                 raise
-            # Looks like a client-side route — serve the SPA shell so the
-            # browser's history/router can render it.
+            if not self._client_route(path):
+                response = publications.public_document(Path(self.directory) / "index.html",
+                    title="Page not found — Scenewright", description="This page does not exist.",
+                    path="/" + path, intro='<h1>Page not found</h1><p><a href="/">Return to Scenewright</a></p>', noindex=True)
+                response.status_code = 404
+                return response
             response = await super().get_response("index.html", scope)
             document = True
         if response.status_code in {200, 206, 304}:
@@ -99,6 +122,10 @@ class SPAStaticFiles(StaticFiles):
             else:
                 # Unfingerprinted marketing files can change at the same URL.
                 response.headers["Cache-Control"] = "public, max-age=3600"
+        if self._client_route(path):
+            response.headers["X-Robots-Tag"] = "noindex, follow"
+        if path.lower().endswith(".webp") and response.status_code in {200, 206}:
+            response.headers["Content-Type"] = "image/webp"
         return response
 
 
@@ -623,9 +650,8 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     # Serve bundled fonts
     app.mount("/static/fonts", StaticFiles(directory=str(FONTS_DIR)), name="fonts")
 
-    # In production, serve the built React app. SPAStaticFiles falls back to
-    # index.html for unknown non-asset paths so client-side routes (e.g.
-    # /login) survive direct hits and refreshes.
+    # Complete public React documents are built alongside the SPA shell.
+    # Recognized private/auth routes retain deep links; unknown URLs return 404.
     if not dev:
         dist = Path(__file__).parent.parent.parent.parent.parent / "web" / "dist"
         if dist.is_dir():

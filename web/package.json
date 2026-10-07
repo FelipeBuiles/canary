@@ -8,7 +8,7 @@
     "brand:check": "tsc -p brand-system/tsconfig.json && node --experimental-strip-types brand-system/src/validate.ts",
     "brand:preview": "npm run brand:build && vite --open /brand-system/preview/",
     "dev": "vite",
-    "build": "npm run i18n:check && tsc -b && vite build && npm run perf:check",
+    "build": "npm run i18n:check && tsc -b && vite build && node scripts/build-social-card.mjs && node scripts/prerender-public.mjs && npm run perf:check",
     "audit:production": "npm audit --omit=dev --audit-level=high",
     "lint": "eslint .",
     "perf:check": "node scripts/check-performance.mjs",

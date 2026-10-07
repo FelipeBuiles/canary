@@ -5,7 +5,7 @@ import { NotFound } from "../pages/NotFound";
 import { I18nProvider } from "../i18n";
 
 describe("NotFound", () => {
-  it("renders the cutting-room-floor panel with a way back to the Library", () => {
+  it("renders the cutting-room-floor panel with a way back home", () => {
     render(
       <MemoryRouter initialEntries={["/nonsense"]}>
         <I18nProvider>
@@ -15,6 +15,6 @@ describe("NotFound", () => {
     );
 
     expect(screen.getByText("THIS PAGE WAS LEFT ON THE CUTTING ROOM FLOOR")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "BACK TO THE LIBRARY" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Back to home" })).toBeTruthy();
   });
 });

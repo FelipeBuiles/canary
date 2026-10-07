@@ -82,6 +82,8 @@ export async function signOut() {
   return supabase.auth.signOut();
 }
 
+const serverSnapshot = { session: null, user: null, loading: true };
+
 export function useAuth() {
-  return useSyncExternalStore(subscribe, () => snapshot);
+  return useSyncExternalStore(subscribe, () => snapshot, () => serverSnapshot);
 }

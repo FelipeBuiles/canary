@@ -1,0 +1,475 @@
+{
+  "observed_date": "2026-10-06",
+  "timezone": "America/Toronto",
+  "method": "Cookie-free GET of every URL in the live sitemap; initial HTML only",
+  "summary": {
+    "total_urls": 29,
+    "http_200": 29,
+    "matching_canonicals": 29,
+    "json_ld_pages": 0
+  },
+  "pages": [
+    {
+      "url": "https://scenewright.ink/",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/",
+      "schema_count": 0,
+      "headings": [],
+      "body_words": 0,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": true
+    },
+    {
+      "url": "https://scenewright.ink/samples",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 73,
+      "link_count": 21,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/read/d1cb0ec790244ce6849974daa586146b",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/read/d1cb0ec790244ce6849974daa586146b",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 43,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": true
+    },
+    {
+      "url": "https://scenewright.ink/read/c55d2cfd0ded41089d048f3c019ade13",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/read/c55d2cfd0ded41089d048f3c019ade13",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 36,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": true
+    },
+    {
+      "url": "https://scenewright.ink/read/df3a1b400a444815bddeca430360f0d9",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/read/df3a1b400a444815bddeca430360f0d9",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 36,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": true
+    },
+    {
+      "url": "https://scenewright.ink/read/d95ccd64ff414fa9a99c816f128854c2",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/read/d95ccd64ff414fa9a99c816f128854c2",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 30,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": true
+    },
+    {
+      "url": "https://scenewright.ink/read/c1f2c824e85e4313a804743865296e85",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/read/c1f2c824e85e4313a804743865296e85",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 35,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": true
+    },
+    {
+      "url": "https://scenewright.ink/read/2086c5dc171e4c74899377da29c6efd5",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/read/2086c5dc171e4c74899377da29c6efd5",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 34,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": true
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=kaitlin-out-of-space",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=kaitlin-out-of-space",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 28,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=merrily-merrily-merrily",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=merrily-merrily-merrily",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 21,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=the-sea-in-me",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=the-sea-in-me",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 24,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=elm-and-keep",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=elm-and-keep",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 19,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=scp-5031",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=scp-5031",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 16,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=three-second-memory",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=three-second-memory",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 25,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=the-house-of-my-grandfather",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=the-house-of-my-grandfather",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 24,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=the-spirit-of-the-forest",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=the-spirit-of-the-forest",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 26,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=an-education",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=an-education",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 21,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=drowning-in-ambition",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=drowning-in-ambition",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 20,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=men-of-the-waste",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=men-of-the-waste",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 24,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=scp-1762",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=scp-1762",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 22,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=when-you-lived-inside-the-walls",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=when-you-lived-inside-the-walls",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 29,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=astronomical",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=astronomical",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 21,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=scp-348",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=scp-348",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 19,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=the-pilots-wife",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=the-pilots-wife",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 27,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=scp-4999",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=scp-4999",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 16,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=site-30-s-janitor",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=site-30-s-janitor",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 17,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=scp-1230",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=scp-1230",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 14,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=a-seed-drifts-by",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=a-seed-drifts-by",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 24,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    },
+    {
+      "url": "https://scenewright.ink/samples?story=scp-2295",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "canonical": "https://scenewright.ink/samples?story=scp-2295",
+      "schema_count": 0,
+      "headings": [
+        "h1"
+      ],
+      "body_words": 17,
+      "link_count": 0,
+      "image_count": 0,
+      "description_present": true,
+      "social_image_present": false
+    }
+  ]
+}
