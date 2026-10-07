@@ -1943,6 +1943,7 @@ async def analyze_complete_page(
     image: bytes,
     ocr: "OCRAdapter",
     artifacts: TargetArtifacts,
+    retry_crop_ocr: bool = False,
 ) -> RenderAnalysis:
     """Read one existing render back and record its evidence and issues."""
 
@@ -1957,6 +1958,8 @@ async def analyze_complete_page(
         image=image,
         ocr=ocr,
         artifacts=artifacts,
+        config=getattr(ocr, "config", None),
+        retry_crop_ocr=retry_crop_ocr,
     )
     await asyncio.to_thread(record_analysis_issues, artifacts, analyzed.analysis)
     return analyzed.analysis

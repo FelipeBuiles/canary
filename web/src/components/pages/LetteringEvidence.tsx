@@ -102,6 +102,7 @@ export function LetteringIssueCard({ issue }: { issue: PageIssue }) {
   const recognized = readTextEvidence(issue, "recognized_text=");
   const closeUp = readTextEvidence(issue, "crop_recognized_text=");
   const cropStatus = cropCheckStatus(issue);
+  const cropIncomplete = issue.evidence.includes("crop_check_complete=false");
   const lines = cropReadings(issue);
   const differences = expected && recognized ? alignLettering(expected, recognized) : null;
   const changedCount = differences?.filter((row) => row.type !== "same").length ?? 0;
@@ -133,6 +134,13 @@ export function LetteringIssueCard({ issue }: { issue: PageIssue }) {
               ? "The close-up text check was inconclusive. Compare the saved artwork with the script before making changes."
               : "Possible wording difference. The checker can misread text; compare it with the saved artwork before making changes.")}
         </p>
+        {cropIncomplete && (
+          <p className="mt-2 font-body text-xs leading-5 text-ink-black/75">
+            {t(issue.evidence.includes("crop_outcome_unknown=true")
+              ? "A close-up check did not return a result. Saved evidence is kept. You can retry the text check at no extra credit cost."
+              : "Some close-up checks are unfinished. You can retry the text check at no extra credit cost.")}
+          </p>
+        )}
       </div>
       {(expected || recognized) && (
         <details>
@@ -153,7 +161,7 @@ export function LetteringIssueCard({ issue }: { issue: PageIssue }) {
           {closeUp && (
             <div>
               <dt className="font-meta font-bold text-ink-muted">{t("CLOSE-UP READ")}</dt>
-              <dd>{closeUp.join(" · ") || t("No readable lettering found")}</dd>
+              <dd>{closeUp.join(" · ") || t(cropIncomplete ? "Close-up result unavailable" : "No readable lettering found")}</dd>
             </div>
           )}
         </dl>
@@ -194,7 +202,7 @@ export function LetteringIssueCard({ issue }: { issue: PageIssue }) {
             {lines.map((line, index) => (
               <li key={index}>
                 <p><span className="font-bold">{t("First read:")} </span>{line.first}</p>
-                <p><span className="font-bold">{t("Close-up:")} </span>{line.closeUp || t("No readable lettering found")}</p>
+                <p><span className="font-bold">{t("Close-up:")} </span>{line.closeUp || t(cropIncomplete ? "Close-up result unavailable" : "No readable lettering found")}</p>
                 <p className="font-meta text-ink-muted">{t(line.verdict === "agrees"
                   ? "Both reads match"
                   : line.verdict === "disagrees" ? "The reads differ" : "Close-up read unclear")}</p>

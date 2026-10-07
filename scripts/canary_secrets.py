@@ -30,6 +30,7 @@ REQUIRED = frozenset({
     "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET",
 })
 OPTIONAL = frozenset({
+    "CANARY_TEXTRACT_ACCESS_KEY_ID", "CANARY_TEXTRACT_SECRET_ACCESS_KEY", "CANARY_TEXTRACT_SESSION_TOKEN",
     "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "FAL_KEY", "FAL_ADMIN_KEY", "OPENROUTER_API_KEY",
     "TOGETHER_API_KEY", "R2_ACCESS_KEY", "R2_SECRET_KEY", "DATABASE_URL",
     "AWS_BEARER_TOKEN_BEDROCK",
@@ -102,6 +103,10 @@ def validate(bundle):
         reject("gateway_key_mismatch")
     if ("R2_ACCESS_KEY" in env) != ("R2_SECRET_KEY" in env):
         reject("incomplete_r2_pair")
+    if ("CANARY_TEXTRACT_ACCESS_KEY_ID" in env) != ("CANARY_TEXTRACT_SECRET_ACCESS_KEY" in env):
+        reject("incomplete_textract_pair")
+    if "CANARY_TEXTRACT_SESSION_TOKEN" in env and "CANARY_TEXTRACT_ACCESS_KEY_ID" not in env:
+        reject("incomplete_textract_pair")
     if not isinstance(files, dict) or not files.keys() <= {ADC_NAME}:
         reject("invalid_file_names")
     for value in files.values():

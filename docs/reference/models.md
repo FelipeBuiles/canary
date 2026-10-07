@@ -243,7 +243,7 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | Field | Type | Default |
 |-------|------|---------|
 | `observation_id` | `str` |  |
-| `status` | `Literal['read', 'no_region', 'over_budget', 'unavailable']` |  |
+| `status` | `Literal['read', 'no_region', 'over_budget', 'unavailable', 'pending', 'outcome_unknown']` |  |
 | `crop_sha256` | `str | None` | `None` |
 | `bounds` | `tuple[int, int, int, int] | None` | `None` |
 | `lines` | `tuple[CropOCRLine, ...]` | `()` |
@@ -1117,6 +1117,52 @@ These Pydantic models define the current pipeline's typed contracts. See [Stage 
 | `style_notes` | `Optional[str]` | `None` |
 | `props` | `list[Prop]` | `[]` |
 | `excluded_entities` | `list[ExcludedEntity]` | `[]` |
+
+## TextractCrop _(textract_ocr.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `observation_id` | `str` |  |
+| `status` | `Literal['ready', 'no_region', 'over_budget', 'unavailable']` |  |
+| `bounds` | `tuple[int, int, int, int] | None` | `None` |
+| `sha256` | `str | None` | `Field(default=None, pattern='^[a-f0-9]{64}$')` |
+| `width` | `int` | `Field(default=0, ge=0)` |
+| `height` | `int` | `Field(default=0, ge=0)` |
+
+## TextractPlan _(textract_ocr.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `schema_version` | `Literal[1]` | `1` |
+| `page_number` | `int` | `Field(ge=1)` |
+| `render_revision` | `int` | `Field(ge=1)` |
+| `render_image_sha256` | `str` | `Field(pattern='^[a-f0-9]{64}$')` |
+| `input_sha256` | `str` | `Field(pattern='^[a-f0-9]{64}$')` |
+| `crops` | `tuple[TextractCrop, ...]` |  |
+
+## TextractAttempt _(textract_ocr.py)_
+
+| Field | Type | Default |
+|-------|------|---------|
+| `schema_version` | `Literal[1]` | `1` |
+| `attempt_id` | `str` | `Field(pattern='^[a-f0-9]{32}$')` |
+| `page_number` | `int` | `Field(ge=1)` |
+| `render_revision` | `int` | `Field(ge=1)` |
+| `render_image_sha256` | `str` | `Field(pattern='^[a-f0-9]{64}$')` |
+| `recognition_sha256` | `str` | `Field(pattern='^[a-f0-9]{64}$')` |
+| `crop_sha256` | `str` | `Field(pattern='^[a-f0-9]{64}$')` |
+| `model` | `str` |  |
+| `region` | `str` |  |
+| `started_at` | `float` |  |
+| `expires_at` | `float` |  |
+| `finished_at` | `float | None` | `None` |
+| `status` | `Literal['submitting', 'succeeded', 'failed', 'outcome_unknown']` |  |
+| `estimated_units` | `Literal[1]` | `1` |
+| `unit_price_usd` | `str` |  |
+| `pricing_snapshot` | `str` |  |
+| `charged_credits` | `Literal[0]` | `0` |
+| `response` | `dict[str, Any] | None` | `None` |
+| `error_code` | `str | None` | `None` |
 
 ## _ValidationResult _(validation.py)_
 

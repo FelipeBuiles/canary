@@ -39,6 +39,7 @@ Path(__file__).with_name("check-run.json").write_text(json.dumps({
     "key": os.environ["VITE_SUPABASE_PUBLISHABLE_KEY"],
     "uploads": os.environ["POSTHOG_API_KEY"],
     "stdin": sys.stdin.read(),
+    "git_directory": os.environ.get("GIT_DIR"),
 }))
 print("test gate invoked", flush=True)
 raise SystemExit(int(os.environ.get("TEST_GATE_EXIT", "0")))
@@ -86,6 +87,7 @@ def test_push_requires_successful_gate(checkout, tmp_path, gate_exit):
     assert record == {
         "arguments": ["local"], "url": "https://ci.supabase.co",
         "key": "sb_publishable_ci", "uploads": "", "stdin": "",
+        "git_directory": None,
     }
     remote_head = subprocess.run(
         ["git", "rev-parse", "--verify", "refs/heads/main"], cwd=remote,
