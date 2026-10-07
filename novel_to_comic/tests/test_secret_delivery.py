@@ -554,3 +554,12 @@ def test_prune_removes_only_unmounted_plaintext(tmp_path, monkeypatch):
     assert sorted(p.name for p in root.iterdir()) == sorted([live, current, "d" * 64, "unrelated"])
     assert outside.exists()
     assert secrets.prune(root, None, proc) == [current]
+
+
+def test_textract_scoped_credentials_require_a_complete_pair(bundle):
+    bundle["env"]["CANARY_TEXTRACT_ACCESS_KEY_ID"] = SENTINEL
+    with pytest.raises(secrets.SecretError, match="incomplete_textract_pair"):
+        secrets.validate(bundle)
+    bundle["env"]["CANARY_TEXTRACT_SECRET_ACCESS_KEY"] = SENTINEL
+    bundle["env"]["CANARY_TEXTRACT_SESSION_TOKEN"] = SENTINEL
+    secrets.validate(bundle)

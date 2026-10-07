@@ -81,4 +81,11 @@ describe("LetteringIssueCard evidence display", () => {
     expect(rows.some((row) => row.includes("Robbins") && row.includes("Both reads match"))).toBe(true);
     expect(rows.some((row) => row.includes("dreem") && row.includes("dream") && row.includes("The reads differ"))).toBe(true);
   });
+  it("explains an interrupted close-up check without claiming no text was present", () => {
+    const issue = singleTypoIssue();
+    issue.evidence.push("crop_check_status=inconclusive", "crop_check_complete=false", "crop_outcome_unknown=true");
+    const { container } = render(<I18nProvider><LetteringIssueCard issue={issue} /></I18nProvider>);
+    expect(container.textContent).toContain("A close-up check did not return a result.");
+    expect(container.textContent).toContain("no extra credit cost");
+  });
 });

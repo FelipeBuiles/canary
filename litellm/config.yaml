@@ -278,6 +278,11 @@ model_list:
       image_output_cost_per_token: 3.0e-05
   model_info:
     mode: image_generation
+- model_name: ocr-textract
+  litellm_params:
+    model: textract/detect-document-text
+  model_info:
+    mode: chat
 litellm_settings:
   set_verbose: false
   num_retries: 0
@@ -292,5 +297,7 @@ litellm_settings:
     custom_handler: litellm_handlers.fal_provider.fal_queue_llm
   - provider: openai-stream
     custom_handler: litellm_handlers.openai_image_stream.openai_image_stream_llm
+  - provider: textract
+    custom_handler: litellm_handlers.textract.textract_llm
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

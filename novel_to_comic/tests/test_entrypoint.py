@@ -192,7 +192,9 @@ def test_children_receive_only_their_own_secrets(tmp_path):
         pipeline=f'env > "{web}"; while [ ! -s "{gateway}" ]; do sleep 0.05; done; exit 0',
     )
     gateway_only = {"OPENAI_API_KEY", "FAL_KEY", "LITELLM_MASTER_KEY", "LITELLM_SALT_KEY",
-                    "AWS_BEARER_TOKEN_BEDROCK", "DATABASE_URL"}
+                    "AWS_BEARER_TOKEN_BEDROCK", "DATABASE_URL",
+                    "CANARY_TEXTRACT_ACCESS_KEY_ID", "CANARY_TEXTRACT_SECRET_ACCESS_KEY",
+                    "CANARY_TEXTRACT_SESSION_TOKEN", "CANARY_TEXTRACT_AWS_PROFILE"}
     web_only = {"LITELLM_API_KEY", "CANARY_OPS_TOKEN", "SUPABASE_SECRET_KEY",
                 "CANARY_QUEUE_DATABASE_URL", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET",
                 "R2_ACCESS_KEY", "R2_SECRET_KEY"}

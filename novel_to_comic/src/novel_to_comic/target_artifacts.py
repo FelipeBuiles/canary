@@ -20,6 +20,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from novel_to_comic.models.adaptation import AdaptationBrief, BookAdaptation
 from novel_to_comic.models.crop_ocr import CropOCRReport
+from novel_to_comic.models.textract_ocr import TextractAttempt, TextractPlan
 from novel_to_comic.models.draw import (
     BookEdition,
     FrozenPageGenerationRequest,
@@ -73,6 +74,8 @@ _ARTIFACT_OWNER_STAGES = {
     "page_generation_request": "Draw",
     "page_generation_provenance": "Draw",
     "render_analysis": "Draw",
+    "textract_plan": "Draw",
+    "textract_attempt": "Draw",
     "finish_preflight": "Finish",
 }
 
@@ -1084,6 +1087,52 @@ class TargetArtifacts:
             self.crop_ocr_path(report.page_number, report.render_revision, report.input_sha256),
             report, CropOCRReport,
         )
+
+    def textract_path(self, page_number: int, revision: int, identity: str, name: str) -> Path:
+        if not re.fullmatch(r"[a-f0-9]{64}", identity) or not re.fullmatch(r"[a-z0-9_.]+", name):
+            raise ValueError("Invalid hosted OCR artifact identity")
+        return self.analysis_path(page_number, revision).parent / f"textract_{revision:03d}" / identity / name
+
+    def read_textract_plan(self, page_number: int, revision: int, identity: str) -> TextractPlan:
+        return self._read_model("textract_plan", self.textract_path(page_number, revision, identity, "plan.json"), TextractPlan)
+
+    @locked_mutation
+    def write_textract_plan(self, plan: TextractPlan) -> None:
+        self._write_immutable_model(self.textract_path(plan.page_number, plan.render_revision, plan.input_sha256, "plan.json"), plan, TextractPlan)
+
+    @locked_mutation
+    def write_textract_crop(self, page_number: int, revision: int, identity: str, image: bytes) -> None:
+        path = self.textract_path(page_number, revision, identity, "crop.png")
+        if path.exists():
+            if path.read_bytes() != image:
+                raise ValueError("Hosted OCR crop identity collision")
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{uuid4().hex}.tmp")
+        try:
+            temporary.write_bytes(image)
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def read_textract_crop(self, page_number: int, revision: int, identity: str) -> bytes:
+        return self.textract_path(page_number, revision, identity, "crop.png").read_bytes()
+
+    def textract_attempts(self, page_number: int, revision: int, identity: str) -> tuple[TextractAttempt, ...]:
+        directory = self.textract_path(page_number, revision, identity, "crop.png").parent
+        attempts = [self._read_model("textract_attempt", path, TextractAttempt)
+                    for path in directory.glob("attempt_*.json")]
+        return tuple(sorted(attempts, key=lambda item: (item.started_at, item.attempt_id)))
+
+    @locked_mutation
+    def write_textract_attempt(self, attempt: TextractAttempt) -> None:
+        path = self.textract_path(attempt.page_number, attempt.render_revision,
+                                  attempt.recognition_sha256, f"attempt_{attempt.attempt_id}.json")
+        if path.exists():
+            saved = self._read_model("textract_attempt", path, TextractAttempt)
+            if saved.status == "succeeded" and saved != attempt:
+                raise ValueError("Successful hosted OCR evidence is immutable")
+        self._write_model(path, attempt)
 
     def read_crop_ocr(self, page_number: int, render_revision: int, input_sha256: str) -> CropOCRReport:
         return self._read_model(

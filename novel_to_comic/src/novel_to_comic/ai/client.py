@@ -1084,6 +1084,7 @@ def _finalize_event(
     metadata: dict[str, Any] | None = None,
     estimated_cost_usd: float | None = None,
     started_at: datetime.datetime | None = None,
+    charge_user: bool = True,
 ) -> None:
     funding = usage.funding if usage is not None else (metadata or {}).get("funding", "api")
     if is_subscription(funding) and usage is None:
@@ -1106,7 +1107,7 @@ def _finalize_event(
     if cost is not None and cost.source == "unknown_provider_usage":
         cost_usd = None
     billable = bool(
-        usage
+        charge_user and usage
         and (cost is None or cost.source != "unknown_provider_usage")
         and usage_has_billable_activity(usage)
         and (
@@ -1208,7 +1209,7 @@ def _finalize_event(
                        event_id, type(exc).__name__, getattr(exc, "code", "unknown"))
     if usage is not None and billable and not is_subscription(funding):
         _settle_event_usage(usage, feature=feature, status=status)
-    elif funding == "api" and not (config is not None and mock_mode_active(config)):
+    elif charge_user and funding == "api" and not (config is not None and mock_mode_active(config)):
         from novel_to_comic.server.credits import (
             is_ambiguous_job, release_model_call_authorization,
             retain_ambiguous_job,

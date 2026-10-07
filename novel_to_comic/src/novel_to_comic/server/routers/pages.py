@@ -159,6 +159,9 @@ def _analysis_recovery(target: TargetArtifacts, page_number: int) -> dict:
         if (analysis.render_image_sha256 == render.image_sha256
                 and analysis.comic_page_sha256 == page.content_sha256
                 and analysis_is_current(analysis.validator_version)):
+            from novel_to_comic import textract_ocr
+            if textract_ocr.enabled() and analysis.crop_verification is not None and not analysis.crop_verification.complete:
+                return {"status": "requires_ocr", "requires_paid_call": True, "requires_primary_ocr": False}
             return {"status": "checked", "requires_paid_call": False}
     except (ArtifactMissing, ArtifactInvalid):
         pass
@@ -697,7 +700,8 @@ def estimate_page_analysis(page_number: int, project=Depends(get_project)):
             raise HTTPException(409, "Page render is unavailable")
     except ArtifactMissing as exc:
         raise HTTPException(409, str(exc)) from exc
-    requires_call = _analysis_recovery(target, page_number)["requires_paid_call"]
+    recovery = _analysis_recovery(target, page_number)
+    requires_call = recovery.get("requires_primary_ocr", recovery["requires_paid_call"])
     funding = classify_operations(page_check_operations(project[1]) if requires_call else ())
     return dict(credit_estimate_for_provider_cost(
         float(PAGE_OCR_ESTIMATED_COST_USD) if requires_call else 0.0,
@@ -776,14 +780,15 @@ def estimate_missing_page_checks(project=Depends(get_project)):
         for selected in target.read_plan().pages
     ]
     paid = sum(item["requires_paid_call"] for item in pages)
-    funding = classify_operations(page_check_operations(project[1]) if paid else ())
+    charged = sum(item.get("requires_primary_ocr", item["requires_paid_call"]) for item in pages)
+    funding = classify_operations(page_check_operations(project[1]) if charged else ())
     estimate = dict(credit_estimate_for_provider_cost(
         float(PAGE_OCR_ESTIMATED_COST_USD), "draw", reserve=True,
         funding=funding,
     ))
     for key in ("estimate_credits", "reserved_credits"):
         if estimate.get(key) is not None:
-            estimate[key] *= paid
+            estimate[key] *= charged
     return {**estimate, "pages": pages, "paid_pages": paid}
 
 
@@ -823,7 +828,7 @@ async def recover_missing_page_checks(
                 number, project_id, project, user_id, allow_paid=body.allow_paid,
                 expected_image_sha256=body.renders.get(number) if body.allow_paid else None,
             )
-            results.append({"page_number": number, "status": "checked"})
+            results.append({"page_number": number, **_analysis_recovery(target, number)})
         except Exception as exc:
             results.append({"page_number": number, "status": "failed",
                             "error": str(exc.detail if isinstance(exc, HTTPException) else exc)})
@@ -859,6 +864,11 @@ async def analyze_page(
     try:
         from ..credited_job import run_credited_page_check
         from novel_to_comic.config import PAGE_OCR_ESTIMATED_COST_USD
+        from novel_to_comic import textract_ocr
+        recovery = _analysis_recovery(target, page_number)
+        # Reserve the primary read unless this is known to be hosted-only.
+        # Cached evidence may be missing/invalid by the time the lock is acquired.
+        primary_needed = recovery.get("requires_primary_ocr", True)
         def cached_work():
             if hashlib.sha256(image).hexdigest() != active.render.image_sha256:
                 raise HTTPException(409, "Saved artwork bytes do not match render lineage")
@@ -871,6 +881,9 @@ async def analyze_page(
                 analysis = revalidate_cached_page_render(
                     page=page, render=active.render, artifacts=target,
                 )
+                if (allow_paid and textract_ocr.enabled() and analysis.crop_verification is not None
+                        and not analysis.crop_verification.complete):
+                    return None
             except ArtifactMissing as exc:
                 if exc.name == "raw_ocr":
                     if not allow_paid:
@@ -880,12 +893,13 @@ async def analyze_page(
             return analysis
         analysis = await run_credited_page_check(
             user_id=user_id, project_id=project_id, project_dir=project_dir,
-            page_number=page_number, estimated_cost_usd=float(PAGE_OCR_ESTIMATED_COST_USD),
+            page_number=page_number, estimated_cost_usd=float(PAGE_OCR_ESTIMATED_COST_USD) if primary_needed else 0.0,
             cached_work=cached_work,
-            operations=page_check_operations(config),
+            operations=page_check_operations(config) if primary_needed else (),
             work=lambda: analyze_complete_page(
                 page=page, render=active.render, image=image,
                 ocr=page_read_adapter(config, target, page), artifacts=target,
+                retry_crop_ocr=True,
             ),
         )
     except ValueError as exc:

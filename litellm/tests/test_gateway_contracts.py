@@ -115,6 +115,7 @@ def test_real_gateway_and_supported_custom_handlers_are_loaded():
         "claude-sonnet-5-5", "mimo-v2.6-pro", "deepseek-v4.1-flash", "image-sunburst",
         "image-sunburst-openai", "image-flare", "image-nano-banana-2.1", "gemini-3.8-flash",
         "bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5",
+        "ocr-textract",
     }
     assert config["litellm_settings"]["custom_provider_map"] == [{
         "provider": "vertex-multimodal",
@@ -125,10 +126,13 @@ def test_real_gateway_and_supported_custom_handlers_are_loaded():
     }, {
         "provider": "openai-stream",
         "custom_handler": "litellm_handlers.openai_image_stream.openai_image_stream_llm",
+    }, {
+        "provider": "textract",
+        "custom_handler": "litellm_handlers.textract.textract_llm",
     }]
     for dockerfile in ("Dockerfile", "litellm/Dockerfile"):
         source = (ROOT / dockerfile).read_text()
-        for handler in ("fal_provider", "openai_image_stream", "vertex_multimodal"):
+        for handler in ("fal_provider", "openai_image_stream", "vertex_multimodal", "textract"):
             assert f"litellm_handlers/{handler}.py" in source
 
 
@@ -340,7 +344,7 @@ def _app_price(alias):
 
 
 TEXT_ROUTES = [route["model_name"] for route in _gateway_config()["model_list"]
-               if not route["model_name"].startswith("image-")]
+               if not route["model_name"].startswith(("image-", "ocr-"))]
 
 
 def test_gateway_uses_bundled_map_and_rejects_unsupported_params():
