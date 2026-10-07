@@ -44,7 +44,6 @@ it("drops late responses after the account changes", async () => {
 });
 
 it("marks a request with no response as a network error, but not a server error", async () => {
-  observeApiRequests(() => undefined, () => undefined);
   vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("Failed to fetch"); }));
   const dropped = await apiFetch("/projects/book/styles/suggest-estimate").catch(error => error);
   expect(isNetworkError(dropped)).toBe(true);
