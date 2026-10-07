@@ -7,8 +7,6 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-DIST = ROOT / "web" / "dist"
-original_is_dir = Path.is_dir
-Path.is_dir = lambda path: False if path == DIST else original_is_dir(path)
 os.chdir(ROOT / "novel_to_comic")
-raise SystemExit(pytest.main(sys.argv[1:] or ["-x", "-q"]))
+# A pytest option reaches xdist workers too; a patch in this process would not.
+raise SystemExit(pytest.main(["--hide-web-dist", *(sys.argv[1:] or ["-x", "-q"])]))

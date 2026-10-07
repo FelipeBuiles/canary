@@ -88,17 +88,27 @@ provider-free; paid generation and ambiguous submissions retain the guardrails a
 
 - Backend: start with `novel_to_comic/.venv/bin/python -m pytest novel_to_comic/tests/test_<area>.py -q`
   (substitute the relevant test file; use `-k` to narrow further).
+  For the full suite, prefer `python3 scripts/check_release.py backend`: it runs
+  Ruff and all provider-free cases with up to four isolated workers. Set
+  `CANARY_BACKEND_WORKERS=0` only when serial debugging or profiling is needed.
   For suite speed or duplicate coverage, use the JUnit audit and trimming rules
   in [backend test maintenance](docs/reference/backend-tests.md).
+- Complete local gate: `./scripts/check_all.sh` (also `npm run check:push`) runs
+  all provider-free backend, frontend, and gateway unit tests, lint, dependency
+  audits, docs reliability, and the web build. The tracked `.githooks/pre-push`
+  blocks pushes on failure; activate it with `git config --local core.hooksPath .githooks`.
+  See [pre-push checks](docs/agents/pre-push.md) for prerequisites and release checks.
 - Frontend: in `web/`, use `npm test -- src/__tests__/<area>.test.tsx` for the
-  affected behavior. Run `npm run build` for TypeScript/bundling changes and
+  affected behavior, or `npm test` for the full suite. Both use the optimized
+  Vitest pools and quiet passing-test output by default. Keep these defaults
+  unless diagnosing a pool/isolation issue; use `--reporter=verbose --silent=false`
+  when test output is needed. Run `npm run build` for TypeScript/bundling changes and
   `npm run lint` for frontend source changes.
 - Docs: run `python3 scripts/check_docs_reliability.py`. Regenerate affected
   generated references with `python3 scripts/update_docs.py` after source changes.
-- Broaden to the backend suite (`novel_to_comic/.venv/bin/python -m pytest novel_to_comic/tests -q`)
-  or frontend suite (`npm test` in `web/`) for shared contracts, integration impact,
-  or release requirements. Do not repeat passing checks without a relevant change
-  or unresolved concern. Mocked tests do not establish image quality.
+- Broaden to the full backend or frontend commands above for shared contracts,
+  integration impact, or release requirements. Do not repeat passing checks
+  without a relevant change or unresolved concern. Mocked tests do not establish image quality.
 
 ## Working agreements
 

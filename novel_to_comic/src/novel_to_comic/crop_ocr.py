@@ -19,7 +19,6 @@ import sys
 import tempfile
 import threading
 import time
-from collections import Counter
 from pathlib import Path
 from typing import Protocol
 

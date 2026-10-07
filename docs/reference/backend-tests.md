@@ -81,6 +81,35 @@ The operations snapshot test fixes external disk measurements while exercising
 the storage alert. Its repeated reads can then verify journal and credit evidence
 stays unchanged even when other processes write to the host filesystem.
 
+## Run the local suite in isolated workers
+
+The complete local gate and its backend component use
+[pytest-xdist](https://pytest-xdist.readthedocs.io/en/stable/distribution.html)
+with up to four worker processes (bounded by the local CPU count) and the
+`worksteal` scheduler. Each process owns its Python state, temporary directories,
+and lazily reused Chromium processes. The same provider-free cases run; no
+rendering results are cached or coverage removed. The source-only frontend probe
+is configured in every worker before collection and still permits fixture builds.
+
+Run just backend lint and the full parallel suite from the repository root:
+
+```sh
+python3 scripts/check_release.py backend
+```
+
+Set `CANARY_BACKEND_WORKERS` to choose the worker count. Use `0` for serial
+debugging or comparable JUnit profiling:
+
+```sh
+CANARY_BACKEND_WORKERS=0 python3 scripts/check_release.py backend
+```
+
+Focused pytest commands and the JUnit command above remain serial unless `-n`
+is explicitly supplied. Depot already distributes filenames across four
+two-CPU shards; those shards and the real PostgreSQL job retain their existing
+execution model. Parallelism is enabled by the local full-suite component,
+without a global pytest `addopts` setting.
+
 ## Local observations (2026-10-07)
 
 | Check | Original startup/waits | Optimized |
@@ -98,3 +127,11 @@ additional cases were collected as work continued in the shared checkout. Module
 times sum reported testcase work; the full-suite row uses pytest elapsed time.
 The observed full-suite runtime fell by 38%; machine load and cache state affect
 the result. The CI split key remains unchanged so Depot learns the new timings.
+
+A subsequent full local gate measured 161.45 s for the serial backend suite.
+The four-worker trial measured 60.25 s, with 3,599 passes and 50 skips in both
+runs (63% less elapsed time). This is a separate single-run comparison after
+the startup/wait improvements above, on the same local machine. Worker testcase
+times overlap; compare pytest's elapsed time rather than summing those rows.
+The final backend gate also passed its two new source-only runner regressions:
+3,601 passes and 50 skips in 53.31 s, with Ruff passing before the suite.

@@ -80,6 +80,10 @@ jobs:
       size: 8x32
       image: 6ntrqswcbt.registry.depot.dev/canary-ci:py312-node24.21-pw1.63-v1
     timeout-minutes: 30
+    # Tests and public-page prerendering validate Supabase config at import time.
+    env:
+      VITE_SUPABASE_URL: https://ci.supabase.co
+      VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci
     steps:
       - uses: actions/checkout@v7
       - name: Set up Node
@@ -101,10 +105,6 @@ jobs:
           npm audit --audit-level=high
       - name: Vitest
         working-directory: web
-        # Import-time Supabase validation requires non-secret placeholders.
-        env:
-          VITE_SUPABASE_URL: https://ci.supabase.co
-          VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci
         run: npm run test
       - name: ESLint
         working-directory: web

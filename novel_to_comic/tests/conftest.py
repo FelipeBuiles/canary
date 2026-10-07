@@ -1,12 +1,28 @@
 """Provider-free test isolation and shared, real Chromium processes."""
+from pathlib import Path
+
 import pytest
 
 
 def pytest_addoption(parser):
     parser.addoption(
+        "--hide-web-dist", action="store_true",
+        help="Ignore the checkout's frontend build, matching source-only CI.",
+    )
+    parser.addoption(
         "--fresh-lettering-browser", action="store_true",
         help="Launch Chromium for every lettering operation, as production does.",
     )
+
+
+def pytest_configure(config):
+    if not config.getoption("--hide-web-dist"):
+        return
+    dist = Path(__file__).resolve().parents[2] / "web" / "dist"
+    original_is_dir = Path.is_dir
+    patch = pytest.MonkeyPatch()
+    patch.setattr(Path, "is_dir", lambda path: path != dist and original_is_dir(path))
+    config.add_cleanup(patch.undo)
 
 
 @pytest.fixture(scope="session", autouse=True)
