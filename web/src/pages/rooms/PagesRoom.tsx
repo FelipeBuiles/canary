@@ -42,7 +42,8 @@ import {
 } from "../../components/composites";
 import { Button } from "../../components/ui/Button";
 import { StageStartAction } from "../../components/composites/StagePlaceholder";
-import { FlowingDotsPlaceholder } from "../../components/ui/FlowingDotsPlaceholder";
+import { ImageGenerationPreview } from "../../components/composites/ImageGenerationPreview";
+import { usePipelineStore } from "../../store/pipeline";
 import { StatusPill } from "../../components/ui/StatusPill";
 import { Surface } from "../../components/ui/Surface";
 import { StateBlock } from "../../components/ui/StateBlock";
@@ -486,7 +487,9 @@ export function PagesRoom() {
       firstArtworkObserved.current = !!artwork;
     } else if (!firstArtworkObserved.current && artwork) {
       firstArtworkObserved.current = true;
-      if (filter === "all" || (filter === "needs-review" && needsReview(artwork))) {
+      // A page that developed in a live preview has already been revealed.
+      const previewed = !!usePipelineStore.getState().imagePreviews[`page:${artwork.page.page_number}`];
+      if (!previewed && (filter === "all" || (filter === "needs-review" && needsReview(artwork)))) {
         setRevealedPage(artwork.page.page_number);
       }
     }
@@ -925,6 +928,10 @@ export function PagesRoom() {
                     <StatusPill tone="gold">{t("Needs placement")}</StatusPill>
                   ) : null}
                 </div>
+                <ImageGenerationPreview project={id} target={`page:${item.page.page_number}`} active={pageIsDrawing} keepChildren={!!revision} aspect="2 / 3"
+                  aria-label={`${t("Page")} ${item.page.page_number}: ${t("generation in progress")}`}
+                  finalSrc={revision ? (item.lettering_mode === "hybrid" ? pageCompositePreviewUrl(id, item.page.page_number, revision, "thumbnail", item.lettering_revision) : pageRenderPreviewUrl(id, item.page.page_number, revision, "thumbnail")) : undefined}
+                  label={t("DRAWING PAGE…")} caption={t("Queued in the page press")}>
                 {revision ? (
                   <button
                     type="button"
@@ -943,15 +950,7 @@ export function PagesRoom() {
                   </button>
                 ) : (
                   <div className="aspect-[2/3] overflow-hidden bg-surface-container">
-                    {pageIsDrawing ? (
-                      <FlowingDotsPlaceholder
-                        aspect="2 / 3"
-                        label={t("DRAWING PAGE…")}
-                        caption={t("Queued in the page press")}
-                        aria-label={`${t("Page")} ${item.page.page_number}: ${t("generation in progress")}`}
-                        className="h-full border-0"
-                      />
-                    ) : failureCopy ? (
+                    {failureCopy ? (
                       <div role="alert" className="flex h-full flex-col overflow-y-auto p-5 text-center">
                         <div className="my-auto flex flex-col items-center">
                           <Layers size={28} aria-hidden="true" className="text-hero-red" />
@@ -1030,6 +1029,7 @@ export function PagesRoom() {
                     )}
                   </div>
                 )}
+                </ImageGenerationPreview>
               </EntityCard>
             );
           })}

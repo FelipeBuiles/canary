@@ -207,7 +207,7 @@ export function ProjectSettingsPage() {
 
         {activeTab === "models" && ProjectModelControls && (<div>
           <SectionHeader title="Models for this project (dev)" description="Model changes apply to new work. Saving does not start generation." />
-          <p className="mb-4 font-body text-sm leading-6 text-ink-muted">{t("Changing the Draw model requires a new edition or project. Existing pages are never switched automatically.")}</p>
+          <p className="mb-4 font-body text-sm leading-6 text-ink-muted">{t("New Draw jobs use the selected model. Existing pages keep their artwork and lettering mode.")}</p>
           <Suspense fallback={<p role="status">{t("Loading model settings…")}</p>}>
             {config && <ProjectModelControls
               selections={config.dev_model_selections ?? {}}

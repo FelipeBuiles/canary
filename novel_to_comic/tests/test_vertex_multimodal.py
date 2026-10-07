@@ -305,6 +305,24 @@ def test_empty_image_with_unknown_finish_reason_remains_ambiguous():
         _extract_image(response)
 
 
+@pytest.mark.parametrize("has_final", [False, True])
+def test_thought_images_never_become_final_artwork_or_diagnostics(has_final):
+    parts = [
+        SimpleNamespace(thought=True, text="private reasoning", inline_data=None),
+        SimpleNamespace(thought=True, inline_data=SimpleNamespace(data=b"draft pixels", mime_type="image/png")),
+    ]
+    if has_final:
+        parts.append(SimpleNamespace(thought=False, inline_data=SimpleNamespace(data=b"final pixels", mime_type="image/png")))
+    response = SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(parts=parts))])
+    if has_final:
+        assert _extract_image(response) == (b"final pixels", "image/png")
+    else:
+        with pytest.raises(ValueError, match="did not contain image bytes") as error:
+            _extract_image(response)
+        assert "private reasoning" not in str(error.value)
+        assert "draft pixels" not in str(error.value)
+
+
 @pytest.mark.parametrize(("quality", "size"), [("low", "1K"), ("medium", "2K"), ("high", "4K")])
 def test_nano_banana_native_controls_omit_unsupported_sampling(quality, size):
     assert _image_config_kwargs(2 / 3, quality, model="gemini-nano-banana-2.1") == {

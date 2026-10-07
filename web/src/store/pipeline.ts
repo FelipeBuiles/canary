@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { queryClient } from "../api/queryClient";
 import { applyPipelineEvent } from "../lib/stageProgress";
-import type { PipelineEvent } from "../types/api";
+import type { ImagePreview, PipelineEvent } from "../types/api";
 import { useInsufficientCreditsStore } from "./insufficientCredits";
 import { STAGE_DISPLAY_NAMES, type StageName } from "../types/api";
 import { invalidateProject, projectPath } from "../api/projectScope";
@@ -9,9 +9,13 @@ import { invalidateProject, projectPath } from "../api/projectScope";
 interface PipelineStore {
   connected: boolean;
   events: PipelineEvent[];
+  projectId: string | null;
+  imagePreviews: Record<string, ImagePreview>;
   connect: (projectId: string) => void;
   disconnect: () => void;
   clearEvents: () => void;
+  /** Drop finished pixels once the card shows its saved file. */
+  releaseImagePreview: (target: string, requestId: string) => void;
 }
 
 let eventSource: EventSource | null = null;
@@ -38,6 +42,8 @@ function closeCurrentSource(es?: EventSource) {
 export const usePipelineStore = create<PipelineStore>((set) => ({
   connected: false,
   events: [],
+  projectId: null,
+  imagePreviews: {},
 
   connect: (projectId: string) => {
     const continuing = activeProject === projectId;
@@ -45,9 +51,9 @@ export const usePipelineStore = create<PipelineStore>((set) => ({
     activeProject = projectId;
     if (!continuing) {
       reconnectDelay = 1000;
-      set({ events: [] });
+      set({ events: [], imagePreviews: {} });
     }
-    set({ connected: false });
+    set({ connected: false, projectId });
     const es = new EventSource(
       `/api${projectPath(projectId)}/events`,
     );
@@ -56,6 +62,27 @@ export const usePipelineStore = create<PipelineStore>((set) => ({
       try {
         const event: PipelineEvent = JSON.parse(e.data);
         reconnectDelay = 1000;
+        if (event.type === "image_preview" || event.type === "image_preview_clear") {
+          if (!event.target || !event.request_id) return;
+          set((state) => {
+            const imagePreviews = { ...state.imagePreviews };
+            const current = imagePreviews[event.target!];
+            if (event.type === "image_preview_clear") {
+              if (event.settled && current?.request_id === event.request_id && current.preview_index === 3) {
+                // Completed pixels of a finished job: hold them until the saved file loads.
+                imagePreviews[event.target!] = { ...current, settled: true };
+              } else if (event.reset || current?.request_id === event.request_id) delete imagePreviews[event.target!];
+            } else if (typeof event.preview_index === "number" && Number.isInteger(event.preview_index) && event.preview_index >= 0 && event.preview_index <= 3
+              && event.image_url?.startsWith("data:image/webp;base64,")
+              && event.image_url.length <= 2 * 1024 * 1024
+              && (!current || current.request_id !== event.request_id || event.preview_index > current.preview_index)) {
+              imagePreviews[event.target!] = { request_id: event.request_id!, preview_index: event.preview_index, image_url: event.image_url };
+              if (Object.keys(imagePreviews).length > 32) delete imagePreviews[Object.keys(imagePreviews)[0]];
+            }
+            return { imagePreviews };
+          });
+          return;
+        }
         // Snapshots are state, not history: they live in the status cache and
         // must not evict the log lines this bounded feed exists to keep.
         if (event.type !== "stage_snapshot") {
@@ -92,7 +119,7 @@ export const usePipelineStore = create<PipelineStore>((set) => ({
           void invalidateProject(queryClient, projectId, "status");
           void queryClient.invalidateQueries({ queryKey: ["projects"] });
           closeCurrentSource(es);
-          set({ connected: false });
+          set({ connected: false, imagePreviews: {} });
         }
       } catch {
         // ignore malformed events
@@ -122,8 +149,16 @@ export const usePipelineStore = create<PipelineStore>((set) => ({
   disconnect: () => {
     closeCurrentSource();
     reconnectDelay = 1000;
-    set({ connected: false });
+    set({ connected: false, projectId: null, imagePreviews: {} });
   },
 
-  clearEvents: () => set({ events: [] }),
+  clearEvents: () => set({ events: [], imagePreviews: {} }),
+
+  releaseImagePreview: (target, requestId) => set((state) => {
+    const current = state.imagePreviews[target];
+    if (!current?.settled || current.request_id !== requestId) return state;
+    const imagePreviews = { ...state.imagePreviews };
+    delete imagePreviews[target];
+    return { imagePreviews };
+  }),
 }));

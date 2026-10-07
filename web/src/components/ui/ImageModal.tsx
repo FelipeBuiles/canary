@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { LoaderCircle } from "lucide-react";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { useBackdropDismiss } from "../../hooks/useBackdropDismiss";
 import type { ReactNode } from "react";
@@ -20,9 +21,11 @@ interface ImageModalProps {
   sidebar?: ReactNode;
   imageAvailable?: boolean;
   emptyLabel?: string;
+  /** Queued or drawing feedback over the image while a replacement is generated. */
+  generationStatus?: string;
 }
 
-export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar, imageAvailable = true, emptyLabel = "No image generated" }: ImageModalProps) {
+export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar, imageAvailable = true, emptyLabel = "No image generated", generationStatus }: ImageModalProps) {
   const { t } = useI18n();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -76,7 +79,8 @@ export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar,
         >
           <div
             data-testid="image-modal-image-pane"
-            className="flex h-[36dvh] min-h-0 shrink-0 items-center justify-center overflow-hidden bg-ink-black lg:h-auto lg:min-h-[60vh] lg:shrink"
+            aria-busy={!!generationStatus}
+            className="relative flex h-[36dvh] min-h-0 shrink-0 items-center justify-center overflow-hidden bg-ink-black lg:h-auto lg:min-h-[60vh] lg:shrink"
           >
             {imageAvailable ? (
               <button
@@ -84,7 +88,7 @@ export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar,
                 onClick={() => inspector.open({ src, alt, label: title })}
                 aria-label={`${t("Zoom and inspect")} · ${alt}`}
                 title={t("Zoom and inspect")}
-                className="group relative h-full w-full cursor-zoom-in focus-visible:outline-[3px] focus-visible:-outline-offset-[3px] focus-visible:outline-narrator-gold"
+                className={`group relative h-full w-full cursor-zoom-in transition-opacity focus-visible:outline-[3px] focus-visible:-outline-offset-[3px] focus-visible:outline-narrator-gold ${generationStatus ? "opacity-60" : ""}`}
               >
                 <LazyImage
                   src={src}
@@ -98,6 +102,12 @@ export function ImageModal({ isOpen, onClose, src, alt, title, actions, sidebar,
               <p className="px-6 text-center font-meta text-xs tracking-[0.08em] text-bristol/80">
                 {emptyLabel}
               </p>
+            )}
+            {generationStatus && (
+              <div role="status" className="pointer-events-none absolute left-1/2 top-4 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 border-[2px] border-ink-black bg-bristol px-3 py-2 font-meta text-xs font-bold uppercase tracking-wider text-ink-black shadow-ink">
+                <LoaderCircle size={14} aria-hidden="true" className="shrink-0 motion-safe:animate-spin" />
+                {generationStatus}
+              </div>
             )}
           </div>
           {sidebar && (

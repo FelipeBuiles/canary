@@ -64,6 +64,7 @@ where = ["src"]
   "prompts/*.txt",
   "fonts/*.ttf", "lettering/*.mjs", "lettering/*.mts",
   "litellm_pricing_overrides.yaml",
+  "ai_request_limits.yaml",
   "litellm_model_prices.cached.json",
   "sample_stories/*.json", "sample_stories/*.txt",
 ]

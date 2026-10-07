@@ -87,6 +87,7 @@ From the repository root, start the local stack with:
 ./scripts/dev.sh --codex  # Explicit process-configured Codex diagnostic routes
 ./scripts/dev.sh --mock   # Zero-cost local fixture replay
 ./scripts/dev.sh --check  # Read-only API stack health check
+./scripts/dev.sh --refresh-gateway # Refresh stale gateway, then start/reuse the stack
 ```
 
 The three mode flags are mutually exclusive. Codex startup requires both pinned
@@ -94,6 +95,10 @@ SDK distributions already installed; it never installs them, probes authenticati
 or generates. Both Codex and API modes retain LiteLLM/Postgres Docker dependencies:
 unselected API routes still exist. `--no-docker` prevents automatic Docker startup.
 `--help` and `--check` do not start services or install dependencies.
+API/Codex modes also check the gateway's loaded source fingerprints and model
+inventory. A stale gateway prints `./scripts/gateway.sh`; the launcher refreshes
+a running gateway only with `--refresh-gateway`. See
+[gateway refresh](gateway-refresh.md) for automatic rebuild/recreate decisions.
 
 The launcher authorizes Codex **only in the backend child process**, before imports,
 and defaults `CANARY_ENV` to `development` only when unset in all launcher modes. Explicit nondevelopment

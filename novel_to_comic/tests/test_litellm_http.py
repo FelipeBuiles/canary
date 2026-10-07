@@ -202,3 +202,52 @@ def test_wire_error_reports_safe_fal_phase_and_request_id():
     assert '"fal_request_id": "req-123"' in message
     assert "signed" not in message
     assert "prompt text" not in message
+
+
+@pytest.mark.parametrize("endpoint", ["generations", "edits"])
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_wire_error_identifies_missing_gateway_model_without_copying_response(endpoint, wrapped):
+    import httpx
+    from novel_to_comic.ai.errors import AITransportError
+    from novel_to_comic.ai.providers.litellm_http import _raise_safe_wire_phase_error
+    from novel_to_comic.image_failure import classify_image_failure
+
+    detail = (
+        f"/image/{endpoint}: Invalid model name passed in model=image-nano-banana-2.1. "
+        "Call `/v1/models` to view available models for your key."
+    )
+    error = {"message": str({"error": detail}) + " private prompt https://example.invalid/?token=secret",
+             "code": "400"} if wrapped else detail
+    response = httpx.Response(400, json={"error": error, "private": "sensitive request context"})
+    with pytest.raises(AITransportError) as captured:
+        _raise_safe_wire_phase_error("gateway_request", httpx.HTTPStatusError(
+            "gateway error", request=httpx.Request("POST", f"https://gateway.invalid/v1/images/{endpoint}"),
+            response=response,
+        ))
+
+    message = str(captured.value)
+    assert captured.value.phase == "gateway_request"
+    assert captured.value.response is response
+    assert '"gateway_failure": "model_not_loaded"' in message
+    assert '"model_alias": "image-nano-banana-2.1"' in message
+    assert "reload the gateway configuration" in message
+    assert classify_image_failure(captured.value) == "configuration_error"
+    assert "private prompt" not in message
+    assert "sensitive request context" not in message
+    assert "https://" not in message
+    assert "secret" not in message
+
+
+def test_wire_error_does_not_treat_every_bad_request_as_a_missing_model():
+    import httpx
+    from novel_to_comic.ai.errors import AITransportError
+    from novel_to_comic.ai.providers.litellm_http import _raise_safe_wire_phase_error
+
+    response = httpx.Response(400, json={"error": {"message": "invalid quality; private prompt", "code": "400"}})
+    with pytest.raises(AITransportError) as captured:
+        _raise_safe_wire_phase_error("gateway_request", httpx.HTTPStatusError(
+            "gateway error", request=httpx.Request("POST", "https://gateway.invalid/v1/images/generations"),
+            response=response,
+        ))
+    assert "model_not_loaded" not in str(captured.value)
+    assert "private prompt" not in str(captured.value)

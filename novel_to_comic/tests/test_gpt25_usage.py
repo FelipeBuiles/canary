@@ -77,7 +77,7 @@ def test_measured_style_estimate_is_bounded_and_never_changes_settlement():
     quote = resolver.estimate_image_cost("image-sunburst", 1, quality="medium",
         width=1024, height=1280, prompt_tokens=897, ref_count=1)
     assert quote.source == "measured_consumption_estimate"
-    assert quote.cost_usd == pytest.approx(.034885)
+    assert quote.cost_usd == pytest.approx(.034885 + 300 * 3e-5)
     observed = _extract_usage({"usage": {
         "input_tokens": 2402, "output_tokens": 378,
         "input_tokens_details": {"text_tokens": 897, "image_tokens": 1505},
@@ -97,7 +97,7 @@ def test_unmeasured_image_settings_keep_conservative_allowance(model, quality, w
 
     quote = get_pricing_resolver().estimate_image_cost(model, 1, quality=quality, width=width, height=height)
     assert quote.source == "configured_reservation_allowance"
-    assert quote.cost_usd == .25
+    assert quote.cost_usd == pytest.approx(.25 + 300 * 3e-5)
 
 
 def test_measured_draw_quote_covers_observed_usage_without_flat_allowance():
@@ -108,7 +108,7 @@ def test_measured_draw_quote_covers_observed_usage_without_flat_allowance():
         prompt_tokens=2022, ref_count=4,
     )
     assert quote.source == 'measured_consumption_estimate'
-    assert quote.cost_usd == pytest.approx(.12661)
+    assert quote.cost_usd == pytest.approx(.12661 + 300 * 3e-5)
     assert .082855 < quote.cost_usd < .15
 
 
@@ -128,8 +128,8 @@ def test_medium_page_quote_and_expected_settlement_use_their_own_tables():
     quote = resolver.estimate_image_cost('image-sunburst', 1, **kwargs)
     expected = resolver.estimate_image_cost('image-sunburst', 1, basis='expected', **kwargs)
     assert quote.source == 'measured_consumption_estimate'
-    # 430 output + 4 x 2000 reference tokens + 2000 prompt tokens.
-    assert quote.cost_usd == pytest.approx(430 * 3e-5 + 8000 * 8e-6 + 2000 * 5e-6)
+    # Final output + up to three OpenAI previews + references and prompt.
+    assert quote.cost_usd == pytest.approx((430 + 300) * 3e-5 + 8000 * 8e-6 + 2000 * 5e-6)
     assert expected.source == 'expected_consumption_estimate'
     # 343 output (FAL's published medium portrait) + 4 x 1200 reference tokens.
     assert expected.cost_usd == pytest.approx(343 * 3e-5 + 4800 * 8e-6 + 2000 * 5e-6)
@@ -137,11 +137,23 @@ def test_medium_page_quote_and_expected_settlement_use_their_own_tables():
     assert .05 < expected.cost_usd < .07 < quote.cost_usd
 
 
-def test_expected_basis_without_measurements_keeps_the_reservation_estimate():
+def test_fal_expected_charge_excludes_openai_preview_reservation():
     from novel_to_comic.model_costs import get_pricing_resolver
 
     resolver = get_pricing_resolver()
     quote = resolver.estimate_image_cost('image-sunburst', 1, quality='medium', width=1536, height=1536)
     expected = resolver.estimate_image_cost('image-sunburst', 1, quality='medium', width=1536, height=1536,
                                             basis='expected')
-    assert expected == quote
+    assert quote.cost_usd - expected.cost_usd == pytest.approx(300 * 3e-5)
+
+
+def test_openai_expected_charge_includes_preview_tokens_once():
+    from novel_to_comic.model_costs import get_pricing_resolver
+
+    resolver = get_pricing_resolver()
+    kwargs = dict(quality="medium", width=1024, height=1536)
+    quote = resolver.estimate_image_cost("image-sunburst-openai", 1, **kwargs)
+    expected = resolver.estimate_image_cost("image-sunburst-openai", 1, basis="expected", **kwargs)
+    pricing = resolver._overrides["model_overrides"]["gpt-image-2.5-sunburst"]
+    assert quote.cost_usd == pytest.approx((pricing["estimated_image_tokens_by_quality_and_size"]["medium"]["1024x1536"] + 300) * 3e-5)
+    assert expected.cost_usd == pytest.approx((pricing["expected_image_tokens_by_quality_and_size"]["medium"]["1024x1536"] + 300) * 3e-5)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import signal
 import subprocess
@@ -19,40 +20,81 @@ def _write_executable(path: Path, contents: str) -> None:
     path.chmod(0o755)
 
 
+def _gateway_environment(tmp_path: Path, env: dict, *, stale=False) -> dict:
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    from gateway_state import BUILD_LABEL, SCHEMA_VERSION, build_fingerprint, runtime_files
+    import yaml
+    directory = tmp_path / "gateway-fixtures"
+    directory.mkdir()
+    build = build_fingerprint(REPO_ROOT)
+    files = runtime_files(REPO_ROOT)
+    models = [route["model_name"] for route in yaml.safe_load((REPO_ROOT / "litellm/config.yaml").read_text())["model_list"]]
+    fixture = {
+        "inspect": [{"Id": "litellm-id", "Image": "image-current", "State": {"Running": True},
+                     "Config": {"Env": [], "Labels": {
+                         "com.docker.compose.project.working_dir": str(REPO_ROOT),
+                         "com.docker.compose.config-hash": "fixture-hash"}}, "Mounts": []}],
+        "image": [{"Id": "image-current", "Config": {"Labels": {BUILD_LABEL: build}}}],
+        "service": {"services": {"litellm": {"image": "fixture-image", "volumes": []}}},
+        "live": {"state": {"schema_version": SCHEMA_VERSION, "build_sha256": build,
+                           "runtime_files": files}, "models": models},
+    }
+    (directory / "live-current.json").write_text(json.dumps(fixture["live"]))
+    if stale:
+        fixture["live"]["state"]["runtime_files"] = {**files, "litellm/config.yaml": "old"}
+        fixture["live"]["models"] = [model for model in models if model != "image-nano-banana-2.1"]
+    for name, value in fixture.items():
+        (directory / f"{name}.json").write_text(json.dumps(value))
+    env["DEV_TEST_GATEWAY_FIXTURES"] = str(directory)
+    for variable, filename in (("DEV_TEST_DOCKER_LOG", "docker-invocations"),
+                               ("DEV_TEST_START_LOG", "start-invocations")):
+        if variable not in env:
+            path = tmp_path / filename
+            path.write_text("")
+            env[variable] = str(path)
+    return env
+
+
+def _write_docker_stub(bin_dir: Path) -> None:
+    _write_executable(bin_dir / "docker", """#!/bin/sh
+printf '%s\n' "$*" >> "$DEV_TEST_DOCKER_LOG"
+case "$1" in
+  info) exit 0 ;;
+  ps) printf '%s\n' litellm-id ;;
+  compose)
+    case "$*" in
+      *"ps -q queue-db") printf queue-db-id ;;
+      *"ps -q litellm-db") printf '%s\n' litellm-db-id ;;
+      *"ps -q litellm") printf '%s\n' litellm-id ;;
+      *"config --format json") cat "$DEV_TEST_GATEWAY_FIXTURES/service.json" ;;
+      *"config --hash litellm") printf '%s\n' 'litellm fixture-hash' ;;
+      *"up -d --no-deps --force-recreate litellm")
+        cp "$DEV_TEST_GATEWAY_FIXTURES/live-current.json" "$DEV_TEST_GATEWAY_FIXTURES/live.json" ;;
+      *) exit 1 ;;
+    esac ;;
+  inspect)
+    if [ "$2" = --format ]; then
+      case "$*" in
+        *queue-db-id|*litellm-db-id) printf healthy ;;
+        *litellm-id) printf running ;;
+        *) exit 1 ;;
+      esac
+    else
+      cat "$DEV_TEST_GATEWAY_FIXTURES/inspect.json"
+    fi ;;
+  image) cat "$DEV_TEST_GATEWAY_FIXTURES/image.json" ;;
+  exec) cat "$DEV_TEST_GATEWAY_FIXTURES/live.json" ;;
+  *) exit 1 ;;
+esac
+""")
+
+
 def test_live_start_waits_for_litellm_http_readiness(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     curl_attempts = tmp_path / "litellm-curl-attempts"
 
-    _write_executable(
-        bin_dir / "docker",
-        """#!/bin/sh
-case "$1" in
-  info)
-    exit 0
-    ;;
-  compose)
-    case "$*" in
-      *"ps -q queue-db") printf queue-db-id ;;
-      *"ps -q litellm-db") printf '%s\n' 'litellm-db-id' ;;
-      *"ps -q litellm") printf '%s\n' 'litellm-id' ;;
-      *) exit 1 ;;
-    esac
-    ;;
-  inspect)
-    case "$*" in
-      *queue-db-id) printf healthy ;;
-      *litellm-db-id) printf '%s\n' 'healthy' ;;
-      *litellm-id) printf '%s\n' 'running' ;;
-      *) exit 1 ;;
-    esac
-    ;;
-  *)
-    exit 1
-    ;;
-esac
-""",
-    )
+    _write_docker_stub(bin_dir)
     _write_executable(
         bin_dir / "curl",
         """#!/bin/sh
@@ -87,6 +129,7 @@ esac
     env = os.environ.copy()
     env["PATH"] = f"{bin_dir}{os.pathsep}{env['PATH']}"
     env["DEV_TEST_CURL_ATTEMPTS"] = str(curl_attempts)
+    _gateway_environment(tmp_path, env)
     result = subprocess.run(
         ["bash", str(REPO_ROOT / "scripts" / "dev.sh"), "--api"],
         cwd=REPO_ROOT,
@@ -104,36 +147,7 @@ esac
 
 
 def _write_check_stubs(bin_dir: Path) -> None:
-    _write_executable(
-        bin_dir / "docker",
-        """#!/bin/sh
-printf '%s\\n' "$*" >> "$DEV_TEST_DOCKER_LOG"
-case "$1" in
-  info)
-    exit 0
-    ;;
-  compose)
-    case "$*" in
-      *"ps -q queue-db") printf queue-db-id ;;
-      *"ps -q litellm-db") printf '%s\\n' 'litellm-db-id' ;;
-      *"ps -q litellm") printf '%s\\n' 'litellm-id' ;;
-      *) exit 1 ;;
-    esac
-    ;;
-  inspect)
-    case "$*" in
-      *queue-db-id) printf healthy ;;
-      *litellm-db-id) printf '%s\\n' 'healthy' ;;
-      *litellm-id) printf '%s\\n' 'running' ;;
-      *) exit 1 ;;
-    esac
-    ;;
-  *)
-    exit 1
-    ;;
-esac
-""",
-    )
+    _write_docker_stub(bin_dir)
     _write_executable(
         bin_dir / "curl",
         """#!/bin/sh
@@ -169,7 +183,8 @@ exit 1
 
 
 def _run_dev(
-    tmp_path: Path, backend_payload: str, *, check_only: bool = True, default_mode: bool = False
+    tmp_path: Path, backend_payload: str, *, check_only: bool = True, default_mode: bool = False,
+    stale_gateway: bool = False, refresh_gateway: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -184,11 +199,14 @@ def _run_dev(
     env["DEV_TEST_BACKEND_PAYLOAD"] = backend_payload
     env["DEV_TEST_DOCKER_LOG"] = str(docker_log)
     env["DEV_TEST_START_LOG"] = str(start_log)
+    _gateway_environment(tmp_path, env, stale=stale_gateway)
     command = ["bash", str(REPO_ROOT / "scripts" / "dev.sh")]
     if not default_mode:
         command.append("--api")
     if check_only:
         command.append("--check")
+    if refresh_gateway:
+        command.append("--refresh-gateway")
     result = subprocess.run(
         command,
         cwd=REPO_ROOT,
@@ -259,6 +277,35 @@ def test_default_launcher_mode_uses_api_without_starting_services(tmp_path: Path
     result, docker_log = _run_dev(tmp_path, payload, default_mode=True)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "up -d" not in docker_log
+
+
+@pytest.mark.parametrize("check_only", [False, True])
+def test_launcher_rejects_stale_gateway_without_restarting_it(tmp_path, check_only):
+    payload = '{"checks":{"litellm":"ok","generation_queue":"ok"},"model_mode":"api","pipeline_contract":"eight-stage-v2"}'
+    result, docker_log = _run_dev(tmp_path, payload, check_only=check_only, stale_gateway=True)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "Model routes missing" in result.stdout
+    assert "./scripts/gateway.sh" in result.stdout
+    assert "up -d" not in docker_log
+    assert " build " not in docker_log
+
+
+def test_explicit_launcher_refresh_recreates_only_stale_gateway(tmp_path):
+    payload = '{"checks":{"litellm":"ok","generation_queue":"ok"},"model_mode":"api","pipeline_contract":"eight-stage-v2"}'
+    result, docker_log = _run_dev(tmp_path, payload, check_only=False, stale_gateway=True, refresh_gateway=True)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "startup fingerprints and all configured model routes verified" in result.stdout
+    assert "up -d --no-deps --force-recreate litellm" in docker_log
+    assert " build " not in docker_log
+    assert " down" not in docker_log
+
+
+@pytest.mark.parametrize("option", ["--check", "--no-docker", "--mock"])
+def test_refresh_flag_rejects_read_only_and_mock_combinations(option):
+    result = subprocess.run(["bash", str(REPO_ROOT / "scripts/dev.sh"), "--refresh-gateway", option],
+                            capture_output=True, text=True, timeout=5)
+    assert result.returncode == 2
+    assert "cannot be combined" in result.stderr
 
 
 def test_second_interrupt_releases_lock_held_by_server_descendant(tmp_path: Path) -> None:

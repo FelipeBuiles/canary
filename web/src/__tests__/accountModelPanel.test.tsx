@@ -12,16 +12,17 @@ import { AccountModelPanel } from "../components/AccountModelPanel";
 
 const settings: AccountModelSettings = {
   enabled: true,
-  selections: { adapt: "gpt-5.6-terra", draw: "image-sunburst" },
+  selections: { adapt: "gpt-5.6-terra", image: "image-sunburst", draw: "image-sunburst" },
   stages: [
     { id: "adapt", label: "Adapt", model_ids: ["gpt-5.6-terra", "deepseek-v4.1-flash"] },
-    { id: "draw", label: "Draw", model_ids: ["image-sunburst", "image-flare"] },
+    { id: "image", label: "Style & Cast images", model_ids: ["image-sunburst", "image-nano-banana-2.1"] },
+    { id: "draw", label: "Draw", model_ids: ["image-sunburst", "image-nano-banana-2.1"] },
   ],
   models: [
     { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", kind: "text", provider: "OpenAI", vision: true },
     { id: "deepseek-v4.1-flash", label: "DeepSeek V4.1 Flash", kind: "text", provider: "OpenRouter", vision: true },
-    { id: "image-sunburst", label: "GPT Image 2.5 Sunburst", kind: "image", provider: "OpenAI", vision: true },
-    { id: "image-flare", label: "GPT Image 2.5 Flare", kind: "image", provider: "OpenAI", vision: true },
+    { id: "image-sunburst", label: "GPT Image 2.5 Sunburst", kind: "image", provider: "OpenAI, FAL backup", vision: true },
+    { id: "image-nano-banana-2.1", label: "Nano Banana 2.1", kind: "image", provider: "Google Vertex AI", vision: true },
   ],
 };
 
@@ -55,10 +56,10 @@ describe("account model controls", () => {
     const user = userEvent.setup();
     vi.mocked(updateAccountModelSettings).mockRejectedValueOnce(new Error("Settings could not be saved"));
     mount();
-    await user.selectOptions(await screen.findByRole("combobox", { name: "Draw" }), "image-flare");
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Draw" }), "image-nano-banana-2.1");
     await user.click(screen.getByRole("button", { name: "Save models" }));
     await screen.findByRole("alert");
-    expect((screen.getByRole("combobox", { name: "Draw" }) as HTMLSelectElement).value).toBe("image-flare");
+    expect((screen.getByRole("combobox", { name: "Draw" }) as HTMLSelectElement).value).toBe("image-nano-banana-2.1");
     expect((screen.getByRole("button", { name: "Save models" }) as HTMLButtonElement).disabled).toBe(false);
     await user.click(screen.getByRole("button", { name: "Discard changes" }));
     expect((screen.getByRole("combobox", { name: "Draw" }) as HTMLSelectElement).value).toBe("image-sunburst");
@@ -73,12 +74,25 @@ describe("account model controls", () => {
   });
 
   it("loads saved account choices when mounted again", async () => {
-    vi.mocked(getAccountModelSettings).mockResolvedValue({ ...settings, selections: { ...settings.selections, draw: "image-flare" } });
+    vi.mocked(getAccountModelSettings).mockResolvedValue({ ...settings, selections: { ...settings.selections, draw: "image-nano-banana-2.1" } });
     const view = mount();
-    await waitFor(() => expect((screen.getByRole("combobox", { name: "Draw" }) as HTMLSelectElement).value).toBe("image-flare"));
+    await waitFor(() => expect((screen.getByRole("combobox", { name: "Draw" }) as HTMLSelectElement).value).toBe("image-nano-banana-2.1"));
     view.unmount();
     mount();
-    await waitFor(() => expect((screen.getByRole("combobox", { name: "Draw" }) as HTMLSelectElement).value).toBe("image-flare"));
+    await waitFor(() => expect((screen.getByRole("combobox", { name: "Draw" }) as HTMLSelectElement).value).toBe("image-nano-banana-2.1"));
+  });
+
+  it("saves Nano Banana 2.1 for both image settings", async () => {
+    const user = userEvent.setup();
+    const selections = { image: "image-nano-banana-2.1", draw: "image-nano-banana-2.1" };
+    vi.mocked(updateAccountModelSettings).mockResolvedValue({ ...settings, selections: { ...settings.selections, ...selections } });
+    mount();
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Style & Cast images" }), selections.image);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Draw" }), selections.draw);
+    expect(screen.getAllByText("Google Vertex AI · API billing")).toHaveLength(2);
+    await user.click(screen.getByRole("button", { name: "Save models" }));
+    await screen.findByText("Account models saved. New jobs will use these choices.");
+    expect(updateAccountModelSettings).toHaveBeenCalledWith(selections, expect.anything());
   });
 
   it("groups Codex choices by billing source and saves the exact selected model", async () => {

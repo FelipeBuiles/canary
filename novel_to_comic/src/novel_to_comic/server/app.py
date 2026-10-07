@@ -15,6 +15,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.staticfiles import StaticFiles
 from novel_to_comic.model_costs import DEFAULT_COST_MAP_PATH, refresh_litellm_cost_cache
 from novel_to_comic.clients.structured_call import validation_error_summary
+from novel_to_comic.config import DEFAULT_IMAGE_CONCURRENCY
 from novel_to_comic.target_artifacts import ArtifactInvalid, ArtifactMissing
 from novel_to_comic.usage import audit_pricing
 
@@ -396,9 +397,9 @@ def create_app(projects_dir: Path, dev: bool = False) -> FastAPI:
     app.state.draw_in_flight: dict[str, list[dict]] = {}
     app.state.style_tasks: dict[str, asyncio.Task] = {}
     app.state.generation_semaphore = get_global_semaphore()
-    app.state.light_generation_semaphore = asyncio.Semaphore(5)
+    app.state.light_generation_semaphore = asyncio.Semaphore(DEFAULT_IMAGE_CONCURRENCY)
     app.state.light_generation_semaphores = _global_light_semaphores
-    app.state.light_generation_semaphores[5] = app.state.light_generation_semaphore
+    app.state.light_generation_semaphores[DEFAULT_IMAGE_CONCURRENCY] = app.state.light_generation_semaphore
     app.state.generation_queue = asyncio.Queue()
     app.state.durable_queue_required = True
     app.state.durable_queue = None

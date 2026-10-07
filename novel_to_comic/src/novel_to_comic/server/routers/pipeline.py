@@ -183,7 +183,8 @@ async def _run_stage(
             project_dir,
             on_event=_wrap_on_event(queue),
         )
-        await stage_obj.run(config, project_dir, ctx)
+        with ctx.image_previews():
+            await stage_obj.run(config, project_dir, ctx)
     except Exception as exc:
         from novel_to_comic.text_utils import clean_exception_message
 

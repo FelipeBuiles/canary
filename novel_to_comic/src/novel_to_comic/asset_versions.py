@@ -69,12 +69,18 @@ def list_asset_versions(image_path: Path, project_dir: Path) -> list[dict]:
     versions = asset_versions_dir(image_path)
     manifest = versions / "history.json"
     entries = json.loads(manifest.read_text()).get("entries", []) if manifest.exists() else []
-    result = list(entries)
+    result = [dict(entry) for entry in entries]
     if image_path.exists():
+        digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
+        # Restoring an archived image selects that version; it creates no new art.
+        for entry in result:
+            if entry.get("sha256") == digest:
+                entry["current"] = True
+                return result
         result.append({
             "version": max((entry["version"] for entry in result), default=0) + 1,
             "current": True,
-            "sha256": hashlib.sha256(image_path.read_bytes()).hexdigest(),
+            "sha256": digest,
             "image_path": str(image_path.relative_to(series_root(project_dir))),
         })
     return result

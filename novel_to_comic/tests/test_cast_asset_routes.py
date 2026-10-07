@@ -958,18 +958,22 @@ def test_location_history_restores_only_selected_appearance_and_keeps_undo(tmp_p
     history = get_location_plate_versions(loc_id="loc_001", state_id=state_id, project=project)
     assert history["has_history"]
     assert len(history["versions"]) == 2
-    with patch("novel_to_comic.state_assets.mark_dependent_states_stale") as stale, patch("novel_to_comic.state_assets.revalidate_state_asset_lineage") as revalidate:
-        restored = restore_location_plate_version(loc_id="loc_001", version=1, state_id=state_id, project=project)
-    assert selected.read_bytes() == b"first"
-    assert other.read_bytes() == untouched
-    assert artifacts.read_asset_meta(selected)["art_direction"] == "First design"
+    assert [v["version"] for v in history["versions"] if v.get("current")] == [2]
     from novel_to_comic.cast_instructions import _instructions_path
-    assert artifacts.read_active_addendum(_instructions_path(project_dir, "location", "loc_001", state_id)) == "First design"
-    assert len(restored["versions"]) == 3
-    assert revalidate.call_count == (1 if state_id else 0)
-    assert stale.call_count == (0 if state_id else 1)
-    restore_location_plate_version(loc_id="loc_001", version=2, state_id=state_id, project=project)
-    assert selected.read_bytes() == b"second"
+    with patch("novel_to_comic.state_assets.mark_dependent_states_stale") as stale, patch("novel_to_comic.state_assets.revalidate_state_asset_lineage") as revalidate:
+        for version, image, direction in [(1, b"first", "First design"), (2, b"second", "Second design"),
+                                          (1, b"first", "First design"), (2, b"second", "Second design")]:
+            restored = restore_location_plate_version(loc_id="loc_001", version=version, state_id=state_id, project=project)
+            assert selected.read_bytes() == image
+            assert other.read_bytes() == untouched
+            assert artifacts.read_asset_meta(selected)["art_direction"] == direction
+            assert artifacts.read_active_addendum(_instructions_path(project_dir, "location", "loc_001", state_id)) == direction
+            assert [v["version"] for v in restored["versions"]] == [1, 2]
+            assert [v["version"] for v in restored["versions"] if v.get("current")] == [version]
+            history = get_location_plate_versions(loc_id="loc_001", state_id=state_id, project=project)
+            assert history["versions"] == restored["versions"]
+    assert revalidate.call_count == (4 if state_id else 0)
+    assert stale.call_count == (0 if state_id else 4)
 
 
 def test_location_history_rejects_unknown_or_unsafe_appearance(tmp_path):

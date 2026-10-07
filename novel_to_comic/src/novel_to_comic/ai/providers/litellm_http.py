@@ -60,6 +60,7 @@ class LitellmHttpProvider:
     ) -> ProviderRawResult:
         """Submit the exact frozen wire payload."""
         from novel_to_comic.ai import client as ai_client
+        from novel_to_comic.ai.image_previews import post_image_request
 
         params, files = self.prepare_wire_request(wire)
         prompt = str(params.pop("prompt"))
@@ -69,21 +70,19 @@ class LitellmHttpProvider:
         started = time.perf_counter()
         try:
             if files:
-                response = await ai_client._post_with_retry(
+                response = await post_image_request(
                     url, headers=headers,
                     data={"prompt": prompt, "metadata": ai_client._json_dumps(metadata), **{
                         key: str(value) for key, value in params.items() if value is not None
                     }},
                     files=files,
-                    retry_ambiguous=False,
                 )
             else:
-                response = await ai_client._post_with_retry(
+                response = await post_image_request(
                     url, headers=headers,
                     json={"prompt": prompt, "metadata": metadata, **{
                         key: value for key, value in params.items() if value is not None
                     }},
-                    retry_ambiguous=False,
                 )
             if response.status_code >= 400:
                 response.raise_for_status()
@@ -301,6 +300,24 @@ def _raise_safe_wire_phase_error(phase: str, exc: BaseException) -> None:
             error = body.get("error")
             if isinstance(error, dict) and isinstance(error.get("code"), str):
                 descriptor["provider_error_code"] = error["code"]
+            message = error.get("message") if isinstance(error, dict) else error
+            if response.status_code == 400 and isinstance(message, str):
+                # A stale proxy can reject an alias before reaching the image
+                # provider. Preserve only the bounded model identifier and a
+                # fixed recovery hint, never the surrounding response text.
+                missing_model = re.search(
+                    r"\bInvalid model name passed in model="
+                    r"(?P<model>[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127})"
+                    r"\. Call `/v1/models` to view available models for your key\.",
+                    message,
+                )
+                if missing_model:
+                    descriptor["gateway_failure"] = "model_not_loaded"
+                    descriptor["model_alias"] = missing_model.group("model")
+                    descriptor["failure"] = (
+                        "requested image model is not loaded in the gateway; "
+                        "reload the gateway configuration"
+                    )
             if isinstance(error, dict) and isinstance(error.get("message"), str):
                 message = " ".join(error["message"].split())
                 # The proxy wraps custom-provider exceptions in a generic

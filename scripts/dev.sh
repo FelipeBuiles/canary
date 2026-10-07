@@ -19,6 +19,7 @@ EXPLICIT_MODE=""
 CLAUDE_CODE=false
 CHECK_ONLY=false
 START_DOCKER=true
+REFRESH_GATEWAY=false
 FIXTURE="${CANARY_MOCK_FIXTURE_PROJECT:-$DEFAULT_FIXTURE}"
 CHILD_PIDS=()
 
@@ -38,12 +39,16 @@ Options:
                          claude.ai login (API or Codex mode; claude CLI required)
   --fixture DIR          Completed project used by mock replay
   --no-docker            Do not automatically start missing Docker services
+  --refresh-gateway      Refresh stale LiteLLM routes/handlers; rebuild only if needed
   --check                Report health only; do not start anything
   -h, --help             Show this help
 
 Examples:
   ./scripts/dev.sh
   ./scripts/dev.sh --api
+  ./scripts/dev.sh --refresh-gateway
+  ./scripts/gateway.sh         # Refresh only LiteLLM, preserving credential mounts
+  ./scripts/gateway.sh --check # Read-only gateway freshness check
   ./scripts/dev.sh --mock
   ./scripts/dev.sh --mock --fixture projects/my-completed-project
 
@@ -88,6 +93,10 @@ while [ "$#" -gt 0 ]; do
       START_DOCKER=false
       shift
       ;;
+    --refresh-gateway)
+      REFRESH_GATEWAY=true
+      shift
+      ;;
     --check)
       CHECK_ONLY=true
       START_DOCKER=false
@@ -104,6 +113,11 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ "$REFRESH_GATEWAY" = true ] && { [ "$CHECK_ONLY" = true ] || [ "$START_DOCKER" = false ] || [ "$MODE" = "mock" ]; }; then
+  echo "[dev] --refresh-gateway cannot be combined with --check, --no-docker, or --mock" >&2
+  exit 2
+fi
 
 source "$SCRIPT_DIR/dev_environment.sh"
 report_posthog_configuration
@@ -282,16 +296,22 @@ fi
 queue_failed="$required_failed"
 
 if [ "$MODE" != "mock" ]; then
+  gateway_verified=false
+  gateway_http_ready=false
   if docker_available; then
     ok "Docker daemon"
     if ! report_compose_service "litellm-db"; then required_failed=true; fi
     if ! report_compose_service "litellm"; then required_failed=true; fi
 
-    if [ "$required_failed" = true ] && [ "$CHECK_ONLY" = false ] && [ "$START_DOCKER" = true ]; then
-      start_compose_services "litellm"
-      required_failed=false
-      report_compose_service "litellm-db" || required_failed=true
-      report_compose_service "litellm" || required_failed=true
+    if [ "$REFRESH_GATEWAY" = true ] || { [ "$required_failed" = true ] && [ "$CHECK_ONLY" = false ] && [ "$START_DOCKER" = true ]; }; then
+      if "$SCRIPT_DIR/gateway.sh"; then
+        gateway_verified=true
+        required_failed=false
+        report_compose_service "litellm-db" || required_failed=true
+        report_compose_service "litellm" || required_failed=true
+      else
+        required_failed=true
+      fi
     fi
   else
     failed "Docker daemon is not available"
@@ -299,12 +319,20 @@ if [ "$MODE" != "mock" ]; then
   fi
 
   if http_ok "$LITELLM_URL/health/liveliness"; then
+    gateway_http_ready=true
     ok "LiteLLM ($LITELLM_URL)"
   elif [ "$CHECK_ONLY" = false ] && [ "$required_failed" = false ]; then
-    wait_for_http "LiteLLM" "$LITELLM_URL/health/liveliness" || required_failed=true
+    if wait_for_http "LiteLLM" "$LITELLM_URL/health/liveliness"; then
+      gateway_http_ready=true
+    else
+      required_failed=true
+    fi
   else
     failed "LiteLLM HTTP health ($LITELLM_URL/health/liveliness)"
     required_failed=true
+  fi
+  if [ "$gateway_http_ready" = true ] && [ "$gateway_verified" = false ]; then
+    "$SCRIPT_DIR/gateway.sh" --check || required_failed=true
   fi
 else
   if [ ! -d "$FIXTURE" ] || [ ! -f "$FIXTURE/config.yaml" ]; then

@@ -68,7 +68,7 @@ async def run(config: Config, project_dir: Path, ctx: StageRuntime):
         generate=generate,
         max_generation_calls=config.narrative_max_calls,
         story_instruction=instruction,
-        concurrency=config.effective_text_concurrency(),
+        concurrency=config.effective_text_concurrency("adapt"),
         continuity=continuity_context(project_dir),
     )
     if workspace_part_id(project_dir) is not None:

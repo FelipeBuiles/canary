@@ -28,6 +28,10 @@ GATEWAY_SOL = "gpt-6-sol"
 GATEWAY_LUNA = "gpt-6-luna"
 GATEWAY_GEMINI_FLASH = "gemini-3.8-flash"
 
+DEFAULT_TEXT_CONCURRENCY = 16
+DEFAULT_IMAGE_CONCURRENCY = 12
+DEFAULT_ADAPT_CONCURRENCY = 12
+
 # Compatibility inventories derived from the route-description seam.
 GPT_IMAGE_2_ALIASES: frozenset[str] = frozenset(
     alias
@@ -40,8 +44,8 @@ SEEDREAM_ALIASES: frozenset[str] = frozenset(
     if describe_image_model(alias).route is ImageRoute.SEEDREAM
 )
 
-# Retained Vertex edition metadata. New Draw editions select Sunburst through
-# the operator catalog; old editions keep their frozen provider/model identity.
+# Retained Gemini 3 Pro edition metadata. New Draw profiles follow the model
+# catalog; saved requests keep their frozen provider/model identity.
 COMPLETE_PAGE_PROVIDER = "vertex-multimodal"
 COMPLETE_PAGE_MODEL = "gemini-3-pro-image"
 COMPLETE_PAGE_GATEWAY_MODEL = GATEWAY_IMAGE_SUNBURST
@@ -177,13 +181,13 @@ class Config(BaseModel):
     # Local development mode uses a separate lightweight concurrency limit.
     dev_mode: bool = False
 
-    dev_image_concurrency: int = 5
+    dev_image_concurrency: int = DEFAULT_IMAGE_CONCURRENCY
 
     # Image generation
     image_quality: str = "medium"  # OpenAI GPT Image quality: auto | low | medium | high
 
     # Max style/cast image generations in parallel. None uses the general limit.
-    image_concurrency: int | None = None
+    image_concurrency: int | None = DEFAULT_IMAGE_CONCURRENCY
 
     # LLM style-sample brief: compose the shared subject/setting prose for S2
     # style proof images (via prompt_model), cached per project so every
@@ -206,8 +210,9 @@ class Config(BaseModel):
     )
 
     # Pipeline settings
-    parallel_batch_size: int = 5
-    max_concurrent_requests: int = 5  # Parallel Adapt/Plan text requests; image fallback when image_concurrency is unset
+    parallel_batch_size: int = DEFAULT_TEXT_CONCURRENCY
+    max_concurrent_requests: int = DEFAULT_TEXT_CONCURRENCY  # Text ceiling; transport admission also enforces provider budgets
+    adapt_concurrency: int = DEFAULT_ADAPT_CONCURRENCY
     cost_limit_usd: Optional[float] = None
 
     def effective_image_model(self) -> str:
@@ -255,9 +260,10 @@ class Config(BaseModel):
             "as written unless the source text already localizes them."
         )
 
-    def effective_text_concurrency(self) -> int:
+    def effective_text_concurrency(self, stage: str | None = None) -> int:
         """Parallel structured text requests (Adapt shards, reviews, Plan batches)."""
-        return max(1, self.max_concurrent_requests)
+        limit = max(1, self.max_concurrent_requests)
+        return min(limit, max(1, self.adapt_concurrency)) if stage == "adapt" else limit
 
     def effective_image_concurrency(self) -> int:
         if self.dev_mode:
@@ -338,6 +344,7 @@ def save_config(config: Config, project_dir: Path) -> None:
         "style_template": config.style_template,
         "parallel_batch_size": config.parallel_batch_size,
         "max_concurrent_requests": config.max_concurrent_requests,
+        "adapt_concurrency": config.adapt_concurrency,
         "cost_limit_usd": config.cost_limit_usd,
     }
     if config.mock_mode:

@@ -120,6 +120,27 @@ def test_location_plate_uses_verified_landscape_geometry():
     assert "LOCATION-SENTINEL" in request.wire.prompt_parts[0]
 
 
+@pytest.mark.parametrize("quality", ["auto", "low", "medium", "high"])
+@pytest.mark.parametrize("input_type", [AbstractStyleProofInput, CanonicalLocationPlateInput])
+def test_nano_banana_freezes_1k_control_before_style_and_cast_submission(quality, input_type):
+    from litellm_handlers.vertex_multimodal import _image_config_kwargs
+
+    config = Config(image_model="image-nano-banana-2.1", image_quality=quality)
+    input_data = input_type(
+        asset_identity="1k-reference",
+        prompt=GenerationPromptInput(visual_brief="An ink drawing.", width=1024, height=1280),
+    )
+    request = compile_non_panel_request(config, input_data)
+    assert request.wire.controls == (("quality", "low"),)
+    assert request.wire.execution_fingerprint == request.wire.recompute_execution_fingerprint()
+    assert _image_config_kwargs(4 / 5, dict(request.wire.controls)["quality"],
+                                model="gemini-nano-banana-2.1") == {
+        "image_size": "1K", "aspect_ratio": "4:5",
+    }
+    sunburst = compile_non_panel_request(config.model_copy(update={"image_model": "image-sunburst"}), input_data)
+    assert sunburst.wire.controls == (("quality", quality),)
+
+
 def test_non_page_style_omits_production_contract_but_proof_retains_it():
     from novel_to_comic.asset_generation import PropReferenceInput
     from novel_to_comic.style_contract import page_style_template, LETTERING_MARKER, FRAMING_MARKER

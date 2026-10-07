@@ -34,11 +34,18 @@ RUN /app/.venv/bin/python /app/patch_http_errors.py \
 
 COPY litellm/config.yaml /app/config.yaml
 COPY litellm_handlers/__init__.py litellm_handlers/provider_wire.py litellm_handlers/fal_provider.py litellm_handlers/openai_image_stream.py litellm_handlers/vertex_multimodal.py /app/litellm_handlers/
+COPY litellm_handlers/image_previews.py /app/litellm_handlers/
+COPY scripts/gateway_state.py /app/gateway_state.py
+# The refresh command supplies a digest of the Dockerfile, lockfiles, patches,
+# and startup helper. Direct builds remain untracked until refreshed once.
+ARG CANARY_GATEWAY_BUILD_SHA256=untracked
+LABEL com.canary.gateway.build-sha256=$CANARY_GATEWAY_BUILD_SHA256
+ENV CANARY_GATEWAY_BUILD_SHA256=$CANARY_GATEWAY_BUILD_SHA256
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH=/app:/app/litellm_handlers
 # Price and gate every route from the bundled map plus config model_info, never
 # a copy fetched at boot (see litellm/config.yaml).
 ENV LITELLM_LOCAL_MODEL_COST_MAP=True
 EXPOSE 4000
-ENTRYPOINT ["/app/.venv/bin/litellm"]
+ENTRYPOINT ["/app/.venv/bin/python", "/app/gateway_state.py"]
 CMD ["--host", "0.0.0.0", "--port", "4000", "--config", "/app/config.yaml"]

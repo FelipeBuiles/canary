@@ -64,7 +64,7 @@ export function OperatorModelPanel({ connection }: { connection: OperatorConnect
       <p className="font-meta text-[0.55rem] font-bold uppercase tracking-[0.14em] text-hero-red">Generation settings</p>
       <h1 className="mt-2 font-display text-3xl font-black tracking-tight">Stage models</h1>
       <p className="mt-3 max-w-2xl font-body text-sm leading-6 text-ink-muted">{settings.note}</p>
-      <p className="mt-2 max-w-2xl font-body text-sm leading-6 text-ink-muted">Changing Draw requires a new edition or project for existing artwork. Saving does not start generation.</p>
+      <p className="mt-2 max-w-2xl font-body text-sm leading-6 text-ink-muted">New Draw jobs use the selected model. Existing pages keep their artwork and lettering mode. Saving does not start generation.</p>
     </header>
     <p className="font-body text-xs leading-5 text-ink-muted">Reasoning is configured independently for each text stage. Higher effort can increase latency and cost. Style and Cast share their text setting.</p>
     <Surface border="soft" shadow="none" className="divide-y-2 divide-ink-black/10">

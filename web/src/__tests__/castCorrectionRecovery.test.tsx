@@ -56,6 +56,7 @@ it("keeps canonical identity and a failed correction visible after closing and r
   await user.click(await screen.findByRole("button", { name: /REGENERATE WITH CHANGE.*credits/ }));
   await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "REGENERATE WITH CHANGE" }));
   await waitFor(() => expect(server.submit).toHaveBeenCalledTimes(1));
+  expect(within(screen.getByTestId("image-modal-image-pane")).getByRole("status").textContent).toBe("DRAWING…");
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.getByRole("button", { name: "Open image · Companion" }).hasAttribute("disabled")).toBe(false);
@@ -76,6 +77,7 @@ it("keeps canonical identity and a failed correction visible after closing and r
   expect((await screen.findByRole("alert")).textContent).toContain(reason);
   await user.click(screen.getByRole("button", { name: "Open image · Companion" }));
   expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(draft);
+  expect(within(screen.getByTestId("image-modal-image-pane")).queryByRole("status")).toBeNull();
   expect(screen.queryByText("LAST CHANGE APPLIED")).toBeNull();
   server.submit.mockResolvedValue({ status: "queued", char_id: "cat", job: { ...job, id: "recovery", queued_at: new Date(Date.now() + 1000).toISOString() } });
   await user.click(screen.getByRole("button", { name: /REGENERATE WITH CHANGE.*credits/ }));

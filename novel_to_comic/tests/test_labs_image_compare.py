@@ -166,7 +166,7 @@ def test_flare_estimates_use_its_allowance_and_completed_cost_uses_its_tokens(ro
     item = image_compare.AssetItem(root / "story", "new")
     prepared = item.prepare(None, target, "production")
     expected = estimate_image_cost("image-flare", 1, quality=item.quality, width=1024, height=1024,
-                                   ref_count=1, prompt_text=PROMPT)
+                                   ref_count=1, prompt_text=PROMPT, include_previews=False)
 
     assert prepared.estimate_usd(target, item.quality) == expected > 0.25
     usage = _usage().model_copy(update={
@@ -255,10 +255,15 @@ def test_a_failed_cell_is_recorded_and_never_retried(root, monkeypatch, target):
     ("sunburst-openai", "sunburst_openai_page_transport"),
     ("sunburst-fal", "sunburst_fal_page_transport"),
     ("flare-openai", "complete_page_adapter"),
+    ("nano-banana-2.1-vertex", "complete_page_adapter"),
 ])
 def test_page_arms_use_only_their_own_route(root, tmp_path, monkeypatch, target, factory):
-    profile = (openai_page_capability_profile("gpt-image-2.5-flare", quality="medium")
-               if target == "flare-openai" else sunburst_fallback_page_capability_profile())
+    if target == "nano-banana-2.1-vertex":
+        profile = page_drawing.nano_banana_21_page_capability_profile()
+    elif target == "flare-openai":
+        profile = openai_page_capability_profile("gpt-image-2.5-flare", quality="medium")
+    else:
+        profile = sunburst_fallback_page_capability_profile()
     compiled = compile_page_generation_request(
         _page(), select_book_edition(edition_id="labs", profile=profile), _inventory(),
         _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
@@ -502,6 +507,8 @@ def test_sheet_form_variants_refuse_plates_and_drifted_layouts(root):
 
 
 def test_nano_banana_asset_preserves_prompt_references_and_vertex_identity(root):
+    from litellm_handlers.vertex_multimodal import _image_config_kwargs
+
     item = image_compare.AssetItem(root / "story", "new")
     target = image_compare.get_target("nano-banana-2.1-vertex")
     prepared = item.prepare(None, target, "production")
@@ -513,15 +520,30 @@ def test_nano_banana_asset_preserves_prompt_references_and_vertex_identity(root)
     assert wire.requested_alias == "image-nano-banana-2.1"
     assert prepared.prompt == PROMPT
     assert prepared.reference_sha256 == tuple(ref.content_sha256 for ref in item.wire.references)
-    assert json.loads(params["canary_wire_request"])["controls"] == [["quality", "medium"]]
+    assert json.loads(params["canary_wire_request"])["controls"] == [["quality", "low"]]
+    assert prepared.quality == "low"
+    assert _image_config_kwargs(1, prepared.quality, model="gemini-nano-banana-2.1")["image_size"] == "1K"
     assert [part[1][1] for part in files] == [b"\x89PNG new"]
     assert prepared.estimate_usd(target, "medium") == pytest.approx(
         0.15 + 0.00168, abs=0.001,
     )
 
 
+def test_nano_banana_retry_rejects_the_previous_2k_quality(root, tmp_path):
+    item = image_compare.AssetItem(root / "story", "new")
+    target = image_compare.get_target("nano-banana-2.1-vertex")
+    prepared = item.prepare(None, target, "production")
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text(prepared.prompt)
+    previous = {"input_sha256": replace(prepared, quality="medium").fingerprint(target)}
+
+    with pytest.raises(image_compare.ChangedInputError, match="start a new run"):
+        image_compare._require_same_request(previous, prepared.fingerprint(target), prepared.prompt, prompt_path)
+
+
 @pytest.mark.parametrize("lettering_mode", ["editable", "integrated"])
 def test_nano_banana_page_compiles_for_vertex_preserving_lettering_mode(root, tmp_path, monkeypatch, lettering_mode):
+    from litellm_handlers.vertex_multimodal import _image_size_for_dimensions
     from novel_to_comic.target_artifacts import TargetArtifacts
 
     monkeypatch.setattr(TargetArtifacts, "read_page", lambda self, number: _page())
@@ -537,10 +559,55 @@ def test_nano_banana_page_compiles_for_vertex_preserving_lettering_mode(root, tm
     assert profile.provider == compiled.request.provider == "vertex-multimodal"
     assert profile.max_image_references == 14 and profile.max_attempts == 1
     assert profile.exact_visible_lettering == (lettering_mode == "integrated")
-    assert (compiled.request.output_width, compiled.request.output_height) == (1696, 2528)
+    assert (compiled.request.output_width, compiled.request.output_height) == (848, 1264)
+    assert _image_size_for_dimensions(compiled.request.output_width, compiled.request.output_height) == "1K"
+    assert page_image_quality(profile.id, profile.provider) == "low"
+    assert "-1k-" in profile.id
     adapter = page_drawing.complete_page_adapter(config, profile)
     assert adapter._transport._gateway_model == "image-nano-banana-2.1"
     assert adapter.prepare(compiled)
+
+
+def test_nano_banana_page_submits_1k_dimensions_to_vertex_once(root, tmp_path, monkeypatch):
+    import base64
+    import io
+
+    from PIL import Image
+    from litellm_handlers.vertex_multimodal import _image_size_for_dimensions
+
+    profile = page_drawing.nano_banana_21_page_capability_profile()
+    compiled = compile_page_generation_request(
+        _page(), select_book_edition(edition_id="labs", profile=profile), _inventory(),
+        _reference_files(tmp_path), retry=RetryProvenance(attempt=1),
+    )
+    monkeypatch.setattr(image_compare.PageItem, "_compile", lambda self, config: (profile, compiled))
+    output = io.BytesIO()
+    Image.new("RGB", (848, 1264)).save(output, format="PNG")
+    sent = []
+
+    async def post(url, **kwargs):
+        sent.append(kwargs)
+        return httpx.Response(200, request=httpx.Request("POST", url), json={
+            "model": "vertex_ai/gemini-nano-banana-2.1",
+            "data": [{"b64_json": base64.b64encode(output.getvalue()).decode()}],
+            "usage": {"input_tokens": 1200, "output_tokens": 1120,
+                      "input_tokens_details": {"image_tokens": 1000, "text_tokens": 200},
+                      "output_tokens_details": {"image_tokens": 1120}},
+        })
+
+    monkeypatch.setattr(client, "_post_with_retry", post)
+    _, cell = _run(root, "page:1", {"target": "nano-banana-2.1-vertex", "prompt": "production"})
+
+    assert cell["status"] == "ok" and len(sent) == 1
+    fields = sent[0]["data"]
+    assert fields["model"] == "image-nano-banana-2.1"
+    manifest = json.loads(fields["canary_complete_page_request"])
+    assert (manifest["output_width"], manifest["output_height"]) == (848, 1264)
+    assert _image_size_for_dimensions(manifest["output_width"], manifest["output_height"]) == "1K"
+    assert fields["prompt"] == compiled.request.prompt
+    assert [file[1][1] for file in sent[0]["files"]] == list(compiled.reference_bytes)
+    assert sent[0]["retry_ambiguous"] is False
+    assert cell["requested_size"] == cell["output_size"] == "848x1264"
 
 
 def test_nano_banana_rejects_reference_overflow_before_submission(root):

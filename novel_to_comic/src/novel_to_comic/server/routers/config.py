@@ -22,6 +22,9 @@ _SETTABLE_FIELDS = {
     "image_quality",
     "parallel_batch_size",
     "max_concurrent_requests",
+    "adapt_concurrency",
+    "image_concurrency",
+    "dev_image_concurrency",
     "cost_limit_usd",
 }
 

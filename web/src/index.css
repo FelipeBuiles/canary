@@ -1,5 +1,101 @@
 @import "tailwindcss";
 
+/* Generation previews. Each draft is laid down like a pass through the page
+   press: a feathered edge sweeps down the card, carrying a halftone bar, while
+   the draft settles from coarse to its own blur. Completed pixels then lose
+   their last softness in place; the saved file swaps in with a plain fade. */
+@keyframes image-develop {
+  from {
+    -webkit-mask-position: 0 100%;
+    mask-position: 0 100%;
+    filter: blur(calc(var(--preview-blur) + 6px)) saturate(0.55) contrast(1.15);
+    transform: scale(calc(var(--preview-scale, 1) + 0.025));
+  }
+  to {
+    -webkit-mask-position: 0 0;
+    mask-position: 0 0;
+    filter: blur(var(--preview-blur)) saturate(1) contrast(1);
+    transform: scale(var(--preview-scale, 1));
+  }
+}
+
+@keyframes image-press-bar {
+  from { top: -25%; opacity: 0; }
+  12% { opacity: 1; }
+  80% { opacity: 1; }
+  to { top: 125%; opacity: 0; }
+}
+
+@keyframes image-resolve {
+  from { opacity: 0.6; filter: blur(4px) brightness(1.06); transform: scale(1.012); }
+  55% { opacity: 1; }
+  to { opacity: 1; filter: blur(0) brightness(1); transform: scale(1); }
+}
+
+@keyframes image-handoff {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.image-focus-layer {
+  filter: blur(var(--preview-blur));
+  /* Blur pulls the card colour in at the edges; overscan hides that halo. */
+  transform: scale(var(--preview-scale, 1));
+}
+
+.image-focus-develop {
+  /* The mask is 2.5x the card; its feathered middle is the press edge. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 45%, transparent 55%);
+  mask-image: linear-gradient(to bottom, #000 45%, transparent 55%);
+  -webkit-mask-size: 100% 250%;
+  mask-size: 100% 250%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  animation: image-develop 1100ms cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+
+.image-focus-resolve {
+  animation: image-resolve 650ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.image-focus-handoff {
+  animation: image-handoff 280ms ease-out both;
+}
+
+.image-press-bar {
+  position: absolute;
+  inset-inline: 0;
+  height: 9%;
+  transform: translateY(-50%);
+  background:
+    linear-gradient(to bottom, transparent, rgb(255 255 255 / 0.55) 48%, rgb(255 255 255 / 0.55) 52%, transparent),
+    radial-gradient(circle, rgb(27 28 21 / 0.28) 1px, transparent 1.6px) 0 0 / 6px 6px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 35%, #000 65%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 35%, #000 65%, transparent);
+  mix-blend-mode: soft-light;
+  animation: image-press-bar 1100ms cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+
+@keyframes image-preview-release {
+  to { opacity: 0; }
+}
+
+/* Fades only once the card's own image is painted beneath, so the two
+   identical images dissolve without a skeleton or a dip. */
+.image-preview-release {
+  animation: image-preview-release 180ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image-preview-release { animation-duration: 1ms; }
+  .image-focus-develop, .image-focus-resolve, .image-focus-handoff {
+    -webkit-mask-image: none;
+    mask-image: none;
+    animation: image-handoff 1ms both;
+  }
+  .image-press-bar { display: none; }
+}
+
 /* The sidebar shell needs room for a useful workbench beside it; narrower
    windows (split screens, tablets, phone landscapes) keep compact navigation.
    Keep in sync with DESKTOP_LAYOUT_QUERY in hooks/useDesktopLayout.ts. */

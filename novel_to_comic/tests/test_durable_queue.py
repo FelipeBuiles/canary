@@ -216,8 +216,8 @@ asyncio.run(crash(Path(sys.argv[1])))
     assert jobs["2"].recoverable is False
 
 
-@pytest.mark.parametrize("provider", ["fal-queue", "openai"])
-def test_page_dispatch_has_three_locks_without_changing_other_account_work(tmp_path, provider):
+@pytest.mark.parametrize("provider", ["fal-queue", "openai", "vertex-multimodal"])
+def test_page_dispatch_has_twelve_locks_without_changing_other_account_work(tmp_path, provider):
     from novel_to_comic.server.generation_jobs import GenerationJob
 
     pages = [GenerationJob(
@@ -225,10 +225,10 @@ def test_page_dispatch_has_three_locks_without_changing_other_account_work(tmp_p
         label=str(number), payload={"page_number": number}, sequence=number, runner=None,
         user_id="account",
         command=SimpleNamespace(operation="page_draw", arguments={"request": {"provider": provider}}),
-    ) for number in range(1, 5)]
+    ) for number in range(1, 14)]
     locks = [dispatch_lock("queue", page) for page in pages]
-    assert len(set(locks[:3])) == 3
-    assert locks[0] == locks[3]
+    assert len(set(locks[:12])) == 12
+    assert locks[0] == locks[12]
     assert dispatch_lock("queue", SimpleNamespace(user_id="account", kind="pipeline_stage", payload={}, command=None)) == "queue:account:account"
     # Text stages take the light lane so another part's Extract runs beside page work.
     extract = SimpleNamespace(user_id="account", kind="pipeline_stage", payload={"stage": "extract"}, command=None)

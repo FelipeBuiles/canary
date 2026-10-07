@@ -198,7 +198,7 @@ def test_per_user_generation_semaphore_serializes_same_user(monkeypatch):
     assert peak == 1
 
 
-def test_page_lane_runs_three_pages_but_keeps_other_work_exclusive():
+def test_page_lane_runs_twelve_pages_but_keeps_other_work_exclusive():
     app = SimpleNamespace(state=SimpleNamespace())
     lane = _account_lane(app, "user-1")
     release_pages = asyncio.Event()
@@ -214,9 +214,9 @@ def test_page_lane_runs_three_pages_but_keeps_other_work_exclusive():
         async with lane.enter(True):
             active += 1
             peak = max(peak, active)
-            if active == 3:
+            if active == 12:
                 entered_pages.set()
-            if number == 4:
+            if number == 13:
                 fourth_entered.set()
             await release_pages.wait()
             active -= 1
@@ -228,13 +228,13 @@ def test_page_lane_runs_three_pages_but_keeps_other_work_exclusive():
             await release_exclusive.wait()
 
     async def exercise():
-        first = [asyncio.create_task(page(number)) for number in (1, 2, 3)]
+        first = [asyncio.create_task(page(number)) for number in range(1, 13)]
         await asyncio.wait_for(entered_pages.wait(), 1)
         other = asyncio.create_task(exclusive())
         await asyncio.sleep(0)
-        fourth = asyncio.create_task(page(4))
+        fourth = asyncio.create_task(page(13))
         await asyncio.sleep(0)
-        assert active == 3 and peak == 3
+        assert active == 12 and peak == 12
         assert not exclusive_entered.is_set() and not fourth_entered.is_set()
         release_pages.set()
         await asyncio.wait_for(exclusive_entered.wait(), 1)
@@ -244,7 +244,7 @@ def test_page_lane_runs_three_pages_but_keeps_other_work_exclusive():
         assert fourth_entered.is_set()
 
     asyncio.run(exercise())
-    assert peak == 3
+    assert peak == 12
 
 
 def test_parallel_routing_uses_frozen_page_provider():
@@ -256,7 +256,9 @@ def test_parallel_routing_uses_frozen_page_provider():
     assert is_parallel_page_draw(job)
     job.command.arguments["request"]["provider"] = "openai"
     assert is_parallel_page_draw(job)
-    for provider in ("openrouter", "vertex-multimodal", "codex-dev"):
+    job.command.arguments["request"]["provider"] = "vertex-multimodal"
+    assert is_parallel_page_draw(job)
+    for provider in ("openrouter", "codex-dev"):
         job.command.arguments["request"]["provider"] = provider
         assert not is_parallel_page_draw(job)
     job.command.arguments["request"]["provider"] = "openai"

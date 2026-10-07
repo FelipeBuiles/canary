@@ -1,16 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Expand, EyeOff, Eye, Pencil, RotateCcw, ScanLine } from "lucide-react";
 import { useImageGenerationMeta, useSetActiveStyle, useUpdateStylePresentation } from "../../api/queries";
-import { isAuthorDirection, styleName, type StyleSuggestion } from "../../api/styles";
+import { isAuthorDirection, proofImageUrl, styleName, type StyleSuggestion } from "../../api/styles";
 import { useI18n } from "../../i18n";
 import { EntityCard } from "../composites";
 import { Button } from "../ui/Button";
-import { FlowingDotsPlaceholder } from "../ui/FlowingDotsPlaceholder";
+import { ImageGenerationPreview } from "../composites/ImageGenerationPreview";
 import { GenerationDetailsModal } from "../ui/GenerationDetailsModal";
 import { LazyImage } from "../ui/LazyImage";
 import { Loupe } from "../ui/Loupe";
 import { Stamp, usePress } from "../ui/motion";
-import { seriesPath } from "../../api/projectScope";
 
 const ROLE_LABELS: Record<string, string> = {
   story_fit_primary: "BEST FIT",
@@ -71,14 +70,19 @@ export function StyleProofCard({
   const [renaming, setRenaming] = useState(false);
   const [draftName, setDraftName] = useState(name);
   const [presentationError, setPresentationError] = useState<string | null>(null);
-  const artUrl = `/api${seriesPath(projectName)}/files/samples/style_${suggestion.index}.png`;
-  const sampleUrl = suggestion.sample_preview_url ?? artUrl;
-  const [imgFailed, setImgFailed] = useState(!suggestion.has_sample);
+  const sampleUrl = proofImageUrl(projectName, suggestion);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [selectionConfirmed, setSelectionConfirmed] = useState(false);
   const [timestamp, setTimestamp] = useState(() => Date.now());
   const displayedProofUrl = `${sampleUrl}${sampleUrl.includes("?") ? "&" : "?"}t=${timestamp}`;
+  const [proofLoad, setProofLoad] = useState({ url: displayedProofUrl, hasSample: suggestion.has_sample, failed: false });
+  // Model changes can replace a cached preview URL with the saved raw proof.
+  // Reset on each source change, including a return to the original model.
+  if (proofLoad.url !== displayedProofUrl || proofLoad.hasSample !== suggestion.has_sample) {
+    setProofLoad({ url: displayedProofUrl, hasSample: suggestion.has_sample, failed: false });
+  }
+  const imgFailed = !suggestion.has_sample || (proofLoad.url === displayedProofUrl && proofLoad.failed);
   const wasGenerating = useRef(isGenerating);
   // A finished proof seats with a press instead of fading in.
   const arrival = usePress(timestamp);
@@ -91,17 +95,11 @@ export function StyleProofCard({
   );
 
   useEffect(() => {
-    if (!suggestion.has_sample) return;
-    const timer = window.setTimeout(() => setImgFailed(false), 0);
-    return () => window.clearTimeout(timer);
-  }, [suggestion.has_sample]);
-
-  useEffect(() => {
     const wasGeneratingValue = wasGenerating.current;
     wasGenerating.current = isGenerating;
     if (!wasGeneratingValue || isGenerating) return;
     const timer = window.setTimeout(() => {
-      setImgFailed(false);
+      setProofLoad((current) => ({ ...current, failed: false }));
       setTimestamp(Date.now());
     }, 0);
     return () => window.clearTimeout(timer);
@@ -150,13 +148,10 @@ export function StyleProofCard({
       {/* The grid has no row gap (a subgrid would absorb it into each section); the margin spaces rows. */}
       <EntityCard active={isActive} subgridRows={5} className="mb-8 min-w-0">
         <div className={`relative bg-surface-container ${arrival.className}`} onAnimationEnd={arrival.onAnimationEnd}>
-          {showLoading ? (
-            <FlowingDotsPlaceholder
-              aspect="4 / 5"
-              className="h-full w-full"
-              label={queueState === "queued" ? t("QUEUED") : t("GENERATING SAMPLES…")}
-            />
-          ) : imgFailed ? (
+          <ImageGenerationPreview project={projectName} target={`samples/style_${suggestion.index}.png`}
+            active={showLoading} finalSrc={suggestion.has_sample ? displayedProofUrl : undefined} aspect="4 / 5"
+            label={queueState === "queued" ? t("QUEUED") : t("GENERATING SAMPLES…")}>
+          {imgFailed ? (
             <div className="flex aspect-[4/5] w-full flex-col items-center justify-center gap-4 p-6 text-center">
               <div className={`font-meta text-[0.62rem] font-bold tracking-[0.1em] ${failed && !suggestion.has_sample ? "text-hero-red" : "text-ink-muted"}`}>
                 {suggestion.has_sample ? t("PROOF IMAGE UNAVAILABLE") : t(failed ? "SAMPLE PROOF FAILED" : "PROOF NOT GENERATED")}
@@ -170,6 +165,7 @@ export function StyleProofCard({
           ) : (
             <Loupe>
               <LazyImage
+                key={displayedProofUrl}
                 src={displayedProofUrl}
                 alt={name}
                 loading="lazy"
@@ -178,7 +174,7 @@ export function StyleProofCard({
                 aspect="4 / 5"
                 containerClassName="w-full"
                 className="object-contain object-center"
-                onError={() => setImgFailed(true)}
+                onError={() => setProofLoad((current) => current.url === displayedProofUrl ? { ...current, failed: true } : current)}
               />
               {/* The proof itself opens the full view; the corner mark only signals it. */}
               <button
@@ -196,6 +192,8 @@ export function StyleProofCard({
               </button>
             </Loupe>
           )}
+
+          </ImageGenerationPreview>
 
           {isActive && (
             <Stamp play={selectionConfirmed} onSettled={() => setSelectionConfirmed(false)} className="pointer-events-none absolute left-3 top-4 shadow-ink-sm">

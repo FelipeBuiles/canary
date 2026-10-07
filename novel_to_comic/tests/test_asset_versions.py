@@ -52,6 +52,9 @@ def test_record_is_idempotent_for_identical_bytes(tmp_path):
     again = record_asset_version(sheet, tmp_path, reason="before_regenerate")
     assert first["version"] == 1
     assert again["version"] == 1  # same bytes → no new version
+    versions = list_asset_versions(sheet, tmp_path)
+    assert [v["version"] for v in versions] == [1]
+    assert versions[0].get("current") is True
 
 
 def test_restore_brings_back_an_old_version(tmp_path):
@@ -60,11 +63,52 @@ def test_restore_brings_back_an_old_version(tmp_path):
     record_asset_version(sheet, tmp_path, reason="before_regenerate")  # v001 = dark
     _png(sheet, (200, 200, 200))  # live is now light
 
-    restore_asset_version(sheet, tmp_path, version=1)
-    with Image.open(sheet) as img:
-        assert img.getpixel((0, 0)) == (10, 10, 10)  # back to the dark original
+    for version, color in [(1, 10), (2, 200), (1, 10), (2, 200)]:
+        restore_asset_version(sheet, tmp_path, version=version)
+        with Image.open(sheet) as img:
+            assert img.getpixel((0, 0)) == (color, color, color)
+        versions = list_asset_versions(sheet, tmp_path)
+        assert [v["version"] for v in versions] == [1, 2]
+        assert [v["version"] for v in versions if v.get("current")] == [version]
     # The light version we overwrote was itself archived (restore is reversible).
-    assert any(v.get("reason") == "before_restore" for v in list_asset_versions(sheet, tmp_path))
+    assert any(v.get("reason") == "before_restore" for v in versions)
+
+
+def test_list_existing_history_identifies_current_without_rewriting_it(tmp_path):
+    plate = tmp_path / "plates" / "hall.png"
+    _png(plate, (10, 10, 10))
+    record_asset_version(plate, tmp_path, reason="before_regenerate")
+    _png(plate, (200, 200, 200))
+    restore_asset_version(plate, tmp_path, version=1)
+    manifest = asset_versions_dir(plate) / "history.json"
+    before = manifest.read_bytes()
+
+    versions = list_asset_versions(plate, tmp_path)
+
+    assert [v["version"] for v in versions] == [1, 2]
+    assert [v["version"] for v in versions if v.get("current")] == [1]
+    assert manifest.read_bytes() == before
+
+
+def test_new_art_after_restoring_an_old_version_keeps_chronological_ids(tmp_path):
+    sheet = tmp_path / "refs" / "char_001" / "sheet.png"
+    _png(sheet, (10, 10, 10))
+    record_asset_version(sheet, tmp_path, reason="before_regenerate")
+    _png(sheet, (20, 20, 20))
+    restore_asset_version(sheet, tmp_path, version=1)
+
+    record_asset_version(sheet, tmp_path, reason="before_regenerate")
+    _png(sheet, (30, 30, 30))
+    versions = list_asset_versions(sheet, tmp_path)
+    assert [v["version"] for v in versions] == [1, 2, 3]
+    assert [v["version"] for v in versions if v.get("current")] == [3]
+
+    restore_asset_version(sheet, tmp_path, version=2)
+    with Image.open(sheet) as img:
+        assert img.getpixel((0, 0)) == (20, 20, 20)
+    versions = list_asset_versions(sheet, tmp_path)
+    assert [v["version"] for v in versions] == [1, 2, 3]
+    assert [v["version"] for v in versions if v.get("current")] == [2]
 
 
 def test_asset_versioning_rejects_another_projects_path(tmp_path):

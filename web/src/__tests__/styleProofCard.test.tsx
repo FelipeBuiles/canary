@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
@@ -72,6 +72,35 @@ describe("StyleProofCard", () => {
     expect(within(screen.getByRole("dialog")).getByRole("img", { name: suggestion.label }).getAttribute("src")).toBe(cardSource);
   });
 
+  it.each([null, "/lettered-proof.png?style=updated"])("recovers a failed preview when the refreshed styles response changes its source to %s", async (preview) => {
+    const input = props({ suggestion: { ...suggestion, sample_preview_url: "/lettered-proof.png?style=previous" } });
+    const view = render(card(input));
+    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)); });
+    fireEvent.error(screen.getByRole("img", { name: suggestion.label }));
+    expect(screen.getByText("PROOF IMAGE UNAVAILABLE")).toBeTruthy();
+
+    // Polling the same failed source must not retry it on every response.
+    view.rerender(card({ ...input, suggestion: { ...input.suggestion, sample_stale: true } }));
+    expect(screen.getByText("PROOF IMAGE UNAVAILABLE")).toBeTruthy();
+    expect(screen.queryByRole("img", { name: suggestion.label })).toBeNull();
+
+    // A model change can withdraw the preview URL while retaining the saved art.
+    view.rerender(card({ ...input, suggestion: { ...input.suggestion, sample_preview_url: preview, sample_stale: true } }));
+    await waitFor(() => {
+      const image = screen.getByRole("img", { name: suggestion.label });
+      expect(image.getAttribute("src")).toContain(preview ? `${preview}&t=` : "/files/samples/style_0.png?t=");
+    });
+    // Returning to the original model must try its preview again, even if the
+    // replacement image has not finished loading yet.
+    view.rerender(card(input));
+    expect(screen.getByRole("img", { name: suggestion.label }).getAttribute("src")).toContain("/lettered-proof.png?style=previous&t=");
+    fireEvent.load(screen.getByRole("img", { name: suggestion.label }));
+    expect(screen.getByRole("img", { name: suggestion.label }).className).toContain("opacity-100");
+    expect(screen.queryByText("PROOF IMAGE UNAVAILABLE")).toBeNull();
+    expect(input.onRefresh).not.toHaveBeenCalled();
+    expect(input.onRetry).not.toHaveBeenCalled();
+  });
+
   it.each(["pending", "generating", "disabled", "active"])("blocks selection while %s", async (state) => {
     mutation.isPending = state === "pending";
     render(card(props({
@@ -83,6 +112,18 @@ describe("StyleProofCard", () => {
     expect(button.getAttribute("aria-pressed")).toBe(String(state === "active"));
     await userEvent.click(button);
     expect(mutation.mutate).not.toHaveBeenCalled();
+  });
+
+  it("reloads a saved proof when it becomes available again after an image failure", () => {
+    const input = props();
+    const view = render(card(input));
+    fireEvent.error(screen.getByRole("img", { name: suggestion.label }));
+    expect(screen.getByText("PROOF IMAGE UNAVAILABLE")).toBeTruthy();
+    view.rerender(card({ ...input, suggestion: { ...suggestion, has_sample: false } }));
+    expect(screen.getAllByText("PROOF NOT GENERATED").length).toBeGreaterThan(0);
+    view.rerender(card(input));
+    expect(screen.getByRole("img", { name: suggestion.label })).toBeTruthy();
+    expect(screen.queryByText("PROOF IMAGE UNAVAILABLE")).toBeNull();
   });
 
   it("shows selection failure without marking the rejected direction as selected", async () => {

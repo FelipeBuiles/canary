@@ -450,7 +450,7 @@
   "Changes the name shown in your library and studio. Your story, artwork, and exports stay unchanged.": "Cambia el nombre que aparece en tu biblioteca y estudio. La historia, las ilustraciones y las exportaciones no cambian.",
   "Changing a description marks this entry's Cast images out of date; you choose to regenerate or keep them. Drawn pages are flagged, never redrawn.": "Cambiar una descripción marca como desactualizadas las imágenes del Reparto de esta entrada; tú eliges si regenerarlas o conservarlas. Las páginas dibujadas se señalan, nunca se vuelven a dibujar.",
   "Changing a word means redrawing the page. It uses credits and can change the art.": "Cambiar una palabra implica redibujar la página. Usa créditos y puede cambiar el arte.",
-  "Changing the Draw model requires a new edition or project. Existing pages are never switched automatically.": "Cambiar el modelo de dibujo requiere una nueva edición o proyecto. Las páginas existentes nunca cambian automáticamente.",
+  "New Draw jobs use the selected model. Existing pages keep their artwork and lettering mode.": "Los nuevos trabajos de dibujo usan el modelo seleccionado. Las páginas existentes conservan sus ilustraciones y su modo de rotulación.",
   "Chapter": "Capítulo",
   "Character and place designs": "Diseños de personajes y lugares",
   "Character and scene continuity": "Continuidad de personajes y escenas",

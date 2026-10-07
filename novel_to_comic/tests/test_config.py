@@ -7,7 +7,7 @@ import yaml
 
 import pytest
 
-from novel_to_comic.image_models import GATEWAY_IMAGE_BALANCED
+from novel_to_comic.image_models import GATEWAY_IMAGE_BALANCED, GATEWAY_IMAGE_NANO_BANANA_21
 from novel_to_comic.config import (
     Config,
     GATEWAY_IMAGE_FAST,
@@ -41,6 +41,14 @@ class TestConfigDefaults:
     def test_dev_mode_defaults_to_false(self):
         cfg = Config()
         assert cfg.dev_mode is False
+
+    def test_concurrency_targets_are_independent(self):
+        cfg = Config()
+        assert cfg.effective_text_concurrency() == 16
+        assert cfg.effective_text_concurrency("adapt") == 12
+        assert cfg.effective_image_concurrency() == 12
+        assert Config(dev_mode=True).effective_image_concurrency() == 12
+        assert Config(max_concurrent_requests=4).effective_text_concurrency("adapt") == 4
 
     def test_target_language_defaults_to_en(self):
         cfg = Config()
@@ -90,10 +98,11 @@ class TestEffectiveImageModel:
 
 class TestImageModelAliases:
     def test_exposes_production_gateway_aliases(self):
-        assert image_model_aliases() == ("image-sunburst",)
+        assert image_model_aliases() == ("image-sunburst", "image-nano-banana-2.1")
 
-    def test_validates_supported_alias(self):
-        assert validate_image_model_alias(" image-sunburst ") == GATEWAY_IMAGE_SUNBURST
+    @pytest.mark.parametrize("alias", [GATEWAY_IMAGE_SUNBURST, GATEWAY_IMAGE_NANO_BANANA_21])
+    def test_validates_supported_alias(self, alias):
+        assert validate_image_model_alias(f" {alias} ") == alias
 
     def test_blank_alias_means_project_default(self):
         assert validate_image_model_alias("") is None
@@ -107,12 +116,13 @@ class TestImageModelAliases:
         else:
             raise AssertionError("raw provider model should be rejected")
 
-    def test_one_shot_alias_copy_does_not_mutate_original(self):
+    @pytest.mark.parametrize("alias", [GATEWAY_IMAGE_SUNBURST, GATEWAY_IMAGE_NANO_BANANA_21])
+    def test_one_shot_alias_copy_does_not_mutate_original(self, alias):
         cfg = Config(image_model=GATEWAY_IMAGE_FAST)
-        copied = config_for_image_model_alias(cfg, GATEWAY_IMAGE_SUNBURST)
+        copied = config_for_image_model_alias(cfg, alias)
 
         assert copied is not cfg
-        assert copied.image_model == GATEWAY_IMAGE_SUNBURST
+        assert copied.image_model == copied.effective_image_model() == alias
         assert cfg.image_model == GATEWAY_IMAGE_FAST
 
 
@@ -175,20 +185,20 @@ class TestEffectiveImageConcurrency:
         cfg = Config(dev_mode=True, dev_image_concurrency=3)
         assert cfg.effective_image_concurrency() == 3
 
-    def test_sunburst_route_uses_general_default(self):
+    def test_sunburst_route_has_independent_image_default(self):
         cfg = Config(dev_mode=False, max_concurrent_requests=5)
-        assert cfg.effective_image_concurrency() == 5
+        assert cfg.effective_image_concurrency() == 12
 
     def test_explicit_image_concurrency_overrides_provider_default(self):
         cfg = Config(dev_mode=False, image_concurrency=8)
         assert cfg.effective_image_concurrency() == 8
 
     def test_default_uses_max_concurrent_requests(self):
-        cfg = Config(dev_mode=False, max_concurrent_requests=5, image_model="image-sunburst")
+        cfg = Config(dev_mode=False, max_concurrent_requests=5, image_concurrency=None, image_model="image-sunburst")
         assert cfg.effective_image_concurrency() == 5
 
     def test_minimum_1(self):
-        cfg = Config(dev_mode=False, max_concurrent_requests=0, image_model="image-sunburst")
+        cfg = Config(dev_mode=False, max_concurrent_requests=0, image_concurrency=None, image_model="image-sunburst")
         assert cfg.effective_image_concurrency() == 1
         cfg = Config(dev_mode=False, image_concurrency=0)
         assert cfg.effective_image_concurrency() == 1

@@ -263,7 +263,7 @@ model_list:
   litellm_params:
     model: openai-stream/gpt-image-2.5-flare
     api_key: os.environ/OPENAI_API_KEY
-# Operator-funded Labs image experiments, using the existing Vertex ADC.
+# Style/Cast, Draw, and Labs image generation, using the existing Vertex ADC.
 - model_name: image-nano-banana-2.1
   litellm_params:
     model: vertex-multimodal/gemini-nano-banana-2.1

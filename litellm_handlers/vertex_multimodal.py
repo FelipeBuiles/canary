@@ -11,11 +11,15 @@ import mimetypes
 import os
 import re
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 import httpx
 import struct
+
+from litellm_handlers.image_previews import publish_partial_image, requested_partial_images
+
 try:
     from google import genai
     from google.genai import types
@@ -276,14 +280,22 @@ class VertexMultimodalLLM(CustomLLM):
             ):
                 raise ValueError("Nano Banana 2.1 requires configured modality pricing")
         client_kwargs: dict[str, Any] = {"vertexai": True, "project": project, "location": location}
+        stream_previews = vertex_model == "gemini-nano-banana-2.1" and requested_partial_images()
+        image_http_client = httpx.AsyncClient() if stream_previews else None
         if vertex_model == "gemini-nano-banana-2.1":
             # The SDK otherwise retries transient errors below the gateway's
             # num_retries=0 setting, including ambiguous image submissions.
             client_kwargs["http_options"] = types.HttpOptions(
                 retry_options=types.HttpRetryOptions(attempts=1),
+                # The SDK's default aiohttp reader caps an SSE line at 8 MiB,
+                # below a final 2K PNG's base64 size. Its connection-error path
+                # also retries independently of HttpRetryOptions. An owned
+                # HTTPX client handles large image frames in one attempt.
+                httpx_async_client=image_http_client,
             )
-        client = genai.Client(**client_kwargs)
+        image_config_kwargs: dict[str, Any] = {}
         try:
+            client = genai.Client(**client_kwargs)
             # TEXT is not optional: Gemini 3 Pro Image is a thinking model that
             # emits reasoning text alongside the image, and every documented
             # call for it requests both modalities. IMAGE-only works on the
@@ -323,12 +335,21 @@ class VertexMultimodalLLM(CustomLLM):
                     "Vertex image SDK lacks ImageConfig; using Gemini's default "
                     "square output and verifying returned dimensions"
                 )
-            response = await asyncio.to_thread(
-                client.models.generate_content,
-                model=vertex_model,
-                contents=contents,
-                config=types.GenerateContentConfig(**config_kwargs),
-            )
+            if stream_previews:
+                # Return the model's existing thought images without changing
+                # its default thinking level or making another paid request.
+                config_kwargs["thinking_config"] = types.ThinkingConfig(include_thoughts=True)
+                response = await _generate_with_previews(
+                    client, model=vertex_model, contents=contents,
+                    config=types.GenerateContentConfig(**config_kwargs),
+                )
+            else:
+                response = await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=vertex_model,
+                    contents=contents,
+                    config=types.GenerateContentConfig(**config_kwargs),
+                )
         except Exception as exc:  # noqa: BLE001 — re-raised as a typed LiteLLM error
             translated = _translate_vertex_error(
                 exc,
@@ -341,6 +362,12 @@ class VertexMultimodalLLM(CustomLLM):
             if translated is exc:
                 raise
             raise translated from exc
+        finally:
+            if image_http_client is not None:
+                # The SDK deliberately leaves injected HTTP clients open.
+                # Close ours on success, failure, and cancellation alike.
+                with suppress(Exception):
+                    await image_http_client.aclose()
         image_bytes, mime = _extract_image(response)
         actual_width, actual_height = _image_dimensions(image_bytes)
         actual_aspect = (actual_width / actual_height) if actual_width and actual_height else None
@@ -370,6 +397,63 @@ class VertexMultimodalLLM(CustomLLM):
         model_response._hidden_params["actual_height"] = actual_height
         model_response._hidden_params["requested_aspect"] = requested_aspect
         return model_response
+
+
+async def _generate_with_previews(
+    client: Any, *, model: str, contents: list[Any], config: Any,
+) -> types.GenerateContentResponse:
+    """Relay thought images and consume the final image plus terminal usage."""
+    response = types.GenerateContentResponse()
+    candidates: dict[int, Any] = {}
+    preview_index = 0
+    stream = None
+    try:
+        stream = await client.aio.models.generate_content_stream(
+            model=model, contents=contents, config=config,
+        )
+        async for chunk in stream:
+            for field in ("usage_metadata", "prompt_feedback", "model_version", "response_id"):
+                value = getattr(chunk, field, None)
+                if value is not None:
+                    # Usage is cumulative, including reasoning. Never sum
+                    # repeated counts or stop before the terminal metadata.
+                    setattr(response, field, value)
+            for position, candidate in enumerate(chunk.candidates or []):
+                index = candidate.index if candidate.index is not None else position
+                merged = candidates.setdefault(index, types.Candidate(index=index))
+                for field in ("finish_reason", "finish_message", "safety_ratings"):
+                    value = getattr(candidate, field, None)
+                    if value is not None:
+                        setattr(merged, field, value)
+                content = candidate.content
+                for part in content.parts if content and content.parts else []:
+                    if part.thought:
+                        inline = part.inline_data
+                        if (inline and inline.data and preview_index < requested_partial_images()
+                                and (inline.mime_type or "image/png").startswith("image/")):
+                            publish_partial_image({
+                                "partial_image_index": preview_index,
+                                "b64_json": base64.b64encode(inline.data).decode("ascii"),
+                            })
+                            preview_index += 1
+                        # Neither reasoning text nor draft pixels belong in
+                        # the saved result or refusal diagnostics.
+                        continue
+                    if merged.content is None:
+                        merged.content = types.Content(role=content.role or "model", parts=[])
+                    merged.content.parts.append(part)
+        response.candidates = list(candidates.values())
+        return response
+    finally:
+        # Cancellation or a lost stream must not resubmit the image request.
+        # Cleanup errors must not discard an otherwise complete paid result.
+        if stream is not None:
+            with suppress(Exception):
+                await stream.aclose()
+        with suppress(Exception):
+            await client.aio.aclose()
+        with suppress(Exception):
+            client.close()
 
 
 def _parse_complete_page_request(payload: str) -> dict[str, Any]:
@@ -890,12 +974,25 @@ def _mime_type(item: Any) -> str:
 
 
 def _extract_image(response: types.GenerateContentResponse) -> tuple[bytes, str]:
-    for candidate in response.candidates or []:
-        content = candidate.content
-        for part in content.parts if content and content.parts else []:
-            inline = getattr(part, "inline_data", None)
-            if inline and inline.data:
-                return inline.data, inline.mime_type or "image/png"
+    feedback = getattr(response, "prompt_feedback", None)
+    prompt_block_reason = getattr(feedback, "block_reason", None) or None
+    policy_reasons = {"SAFETY", "PROHIBITED_CONTENT", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT"}
+    candidate_blocked = any(
+        str(getattr(getattr(candidate, "finish_reason", None), "value",
+                    getattr(candidate, "finish_reason", ""))) in policy_reasons
+        for candidate in response.candidates or []
+    )
+    # A terminal refusal can arrive after streamed pixels; check it before
+    # accepting any image as the final artifact.
+    if prompt_block_reason is None and not candidate_blocked:
+        for candidate in response.candidates or []:
+            content = candidate.content
+            for part in content.parts if content and content.parts else []:
+                if getattr(part, "thought", False):
+                    continue
+                inline = getattr(part, "inline_data", None)
+                if inline and inline.data:
+                    return inline.data, inline.mime_type or "image/png"
 
     # Build a detailed diagnostic message
     details = []
@@ -913,7 +1010,7 @@ def _extract_image(response: types.GenerateContentResponse) -> tuple[bytes, str]
                     if candidate.content and candidate.content.parts
                     else []
                 )
-                if getattr(part, "text", None)
+                if getattr(part, "text", None) and not getattr(part, "thought", False)
             ]
             if texts:
                 cand_details.append(f"text={' '.join(texts)[:500]!r}")
@@ -938,13 +1035,10 @@ def _extract_image(response: types.GenerateContentResponse) -> tuple[bytes, str]
         details.append("no candidates returned")
 
     # Inspect prompt feedback
-    feedback = getattr(response, "prompt_feedback", None)
-    prompt_block_reason = None
     if feedback:
         feedback_details = []
         block_reason = getattr(feedback, "block_reason", None)
         if block_reason:
-            prompt_block_reason = block_reason
             feedback_details.append(f"block_reason={block_reason}")
         safety_ratings = getattr(feedback, "safety_ratings", None)
         if safety_ratings:
@@ -961,12 +1055,6 @@ def _extract_image(response: types.GenerateContentResponse) -> tuple[bytes, str]
     detail_str = " | ".join(details)
     # A terminal policy refusal has a known outcome. Reporting it as a 500
     # makes the caller retain a paid-submission hold indefinitely.
-    policy_reasons = {"SAFETY", "PROHIBITED_CONTENT", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT"}
-    candidate_blocked = any(
-        str(getattr(getattr(candidate, "finish_reason", None), "value",
-                    getattr(candidate, "finish_reason", ""))) in policy_reasons
-        for candidate in response.candidates or []
-    )
     if prompt_block_reason is not None or candidate_blocked:
         raise litellm.APIError(
             status_code=400,
@@ -974,7 +1062,7 @@ def _extract_image(response: types.GenerateContentResponse) -> tuple[bytes, str]
             llm_provider="vertex-multimodal",
             model=str(getattr(response, "model_version", None) or "vertex-image"),
         )
-    raise ValueError(f"Vertex response did not contain image bytes: {detail_str} (Full response: {response})")
+    raise ValueError(f"Vertex response did not contain image bytes: {detail_str}")
 
 
 def _detail_value(detail: Any, key: str) -> Any:

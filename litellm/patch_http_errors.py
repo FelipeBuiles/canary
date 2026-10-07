@@ -11,6 +11,7 @@ import sys
 
 MARKER = 'content=b"",  # Canary: never consume an upload while masking an error.'
 METRICS_MIDDLEWARE_MARKER = "app.add_middleware(PostHogMetricsMiddleware)"
+PREVIEW_MIDDLEWARE_MARKER = "app.add_middleware(ImagePreviewMiddleware)"
 REQUEST_READ = '''        try:
             request_content = original_error.request.content
         except httpx.RequestNotRead:
@@ -29,8 +30,14 @@ def patch_source(source: str) -> str:
 
 
 def patch_proxy_source(source: str) -> str:
-    if METRICS_MIDDLEWARE_MARKER in source:
+    if METRICS_MIDDLEWARE_MARKER in source and PREVIEW_MIDDLEWARE_MARKER in source:
         return source
+    previews = (
+        "from litellm_handlers.image_previews import ImagePreviewMiddleware\n\n"
+        f"{PREVIEW_MIDDLEWARE_MARKER}\n\n"
+    )
+    if METRICS_MIDDLEWARE_MARKER in source:
+        return source.replace(METRICS_MIDDLEWARE_MARKER, previews + METRICS_MIDDLEWARE_MARKER)
     anchor = "app.add_middleware(\n    CORSMiddleware,"
     if source.count(anchor) != 1:
         raise RuntimeError("LiteLLM middleware layout changed; review the metrics patch")
@@ -38,7 +45,7 @@ def patch_proxy_source(source: str) -> str:
         "from canary_metrics import PostHogMetricsMiddleware\n\n"
         f"{METRICS_MIDDLEWARE_MARKER}\n\n"
     )
-    return source.replace(anchor, metrics + anchor)
+    return source.replace(anchor, previews + metrics + anchor)
 
 
 def main() -> None:

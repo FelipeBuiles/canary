@@ -1,6 +1,6 @@
 # Model settings
 
-**Status: Current, October 3, 2026.** Implementation, gateway configuration,
+**Status: Current, October 6, 2026.** Implementation, gateway configuration,
 and tests are authoritative.
 
 ## Production operator defaults
@@ -15,8 +15,10 @@ Finish packages the book and has no separate model.
 Operator defaults are stored atomically in
 `<projects_dir>/.operator-model-settings.json`. New job configuration snapshots
 for every account and project read them in development and production. A change
-does not mutate a running job or rebind an existing Draw edition; a changed Draw
-model needs a new edition or project. The operator token is never embedded in
+does not mutate a running job or existing page artwork. New Draw work advances
+the edition revision to the configured profile when its saved profile is no
+longer spendable, retaining frozen request provenance and lettering mode.
+The operator token is never embedded in
 the production browser bundle. Production backoffice settings require the same
 operator connection used by its other views.
 
@@ -36,7 +38,7 @@ Text and vision choices are `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`,
 `claude-opus-5-5`, `claude-sonnet-5-5`, `mimo-v2.6-pro`,
 `deepseek-v4.1-flash`, `gemini-3.8-flash`, `bedrock-claude-opus-5-5`, and
 `bedrock-claude-sonnet-5-5`.
-Image and Draw choices are `image-sunburst` only. The gateway maps the text
+Image and Draw choices are `image-sunburst` and `image-nano-banana-2.1`. The gateway maps the text
 choices to OpenAI, Anthropic, AWS Bedrock, OpenRouter/Xiaomi, Together AI, and Google Vertex AI.
 Claude's direct Anthropic and Bedrock routes are independent selections; the
 Bedrock labels include “· Bedrock” and the provider reads “AWS Bedrock”. Both
@@ -46,8 +48,24 @@ Cloud billing. See [Vertex setup](vertex-ai.md) for project/credit configuration
 `image-sunburst` runs on OpenAI first with one FAL attempt as backup, for
 Style/Cast images and Draw pages alike; model pickers label it "OpenAI, FAL
 backup". There is no route-priority setting.
-New Draw editions render pages at medium quality; Style/Cast images use
-`image_quality` (default medium). Set an Admin-scoped `FAL_ADMIN_KEY` on the
+Nano Banana 2.1 runs directly on Google Vertex AI, without fallback, using the
+configured Vertex project and ADC at `global`. Both image settings offer
+**Nano Banana 2.1** with provider **Google Vertex AI** in Backoffice and local
+account/project model controls. Style/Cast freezes `quality=low` for native 1K;
+Draw uses the native 1K portrait profile (848×1264) with at most 14 ordered image
+inputs, including any correction parent, and preserves integrated or editable
+lettering. Its streamed drafts use the same transient preview effect as OpenAI;
+only the final image is saved. Pricing and reservations use its own configured
+Vertex tariff, with actual provider usage authoritative for settlement.
+The gateway loads its model routes at startup. Locally, run
+`./scripts/gateway.sh` after updating its routes or preview middleware; it
+decides whether to recreate or rebuild. See [gateway refresh](gateway-refresh.md).
+A running gateway that has not loaded `image-nano-banana-2.1` rejects the
+request before contacting Vertex; Canary classifies that as a configuration
+error and records a gateway reload hint.
+New Sunburst Draw editions render pages at medium quality; Sunburst Style/Cast
+images use `image_quality` (default medium). Nano Banana uses native 1K for
+new Style, Cast, and Draw requests. Set an Admin-scoped `FAL_ADMIN_KEY` on the
 gateway so Sunburst images settle at FAL's billed charge; without it they settle
 at a labelled request estimate (see [stage contracts](stage-contracts.md)).
 `novel_to_comic/src/novel_to_comic/text_models.py` lists the selectable text aliases and the
@@ -95,8 +113,8 @@ server overlays operator defaults when it creates a job snapshot. Existing
 project files may still contain former model/provider fields; `load_config`
 ignores those fields, including legacy gateway credentials and billing policy,
 so they cannot override the operator's production route. The next `save_config`
-emits the compact project-owned format. Existing editions retain their recorded
-capability profile rather than silently switching models.
+emits the compact project-owned format. Existing pages and frozen requests keep
+their recorded profile; new Draw work follows the revision rules above.
 
 ## Local development controls
 
@@ -112,8 +130,9 @@ Account preferences are stored in
 as `dev_model_selections` in the project `config.yaml`. In development, job
 configuration resolves operator defaults, then account preferences, then
 explicit project overrides. In production, only operator defaults apply.
-Project settings remove an override by choosing **Account setting**. Changing
-Draw after an edition exists is rejected. Saved choices do not start work.
+Project settings remove an override by choosing **Account setting**.
+Draw is selectable for existing projects; saving keeps the edition and artwork
+unchanged until new Draw work selects its spendable profile. Saved choices do not start work.
 
 When an older operator, account, or project setting names a retired API model,
 reads ignore that choice and use the next active setting in the operator →
@@ -122,8 +141,8 @@ projects and their assets remain accessible. The development project selector
 labels a retired choice and shows which account setting new work will use.
 Editing another stage preserves the retired value; explicitly choosing a new
 model replaces it. New selections still have to pass the current catalog.
-An existing Draw edition keeps its recorded profile and cannot silently switch
-to the fallback model for new pages.
+Existing render bytes and frozen requests keep their recorded profile. New Draw
+work follows the spendable-profile revision rules above.
 
 The optional Codex adapter uses explicit `codex-dev/text/<model>` and
 `codex-dev/image/<reasoning-model>` choices. The selector offers GPT-6 Luna and
@@ -164,8 +183,8 @@ mocked providers and do not establish account access or image quality.
 OpenAI API. New comparisons default to those two models with the production
 prompt. Both use the same `OPENAI_API_KEY` and streaming gateway handler;
 `image-flare` is a Labs route and is not added to account or operator choices.
-Style/Cast comparisons preserve the recorded size, quality and references.
-Page comparisons use medium quality at 1024×1536 and preserve the project's
+Sunburst and Flare Style/Cast comparisons preserve the recorded size, quality
+and references. Their page comparisons use medium quality at 1024×1536 and preserve the project's
 lettering mode. Each cell submits once to its selected route, without fallback
 or automatic retry, and is operator-funded. Source projects and editions are
 not modified.
@@ -186,14 +205,19 @@ Nano Banana 2.1 is also available through Vertex AI as `image-nano-banana-2.1`
 in Image comparison for recorded Style/Cast requests or planned Draw pages.
 This operator-funded Labs route uses the configured Vertex project and ADC at
 `global`; it allows at most 14 ordered reference images and makes one submission
-per cell, without fallback. Recorded assets map Low/Medium/High quality to
-1K/2K/4K; page experiments use a frozen 2K portrait profile and preserve the
+per cell, without fallback. Asset comparisons freeze `quality=low` to select
+native 1K, preserving the recorded prompt, aspect intent and reference bytes.
+Page experiments use the versioned 1K portrait profile (848×1264) and preserve the
 project's integrated or editable lettering mode. Estimates use the model's
 configured allowance, while reported output modalities and reasoning are priced
 at its own Vertex rates. The gateway must be rebuilt for its new handler and
 Google Gen AI SDK, and the backend must reload the updated Labs target list.
+Comparison fingerprints include effective quality; start a new run to compare
+at 1K rather than retrying a cell from an older 2K run. Existing art and frozen
+production requests retain their recorded inputs.
 See [Google's model specifications](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/nano-banana-2-1)
-and [Vertex pricing](https://cloud.google.com/vertex-ai/generative-ai/pricing).
+and [native resolution table](https://ai.google.dev/gemini-api/docs/image-generation),
+plus [Vertex pricing](https://cloud.google.com/vertex-ai/generative-ai/pricing).
 
 ## Labs comparison reasoning
 

@@ -84,6 +84,17 @@ def test_http_patch_is_present_idempotent_and_fails_closed():
         patch.patch_source("unreviewed upstream layout")
 
 
+def test_proxy_preview_patch_compiles_and_is_idempotent():
+    proxy = Path(import_module("litellm").__file__).parent / "proxy/proxy_server.py"
+    patch = load_patch("patch_http_errors")
+    source = patch.patch_proxy_source(proxy.read_text())
+    assert source.count(patch.PREVIEW_MIDDLEWARE_MARKER) == 1
+    assert patch.patch_proxy_source(source) == source
+    compile(source, str(proxy), "exec")
+    with pytest.raises(RuntimeError):
+        patch.patch_proxy_source("unreviewed upstream layout")
+
+
 def test_real_gateway_and_supported_custom_handlers_are_loaded():
     import yaml
     from litellm.llms.custom_llm import CustomLLM
@@ -501,11 +512,12 @@ def test_vertex_gemini_route_preserves_project_schema_vision_reasoning_and_usage
 
 
 @pytest.mark.parametrize("edit", [False, True])
+@pytest.mark.parametrize("previews", [False, True])
 @pytest.mark.parametrize("alias,model", [
     ("image-sunburst-openai", "gpt-image-2.5-sunburst"),
     ("image-flare", "gpt-image-2.5-flare"),
 ])
-def test_openai_stream_route_keeps_manifest_usage_and_reports_no_gateway_cost(monkeypatch, edit, alias, model):
+def test_openai_stream_route_keeps_manifest_usage_and_reports_no_gateway_cost(monkeypatch, edit, previews, alias, model):
     """The Draw page transport's exact fields through the Router, as the proxy runs them."""
     import asyncio
     import base64
@@ -525,8 +537,10 @@ def test_openai_stream_route_keeps_manifest_usage_and_reports_no_gateway_cost(mo
         event = {"type": "image_edit.completed" if edit else "image_generation.completed", "b64_json": png,
                  "usage": {"input_tokens": 3200, "output_tokens": 343, "total_tokens": 3543,
                            "input_tokens_details": {"image_tokens": 3000, "text_tokens": 200}}}
+        partial = {"type": "image_edit.partial_image" if edit else "image_generation.partial_image",
+                   "partial_image_index": 0, "b64_json": png}
         return httpx.Response(200, headers={"content-type": "text/event-stream", "x-request-id": "req_9"},
-                              content=f"data: {json.dumps(event)}\n\n".encode())
+                              content=f"data: {json.dumps(partial)}\n\ndata: {json.dumps(event)}\n\n".encode())
 
     real = httpx.AsyncClient
     monkeypatch.setattr(openai_image_stream.httpx, "AsyncClient",
@@ -546,9 +560,33 @@ def test_openai_stream_route_keeps_manifest_usage_and_reports_no_gateway_cost(mo
     }
     call = (router.aimage_edit(model=alias, image=[io.BytesIO(b"\x89PNGref")], **fields)
             if edit else router.aimage_generation(model=alias, **fields))
-    response = asyncio.run(call)
+    if previews:
+        from litellm_handlers.image_previews import ImagePreviewMiddleware
+        messages = []
+        result = []
+
+        async def route(scope, receive, send):
+            result.append(await call)
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": result[0].model_dump_json().encode()})
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message):
+            messages.append(message)
+
+        asyncio.run(ImagePreviewMiddleware(route)({"type": "http", "method": "POST",
+            "path": "/v1/images/edits" if edit else "/v1/images/generations",
+            "headers": [(b"x-canary-image-previews", b"3")]}, receive, send))
+        assert any(b'"image_preview"' in message.get("body", b"") for message in messages)
+        response = result[0]
+    else:
+        response = asyncio.run(call)
 
     sent = seen[-1].content
+    count = 3 if previews else 0
+    assert (f'name="partial_images"\r\n\r\n{count}'.encode() in sent) if edit else (json.loads(sent)["partial_images"] == count)
     assert (b'name="size"\r\n\r\n1024x1536' in sent) if edit else (json.loads(sent)["size"] == "1024x1536")
     assert (f'name="model"\r\n\r\n{model}'.encode() in sent) if edit else (json.loads(sent)["model"] == model)
     body = json.loads(response.model_dump_json())

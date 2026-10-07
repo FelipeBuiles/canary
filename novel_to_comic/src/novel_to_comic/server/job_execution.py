@@ -52,11 +52,14 @@ async def execute_command(app, job):
                                             spec.reservation_credits, job_id=spec.ledger_job_id)
     try:
         assert_reservation_active(db, reservation)
+        from .image_previews import preview_events
+
         with ai_request_context(user_id=spec.user_id, project_id=spec.project_id,
                                 project_name=directory.name, workspace_id=str(directory.parent),
                                 stage=spec.stage, job_id=ledger_id,
                                 page_number=job.payload.get("page_number"),
-                                is_correction=bool(job.payload.get("issue_ids") or job.payload.get("issue_id"))):
+                                is_correction=bool(job.payload.get("issue_ids") or job.payload.get("issue_id"))), \
+                preview_events(app, job.project_name, directory, spec.stage):
             result, settled = await _operate(app, job, directory, config)
         if result is not None:
             for usage in (result.usage, *result.additional_usage):

@@ -46,7 +46,7 @@ STAGE_MODEL_FIELDS = {
 }
 DEFAULT_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5")
 # Arms run concurrently per funding source; each arm's stages run in order.
-_CONCURRENCY = {"api": 4, "codex_subscription": 1, "claude_subscription": 2}
+_CONCURRENCY = {"api": 16, "codex_subscription": 1, "claude_subscription": 2}
 # Run-local or regenerated state never copied into an arm's workspace.
 _NEVER_COPY = {"requests", "draw", "finish", "exports", "cover", ".jobs", ".locks", ".canary", ".checkpoints"}
 _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}

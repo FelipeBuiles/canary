@@ -18,7 +18,7 @@ const settings = {
   },
   text_reasoning_effort: "medium",
   text_reasoning_effort_options: ["low", "medium", "high"],
-  selections: { adapt: "gpt-6-sol" },
+  selections: { adapt: "gpt-6-sol", image: "image-sunburst", draw: "image-sunburst" },
   models: [
     { id: "gpt-6-sol", label: "GPT-6 Sol", provider: "OpenAI", kind: "text" as const },
     { id: "mimo-v2.6-pro", label: "MiMo", provider: "OpenRouter", kind: "text" as const },
@@ -26,11 +26,19 @@ const settings = {
     { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", provider: "Anthropic", kind: "text" as const },
     { id: "bedrock-claude-opus-5-5", label: "Claude Opus 5.5 · Bedrock", provider: "AWS Bedrock", kind: "text" as const },
     { id: "bedrock-claude-sonnet-5-5", label: "Claude Sonnet 5.5 · Bedrock", provider: "AWS Bedrock", kind: "text" as const },
+    { id: "image-sunburst", label: "GPT Image 2.5 Sunburst", provider: "OpenAI, FAL backup", kind: "image" as const },
+    { id: "image-nano-banana-2.1", label: "Nano Banana 2.1", provider: "Google Vertex AI", kind: "image" as const },
   ],
   stages: [{
     id: "adapt", label: "5. Adapt — script & dialogue", description: "Writes dialogue.",
     model_ids: ["gpt-6-sol", "claude-opus-5-5", "claude-sonnet-5-5", "mimo-v2.6-pro",
                 "bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5"],
+  }, {
+    id: "image", label: "3–4. Style & Cast — images", description: "Generates style samples and cast references.",
+    model_ids: ["image-sunburst", "image-nano-banana-2.1"],
+  }, {
+    id: "draw", label: "7. Draw — page artwork", description: "Generates complete comic pages.",
+    model_ids: ["image-sunburst", "image-nano-banana-2.1"],
   }],
   note: "Applies to new jobs in every project.",
 };
@@ -63,6 +71,21 @@ it("saves text effort without changing stage models", async () => {
   await user.selectOptions(selector, "high");
   await user.click(screen.getByRole("button", { name: "Save stage models" }));
   expect(updateOperatorModels).toHaveBeenCalledWith({}, connection, { adapt: "high" });
+});
+
+it("saves Nano Banana 2.1 for Style/Cast images and Draw through the operator API", async () => {
+  const user = userEvent.setup();
+  render(<OperatorModelPanel connection={connection} />);
+  const image = await screen.findByRole("combobox", { name: "3–4. Style & Cast — images" });
+  const draw = screen.getByRole("combobox", { name: "7. Draw — page artwork" });
+  await user.selectOptions(image, "image-nano-banana-2.1");
+  await user.selectOptions(draw, "image-nano-banana-2.1");
+  expect(screen.getAllByText("Google Vertex AI")).toHaveLength(2);
+  await user.click(screen.getByRole("button", { name: "Save stage models" }));
+  expect(updateOperatorModels).toHaveBeenCalledWith({ image: "image-nano-banana-2.1", draw: "image-nano-banana-2.1" }, connection, {});
+  expect(await screen.findByText("Stage models saved for new jobs across all projects.")).toBeTruthy();
+  expect((image as HTMLSelectElement).value).toBe("image-nano-banana-2.1");
+  expect((draw as HTMLSelectElement).value).toBe("image-nano-banana-2.1");
 });
 
 it.each(["claude-opus-5-5", "claude-sonnet-5-5"])("selects %s through either Anthropic or Bedrock", async (model) => {

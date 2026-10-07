@@ -25,14 +25,22 @@ their page checks (read-back and visual review). Stage implementations continue 
 Synchronous analysis/review APIs keep their existing request lifecycle.
 
 One account executes ordinary queued operations exclusively. Complete-page Draw
-jobs whose frozen provider is FAL or OpenAI (`PARALLEL_PAGE_PROVIDERS`) use three
-durable dispatch lanes and an account gate that admits up to three together;
+jobs whose frozen provider is FAL, OpenAI or Vertex (`PARALLEL_PAGE_PROVIDERS`) use twelve
+durable dispatch lanes and an account gate that admits up to twelve together;
 ordinary operations wait for those pages to finish, and vice versa. Other
-accounts can proceed concurrently. Provider rate limits answer with 429s, which
-are retried before anything is generated. The old process-local per-user
+accounts can proceed concurrently. Shared AI transport admission bounds images
+to twelve and Vertex text to sixteen across accounts, stages, Labs and worker
+event loops. `ai_request_limits.yaml` owns operator pacing budgets: OpenAI image
+routes share 18 starts/minute and 225,000 estimated tokens/minute, with a burst
+of six; Vertex text uses 1.8m weighted tokens/minute and smooths larger batches.
+Reported usage reconciles pacing estimates without changing credit billing.
+429s share a cooldown and remain subject to the existing safe retry rules;
+ambiguous paid image submissions are never automatically repeated by admission.
+These limits share the single-owner API process and do not coordinate independent
+deployments sharing provider credentials. The old process-local per-user
 concurrency override does not raise this durable limit.
-`CANARY_GENERATION_WORKERS` controls total concurrent operations (default 5),
-so its value must remain at least 3 for full parallel Draw throughput. A style batch owns its bounded
+`CANARY_GENERATION_WORKERS` controls total concurrent operations (default 16),
+so its value must remain at least 12 for full parallel Draw throughput. A style batch owns its bounded
 parallel proof calls until every sibling has finished or acknowledged cancellation.
 Each proof has its own persisted status. Draw batch preflight runs in a worker
 thread so preparing many pages cannot starve the queue heartbeat. Page publication
