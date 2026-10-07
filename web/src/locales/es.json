@@ -3435,5 +3435,8 @@
   "Check your details and try again.": "Comprueba tus datos e inténtalo de nuevo.",
   "The connection was interrupted": "Se ha interrumpido la conexión",
   "Check your connection and try again.": "Comprueba tu conexión e inténtalo de nuevo.",
-  "This reference could not be completed.": "No se ha podido completar esta referencia."
+  "This reference could not be completed.": "No se ha podido completar esta referencia.",
+  "A close-up check did not return a result. Saved evidence is kept. You can retry the text check at no extra credit cost.": "Una comprobación del texto ampliado no devolvió ningún resultado. Se conservan los resultados guardados. Puedes volver a comprobar el texto sin gastar créditos adicionales.",
+  "Some close-up checks are unfinished. You can retry the text check at no extra credit cost.": "Algunas comprobaciones del texto ampliado están pendientes. Puedes volver a comprobar el texto sin gastar créditos adicionales.",
+  "Close-up result unavailable": "Resultado del texto ampliado no disponible"
 }

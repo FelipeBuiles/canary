@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from novel_to_comic.localization import Language, LANGUAGE_NAMES as LANGUAGE_NAMES
+
 from novel_to_comic.workspace import series_root
 
 from novel_to_comic.image_models import (
@@ -20,6 +21,11 @@ from novel_to_comic.image_models import (
     describe_image_model,
 )
 
+
+# Optional hosted close-up reader. Operator opt-in is separate from project settings.
+TEXTRACT_MODEL = "ocr-textract"
+TEXTRACT_REGION = "us-east-1"
+TEXTRACT_MINIMUM_CONFIDENCE = 0.98  # Conservative experimental gate, not calibrated accuracy.
 
 FailedRequestBillingPolicy = Literal["provider_usage_only", "never", "estimate_all"]
 

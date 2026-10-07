@@ -3435,5 +3435,8 @@
   "Check your details and try again.": "Check your details and try again.",
   "The connection was interrupted": "The connection was interrupted",
   "Check your connection and try again.": "Check your connection and try again.",
-  "This reference could not be completed.": "This reference could not be completed."
+  "This reference could not be completed.": "This reference could not be completed.",
+  "A close-up check did not return a result. Saved evidence is kept. You can retry the text check at no extra credit cost.": "A close-up check did not return a result. Saved evidence is kept. You can retry the text check at no extra credit cost.",
+  "Some close-up checks are unfinished. You can retry the text check at no extra credit cost.": "Some close-up checks are unfinished. You can retry the text check at no extra credit cost.",
+  "Close-up result unavailable": "Close-up result unavailable"
 }

@@ -72,7 +72,7 @@ class CropOCRRead(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     observation_id: str
-    status: Literal["read", "no_region", "over_budget", "unavailable"]
+    status: Literal["read", "no_region", "over_budget", "unavailable", "pending", "outcome_unknown"]
     crop_sha256: str | None = None
     bounds: tuple[int, int, int, int] | None = None
     lines: tuple[CropOCRLine, ...] = ()

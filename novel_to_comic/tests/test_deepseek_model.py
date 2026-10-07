@@ -18,7 +18,8 @@ def _routes():
 
 
 def test_every_selectable_text_model_has_a_gateway_route():
-    text_routes = {alias for alias in _routes() if not alias.startswith("image-")}
+    # The internal pixels-only OCR route is not an author-selectable text model.
+    text_routes = {alias for alias in _routes() if not alias.startswith(("image-", "ocr-"))}
     assert text_routes == {model.id for model in TEXT_MODELS}
 
 

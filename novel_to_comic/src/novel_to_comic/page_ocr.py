@@ -368,6 +368,10 @@ class GatewayPageOCRAdapter:
         self._render = None
         self._last_response: ApiResult[str] | None = None
 
+    @property
+    def config(self) -> Config:
+        return self._config
+
     @functools.cached_property
     def _portraits(self) -> tuple[CastPortrait, ...]:
         source = self._portrait_source

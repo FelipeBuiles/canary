@@ -37,6 +37,7 @@ class UsageRecord(BaseModel, frozen=True):
     input_tokens: int = 0
     output_tokens: int = 0
     image_count: int = 0
+    document_pages: int = Field(default=0, ge=0)
     input_text_tokens: int | None = Field(default=None, ge=0)
     input_image_tokens: int | None = Field(default=None, ge=0)
     cached_text_tokens: int | None = Field(default=None, ge=0)
@@ -69,6 +70,9 @@ def calculate_cost_breakdown(record: UsageRecord) -> CostBreakdown:
     """Return detailed USD cost metadata for one API call."""
     resolver = get_pricing_resolver()
     resolved = resolver.resolve_model(record.model, record.provider_model)
+    if record.operation == "ocr" and record.cost_usd is None:
+        return CostBreakdown(cost_usd=None, source="unknown_provider_usage",
+            model_alias=record.model, provider_model=resolved, pricing_snapshot=resolver.pricing_snapshot)
     if (
         record.funding == "api"
         and record.cost_usd is None
@@ -117,7 +121,7 @@ def calculate_cost(record: UsageRecord) -> float:
 
 def usage_has_billable_activity(record: UsageRecord) -> bool:
     return record.funding == "api" and (
-        record.input_tokens > 0 or record.output_tokens > 0 or record.image_count > 0
+        record.input_tokens > 0 or record.output_tokens > 0 or record.image_count > 0 or record.document_pages > 0
     )
 
 

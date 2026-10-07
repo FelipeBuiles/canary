@@ -2,5 +2,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
+# Git exports repository-local variables to hooks. Clear them before tests
+# create disposable repositories, so their Git commands cannot mutate this one.
+while IFS= read -r name; do unset "$name"; done < <(git rev-parse --local-env-vars)
+
 echo "[pre-push] Running the complete local checks; a failure blocks this push."
 exec "$REPO_ROOT/scripts/check_all.sh" </dev/null

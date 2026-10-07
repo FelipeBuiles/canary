@@ -374,13 +374,18 @@ def _crop_reader():
 
 def _analysis_validator_version(reader=None):
     from novel_to_comic.crop_ocr import validator_version
+    from novel_to_comic import textract_ocr
+
+    if textract_ocr.enabled():
+        return f"{DRAW_VALIDATOR_VERSION}:hosted-crop:{textract_ocr.fingerprint()}"
 
     return validator_version(DRAW_VALIDATOR_VERSION, reader)
 
 
 def current_draw_validator_version() -> str:
     """The base validator plus the explicitly enabled local verification policy."""
-    return _analysis_validator_version(_crop_reader())
+    from novel_to_comic import textract_ocr
+    return _analysis_validator_version(None if textract_ocr.enabled() else _crop_reader())
 
 
 # Marks an analysis whose optional close-up pass was cut short (busy worker,
@@ -401,6 +406,8 @@ async def analyze_page_render(
     image: bytes,
     ocr: OCRAdapter,
     artifacts: TargetArtifacts,
+    config=None,
+    retry_crop_ocr: bool = False,
 ) -> PageAnalysisResult:
     """Extract and persist immutable derived evidence for one page render."""
 
@@ -411,6 +418,8 @@ async def analyze_page_render(
         raise ValueError("page render bytes do not match render lineage")
     try:
         analysis = await asyncio.to_thread(revalidate_cached_page_render, page=page, render=render, artifacts=artifacts)
+        analysis = await _hosted_crop_check(page=page, render=render, analysis=analysis,
+            artifacts=artifacts, config=config, retry=retry_crop_ocr)
         return PageAnalysisResult(analysis=analysis, usage=None)
     except ArtifactMissing as exc:
         if exc.name != "raw_ocr":
@@ -428,8 +437,31 @@ async def analyze_page_render(
     )
     artifacts.write_raw_ocr(raw)
     analysis = await asyncio.to_thread(_validate_observations, page=page, render=render, raw=raw, artifacts=artifacts)
+    analysis = await _hosted_crop_check(page=page, render=render, analysis=analysis,
+        artifacts=artifacts, config=config, retry=retry_crop_ocr)
     await asyncio.to_thread(_reseed_lettering, artifacts, page.page_number)
     return PageAnalysisResult(analysis=analysis, usage=read.usage)
+
+
+async def _hosted_crop_check(*, page, render, analysis, artifacts, config, retry):
+    """Only the admitted analysis path can add hosted evidence; recovery stays local."""
+    from novel_to_comic import textract_ocr
+    from novel_to_comic.lettering.service import is_hybrid
+    if config is None or not textract_ocr.enabled() or is_hybrid(artifacts):
+        return analysis
+    if analysis.crop_verification is None or analysis.crop_verification.complete:
+        return analysis
+    raw = artifacts.read_raw_ocr(page.page_number, render.revision)
+    disputed = _unmatched_observations(page, raw.extraction) if analysis.invariant_failures else ()
+    if not disputed:
+        return analysis
+    try:
+        await textract_ocr.run_checks(config=config, page=page, render=render,
+            extraction=raw.extraction, disputed=disputed, artifacts=artifacts, retry=retry)
+    except Exception:
+        # Keep the paid first read and every persisted crop even if this optional pass fails.
+        logger.warning("Page %s close-up text check incomplete", page.page_number, exc_info=True)
+    return await asyncio.to_thread(_validate_observations, page=page, render=render, raw=raw, artifacts=artifacts)
 
 
 def _reseed_lettering(artifacts: TargetArtifacts, page_number: int) -> None:
@@ -513,7 +545,8 @@ def _validate_observations(
             or raw.render_image_sha256 != render.image_sha256):
         raise ValueError("saved OCR observations belong to different render bytes")
     extraction = raw.extraction
-    crop_reader = _crop_reader()
+    from novel_to_comic import textract_ocr
+    crop_reader = None if textract_ocr.enabled() else _crop_reader()
     crop_verification = None
     from novel_to_comic.lettering.service import is_hybrid
     if is_hybrid(artifacts):
@@ -531,20 +564,26 @@ def _validate_observations(
     else:
         matches, failures, issues = _compare_lettering(page, render, extraction)
         disputed = _unmatched_observations(page, extraction) if failures else ()
-        if crop_reader is not None and disputed and any(failure.code in {
+        if (crop_reader is not None or textract_ocr.enabled()) and disputed and any(failure.code in {
             "misspelled_lettering", "missing_lettering", "duplicated_lettering", "invented_lettering",
         } for failure in failures):
             from novel_to_comic.crop_ocr import verify_mismatches
 
-            crop_verification = verify_mismatches(
-                page=page, render=render, extraction=extraction,
-                artifacts=artifacts, reader=crop_reader, disputed=disputed,
-            )
+            if textract_ocr.enabled():
+                crop_verification = textract_ocr.cached_report(page=page, render=render,
+                    extraction=extraction, artifacts=artifacts, disputed=disputed)
+            else:
+                crop_verification = verify_mismatches(
+                    page=page, render=render, extraction=extraction,
+                    artifacts=artifacts, reader=crop_reader, disputed=disputed,
+                )
             # Both reads remain evidence. A close-up read never rewrites the
             # primary transcription or certifies the rendered copy as correct.
             # Each line keeps its own verdict; the page status only summarizes.
             extra_evidence = (
                 f"crop_check_status={crop_verification.status}",
+                f"crop_check_complete={str(crop_verification.complete).lower()}",
+                f"crop_outcome_unknown={str(any(read.status == 'outcome_unknown' for read in crop_verification.readings)).lower()}",
                 f"crop_recognized_text={json.dumps([read.text for read in crop_verification.readings if read.lines], ensure_ascii=False)}",
                 "crop_readings=" + json.dumps([
                     {"first": read.primary_text, "close_up": read.text, "verdict": read.verdict}

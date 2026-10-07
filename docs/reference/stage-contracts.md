@@ -1136,6 +1136,13 @@ record `unexpected_generated_lettering`, including its detected region, for
 comic text that should not have been drawn; incidental signs/documents remain
 distinct. It never checks a software-composited image and does not establish
 visual identity, object fidelity, or scene correctness.
+The opt-in [Textract close-up reader](textract-ocr.md) submits bounded disputed
+integrated/baked crops during admitted checks. It retains raw provider evidence
+and attempts, never submits during cached revalidation, and requires explicit
+retry after unknown outcomes. Canary absorbs its fee; primary OCR funding is
+unchanged. Hosted-only recovery uses the existing `requires_ocr` status with
+`requires_primary_ocr: false` and a zero author-credit estimate.
+
 The disabled-by-default [crop OCR experiment](crop-ocr-experiment.md) can add
 a local, blind PaddleOCR read of mismatching integrated/baked lettering regions.
 It preserves primary observations and author decisions. Conflicting or weak
