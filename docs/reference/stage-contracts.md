@@ -1136,6 +1136,12 @@ record `unexpected_generated_lettering`, including its detected region, for
 comic text that should not have been drawn; incidental signs/documents remain
 distinct. It never checks a software-composited image and does not establish
 visual identity, object fidelity, or scene correctness.
+The disabled-by-default [crop OCR experiment](crop-ocr-experiment.md) can add
+a local, blind PaddleOCR read of mismatching integrated/baked lettering regions.
+It preserves primary observations and author decisions. Conflicting or weak
+reads remain uncertain advisory evidence; the second pass never certifies copy
+or a visual concern. Saved crop reports are keyed by exact render/canonical
+lineage, observations, worker/runtime/model fingerprint and policy.
 Page-render and preview HTTP responses use `private, no-cache`: an Adapt/Plan
 restart can reuse page and render revision numbers in a new edition. The client
 uses `delivery=2` URLs to bypass responses previously cached as immutable for a

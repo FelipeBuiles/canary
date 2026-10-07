@@ -3377,5 +3377,10 @@
   "↺ RETRY PANEL PREPARATION": "↺ RETRY PANEL PREPARATION",
   "▶ DRAW ALL PANELS": "▶ DRAW ALL PANELS",
   "Published part": "Published part",
-  "Replace the series public book with this part": "Replace the series public book with this part"
+  "Replace the series public book with this part": "Replace the series public book with this part",
+  "CLOSE-UP READ": "CLOSE-UP READ",
+  "First read:": "First read:",
+  "Text check is uncertain": "Text check is uncertain",
+  "The close-up text check was inconclusive. Compare the saved artwork with the script before making changes.": "The close-up text check was inconclusive. Compare the saved artwork with the script before making changes.",
+  "The text checks disagree. Compare the saved artwork with the script before making changes.": "The text checks disagree. Compare the saved artwork with the script before making changes."
 }

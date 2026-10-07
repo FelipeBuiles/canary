@@ -11,6 +11,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from novel_to_comic.artifact_lock import locked_mutation
 from novel_to_comic.models.draw import (
     AdaptCopyCorrectionRequest,
     CorrectionChange,
@@ -341,6 +342,27 @@ def saved_ocr_draft(response):
         return None
 
 
+def _crop_reader():
+    from novel_to_comic.crop_ocr import reader_from_environment
+
+    try:
+        return reader_from_environment()
+    except (ValueError, OSError):
+        logger.warning("Optional crop OCR is not configured; preserving the original text check", exc_info=True)
+        return None
+
+
+def _analysis_validator_version(reader=None):
+    from novel_to_comic.crop_ocr import validator_version
+
+    return validator_version(DRAW_VALIDATOR_VERSION, reader)
+
+
+def current_draw_validator_version() -> str:
+    """The base validator plus the explicitly enabled local verification policy."""
+    return _analysis_validator_version(_crop_reader())
+
+
 async def analyze_page_render(
     *,
     page: ComicPage,
@@ -400,7 +422,7 @@ def revalidate_cached_page_render(
         saved = artifacts.read_analysis(page.page_number, render.revision)
         if saved.render_image_sha256 != render.image_sha256:
             raise ValueError("saved OCR analysis belongs to different render bytes")
-        if (saved.validator_version == DRAW_VALIDATOR_VERSION
+        if (saved.validator_version == current_draw_validator_version()
                 and saved.comic_page_sha256 == render.comic_page_sha256):
             record_analysis_issues(artifacts, saved)
             return saved
@@ -460,6 +482,8 @@ def _validate_observations(
             or raw.render_image_sha256 != render.image_sha256):
         raise ValueError("saved OCR observations belong to different render bytes")
     extraction = raw.extraction
+    crop_reader = _crop_reader()
+    crop_verification = None
     from novel_to_comic.lettering.service import is_hybrid
     if is_hybrid(artifacts):
         matches, failures = (), ()
@@ -475,11 +499,29 @@ def _validate_observations(
         )
     else:
         matches, failures, issues = _compare_lettering(page, render, extraction)
+        if crop_reader is not None and any(failure.code in {
+            "misspelled_lettering", "missing_lettering", "duplicated_lettering", "invented_lettering",
+        } for failure in failures):
+            from novel_to_comic.crop_ocr import verify_mismatches
+
+            crop_verification = verify_mismatches(
+                page=page, render=render, extraction=extraction,
+                artifacts=artifacts, reader=crop_reader,
+            )
+            # Both reads remain evidence. A close-up read never rewrites the
+            # primary transcription or certifies the rendered copy as correct.
+            extra_evidence = (
+                f"crop_check_status={crop_verification.status}",
+                f"crop_recognized_text={json.dumps([read.text for read in crop_verification.readings if read.lines], ensure_ascii=False)}",
+            )
+            failures = tuple(failure.model_copy(update={
+                "evidence": (*failure.evidence, *extra_evidence),
+            }) for failure in failures)
     analysis = RenderAnalysis(
         page_number=page.page_number,
         render_revision=render.revision,
         render_image_sha256=render.image_sha256,
-        validator_version=DRAW_VALIDATOR_VERSION,
+        validator_version=_analysis_validator_version(crop_reader),
         comic_page_sha256=render.comic_page_sha256,
         reading_order_proven=extraction.reading_order_proven,
         punctuation_policy=PUNCTUATION_POLICY,
@@ -499,11 +541,13 @@ def _validate_observations(
             for evidence in result.evidence
         ),
         analysis_usage=raw.usage,
+        crop_verification=crop_verification,
     )
     artifacts.write_analysis(analysis)
     return analysis
 
 
+@locked_mutation
 def record_analysis_issues(
     artifacts: TargetArtifacts,
     analysis: RenderAnalysis,
@@ -531,6 +575,7 @@ def record_analysis_issues(
     )
     if retained != prior:
         artifacts.write_issues(analysis.page_number, retained)
+    prior = retained
     for result in results:
         issue = PageIssue(
             id=f"page-issue-{result.id}",
@@ -552,8 +597,18 @@ def record_analysis_issues(
             detected_region_ids=result.artifact_ids if result.code == "unexpected_generated_lettering" else (),
             status="open",
         )
+        existing = next((item for item in prior if item.id == issue.id), None)
+        if existing is not None:
+            if existing.evidence != issue.evidence:
+                # Refresh machine evidence after an opt-in local check without
+                # resetting the author's dismissal or resolution decision.
+                prior = tuple(item.model_copy(update={"evidence": issue.evidence})
+                              if item.id == issue.id else item for item in prior)
+                artifacts.write_issues(analysis.page_number, prior)
+            continue
         try:
             recorded.append(record_page_issue(artifacts, issue))
+            prior = (*prior, issue)
         except ValueError:
             # Re-analysing the same immutable render is idempotent by design.
             continue

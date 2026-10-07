@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from novel_to_comic.models.adaptation import LetteringItem, RevisionedArtifact
+from novel_to_comic.models.crop_ocr import CropOCRReport
 from novel_to_comic.models.page import ApprovedVisualReference, ComicPage
 from novel_to_comic.models.validation import EditorialIssue, InvariantFailure
 from novel_to_comic.usage import UsageRecord
@@ -445,6 +446,7 @@ class RenderAnalysis(BaseModel):
     invariant_failures: tuple[InvariantFailure, ...] = ()
     editorial_issues: tuple[EditorialIssue, ...] = ()
     evidence: tuple[str, ...] = ()
+    crop_verification: CropOCRReport | None = None
     # Reading a page back is a second billable provider call. Its usage lives
     # here, on the artifact written only once that call succeeded, rather than
     # on generation provenance, which is recorded before the read happens.
