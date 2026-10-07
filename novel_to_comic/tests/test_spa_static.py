@@ -3,16 +3,17 @@ from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
+from starlette.applications import Starlette
+from starlette.routing import Mount
+
+from novel_to_comic.server.app import SPAStaticFiles
 
 from tests.queue_fixtures import create_app
 
 # web/dist is a built artifact (not always present in CI / fresh checkout),
-# so skip these tests entirely when it isn't there.
+# so skip the app integration checks when it isn't there. The isolated static
+# response checks below remain runnable without a frontend build.
 DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
-pytestmark = pytest.mark.skipif(
-    not DIST.is_dir(),
-    reason="web/dist build not present — run `npm run build` in web/ to exercise this",
-)
 
 
 @pytest.fixture(autouse=True)
@@ -23,6 +24,8 @@ def isolated_credit_lease_service(monkeypatch):
 
 
 def _client():
+    if not DIST.is_dir():
+        pytest.skip("web/dist build not present — run `npm run build` in web/")
     # dev=False mounts the SPAStaticFiles frontend at "/".
     return TestClient(create_app(projects_dir=Path("/tmp/nonexistent-projects"), dev=False))
 
@@ -59,3 +62,51 @@ def test_api_404_is_not_intercepted_by_spa_fallback():
     # mount — so FastAPI's default 404 JSON is correct here.
     assert r.status_code == 404
     assert r.json() == {"detail": "Not Found"}
+
+
+@pytest.fixture
+def static_client(tmp_path):
+    (tmp_path / "index.html").write_text('<html><div id="root"></div></html>')
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "app-AbCd12_3.js").write_text("console.log('app')")
+    (tmp_path / "marketing").mkdir()
+    (tmp_path / "marketing" / "poster.svg").write_text("<svg></svg>")
+    (tmp_path / "marketing" / "hero.mp4").write_bytes(b"0123456789")
+    return TestClient(Starlette(routes=[Mount("/", SPAStaticFiles(directory=tmp_path, html=True))]))
+
+
+def test_fingerprinted_assets_are_immutable_even_on_revalidation(static_client):
+    response = static_client.get("/assets/app-AbCd12_3.js")
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+    unchanged = static_client.get("/assets/app-AbCd12_3.js", headers={"If-None-Match": response.headers["etag"]})
+    assert unchanged.status_code == 304
+    assert unchanged.headers["cache-control"] == response.headers["cache-control"]
+
+
+@pytest.mark.parametrize("path", ["/", "/index.html", "/login", "/project/example/pages"])
+def test_shell_is_revalidated_across_routes(static_client, path):
+    response = static_client.get(path)
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache"
+    unchanged = static_client.get(path, headers={"If-None-Match": response.headers["etag"]})
+    assert unchanged.status_code == 304
+    assert unchanged.headers["cache-control"] == "no-cache"
+
+
+def test_unfingerprinted_marketing_assets_have_a_short_cache(static_client):
+    response = static_client.get("/marketing/poster.svg")
+    assert response.headers["cache-control"] == "public, max-age=3600"
+
+
+def test_video_range_responses_keep_the_public_cache_policy(static_client):
+    response = static_client.get("/marketing/hero.mp4", headers={"Range": "bytes=0-3"})
+    assert response.status_code == 206
+    assert response.content == b"0123"
+    assert response.headers["cache-control"] == "public, max-age=3600"
+
+
+@pytest.mark.parametrize("path", ["/assets/missing.js", "/marketing/missing.mp4", "/assets/missing.woff2"])
+def test_missing_media_and_assets_never_return_the_html_shell(static_client, path):
+    response = static_client.get(path)
+    assert response.status_code == 404
+    assert "cache-control" not in response.headers

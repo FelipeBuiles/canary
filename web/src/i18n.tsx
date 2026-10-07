@@ -1,9 +1,10 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, startTransition, Suspense, use, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { StageName, StageStatus } from "./types/api";
-import { createTranslator, type Translator } from "./locales/messages";
+import { createTranslator, loadCatalog, loadedCatalog, type Translator } from "./locales/messages";
 import { languageCode, type LanguageCode } from "./locales/languages";
+import { LoadingBlock } from "./components/ui/StateBlock";
 export { LANGUAGES, type LanguageCode } from "./locales/languages";
 
 const STORAGE_KEY = "canary.uiLanguage";
@@ -25,25 +26,32 @@ function readStoredLanguage(): LanguageCode {
 }
 
 export function I18nProvider({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<LoadingBlock label="LOADING…" />}><LocalizedProvider>{children}</LocalizedProvider></Suspense>;
+}
+
+function LocalizedProvider({ children }: { children: ReactNode }) {
   const [language, setLanguage] = useState<LanguageCode>(readStoredLanguage);
+  // Keep reading the same promise on a suspended render's retry. Bypassing
+  // use() once its catalog is cached can disrupt React's hook replay.
+  const catalog = language === "en" ? loadedCatalog("en")! : use(loadCatalog(language));
   useEffect(() => {
     try { globalThis.localStorage?.setItem(STORAGE_KEY, language); } catch { /* optional persistence */ }
     document.documentElement.lang = language;
   }, [language]);
   useEffect(() => {
     const sync = (event: StorageEvent) => {
-      if (event.key === STORAGE_KEY) setLanguage(languageCode(event.newValue) ?? "en");
+      if (event.key === STORAGE_KEY) startTransition(() => setLanguage(languageCode(event.newValue) ?? "en"));
     };
     window.addEventListener("storage", sync);
     return () => window.removeEventListener("storage", sync);
   }, []);
   const value = useMemo<I18nValue>(() => {
-    const t = createTranslator(language);
-    return { language, setLanguage, t,
+    const t = createTranslator(language, catalog);
+    return { language, setLanguage: (next: LanguageCode) => startTransition(() => setLanguage(next)), t,
       stageName: (stage) => t(`stage.${stage}`),
       statusName: (status) => t(`status.${status}`),
     };
-  }, [language]);
+  }, [language, catalog]);
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
 

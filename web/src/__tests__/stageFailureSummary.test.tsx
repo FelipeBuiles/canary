@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { StageFailureSummary } from "../components/pages/StageFailureSummary";
 import { I18nProvider } from "../i18n";
@@ -72,10 +72,10 @@ describe("Author-facing stage checks", () => {
   it.each([
     ["es", "Diálogos y textos narrativos", "1 revisión", "Página: 4"],
     ["fr", "Dialogues et récitatifs", "1 vérification", "Page : 4"],
-  ])("localizes grouped checks and locations in %s", (locale, title, count, location) => {
+  ])("localizes grouped checks and locations in %s", async (locale, title, count, location) => {
     localStorage.setItem("canary.uiLanguage", locale);
-    renderSummary([failure("protected_language_missing", { artifact_ids: ["page_004"] })]);
-    const group = screen.getByRole("region", { name: title });
+    await act(async () => { renderSummary([failure("protected_language_missing", { artifact_ids: ["page_004"] })]); });
+    const group = await screen.findByRole("region", { name: title });
     expect(within(group).getByText(count)).toBeTruthy();
     expect(within(group).getByText(location)).toBeTruthy();
     expect(within(group).queryByText("Wording you asked to keep exactly is missing from the comic script.")).toBeNull();

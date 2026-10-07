@@ -1,17 +1,23 @@
-import en from "../locales/en.json";
-import es from "../locales/es.json";
-import fr from "../locales/fr.json";
+import { loadedCatalog } from "../locales/messages";
+import { LANGUAGES } from "../locales/languages";
 
 // Only literal catalog labels can opt in. Interpolated labels may contain author content.
 const labels = new Set<string>();
-for (const catalog of [en, es, fr]) {
-  for (const [key, value] of Object.entries(catalog)) {
-    if (!key.includes("{") && value && value.length <= 80 && !value.includes("{")) labels.add(value);
-  }
-}
+const indexedCatalogs = new WeakSet<Record<string, string>>();
 
 export function safeReplayLabel(value: unknown): string | undefined {
-  return typeof value === "string" && value.length <= 80 && !value.includes("{") && labels.has(value) ? value : undefined;
+  if (typeof value !== "string" || value.length > 80 || value.includes("{")) return undefined;
+  // Displayed translations have already been loaded by I18nProvider. Index only
+  // those trusted catalogs; never fetch unused languages for the recorder.
+  for (const { code } of LANGUAGES) {
+    const catalog = loadedCatalog(code);
+    if (!catalog || indexedCatalogs.has(catalog)) continue;
+    for (const [key, label] of Object.entries(catalog)) {
+      if (!key.includes("{") && label && label.length <= 80 && !label.includes("{")) labels.add(label);
+    }
+    indexedCatalogs.add(catalog);
+  }
+  return labels.has(value) ? value : undefined;
 }
 
 export function replayText(text: string, label?: string): string {

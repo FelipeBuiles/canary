@@ -40,6 +40,12 @@ migration without improving the book-content contract. See the
 Catalog validation establishes structural completeness, not native-language
 editorial quality; new translations still benefit from that review.
 
+English is in the startup bundle. Spanish and French catalogs load on demand,
+with cached promises and a provider loading boundary for a stored non-English
+preference. Language changes use a React transition so the current screen stays
+usable during the download. Replay's safe-label allowlist indexes only trusted
+catalogs already loaded by the UI; it never fetches another language for recording.
+
 ## Editable book lettering
 
 `source` is the stable Pages-owned display wording. Adapt's canonical copy stays

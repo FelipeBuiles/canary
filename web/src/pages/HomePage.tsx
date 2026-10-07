@@ -1,7 +1,10 @@
 import { PublicationShowcase } from "../components/book/PublicationShowcase";
 import { useShortStories } from "../api/queries";
 import { genreLabel } from "../lib/storyBrowser";
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { preload } from "react-dom";
+import { afterPageLoad } from "../lib/afterPageLoad";
+import { responsiveMarketingImage } from "../lib/marketingImages";
 import { Link } from "react-router-dom";
 import { BrandIdentity } from "../components/BrandIdentity";
 import { BrandMark } from "../components/BrandMark";
@@ -79,10 +82,20 @@ function HeroFolio({ copy }: { copy: LandingCopy["hero"] }) {
   const reducedMotion = usePrefersReducedMotion();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [paused, setPaused] = useState(true);
+  const [videoReady, setVideoReady] = useState(false);
+  preload(MARKETING_IMAGES.heroPoster, { as: "image", fetchPriority: "high" });
+  useEffect(() => {
+    if (!reducedMotion) return afterPageLoad(() => setVideoReady(true));
+  }, [reducedMotion]);
 
   const toggle = () => {
     const video = videoRef.current;
     if (!video) return;
+    if (!videoReady) {
+      // Explicit Play starts immediately, even before the optional idle load.
+      video.src = MARKETING_IMAGES.heroLoop;
+      setVideoReady(true);
+    }
     if (video.paused) {
       void video.play()?.catch(() => setPaused(true));
     } else {
@@ -122,7 +135,7 @@ function HeroFolio({ copy }: { copy: LandingCopy["hero"] }) {
           ) : (
             <video
               ref={videoRef}
-              src={MARKETING_IMAGES.heroLoop}
+              src={videoReady ? MARKETING_IMAGES.heroLoop : undefined}
               poster={MARKETING_IMAGES.heroPoster}
               width="600"
               height="750"
@@ -130,7 +143,7 @@ function HeroFolio({ copy }: { copy: LandingCopy["hero"] }) {
               muted
               loop
               playsInline
-              preload="auto"
+              preload="none"
               onPlaying={() => setPaused(false)}
               onPause={() => setPaused(true)}
               onError={() => setPaused(true)}
@@ -160,7 +173,7 @@ function PageStrip({
       {pages.map((src, index) => (
         <figure key={src}>
           <a href={src} target="_blank" rel="noopener noreferrer" aria-label={links?.[index] ?? captions[index]}>
-            <img src={src} alt={alts[index]} width="1024" height="1536" loading="lazy" decoding="async" />
+            <img src={src} {...responsiveMarketingImage(src, "(max-width: 680px) 90vw, (max-width: 900px) 45vw, 30vw")} alt={alts[index]} loading="lazy" decoding="async" />
           </a>
           <figcaption>
             <span>{captions[index]}</span>
@@ -228,7 +241,7 @@ function FilmSection({ copy, language }: { copy: LandingCopy["film"]; language: 
             />
           ) : (
             <button type="button" className="landing-film__poster" onClick={() => setPlaying(true)} aria-label={copy.play}>
-              <img src={poster} alt={copy.posterAlt} width="1280" height="720" loading="lazy" decoding="async" />
+              <img src={poster} {...responsiveMarketingImage(poster, "(max-width: 900px) 90vw, 55vw")} alt={copy.posterAlt} loading="lazy" decoding="async" />
               <span className="landing-film__play" aria-hidden="true">
                 <svg viewBox="0 0 24 24" focusable="false"><path d="M8 5.5v13l10.5-6.5z" /></svg>
                 {copy.playLabel}
@@ -384,7 +397,7 @@ export function HomePage() {
             {MARKETING_IMAGES.pages.map((src, index) => (
               <figure key={src}>
                 <a href={src} target="_blank" rel="noopener noreferrer" aria-label={copy.continuity.inspectLinks[index]}>
-                  <img src={src} alt={copy.continuity.alts[index]} width="1024" height="1536" loading="lazy" decoding="async" />
+                  <img src={src} {...responsiveMarketingImage(src, "(max-width: 680px) 90vw, 45vw")} alt={copy.continuity.alts[index]} loading="lazy" decoding="async" />
                 </a>
                 <figcaption>
                   <span>{copy.continuity.captions[index]}</span>

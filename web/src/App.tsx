@@ -19,7 +19,8 @@ const ResetPasswordPage = lazy(() =>
   import("./pages/auth/ResetPasswordPage").then(({ ResetPasswordPage }) => ({ default: ResetPasswordPage })),
 );
 const PublicBookPage = lazy(() => import("./pages/PublicBookPage").then(({ PublicBookPage }) => ({ default: PublicBookPage })));
-const HomePage = lazy(() => import("./pages/HomePage").then(({ HomePage }) => ({ default: HomePage })));
+const loadHomePage = () => import("./pages/HomePage").then(({ HomePage }) => ({ default: HomePage }));
+const HomePage = lazy(loadHomePage);
 const SampleLibraryPage = lazy(() => import("./pages/SampleLibraryPage").then(({ SampleLibraryPage }) => ({ default: SampleLibraryPage })));
 const TermsPage = lazy(() => import("./pages/legal/TermsPage").then(({ TermsPage }) => ({ default: TermsPage })));
 const PrivacyPage = lazy(() => import("./pages/legal/PrivacyPage").then(({ PrivacyPage }) => ({ default: PrivacyPage })));
@@ -70,6 +71,10 @@ function lazyRoute(Component: ComponentType): ReactElement {
  */
 function RootRoute() {
   const { session, loading } = useAuth();
+  useEffect(() => {
+    // Fetch the landing route alongside session restoration, not after it.
+    if (loading) void loadHomePage().catch(() => {});
+  }, [loading]);
 
   if (loading) {
     return <LoadingBlock label="OPENING SCENEWRIGHT…" />;
@@ -152,8 +157,9 @@ export function App() {
 }
 
 export function AccountApp() {
-  const { user, loading } = useAuth();
-  if (loading) return null;
+  // Public readers/auth/legal pages need not wait for session restoration.
+  // RootRoute and AuthGuard retain their gates; account changes replace caches.
+  const { user } = useAuth();
   return (
     <QueryClientProvider key={user?.id ?? "signed-out"} client={queryClient}>
       <BrowserRouter>

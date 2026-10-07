@@ -3,13 +3,12 @@ import { PageVersions } from "../../components/pages/PageVersions";
 import { ArchivedArtwork } from "../../components/pages/ArchivedArtwork";
 import { createPortal } from "react-dom";
 import { ArrowUpRight, BookOpen, Layers, ChevronLeft as ReviewChevronLeft, ChevronRight as ReviewChevronRight, X as ReviewClose } from "lucide-react";
-import { LetteringEditor } from "../../components/lettering/LetteringEditor";
 import { pageCompositePreviewUrl } from "../../api/lettering";
 import { PageThumbnail } from "../../components/pages/PageThumbnail";
 import { WholeBookReveal } from "../../components/pages/WholeBookReveal";
 import { editionKeyFor } from "../../lib/editionKey";
 import { accountIdentity } from "../../lib/accountEpoch";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   useAnalyzeCompletePage,
@@ -68,6 +67,8 @@ import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
 import { seriesPath } from "../../api/projectScope";
 import { PartNotices } from "../../components/parts/PartNotices";
 import { describeRedrawChanges } from "../../components/pages/redrawChanges";
+
+const LetteringEditor = lazy(() => import("../../components/lettering/LetteringEditor").then(module => ({ default: module.LetteringEditor })));
 
 type ReviewView = "page" | "lettering" | "history";
 type PageFilter = "all" | "needs-review" | "drawing" | "failed";
@@ -340,7 +341,7 @@ function PageReview({
               </div>
             )}
 
-            {shownView === "lettering" && editSourceRevision != null && !renderStale && <LetteringEditor project={project} pageNumber={item.page.page_number} disabled={pageIsDrawing}/>}
+            {shownView === "lettering" && editSourceRevision != null && !renderStale && <Suspense fallback={<p role="status">{t("Opening lettering…")}</p>}><LetteringEditor project={project} pageNumber={item.page.page_number} disabled={pageIsDrawing}/></Suspense>}
           </div>
         </div>
       </div>

@@ -1,0 +1,128 @@
+{
+  "/marketing/cthulhu-page-40.webp": {
+    "width": 1024,
+    "height": 1536,
+    "variants": [
+      {
+        "src": "/marketing/previews/cthulhu-page-40-480.webp",
+        "width": 480
+      },
+      {
+        "src": "/marketing/previews/cthulhu-page-40-800.webp",
+        "width": 800
+      }
+    ]
+  },
+  "/marketing/elm-and-keep-page-12.webp": {
+    "width": 1024,
+    "height": 1527,
+    "variants": [
+      {
+        "src": "/marketing/previews/elm-and-keep-page-12-480.webp",
+        "width": 480
+      },
+      {
+        "src": "/marketing/previews/elm-and-keep-page-12-800.webp",
+        "width": 800
+      }
+    ]
+  },
+  "/marketing/janitor-riso-page-01.webp": {
+    "width": 1024,
+    "height": 1527,
+    "variants": [
+      {
+        "src": "/marketing/previews/janitor-riso-page-01-480.webp",
+        "width": 480
+      },
+      {
+        "src": "/marketing/previews/janitor-riso-page-01-800.webp",
+        "width": 800
+      }
+    ]
+  },
+  "/marketing/janitor-gouache-page-01.webp": {
+    "width": 1024,
+    "height": 1536,
+    "variants": [
+      {
+        "src": "/marketing/previews/janitor-gouache-page-01-480.webp",
+        "width": 480
+      },
+      {
+        "src": "/marketing/previews/janitor-gouache-page-01-800.webp",
+        "width": 800
+      }
+    ]
+  },
+  "/marketing/janitor-oil-page-01.webp": {
+    "width": 1024,
+    "height": 1536,
+    "variants": [
+      {
+        "src": "/marketing/previews/janitor-oil-page-01-480.webp",
+        "width": 480
+      },
+      {
+        "src": "/marketing/previews/janitor-oil-page-01-800.webp",
+        "width": 800
+      }
+    ]
+  },
+  "/marketing/kaitlin-page-01.webp": {
+    "width": 1024,
+    "height": 1527,
+    "variants": [
+      {
+        "src": "/marketing/previews/kaitlin-page-01-480.webp",
+        "width": 480
+      },
+      {
+        "src": "/marketing/previews/kaitlin-page-01-800.webp",
+        "width": 800
+      }
+    ]
+  },
+  "/marketing/kaitlin-page-12.webp": {
+    "width": 1024,
+    "height": 1524,
+    "variants": [
+      {
+        "src": "/marketing/previews/kaitlin-page-12-480.webp",
+        "width": 480
+      },
+      {
+        "src": "/marketing/previews/kaitlin-page-12-800.webp",
+        "width": 800
+      }
+    ]
+  },
+  "/marketing/kaitlin-page-34.webp": {
+    "width": 1024,
+    "height": 1527,
+    "variants": [
+      {
+        "src": "/marketing/previews/kaitlin-page-34-480.webp",
+        "width": 480
+      },
+      {
+        "src": "/marketing/previews/kaitlin-page-34-800.webp",
+        "width": 800
+      }
+    ]
+  },
+  "/marketing/scenewright-film-poster.webp": {
+    "width": 1280,
+    "height": 720,
+    "variants": [
+      {
+        "src": "/marketing/previews/scenewright-film-poster-480.webp",
+        "width": 480
+      },
+      {
+        "src": "/marketing/previews/scenewright-film-poster-800.webp",
+        "width": 800
+      }
+    ]
+  }
+}

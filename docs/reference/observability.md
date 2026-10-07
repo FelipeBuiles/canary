@@ -45,6 +45,13 @@ reducing the Fly machine size.
   Only selected `canary.observations` logs are exported.
   Generic tracing is a PostHog alpha capability; the selected project exposes its configuration with the expected
   `posthogDistinctId` correlation key. Live request, worker, stage, and AI span ingestion was verified on 2026-09-26; worker and AI spans retain parent links. This is not automatic browser tracing or host infrastructure APM.
+- Browser telemetry initializes after page load in an idle slot. The bundled
+  `web-vitals` entry explicitly enables LCP, INP, CLS, and FCP capture. The privacy
+  boundary retains finite nonnegative scalar values and canonical route templates;
+  metric entries, DOM attribution, private image URLs, and network timing stay
+  excluded. These are document Web Vitals, not independent LCP measurements for
+  every client-side room change. See the [performance audit](../reviews/2026-10-06-web-vitals.md)
+  for the baseline and verification limits.
 - Session replay and click autocapture (including `$rageclick`) feed
   Self-driving Replay Vision. The recorder is bundled (`posthog-recorder`;
   the no-external SDK loads no scripts). Replays mask all inputs and author text.

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./fonts.css";
 
 /* Generation previews. Each draft is laid down like a pass through the page
    press: a feathered edge sweeps down the card, carrying a halftone bar, while
