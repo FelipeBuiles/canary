@@ -1,4 +1,4 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
@@ -161,4 +161,16 @@ it("offers the retry inside the empty proof and keeps it open while other proofs
 it("keeps a failed proof retryable while a batch draws the others", () => {
   render(card(props({ awaitingBatch: true, suggestion: { ...suggestion, has_sample: false, generation_status: "failed" } })));
   expect(screen.getByRole("button", { name: "TRY SAMPLE AGAIN" })).toBeTruthy();
+});
+
+it("reloads a saved proof image that failed to load", async () => {
+  render(card());
+  await act(() => new Promise((resolve) => setTimeout(resolve, 2)));
+  const first = screen.getByRole("img", { name: suggestion.label }).getAttribute("src");
+  fireEvent.error(screen.getByRole("img", { name: suggestion.label }));
+  expect(screen.getByText("PROOF IMAGE UNAVAILABLE")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "TRY SAMPLE AGAIN" })).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: "RELOAD PROOF" }));
+  expect(screen.queryByText("PROOF IMAGE UNAVAILABLE")).toBeNull();
+  expect(screen.getByRole("img", { name: suggestion.label }).getAttribute("src")).not.toBe(first);
 });

@@ -1,6 +1,6 @@
 import type { CastReferenceInput } from "../types/api";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { isNotFoundError } from "./client";
+import { isNetworkError, isNotFoundError } from "./client";
 import { listProjects, getProjectStatus, createProject, renameProject, deleteProject, fetchProjectCoverEstimate, generateProjectCover, listShortStories, importStory, previewSource } from "./projects";
 import { runPipeline, approveStage, regenRef, regenStateRef, regenLocationState, regenRefWithInstruction, regenPlate, regenPlateWithInstruction, regenProp, regenPropWithInstruction, getGenerationJobs, cancelQueuedPageJobs, regenExtract, resetStale, fetchStageEstimate, fetchAssetRegenEstimate, getCastAssetVersions, restoreCastAssetVersion } from "./pipeline";
 import type { AdaptationBrief, ConfigOverrides, ProjectStatus, ProjectSummary } from "../types/api";
@@ -751,12 +751,16 @@ export function useCreateStyleDirection() {
   });
 }
 
+// A returning API sends no browser event, so poll until it answers.
+const reconnectInterval = (query: { state: { error: Error | null } }) => isNetworkError(query.state.error) ? 15_000 : false;
+
 export function useSuggestStylesEstimate(project: string | undefined, enabled = true) {
   return useQuery({
     queryKey: ["project", project, "styles", "suggest-estimate"],
     queryFn: () => fetchSuggestStylesEstimate(project!),
     enabled: !!project && enabled,
     staleTime: 60_000,
+    refetchInterval: reconnectInterval,
   });
 }
 
@@ -775,6 +779,7 @@ export function useStyleDirectionEstimate(project: string | undefined, enabled =
     queryFn: () => fetchStyleDirectionEstimate(project!),
     enabled: !!project && enabled,
     staleTime: 60_000,
+    refetchInterval: reconnectInterval,
   });
 }
 
