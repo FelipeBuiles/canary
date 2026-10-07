@@ -37,7 +37,9 @@ def test_initial_public_html_is_complete_and_has_unique_metadata(public_site, pa
     assert f'<html lang="{language}">' in body
     assert '<h1' in body and len(re.findall(r'<p\b', body)) >= 4
     assert 'data-prerendered="true"' in body
-    assert '<meta name="robots" content="index, follow">' in body
+    assert '<meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large">' in body
+    locale = {"en": "en_US", "es": "es_ES", "fr": "fr_FR"}[language]
+    assert f'<meta property="og:locale" content="{locale}">' in body
     assert "x-robots-tag" not in response.headers
     schema = json.loads(re.search(r'id="public-schema"[^>]*>(.*?)</script>', body, re.S).group(1))
     assert schema["@context"] == "https://schema.org"
@@ -47,6 +49,9 @@ def test_initial_public_html_is_complete_and_has_unique_metadata(public_site, pa
             assert f'hreflang="{locale}" href="https://scenewright.ink{target}"' in body
         assert re.search(r'<link rel="stylesheet" href="/assets/HomePage-[^"]+\.css">', body)
         assert '<video' not in body
+        for image in re.findall(r'<img\b[^>]*>', body):
+            assert re.search(r'\bwidth="[1-9]\d*"', image), image
+            assert re.search(r'\bheight="[1-9]\d*"', image), image
 
 
 def test_built_pricing_agrees_with_the_billing_contract(public_site):

@@ -24,6 +24,16 @@ export const publicPages: Record<string, PublicPageMetadata> = {
   "/legal/acceptable-use": { title: "Acceptable Use and Reporting | Scenewright", description: "Read Scenewright’s acceptable use policy and learn how to report prohibited content or rights concerns.", language: "en" },
 };
 export const homePaths = { en: "/", es: "/es", fr: "/fr" } as const;
+/** Shared by prerendering and navigation; applies only to our public site copy. */
+export function publicSearchMetadata(path: string): Record<string, string> {
+  const page = publicPages[path];
+  if (!page) return {};
+  const locales = { en: "en_US", es: "es_ES", fr: "fr_FR" } as const;
+  return {
+    robots: "index, follow, max-snippet:-1, max-image-preview:large",
+    "og:locale": locales[page.language],
+  };
+}
 export const isPublicHome = (path: string) => Object.values(homePaths).includes(path as typeof homePaths[LanguageCode]);
 export function publicSchema(path: string) {
   const page = publicPages[path];
