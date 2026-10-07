@@ -217,19 +217,29 @@ async def create_run(
 async def retry_cells(
     run_id: str, request: Request, body: dict[str, Any] = Body(default={}), user_id: str = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Resubmit failed image cells with the same prompt and inputs; ``cells`` omitted retries all."""
+    """Resubmit failed cells with their recorded inputs; ``cells`` omitted retries all.
+
+    Image cells resend the same request; text-stage arms rerun their phase.
+    """
     root = _user_root(request, user_id)
     if run_id in _tasks(request):
         raise HTTPException(409, "This run is still in progress")
+    try:
+        run = storage.read_run(root, run_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    experiment = {image_compare.KIND: image_compare, stage_models.KIND: stage_models}.get((run or {}).get("kind"))
+    if experiment is None:
+        raise HTTPException(404, "Run not found")
     requested = body.get("cells")
     try:
-        cells = image_compare.failed_cells(root, run_id, None if requested is None else [str(c) for c in requested])
+        cells = experiment.failed_cells(root, run_id, None if requested is None else [str(c) for c in requested])
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     if not cells:
         raise HTTPException(400, "No failed cells to retry")
     storage.update_run(root, run_id, status="running", finished_at=None, error=None)
-    _start(request, root, run_id, image_compare.retry(root, run_id, cells))
+    _start(request, root, run_id, experiment.retry(root, run_id, cells))
     return {"status": "running", "cells": [cell["cell_id"] for cell in cells]}
 
 

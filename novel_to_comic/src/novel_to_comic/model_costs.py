@@ -186,8 +186,9 @@ class PricingResolver:
                 pricing_snapshot=self.pricing_snapshot,
             )
 
-        input_cost = float(pricing.get("input_cost_per_token") or 0.0)
-        output_cost = float(pricing.get("output_cost_per_token") or 0.0)
+        suffix = "_above_100k_tokens" if input_tokens > 100_000 else ""
+        input_cost = float(pricing.get(f"input_cost_per_token{suffix}", pricing.get("input_cost_per_token")) or 0.0)
+        output_cost = float(pricing.get(f"output_cost_per_token{suffix}", pricing.get("output_cost_per_token")) or 0.0)
         image_cost = float(
             pricing.get("output_cost_per_image")
             or pricing.get("input_cost_per_image")

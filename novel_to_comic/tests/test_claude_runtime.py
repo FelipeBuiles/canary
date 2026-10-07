@@ -18,7 +18,7 @@ from novel_to_comic.text_models import text_wire
 MODEL = "claude-opus-5-5"
 
 
-@pytest.fixture(params=["claude-opus-5-5", "claude-sonnet-5-5"])
+@pytest.fixture(params=["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"])
 def selected_claude_model(request, monkeypatch):
     # Model selection, catalog membership and tariffs vary by model. Generic
     # transport failures, redaction and timeouts need one representative model.
@@ -343,7 +343,8 @@ def test_client_sends_api_route_controls_and_records_comparable_usage(claude_cli
     terminal = claude_client.events[-1][1]
     assert terminal["status"] == "succeeded"
     assert terminal["estimated_cost_usd"] is None
-    assert terminal["metadata"]["api_equivalent_cost_usd"] == pytest.approx(125 * (4e-6 if MODEL == "claude-opus-5-5" else 2e-6) + 40 * (20e-6 if MODEL == "claude-opus-5-5" else 10e-6))
+    assert terminal["metadata"]["api_equivalent_cost_usd"] == pytest.approx(125 * {"claude-opus-5-5": 4e-6, "claude-sonnet-5-5": 2e-6, "claude-haiku-5-5": 1e-7}[MODEL]
+        + 40 * {"claude-opus-5-5": 20e-6, "claude-sonnet-5-5": 10e-6, "claude-haiku-5-5": 5e-7}[MODEL])
 
 
 def test_subscription_usage_never_reaches_the_credit_ledger():

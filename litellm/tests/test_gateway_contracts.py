@@ -160,9 +160,9 @@ def test_real_gateway_and_supported_custom_handlers_are_loaded():
     assert len(aliases) == len(set(aliases)), "Each model alias must have exactly one route"
     assert {route["model_name"] for route in config["model_list"]} == {
         "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "claude-opus-5-5",
-        "claude-sonnet-5-5", "mimo-v2.6-pro", "deepseek-v4.1-flash", "image-sunburst",
+        "claude-sonnet-5-5", "claude-haiku-5-5", "mimo-v2.6-pro", "deepseek-v4.1-flash", "image-sunburst",
         "image-sunburst-openai", "image-flare", "image-nano-banana-2.1", "gemini-3.8-flash",
-        "bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5",
+        "bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5", "bedrock-claude-haiku-5-5",
         "ocr-textract",
     }
     assert config["litellm_settings"]["custom_provider_map"] == [{
@@ -233,7 +233,7 @@ def test_together_deepseek_route_disables_thinking_and_keeps_json_schema(monkeyp
     assert body["messages"][0]["content"][1]["type"] == "image_url"
 
 
-@pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-sonnet-5-5"])
+@pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"])
 def test_claude_5_5_route_keeps_client_effort_format_and_thinking_summaries(monkeypatch, model):
     """Thinking stays adaptive with visible summaries; effort rides in output_config.
 
@@ -289,7 +289,7 @@ def test_claude_5_5_route_keeps_client_effort_format_and_thinking_summaries(monk
         "effort": "low", "format": {"type": "json_schema", "schema": schema},
     }
     assert body["max_tokens"] == 4096
-    # Both reject non-default sampling controls, prefill and forced tool choice.
+    # All reject non-default sampling controls, prefill and forced tool choice.
     assert "temperature" not in body
     assert "tool_choice" not in body
     assert body["messages"][-1]["role"] == "user"

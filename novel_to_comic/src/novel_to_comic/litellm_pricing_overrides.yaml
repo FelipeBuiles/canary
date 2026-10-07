@@ -11,8 +11,10 @@ aliases:
   gemini-3.8-flash: vertex_ai/gemini-3.8-flash
   claude-opus-5-5: anthropic/claude-opus-5-5
   claude-sonnet-5-5: anthropic/claude-sonnet-5-5
+  claude-haiku-5-5: anthropic/claude-haiku-5-5
   bedrock-claude-opus-5-5: bedrock/converse/global.anthropic.claude-opus-5-5
   bedrock-claude-sonnet-5-5: bedrock/converse/global.anthropic.claude-sonnet-5-5
+  bedrock-claude-haiku-5-5: bedrock/converse/global.anthropic.claude-haiku-5-5
   deepseek-v4.1-flash: together_ai/deepseek-ai/DeepSeek-V4.1-Flash
   mimo-v2.6-pro: openrouter/xiaomi/mimo-v2.6-pro
   image-sunburst: openai/gpt-image-2.5/sunburst
@@ -232,3 +234,20 @@ model_overrides:
         1024x1024: 439
         1344x768: 255
         1536x1024: 255
+
+  # https://platform.claude.com/docs/en/models/haiku-5-5/overview (2026-10-07).
+  claude-haiku-5-5: &haiku_5_5
+    input_cost_per_token: 1.0e-07
+    output_cost_per_token: 5.0e-07
+    cache_read_input_token_cost: 1.0e-08
+    cache_creation_input_token_cost: 1.25e-07
+    input_cost_per_token_above_100k_tokens: 5.0e-07
+    output_cost_per_token_above_100k_tokens: 2.5e-06
+    cache_read_input_token_cost_above_100k_tokens: 5.0e-08
+    cache_creation_input_token_cost_above_100k_tokens: 6.25e-07
+    mode: chat
+    max_input_tokens: 1000000
+    max_output_tokens: 128000
+  global.anthropic.claude-haiku-5-5: *haiku_5_5
+  bedrock/converse/global.anthropic.claude-haiku-5-5: *haiku_5_5
+  converse/global.anthropic.claude-haiku-5-5: *haiku_5_5

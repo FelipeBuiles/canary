@@ -154,6 +154,17 @@ export interface StageModelCell {
   cost_usd?: number;
   api_equivalent_usd?: number | null;
   error?: string;
+  input_sha256?: string;
+  /** Earlier failed attempts of this arm, oldest first, each with its own workspace and spend. */
+  attempts?: {
+    started_at?: string;
+    seconds?: number;
+    cost_usd?: number | null;
+    api_equivalent_usd?: number | null;
+    error?: string | null;
+    workspace: string;
+    stages?: StageResult[];
+  }[];
 }
 
 export interface LabsRunDetail extends Omit<LabsRunSummary, "cell_count"> {
@@ -212,7 +223,8 @@ export function getLabsRun(runId: string): Promise<LabsRunDetail> {
   return apiFetch(`/labs/runs/${encodeURIComponent(runId)}`);
 }
 
-/** Resubmit failed image cells with the same prompt and inputs; omit ``cells`` to retry every failure. */
+/** Retry failed cells with their recorded inputs: image cells resend the same request, text arms rerun
+ * their phase. Omit ``cells`` to retry every failure. */
 export function retryLabsCells(runId: string, cells?: string[]): Promise<{ status: string; cells: string[] }> {
   return apiFetch(`/labs/runs/${encodeURIComponent(runId)}/retry`, {
     method: "POST", body: JSON.stringify(cells ? { cells } : {}),

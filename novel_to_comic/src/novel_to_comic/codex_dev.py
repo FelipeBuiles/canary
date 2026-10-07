@@ -89,7 +89,7 @@ def selectable_models() -> tuple[str, ...]:
 
 
 # Claude Code selectors. Text only: Claude Code has no image generation tool.
-_DEFAULT_CLAUDE_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5")
+_DEFAULT_CLAUDE_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")
 
 
 def _claude_model(value: object) -> str:

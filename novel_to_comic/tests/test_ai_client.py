@@ -351,16 +351,36 @@ def test_missing_json_closers_preserve_content_without_resubmission(monkeypatch,
         user_content="story", retry_invalid_json=False,
     ))
     assert len(calls) == 1
-    assert result.value == json.loads(client._close_json_containers(raw))
-    assert client._close_json_containers(raw).startswith(raw)
+    assert result.value == json.loads(client._balance_json_containers(raw))
+    assert client._balance_json_containers(raw).startswith(raw)
+
+
+@pytest.mark.parametrize("raw, repaired", [
+    ('{"review":{"items":[]}}}', '{"review":{"items":[]}}'),
+    ('{"items":["a } b"]}]} \n', '{"items":["a } b"]}'),
+])
+def test_surplus_trailing_json_closers_are_dropped_without_resubmission(monkeypatch, raw, repaired):
+    calls = []
+    async def generate(**kwargs):
+        calls.append(kwargs)
+        return {"text": raw, "usage": None, "finish_reason": "stop"}
+    monkeypatch.setattr(client, "_chat_completion", generate)
+    result = asyncio.run(client.generate_structured_object(
+        config=Config(), model="claude-haiku-5-5", system_prompt="JSON",
+        user_content="story", retry_invalid_json=False,
+    ))
+    assert len(calls) == 1
+    assert client._balance_json_containers(raw) == repaired
+    assert result.value == json.loads(repaired)
 
 
 @pytest.mark.parametrize("raw", [
     '{"text":"unfinished', '{"text":', '{"number":12', '{"ok":tru',
     '{"items":["a",', '{"a":"b" "c":"d"}', '{"a":["b"}',
+    '{"a":1}}{"b":2}', '{"a":1},"b":2}', '}{"a":1}', '{"a":1}]x}',
 ])
 def test_json_closer_repair_rejects_missing_content_and_internal_errors(raw):
-    assert client._close_json_containers(raw) is None
+    assert client._balance_json_containers(raw) is None
 
 
 @pytest.mark.parametrize("finish_reason,stream", [
@@ -1482,7 +1502,7 @@ class TestStreamingOptOut:
         assert client._stream_text_enabled() is True
 
     @pytest.mark.parametrize("model", [
-        "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "claude-opus-5-5", "claude-sonnet-5-5",
+        "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5",
     ])
     def test_opting_out_falls_back_to_a_buffered_request(
         self, monkeypatch, _patch_events, model
@@ -2005,6 +2025,28 @@ def test_vertex_structured_calls_send_json_mode_with_the_compiled_schema_as_inst
     })
     assert hashed["system_prompt"] == instructions
     assert hashed["json_schema"] is None and hashed["json_mode"] is True
+
+
+@pytest.mark.parametrize("model", ["claude-haiku-5-5", "bedrock-claude-haiku-5-5"])
+def test_haiku_structured_calls_avoid_native_grammar_and_keep_effort(monkeypatch, model):
+    from novel_to_comic.extraction_schema import extraction_schema
+    from novel_to_comic.ai.gemini_schema import gemini_output_schema
+    schema = extraction_schema()
+    _patch_http(monkeypatch, {
+        "model": model,
+        "choices": [{"message": {"content": '{}'}, "finish_reason": "stop"}],
+    })
+    asyncio.run(client.generate_structured_object(
+        config=Config(), model=model, system_prompt="Extract source facts.",
+        user_content="Exact story.", feature="extract.story_bible", json_schema=schema,
+    ))
+    sent = _FakeAsyncClient.last_request["json"]
+    assert "response_format" not in sent
+    assert sent["output_config"] == {"effort": "medium"}
+    instructions = sent["messages"][0]["content"]
+    assert instructions.startswith("Extract source facts.\n\nOUTPUT CONTRACT:")
+    assert json.loads(instructions.split("\n")[-1]) == gemini_output_schema(schema)
+    assert sent["messages"][1]["content"] == "Exact story."
 
 
 @pytest.mark.parametrize("answer_limit, billed_limit", [(4096, 20480), (65536, 65536)])

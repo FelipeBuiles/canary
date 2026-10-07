@@ -146,6 +146,32 @@ describe("Labs", () => {
     expect(state.retry).toHaveBeenLastCalledWith(undefined);
   });
 
+  it("retries one failed text arm, or every failure, and keeps earlier attempts' spend visible", () => {
+    const stage = (model: string, error: string | null, cost: number) => ({
+      stage: "extract", status: error ? "failed" : "complete", error, seconds: 50, calls: 3, input_tokens: 58000,
+      cached_input_tokens: 0, output_tokens: 40000, cost_usd: cost, unpriced_calls: 0, models: [model], funding: ["api"],
+    });
+    state.run = {
+      ...base, run_id: "r3", kind: "stage_models", label: "Haiku vs Flash",
+      spec: { phases: ["extract_brief"] },
+      cells: [
+        { cell_id: "extract_brief.haiku", phase: "extract_brief", model: "haiku", funding: "api", status: "failed",
+          workspace: "workspaces/extract_brief.haiku", stages: [stage("haiku", "malformed JSON", 0.026)], cost_usd: 0.026 },
+        { cell_id: "extract_brief.flash", phase: "extract_brief", model: "flash", funding: "api", status: "ok",
+          workspace: "workspaces/extract_brief.flash", stages: [stage("flash", null, 0.03)], cost_usd: 0.03,
+          attempts: [{ workspace: "workspaces/extract_brief.flash.attempt1", cost_usd: 0.012, api_equivalent_usd: 0.012, error: "timeout" }] },
+      ],
+    } satisfies LabsRunDetail;
+    renderAt("/labs?run=r3");
+
+    expect(screen.getByText(/Succeeded on retry 1 · earlier spend \$0\.012/)).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(state.retry).toHaveBeenCalledWith(["extract_brief.haiku"]);
+    fireEvent.click(screen.getByRole("button", { name: "Retry 1 failed" }));
+    expect(state.retry).toHaveBeenLastCalledWith(undefined);
+  });
+
   it("compares stages side by side and reports subscription runs as allowance, not dollars", () => {
     const arm = (model: string, funding: "api" | "claude_subscription", cost: number) => ({
       cell_id: `adapt_plan.${model}`, phase: "adapt_plan", model, funding, status: "ok" as const,

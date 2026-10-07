@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..page_operations import (_draw_success_callback, _generation_retry, _sync_draw_progress, enqueue_all_undrawn_pages, prepare_undrawn_pages)
+from ..page_operations import (_generation_retry, _sync_draw_progress, enqueue_all_undrawn_pages, prepare_undrawn_pages)
 
 
 from novel_to_comic.style_reference import require_style_reference
@@ -743,11 +743,6 @@ async def generate_page(
         artifacts=target,
         page=page,
         ocr=page_read_adapter(config, target, page),
-        on_success=_draw_success_callback(
-            request,
-            pkey=pkey,
-            project_dir=project_dir,
-        ),
     )
     if created and replaced_revision is not None:
         record_page_outcome(request.app, "redraw_requested", user_id=user_id, project_id=project_id,
@@ -1340,11 +1335,6 @@ async def submit_page_correction(
         ocr=page_read_adapter(config, target, page),
         parent_render_revision=correction.parent_render_revision,
         issue=primary_issue,
-        on_success=_draw_success_callback(
-            request,
-            pkey=pkey,
-            project_dir=project_dir,
-        ),
     )
     if created:
         record_page_outcome(request.app, "correction_submitted", user_id=user_id, project_id=project_id,

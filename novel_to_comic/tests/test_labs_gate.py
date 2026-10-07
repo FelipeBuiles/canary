@@ -167,3 +167,26 @@ def test_labs_source_files_use_slugs_and_stay_in_owned_project(monkeypatch, tmp_
         assert client.get(base + path).status_code == 403
     assert client.get("/api/labs/projects/story/files/page.png").status_code == 404
     assert client.get("/api/labs/projects/linked-project/files/page.png").status_code == 403
+
+
+def test_retry_dispatches_failed_text_arms_to_the_stage_model_runner(monkeypatch, tmp_path):
+    from novel_to_comic.server.routers import labs
+    from novel_to_comic.labs import stage_models, storage
+    client = _labs_client(monkeypatch, tmp_path)
+    root = tmp_path / "owner"
+    run = storage.create_run(root, kind=stage_models.KIND, label="t", spec={"project": "story"})
+    storage.write_cell(root, run["run_id"], "extract_brief.a", {"status": "failed", "model": "a"})
+    storage.write_cell(root, run["run_id"], "extract_brief.b", {"status": "ok", "model": "b"})
+    storage.update_run(root, run["run_id"], status="complete")
+    dispatched = []
+    def start(request, root, run_id, coroutine):
+        dispatched.append((coroutine.cr_code.co_filename.rsplit("/", 1)[-1], coroutine.cr_code.co_name))
+        coroutine.close()
+    monkeypatch.setattr(labs, "_start", start)
+
+    url = f"/api/labs/runs/{run['run_id']}/retry"
+    assert client.post(url, json={"cells": ["extract_brief.b"]}).status_code == 400
+    result = client.post(url, json={})
+    assert result.status_code == 200 and result.json()["cells"] == ["extract_brief.a"]
+    assert dispatched == [("stage_models.py", "retry")]
+    assert storage.read_run(root, run["run_id"])["status"] == "running"

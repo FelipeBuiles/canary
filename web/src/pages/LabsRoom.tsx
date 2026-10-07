@@ -767,11 +767,26 @@ function StageTable({ run, stageName, cells }: { run: LabsRunDetail; stageName: 
 }
 
 function StageModelsRun({ run }: { run: LabsRunDetail }) {
+  const retry = useRetryLabsCells(run.run_id);
   const cells = run.cells as StageModelCell[];
   const phases = (run.spec.phases as string[] | undefined) ?? [];
   const estimate = run.spec.estimated_cost_usd as Record<string, number | null> | undefined;
+  const failed = cells.filter((cell) => cell.status === "failed");
+  const canRetry = run.status !== "running" && !retry.isPending;
   return (
     <div className="space-y-8">
+      {failed.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="outline" size="sm" disabled={!canRetry} onClick={() => retry.mutate(undefined)}>
+              <RotateCcw className="mr-1.5 inline h-4 w-4" aria-hidden />
+              Retry {failed.length} failed
+            </Button>
+            <span className={META}>A retry reruns the arm's whole phase from the same source inputs.</span>
+          </div>
+          {retry.error && <p className="font-body text-sm text-hero-red">{String(retry.error)}</p>}
+        </div>
+      )}
       {phases.map((phase) => {
         const phaseCells = cells.filter((cell) => cell.phase === phase);
         const stages = [...new Set(phaseCells.flatMap((cell) => cell.stages.map((stage) => stage.stage)))];
@@ -795,6 +810,24 @@ function StageModelsRun({ run }: { run: LabsRunDetail }) {
                   </p>
                   {cell.reasoning_efforts && <p className="mt-1 font-body text-xs text-ink-muted">Reasoning: {Object.entries(cell.reasoning_efforts).map(([stage, effort]) => `${stage}: ${effort === "none" ? "Off" : effort === "enabled" ? "On" : effort}`).join(" · ")}</p>}
                   {cell.error && <p className="mt-1 font-body text-sm text-hero-red">{cell.error}</p>}
+                  {!!cell.attempts?.length && (
+                    <p className="mt-1 font-body text-xs text-ink-muted tabular-nums">
+                      {cell.status === "ok" ? `Succeeded on retry ${cell.attempts.length}` : `${cell.attempts.length} earlier attempt${cell.attempts.length > 1 ? "s" : ""}`}
+                      {" · earlier spend "}
+                      {costWithEquivalent(
+                        cell.attempts.reduce((sum, attempt) => sum + (attempt.cost_usd ?? 0), 0),
+                        cell.attempts.some((attempt) => attempt.api_equivalent_usd == null)
+                          ? null : cell.attempts.reduce((sum, attempt) => sum + (attempt.api_equivalent_usd ?? 0), 0),
+                        cell.funding,
+                      )}
+                    </p>
+                  )}
+                  {cell.status === "failed" && (
+                    <Button className="mt-2" variant="outline" size="sm" disabled={!canRetry} onClick={() => retry.mutate([cell.cell_id])}>
+                      <RotateCcw className="mr-1.5 inline h-4 w-4" aria-hidden />
+                      Retry
+                    </Button>
+                  )}
                 </Surface>
               ))}
             </div>

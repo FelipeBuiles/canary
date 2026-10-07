@@ -539,6 +539,45 @@ def test_queue_supervisor_reconnects_after_failure(tmp_path, monkeypatch):
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("action", ["generate", "corrections"])
+def test_page_routes_use_durable_draw_admission_signature(tmp_path, monkeypatch, action):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from unittest.mock import create_autospec
+    from novel_to_comic.server.page_admission import enqueue_complete_page_draw
+    from novel_to_comic.server.routers import pages
+    from tests.test_complete_page_draw import _compile, _page
+
+    app = FastAPI()
+    app.include_router(pages.router)
+    app.state.event_queues = {}
+    app.state.generation_jobs = {}
+    config = Config()
+    page, compiled = _page(), _compile(tmp_path)
+    target = SimpleNamespace(read_page=lambda number: page, active_render_revision=lambda number: None)
+    app.dependency_overrides[pages.get_project] = lambda: (tmp_path, config, None)
+    app.dependency_overrides[pages.get_current_user] = lambda: "account"
+    monkeypatch.setattr(pages, "TargetArtifacts", lambda directory: target)
+    monkeypatch.setattr(pages, "_prepare_initial_generation", lambda *args: (target, page, compiled))
+    monkeypatch.setattr(pages, "_prepare_explicit_correction", lambda **kwargs: SimpleNamespace(
+        compiled=compiled, correction=SimpleNamespace(issue_ids=(), parent_render_revision=1)))
+    monkeypatch.setattr(pages, "complete_page_adapter", lambda *args, **kwargs: "adapter")
+    monkeypatch.setattr(pages, "page_read_adapter", lambda *args: None)
+    monkeypatch.setattr(pages, "generation_job_payload", lambda *args: {"id": "queued-draw"})
+    # Enforce the real admission signature without submitting provider work.
+    enqueue_draw = create_autospec(enqueue_complete_page_draw, return_value=(object(), False))
+    monkeypatch.setattr(pages, "enqueue_complete_page_draw", enqueue_draw)
+
+    body = {} if action == "generate" else {"parent_render_revision": 1, "comic_page_revision": 2}
+    response = TestClient(app).post(f"/pages/7/{action}?project_id=book", json=body)
+
+    assert response.status_code == 200
+    assert response.json()["job"] == {"id": "queued-draw"}
+    enqueue_draw.assert_awaited_once()
+    assert enqueue_draw.call_args.kwargs["compiled"] is compiled
+    assert enqueue_draw.call_args.kwargs["page"] is page
+
+
 def test_page_handler_reconstructs_frozen_bytes_and_ocr(tmp_path, monkeypatch):
     from unittest.mock import AsyncMock
     from novel_to_comic.server import job_execution
@@ -568,6 +607,7 @@ def test_page_handler_reconstructs_frozen_bytes_and_ocr(tmp_path, monkeypatch):
     assert captured["compiled"] == compiled
     assert isinstance(captured["ocr"], GatewayPageOCRAdapter)
     assert captured["page"] == _page()
+    assert callable(captured["on_success"])
     work.assert_awaited_once()
 
 
