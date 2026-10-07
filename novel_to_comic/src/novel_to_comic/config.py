@@ -25,7 +25,11 @@ from novel_to_comic.image_models import (
 # Optional hosted close-up reader. Operator opt-in is separate from project settings.
 TEXTRACT_MODEL = "ocr-textract"
 TEXTRACT_REGION = "us-east-1"
-TEXTRACT_MINIMUM_CONFIDENCE = 0.98  # Conservative experimental gate, not calibrated accuracy.
+# Weakest line/word score for a decisive second read. Low by design: a conclusion
+# also needs the blind read to equal either the first read or the script, which
+# chance misreads rarely do. Below it the author sees "hard to read". Provisional
+# until a labeled EN/ES/FR crop set measures false confidence.
+TEXTRACT_MINIMUM_CONFIDENCE = 0.80
 
 FailedRequestBillingPolicy = Literal["provider_usage_only", "never", "estimate_all"]
 

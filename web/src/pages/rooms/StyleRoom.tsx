@@ -716,7 +716,7 @@ export function StyleRoom() {
         </>
       )}
 
-      <ApprovalBar
+      {!isPipelineRunning && !isStageGenerating && !isSuggesting && <ApprovalBar
         next={styleSelected
           ? needsCover
             ? t("Scenewright casts your characters and places, and draws your project cover")
@@ -744,7 +744,7 @@ export function StyleRoom() {
             disabled={letteringOpen || isPipelineRunning || isStageGenerating || isSuggesting}
           />
         ) : undefined}
-      />
+      />}
 
       <ConfirmDrawer
         open={!!pendingProofs}

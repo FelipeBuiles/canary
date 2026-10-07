@@ -1,24 +1,50 @@
 import { useState } from "react";
 import { useI18n } from "../../i18n";
+import { msg } from "../../locales/messages";
 import type { PageIssue } from "../../types/api";
 import { StatusPill } from "../ui/StatusPill";
+import { Button } from "../ui/Button";
 import { Surface } from "../ui/Surface";
 import {
   alignChars,
   alignLettering,
+  assessTextCheck,
   cropLeadingContext,
   cropMiddleContext,
   cropTrailingContext,
-  cropCheckStatus,
-  cropReadings,
   isOcrIssue,
   issueConfirmed,
+  normalizeLettering,
   ocrIssueTitle,
   readTextEvidence,
+  type AssessedReading,
   type SegmentDifference,
+  type TextCheckAssessment,
 } from "./lettering";
 
-function DifferenceRow({ difference, secondaryRead = false }: { difference: SegmentDifference; secondaryRead?: boolean }) {
+const SUMMARIES: Record<TextCheckAssessment | "none", string> = {
+  none: msg("Possible wording difference. The checker can misread text; compare it with the saved artwork before making changes."),
+  likely_error: msg("This was read the same way twice, so the artwork probably differs from the script. Compare it with the artwork before making changes."),
+  likely_misread: msg("A closer look matches the script, so the artwork is probably fine. If it looks right, choose Not a problem."),
+  unclear: msg("This lettering was hard to read. Compare the artwork with the script before making changes."),
+  unchecked: msg("This lettering hasn’t been double-checked yet. Compare the artwork with the script, or double-check it now at no cost."),
+};
+
+/** One plain-language line on what the second look found for this difference. */
+function ReadingNote({ reading }: { reading: AssessedReading }) {
+  const { t } = useI18n();
+  return (
+    <p className="font-meta text-ink-muted">
+      {reading.assessment === "likely_error"
+        ? t("Read the same way twice.")
+        : reading.assessment === "likely_misread"
+          ? t("A closer look reads “{text}”, matching the script.", { text: reading.closeUp })
+          : t(reading.closeUp ? "Hard to read, even up close." : "Not double-checked.")}
+    </p>
+  );
+}
+
+function DifferenceRow({ difference, reading }: { difference: SegmentDifference; reading?: AssessedReading }) {
   const { t } = useI18n();
   if (difference.type === "same") {
     return (
@@ -54,6 +80,7 @@ function DifferenceRow({ difference, secondaryRead = false }: { difference: Segm
         <span aria-hidden="true" className="font-bold text-hero-red">+</span>
         <span>
           {t("Extra:")} <mark className="bg-hero-red/15 text-hero-red">{difference.recognized}</mark>
+          {reading && <ReadingNote reading={reading} />}
         </span>
       </li>
     );
@@ -80,30 +107,37 @@ function DifferenceRow({ difference, secondaryRead = false }: { difference: Segm
   return (
     <li className="space-y-1">
       <p>
-        <span className="font-bold">{t("Expected:")} </span>
+        <span className="font-bold">{t("Script:")} </span>
         {renderSide("expected")}
       </p>
       <p>
-        <span className="font-bold">{t(secondaryRead ? "First read:" : "Found:")} </span>
+        <span className="font-bold">{t("On the page:")} </span>
         {renderSide("recognized")}
       </p>
+      {reading && <ReadingNote reading={reading} />}
     </li>
   );
 }
 
 /**
- * One OCR finding: compact multi-difference summary plus full evidence
- * disclosure. The exact comparison policy is unchanged; every segment pair
- * is shown instead of only the first.
+ * One OCR finding: a plain-language conclusion, the script-versus-artwork
+ * differences, and the raw reads behind a disclosure. The exact comparison
+ * policy is unchanged; every segment pair is shown instead of only the first.
+ * When a second look ran, each difference says what it found; the reads
+ * themselves are never presented as a pipeline to the author.
  */
-export function LetteringIssueCard({ issue }: { issue: PageIssue }) {
+export function LetteringIssueCard({ issue, secondLook }: {
+  issue: PageIssue;
+  /** Free retry of unfinished close-up reads; omitted where no action belongs. */
+  secondLook?: { onRetry: () => void; busy: boolean; error?: string };
+}) {
   const { t } = useI18n();
   const expected = readTextEvidence(issue, "expected_text=");
   const recognized = readTextEvidence(issue, "recognized_text=");
   const closeUp = readTextEvidence(issue, "crop_recognized_text=");
-  const cropStatus = cropCheckStatus(issue);
-  const cropIncomplete = issue.evidence.includes("crop_check_complete=false");
-  const lines = cropReadings(issue);
+  const { overall, readings } = assessTextCheck(issue);
+  const readingFor = (text?: string) => text === undefined ? undefined
+    : readings.find((reading) => normalizeLettering(reading.first) === normalizeLettering(text));
   const differences = expected && recognized ? alignLettering(expected, recognized) : null;
   const changedCount = differences?.filter((row) => row.type !== "same").length ?? 0;
   return (
@@ -127,19 +161,14 @@ export function LetteringIssueCard({ issue }: { issue: PageIssue }) {
           )}
         </StatusPill>
         <p className="mt-3 font-body text-sm font-bold">{t(ocrIssueTitle(issue))}</p>
-        <p className="mt-1 font-body text-xs leading-5 text-ink-black/75">
-          {t(cropStatus === "disagrees"
-            ? "The text checks disagree. Compare the saved artwork with the script before making changes."
-            : cropStatus === "inconclusive"
-              ? "The close-up text check was inconclusive. Compare the saved artwork with the script before making changes."
-              : "Possible wording difference. The checker can misread text; compare it with the saved artwork before making changes.")}
-        </p>
-        {cropIncomplete && (
-          <p className="mt-2 font-body text-xs leading-5 text-ink-black/75">
-            {t(issue.evidence.includes("crop_outcome_unknown=true")
-              ? "A close-up check did not return a result. Saved evidence is kept. You can retry the text check at no extra credit cost."
-              : "Some close-up checks are unfinished. You can retry the text check at no extra credit cost.")}
-          </p>
+        <p className="mt-1 font-body text-xs leading-5 text-ink-black/75">{t(SUMMARIES[overall ?? "none"])}</p>
+        {overall === "unchecked" && secondLook && (
+          <div className="mt-2">
+            <Button size="xs" variant="outline" disabled={secondLook.busy} onClick={secondLook.onRetry}>
+              {t(secondLook.busy ? "DOUBLE-CHECKING…" : "DOUBLE-CHECK")}
+            </Button>
+            {secondLook.error && <p role="alert" className="mt-1 text-xs text-hero-red">{secondLook.error}</p>}
+          </div>
         )}
       </div>
       {(expected || recognized) && (
@@ -148,20 +177,20 @@ export function LetteringIssueCard({ issue }: { issue: PageIssue }) {
         <dl className="grid gap-2 font-body text-xs leading-5">
           {expected && (
             <div>
-              <dt className="font-meta font-bold text-ink-muted">{t("EXPECTED SCRIPT")}</dt>
+              <dt className="font-meta font-bold text-ink-muted">{t("SCRIPT")}</dt>
               <dd>{expected.join(" · ") || t("No lettering")}</dd>
             </div>
           )}
           {recognized && (
             <div>
-              <dt className="font-meta font-bold text-ink-muted">{t("CHECKER READ")}</dt>
+              <dt className="font-meta font-bold text-ink-muted">{t("ON THE PAGE")}</dt>
               <dd>{recognized.join(" · ") || t("No readable lettering found")}</dd>
             </div>
           )}
-          {closeUp && (
+          {closeUp && closeUp.length > 0 && (
             <div>
-              <dt className="font-meta font-bold text-ink-muted">{t("CLOSE-UP READ")}</dt>
-              <dd>{closeUp.join(" · ") || t(cropIncomplete ? "Close-up result unavailable" : "No readable lettering found")}</dd>
+              <dt className="font-meta font-bold text-ink-muted">{t("CLOSER LOOK")}</dt>
+              <dd>{closeUp.join(" · ")}</dd>
             </div>
           )}
         </dl>
@@ -176,7 +205,7 @@ export function LetteringIssueCard({ issue }: { issue: PageIssue }) {
             {differences
               .filter((row) => row.type !== "same")
               .map((row, index) => (
-                <DifferenceRow key={`${row.type}:${index}`} difference={row} secondaryRead={cropStatus !== null} />
+                <DifferenceRow key={`${row.type}:${index}`} difference={row} reading={readingFor(row.recognized)} />
               ))}
           </ul>
           {differences.some((row) => row.type === "same") && (
@@ -193,27 +222,6 @@ export function LetteringIssueCard({ issue }: { issue: PageIssue }) {
               </ul>
             </details>
           )}
-        </div>
-      )}
-      {lines.length > 0 ? (
-        <div className="font-body text-xs leading-5">
-          <p className="font-bold">{t("CLOSE-UP READ")}</p>
-          <ul className="mt-1 space-y-2">
-            {lines.map((line, index) => (
-              <li key={index}>
-                <p><span className="font-bold">{t("First read:")} </span>{line.first}</p>
-                <p><span className="font-bold">{t("Close-up:")} </span>{line.closeUp || t(cropIncomplete ? "Close-up result unavailable" : "No readable lettering found")}</p>
-                <p className="font-meta text-ink-muted">{t(line.verdict === "agrees"
-                  ? "Both reads match"
-                  : line.verdict === "disagrees" ? "The reads differ" : "Close-up read unclear")}</p>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : closeUp && closeUp.length > 0 && (
-        <div className="font-body text-xs leading-5">
-          <p className="font-bold">{t("CLOSE-UP READ")}</p>
-          <ul className="mt-1 space-y-1">{closeUp.map((text, index) => <li key={index}>{text}</li>)}</ul>
         </div>
       )}
       <p className="font-body text-xs leading-5 text-ink-muted">

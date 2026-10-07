@@ -3438,5 +3438,22 @@
   "This reference could not be completed.": "Cette référence n’a pas pu être terminée.",
   "A close-up check did not return a result. Saved evidence is kept. You can retry the text check at no extra credit cost.": "Une vérification du texte en gros plan n’a pas renvoyé de résultat. Les résultats enregistrés sont conservés. Vous pouvez relancer la vérification sans dépenser de crédits supplémentaires.",
   "Some close-up checks are unfinished. You can retry the text check at no extra credit cost.": "Certaines vérifications du texte en gros plan sont inachevées. Vous pouvez relancer la vérification sans dépenser de crédits supplémentaires.",
-  "Close-up result unavailable": "Résultat de la vérification en gros plan indisponible"
+  "Close-up result unavailable": "Résultat de la vérification en gros plan indisponible",
+  "This was read the same way twice, so the artwork probably differs from the script. Compare it with the artwork before making changes.": "Le texte a été lu deux fois de la même façon : l’illustration diffère probablement du script. Comparez-la avant d’apporter des modifications.",
+  "A closer look matches the script, so the artwork is probably fine. If it looks right, choose Not a problem.": "Une lecture plus attentive correspond au script : l’illustration est probablement correcte. Si c’est le cas, choisissez Pas un problème.",
+  "This lettering was hard to read. Compare the artwork with the script before making changes.": "Ce lettrage était difficile à lire. Comparez l’illustration avec le script avant d’apporter des modifications.",
+  "Read the same way twice.": "Lu de la même façon deux fois.",
+  "A closer look reads “{text}”, matching the script.": "Une lecture plus attentive donne « {text} », conforme au script.",
+  "Hard to read, even up close.": "Difficile à lire, même de près.",
+  "Not double-checked.": "Pas revérifié.",
+  "Script:": "Script :",
+  "On the page:": "Sur la page :",
+  "SCRIPT": "SCRIPT",
+  "ON THE PAGE": "SUR LA PAGE",
+  "CLOSER LOOK": "LECTURE ATTENTIVE",
+  "Probably a misread": "Probablement une erreur de lecture",
+  "Hard to read": "Difficile à lire",
+  "This lettering hasn’t been double-checked yet. Compare the artwork with the script, or double-check it now at no cost.": "Ce lettrage n’a pas encore été revérifié. Comparez l’illustration avec le script, ou revérifiez-le maintenant sans frais.",
+  "DOUBLE-CHECK": "REVÉRIFIER",
+  "DOUBLE-CHECKING…": "REVÉRIFICATION…"
 }

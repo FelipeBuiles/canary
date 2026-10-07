@@ -2,7 +2,7 @@ import { useCompletePage } from "../../api/queries";
 import { pageRenderUrl } from "../../api/pages";
 import { useI18n } from "../../i18n";
 import type { PageIssue } from "../../types/api";
-import { readTextEvidence } from "./lettering";
+import { normalizeLettering as normalize, readTextEvidence } from "./lettering";
 
 /** Display evidence from the exact revision the checker saw, never a newer redraw. */
 export function TextCheckArtwork({ project, issue }: { project: string; issue: PageIssue }) {
@@ -38,9 +38,4 @@ export function TextCheckArtwork({ project, issue }: { project: string; issue: P
       {t("Open full-size artwork")} · {t("Revision")} {issue.render_revision}
     </a>
   </div>;
-}
-
-function normalize(text: string): string {
-  return text.normalize("NFC").replace(/[‘’]/g, "'").replace(/[“”]/g, '"')
-    .replace(/[—–]/g, "-").replace(/…/g, "...").replace(/\s+/g, " ").trim();
 }

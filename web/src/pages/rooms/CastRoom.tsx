@@ -1537,12 +1537,10 @@ export function CastRoom() {
         onClose={() => setConfirmCast(false)}
         busy={isPipelineRunning || !castResumeEstimate}
       />
-      <ApprovalBar
+      {!projectBusy && !stageRegenerating && !isPipelineRunning && !continuing && <ApprovalBar
         next={canStartCast ? t("Start the character and place references when you are ready")
           : missingAnchors.length > 0
           ? t("Add the missing descriptions above to continue")
-          : projectBusy && (needsApproval || recheckOnly)
-          ? t("A reference is still being drawn. Continue unlocks when it finishes.")
           : recheckOnly
           ? t("Scenewright checks your corrected cast, then adapts the book and plans complete pages — automatically")
           : checkpointAction === "resume"
@@ -1573,7 +1571,7 @@ export function CastRoom() {
         busy={approveStage.isPending || isPipelineRunning || continuing}
         error={actionError}
         secondary={<RerunStageAction project={id} stage="cast" label="cast" disabled={stageRegenerating} />}
-      />
+      />}
     </RoomShell>
   );
 }

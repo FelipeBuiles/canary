@@ -640,6 +640,17 @@ export function useAnalyzeCompletePage() {
 }
 
 
+/** Retry unfinished close-up reads for one page; free to the author. */
+export function useSecondLook() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ project, pageNumber }: { project: string; pageNumber: number }) =>
+      analyzeCompletePage(project, pageNumber, { secondLookOnly: true }),
+    onSettled: (_data, _error, { project, pageNumber }) =>
+      invalidatePageReview(qc, project, pageNumber),
+  });
+}
+
 export function useAcceptPageIssue() {
   const qc = useQueryClient();
   return useMutation({

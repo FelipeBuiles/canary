@@ -269,3 +269,18 @@ it("queues every missing proof at once, even while another proof is drawing", as
   state.suggestions = undefined;
   state.stylesMeta = {};
 });
+
+it.each(["queued", "running"] as const)("hides the approval footer while style suggestions are %s", (status) => {
+  const previousMeta = state.stylesMeta;
+  state.stylesMeta = { is_suggesting: true };
+  state.jobs = [{ id: "style-batch", project_name: "book", kind: "style_suggest", label: "Style suggestions", payload: {}, status, queue_position: null, queued_at: new Date().toISOString(), started_at: null, finished_at: null, error: null }];
+  try {
+    render(<I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
+      <Route path="/projects/:id/style" element={<StyleRoom />} />
+    </Routes></MemoryRouter></I18nProvider>);
+    expect(screen.queryByRole("button", { name: /Continue for/ })).toBeNull();
+  } finally {
+    state.stylesMeta = previousMeta;
+    state.jobs = [];
+  }
+});

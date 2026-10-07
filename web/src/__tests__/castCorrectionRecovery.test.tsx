@@ -94,7 +94,10 @@ it("queues a character change while Cast is generating other references", async 
   server.submit.mockResolvedValue({ status: "queued", char_id: "cat", job });
   const user = userEvent.setup();
   mount(client);
-  await user.click(await screen.findByRole("button", { name: "Review & adjust · Companion" }));
+  await screen.findByRole("button", { name: "Review & adjust · Companion" });
+  expect(document.querySelector("footer")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Rerun cast/ })).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Review & adjust · Companion" }));
   await user.type(screen.getByRole("textbox"), "Give her a darker tail.");
   await user.click(await screen.findByRole("button", { name: /REGENERATE WITH CHANGE.*credits/ }));
   await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "REGENERATE WITH CHANGE" }));

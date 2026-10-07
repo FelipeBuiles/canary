@@ -198,8 +198,9 @@ def test_hosted_only_route_estimate_and_admission_are_free(harness, monkeypatch)
     case[3].write_page(case[0])
     case[3].write_provenance(PageGenerationProvenance(render=case[1],
         usage=UsageRecord(provider="fixture", model="fixture", operation="image", cost_usd=0)))
+    # The optional second look never makes the page unchecked or asks the author to pay.
     recovery = pages._analysis_recovery(case[3], 34)
-    assert recovery == {"status": "requires_ocr", "requires_paid_call": True, "requires_primary_ocr": False}
+    assert recovery == {"status": "checked", "requires_paid_call": False}
     project = (case[3].project_dir, Config(), None)
     quote = pages.estimate_page_analysis(34, project)
     assert quote["estimate_credits"] == 0
@@ -213,7 +214,7 @@ def test_hosted_only_route_estimate_and_admission_are_free(harness, monkeypatch)
     monkeypatch.setattr("novel_to_comic.server.credited_job.run_credited_page_check", admitted)
     asyncio.run(pages.analyze_page(34, "fixture", project, "author", allow_paid=False))
     assert not calls and not admissions
-    asyncio.run(pages.analyze_page(34, "fixture", project, "author", allow_paid=True))
+    asyncio.run(pages.analyze_page(34, "fixture", project, "author", second_look_only=True))
     assert len(calls) == len(admissions) == 1
     assert admissions[0]["estimated_cost_usd"] == 0
     assert admissions[0]["operations"] == ()
@@ -240,3 +241,72 @@ def test_partial_success_retries_only_the_unfinished_crop(harness, monkeypatch):
     final = analyze(case, retry_crop_ocr=True)
     assert len(calls) == 3 and final.crop_verification.complete
     assert case[3].textract_attempts(34, 1, calls[0].recognition_sha256) == (first_receipt,)
+
+
+def test_second_look_only_refuses_work_needing_a_primary_read(harness, monkeypatch):
+    from fastapi import HTTPException
+    from novel_to_comic.models.draw import PageGenerationProvenance
+    from novel_to_comic.server.routers import pages
+    case, calls, _ = harness
+    case[3].write_page(case[0])
+    case[3].write_provenance(PageGenerationProvenance(render=case[1],
+        usage=UsageRecord(provider="fixture", model="fixture", operation="image", cost_usd=0)))
+    monkeypatch.setattr("novel_to_comic.server.credited_job.run_credited_page_check",
+        lambda **kwargs: pytest.fail("admitted a primary read"))
+    with pytest.raises(HTTPException) as refused:
+        asyncio.run(pages.analyze_page(34, "fixture", (case[3].project_dir, Config(), None), "author",
+            second_look_only=True))
+    assert refused.value.status_code == 409 and not calls
+
+
+def test_enabling_hosted_reads_keeps_saved_checks_current(monkeypatch):
+    monkeypatch.delenv("CANARY_TEXTRACT_ENABLED", raising=False)
+    monkeypatch.setattr(page_review, "_crop_reader", lambda: None)
+    before = page_review.current_draw_validator_version()
+    monkeypatch.setenv("CANARY_TEXTRACT_ENABLED", "1")
+    assert page_review.current_draw_validator_version() == before
+
+
+def test_hyphenated_line_wrap_is_one_word():
+    from novel_to_comic.models.crop_ocr import CropOCRLine
+    lines = (CropOCRLine(text="It was won-", confidence=1, box=(0, 0, 10, 5)),
+             CropOCRLine(text="derful.", confidence=1, box=(0, 6, 10, 11)))
+    assert "It was wonderful." in hosted.joined_variants(lines)
+    compound = (CropOCRLine(text="A well-", confidence=1, box=(0, 0, 10, 5)),
+                CropOCRLine(text="known face", confidence=1, box=(0, 6, 10, 11)))
+    assert "A well-known face" in hosted.joined_variants(compound)
+    dash = (CropOCRLine(text="Wait -", confidence=1, box=(0, 0, 10, 5)),
+            CropOCRLine(text="what?", confidence=1, box=(0, 6, 10, 11)))
+    assert hosted.joined_variants(dash) == ("Wait - what?",)
+
+
+def test_gateway_refusal_and_unreachable_gateway_are_known_failures(harness, monkeypatch):
+    import httpx
+    case, _, _ = harness
+    plan = hosted.prepare_plan(render=case[1], extraction=case[4], disputed=case[4].lettering[:1],
+        artifacts=case[3], deadline=time.monotonic()+5)
+    attempt = hosted._claim(artifacts=case[3], render=case[1], crop=plan.crops[0],
+        expires_at=time.time()+5, retry=False, retry_before=time.time())
+    image = case[3].read_textract_crop(34, 1, attempt.recognition_sha256)
+    original = httpx.AsyncClient
+    def respond(handler):
+        monkeypatch.setattr(httpx, "AsyncClient",
+            lambda **kwargs: original(transport=httpx.MockTransport(handler), **kwargs))
+        return asyncio.run(REAL_SUBMIT(Config(), image, attempt))
+    assert respond(lambda request: httpx.Response(401))["status"] == "not_submitted"
+    assert respond(lambda request: httpx.Response(429))["status"] == "not_submitted"
+    def refuse(request):
+        raise httpx.ConnectError("refused")
+    assert respond(refuse) == {"status": "not_submitted", "error_code": "gateway_unreachable"}
+    with pytest.raises(httpx.HTTPStatusError):
+        respond(lambda request: httpx.Response(408))  # May have reached the provider.
+
+
+def test_usage_projection_failure_still_submits_once(harness, monkeypatch):
+    case, calls, _ = harness
+    async def broken(**kwargs):
+        raise RuntimeError("database unavailable")
+    monkeypatch.setattr("novel_to_comic.ai.client._insert_event_async", broken)
+    result = analyze(case)
+    assert len(calls) == 1 and result.crop_verification.complete
+    assert result.crop_verification.readings[0].status == "read"

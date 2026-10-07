@@ -1140,8 +1140,9 @@ The opt-in [Textract close-up reader](textract-ocr.md) submits bounded disputed
 integrated/baked crops during admitted checks. It retains raw provider evidence
 and attempts, never submits during cached revalidation, and requires explicit
 retry after unknown outcomes. Canary absorbs its fee; primary OCR funding is
-unchanged. Hosted-only recovery uses the existing `requires_ocr` status with
-`requires_primary_ocr: false` and a zero author-credit estimate.
+unchanged. An unfinished close-up read never makes a page unchecked; the author
+retries it from the finding (`analyze?second_look_only=true`), which refuses
+any work needing a primary read and reserves no author credits.
 
 The disabled-by-default [crop OCR experiment](crop-ocr-experiment.md) can add
 a local, blind PaddleOCR read of mismatching integrated/baked lettering regions.

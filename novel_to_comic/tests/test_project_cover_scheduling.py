@@ -76,6 +76,28 @@ def test_missing_character_reference_is_rejected_before_credit_reservation(tmp_p
     enqueue.assert_not_called()
 
 
+@pytest.mark.parametrize("part_id", [None, "part_0001"])
+def test_cover_uses_cast_roster_instead_of_incidental_participants(tmp_path, part_id):
+    from novel_to_comic import artifacts
+    from novel_to_comic.workspace import create_part_workspace
+    from tests.test_cast_roster import bible
+
+    source = bible()
+    # A retained reference keeps a less frequent character eligible for covers.
+    reference = artifacts.character_ref_sheet_path(tmp_path, "guard")
+    reference.parent.mkdir(parents=True)
+    reference.write_bytes(b"retained reference")
+    workspace = create_part_workspace(tmp_path, part_id) if part_id else tmp_path
+    original = source.model_dump()
+
+    assert [c.id for c in cover_operations._cover_characters(source, workspace)] == ["ari", "guard"]
+    assert source.model_dump() == original
+
+    # Missing required identities must still reach preflight, not be dropped.
+    source.characters[1].cast_required = True
+    assert [c.id for c in cover_operations._cover_characters(source, workspace)] == ["ari", "visitor", "guard"]
+
+
 def test_cast_estimate_excludes_deferred_cover(tmp_path, monkeypatch):
     estimate = {"estimate_credits": 20, "reserved_credits": 25, "reservation_multiplier": 1.25,
                 "confidence": "usually_within_estimate", "funding": "api"}

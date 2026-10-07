@@ -1,3 +1,4 @@
+import { msg } from "../../locales/messages";
 import type { PageIssue } from "../../types/api";
 
 export const OCR_ISSUE_TYPES = new Set([
@@ -273,9 +274,62 @@ const OCR_TITLES: Record<string, string> = {
   reordered_lettering: "The lettering may be in the wrong reading order",
 };
 
+/** Display-level text equivalence: typography and whitespace never count as a difference. */
+export function normalizeLettering(text: string): string {
+  return text.normalize("NFC").replace(/[‘’]/g, "'").replace(/[“”]/g, '"')
+    .replace(/[—–]/g, "-").replace(/…/g, "...").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * What the second look means for the author, per disputed line. The raw
+ * verdict compares the two blind reads with each other; only here, for
+ * wording, is the second read set against the script. It never resolves the
+ * finding: the author still decides from the artwork.
+ * - `likely_error`: both reads saw the same difference from the script.
+ * - `likely_misread`: the second read matches the script.
+ * - `unclear`: weak, unreadable, or still unchecked.
+ */
+export type LineAssessment = "likely_error" | "likely_misread" | "unclear";
+export type TextCheckAssessment = LineAssessment | "unchecked";
+
+export interface AssessedReading extends CropReading { assessment: LineAssessment }
+
+/** A hyphen-wrapped word ("won- derful") may be one word or a kept compound. */
+function wrapVariants(text: string): string[] {
+  if (!text) return [];
+  const wrap = /(?<=\p{L})- (?=\p{L})/gu;
+  return [text, text.replace(wrap, ""), text.replace(wrap, "-")];
+}
+
+export function assessTextCheck(issue: PageIssue): {
+  overall: TextCheckAssessment | null;
+  readings: AssessedReading[];
+} {
+  const status = cropCheckStatus(issue);
+  if (status === null) return { overall: null, readings: [] };
+  const script = new Set((readTextEvidence(issue, "expected_text=") ?? []).map(normalizeLettering));
+  const readings = cropReadings(issue).map((reading): AssessedReading => ({
+    ...reading,
+    assessment: reading.verdict === "agrees"
+      ? "likely_error"
+      : reading.verdict === "disagrees" && wrapVariants(reading.closeUp).some((text) => script.has(normalizeLettering(text)))
+        ? "likely_misread"
+        : "unclear",
+  }));
+  const incomplete = issue.evidence.includes("crop_check_complete=false");
+  const overall: TextCheckAssessment = readings.some((item) => item.assessment === "likely_error")
+    || (readings.length === 0 && status === "agrees")
+    ? "likely_error"
+    : readings.length > 0 && readings.every((item) => item.assessment === "likely_misread")
+      ? "likely_misread"
+      : incomplete ? "unchecked" : "unclear";
+  return { overall, readings };
+}
+
 export function ocrIssueTitle(issue: PageIssue): string {
-  const cropStatus = cropCheckStatus(issue);
-  if (cropStatus === "disagrees" || cropStatus === "inconclusive") return "Text check is uncertain";
+  const { overall } = assessTextCheck(issue);
+  if (overall === "likely_misread") return msg("Probably a misread");
+  if (overall === "unclear" || overall === "unchecked") return msg("Hard to read");
   return OCR_TITLES[issue.issue_type] ?? issue.requested_correction;
 }
 

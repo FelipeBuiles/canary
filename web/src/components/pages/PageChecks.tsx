@@ -5,7 +5,7 @@ import { msg } from "../../locales/messages";
 import { readableAnchor } from "../../lib/visualAnchor";
 import type { CompletePageSummary, PageIssue } from "../../types/api";
 import { referenceFileUrl } from "../../api/pages";
-import { useAcceptPageIssue, useDismissPageIssue } from "../../api/queries";
+import { useAcceptPageIssue, useDismissPageIssue, useSecondLook } from "../../api/queries";
 import { useCachedVisualReview, useReviewPageVisuals, useVisualReviewEstimate } from "../../api/pageRevisions";
 import { Button } from "../ui/Button";
 import { Surface } from "../ui/Surface";
@@ -69,6 +69,7 @@ export function PageChecks({
   const pageNumber = item.page.page_number;
   const accept = useAcceptPageIssue();
   const dismiss = useDismissPageIssue();
+  const secondLook = useSecondLook();
   const [actionError, setActionError] = useState<{ issueId: string; error: Error } | null>(null);
   const textChecked = item.analysis_recovery?.status === "checked";
   const visualChecked = !!item.visual_reviewed;
@@ -118,7 +119,11 @@ export function PageChecks({
                       {issue.status === "revised" && ` · ${t("Redrawn — does it look fixed?")}`}
                     </p>
                     {isOcrIssue(issue) ? (
-                      <><TextCheckArtwork project={project} issue={issue} /><LetteringIssueCard issue={issue} /></>
+                      <><TextCheckArtwork project={project} issue={issue} /><LetteringIssueCard issue={issue} secondLook={{
+                        onRetry: () => secondLook.mutate({ project, pageNumber }),
+                        busy: secondLook.isPending,
+                        error: secondLook.error?.message,
+                      }} /></>
                     ) : (
                       <>
                         {issue.evidence.length > 0 && (
