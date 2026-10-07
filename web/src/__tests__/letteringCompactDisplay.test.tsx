@@ -50,4 +50,23 @@ describe("LetteringIssueCard evidence display", () => {
     expect(definitions.some((text) => text.includes(expectedPassage))).toBe(true);
     expect(definitions.some((text) => text.includes(recognizedPassage))).toBe(true);
   });
+  it("shows independent close-up evidence and uncertainty without claiming a fix", () => {
+    const issue = singleTypoIssue();
+    issue.evidence.push("crop_check_status=disagrees", `crop_recognized_text=${JSON.stringify([expectedPassage])}`);
+    const { container } = render(<I18nProvider><LetteringIssueCard issue={issue} /></I18nProvider>);
+    expect(container.textContent).toContain("Text check is uncertain");
+    expect(container.textContent).toContain("The text checks disagree.");
+    expect(container.textContent).toContain("First read:");
+    expect(container.textContent).toContain("CLOSE-UP READ");
+    expect(container.querySelectorAll("dd")[2]?.textContent).toContain(expectedPassage);
+    expect(container.textContent).not.toContain("CONFIRMED");
+  });
+  it("treats an unavailable or weak close-up read as inconclusive", () => {
+    const issue = singleTypoIssue();
+    issue.evidence.push("crop_check_status=inconclusive", "crop_recognized_text=[]");
+    const { container } = render(<I18nProvider><LetteringIssueCard issue={issue} /></I18nProvider>);
+    expect(container.textContent).toContain("Text check is uncertain");
+    expect(container.textContent).toContain("The close-up text check was inconclusive.");
+    expect(container.textContent).toContain("No readable lettering found");
+  });
 });

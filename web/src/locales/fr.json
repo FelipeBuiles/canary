@@ -3377,5 +3377,10 @@
   "↺ RETRY PANEL PREPARATION": "↺ RELANCER LA PRÉPARATION",
   "▶ DRAW ALL PANELS": "▶ DESSINER TOUTES LES CASES",
   "Published part": "Partie publiée",
-  "Replace the series public book with this part": "Remplacer le livre public de la série par cette partie"
+  "Replace the series public book with this part": "Remplacer le livre public de la série par cette partie",
+  "CLOSE-UP READ": "LECTURE EN GROS PLAN",
+  "First read:": "Première lecture :",
+  "Text check is uncertain": "La vérification du texte est incertaine",
+  "The close-up text check was inconclusive. Compare the saved artwork with the script before making changes.": "La vérification du texte en gros plan est non concluante. Comparez le dessin enregistré au script avant de faire des modifications.",
+  "The text checks disagree. Compare the saved artwork with the script before making changes.": "Les vérifications du texte ne concordent pas. Comparez le dessin enregistré au script avant de faire des modifications."
 }

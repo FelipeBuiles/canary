@@ -26,6 +26,12 @@ export function readTextEvidence(issue: PageIssue, prefix: string): string[] | n
   }
 }
 
+export function cropCheckStatus(issue: PageIssue): "agrees" | "disagrees" | "inconclusive" | null {
+  const entry = issue.evidence.find((item) => item.startsWith("crop_check_status="));
+  const value = entry?.slice("crop_check_status=".length);
+  return value === "agrees" || value === "disagrees" || value === "inconclusive" ? value : null;
+}
+
 export interface SegmentDifference {
   type: "same" | "changed" | "missing" | "extra" | "moved";
   expected?: string;
@@ -246,6 +252,8 @@ const OCR_TITLES: Record<string, string> = {
 };
 
 export function ocrIssueTitle(issue: PageIssue): string {
+  const cropStatus = cropCheckStatus(issue);
+  if (cropStatus === "disagrees" || cropStatus === "inconclusive") return "Text check is uncertain";
   return OCR_TITLES[issue.issue_type] ?? issue.requested_correction;
 }
 

@@ -19,6 +19,7 @@ from uuid import uuid4
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from novel_to_comic.models.adaptation import AdaptationBrief, BookAdaptation
+from novel_to_comic.models.crop_ocr import CropOCRReport
 from novel_to_comic.models.draw import (
     BookEdition,
     FrozenPageGenerationRequest,
@@ -1063,6 +1064,24 @@ class TargetArtifacts:
     def read_raw_ocr(self, page_number: int, render_revision: int) -> RawOCRObservation:
         return self._read_model(
             "raw_ocr", self.raw_ocr_path(page_number, render_revision), RawOCRObservation
+        )
+
+    def crop_ocr_path(self, page_number: int, render_revision: int, input_sha256: str) -> Path:
+        if re.fullmatch(r"[0-9a-f]{64}", input_sha256) is None:
+            raise ValueError("Invalid crop OCR input hash")
+        return self.analysis_path(page_number, render_revision).with_name(
+            f"crop_ocr_{render_revision:03d}_{input_sha256}.json"
+        )
+
+    def write_crop_ocr(self, report: CropOCRReport) -> None:
+        self._write_immutable_model(
+            self.crop_ocr_path(report.page_number, report.render_revision, report.input_sha256),
+            report, CropOCRReport,
+        )
+
+    def read_crop_ocr(self, page_number: int, render_revision: int, input_sha256: str) -> CropOCRReport:
+        return self._read_model(
+            "crop_ocr", self.crop_ocr_path(page_number, render_revision, input_sha256), CropOCRReport,
         )
 
     @locked_mutation
