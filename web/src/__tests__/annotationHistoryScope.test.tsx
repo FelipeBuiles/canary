@@ -7,6 +7,7 @@ import type { PageIssue } from "../types/api";
 
 vi.mock("../api/queries", () => ({
   useAdaptation: () => ({ data: { beats: [] }, isLoading: false, error: null }),
+  useCompletePage: () => ({ data: undefined }),
 }));
 
 vi.mock("../api/pageRevisions", async (importOriginal) => {

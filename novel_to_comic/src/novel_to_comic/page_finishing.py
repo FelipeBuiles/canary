@@ -46,6 +46,11 @@ _CREATIVE_FAILURES = {
 }
 
 
+def _native_dimension_render(render: PageRenderRevision) -> bool:
+    """Renders from the Codex route keep the provider's native page size."""
+    return render.provider == "codex-dev" and render.model == "gpt-image-2"
+
+
 def _failure(
     *,
     page_number: int,
@@ -587,13 +592,14 @@ def finish_book(
         if not clear_derived_outputs and not formats
         else None
     )
-    if clear_derived_outputs:
-        _clear_derived_outputs(artifacts)
     plan = artifacts.read_plan()
     adaptation = artifacts.read_adaptation()
     edition = artifacts.read_book_edition()
-    native_dimensions = page_profile_uses_native_dimensions(edition.capability_profile)
-    automatic_native_geometry = native_dimensions and production is None
+    # Missing inputs fail before any current package is removed.
+    if clear_derived_outputs:
+        _clear_derived_outputs(artifacts)
+    edition_native_dimensions = page_profile_uses_native_dimensions(edition.capability_profile)
+    production_requested = production is not None
     if production is None:
         production = FinishProductionSpec(
             canvas_width=edition.capability_profile.output_width,
@@ -699,14 +705,12 @@ def finish_book(
         )
         failures.extend(render_failures)
         analysis: RenderAnalysis | None = None
+        # A render keeps the geometry of the route that drew it; pages retained
+        # across an edition profile advance are checked against their own route.
+        native_dimensions = edition_native_dimensions or (
+            render is not None and _native_dimension_render(render)
+        )
         if render is not None:
-            if render.provider != edition.capability_profile.provider or render.model != edition.capability_profile.model:
-                failures.append(_failure(
-                    page_number=page.page_number, owner_stage="draw", code="edition_model_mismatch",
-                    message="This render belongs to a different page model; regenerate the edition.",
-                    artifact_ids=(f"render_{render.revision:03d}",),
-                    evidence=(f"Render model={render.model}; edition model={edition.capability_profile.model}.",),
-                ))
             if render.is_stale_for(page):
                 failures.append(
                     _failure(
@@ -742,7 +746,7 @@ def finish_book(
                         evidence=("Pillow could not decode the complete-page image.",),
                     )
                 )
-            if automatic_native_geometry and width is not None and height is not None:
+            if native_dimensions and not production_requested and width is not None and height is not None:
                 page_production = FinishProductionSpec(
                     canvas_width=width, canvas_height=height, dpi=dpi,
                 )

@@ -116,10 +116,10 @@ export function PageChecks({
                   <div className="space-y-3">
                     <p className="font-meta text-xs font-bold uppercase tracking-wider text-ink-muted">
                       {t(label)}
-                      {issue.status === "revised" && ` · ${t("Redrawn — does it look fixed?")}`}
+                      {!pageIsDrawing && issue.status === "revised" && ` · ${t("Redrawn — does it look fixed?")}`}
                     </p>
                     {isOcrIssue(issue) ? (
-                      <><TextCheckArtwork project={project} issue={issue} /><LetteringIssueCard issue={issue} secondLook={{
+                      <><TextCheckArtwork project={project} issue={issue} /><LetteringIssueCard issue={issue} secondLook={pageIsDrawing ? undefined : {
                         onRetry: () => secondLook.mutate({ project, pageNumber }),
                         busy: secondLook.isPending,
                         error: secondLook.error?.message,
@@ -136,10 +136,10 @@ export function PageChecks({
                         </p>
                       </>
                     )}
-                    <div className="flex flex-wrap justify-end gap-2">
+                    {!pageIsDrawing && <div className="flex flex-wrap justify-end gap-2">
                       {issue.status === "revised" ? (
                         <>
-                          <Button size="xs" variant="outline" disabled={busy || pageIsDrawing} onClick={() => fix(issue)}>
+                          <Button size="xs" variant="outline" disabled={busy} onClick={() => fix(issue)}>
                             {t("STILL WRONG")}
                           </Button>
                           <Button size="xs" disabled={busy} onClick={() => decide(issue, false)}>
@@ -152,13 +152,13 @@ export function PageChecks({
                             {t(issue.issue_type === "manual_change" ? "WITHDRAW REQUEST" : "NOT A PROBLEM")}
                           </Button>
                           {issue.correction_owner === "draw" && issue.issue_type !== "manual_change" && (
-                            <Button size="xs" disabled={pageIsDrawing} onClick={() => fix(issue)}>
+                            <Button size="xs" onClick={() => fix(issue)}>
                               {t("FIX")}
                             </Button>
                           )}
                         </>
                       )}
-                    </div>
+                    </div>}
                     {actionError?.issueId === issue.id && (
                       <ErrorNotice error={actionError.error} operation="save" />
                     )}

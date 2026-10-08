@@ -1139,6 +1139,23 @@ def test_scp_adaptation_exports_visible_attribution_and_share_alike_page(tmp_pat
             assert credit.getpixel((10, 10)) != (15, 35, 55)
 
 
+def test_native_pages_retained_after_edition_profile_advance_export_at_native_size(tmp_path):
+    artifacts, _ = _write_valid_book(tmp_path, edition=_native_edition(), size=(123, 177))
+    native = artifacts.read_book_edition()
+    artifacts.replace_book_edition(BookEdition(
+        revision=native.revision + 1,
+        id=native.id,
+        capability_profile=_edition().capability_profile,
+    ))
+
+    result = finish_book(artifacts, formats=("cbz",))
+
+    assert result.preflight.ready_to_export
+    assert not result.preflight.pages[0].invariant_failures
+    assert not result.preflight.correction_requests
+    assert (result.preflight.pages[0].width, result.preflight.pages[0].height) == (123, 177)
+
+
 @pytest.mark.parametrize("production", [
     FinishProductionSpec(canvas_width=1696, canvas_height=2528),
     FinishProductionSpec(canvas_width=120, canvas_height=180, bleed_px=10),

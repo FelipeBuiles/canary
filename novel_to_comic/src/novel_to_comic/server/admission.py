@@ -86,12 +86,17 @@ def project_busy(app, key: str, part: str | None = None, *, series: bool = False
 
 
 def mutation_conflicts(app, key: str, suffix: str, part: str | None = None,
-                       method: str = "POST") -> bool:
+                       method: str = "POST", *, model_settings_only: bool = False) -> bool:
     """Resource policy: independent presentation edits do not own all artwork.
 
     ``part`` is the part a route addresses; another part's work never blocks it.
     """
     jobs = _active_jobs(app, key)
+    if model_settings_only:
+        # Page jobs already own serialized Config and frozen request snapshots.
+        # New model choices change future work only. Other jobs may publish
+        # project config, so keep their existing exclusion.
+        return any(job.kind != "complete_page_draw" for job in jobs)
     if part is not None:
         if method == "PATCH" and suffix == "":
             return False  # renaming a part changes no work
@@ -285,6 +290,17 @@ async def admission_middleware(request, call_next):
                 raise HTTPException(503, {"code": "credits_unavailable", "message": "Credit authorization is temporarily unavailable. Try again when service is ready."})
             pkey = project_key(account, project_id)
             part = part_route.group(1) if part_route else None
+            model_settings_only = False
+            if request.method == "PATCH" and suffix.rstrip("/") == "/config":
+                try:
+                    settings = json.loads(body)
+                except ValueError:
+                    settings = None
+                model_settings_only = (
+                    isinstance(settings, dict)
+                    and set(settings) == {"dev_model_selections"}
+                    and isinstance(settings["dev_model_selections"], dict)
+                )
             review_or_queue = request.method == "POST" and bool(_QUEUED.fullmatch(suffix) or _REVIEW.fullmatch(suffix))
             if _REVIEW.fullmatch(suffix) and review_conflicts(request.app, pkey, suffix, part):
                 raise HTTPException(409, "This review's saved evidence is being updated. Other reviews remain available.")
@@ -292,7 +308,10 @@ async def admission_middleware(request, call_next):
                    and (part is None or _job_part(job) in {part, None})
                    for job in generation_jobs_snapshot(request.app)):
                 raise HTTPException(409, "Wait for project lettering translation to finish before changing this project.")
-            if not review_or_queue and not _TARGETED.fullmatch(suffix) and mutation_conflicts(request.app, pkey, suffix, part, request.method):
+            if not review_or_queue and not _TARGETED.fullmatch(suffix) and mutation_conflicts(
+                request.app, pkey, suffix, part, request.method,
+                model_settings_only=model_settings_only,
+            ):
                 raise HTTPException(409, "Wait for all project jobs to finish before changing this project.")
             if not review_or_queue and _TARGETED.fullmatch(suffix):
                 if any(job.project_name == pkey and job.status in {"queued", "running"}

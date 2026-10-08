@@ -1159,6 +1159,15 @@ and uncertainty independently of OCR; it does not certify a page as correct.
 A saved visual report is reusable only while the canonical page, exact render
 bytes, approved reference bytes, review model, prompt, and schema still digest
 identically; otherwise the report is null until a matching paid review lands.
+Reviews receive prior visual concerns from ancestor renders under the same
+canonical page and approved reference set. A repeated concern links to its
+existing issue ID when the subject, panel, feature and expected outcome match;
+new concerns get new IDs. Closed author decisions remain closed, and a repeated
+finding does not create another dismissal task or certify a correction. The
+immutable prior evidence enters the review digest; mutable decisions do not,
+so clearing an issue does not invalidate or repay the review. Unknown IDs and
+panel/category mismatches are rejected. Updated prompt/schema versions require
+a new check; saved requests, images and older reports are never rewritten.
 Canonical lettering is immutable for Draw: story-source wording changes return
 to Adapt/Plan, never image correction. Display wording/translation changes use
 Pages Lettering, leaving Adapt and base art unchanged. Missing or stale OCR is
@@ -1169,10 +1178,10 @@ author-selected batch — linked tracked issues and/or new manual
 instructions — where each change carries an editable instruction plus
 normalized page-fraction marks (origin top-left), an optional author note, and
 explicitly selected source passages. Bookwide beat summaries, treatment spine,
-appearance chronology, and continuity travel with every correction;
-author-selected passages retain their source context and only auto-gathered
-page units are budget-truncated. Hybrid image prompts redact long exact
-publishable phrases from this read-only context rather than reintroducing them
+appearance chronology, and continuity are compiled into every correction's
+provenance; author-selected passages retain their source context and only
+auto-gathered page units are budget-truncated. Hybrid image prompts redact long exact
+publishable phrases from read-only context rather than reintroducing them
 as typesetting instructions. Preview compiles, validates lineage (canonical
 revision/SHA, parent render revision/bytes), and estimates cost without
 spending or mutating issues; manual issues are created deterministically
@@ -1184,6 +1193,23 @@ per render revision — null for initial draws. A generated visual fix stays
 fixes may resolve by OCR. Finish checks artifact and render lineage,
 state citations, unresolved issues, dimensions, and packaging. It does not
 invoke a creative model.
+
+Corrections use a short plain-text edit prompt, not the page-generation
+specification: the requested changes (with marks and regions as page
+percentages) come first, then "keep everything else as in Image 1" with the
+rendering-fidelity block, then constraints, and the changes are restated last.
+Image 1 is the parent page; constraints bind each approved identity/state/style
+reference to its actual upload position (`Image N (asset-X)`), keep visual
+anchors and continuity guards verbatim, list panel cast, pinned geometry,
+earlier author requests and exact lettering (or the hybrid no-lettering rule).
+Original panel acting and staging, the style essay, treatment spine,
+chronology and continuity are omitted because Image 1 already carries them;
+only page/neighboring beat summaries and author-selected passages remain as
+reference. Full book context remains in provenance. Prompt priority is not
+proof that the model applied the edit. An older tracked visual
+concern can target the current render only when the normal issue lineage matches
+or a saved visual report explicitly links that concern to those exact current
+pixels. Confirming such a revised concern records the render the author inspected.
 
 Correction lineage retains the exact original producing prompt in
 `PageRenderCorrection.retained_instructions`, then carries prior correction

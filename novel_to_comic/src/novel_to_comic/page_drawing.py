@@ -550,6 +550,163 @@ def _off_canvas_handle(prefix: str, index: int) -> str:
     return f"{prefix}-{suffix}"
 
 
+def _edit_image_numbers(payload: dict) -> dict[str, int]:
+    """One-based upload positions: Image 1 is the parent page on every transport.
+
+    Images APIs do not interleave Vertex's textual asset labels, so authorities
+    are bound to their actual upload order, which follows asset order.
+    """
+    handles = dict.fromkeys(ref["image"] for ref in payload["approved_page_references"])
+    style = payload.get("selected_style_proof")
+    if style is not None:
+        handles[style["image"]] = None
+    return {
+        handle: index
+        for index, handle in enumerate(sorted(handles, key=lambda handle: (len(handle), handle)), start=2)
+    }
+
+
+def _percent_box(points: list[tuple[float, float]]) -> str:
+    xs = [x for x, _ in points]
+    ys = [y for _, y in points]
+    return (f"{round(min(xs) * 100)}-{round(max(xs) * 100)}% across, "
+            f"{round(min(ys) * 100)}-{round(max(ys) * 100)}% down the page")
+
+
+def _edit_prompt(
+    payload: dict,
+    page: ComicPage,
+    correction_context: "PageCorrectionContext | None",
+    depiction: str,
+    exact_visible_lettering: bool,
+) -> str:
+    """A short, priority-ordered edit of Image 1.
+
+    The author's change leads and is restated last; everything after it is a
+    constraint, not a page specification. Image 1 already carries the page's
+    composition, style and story, so the original generation brief, story
+    spine and style essay are omitted from the provider prompt (they remain in
+    provenance). Approved anchors and guards stay verbatim.
+    """
+    edit = payload["complete_page_correction"]
+    numbers = _edit_image_numbers(payload)
+    lines = ["EDIT IMAGE 1. Image 1 is the current comic page. Return the complete page with only the "
+             "requested changes below applied.", "",
+             "REQUESTED CHANGES (top priority; each must be clearly visible in the output - keeping "
+             "Image 1's version of these details does not count):"]
+    summaries = []
+    for index, change in enumerate(edit["changes"], 1):
+        instruction = change["instruction"].strip()
+        summaries.append(instruction.split("\n\n", 1)[0].strip())
+        lines.append(f"{index}. {instruction}")
+        for mark in change.get("annotations", ()):
+            points = [(point["x"], point["y"]) for point in mark["points"]]
+            where = f"   Marked {mark['kind']}: {_percent_box(points)}"
+            if mark["kind"] == "arrow" and len(points) >= 2:
+                (x0, y0), (x1, y1) = points[0], points[-1]
+                where += f" (from {round(x0 * 100)}%,{round(y0 * 100)}% to {round(x1 * 100)}%,{round(y1 * 100)}%)"
+            details = " - ".join(part for part in (mark.get("label"), mark.get("note")) if part)
+            lines.append(where + (f": {details}" if details else ""))
+    for region in edit["parent_coordinate_regions"]:
+        lines.append(f"   Edit region: {_percent_box([(point['x'], point['y']) for point in region['polygon']])}")
+    if edit["author_note"]:
+        lines.append(f"Author note: {edit['author_note']}")
+    lines += [
+        "These changes override Image 1 and any original pose, gaze, expression, gesture or staging they "
+        "conflict with. When a change involves a pose, contact point, direction or object, redraw that "
+        "pose or object completely so the result is correct, in every panel the change affects.",
+        "",
+        "KEEP EVERYTHING ELSE EXACTLY AS IN IMAGE 1: panels, borders, framing, composition, characters, "
+        "colors, lighting, line work and lettering outside the requested changes. Do not redraw, restyle, "
+        "sharpen, re-texture or add detail to untouched areas; match Image 1's existing rendering where "
+        "the edit meets them.",
+        RENDERING_FIDELITY_BLOCK,
+        "",
+        "CONSTRAINTS (keep these while editing):",
+        "- Images 2 onward are approved reference sheets for identity, costume and design only. Never copy "
+        "their pose, facial expression, background or layout, and never draw them as extra panels.",
+    ]
+    known = {"image", "subject", "appearance", "identity", "visual_anchor", "continuity_guard", "art_direction"}
+    for reference in payload["approved_page_references"]:
+        detail = (f"- Image {numbers[reference['image']]} ({reference['image']}) = "
+                  f"{reference['appearance']} ({reference['subject']})")
+        binding = {key: value for key, value in reference.items() if key not in known}
+        if binding:
+            detail += f"; sheet binding {json.dumps(binding, ensure_ascii=False, separators=(',', ':'))}"
+        if reference.get("identity"):
+            detail += f"; {reference['identity']}"
+        detail += f". Visual anchor: {reference['visual_anchor']}"
+        if reference.get("continuity_guard"):
+            detail += f" Continuity guard: {reference['continuity_guard']}"
+        if reference.get("art_direction"):
+            detail += f" Approved art direction: {reference['art_direction']}"
+        lines.append(detail)
+    style = payload.get("selected_style_proof")
+    if style is not None:
+        lines.append(f"- Image {numbers[style['image']]} ({style['image']}) = style proof, rendering reference "
+                     f"only: {style['authority']}")
+    for panel in payload["canonical_comic_page"]["content"]:
+        cast = []
+        for subject in panel["visible_subjects"]:
+            images = [f"Image {numbers[ref['image']]}" for ref in subject["references"] if ref["image"] in numbers]
+            labels = [ref["appearance"] for ref in subject["references"]]
+            written = subject.get("written_identity")
+            if written:
+                labels.append(written["appearance"])
+            cast.append(f"{' / '.join(dict.fromkeys(labels)) or subject['subject']} ({subject['subject']}"
+                        + (f", {', '.join(images)}" if images else "") + ")")
+        if cast:
+            lines.append(f"- Panel {panel['order']} shows: {'; '.join(cast)}.")
+        for subject in panel["visible_subjects"]:
+            written = subject.get("written_identity")
+            if written:
+                detail = f"- {written['appearance']} ({subject['subject']}, no reference image)"
+                if written.get("identity"):
+                    detail += f"; {written['identity']}"
+                detail += f". Visual anchor: {written['visual_anchor']}"
+                if written.get("continuity_guard"):
+                    detail += f" Continuity guard: {written['continuity_guard']}"
+                lines.append(detail)
+        if panel["pinned_geometry"]:
+            lines.append(f"- Panel {panel['order']} author-pinned geometry: "
+                         f"{json.dumps(panel['pinned_geometry'], ensure_ascii=False, separators=(',', ':'))}")
+    if edit["retained_render_intent"]:
+        lines.append("- Earlier author requests on this page still apply unless a requested change above says otherwise:")
+        lines += [f"  * {instruction}" for instruction in edit["retained_render_intent"]]
+    if depiction == "less_graphic":
+        lines.append("- Use framing, shadow, reaction or aftermath for graphic details; preserve identity and story.")
+    if exact_visible_lettering:
+        lettering = payload["exact_lettering"]["panels"]
+        if any(panel["lettering"] for panel in lettering):
+            lines.append("- Lettering: keep Image 1's existing lettering and typesetting. Each string appears exactly "
+                         "once, in its panel, with this exact wording:")
+            lines += [
+                f"  * Panel {panel['panel']} {item['kind']}"
+                + (f" ({item['speaker']})" if item.get("speaker") else "")
+                + f": {json.dumps(item['text'], ensure_ascii=False)}"
+                for panel in lettering for item in panel["lettering"]
+            ]
+        else:
+            lines.append("- This page is unlettered: add no text, captions, balloons or SFX.")
+    else:
+        lines.append("- No comic lettering: Canary adds dialogue, captions and SFX later. Add no balloons, caption "
+                     "boxes, SFX, words, pseudo-writing or blank lettering areas; existing in-world signage may stay.")
+    if correction_context is not None:
+        story = list(correction_context.beat_summaries)
+        selected = set(correction_context.selected_source_unit_ids)
+        passages = [text for unit_id, text in zip(correction_context.source_unit_ids,
+                                                  correction_context.source_texts, strict=True)
+                    if unit_id in selected]
+        if story or passages:
+            lines += ["", "STORY CONTEXT (reference only; never extra panels, text or edits):"]
+            lines += [f"- {beat}" for beat in story]
+            lines += [f"- Source passage chosen by the author: {text}" for text in passages]
+    lines += ["", "BEFORE RETURNING, CHECK: the output is the complete page and shows "
+              + " ".join(f"({index}) {summary}" for index, summary in enumerate(summaries, 1))
+              + " Everything else matches Image 1."]
+    return "\n".join(lines)
+
+
 def _compile_prompt(
     page: ComicPage,
     references: tuple[PageReference, ...],
@@ -731,44 +888,14 @@ def _compile_prompt(
         # structured author changes once; legacy single-issue instructions once.
         payload["complete_page_correction"] = {
             "mode": correction.mode,
-            "edit_priority": (
-                "Apply current author changes to the requested visual details even when the "
-                "parent image or original panel staging shows them incorrectly. The parent is "
-                "an editable starting point, not evidence that the disputed detail is correct. "
-                "For action or orientation corrections, reconstruct the affected object and pose: "
-                "honor the specified leading/trailing ends, screen direction, release/contact "
-                "and endpoint relationships. Do not merely add motion lines to the unchanged object. "
-                "For attached or penetrating objects, reconstruct the contact point, both ends, "
-                "exposed length and support relationship together; preserve that corrected "
-                "relationship across every affected panel, including the aftermath. A requested "
-                "setting correction replaces the wrong environment throughout the requested scope. "
-                "Preserve panels and details outside the requested scope, exact canonical copy, "
-                "approved identities, visual anchors and continuity guards."
-            ),
             # The initial frozen request is preserved verbatim in correction
-            # provenance, but replaying that complete prompt duplicates the
-            # current Plan, style, copy and reference authorities above. It
-            # can consume half a fixed-profile prompt by itself. Keep prior
-            # authored corrections in order; current authorities supply the
-            # original page intent without re-sending its full specification.
+            # provenance; replaying it duplicates current authorities.
             "retained_render_intent": [instruction for instruction in correction.retained_instructions
                                        if not instruction.startswith("PAGE CANVAS: ")],
-            "retained_intent_scope": (
-                "Preserve deliberate depiction and earlier author corrections only where consistent "
-                "with current canonical copy, approved identity/state/style and author pins. "
-                "Current changes supersede conflicting earlier changes. The original complete "
-                "page specification is retained in provenance; current canonical authorities "
-                "supply its page intent without duplicating its old bindings."
-            ),
             "parent_coordinate_regions": [
                 {"polygon": [{"x": x, "y": y} for x, y in region.polygon]}
                 for region in correction.resolved_regions
             ],
-            "geometry_scope": (
-                "Region polygons and annotations use normalized coordinates of parent-edit-base, "
-                "origin top left. They localize this correction only, not canonical panel layout. "
-                "Preserve untouched composition and framing; return the entire page."
-            ),
             "changes": [
                 {
                     "instruction": provider_safe_direction(change.instruction),
@@ -787,22 +914,6 @@ def _compile_prompt(
             ] if correction.changes else [{"instruction": provider_safe_direction(correction.instruction)}],
             "author_note": provider_safe_direction(correction.note) if correction.changes else "",
         }
-        if correction_context is not None:
-            payload["background_context_not_for_rendering"] = {
-                "scope": (
-                    "Evidence only, never additional panels or lettering. Render only the ordered "
-                    "panels above. Their current subject/state assignments govern now; chronology "
-                    "describes other moments and must not activate later states. Source prose "
-                    "may mention past rooms or places in dialogue; those mentions do not relocate "
-                    "the current scene. Current author changes govern disputed staging and setting. "
-                    "never overrides exact lettering. Explicitly selected passages are retained in full."
-                ),
-                "treatment_spine": list(correction_context.treatment_spine),
-                "beats": list(correction_context.beat_summaries),
-                "appearance_chronology": list(correction_context.appearance_chronology),
-                "continuity": list(correction_context.beat_transitions),
-                "sources": list(correction_context.source_texts),
-            }
     if text_authorities:
         payload["reference_scope"] += (
             " Incidental participants and scene objects use written_identity instead of a "
@@ -816,9 +927,20 @@ def _compile_prompt(
             "image": _off_canvas_handle("asset", style_reference.order),
             "authority": style_reference.visual_anchor,
         }
+    if not exact_visible_lettering and page.lettering_reservations is None:
+        raise ValueError("This Plan predates lettering reservations. Rerun Plan before drawing a hybrid edition.")
+    if correction is not None:
+        edit = payload["complete_page_correction"]
+        current = {change["instruction"] for change in edit["changes"]} | {edit["author_note"]}
+        edit["retained_render_intent"] = list(dict.fromkeys(
+            instruction for instruction in edit["retained_render_intent"] if instruction not in current
+        ))
+        if not exact_visible_lettering:
+            # Publishable phrases stay out of hybrid base-art edits.
+            return _edit_prompt(_without_copy(payload, page), page,
+                                _without_context_copy(correction_context, page), depiction, False)
+        return _edit_prompt(payload, page, correction_context, depiction, True)
     if not exact_visible_lettering:
-        if page.lettering_reservations is None:
-            raise ValueError("This Plan predates lettering reservations. Rerun Plan before drawing a hybrid edition.")
         payload.pop("exact_lettering")
         payload["project_style_direction"] = page_art_style_template(style_template)
         # Placement reservations seed the editable layer only; exposing them to
@@ -863,32 +985,45 @@ def _compile_prompt(
 
 
 
-def _hybrid_prompt(payload: dict, page: ComicPage, depiction: str) -> str:
-    copy = sorted({item.text for content in page.content for item in content.lettering}, key=len, reverse=True)
+def _publishable_copy(page: ComicPage) -> list[str]:
+    return sorted({item.text for content in page.content for item in content.lettering}, key=len, reverse=True)
 
-    # Remove quoted publishable phrases from editorial/context prose without
-    # corrupting identifiers or verbatim reference authorities. Short utterances
-    # can also be ordinary English ("I", "No"); their occurrence in visual prose
-    # is not a lettering payload. Canonical text fields are absent altogether.
-    authority_fields = {"visual_anchor", "continuity_guard"}
 
-    def without_copy(value, field=""):
-        if field in authority_fields:
-            return value
-        if isinstance(value, str):
-            for text in copy:
-                if text and len(text.strip()) >= 12:
-                    value = value.replace(text, "[story copy omitted]")
-            return value
-        if isinstance(value, list):
-            return [without_copy(item, field) for item in value]
-        if isinstance(value, dict):
-            return {key: without_copy(item, key) for key, item in value.items()}
+def _without_copy(value, page: ComicPage, field: str = ""):
+    """Remove quoted publishable phrases from editorial/context prose.
+
+    Identifiers and verbatim reference authorities are untouched. Short
+    utterances can also be ordinary English ("I", "No"); their occurrence in
+    visual prose is not a lettering payload.
+    """
+    if field in {"visual_anchor", "continuity_guard"}:
         return value
+    if isinstance(value, str):
+        for text in _publishable_copy(page):
+            if text and len(text.strip()) >= 12:
+                value = value.replace(text, "[story copy omitted]")
+        return value
+    if isinstance(value, list):
+        return [_without_copy(item, page, field) for item in value]
+    if isinstance(value, dict):
+        return {key: _without_copy(item, page, key) for key, item in value.items()}
+    return value
 
-    payload = without_copy(payload)
+
+def _without_context_copy(context: "PageCorrectionContext | None", page: ComicPage):
+    if context is None:
+        return None
+    return context.model_copy(update={
+        "beat_summaries": tuple(_without_copy(list(context.beat_summaries), page)),
+        "source_texts": tuple(_without_copy(list(context.source_texts), page)),
+    })
+
+
+def _hybrid_prompt(payload: dict, page: ComicPage, depiction: str) -> str:
+    # Canonical text fields are absent altogether from hybrid generation.
+    payload = _without_copy(payload, page)
     policy = (
-        "Render exactly one COMPLETE COMIC PAGE of base artwork, never per-panel assets.\n"
+"Render exactly one COMPLETE COMIC PAGE of base artwork, never per-panel assets.\n"
         "LETTERING POLICY: Final dialogue, thoughts, narration, captions and sound effects are added "
         "after illustration by Canary. Draw NO speech or thought balloons, caption/narration boxes, "
         "SFX glyphs, subtitles, words, placeholder text, lorem ipsum or pseudo-writing for these elements. "
@@ -905,9 +1040,7 @@ def _hybrid_prompt(payload: dict, page: ComicPage, depiction: str) -> str:
         "The selected art direction owns rendering. Preserve authored markings and deliberate "
         "medium texture, but do not transfer incidental paper stains or mottling onto skin, "
         "clothing, sky and other unrelated materials. Reconstruct new surfaces with coherent "
-        "tonal areas and material-specific marks. For corrections, this does not authorize "
-        "cleanup outside the requested change. "
-        "The parent-edit-base is immutable art, not a lettered proof.\n"
+        "tonal areas and material-specific marks.\n"
     )
     if depiction == "less_graphic":
         policy += "Use framing, shadow, reaction or aftermath for graphic details; preserve identity, story and references.\n"
@@ -1051,25 +1184,11 @@ def compile_page_generation_request(
         uploaded_bytes += (style_bytes,)
     profile = selected_edition.capability_profile
     prompt_context = correction_context
-    prompt = _compile_prompt(
-        page,
-        tuple(references),
-        correction,
-        depiction,
-        style_template,
-        prompt_context,
-        cast_art_direction,
-        exact_visible_lettering=profile.exact_visible_lettering,
-        reference_bindings=reference_bindings,
-        style_reference=style_reference,
-        text_authorities=text_authorities,
-    )
-    if correction is not None and correction_context is not None and len(prompt) > profile.max_prompt_characters - 1024:
-        # A long book's entire beat/transition history can exceed a fixed
-        # Draw edition's prompt capacity before its page-specific authorities
-        # are added. Keep the full context and digest on the correction, but
-        # send nearby beats plus the book's causal spine to the image model.
-        # Exact author-selected sources, current Plan and visual anchors stay.
+    if correction is not None and correction_context is not None:
+        # Bookwide history belongs in provenance, not every image edit.
+        # Always restrict provider grounding to the page and nearby beats;
+        # a small edit must not replay remote staging just because it fits
+        # below the model's character limit. Keep explicitly selected prose.
         active = {beat for content in page.content for beat in content.beat_ids}
         ordered = correction_context.beat_ids
         indexes = {i for i, beat in enumerate(ordered) if beat in active}
@@ -1083,19 +1202,19 @@ def compile_page_generation_request(
             "appearance_chronology": tuple(item for item in correction_context.appearance_chronology
                                             if any(item.startswith(f"Beat {beat} [") for beat in nearby)),
         })
-        prompt = _compile_prompt(
-            page,
-            tuple(references),
-            correction,
-            depiction,
-            style_template,
-            prompt_context,
-            cast_art_direction,
-            exact_visible_lettering=profile.exact_visible_lettering,
-            reference_bindings=reference_bindings,
-            style_reference=style_reference,
-            text_authorities=text_authorities,
-        )
+    prompt = _compile_prompt(
+        page,
+        tuple(references),
+        correction,
+        depiction,
+        style_template,
+        prompt_context,
+        cast_art_direction,
+        exact_visible_lettering=profile.exact_visible_lettering,
+        reference_bindings=reference_bindings,
+        style_reference=style_reference,
+        text_authorities=text_authorities,
+    )
     if reference_bindings:
         prompt += (
             "\nREFERENCE SHEETS: asset-A, asset-B, etc. identify uploaded authority images in order "

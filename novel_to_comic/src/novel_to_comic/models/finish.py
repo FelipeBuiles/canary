@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from novel_to_comic.models.validation import InvariantFailure, StageName
 
 
-FINISH_PREFLIGHT_VALIDATOR_VERSION = 6
+FINISH_PREFLIGHT_VALIDATOR_VERSION = 8
 
 
 class PreflightDiagnostic(BaseModel):

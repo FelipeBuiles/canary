@@ -159,6 +159,10 @@ word or page quotas. Review is metered text work and not a quality guarantee.
   non-lettering history; current canonical copy, identity/state/style, author
   pins, and current changes win. No top-level `FrozenPageGenerationRequest.depiction`
   field or retroactive request rehash is introduced.
+- Page visual reviews link recurring concerns to existing issue IDs on the same
+  render branch and canonical/reference authority, preserving author decisions.
+  New findings remain distinct; current-pixel review evidence permits another
+  correction of a linked concern without claiming it was visually fixed.
 
 ## Code navigation
 

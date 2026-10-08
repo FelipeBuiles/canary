@@ -728,6 +728,8 @@ export interface CompletePageSummary {
   page: ComicPage;
   active_render: PageGenerationProvenance | null;
   issues: PageIssue[];
+  /** Issues a correction of the active render may link (server lineage rule). */
+  correctable_issue_ids?: string[];
   failure: PageGenerationFailure | null;
   analysis_recovery: PageAnalysisRecovery;
   /** The active art has a saved visual review from its draw or a re-check. */

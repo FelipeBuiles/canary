@@ -818,8 +818,8 @@ def build_correction_context(
 ) -> PageCorrectionContext:
     """Compile grounded bookwide context for one page correction.
 
-    Every adapted beat summary travels with the request so the redraw stays
-    consistent with the whole novel, while full source prose is limited to the
+    Every adapted beat summary is retained in correction provenance. The image
+    prompt uses the page and nearby beats, while full source prose is limited to the
     units this page adapts plus the remote passages the author explicitly
     selected. Author-selected passages always arrive in full; only the
     automatically gathered page units are subject to the context budget.
@@ -1018,14 +1018,20 @@ def ensure_correction_issues(
     return tuple(ensured)
 
 
-def _check_effective_issue_lineage(issue: PageIssue, parent: PageRenderRevision) -> None:
+def _check_effective_issue_lineage(issue: PageIssue, parent: PageRenderRevision, artifacts: TargetArtifacts) -> None:
     """Accept the lineage a revised issue actually carries.
 
     A revised issue retains its original render_revision and gains the
     resolution_revision that addressed it. Re-fixing it targets the current
     render only when that resolution revision is current; otherwise the
-    request is stale. Open issues must cite the current render directly.
+    request is stale. A visual review can explicitly observe the same tracked
+    concern on the current render, making it eligible without changing its
+    original evidence or treating the redraw as a verified correction.
     """
+    from novel_to_comic.page_visual_review import visual_issue_observed_on_render
+
+    if visual_issue_observed_on_render(artifacts, issue, parent):
+        return
     if issue.status == "revised":
         if issue.resolution_revision != parent.revision:
             raise StaleCorrectionError(
@@ -1037,6 +1043,28 @@ def _check_effective_issue_lineage(issue: PageIssue, parent: PageRenderRevision)
             f"page issue {issue.id!r} targets render {issue.render_revision}, "
             f"not current render {parent.revision}"
         )
+
+
+def correctable_issue_ids(
+    artifacts: TargetArtifacts, issues: tuple[PageIssue, ...], parent: PageRenderRevision | None,
+) -> tuple[str, ...]:
+    """Draw issues a correction of ``parent`` may link, by the same lineage rule it enforces.
+
+    Reselecting an older render leaves issues found on later renders tracked
+    but not linkable; the UI offers only these, so preview never trips a 409.
+    """
+    if parent is None:
+        return ()
+    eligible = []
+    for issue in issues:
+        if issue.correction_owner != "draw" or issue.status not in {"open", "revised"}:
+            continue
+        try:
+            _check_effective_issue_lineage(issue, parent, artifacts)
+        except StaleCorrectionError:
+            continue
+        eligible.append(issue.id)
+    return tuple(eligible)
 
 
 def build_aggregated_correction_request(
@@ -1115,7 +1143,7 @@ def build_aggregated_correction_request(
                 raise InvalidCorrectionError(
                     f"page issue {change.issue_id!r} changes canonical copy and requires a story change, not image correction"
                 )
-            _check_effective_issue_lineage(issue, parent)
+            _check_effective_issue_lineage(issue, parent, artifacts)
             selected.append(issue)
             records.append(change.model_copy(update={"issue_id": issue.id}))
         else:
@@ -1269,8 +1297,20 @@ def accept_editorial_page_issue(
                 raise ValueError("only an open page issue can be accepted")
             if issue.classification == "invariant_failure":
                 raise ValueError("an invariant failure cannot be deliberately accepted")
+            resolution = issue.resolution_revision
+            if issue.status == "revised":
+                current_revision = artifacts.active_render_revision(page_number)
+                if current_revision is not None and current_revision != resolution:
+                    from novel_to_comic.page_visual_review import visual_issue_observed_on_render
+
+                    current = artifacts.read_provenance(page_number, current_revision).render
+                    if visual_issue_observed_on_render(artifacts, issue, current):
+                        resolution = current_revision
             accepted = PageIssue.model_validate(
-                issue.model_copy(update={"status": "resolved" if issue.status == "revised" else "accepted"}).model_dump()
+                issue.model_copy(update={
+                    "status": "resolved" if issue.status == "revised" else "accepted",
+                    "resolution_revision": resolution,
+                }).model_dump()
             )
             updated.append(accepted)
         else:

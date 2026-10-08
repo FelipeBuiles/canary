@@ -92,9 +92,16 @@ def test_proof_and_edit_parent_reserve_slots_before_subject_packing(tmp_path, co
     assert {member["authority"]["id"] for member in members} == {"ward-bloodied-ref", "idol-ref"}
     assert style.id == "selected-style-proof" and style.order == 2
     assert compiled.reference_bytes[-1] == proof.read_bytes()
-    payload = _provider_brief(compiled.request.prompt)
-    assert {ref["image"] for ref in payload["approved_page_references"]} == {"asset-A"}
-    assert payload["selected_style_proof"]["image"] == "asset-B"
+    if correction:
+        # Image 1 is the parent, so both sheet members bind upload 2.
+        prompt = compiled.request.prompt
+        assert prompt.count("Image 2 (asset-A) = ") == 2
+        assert "sheet binding" in prompt
+        assert "Image 3 (asset-B) = style proof" in prompt
+    else:
+        payload = _provider_brief(compiled.request.prompt)
+        assert {ref["image"] for ref in payload["approved_page_references"]} == {"asset-A"}
+        assert payload["selected_style_proof"]["image"] == "asset-B"
     assert _prepare_complete_page(compiled, profile).edit_source_bytes == (parent if correction else None)
     profile = _profile(provider="openai", max_image_references=2 + int(correction))
     with pytest.raises(ValueError, match="Identity references will not be silently dropped"):

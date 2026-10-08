@@ -2574,7 +2574,6 @@
   "The page plan needs to keep every line of dialogue and narration once, in order, with the right story moment.": "El plan de páginas debe incluir cada línea de diálogo y narración una sola vez, en orden y junto al momento de la historia que le corresponde.",
   "The page plan no longer includes this page version": "El plan de páginas ya no incluye esta versión",
   "The page plan shows a look the story hasn’t changed into yet, so redrawing alone won’t clear it. Re-plan the page, then redraw it.": "El plan de páginas muestra un aspecto al que la historia aún no ha llegado, así que redibujar no basta. Vuelve a planificar la página y luego redibújala.",
-  "The page was drawn for a different page layout": "La página se dibujó para otra maquetación",
   "The page was drawn successfully, but its lettering check could not be completed.": "La página se dibujó correctamente, pero no se pudo completar la revisión de la rotulación.",
   "The page’s review history is inconsistent": "El historial de revisión de la página es inconsistente",
   "The public reader includes a Made with Scenewright credit and a closing invitation to create a book.": "El lector público incluye el crédito Hecho con Scenewright y una invitación final para crear un cómic.",
@@ -3455,5 +3454,14 @@
   "Hard to read": "Difícil de leer",
   "This lettering hasn’t been double-checked yet. Compare the artwork with the script, or double-check it now at no cost.": "Este rotulado aún no se ha verificado dos veces. Compara el dibujo con el guion o verifícalo ahora sin coste.",
   "DOUBLE-CHECK": "VERIFICAR DE NUEVO",
-  "DOUBLE-CHECKING…": "VERIFICANDO…"
+  "DOUBLE-CHECKING…": "VERIFICANDO…",
+  "Page versions": "Versiones de la página",
+  "Previous version": "Versión anterior",
+  "Next version": "Versión siguiente",
+  "Version": "Versión",
+  "Latest": "Más reciente",
+  "earlier plan": "plan anterior",
+  "Back to selected": "Volver a la seleccionada",
+  "Compare with": "Comparar con",
+  "Previewing only. Changes and exports use the selected version until you choose this one. Choosing costs no credits.": "Solo vista previa. Los cambios y las exportaciones usan la versión seleccionada hasta que elijas esta. Elegirla no cuesta créditos."
 }

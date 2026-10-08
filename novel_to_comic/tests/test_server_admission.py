@@ -133,6 +133,43 @@ async def test_review_records_only_conflict_with_their_own_writers(tmp_path, suf
     assert result.status_code == expected, result.text
 
 
+@pytest.mark.parametrize("status", ["queued", "running"])
+@pytest.mark.parametrize("suffix, kind, body, expected", [
+    ("/config/", "complete_page_draw", {"dev_model_selections": {"draw": "image-sunburst"}}, 200),
+    ("/config", "complete_page_draw", {"dev_model_selections": {}}, 200),
+    ("/config/", "complete_page_draw", {"dev_model_selections": {}, "target_language": "fr"}, 409),
+    ("/config/", "complete_page_draw", {"target_language": "fr"}, 409),
+    ("/config/", "pipeline_stage", {"dev_model_selections": {"draw": "image-sunburst"}}, 409),
+    ("/config/", "style_sample", {"dev_model_selections": {"draw": "image-sunburst"}}, 409),
+    ("/config/", "lettering_translation", {"dev_model_selections": {"draw": "image-sunburst"}}, 409),
+])
+@run_async
+async def test_model_choices_can_change_during_frozen_page_jobs_only(tmp_path, status, suffix, kind, body, expected):
+    from fastapi import Request
+    from novel_to_comic.config import Config
+    from novel_to_comic.server.job_commands import command
+
+    app = app_at(tmp_path)
+    frozen = command("cover", tmp_path, Config(draw_model="codex-dev/image/gpt-5.5"))
+    app.state.generation_jobs["existing"] = SimpleNamespace(
+        project_name="account:book", kind=kind, status=status,
+        payload={"page_number": 3}, command=frozen,
+    )
+    saved = []
+    path = f"/api/projects/book{suffix}"
+
+    @app.patch(path)
+    async def edit(request: Request):
+        saved.append(await request.json())
+        return {"saved": True}
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        result = await client.patch(path, json=body)
+    assert result.status_code == expected, result.text
+    assert saved == ([body] if expected == 200 else [])
+    assert frozen.config["draw_model"] == "codex-dev/image/gpt-5.5"
+
+
 @run_async
 async def test_lost_response_replay_survives_restart_and_conflicting_input(tmp_path):
     calls = []

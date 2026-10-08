@@ -2574,7 +2574,6 @@
   "The page plan needs to keep every line of dialogue and narration once, in order, with the right story moment.": "Le plan des pages doit conserver chaque réplique et chaque texte narratif une seule fois, dans le bon ordre et au bon moment du récit.",
   "The page plan no longer includes this page version": "Le plan de pages n’inclut plus cette version de la page",
   "The page plan shows a look the story hasn’t changed into yet, so redrawing alone won’t clear it. Re-plan the page, then redraw it.": "Le plan de pages montre une apparence que l’histoire n’a pas encore atteinte : redessiner ne suffit pas. Replanifiez la page, puis redessinez-la.",
-  "The page was drawn for a different page layout": "La page a été dessinée pour une autre mise en page",
   "The page was drawn successfully, but its lettering check could not be completed.": "La page a bien été dessinée, mais la vérification du lettrage n’a pas pu être terminée.",
   "The page’s review history is inconsistent": "L’historique de vérification de la page est incohérent",
   "The public reader includes a Made with Scenewright credit and a closing invitation to create a book.": "Le lecteur public inclut la mention Créé avec Scenewright et une invitation finale à créer une BD.",
@@ -3455,5 +3454,14 @@
   "Hard to read": "Difficile à lire",
   "This lettering hasn’t been double-checked yet. Compare the artwork with the script, or double-check it now at no cost.": "Ce lettrage n’a pas encore été revérifié. Comparez l’illustration avec le script, ou revérifiez-le maintenant sans frais.",
   "DOUBLE-CHECK": "REVÉRIFIER",
-  "DOUBLE-CHECKING…": "REVÉRIFICATION…"
+  "DOUBLE-CHECKING…": "REVÉRIFICATION…",
+  "Page versions": "Versions de la page",
+  "Previous version": "Version précédente",
+  "Next version": "Version suivante",
+  "Version": "Version",
+  "Latest": "La plus récente",
+  "earlier plan": "plan précédent",
+  "Back to selected": "Revenir à la sélection",
+  "Compare with": "Comparer avec",
+  "Previewing only. Changes and exports use the selected version until you choose this one. Choosing costs no credits.": "Aperçu uniquement. Les modifications et les exports utilisent la version sélectionnée jusqu’à ce que vous choisissiez celle-ci. Ce choix ne coûte aucun crédit."
 }
