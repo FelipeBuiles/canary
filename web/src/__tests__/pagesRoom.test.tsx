@@ -268,7 +268,7 @@ function LocationProbe() {
 
 function renderRoom(url = "/project/demo/pages") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(
+  const room = () => (
     <QueryClientProvider client={client}>
     <MemoryRouter initialEntries={[url]}>
       <I18nProvider>
@@ -277,8 +277,10 @@ function renderRoom(url = "/project/demo/pages") {
           <Route path="/project/:id/story" element={<h1>Story brief</h1>} />
         </Routes>
       </I18nProvider>
-    </MemoryRouter></QueryClientProvider>,
+    </MemoryRouter></QueryClientProvider>
   );
+  const result = render(room());
+  return { ...result, rerenderRoom: () => result.rerender(room()) };
 }
 
 describe("PagesRoom", () => {
@@ -1266,6 +1268,48 @@ describe("PagesRoom", () => {
     renderRoom();
     expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
     expect(screen.queryByText(/text check didn't finish/)).toBeNull();
+  });
+
+  it.each(["queued", "running"] as const)("hides suggestion actions until a %s revision finishes", async (status) => {
+    pageIssues = [
+      {
+        id: "page-issue-manual-1", issue_type: "manual_change", status: "revised",
+        requested_correction: "Close the upper eye.", resolution_revision: 2,
+      },
+      {
+        id: `visual-review-${"a".repeat(64)}-1`, issue_type: "visual_prop", status: "open",
+        requested_correction: "Restore the approved gun.", resolution_revision: null,
+      },
+      {
+        id: "page-issue-manual-2", issue_type: "manual_change", status: "open",
+        requested_correction: "Move the lamp.", resolution_revision: null,
+      },
+      {
+        id: "page-issue-text-1", issue_type: "misspelled_lettering", status: "open",
+        requested_correction: "Restore the caption.", resolution_revision: null,
+        evidence: ['expected_text=["Hello"]', 'recognized_text=["Helo"]', "crop_check_status=inconclusive", "crop_check_complete=false"],
+      },
+    ].map((issue) => ({
+      classification: "editorial_issue", correction_kind: "render_fidelity", correction_owner: "draw",
+      page_number: 1, render_revision: 1, evidence: [issue.requested_correction], ...issue,
+    }));
+    generationJobResults = [{ id: "new-revision", status, payload: { page_number: 1 } }];
+    const room = renderRoom();
+    fireEvent.click(screen.getByRole("button", { name: "Open page 1, revision 2" }));
+    const checks = screen.getByRole("region", { name: "Checks" });
+    expect(within(checks).getByText("Checks run automatically when the page finishes drawing.")).toBeTruthy();
+    expect(within(checks).getAllByText("Close the upper eye.").length).toBeGreaterThan(0);
+    expect(within(checks).queryByText(/does it look fixed/)).toBeNull();
+    expect(within(checks).queryAllByRole("button")).toHaveLength(0);
+
+    generationJobResults = [{ id: "new-revision", status: "complete", payload: { page_number: 1 } }];
+    await act(async () => room.rerenderRoom());
+    expect(within(checks).getByText(/does it look fixed/)).toBeTruthy();
+    for (const name of ["STILL WRONG", "LOOKS FIXED", "FIX", "NOT A PROBLEM", "WITHDRAW REQUEST", "DOUBLE-CHECK"]) {
+      expect(within(checks).getAllByRole("button", { name }).length).toBeGreaterThan(0);
+    }
+    expect(generatePage).not.toHaveBeenCalled();
+    expect(dismissIssue).not.toHaveBeenCalled();
   });
 
   it("clears an automatic visual finding as not a problem, or fixes it through the draft", () => {

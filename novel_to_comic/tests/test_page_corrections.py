@@ -6,8 +6,10 @@ from .plan_detail_support import with_reservations
 
 import asyncio
 import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import ValidationError
@@ -54,6 +56,7 @@ from novel_to_comic.page_review import (
     StaleCorrectionError,
     build_aggregated_correction_request,
     build_correction_context,
+    correctable_issue_ids,
     deterministic_manual_issue_id,
     ensure_correction_issues,
 )
@@ -62,11 +65,12 @@ from novel_to_comic.page_visual_review import (
     VisualFinding,
     finding_issue_links,
     reference_display_for_render,
+    review_page_visuals,
     validated_saved_visual_review,
     visual_review_input_digest,
 )
 from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
-from novel_to_comic.usage import UsageRecord
+from novel_to_comic.usage import ApiResult, UsageRecord
 
 
 
@@ -436,24 +440,17 @@ def test_annotations_and_novel_context_reach_prompt_and_provenance(tmp_path: Pat
     )
 
     prompt = prepared.compiled.request.prompt
-    assert "Keep this edge readable." in prompt
-    assert "leading/trailing ends" in prompt
-    assert "Do not merely add motion lines to the unchanged object" in prompt
-    assert "including the aftermath" in prompt
-    assert "setting correction replaces the wrong environment" in prompt
-    assert "those mentions do not relocate" in prompt
-    assert "Do not borrow rooms, background props" in prompt
+    # The mark is located in page percentages beside its own change.
+    assert "Marked arrow: 50-60% across, 50-60% down the page (from 50%,50% to 60%,60%): door - Keep this edge readable." in prompt
+    assert "redraw that pose or object completely" in prompt
     producing = artifacts.read_request(page.page_number, 1)
     assert producing.prompt in prepared.correction.retained_instructions
     assert producing.prompt not in prompt  # Current Plan/references already carry its authority.
-    # Bookwide spine travels, not just the page's own beat.
-    assert "beat-1" in prompt and "beat-2" in prompt
-    assert "The door opens, then stillness." in prompt
-    assert "The chamber answers with stillness." in prompt
-    # Appearance chronology and remote continuity facts travel in beat order.
-    assert "drenched" in prompt
-    assert "harbor" in prompt
-    # Full prose is limited to the page's adapted units.
+    # Image 1 carries the story; only the page's beats ground the edit.
+    assert "Johansen opens the idol chamber door." in prompt
+    # Spine, chronology and continuity stay in provenance, not the edit.
+    assert "The door opens, then stillness." not in prompt
+    assert "drenched" not in prompt and "harbor" not in prompt
     assert "The door opened." not in prompt  # Canonical copy is withheld from hybrid Draw.
     assert prepared.context.treatment_spine[:1] == ("The door opens, then stillness.",)
     assert prepared.context.appearance_chronology != ()
@@ -468,11 +465,205 @@ def test_annotations_and_novel_context_reach_prompt_and_provenance(tmp_path: Pat
     assert prepared.compiled.request.lettering == ()
 
 
-def test_long_book_context_focuses_prompt_without_losing_saved_provenance(tmp_path: Path) -> None:
+@pytest.mark.parametrize("integrated", [False, True])
+def test_current_edit_precedes_page_and_novel_directions(tmp_path: Path, integrated: bool) -> None:
+    from novel_to_comic.page_drawing import _integrated_page_profile
+
+    artifacts, page, render = _setup(tmp_path)
+    instruction = "Close the forehead eye in panel 1 while keeping the two lower eyes closed."
+    prepared = _prepare(
+        artifacts, page, render,
+        profile=_integrated_page_profile(_profile()) if integrated else _profile(),
+        changes=(_change("c-eye", instruction),),
+        note="Keep the hat and framing.",
+    )
+    prompt = prepared.compiled.request.prompt
+    body = prompt.split("\n", 1)[1]  # After the fixed canvas line.
+    assert body.startswith("EDIT IMAGE 1.")
+    # The change leads, ahead of every constraint, and is restated last.
+    assert body.index("REQUESTED CHANGES") < body.index(instruction) < body.index("KEEP EVERYTHING ELSE")
+    assert body.index(instruction) < body.index("CONSTRAINTS")
+    assert body.index("Author note: Keep the hat and framing.") < body.index("CONSTRAINTS")
+    assert prompt.rstrip().endswith(f"(1) {instruction} Everything else matches Image 1.")
+    assert prompt.count(instruction) == 2
+    assert "override Image 1 and any original pose, gaze, expression" in prompt
+    assert "Do not redraw, restyle, sharpen, re-texture" in prompt
+    assert "{" not in body  # Plain directions, not a nested specification.
+    assert "immutable art" not in prompt
+    assert len(prompt) < 4000
+
+
+@pytest.mark.parametrize("integrated", [False, True])
+def test_revision_does_not_replay_the_disputed_pose_or_page_generation_brief(tmp_path: Path, integrated: bool) -> None:
+    from novel_to_comic.models.page import ApprovedVisualReference, CharacterActing
+    from novel_to_comic.page_drawing import ApprovedReferenceFile, _integrated_page_profile
+
+    artifacts, original, _ = _setup(tmp_path)
+    content = original.content[0].model_copy(update={
+        "visual_intent": "The muzzle goes into the open forehead eye.",
+        "entity_ids": ("rook",),
+        "appearance_states": {"rook": "grieving"},
+        "acting": (CharacterActing(
+            entity_id="rook", facing="toward_viewer", gaze="The upper eye is open.",
+            expression="Grief", gesture="Push the barrel inside the eye socket.",
+        ),),
+    })
+    page = original.model_copy(update={"content": (content,)})
+    artifacts.write_page(page)
+    profile = _integrated_page_profile(_profile()) if integrated else _profile()
+    edition = _edition(profile)
+    inventory = ApprovedVisualReferenceInventory(references=[ApprovedVisualReference(
+        id="rook-ref", entity_id="rook", appearance_state_id="grieving",
+        visual_anchor="Three eyes: a centered forehead eye and two lower eyes.",
+        continuity_guard="Keep the forehead eye in the center above the eyebrows.",
+    )])
+    reference_path = tmp_path / "rook.png"
+    reference_path.write_bytes(b"approved-rook-reference")
+    references = {"rook-ref": ApprovedReferenceFile(reference_id="rook-ref", path=reference_path, media_type="image/png")}
+    producing = compile_page_generation_request(page, edition, inventory, references, retry=RetryProvenance(attempt=1)).request
+    artifacts.write_request(producing, request_revision=2)
+    parent = artifacts.read_provenance(1, 1).render.model_copy(update={
+        "revision": 2, "parent_revision": 1,
+        "comic_page_sha256": page.content_sha256, "request_sha256": producing.request_sha256,
+    })
+    artifacts.write_render(page_number=1, render_revision=2, image=artifacts.read_render(1, 1))
+    artifacts.write_provenance(PageGenerationProvenance(render=parent, usage=_usage()))
+    instruction = "Close all three eyes tightly in panel 1; put the muzzle against the closed upper eyelid."
+    prepared = prepare_page_correction(
+        page=page, edition=edition, inventory=inventory, reference_files=references,
+        retry=RetryProvenance(attempt=2, retries_request_sha256=parent.request_sha256),
+        parent=parent, changes=(_change("close-eye", instruction),), artifacts=artifacts,
+    )
+    prompt = prepared.compiled.request.prompt
+    assert content.visual_intent in producing.prompt
+    assert content.acting[0].gesture in producing.prompt
+    assert content.visual_intent not in prompt
+    assert content.acting[0].gesture not in prompt
+    assert "Render exactly one" not in prompt
+    assert "EDIT IMAGE 1." in prompt
+    assert instruction in prompt
+    assert inventory.references[0].visual_anchor in prompt
+    assert inventory.references[0].continuity_guard in prompt
+    assert "Image 2 (asset-A) = " in prompt
+    assert "Panel 1 shows: " in prompt and "(subject-A, Image 2)" in prompt
+    assert prepared.compiled.edit_source_bytes == artifacts.read_render(1, 2)
+    assert prepared.compiled.reference_bytes == (reference_path.read_bytes(),)
+    assert bool(prepared.compiled.request.lettering) == integrated
+    if integrated:
+        assert "keep Image 1's existing lettering and typesetting" in prompt
+    else:
+        assert "No comic lettering" in prompt
+    assert producing.prompt in prepared.correction.retained_instructions
+
+
+@pytest.mark.parametrize("status", ["open", "revised", "resolved", "accepted", "dismissed"])
+def test_recurring_visual_finding_keeps_one_issue_and_author_decision(tmp_path: Path, status: str) -> None:
+    issue = _issue(
+        "visual-review-prior-1", status=status,
+        evidence=("Panel 1: The chamber is too bright.", "Expected: A dark reveal."),
+        resolution_revision=2 if status in {"revised", "resolved"} else None,
+        dismissal_reason="The lighting is intentional." if status == "dismissed" else None,
+    )
+    artifacts, page, _ = _setup(tmp_path, issues=(issue,))
+    _advance(artifacts, page, revision=2, image=b"page-2")
+    image = b"page-3"
+    render = _advance(artifacts, page, revision=3, image=image)
+    compiled = compile_page_generation_request(
+        page, _edition(), ApprovedVisualReferenceInventory(references=()), {}, retry=RetryProvenance(attempt=1),
+    )
+    generate = AsyncMock(return_value=ApiResult(value={"findings": [
+        {"category": "composition", "panel_number": 1, "observation": "The room remains brightly lit.",
+         "expected": "A dark reveal.", "correction": "Reduce the room lighting.", "issue_id": issue.id},
+        {"category": "composition", "panel_number": 1, "observation": "The door is cropped out.",
+         "expected": "The opening door is visible.", "correction": "Show the door.", "issue_id": None},
+    ]}))
+    args = dict(config=Config(), page=page, render=render, image=image, compiled=compiled,
+                artifacts=artifacts, generate=generate, producing_request=artifacts.producing_request(render))
+    report = asyncio.run(review_page_visuals(**args)).value
+    stored = artifacts.read_issues(page.page_number)
+    assert len(stored) == 2  # The recurrence adds nothing; the distinct concern does.
+    assert stored[0] == issue
+    assert finding_issue_links(report, stored)[0]["issue_id"] == issue.id
+    assert finding_issue_links(report, stored)[0]["available"] == (status in {"open", "revised"})
+    prior = json.JSONDecoder().raw_decode(generate.call_args.kwargs["user_content"].split("\n\n")[-1])[0]["prior_findings"]
+    assert prior[0]["issue_id"] == issue.id
+    assert "status" not in prior[0]
+
+    if status in {"open", "revised"}:
+        # Current visual evidence makes STILL WRONG usable on this render.
+        correction = build_aggregated_correction_request(
+            changes=(_change("c-still-wrong", "Make it darker.", issue_id=issue.id),),
+            page=page, parent=render, profile=_profile(), artifacts=artifacts,
+        )
+        assert correction.issue_ids == (issue.id,)
+        from novel_to_comic.page_review import accept_editorial_page_issue
+
+        accepted = accept_editorial_page_issue(artifacts, issue_id=issue.id, page_number=1)
+        assert accepted.status == ("resolved" if status == "revised" else "accepted")
+        if status == "revised":
+            assert accepted.resolution_revision == render.revision
+
+    # Clearing an issue never changes the input digest or triggers another paid check.
+    assert validated_saved_visual_review(**{k: v for k, v in args.items() if k != "generate"}) == report
+    assert asyncio.run(review_page_visuals(**args)).value == report
+    assert generate.await_count == 1
+    assert len(artifacts.read_issues(1)) == 2
+
+
+def test_visual_review_rejects_links_outside_the_render_branch(tmp_path: Path) -> None:
+    issue = _issue("visual-review-other-branch-1", render_revision=2, evidence=("Panel 1: Too bright.",))
+    artifacts, page, render = _setup(tmp_path, issues=(issue,))
+    compiled = compile_page_generation_request(
+        page, _edition(), ApprovedVisualReferenceInventory(references=()), {}, retry=RetryProvenance(attempt=1),
+    )
+    generate = AsyncMock(return_value=ApiResult(value={"findings": [
+        {"category": "composition", "panel_number": 1, "observation": "Too bright.",
+         "expected": "Dark.", "correction": "Darken it.", "issue_id": issue.id},
+    ]}))
+    with pytest.raises(ValueError, match="prior panel/category"):
+        asyncio.run(review_page_visuals(
+            config=Config(), page=page, render=render, image=artifacts.read_render(1, 1),
+            compiled=compiled, artifacts=artifacts, generate=generate,
+        ))
+    assert artifacts.read_visual_reviews(1, 1) == ()
+    assert artifacts.read_issues(1) == (issue,)
+
+
+@pytest.mark.parametrize("change", ["canonical", "references", "category"])
+def test_prior_decision_cannot_hide_a_changed_visual_concern(tmp_path: Path, change: str) -> None:
+    issue = _issue(
+        "visual-review-prior-1", status="dismissed", dismissal_reason="Intentional lighting.",
+        evidence=("Panel 1: Too bright.",),
+    )
+    artifacts, page, _ = _setup(tmp_path, issues=(issue,))
+    if change == "canonical":
+        page = page.model_copy(update={"revision": 2})
+    image = b"page-2"
+    render = _advance(artifacts, page, revision=2, image=image)
+    compiled = compile_page_generation_request(
+        page, _edition(), ApprovedVisualReferenceInventory(references=()), {}, retry=RetryProvenance(attempt=1),
+        style_reference_path=artifacts.project_dir / "samples" / "style_1.png" if change == "references" else None,
+    )
+    generate = AsyncMock(return_value=ApiResult(value={"findings": [
+        {"category": "prop" if change == "category" else "composition", "panel_number": 1,
+         "observation": "A visible discrepancy.", "expected": "Current authority.",
+         "correction": "Restore the current authority.", "issue_id": issue.id},
+    ]}))
+    with pytest.raises(ValueError, match="prior panel/category"):
+        asyncio.run(review_page_visuals(
+            config=Config(), page=page, render=render, image=image,
+            compiled=compiled, artifacts=artifacts, generate=generate,
+        ))
+    assert artifacts.read_visual_reviews(1, 2) == ()
+    assert artifacts.read_issues(1) == (issue,)
+
+
+@pytest.mark.parametrize("history_repetitions", [1, 35])
+def test_book_context_focuses_prompt_even_below_capacity_without_losing_provenance(tmp_path: Path, history_repetitions: int) -> None:
     artifacts, page, render = _setup(tmp_path)
     prepared = _prepare(artifacts, page, render, note="Make the jacket crimson.")
     context = prepared.context
-    remote = tuple(f"Remote beat {i}: " + "unrelated history " * 35 for i in range(3, 90))
+    remote = tuple(f"Remote beat {i}: " + "unrelated history " * history_repetitions for i in range(3, 90))
     long_context = context.model_copy(update={
         "beat_ids": (*context.beat_ids, *(f"remote-{i}" for i in range(3, 90))),
         "beat_summaries": (*context.beat_summaries, *remote),
@@ -485,7 +676,7 @@ def test_long_book_context_focuses_prompt_without_losing_saved_provenance(tmp_pa
     )
     assert len(compiled.request.prompt) <= _edition().capability_profile.max_prompt_characters
     assert "Remote beat 89" not in compiled.request.prompt
-    assert "The door opens, then stillness." in compiled.request.prompt
+    assert "Johansen opens the idol chamber door." in compiled.request.prompt
     assert prepared.correction.context_digest == context.digest
     assert len(long_context.beat_summaries) == 89
     estimate = correction_credit_estimate(prepared.compiled, config=Config(), reserve=True)
@@ -1386,3 +1577,24 @@ def test_correction_preview_uses_selected_older_parent(tmp_path):
     assert response.json()["parent_render_revision"] == 1
     body["parent_render_revision"] = 2
     assert client.post("/api/projects/test_project/parts/part_0001/pages/1/corrections/preview", json=body).status_code == 409
+
+
+def test_reselected_older_render_offers_only_issues_it_can_correct(tmp_path: Path) -> None:
+    on_first = _issue("issue-first", render_revision=1)
+    artifacts, page, first = _setup(tmp_path, issues=(
+        on_first,
+        _issue("issue-later", render_revision=2),
+        _issue("issue-dismissed", render_revision=1, status="dismissed", dismissal_reason="Intended."),
+        _issue("issue-copy", render_revision=1, correction_owner="adapt", correction_kind="copy_change"),
+    ))
+    second = _advance(artifacts, page, revision=2, image=b"page-2")
+
+    assert correctable_issue_ids(artifacts, artifacts.read_issues(1), second) == ("issue-later",)
+    # Reselecting render 1 makes the later finding unlinkable, exactly as preview enforces.
+    assert correctable_issue_ids(artifacts, artifacts.read_issues(1), first) == ("issue-first",)
+    with pytest.raises(StaleCorrectionError, match="targets render 2, not current render 1"):
+        build_aggregated_correction_request(
+            changes=(_change("c-later", "Fix it.", issue_id="issue-later"),),
+            page=page, parent=first, profile=_profile(), artifacts=artifacts,
+        )
+    assert correctable_issue_ids(artifacts, (), None) == ()

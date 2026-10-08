@@ -293,6 +293,7 @@ function PageReview({
                   comicPageSha256={item.page.content_sha256}
                   compareRevision={compareRevision}
                   issues={item.issues}
+                  correctableIssueIds={item.correctable_issue_ids}
                   seeds={visualSeeds}
                   onSeedsConsumed={() => setVisualSeeds([])}
                   onJobQueued={(jobId) => onJobQueued(jobId, item.page.page_number)}

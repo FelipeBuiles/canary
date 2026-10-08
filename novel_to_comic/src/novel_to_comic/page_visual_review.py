@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -12,7 +13,7 @@ from novel_to_comic.config import Config
 from novel_to_comic.models.draw import FrozenPageGenerationRequest, PageIssue, PageRenderRevision
 from novel_to_comic.models.page import ComicPage
 from novel_to_comic.page_drawing import CompiledPageGeneration, _off_canvas_handle
-from novel_to_comic.target_artifacts import TargetArtifacts
+from novel_to_comic.target_artifacts import ArtifactMissing, TargetArtifacts
 from novel_to_comic.usage import ApiResult, UsageRecord
 
 
@@ -23,6 +24,7 @@ class VisualFinding(BaseModel):
     observation: str = Field(min_length=1)
     expected: str = Field(min_length=1)
     correction: str = Field(min_length=1)
+    issue_id: str | None = Field(default=None, min_length=1)
 
 
 class VisualReviewDraft(BaseModel):
@@ -80,8 +82,8 @@ def finding_issue_links(
 ) -> tuple[dict[str, object], ...]:
     """Link each cached finding to its persisted PageIssue, if one exists.
 
-    Visual review records one Draw-owned issue per finding at generation time
-    (``visual-review-{digest}-{index}``). Returning the linkage lets the UI add
+    A recurring finding links to its existing issue; a new finding gets
+    ``visual-review-{digest}-{index}``. Returning the linkage lets the UI add
     the existing issue to a correction draft instead of duplicating it as a
     manual note, preserving one issue lifecycle. A finding with no persisted
     issue is explicitly unavailable and must not seed a draft.
@@ -89,7 +91,7 @@ def finding_issue_links(
     by_id = {issue.id: issue for issue in issues}
     links: list[dict[str, object]] = []
     for index, finding in enumerate(report.findings, start=1):
-        issue_id = f"visual-review-{report.input_sha256}-{index}"
+        issue_id = finding.issue_id or f"visual-review-{report.input_sha256}-{index}"
         stored = by_id.get(issue_id)
         links.append(
             {
@@ -105,10 +107,57 @@ def finding_issue_links(
         )
     return tuple(links)
 
+def _prior_visual_issues(
+    artifacts: TargetArtifacts,
+    page: ComicPage,
+    render: PageRenderRevision,
+    compiled: CompiledPageGeneration,
+) -> tuple[PageIssue, ...]:
+    """Earlier concerns on this branch under the same canonical authority.
+
+    Only their immutable identity/evidence enters the prompt. Decisions and
+    resolution revisions remain live issue state and cannot invalidate a paid
+    review every time the author clears a finding.
+    """
+    try:
+        issues = artifacts.read_issues(page.page_number)
+    except ArtifactMissing:
+        return ()
+    ancestors: set[int] = set()
+    visited = {render.revision}
+    revision = render.parent_revision
+    while revision is not None and revision not in visited:
+        visited.add(revision)
+        prior = artifacts.read_provenance(page.page_number, revision).render
+        if not prior.is_stale_for(page):
+            producing = artifacts.producing_request(prior)
+            if producing.references == compiled.request.references:
+                ancestors.add(revision)
+        revision = prior.parent_revision
+    return tuple(
+        issue for issue in issues
+        if issue.id.startswith("visual-review-") and issue.render_revision in ancestors
+    )
+
+
+def visual_issue_observed_on_render(
+    artifacts: TargetArtifacts, issue: PageIssue, render: PageRenderRevision,
+) -> bool:
+    """Current evidence for a recurring concern, never a claim that it was fixed."""
+    return issue.id.startswith("visual-review-") and any(
+        report.render_image_sha256 == render.image_sha256
+        and report.page_number == render.page_number
+        and report.render_revision == render.revision
+        and any(finding.issue_id == issue.id for finding in report.findings)
+        for report in artifacts.read_visual_reviews(render.page_number, render.revision)
+    )
+
+
 def visual_review_prompt(
     *,
     compiled: CompiledPageGeneration,
     producing_request: FrozenPageGenerationRequest | None = None,
+    prior_issues: tuple[PageIssue, ...] = (),
 ) -> str:
     """Compare current authority while retaining the producing render's intent."""
     attachment_map = {
@@ -134,11 +183,21 @@ def visual_review_prompt(
         "correction choices: retain those choices where consistent with current authority. "
         "It cannot override current approved identity/state/style, author pins or exact copy; "
         "its old asset map does not bind the current attachments.\n\n"
+        "For a discrepancy already described in prior_findings, return that exact issue_id. "
+        "Match the same subject, panel, disputed feature and expected outcome even when the "
+        "wording changes. A different feature or expected outcome is a new concern: use null. "
+        "Report visible evidence regardless of earlier author decisions; the issue lifecycle "
+        "preserves those decisions. Never invent an issue_id.\n\n"
         + json.dumps(
             {
                 "current_asset_attachments": attachment_map,
                 "generation_specification": compiled.request.prompt,
                 "producing_specification": producing_request.prompt if producing_request else None,
+                "prior_findings": [
+                    {"issue_id": issue.id, "category": issue.issue_type.removeprefix("visual_"),
+                     "evidence": issue.evidence, "correction": issue.requested_correction}
+                    for issue in prior_issues
+                ],
             }, ensure_ascii=False
         )
     )
@@ -152,6 +211,7 @@ def visual_review_input_digest(
     image: bytes,
     compiled: CompiledPageGeneration,
     producing_request: FrozenPageGenerationRequest | None = None,
+    prior_issues: tuple[PageIssue, ...] = (),
 ) -> str:
     """Validate current page/render/reference/model inputs and digest them.
 
@@ -184,7 +244,7 @@ def visual_review_input_digest(
                 "visual review reference bytes do not match approved authority"
             )
     model = config.effective_visual_review_model()
-    prompt = visual_review_prompt(compiled=compiled, producing_request=producing_request)
+    prompt = visual_review_prompt(compiled=compiled, producing_request=producing_request, prior_issues=prior_issues)
     return hashlib.sha256(
         json.dumps(
             {
@@ -223,6 +283,7 @@ def validated_saved_visual_review(
     digest = visual_review_input_digest(
         config=config, page=page, render=render, image=image, compiled=compiled,
         producing_request=producing_request,
+        prior_issues=_prior_visual_issues(artifacts, page, render, compiled),
     )
     path = artifacts.visual_review_path(page.page_number, render.revision, digest)
     if not path.exists():
@@ -247,10 +308,12 @@ async def review_page_visuals(
     objective visual correctness. No auto-corrections or critic loop.
     """
     model = config.effective_visual_review_model()
-    prompt = visual_review_prompt(compiled=compiled, producing_request=producing_request)
+    prior_issues = _prior_visual_issues(artifacts, page, render, compiled)
+    prompt = visual_review_prompt(compiled=compiled, producing_request=producing_request, prior_issues=prior_issues)
     digest = visual_review_input_digest(
         config=config, page=page, render=render, image=image, compiled=compiled,
         producing_request=producing_request,
+        prior_issues=prior_issues,
     )
     path = artifacts.visual_review_path(page.page_number, render.revision, digest)
     if path.exists():
@@ -283,6 +346,15 @@ async def review_page_visuals(
         draft = VisualReviewDraft.model_validate(result.value)
         if any(finding.panel_number > len(page.content) for finding in draft.findings):
             raise ValueError("visual review cited a panel that does not exist")
+        prior_by_id = {issue.id: issue for issue in prior_issues}
+        for finding in draft.findings:
+            if finding.issue_id is None:
+                continue
+            prior_issue = prior_by_id.get(finding.issue_id)
+            if prior_issue is None or prior_issue.issue_type != f"visual_{finding.category}" or not any(
+                re.match(rf"Panel {finding.panel_number}:", evidence) for evidence in prior_issue.evidence
+            ):
+                raise ValueError("visual review linked a finding outside its prior panel/category evidence")
         report = PageVisualReview(
             input_sha256=digest,
             page_number=page.page_number,
@@ -297,7 +369,7 @@ async def review_page_visuals(
 
     for index, finding in enumerate(report.findings, 1):
         issue = PageIssue(
-            id=f"visual-review-{digest}-{index}",
+            id=finding.issue_id or f"visual-review-{digest}-{index}",
             issue_type=f"visual_{finding.category}",
             classification="editorial_issue",
             correction_kind="render_fidelity",

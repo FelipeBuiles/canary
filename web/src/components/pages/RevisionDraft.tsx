@@ -41,6 +41,8 @@ import {
 } from "./correctionValidation";
 import type { DraftSeed } from "./PageChecks";
 import { maybeShowInsufficientCredits } from "../../store/insufficientCredits";
+import { useCompletePage } from "../../api/queries";
+import { RevisionSwitcher, type RevisionOption } from "./RevisionSwitcher";
 
 interface DraftChange {
   id: string;
@@ -115,9 +117,11 @@ interface RevisionDraftProps {
   /** Render revision the redraw starts from. */
   parentRenderRevision: number;
   comicPageSha256: string;
-  /** Older render used only for before/after comparison. */
+  /** Default older render for before/after comparison (the parent). */
   compareRevision: number | null;
   issues: PageIssue[];
+  /** Issue IDs this render's correction may link; omitted means every open draw issue. */
+  correctableIssueIds?: string[];
   /** Seeds pushed from the visual review panel; consumed once merged. */
   seeds: DraftSeed[];
   onSeedsConsumed: () => void;
@@ -128,11 +132,15 @@ interface RevisionDraftProps {
   aside?: ReactNode;
 }
 
-function suggestibleIssues(issues: PageIssue[]): PageIssue[] {
+function suggestibleIssues(issues: PageIssue[], correctable?: string[]): PageIssue[] {
+  // The server knows which tracked issues a correction of this render may
+  // link; an older reselected render cannot fix issues found on later ones.
+  const linkable = correctable ? new Set(correctable) : null;
   return issues.filter(
     (issue) =>
       (issue.status === "open" || issue.status === "revised")
-      && issue.correction_owner === "draw",
+      && issue.correction_owner === "draw"
+      && (!linkable || linkable.has(issue.id)),
   );
 }
 
@@ -210,6 +218,7 @@ export function RevisionDraft({
   comicPageSha256,
   compareRevision,
   issues,
+  correctableIssueIds,
   seeds,
   onSeedsConsumed,
   onJobQueued,
@@ -222,7 +231,7 @@ export function RevisionDraft({
   const submit = useSubmitCorrections();
   const target = useMemo<DraftTarget>(() => ({ comicPageRevision, parentRenderRevision }), [comicPageRevision, parentRenderRevision]);
 
-  const suggestions = useMemo(() => suggestibleIssues(issues), [issues]);
+  const suggestions = useMemo(() => suggestibleIssues(issues, correctableIssueIds), [issues, correctableIssueIds]);
   const suggestionIds = useMemo(() => new Set(suggestions.map((issue) => issue.id)), [suggestions]);
 
   const [changes, setChanges] = useState<DraftChange[]>(() => {
@@ -273,6 +282,17 @@ export function RevisionDraft({
   // the artwork a plain fitted image so controls never crowd it.
   const [marking, setMarking] = useState(false);
   const [comparison, setComparison] = useState<"wipe" | "before" | "after">("wipe");
+  // Any saved render can be viewed and compared; corrections always start
+  // from the selected render (parentRenderRevision).
+  const pageDetail = useCompletePage(project, pageNumber);
+  const revisions = useMemo<RevisionOption[]>(() => (pageDetail.data?.renders ?? [])
+    .map(({ render }) => ({
+      revision: render.revision,
+      stale: render.comic_page_revision !== comicPageRevision || render.comic_page_sha256 !== comicPageSha256,
+    }))
+    .sort((a, b) => a.revision - b.revision), [pageDetail.data, comicPageRevision, comicPageSha256]);
+  const [viewRevision, setViewRevision] = useState(parentRenderRevision);
+  const [compareChoice, setCompareChoice] = useState<number | null>(null);
   const [comparisonOpen, setComparisonOpen] = useState(false);
   // Scroll only on explicit mode transitions (start editing, start marking,
   // hide editing). Mark updates and note edits never scroll: the intent flag
@@ -299,13 +319,39 @@ export function RevisionDraft({
     }
   }, [editing, marking]);
 
-  // Merge visual-review seeds once: known issues become selections, the rest new changes.
+  // Checks can clear findings without changing the page/render target. Reconcile
+  // both mounted and restored drafts before displaying or previewing them, while
+  // leaving the exact submitted request frozen until it is available for retry.
+  if (!submit.isPending && (!submittedJobId || canRetry)) {
+    // An open finding from a later render cannot be linked here; keep the
+    // author's own wording or marks for it as a new request, drop the rest.
+    const openElsewhere = new Map(suggestibleIssues(issues).map((issue) => [issue.id, issue]));
+    const activeChanges = changes.flatMap((change) => {
+      if (!change.issueId || suggestionIds.has(change.issueId)) return [change];
+      const issue = openElsewhere.get(change.issueId);
+      const authored = issue && (change.instruction !== issue.requested_correction || change.annotations.length > 0);
+      return authored ? [{ ...change, issueId: undefined }] : [];
+    });
+    if (activeChanges.some((change, index) => change !== changes[index]) || activeChanges.length !== changes.length) {
+      setChanges(activeChanges);
+      setPreviewHash(null);
+    }
+  }
+
+  // Merge visual-review seeds once: current issues become selections, the rest new changes.
   // Own-state merge happens during render (the supported derived-state pattern);
   // parent notification stays in an effect since it sets parent state.
   const [lastSeeds, setLastSeeds] = useState<DraftSeed[]>([]);
   if (seeds !== lastSeeds && seeds.length > 0) {
     setLastSeeds(seeds);
-    setChanges((current) => mergeSeeds(current, seeds));
+    // An open finding that cannot be linked to this render (it was found on
+    // a later one) still carries the author's request: send it as a new
+    // change. Dismissed or settled findings stay dropped.
+    const unlinkable = new Set(suggestibleIssues(issues).map((issue) => issue.id));
+    setChanges((current) => mergeSeeds(current, seeds.flatMap((seed) => (
+      !seed.issueId || suggestionIds.has(seed.issueId) ? [seed]
+        : unlinkable.has(seed.issueId) ? [{ ...seed, issueId: undefined }] : []
+    ))));
     setEditing(true);
   }
   useEffect(() => {
@@ -542,8 +588,16 @@ export function RevisionDraft({
   );
 
   const previewManualCount = previewResult?.pending_manual_change_ids.length ?? 0;
-  const canvasSrc = pageRenderPreviewUrl(project, pageNumber, parentRenderRevision, "reader");
-  const canvasAlt = `${t("Complete page")} ${pageNumber}, ${t("render revision")} ${parentRenderRevision}`;
+  // Requests are drafted against the selected render, so editing always shows it.
+  const shownRevision = editing ? parentRenderRevision : viewRevision;
+  const canvasSrc = pageRenderPreviewUrl(project, pageNumber, shownRevision, "reader");
+  const canvasAlt = `${t("Complete page")} ${pageNumber}, ${t("render revision")} ${shownRevision}`;
+  const otherRevisions = revisions.filter((option) => option.revision !== shownRevision);
+  const fallbackCompare = shownRevision === parentRenderRevision && compareRevision != null
+    ? compareRevision
+    : [...otherRevisions].reverse().find((option) => option.revision < shownRevision)?.revision ?? otherRevisions[0]?.revision ?? null;
+  const beforeRevision = compareChoice != null && compareChoice !== shownRevision
+    && revisions.some((option) => option.revision === compareChoice) ? compareChoice : fallbackCompare;
   function startEditing() {
     if (locked) return;
     if (completed) {
@@ -559,6 +613,7 @@ export function RevisionDraft({
       setPreviewHash(null);
     }
     scrollIntentRef.current = "edit";
+    setViewRevision(parentRenderRevision);
     setEditing(true);
     setMarking(false);
   }
@@ -609,6 +664,12 @@ export function RevisionDraft({
               />
             </div>
           ) : (
+            <>
+            {!editing && (
+              <RevisionSwitcher project={project} pageNumber={pageNumber} revisions={revisions}
+                selected={parentRenderRevision} viewing={viewRevision} disabled={locked || !!redraw}
+                onView={(revision) => { setViewRevision(revision); setCompareChoice(null); }} />
+            )}
             <figure ref={artRef} className="relative flex h-[max(12rem,calc(100dvh-20rem))] justify-center lg:h-auto lg:min-h-64 lg:flex-1">
               <Loupe className={`flex h-full w-full justify-center transition-opacity ${redraw ? "opacity-60" : ""}`}>
                 <PageArtwork src={canvasSrc} alt={canvasAlt} onLoaded={onArtworkLoaded} />
@@ -621,55 +682,67 @@ export function RevisionDraft({
                 </figcaption>
               )}
             </figure>
+            </>
           )}
-          {compareRevision != null && (
+          {beforeRevision != null && (
             <details className="border border-ink-black/20 px-3 py-2" onToggle={(event) => setComparisonOpen(event.currentTarget.open)}>
               <summary className="cursor-pointer font-meta text-xs font-bold text-ink-muted">
-                {t("COMPARE WITH PREVIOUS RENDER")} ({t("Revision")} {compareRevision} → {t("Revision")} {parentRenderRevision})
+                {t("COMPARE WITH PREVIOUS RENDER")} ({t("Revision")} {beforeRevision} → {t("Revision")} {shownRevision})
               </summary>
+              {otherRevisions.length > 1 && (
+                <label className="mt-3 flex flex-wrap items-center gap-2 font-meta text-xs font-bold">
+                  {t("Compare with")}
+                  <select value={beforeRevision} className="min-h-9 border border-ink-black/25 bg-transparent px-2"
+                    onChange={(event) => setCompareChoice(Number(event.target.value))}>
+                    {otherRevisions.map((option) => (
+                      <option key={option.revision} value={option.revision}>{t("Revision")} {option.revision}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <div role="group" aria-label={t("Revision comparison")} className="mt-3 flex flex-wrap gap-2">
                 <Button size="sm" variant="outline" aria-pressed={comparison === "wipe"} onClick={() => setComparison("wipe")}>
                   {t("WIPE")}
                 </Button>
                 <Button size="sm" variant="outline" aria-pressed={comparison === "before"} onClick={() => setComparison("before")}>
-                  {t("BEFORE")} · {t("Revision")} {compareRevision}
+                  {t("BEFORE")} · {t("Revision")} {beforeRevision}
                 </Button>
                 <Button size="sm" variant="outline" aria-pressed={comparison === "after"} onClick={() => setComparison("after")}>
-                  {t("AFTER")} · {t("Revision")} {parentRenderRevision}
+                  {t("AFTER")} · {t("Revision")} {shownRevision}
                 </Button>
               </div>
               <div className="mt-3 grid items-start gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)]">
                 <div className="relative min-w-0">
                 <InspectButton
                   images={[
-                    { src: pageRenderPreviewUrl(project, pageNumber, compareRevision, "reader"), alt: `${t("Complete page")} ${pageNumber}, ${t("previous revision")} ${compareRevision}`, label: `${t("BEFORE")} · ${t("Revision")} ${compareRevision}` },
-                    { src: canvasSrc, alt: `${t("Complete page")} ${pageNumber}, ${t("current revision")} ${parentRenderRevision}`, label: `${t("AFTER")} · ${t("Revision")} ${parentRenderRevision}` },
+                    { src: pageRenderPreviewUrl(project, pageNumber, beforeRevision, "reader"), alt: `${t("Complete page")} ${pageNumber}, ${t("previous revision")} ${beforeRevision}`, label: `${t("BEFORE")} · ${t("Revision")} ${beforeRevision}` },
+                    { src: canvasSrc, alt: `${t("Complete page")} ${pageNumber}, ${t("current revision")} ${shownRevision}`, label: `${t("AFTER")} · ${t("Revision")} ${shownRevision}` },
                   ]}
                   index={comparison === "before" ? 0 : 1}
                   placement={comparison === "wipe" ? "right-2 top-10" : undefined}
                 />
                 {comparison === "wipe" ? (
                   <BeforeAfterWipe
-                    beforeSrc={pageRenderPreviewUrl(project, pageNumber, compareRevision, "reader")}
+                    beforeSrc={pageRenderPreviewUrl(project, pageNumber, beforeRevision, "reader")}
                     afterSrc={canvasSrc}
-                    beforeAlt={`${t("Complete page")} ${pageNumber}, ${t("previous revision")} ${compareRevision}`}
-                    afterAlt={`${t("Complete page")} ${pageNumber}, ${t("current revision")} ${parentRenderRevision}`}
-                    beforeLabel={`${t("BEFORE")} · ${compareRevision}`}
-                    afterLabel={`${t("AFTER")} · ${parentRenderRevision}`}
+                    beforeAlt={`${t("Complete page")} ${pageNumber}, ${t("previous revision")} ${beforeRevision}`}
+                    afterAlt={`${t("Complete page")} ${pageNumber}, ${t("current revision")} ${shownRevision}`}
+                    beforeLabel={`${t("BEFORE")} · ${beforeRevision}`}
+                    afterLabel={`${t("AFTER")} · ${shownRevision}`}
                     visible={comparisonOpen}
-                    firstViewKey={`${project}:${pageNumber}:${compareRevision}:${parentRenderRevision}`}
+                    firstViewKey={`${project}:${pageNumber}:${beforeRevision}:${shownRevision}`}
                   />
                 ) : (
                 <figure>
                   <img
-                    src={comparison === "before" ? pageRenderPreviewUrl(project, pageNumber, compareRevision, "reader") : canvasSrc}
-                    alt={`${t("Complete page")} ${pageNumber}, ${t(comparison === "before" ? "previous revision" : "current revision")} ${comparison === "before" ? compareRevision : parentRenderRevision}`}
+                    src={comparison === "before" ? pageRenderPreviewUrl(project, pageNumber, beforeRevision, "reader") : canvasSrc}
+                    alt={`${t("Complete page")} ${pageNumber}, ${t(comparison === "before" ? "previous revision" : "current revision")} ${comparison === "before" ? beforeRevision : shownRevision}`}
                     loading="lazy"
                     decoding="async"
                     className="max-h-[70dvh] w-full object-contain"
                   />
                   <figcaption className="mt-2 text-sm font-bold" aria-live="polite">
-                    {t(comparison === "before" ? "BEFORE" : "AFTER")} · {t("Revision")} {comparison === "before" ? compareRevision : parentRenderRevision}
+                    {t(comparison === "before" ? "BEFORE" : "AFTER")} · {t("Revision")} {comparison === "before" ? beforeRevision : shownRevision}
                   </figcaption>
                 </figure>
                 )}
@@ -679,16 +752,16 @@ export function RevisionDraft({
                 <SubmittedCorrection
                   project={project}
                   pageNumber={pageNumber}
-                  renderRevision={parentRenderRevision}
+                  renderRevision={shownRevision}
                 />
-                {issues.filter((issue) => issue.render_revision === compareRevision && (issue.status === "open" || issue.status === "revised")).length > 0 && (
+                {issues.filter((issue) => issue.render_revision === beforeRevision && (issue.status === "open" || issue.status === "revised")).length > 0 && (
                   <div>
                     <p className="font-meta text-xs font-bold text-ink-muted">
                       {t("STILL OPEN FROM THE PREVIOUS RENDER")}
                     </p>
                     <ul className="mt-1 space-y-1">
                       {issues
-                        .filter((issue) => issue.render_revision === compareRevision && (issue.status === "open" || issue.status === "revised"))
+                        .filter((issue) => issue.render_revision === beforeRevision && (issue.status === "open" || issue.status === "revised"))
                         .map((issue) => (
                           <li key={issue.id} className="font-body text-xs leading-5">
                             {issue.requested_correction}

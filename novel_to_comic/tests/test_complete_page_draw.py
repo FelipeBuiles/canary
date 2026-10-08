@@ -1675,12 +1675,15 @@ def test_region_only_correction_changes_native_content_without_shifting_referenc
             retry=RetryProvenance(attempt=1), correction=correction,
             edit_source_bytes=parent_bytes,
         ).request
-        brief = _provider_brief(request.prompt)
-        region = brief["complete_page_correction"]["parent_coordinate_regions"][0]
-        assert region["polygon"] == [{"x": x, "y": y} for x, y in polygon]
+        xs, ys = [x for x, _ in polygon], [y for _, y in polygon]
+        assert (f"Edit region: {round(min(xs) * 100)}-{round(max(xs) * 100)}% across, "
+                f"{round(min(ys) * 100)}-{round(max(ys) * 100)}% down the page") in request.prompt
         contents = _exact_complete_page_contents(request.model_dump(mode="json"), images)
-        for index, reference in enumerate(brief["approved_page_references"]):
-            assert reference["image"] in contents[3 + index * 2]
+        for index, reference in enumerate(request.references):
+            # Text and native labels name the same upload: Image N+2 is asset-N.
+            handle = f"asset-{chr(65 + index)}"
+            assert handle in contents[3 + index * 2]
+            assert f"Image {index + 2} ({handle}) = " in request.prompt
         assert request.lettering == ()
         provider_contents.append(contents)
     assert provider_contents[0][:-1] == provider_contents[1][:-1]

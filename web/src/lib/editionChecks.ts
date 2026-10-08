@@ -46,11 +46,6 @@ const COPY: Record<string, FindingCopy> = {
     fix: "Open the page and redraw it from its current plan. The old art stays in the page’s history.",
     review: "page",
   },
-  edition_model_mismatch: {
-    title: "The page was drawn for a different page layout",
-    fix: "Redraw the page from Pages.",
-    review: "page",
-  },
   corrupt_page_render: {
     title: "The page image can’t be read",
     fix: "Redraw the page from Pages.",

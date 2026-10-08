@@ -146,6 +146,15 @@ def _issues(target: TargetArtifacts, page_number: int):
         return ()
 
 
+def _correctable_issue_ids(target: TargetArtifacts, page_number: int) -> tuple[str, ...]:
+    from novel_to_comic.page_review import correctable_issue_ids
+
+    active = _latest_provenance(target, page_number)
+    return correctable_issue_ids(
+        target, tuple(_issues(target, page_number)), active.render if active is not None else None,
+    )
+
+
 def _analysis_recovery(target: TargetArtifacts, page_number: int) -> dict:
     active = _latest_provenance(target, page_number)
     if active is None:
@@ -303,6 +312,7 @@ def list_pages(request: Request = None, project=Depends(get_project)):
                 "page": target.read_page(selected.page_number),
                 "active_render": _latest_provenance(target, selected.page_number),
                 "issues": _issues(target, selected.page_number),
+                "correctable_issue_ids": _correctable_issue_ids(target, selected.page_number),
                 "failure": _page_failure(target, selected.page_number),
                 "analysis_recovery": _analysis_recovery(target, selected.page_number),
                 "visual_reviewed": _visual_reviewed(target, selected.page_number),
