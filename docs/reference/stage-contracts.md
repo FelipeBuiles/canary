@@ -875,6 +875,21 @@ non-naturalistic families, with shape differences weighted above surface/medium
 wording. Design and rendering category are compiled into selected art authority
 and its identity/fingerprint; they are not picker-only metadata.
 
+Each candidate also declares a `color_strategy` (`monochrome`, `spot_color`,
+`muted`, `naturalistic`, `saturated`, `high_key`) and a `medium_family`
+(`comic_production`, `painted`, `drawn`, `printmaking`, `collage`,
+`photographic`, `novelty_process`). Default selection requires four color
+strategies, at most two low-chroma and one monochrome option, and at least two
+full-color options. At least one story-fit role is `comic_production`, and
+`novelty_process` media (cyanotype, stained glass, diorama and similar) appear
+only as the wildcard; regenerations rotate away from earlier novelty processes.
+An author `color_restriction` or `medium_restriction` lifts the matching rule.
+The palette and color strategy compile into the selected style's `COLOR —`
+section, with an anti-warm-cast clause and, for monochrome, a positive-rendering
+clause. `medium_family` is curation metadata outside the stable id. Extracted
+`style_notes` describe the story world and never choose a palette. See
+[style quality research](../research/2026-10-08-graphic-novel-style-quality.md).
+
 An author-directed set is one unchanged faithful proof plus **five** neighbors.
 Neighbor curation uses five roles, at least three stylized/graphic options, and
 the same shape-diversity requirement. Explicit author restrictions override
@@ -895,10 +910,16 @@ sixth image or replace the selected style. The picker uses three columns on
 desktop, two on tablets, and one on narrow screens.
 
 Style proofs share one bounded scene roster and location across the generated
-brief, deterministic fallback, and request compiler. Contextual mentions cannot
+brief, deterministic fallback, and request compiler. The scene is chosen
+deterministically from the first part's opening (at least eight narrative
+scenes or a third of them): avoid climax-like beats, then prefer the lead
+character, action or emotional scenes, and turning beats, then earlier scenes.
+The brief stages a charged moment just before a turn, ending on one large,
+readable reaction face with a named key light; proof constraints in both
+lettering modes add a legibility clause. Contextual mentions cannot
 add subjects or crowds. Brief prose owns staging, not redesigned identities;
 the compiler supplies each selected canonical `visual_anchor` exactly.
-The v6 brief cache fingerprints the selected evidence, model, and prompt;
+The v7 brief cache fingerprints the selected evidence, model, and prompt;
 stale cache entries are not reused. Candidate styles render the same selection.
 Concurrent sample jobs serialize shared-brief authoring and recheck the cache;
 a durable suggestion batch resolves its brief once, including a deterministic
@@ -1372,6 +1393,9 @@ Started-expired holds, legacy unowned holds, and ambiguous settlement require
 operator reconciliation, not global startup/reset release. Ledger settlement
 may replay its identical idempotent database operation; this is not a retry of
 the paid provider request.
+Explicit OpenAI image safety refusals remain terminal refusals when the gateway
+wraps them in a generic 5xx response, including refusals inside an accepted
+stream. They do not retain an ambiguous-outcome hold or trigger route fallback.
 
 Project-lookup connection failures may retry the read once on the shared live
 database pool. Request recovery must not close or replace that client: admitted

@@ -129,11 +129,14 @@ word or page quotas. Review is metered text work and not a quality guarantee.
   concrete `character_design`. Defaults require four stylized/graphic directions,
   one realistic illustration, at most one optional photo, and four proportion
   families including three non-naturalistic ones. Author-quoted medium/rendering
-  and proportion restrictions override only their own axes. Schema, role and
-  diversity repair share two text attempts; mocked tests do not establish image quality.
+  and proportion restrictions override only their own axes. Color strategies
+  and medium families are curated too: four color strategies with at most one
+  monochrome, a comic-production story fit, novelty processes wildcard-only.
+  Schema, role and diversity repair share two text attempts; mocked tests do
+  not establish image quality.
 - Style's generated shared brief, deterministic fallback, and compiler use the
   same bounded scene roster/location. Context mentions do not add subjects.
-  Compiled canonical anchors stay exact; v6 brief caching keys selected evidence,
+  Compiled canonical anchors stay exact; v7 brief caching keys selected evidence,
   model, and prompt rather than reusing an unrelated scene.
 - Cast references use protected art-only style direction; full-page samples
   and Draw keep lettering/framing standards. Approved style imagery owns

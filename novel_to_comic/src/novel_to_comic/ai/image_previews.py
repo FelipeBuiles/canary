@@ -219,7 +219,7 @@ async def _stream_image_response(
                     # artwork until the caller validates and saves the result.
                     _emit("image_preview", target=target, request_id=request_id,
                           preview_index=3, preview_total=3, image_url=image_url)
-            if result.status_code >= 500 and not client._fal_definitely_unsubmitted(result):
+            if result.status_code >= 500 and not client._image_definitely_failed(result):
                 from novel_to_comic.ai.context import current_ai_request_context
                 from novel_to_comic.server.credits import retain_ambiguous_job
                 retain_ambiguous_job(current_ai_request_context().job_id)

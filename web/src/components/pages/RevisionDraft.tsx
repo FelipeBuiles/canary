@@ -327,6 +327,13 @@ export function RevisionDraft({
     // author's own wording or marks for it as a new request, drop the rest.
     const openElsewhere = new Map(suggestibleIssues(issues).map((issue) => [issue.id, issue]));
     const activeChanges = changes.flatMap((change) => {
+      // Submission creates a deterministic tracked issue for each manual
+      // change. A failed job's saved draft still carries the original change
+      // ID; reconnect it before retrying, preserving the author's text/marks.
+      if (!change.issueId) {
+        const issueId = `page-issue-manual-${pageNumber}-${parentRenderRevision}-${change.id}`;
+        if (suggestionIds.has(issueId)) return [{ ...change, issueId }];
+      }
       if (!change.issueId || suggestionIds.has(change.issueId)) return [change];
       const issue = openElsewhere.get(change.issueId);
       const authored = issue && (change.instruction !== issue.requested_correction || change.annotations.length > 0);
@@ -634,6 +641,7 @@ export function RevisionDraft({
       {submittedJobId && canRetry && (
         <Surface tone="container" border="soft" shadow="none" padding="md" role="status">
           <p className="font-body text-sm font-bold">{t("The correction did not finish. Your original requests are saved.")}</p>
+          {job?.user_message && <p className="mt-1 font-body text-sm leading-6 text-ink-muted">{job.user_message}</p>}
           <p className="mt-1 font-body text-sm leading-6 text-ink-muted">
             {t("Choose Make changes to review your saved requests and the cost before trying again.")}
           </p>

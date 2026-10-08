@@ -38,10 +38,13 @@ from novel_to_comic.stages.s2_style import (
     normalize_suggestion,
     style_direction_image,
     style_validation_brief,
+    _suggestion_story_context,
 )
 from novel_to_comic.style_contract import (
     DEFAULT_LETTERING_STANDARD,
     DEFAULT_PAGE_FRAMING_STANDARD,
+    page_art_style_template,
+    style_template_for_suggestion,
 )
 from novel_to_comic.usage import ApiResult
 
@@ -133,12 +136,15 @@ def _batch(*, restriction: str = "", count: int = LLM_REQUEST_COUNT) -> dict:
             "proportion_family": ("naturalistic", "compact", "elongated", "heroic", "caricatured", "geometric")[index % 6],
             "character_design": f"Design {index}: explicit head/body ratio, limb proportions and face shapes.",
             "portfolio_role": PORTFOLIO_ROLES[index % len(PORTFOLIO_ROLES)],
+            "color_strategy": ("naturalistic", "saturated", "high_key", "muted", "monochrome", "naturalistic")[index % 6],
+            "medium_family": ("comic_production", "painted", "printmaking", "drawn", "collage", "novelty_process")[index % 6],
             "palette": f"palette {index}",
             "line_rendering": f"finish {index}",
             "lighting_value": f"lighting {index}",
             "story_fit": "Supports the story.",
         })
-    return {"medium_restriction": restriction, "proportion_restriction": "", "styles": styles}
+    return {"medium_restriction": restriction, "proportion_restriction": "", "color_restriction": "",
+            "styles": styles}
 
 
 def _production(label: str = "Literary") -> dict:
@@ -975,6 +981,184 @@ def test_a_restriction_without_an_author_direction_keeps_the_default_diversity()
         with pytest.raises(RuntimeError, match="proportion families"):
             asyncio.run(generate_suggestions(Config(), _bible()))
     assert len(_sketch_calls(mock)) == 2
+
+
+def test_a_bleak_low_chroma_pool_is_repaired_rather_than_shipped():
+    """Regression for Astronomical: six black-and-gold directions rendered as one sepia page."""
+    batch = _batch()
+    for candidate in batch["styles"]:
+        candidate["color_strategy"] = "muted"
+    mock = _text_mock(batch)
+    with patch("novel_to_comic.clients.text.generate_json", new=mock):
+        with pytest.raises(RuntimeError, match="color strategies"):
+            asyncio.run(generate_suggestions(Config(), _bible()))
+    assert len(_sketch_calls(mock)) == 2
+    assert "color strategies" in _sketch_calls(mock)[1].kwargs["system_prompt"]
+
+
+def test_selected_portfolio_spreads_color_strategies():
+    mock = _text_mock(_batch())
+    with patch("novel_to_comic.clients.text.generate_json", new=mock):
+        suggestions, _usage = asyncio.run(generate_suggestions(Config(), _bible()))
+    strategies = [s["color_strategy"] for s in suggestions]
+    assert len(set(strategies)) >= 4
+    assert sum(s in {"monochrome", "spot_color", "muted"} for s in strategies) <= 2
+
+
+def test_explicit_author_color_restriction_keeps_a_single_strategy():
+    batch = _batch()
+    batch["color_restriction"] = "Black and white only"
+    for candidate in batch["styles"]:
+        candidate["color_strategy"] = "monochrome"
+    mock = _text_mock(batch)
+    with patch("novel_to_comic.clients.text.generate_json", new=mock):
+        suggestions, _ = asyncio.run(generate_suggestions(Config(), _bible(), custom_direction={
+            "text": "Black and white manga",
+        }))
+    assert {s["color_strategy"] for s in suggestions} == {"monochrome"}
+
+
+def test_extracted_style_notes_are_context_not_a_palette():
+    bible = _bible().model_copy(update={"style_notes": "Decay against a warm golden record."})
+    context = _suggestion_story_context(bible)
+    assert "not art direction" in context
+    assert "Decay against a warm golden record." in context
+
+
+def test_palette_reaches_the_image_prompt_only_with_a_color_strategy():
+    legacy = {"template": "Ink with bold brush.", "palette": "teal and coral"}
+    assert "COLOR" not in style_template_for_suggestion(legacy)
+    current = style_template_for_suggestion(legacy | {"color_strategy": "saturated"})
+    assert "COLOR — saturated: teal and coral" in current
+    assert "sepia" in current
+    # Palette authority is art direction: page art keeps it, lettering does not own it.
+    assert "teal and coral" in page_art_style_template(current)
+
+
+
+def test_a_novelty_process_outside_the_wildcard_is_repaired_rather_than_shipped():
+    """Cyanotype kept recurring as a story-fit proof; novelty is wildcard-only."""
+    batch = _batch()
+    for candidate in batch["styles"]:
+        if candidate["portfolio_role"] == "story_fit_secondary":
+            candidate["medium_family"] = "novelty_process"
+    mock = _text_mock(batch)
+    with patch("novel_to_comic.clients.text.generate_json", new=mock):
+        with pytest.raises(RuntimeError, match="novelty_process only in the wildcard"):
+            asyncio.run(generate_suggestions(Config(), _bible()))
+    assert len(_sketch_calls(mock)) == 2
+
+
+def test_a_story_fit_comic_production_style_is_required():
+    batch = _batch()
+    for candidate in batch["styles"]:
+        if candidate["medium_family"] == "comic_production":
+            candidate["medium_family"] = "painted"
+    mock = _text_mock(batch)
+    with patch("novel_to_comic.clients.text.generate_json", new=mock):
+        with pytest.raises(RuntimeError, match="comic_production medium_family"):
+            asyncio.run(generate_suggestions(Config(), _bible()))
+
+
+def test_an_author_medium_restriction_lifts_the_medium_gate():
+    batch = _batch(restriction="Cyanotype only")
+    for candidate in batch["styles"]:
+        candidate["medium_family"] = "novelty_process"
+    mock = _text_mock(batch)
+    with patch("novel_to_comic.clients.text.generate_json", new=mock):
+        suggestions, _ = asyncio.run(generate_suggestions(Config(), _bible(), custom_direction={
+            "text": "Cyanotype sun prints",
+        }))
+    assert {s["medium_family"] for s in suggestions} == {"novelty_process"}
+
+
+def test_selected_portfolio_has_at_most_one_monochrome_option():
+    styles = _batch()["styles"]
+    for candidate in styles:
+        if candidate["portfolio_role"] in {"adjacent", "wildcard"}:
+            candidate["color_strategy"] = "monochrome"
+    with pytest.raises(RuntimeError, match="at most one monochrome"):
+        _select_role_portfolio(styles, PORTFOLIO_ROLES, require_color_diversity=True)
+
+
+def test_rare_one_word_mediums_do_not_outscore_comic_native_mediums():
+    from novel_to_comic.stages.s2_style import _portfolio_distance
+    ink = {"medium": "ink and flat color", "medium_family": "comic_production"}
+    wash = {"medium": "ink with watercolor wash", "medium_family": "comic_production"}
+    cyanotype = {"medium": "cyanotype", "medium_family": "novelty_process"}
+    gouache = {"medium": "gouache", "medium_family": "painted"}
+    assert _portfolio_distance(ink, cyanotype) == _portfolio_distance(ink, gouache)
+    assert _portfolio_distance(ink, wash) < _portfolio_distance(ink, gouache)
+
+
+def test_regeneration_rotates_previous_novelty_processes():
+    from novel_to_comic.stages.s2_style import _build_avoid_block
+    block = _build_avoid_block([
+        {"label": "Sun print", "medium": "Cyanotype", "medium_family": "novelty_process"},
+        {"label": "Flat ink", "medium": "ink and flat color", "medium_family": "comic_production"},
+    ])
+    assert "Previously used novelty processes: do not use any of them again: cyanotype." in block
+
+
+def test_monochrome_styles_render_positively_in_the_image_prompt():
+    template = style_template_for_suggestion({
+        "template": "Prussian-blue sun print.", "palette": "one blue ink", "color_strategy": "monochrome",
+    })
+    assert "dark line and tone on a light ground" in template
+    assert "blueprint-like" in template
+    assert "light ground" not in style_template_for_suggestion({
+        "template": "Bold ink.", "palette": "teal and coral", "color_strategy": "saturated",
+    })
+
+
+def _scene(scene_id, character_ids, scene_type="transition", beat="rising_action"):
+    return Scene(
+        id=scene_id, chapter=1, title=scene_id, location_id="loc_001",
+        character_ids=character_ids, summary=f"{scene_id} summary.", scene_type=scene_type,
+        narrative_beat=beat, source_start_quote=f"{scene_id} opens.",
+    )
+
+
+def _dramatic_bible(scenes):
+    bible = _bible()
+    extra = bible.characters[0].model_copy(update={"id": "char_002", "name": "Donut"})
+    return bible.model_copy(update={"characters": [*bible.characters, extra], "scenes": scenes})
+
+
+def test_proof_scene_prefers_an_early_dramatic_turn_with_the_lead():
+    """Astronomical's proofs showed a lead standing in a hall; pick a scene with drama."""
+    from novel_to_comic.style_briefing import style_sample_selection
+    bible = _dramatic_bible([
+        _scene("scene_001", ["char_001"], "transition", "exposition"),
+        _scene("scene_002", ["char_002"], "action", "inciting_incident"),
+        _scene("scene_003", ["char_001", "char_002"], "emotional", "inciting_incident"),
+        _scene("scene_004", ["char_001"], "action", "climax"),
+    ])
+    assert style_sample_selection(bible).scene.id == "scene_003"
+
+
+def test_proof_scene_never_prefers_the_climax_or_a_late_scene():
+    from novel_to_comic.style_briefing import style_sample_selection
+    scenes = [_scene("scene_001", ["char_001"], "action", "climax")]
+    scenes += [_scene(f"scene_{index:03}", ["char_001"]) for index in range(2, 30)]
+    scenes.append(_scene("scene_030", ["char_001"], "action", "rising_action"))
+    assert style_sample_selection(_dramatic_bible(scenes)).scene.id == "scene_002"
+
+
+def test_proof_brief_asks_for_a_charged_moment_ending_on_a_face():
+    from novel_to_comic.stages.s2_style import STYLE_SAMPLE_BRIEF_SYSTEM_PROMPT
+    assert "quiet" not in STYLE_SAMPLE_BRIEF_SYSTEM_PROMPT
+    assert "instant just before a turn" in STYLE_SAMPLE_BRIEF_SYSTEM_PROMPT
+    assert "face, large in frame" in STYLE_SAMPLE_BRIEF_SYSTEM_PROMPT
+    assert "two depth planes" in STYLE_SAMPLE_BRIEF_SYSTEM_PROMPT
+
+
+@pytest.mark.parametrize("mode", ["editable", "integrated"])
+def test_both_proof_modes_carry_the_legibility_clause(mode):
+    from novel_to_comic.stages.s2_style import _style_proof_direction
+    config = Config(style_template="Bold ink.", lettering_mode=mode)
+    _template, constraints = _style_proof_direction(config, None, _bible())
+    assert "focal face so its expression reads at thumbnail size" in constraints
 
 
 # ── stage run ────────────────────────────────────────────────────────────────

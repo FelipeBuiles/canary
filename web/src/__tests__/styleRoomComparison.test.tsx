@@ -284,3 +284,43 @@ it.each(["queued", "running"] as const)("hides the approval footer while style s
     state.jobs = [];
   }
 });
+
+it("starts additional styles at directions until the new batch supplies its own progress", () => {
+  state.stylesMeta = { is_suggesting: true };
+  state.labels = ["Ink", "Watercolor"];
+  const previousBatch: GenerationJob = {
+    id: "previous-batch", project_name: "book", kind: "style_suggest", label: "Style suggestions",
+    payload: { style_phase: "proofs", proofs: { 1: { status: "complete" }, 2: { status: "complete" } } },
+    status: "complete", queue_position: null, queued_at: "2026-10-03T10:00:00Z",
+    started_at: "2026-10-03T10:00:01Z", finished_at: "2026-10-03T10:02:00Z", error: null,
+  };
+  state.jobs = [previousBatch];
+  const room = () => <I18nProvider><MemoryRouter initialEntries={["/projects/book/style"]}><Routes>
+    <Route path="/projects/:id/style" element={<StyleRoom />} />
+  </Routes></MemoryRouter></I18nProvider>;
+  const expectStep = (label: string) => {
+    const progress = screen.getByRole("region", { name: "Style generation progress" });
+    expect(within(progress).getByText("GENERATING ADDITIONAL STYLES")).toBeTruthy();
+    const steps = within(progress).getByRole("list", { name: "Style generation steps" });
+    const current = within(steps).getAllByRole("listitem").find((step) => step.getAttribute("aria-current") === "step");
+    expect(current?.textContent).toContain(label);
+  };
+  try {
+    const view = render(room());
+    expectStep("Choose directions");
+    // The job poll can also arrive before its first durable phase update.
+    const newBatch = { ...previousBatch, id: "new-batch", status: "running" as const,
+      queued_at: "2026-10-03T11:00:00Z", finished_at: null, payload: {} };
+    state.jobs = [previousBatch, newBatch];
+    view.rerender(room());
+    expectStep("Choose directions");
+    for (const [phase, label] of [["directions", "Choose directions"], ["production", "Design lettering"], ["proofs", "Paint proofs"]]) {
+      state.jobs = [previousBatch, { ...newBatch, payload: { style_phase: phase } }];
+      view.rerender(room());
+      expectStep(label);
+    }
+  } finally {
+    state.stylesMeta = {};
+    state.jobs = [];
+  }
+});

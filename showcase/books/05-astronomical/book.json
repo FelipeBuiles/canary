@@ -1,0 +1,147 @@
+{
+  "title": "Astronomical",
+  "author": "Sophia Light",
+  "description": "On a dying world, scientists discover a mysterious golden record from the stars. Decoding it could offer their civilization a way to survive. A 20-page science-fiction comic adapted from Sophia Light’s SCP Wiki tale, with a source-credit page. Made with Scenewright; shared under CC BY-SA 3.0.",
+  "allow_feature": true,
+  "expected_publication_version": null,
+  "id": "0110627cd88244f5933fb11bdd85bf2d",
+  "version": "8b830aab831f4059bb7d2b6fc29bfbc1",
+  "published_at": "2026-10-08T17:49:16.475211+00:00",
+  "pages": [
+    {
+      "number": 1,
+      "width": 1027,
+      "height": 1532,
+      "spread_role": "single"
+    },
+    {
+      "number": 2,
+      "width": 1028,
+      "height": 1530,
+      "spread_role": "left"
+    },
+    {
+      "number": 3,
+      "width": 1027,
+      "height": 1531,
+      "spread_role": "right"
+    },
+    {
+      "number": 4,
+      "width": 1027,
+      "height": 1531,
+      "spread_role": "left"
+    },
+    {
+      "number": 5,
+      "width": 1027,
+      "height": 1532,
+      "spread_role": "right"
+    },
+    {
+      "number": 6,
+      "width": 1027,
+      "height": 1532,
+      "spread_role": "left"
+    },
+    {
+      "number": 7,
+      "width": 1027,
+      "height": 1532,
+      "spread_role": "right"
+    },
+    {
+      "number": 8,
+      "width": 1028,
+      "height": 1530,
+      "spread_role": "left"
+    },
+    {
+      "number": 9,
+      "width": 1027,
+      "height": 1531,
+      "spread_role": "right"
+    },
+    {
+      "number": 10,
+      "width": 1024,
+      "height": 1536,
+      "spread_role": "left"
+    },
+    {
+      "number": 11,
+      "width": 1027,
+      "height": 1531,
+      "spread_role": "right"
+    },
+    {
+      "number": 12,
+      "width": 1027,
+      "height": 1531,
+      "spread_role": "left"
+    },
+    {
+      "number": 13,
+      "width": 1027,
+      "height": 1531,
+      "spread_role": "right"
+    },
+    {
+      "number": 14,
+      "width": 1024,
+      "height": 1536,
+      "spread_role": "left"
+    },
+    {
+      "number": 15,
+      "width": 1027,
+      "height": 1531,
+      "spread_role": "right"
+    },
+    {
+      "number": 16,
+      "width": 1027,
+      "height": 1531,
+      "spread_role": "left"
+    },
+    {
+      "number": 17,
+      "width": 1027,
+      "height": 1532,
+      "spread_role": "right"
+    },
+    {
+      "number": 18,
+      "width": 1027,
+      "height": 1531,
+      "spread_role": "left"
+    },
+    {
+      "number": 19,
+      "width": 1026,
+      "height": 1532,
+      "spread_role": "right"
+    },
+    {
+      "number": 20,
+      "width": 1027,
+      "height": 1531,
+      "spread_role": "single"
+    },
+    {
+      "number": 21,
+      "width": 1027,
+      "height": 1531,
+      "spread_role": "single"
+    }
+  ],
+  "source_credit": {
+    "title": "Astronomical",
+    "author": "Sophia Light",
+    "source_url": "https://scp-wiki.wikidot.com/astronomical",
+    "license": "CC BY-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-sa/3.0/"
+  },
+  "locale": null,
+  "translations": null
+}

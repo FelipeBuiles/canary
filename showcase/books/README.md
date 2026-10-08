@@ -6,6 +6,19 @@ The app reads these folders directly. No backoffice action or production account
 mapping is required. The catalogue is committed to Git and copied into the
 Docker image, so pushing to `main` deploys it.
 
+The sixth shelf entry is **Astronomical by Sophia Light**, replacing The Terror
+on October 8, 2026. Its reader ID is `0110627cd88244f5933fb11bdd85bf2d`;
+the edition contains 20 story pages and an SCP Wiki source-credit page, shared
+under CC BY-SA 3.0. The Terror is preserved locally under
+`showcase/retired-books/05-the-terror/`, outside the public catalogue.
+
+This entry copies the existing immutable public snapshot, retaining its reader
+ID, version, page bytes and spread roles. Its story-page pixels were compared
+with all 20 hash-verified Finish pages. Repackaging the working project was
+blocked by the local account storage limit; no quota settings were changed.
+Community recommendations and ready-to-post copy are in
+[the Astronomical sharing kit](../../docs/ops/astronomical-community-posts.md).
+
 ## Add or update a book
 
 From the repository root, run the provider-free packaging command:

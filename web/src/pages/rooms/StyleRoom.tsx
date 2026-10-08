@@ -482,7 +482,8 @@ export function StyleRoom() {
       ) : (isSuggesting || isStageGenerating) && (
         <StyleGenerationProgress
           job={activeBatchJob}
-          fallbackPhase={suggestions.length === 0 ? "directions" : "proofs"}
+          // Existing proofs belong to earlier batches, not this new suggestion run.
+          fallbackPhase={isStageGenerating && suggestions.length > 0 ? "proofs" : "directions"}
           title={isStageGenerating ? t("GENERATING STYLE OPTIONS") : t("GENERATING ADDITIONAL STYLES")}
         />
       )}

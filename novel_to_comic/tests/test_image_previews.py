@@ -10,6 +10,7 @@ from PIL import Image
 from novel_to_comic.ai import client
 from novel_to_comic.ai import admission
 from novel_to_comic.ai.errors import AITransportError
+from novel_to_comic.ai.context import ai_request_context
 from novel_to_comic.ai.image_previews import image_preview_events, image_preview_target, post_image_request
 from novel_to_comic.server.event_channel import EventChannel
 
@@ -105,6 +106,37 @@ def test_vertex_gateway_stream_failure_retains_ambiguous_credit_hold(monkeypatch
     asyncio.run(run())
     assert len(calls) == 1
     assert len(retained) == 1
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+@pytest.mark.parametrize("code", ["moderation_blocked", "content_policy_violation", "unknown_error"])
+def test_wrapped_openai_refusal_ends_without_retaining_a_hold_or_retrying(streamed, code, monkeypatch, tmp_path):
+    calls, retained = [], []
+    monkeypatch.setattr("novel_to_comic.server.credits.retain_ambiguous_job", retained.append)
+    body = {"error": {"message": (
+        "litellm.BadGatewayError: Openai-streamException - OpenAI image stream failed "
+        f"for gpt-image-2.5-sunburst; request_id=req_refused; detail=code={code}"
+    )}}
+
+    def respond(request):
+        calls.append(request)
+        if not streamed:
+            return httpx.Response(502, json=body)
+        event = {"type": "image_result", "status_code": 502, "headers": [], "body": json.dumps(body)}
+        return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                              content=f"data: {json.dumps(event)}\n\n")
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as transport:
+            monkeypatch.setattr(client, "_http", transport)
+            with ai_request_context(job_id="refused-job"), image_preview_events(tmp_path, "draw", lambda event: None):
+                result = await post_image_request("https://gateway/v1/images/edits", target="page:14",
+                    headers={}, json={"model": "image-sunburst-openai"})
+                assert result.status_code == 502
+
+    asyncio.run(run())
+    assert len(calls) == 1
+    assert retained == (["refused-job"] if code == "unknown_error" else [])
 
 
 @pytest.mark.parametrize("first", ["connect", "rate_limit", "preview_error"])

@@ -7,6 +7,7 @@ import { RevisionDraft } from "../components/pages/RevisionDraft";
 import { AnnotationEditor } from "../components/pages/AnnotationEditor";
 import { loadRevisionDraft, saveRevisionDraft } from "../api/pageRevisions";
 import type { PageCorrectionAnnotation, PageCorrectionBody, PageCorrectionPreview } from "../api/pages";
+import type { PageIssue } from "../types/api";
 
 const mocks = vi.hoisted(() => ({ preview: vi.fn(), submit: vi.fn(), jobStatus: "queued", refresh: vi.fn(), jobError: false, jobMissing: false }));
 vi.mock("../api/pageRevisions", async (importOriginal) => {
@@ -45,11 +46,13 @@ function saved(annotations: PageCorrectionAnnotation[], instruction = "Make his 
     changes: [{ id: "request-1", instruction, selected: true, annotations }],
     note: "", contextSourceUnitIds: [], updatedAt: new Date().toISOString() });
 }
-function renderDraft(openEditing = true) {
-  render(<QueryClientProvider client={new QueryClient()}><I18nProvider>
+function renderDraft(openEditing = true, issues: PageIssue[] = []) {
+  const client = new QueryClient();
+  const ui = () => <QueryClientProvider client={client}><I18nProvider>
     <RevisionDraft project="demo" pageNumber={1} {...target} comicPageSha256={"a".repeat(64)} compareRevision={null}
-      issues={[]} seeds={[]} onSeedsConsumed={vi.fn()} onJobQueued={vi.fn()} />
-  </I18nProvider></QueryClientProvider>);
+      issues={issues} seeds={[]} onSeedsConsumed={vi.fn()} onJobQueued={vi.fn()} />
+  </I18nProvider></QueryClientProvider>;
+  render(ui());
   const edit = screen.queryByRole("button", { name: /make changes/i });
   if (edit && openEditing) fireEvent.click(edit);
 }
@@ -84,6 +87,27 @@ describe("text-first page correction", () => {
     fireEvent.click(screen.getByRole("button", { name: "Generate revision" }));
     expect(mocks.submit.mock.calls[0][0].body.changes[0].id).toBe("request-1");
     mocks.jobStatus = "queued";
+  });
+  it.each([true, false])("reconnects a failed manual request to its tracked issue, retaining wording and marks (saved job: %s)", (savedJob) => {
+    mocks.jobStatus = "failed";
+    const marks: PageCorrectionAnnotation[] = [{ id: "pin", kind: "pin", points: [{ x: 0.4, y: 0.5 }], note: "Keep the coat" }];
+    saved(marks, "Give the audience member a different face");
+    if (savedJob) saveRevisionDraft({ ...loadRevisionDraft("demo", 1, target)!, submittedJobId: "queued-job" });
+    const issue: PageIssue = {
+      id: "page-issue-manual-1-1-request-1", issue_type: "manual_change", classification: "editorial_issue",
+      correction_kind: "render_fidelity", correction_owner: "draw", page_number: 1, render_revision: 1,
+      evidence: [], requested_correction: "Original wording", status: "open", resolution_revision: null,
+    };
+    renderDraft(true, [issue]);
+    expect(screen.queryByRole("button", { name: "ADD TO DRAFT" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    expect(mocks.preview.mock.calls[0][0].body.changes).toEqual([{
+      id: "request-1", issue_id: issue.id, instruction: "Give the audience member a different face", annotations: marks,
+    }]);
+    expect(loadRevisionDraft("demo", 1, target)?.changes[0].issue_id).toBe(issue.id);
+    expect(screen.getByRole("button", { name: "Generate revision" })).toHaveProperty("disabled", false);
+    fireEvent.click(screen.getByRole("button", { name: "Generate revision" }));
+    expect(mocks.submit.mock.calls[0][0]).toEqual(mocks.preview.mock.calls[0][0]);
   });
   it("restores Make changes on a completed request when returning to its original version", () => {
     mocks.jobStatus = "complete";

@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ErrorNotice } from "../composites/ErrorNotice";
 import { useI18n } from "../../i18n";
@@ -55,17 +55,20 @@ export function RevisionSwitcher({ project, pageNumber, revisions, selected, vie
           <ChevronLeft size={16} aria-hidden="true" />
         </button>
         <label className="sr-only" htmlFor={`revision-switcher-${pageNumber}`}>{t("Version")}</label>
-        <select id={`revision-switcher-${pageNumber}`} value={viewing}
-          className="min-h-9 border-x border-ink-black/25 bg-transparent px-2 font-meta text-xs font-bold"
-          onChange={(event) => { select.reset(); onView(Number(event.target.value)); }}>
-          {revisions.map((option) => (
-            <option key={option.revision} value={option.revision}>
-              {t("Revision")} {option.revision}
-              {option.revision === selected ? ` · ${t("Selected")}` : option.revision === latest ? ` · ${t("Latest")}` : ""}
-              {option.stale ? ` · ${t("earlier plan")}` : ""}
-            </option>
-          ))}
-        </select>
+        <div className="relative">
+          <select id={`revision-switcher-${pageNumber}`} value={viewing}
+            className="min-h-9 appearance-none border-x border-ink-black/25 bg-transparent pl-3 pr-9 font-meta text-xs font-bold"
+            onChange={(event) => { select.reset(); onView(Number(event.target.value)); }}>
+            {revisions.map((option) => (
+              <option key={option.revision} value={option.revision}>
+                {t("Revision")} {option.revision}
+                {option.revision === selected ? ` · ${t("Selected")}` : option.revision === latest ? ` · ${t("Latest")}` : ""}
+                {option.stale ? ` · ${t("earlier plan")}` : ""}
+              </option>
+            ))}
+          </select>
+          <ChevronDown size={14} aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" />
+        </div>
         <button type="button" className="flex min-h-9 min-w-9 items-center justify-center disabled:opacity-30"
           aria-label={t("Next version")} disabled={index >= revisions.length - 1} onClick={() => step(1)}>
           <ChevronRight size={16} aria-hidden="true" />
