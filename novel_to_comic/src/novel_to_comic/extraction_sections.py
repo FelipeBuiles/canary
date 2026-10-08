@@ -92,6 +92,9 @@ source_text is the only source; scenes supplies derived passage boundaries and s
 The registry is continuity context. Review this part's source for omissions using
 source_review; never rewrite the supplied authorities or earlier parts.
 Return JSON with title, author, style_notes (string or null), sequences and source_review.
+style_notes describe the story's visual world in one or two sentences: genre, era,
+technology, setting types and recurring physical motifs. Never prescribe colors,
+palette, lighting, mood, medium or art style; the author chooses those later.
 A sequence is a consecutive run of scenes that pursues one goal, conflict or
 situation and ends on a turn. Use as many sequences as the source supports,
 usually two to six. The source may be one stretch of a longer book: never shape

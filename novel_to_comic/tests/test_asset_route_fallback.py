@@ -173,14 +173,14 @@ def test_unknown_openai_outcome_is_absorbed_and_generated_on_fal(tmp_path, detai
     metric.assert_any_call("canary_absorbed_image_attempts_total", route="openai", surface="asset")
 
 
-def test_a_request_fault_stops_without_trying_fal_and_keeps_the_hold(tmp_path):
+def test_a_safety_refusal_stops_without_trying_fal_or_retaining_the_hold(tmp_path):
     moderation = _handler_failure(
         "OpenAI image submit failed for gpt-image-2.5-sunburst; upstream_status=400; detail=code=moderation_blocked")
     with pytest.raises(AITransportError) as caught:
         _run(tmp_path, _wire(), [moderation])
     assert _models(caught.value.calls) == [OPENAI]
     assert _released(caught.value.db) == []
-    assert JOB in credits._unsettled_jobs
+    assert JOB not in credits._unsettled_jobs
 
 
 def test_a_moderation_block_inside_the_stream_is_a_decline_not_a_lost_result(tmp_path):
@@ -194,6 +194,7 @@ def test_a_moderation_block_inside_the_stream_is_a_decline_not_a_lost_result(tmp
     assert classify_image_failure(caught.value) == "provider_blocked"
     assert "rejected" not in str(caught.value)
     assert not image_route_fallback.OPENAI_SUNBURST_CIRCUIT.is_open()
+    assert JOB not in credits._unsettled_jobs
 
 
 def test_an_unknown_fal_backup_attempt_is_retained_as_today(tmp_path):

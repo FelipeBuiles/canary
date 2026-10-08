@@ -79,7 +79,7 @@ def _ambiguous(job_id=JOB):
 
 
 def _marks_5xx(response):
-    """Like _post_with_retry: any gateway 5xx on an image submission is ambiguous."""
+    """Like the transport after an unknown gateway 5xx: retain the outcome."""
     def act():
         credits.retain_ambiguous_job(JOB)
         return response
@@ -216,20 +216,20 @@ def test_unknown_openai_outcome_is_absorbed_and_drawn_on_fal(tmp_path, failure):
     metric.assert_any_call("canary_absorbed_image_attempts_total", route="openai", surface="draw")
 
 
-@pytest.mark.parametrize("failure", [
-    _marks_5xx(_handler_failure(
-        "OpenAI image submit failed for gpt-image-2.5-sunburst; upstream_status=400; detail=code=moderation_blocked")),
-    _marks_5xx(_handler_failure(
-        "OpenAI image stream failed for gpt-image-2.5-sunburst; request_id=req_1; detail=code=moderation_blocked")),
-    _marks_5xx(_handler_failure("OpenAI image request_validation failed for gpt-image-2.5-sunburst")),
+@pytest.mark.parametrize("failure,held", [
+    (_handler_failure(
+        "OpenAI image submit failed for gpt-image-2.5-sunburst; upstream_status=400; detail=code=moderation_blocked"), False),
+    (_handler_failure(
+        "OpenAI image stream failed for gpt-image-2.5-sunburst; request_id=req_1; detail=code=moderation_blocked"), False),
+    (_marks_5xx(_handler_failure("OpenAI image request_validation failed for gpt-image-2.5-sunburst")), True),
 ])
-def test_request_faults_stop_without_trying_fal(tmp_path, failure):
+def test_request_faults_stop_without_trying_fal(tmp_path, failure, held):
     adapter = complete_page_adapter(Config(draw_model="image-sunburst"))
     with pytest.raises(AITransportError) as caught:
         _run(adapter, _compiled(tmp_path), [failure])
     assert len(caught.value.calls) == 1
-    # Today's behaviour: an ambiguous gateway 5xx keeps the hold for reconciliation.
-    assert JOB in credits._unsettled_jobs
+    # Safety refusals are terminal; an unclassified 5xx still needs reconciliation.
+    assert (JOB in credits._unsettled_jobs) is held
 
 
 def test_refusal_and_invalid_output_stop_without_trying_fal(tmp_path):

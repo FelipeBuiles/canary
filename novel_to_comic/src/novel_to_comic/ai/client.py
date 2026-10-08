@@ -232,7 +232,7 @@ async def _post_with_retry(
             else:
                 response = await admitted_post(_http, url, headers=headers, json=json)
             if not retry_ambiguous and response.status_code >= 500:
-                if not _fal_definitely_unsubmitted(response):
+                if not _image_definitely_failed(response):
                     from novel_to_comic.server.credits import retain_ambiguous_job
                     retain_ambiguous_job(current_ai_request_context().job_id)
                 return response
@@ -273,15 +273,25 @@ async def _post_with_retry(
         )
 
 
-def _fal_definitely_unsubmitted(response: httpx.Response) -> bool:
-    """Recognize only FAL connection failures before its queue accepted a POST."""
+def _image_definitely_failed(response: httpx.Response) -> bool:
+    """Recognize definite failures hidden by the proxy's generic 5xx wrapper.
+
+    An explicit OpenAI safety refusal is a terminal result, even inside an
+    accepted stream. Other stream failures can still represent paid work.
+    """
     try:
         body = response.json()
     except (TypeError, ValueError):
         return False
     error = body.get("error") if isinstance(body, dict) else None
     message = error.get("message") if isinstance(error, dict) else None
-    return isinstance(message, str) and bool(re.search(
+    if not isinstance(message, str):
+        return False
+    from novel_to_comic.image_route_fallback import openai_image_block_code, openai_image_failure_marker
+
+    if openai_image_failure_marker(message) and openai_image_block_code(message):
+        return True
+    return bool(re.search(
         r"\bFal-queueException - FAL submit_connect failed for "
         r"[a-zA-Z0-9_./-]+; detail=(?:ConnectError|ConnectTimeout|PoolTimeout)\b",
         message,

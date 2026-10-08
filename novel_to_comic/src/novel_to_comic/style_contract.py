@@ -25,6 +25,7 @@ LETTERING_MARKER = "LETTERING STANDARD —"
 FRAMING_MARKER = "PAGE FRAMING STANDARD —"
 DESIGN_MARKER = "POST-PRODUCTION LETTERING DESIGN —"
 CHARACTER_DESIGN_MARKER = "CHARACTER DESIGN —"
+COLOR_MARKER = "COLOR —"
 
 
 def rendering_style_template(visual_style: str) -> str:
@@ -92,6 +93,23 @@ def normalize_production_standard(
 def style_template_for_suggestion(suggestion: dict) -> str:
     """Return the complete selected style authority for samples and pages."""
     visual_style = str(suggestion.get("template") or "")
+    palette = str(suggestion.get("palette") or "").strip()
+    # Only suggestions with a declared color strategy carry palette authority,
+    # so styles selected before it keep their exact selected-template identity.
+    if suggestion.get("color_strategy") and palette:
+        visual_style += (
+            f"\n\n{COLOR_MARKER} {str(suggestion['color_strategy']).replace('_', ' ')}: {palette} "
+            "Render these hues at their stated saturation across every page. Do not add an "
+            "overall warm, yellow, sepia or aged-paper cast unless this palette names one."
+        )
+        if suggestion["color_strategy"] == "monochrome":
+            # Cyanotype-like proofs inverted the value structure: pale faces on a
+            # dark field, with the midtones that model them compressed.
+            visual_style += (
+                " Render positively: dark line and tone on a light ground, with a full value "
+                "range from paper white to deepest dark and faces modeled in light midtones; "
+                "never a negative or blueprint-like dark field with pale figures."
+            )
     character_design = str(suggestion.get("character_design") or "").strip()
     if character_design:
         family = str(suggestion.get("proportion_family") or "").strip()

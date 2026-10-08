@@ -89,6 +89,9 @@ retained as current reference.
 - [Telemetry and tracing simplification](research/2026-09-26-observability-simplification.md):
   design rationale for unified production debugging and durable-job traces,
   while preserving first-party recovery data.
+- [Graphic novel style quality](research/2026-10-08-graphic-novel-style-quality.md):
+  October 8 evidence on color, legibility and market styles, a cyanotype/novelty
+  medium gate, and proposed Style proof portfolio changes; not implemented.
 - [Self-service launch strategy](proposals/self-service-launch.md): September 9
   commercial direction, independent-use gates and automation priorities.
 - [First-scene campaign kit](proposals/first-scene-campaign.md): prepared copy,

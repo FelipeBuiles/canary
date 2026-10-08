@@ -85,12 +85,19 @@ class TargetFixtureReplay:
                 # Production is designed per sketch; replay the first recorded system.
                 source = next((item for item in recorded if item.get("lettering_design")), recorded[0])
                 return {key: source[key] for key in StyleProduction.model_fields if key in source}
+            # Recordings that predate color strategies and medium families replay a
+            # valid curated spread.
+            strategies = ("naturalistic", "saturated", "high_key", "muted", "monochrome", "naturalistic")
+            families = ("comic_production", "painted", "printmaking", "drawn", "collage", "painted")
             styles = [
-                {key: item[key] for key in StyleSketch.model_fields if key in item}
+                {"color_strategy": strategies[index % len(strategies)],
+                 "medium_family": families[index % len(families)]}
+                | {key: item[key] for key in StyleSketch.model_fields if key in item}
                 | {"portfolio_role": item.get("portfolio_role") or item.get("role")}
-                for item in recorded
+                for index, item in enumerate(recorded)
             ]
-            return {"medium_restriction": "", "proportion_restriction": "", "styles": styles}
+            return {"medium_restriction": "", "proportion_restriction": "", "color_restriction": "",
+                    "styles": styles}
         if feature == "style.sample_brief":
             return _json(
                 self.project_dir / "samples" / "style_sample_brief.json"
