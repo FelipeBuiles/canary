@@ -9,9 +9,27 @@ from pathlib import Path
 from urllib.parse import unquote
 
 import httpx
-import litellm
 import pytest
 import yaml
+
+import litellm
+
+# LiteLLM 1.101.0 uses static-only ReadOnly qualifiers on these two TypedDicts.
+# Pydantic correctly warns it cannot enforce dict immutability; these transport
+# contracts do not depend on it. Match exact fields and origin, not UserWarning
+# generally, so new schema warnings remain visible. Revisit on LiteLLM upgrades.
+pytestmark = [
+    pytest.mark.filterwarnings(
+        "ignore:Item 'summary' on TypedDict class 'ChatCompletionReasoningItem' "
+        "is using the `ReadOnly` qualifier\\. Pydantic will not protect items "
+        "from any mutation on dictionary instances\\.:UserWarning:pydantic\\._internal\\._generate_schema"
+    ),
+    pytest.mark.filterwarnings(
+        "ignore:Item 'langfuse_environment' on TypedDict class 'StandardCallbackDynamicParams' "
+        "is using the `ReadOnly` qualifier\\. Pydantic will not protect items "
+        "from any mutation on dictionary instances\\.:UserWarning:pydantic\\._internal\\._generate_schema"
+    ),
+]
 
 ROOT = Path(__file__).resolve().parents[2]
 MODELS = ["bedrock-claude-opus-5-5", "bedrock-claude-sonnet-5-5", "bedrock-claude-haiku-5-5"]

@@ -6,7 +6,7 @@ import hashlib
 import json
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from novel_to_comic.models.validation import EditorialIssue
 
@@ -66,6 +66,15 @@ class AdaptationBrief(RevisionedArtifact):
     desired_emphasis: tuple[str, ...] = ()
     target_page_min: int = Field(ge=1)
     target_page_max: int = Field(ge=1)
+
+    @model_serializer(mode="wrap")
+    def _omit_empty_unmatched(self, handler):
+        # An empty note must serialize exactly as a Brief written before the
+        # field existed: its content hash, Adapt lineage and prompts depend on it.
+        payload = handler(self)
+        if isinstance(payload, dict) and not payload.get("unmatched_protected_language", True):
+            del payload["unmatched_protected_language"]
+        return payload
 
     @model_validator(mode="after")
     def _validate_brief(self) -> "AdaptationBrief":

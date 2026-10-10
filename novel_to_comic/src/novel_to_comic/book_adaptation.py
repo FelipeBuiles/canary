@@ -1336,7 +1336,7 @@ def _brief_view(brief: AdaptationBrief) -> dict[str, Any]:
 
     return brief.model_dump(
         mode="json",
-        exclude={"revision", "content_sha256", "status"},
+        exclude={"revision", "content_sha256", "status", "unmatched_protected_language"},
     )
 
 

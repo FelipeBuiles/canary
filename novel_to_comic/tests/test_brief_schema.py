@@ -90,3 +90,24 @@ def test_authored_protected_language_edits_are_anchored_before_they_persist(tmp_
     assert revise_persisted_brief(artifacts, expected_revision=2, tone='cold').unmatched_protected_language == (
         'The door was never there.',
     )
+
+
+def test_brief_saved_before_unmatched_language_existed_keeps_its_hash():
+    import hashlib
+    import json
+
+    from novel_to_comic.models.adaptation import AdaptationBrief
+
+    legacy = {'revision': 2, 'status': 'draft', 'story_promises': ['Cross the gate.'], 'themes': [],
+              'point_of_view': '', 'narrator_treatment': '', 'tone': '', 'ambiguities': [], 'motifs': [],
+              'protected_language': ['I saw the door open.'], 'essential_events': [], 'character_turns': [],
+              'transformation_level': 'medium_specific', 'desired_emphasis': [],
+              'target_page_min': 1, 'target_page_max': 2}
+    digest = hashlib.sha256(json.dumps(legacy, ensure_ascii=False, separators=(',', ':'),
+                                       sort_keys=True).encode()).hexdigest()
+
+    brief = AdaptationBrief.model_validate({**legacy, 'content_sha256': digest})
+
+    # Adapt lineage, prompts and BookAdaptation.brief_sha256 all bind this serialization.
+    assert brief.content_sha256 == digest
+    assert brief.model_dump(mode='json') == {**legacy, 'content_sha256': digest}
