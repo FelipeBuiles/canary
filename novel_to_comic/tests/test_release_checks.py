@@ -68,3 +68,49 @@ def test_web_builds_before_serving_and_hydrating_production_html(checks, monkeyp
     assert "tests/test_public_site.py" in invoked[contracts]
     assert "tests/test_spa_static.py" in invoked[contracts]
     assert ("--silent=false" in invoked[hydration]) is verbose
+
+
+@pytest.mark.parametrize("verbose", [False, True])
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_check_output_is_logged_and_failure_stays_fatal(checks, capsys, verbose, exit_code):
+    import subprocess
+    import sys
+
+    checks.VERBOSE = verbose
+    args = [sys.executable, "-c", (
+        "import sys; print('stdout evidence'); print('stderr evidence', file=sys.stderr); "
+        f"sys.exit({exit_code})"
+    )]
+    if exit_code:
+        with pytest.raises(subprocess.CalledProcessError) as failure:
+            checks.run(args, cwd=checks.ROOT)
+        assert failure.value.returncode == exit_code
+    else:
+        checks.run(args, cwd=checks.ROOT)
+    terminal = capsys.readouterr()
+    log = (checks.LOG_DIR / "01.log").read_text()
+    assert "stdout evidence\n" in log and "stderr evidence\n" in log
+    status = "FAIL" if exit_code else "PASS"
+    assert f"{status}  [01]" in terminal.out
+    assert f"{status}  [01]" in (checks.LOG_DIR / "summary.log").read_text()
+    assert ("stdout evidence\n" in terminal.out + terminal.err) == (verbose or bool(exit_code))
+
+
+def test_export_stdout_remains_machine_readable(checks, capsys):
+    import sys
+
+    destination = checks.ROOT / "requirements.txt"
+    with destination.open("wb") as output:
+        checks.run([sys.executable, "-c", (
+            "import sys; print('package==1.0'); print('export diagnostic', file=sys.stderr)"
+        )], cwd=checks.ROOT, stdout=output)
+    assert destination.read_text() == "package==1.0\n"
+    assert "export diagnostic\n" in (checks.LOG_DIR / "01.log").read_text()
+    assert "export diagnostic\n" not in capsys.readouterr().out
+
+
+def test_missing_command_records_failure(checks, capsys):
+    with pytest.raises(FileNotFoundError):
+        checks.run([str(checks.ROOT / "missing-executable")], cwd=checks.ROOT)
+    assert "FAIL  [01]" in capsys.readouterr().out
+    assert "FAIL  [01]" in (checks.LOG_DIR / "summary.log").read_text()

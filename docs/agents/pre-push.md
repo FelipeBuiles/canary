@@ -18,11 +18,21 @@ that build. A failed check exits nonzero and stops the
 gate. It does not start development servers, build Docker images, or run the
 separate real PostgreSQL contracts.
 
-Successful npm dependency-tree checks and web builds show only check/pass status.
-Their complete stdout and stderr are printed if they fail. Use
-`./scripts/check_all.sh --verbose` to stream that output on successful runs too;
-it also exposes passing frontend test console diagnostics. The same flag is
-supported by `scripts/check_release.py` components.
+Every command shows a numbered RUN and PASS/FAIL line with elapsed time. Terminals
+show a live spinner; redirected output and Git GUI clients receive a heartbeat
+every ten seconds while a check runs. Successful command output stays in a
+per-run temporary `canary-checks-*` directory, printed at the start and finish.
+It contains numbered command logs and `summary.log` with each result and duration;
+logs remain available until the system cleans its temporary directory. A failure
+prints its diagnostics immediately and stops the gate. Use
+`./scripts/check_all.sh --verbose` to stream all command output too, including
+passing frontend test console diagnostics. The same flag is supported by
+`scripts/check_release.py` components.
+
+The Bedrock transport tests narrowly filter Pydantic's runtime-immutability
+warnings for two LiteLLM 1.101.0 TypedDict fields (`summary` and
+`langfuse_environment`). Those contracts do not rely on dict immutability.
+Other warnings remain enabled; revisit the filters when upgrading LiteLLM.
 
 These root package commands are also available:
 
