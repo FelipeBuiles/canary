@@ -55,6 +55,9 @@ class AdaptationBrief(RevisionedArtifact):
     ambiguities: tuple[str, ...] = ()
     motifs: tuple[str, ...] = ()
     protected_language: tuple[str, ...] = ()
+    # Phrases offered as protected language that the source does not carry.
+    # Kept visible for the author, never a verbatim obligation.
+    unmatched_protected_language: tuple[str, ...] = ()
     essential_events: tuple[str, ...] = ()
     character_turns: tuple[str, ...] = ()
     transformation_level: Literal["faithful", "medium_specific", "transformative"] = (

@@ -36,7 +36,7 @@ const checks: { group: Group; codes: string[]; explanation: string }[] = [
   { group: "lettering", codes: ["incomplete_display_text", "trailing_clipped_display_text"],
     explanation: msg("Some dialogue or captions may be unfinished or have incomplete quotation marks.") },
   { group: "lettering", codes: ["protected_language_missing"],
-    explanation: msg("Wording you asked to keep exactly is missing from the comic script.") },
+    explanation: msg("Wording you asked to keep exactly is missing from the comic script. Resume adaptation to letter the book’s exact wording, or change the phrase under Protected language in the Story room.") },
   { group: "lettering", codes: ["lettering_allocation", "lettering_changed", "unknown_lettering", "duplicate_lettering", "lettering_beat_mismatch"],
     explanation: msg("The page plan needs to keep every line of dialogue and narration once, in order, with the right story moment.") },
   { group: "continuity", codes: ["unknown_entity", "reference_authority", "unapproved_appearance_state"],

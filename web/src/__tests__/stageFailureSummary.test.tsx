@@ -78,7 +78,7 @@ describe("Author-facing stage checks", () => {
     const group = await screen.findByRole("region", { name: title });
     expect(within(group).getByText(count)).toBeTruthy();
     expect(within(group).getByText(location)).toBeTruthy();
-    expect(within(group).queryByText("Wording you asked to keep exactly is missing from the comic script.")).toBeNull();
+    expect(within(group).queryByText("Wording you asked to keep exactly is missing from the comic script. Resume adaptation to letter the book’s exact wording, or change the phrase under Protected language in the Story room.")).toBeNull();
   });
 
   it("does not show an empty report", () => {
