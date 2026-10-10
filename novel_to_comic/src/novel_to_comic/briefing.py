@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict
 from novel_to_comic.narrative_instructions import BRIEF_DEPICTION_GUIDANCE
 from novel_to_comic.models.adaptation import AdaptationBrief
 from novel_to_comic.models.source import SourceDocument
+from novel_to_comic.protected_language import anchor_protected_language
 from novel_to_comic.models.story_bible import StoryBible, story_bible_context
 from novel_to_comic.cast_roster import cast_character_ids
 from novel_to_comic.book_context import book_context_instructions
@@ -73,7 +74,7 @@ def inherited_brief_fields(brief: AdaptationBrief) -> dict[str, Any]:
 def brief_inference_schema(*, inherited: Mapping[str, Any] | None = None) -> dict:
     """Request only inferred story direction; code owns approval and inheritance."""
     schema = AdaptationBrief.model_json_schema()
-    owned = {"revision", "content_sha256", "status", *(inherited or {})}
+    owned = {"revision", "content_sha256", "status", "unmatched_protected_language", *(inherited or {})}
     schema["properties"] = {name: value for name, value in schema["properties"].items() if name not in owned}
     schema["required"] = [name for name in schema.get("required", []) if name not in owned]
     return schema
@@ -272,6 +273,7 @@ async def infer_brief(
     return propose_brief(
         inferred_content,
         page_envelope=story_page_envelope(source, story_bible),
+        source=source,
     )
 
 
@@ -287,7 +289,7 @@ _LIST_FIELDS = (
 )
 _TEXT_FIELDS = ("point_of_view", "narrator_treatment", "tone")
 _TRANSFORMATION_LEVELS = ("faithful", "medium_specific", "transformative")
-_AUTHORED_FIELDS = ("revision", "status", "content_sha256")
+_AUTHORED_FIELDS = ("revision", "status", "content_sha256", "unmatched_protected_language")
 
 
 def _transformation_level(described: str) -> str:
@@ -376,24 +378,43 @@ def propose_brief(
     *,
     page_envelope: tuple[int, int] | None = None,
     inherited: Mapping[str, Any] | None = None,
+    source: SourceDocument | None = None,
 ) -> AdaptationBrief:
     """Parse inferred adaptation intent without allowing inference to approve it.
 
     ``inherited`` series fields replace whatever the model returned for them.
+    With ``source``, protected language is anchored to the wording it quotes.
     """
 
+    normalized = normalize_inferred_brief(inferred_content, page_envelope=page_envelope)
+    if source is not None:
+        normalized.update(_anchored_protected_language(source, normalized.get("protected_language", ())))
     return AdaptationBrief.model_validate(
         {
-            **normalize_inferred_brief(
-                inferred_content,
-                page_envelope=page_envelope,
-            ),
+            **normalized,
             **(inherited or {}),
             "revision": 1,
             "status": "draft",
             "content_sha256": "",
         }
     )
+
+
+def _anchored_protected_language(source: SourceDocument, phrases: Any) -> dict[str, tuple[str, ...]]:
+    """Replace protected phrases with the source wording they quote.
+
+    A Brief model routinely recases a word or drops an attribution tag from
+    the passage it protects. Adapt can only letter what the source says, so
+    the draft carries the source's wording, and a phrase the source lacks is
+    set aside where the author can see it instead of becoming an obligation
+    no script can meet.
+    """
+    if isinstance(phrases, str):
+        phrases = (phrases,)
+    anchored, unmatched = anchor_protected_language(source, (str(p) for p in phrases or ()))
+    if unmatched:
+        logger.warning("Protected language not found in source: %r", unmatched)
+    return {"protected_language": anchored, "unmatched_protected_language": unmatched}
 
 
 def _reject_stale_revision(
@@ -436,6 +457,10 @@ def revise_persisted_brief(
 ) -> AdaptationBrief:
     """Persist a stale-safe edit and remove every artifact derived from Brief."""
 
+    if "protected_language" in changes:
+        changes = {**changes, **_anchored_protected_language(
+            artifacts.read_source(), changes["protected_language"],
+        )}
     revised = revise_brief(
         artifacts.read_brief(),
         expected_revision=expected_revision,

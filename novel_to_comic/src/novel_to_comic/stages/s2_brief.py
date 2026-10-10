@@ -41,18 +41,18 @@ def _inference_prompt(project_dir: Path):
                                           book=book_context(project_dir))
     page_envelope = story_page_envelope(source, story_bible, part_id=part)
     inherited = inherited_brief_fields(previous) if previous is not None else None
-    return prompt, page_envelope, inherited
+    return prompt, page_envelope, inherited, source
 
 
 async def run(config: Config, project_dir: Path, ctx: StageRuntime):
     target = TargetArtifacts(project_dir)
-    prompt, page_envelope, inherited = _inference_prompt(project_dir)
+    prompt, page_envelope, inherited, source = _inference_prompt(project_dir)
     model = config.effective_brief_model()
     schema = brief_inference_schema(inherited=inherited)
     estimate = estimate_text_cost(model, prompt + json.dumps(schema), output_chars=8_000)
 
     def parse(raw: object):
-        return propose_brief(raw, page_envelope=page_envelope, inherited=inherited)
+        return propose_brief(raw, page_envelope=page_envelope, inherited=inherited, source=source)
 
     def correction(raw: object, error: Exception) -> str:
         # Provider traces can truncate before the validation feedback. Keep the
@@ -108,7 +108,7 @@ def estimate_cost(config: Config, project_dir: Path, state: PipelineState) -> fl
     target = TargetArtifacts(project_dir)
     if not target.source_path.exists() or not artifacts.story_bible_path(project_dir).exists():
         return 0.0
-    prompt, _envelope, inherited = _inference_prompt(project_dir)
+    prompt, _envelope, inherited, _source = _inference_prompt(project_dir)
     return estimate_text_cost(
         config.effective_brief_model(),
         prompt + json.dumps(brief_inference_schema(inherited=inherited)),

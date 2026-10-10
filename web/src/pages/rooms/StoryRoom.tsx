@@ -136,6 +136,23 @@ interface StoredBriefDraft {
   changes: Partial<AdaptationBrief>;
 }
 
+/** Phrases the Brief offered as protected language that the book does not contain. */
+function UnmatchedProtectedLanguage({ phrases }: { phrases: string[] }) {
+  const { t } = useI18n();
+  if (phrases.length === 0) return null;
+  return (
+    <section aria-label={t("Not found in the book")} className="border-l-4 border-hero-red/60 bg-surface-container px-4 py-3">
+      <h4 className="font-body text-sm font-semibold leading-6">{t("Not found in the book")}</h4>
+      <p className="mt-1 font-body text-xs leading-5 text-ink-muted">
+        {t("These lines are not protected because the book does not contain them word for word. To keep one exactly, add the book’s wording to Protected language.")}
+      </p>
+      <ul className="mt-3 space-y-2">
+        {phrases.map((phrase, index) => <li key={index} className="whitespace-pre-wrap break-words font-body text-sm leading-6">{phrase}</li>)}
+      </ul>
+    </section>
+  );
+}
+
 const BRIEF_FIELD_LABELS: Partial<Record<keyof AdaptationBrief, string>> = {
   story_promises: "STORY PROMISES", themes: "THEMES", point_of_view: "POINT OF VIEW",
   narrator_treatment: "NARRATOR TREATMENT", tone: "TONE", ambiguities: "AMBIGUITIES TO PRESERVE",
@@ -390,7 +407,8 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
               <BriefSection id="desired-emphasis" title={t("DESIRED EMPHASIS")} value={draft.desired_emphasis} onChange={(value) => change("desired_emphasis", splitLines(value))} />
             </div>
           </div>
-          <details className="group border-t-2 border-ink-black/15 pt-2">
+          {/* Open when a protected phrase was set aside, so the author sees why. */}
+          <details open={(savedBrief.unmatched_protected_language?.length ?? 0) > 0 || undefined} className="group border-t-2 border-ink-black/15 pt-2">
             <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-baseline gap-x-4 gap-y-1 py-3 [&::-webkit-details-marker]:hidden">
               <span className="inline-flex items-center gap-2 font-display text-xl font-black uppercase">
                 <ChevronRight size={20} aria-hidden="true" className="text-hero-red transition-transform group-open:rotate-90 motion-reduce:transition-none" />
@@ -404,6 +422,7 @@ function StoryEditor({ id, data, brief, parts, stageStatus, focus, onFocusClosed
               </div>
               <div className="min-w-0 space-y-6">
                 {(["motifs", "protected_language"] as const).map((key) => <BriefSection key={key} id={key.replaceAll("_", "-")} title={t(BRIEF_FIELD_LABELS[key]!)} value={draft[key]} onChange={(value) => change(key, splitLines(value))} />)}
+                <UnmatchedProtectedLanguage phrases={savedBrief.unmatched_protected_language ?? []} />
               </div>
             </div>
           </details>

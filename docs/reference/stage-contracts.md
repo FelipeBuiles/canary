@@ -725,6 +725,29 @@ drafts author non-lettering `continuity_intent` for scene transitions, staging,
 and held-object ownership. Canonicalization folds it into `ComicPage.layout_intent`
 as ordered panel staging, not a new `PageContent.continuity_intent` field.
 
+### Protected language
+
+Protected language is a verbatim obligation only for wording the source carries
+(`protected_language.py`). When Brief proposes a draft, or an author edits the
+list, each phrase is anchored to the source. If the Brief quoted a passage with
+different casing or punctuation, or left out an attribution tag between two
+quotations, the phrase is replaced with the source's own wording. A dialogue
+passage keeps its tag, so each quotation is checked verbatim. Only in-order,
+word-for-word matches count; similar wording does not anchor. A phrase the
+source lacks moves to `unmatched_protected_language`, which the Story room shows
+and Adapt ignores.
+
+Adapt checks approved Briefs the same way. A phrase that is still unanchored
+becomes an `unanchored_protected_language` editorial issue, never a blocking
+failure. An anchored phrase that is missing blocks with source scope, so repair
+can target it. When repair is spent and missing protected wording is the only
+blocking failure, Adapt letters the source wording once, provider-free, as a
+`quoted_text` caption with a reserved `lettering_protected_` ID. The caption goes
+on the beat that already carries that source, or else on the scene's nearest
+beat, and it never crosses shard ownership. Validation reports each such caption
+as `protected_language_lettered_by_canary` for review. The candidate then
+passes narrative review as usual.
+
 ### Plan and Adapt progress and transport limits
 
 Plan publishes a display-only progress snapshot (`StageState.snapshot`, pushed

@@ -150,7 +150,7 @@ export function AdaptProgressBoard({ snapshot }: { snapshot: AdaptProgressSnapsh
           value={latest ? String(latest.blocking) : "—"}
           label={t("Issues to fix")}
           detail={latest
-            ? t(latest.blocking ? "Check {n} of {max}" : "Check {n} passed", { n: String(latest.round), max: String(snapshot.max_rounds) })
+            ? t(latest.blocking ? "Check {n} of {max}" : "Check {n} passed", { n: String(latest.round), max: String(Math.max(snapshot.max_rounds, latest.round)) })
             : undefined}
         />
       </ProgressStats>

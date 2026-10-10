@@ -988,7 +988,7 @@ def test_source_scoped_repairs_do_not_receive_another_shards_missing_phrase():
 
 
 def test_protected_source_matching_does_not_erase_literal_symbols():
-    from novel_to_comic.book_adaptation import _protected_source_key
+    from novel_to_comic.protected_language import protected_source_key as _protected_source_key
     for text in ("x*y*z", "snake_case_word", "3 * 4 * 5", "unmatched *word", r"\*literal\*"):
         assert _protected_source_key(text) == text
 
@@ -2416,7 +2416,7 @@ def test_protected_passage_may_span_consecutive_balloons_in_reading_order(balloo
     )})
     brief = _approved_brief().model_copy(update={"protected_language": (_SPLIT_SPEECH,)})
 
-    result = validate_book_adaptation(_source_document(), brief, adaptation)
+    result = validate_book_adaptation(_source_from_units(_SPLIT_SPEECH + " "), brief, adaptation)
 
     assert ("protected_language_missing" in [f.code for f in result.invariant_failures]) == missing
 
@@ -2435,8 +2435,110 @@ def test_attributed_speech_tag_comma_is_not_protected_wording():
     "I saw the door open.",
 ])
 def test_narration_and_lone_quotations_are_not_attributed_speech(phrase):
-    from novel_to_comic.book_adaptation import _protected_speech
+    from novel_to_comic.protected_language import protected_speech as _protected_speech
     assert _protected_speech(phrase) == ()
+
+
+# The Monkey's Paw, as extraction splits it. A Brief protected this passage
+# with "Fakir" recased and the attribution tag dropped: wording no lettering
+# could match verbatim while staying faithful to the source.
+_MONKEYS_PAW_SOURCE = (
+    "“It had a spell put on it by an old fakir,” said the sergeant-major, “a very holy man. ",
+    "He wanted to show that fate ruled people’s lives, and that those who interfered with it "
+    "did so to their sorrow. ",
+    "He put a spell on it so that three separate men could each have three wishes from it.” ",
+)
+_MONKEYS_PAW_BRIEF_PHRASE = (
+    "It had a spell put on it by an old Fakir, a very holy man. He wanted to show that fate "
+    "ruled people’s lives, and that those who interfered with it did so to their sorrow."
+)
+_MONKEYS_PAW_WORDING = (
+    '"It had a spell put on it by an old fakir," said the sergeant-major, "a very holy man. '
+    "He wanted to show that fate ruled people's lives, and that those who interfered with it "
+    'did so to their sorrow."'
+)
+
+
+def test_brief_phrase_with_elided_attribution_anchors_to_source_wording():
+    from novel_to_comic.protected_language import anchor_protected_phrase
+
+    source = _source_from_units(*_MONKEYS_PAW_SOURCE)
+    assert anchor_protected_phrase(source, _MONKEYS_PAW_BRIEF_PHRASE) == _MONKEYS_PAW_WORDING
+    assert anchor_protected_phrase(source, _MONKEYS_PAW_WORDING) == _MONKEYS_PAW_WORDING
+    # Similar is not verbatim: reworded, reordered or stitched wording anchors to nothing.
+    for phrase in (
+        "It had a curse put on it by an old fakir, a very holy man.",
+        "A very holy man put a spell on it.",
+        "It had a spell put on it by an old fakir, so that three separate men could each have three wishes.",
+    ):
+        assert anchor_protected_phrase(source, phrase) is None
+
+
+@pytest.mark.parametrize(("balloons", "missing"), [
+    (("It had a spell put on it by an old fakir,", "a very holy man. He wanted to show that fate ruled "
+      "people’s lives, and that those who interfered with it did so to their sorrow."), False),
+    (("It had a spell put on it by an old fakir. A very holy man wanted to show that fate ruled lives.",), True),
+])
+def test_tag_elided_protected_speech_is_checked_against_source_quotations(balloons, missing):
+    source = _source_from_units(*_MONKEYS_PAW_SOURCE)
+    adaptation = _with_lettering_text(balloons[0])
+    beat = adaptation.beats[0]
+    lettering = tuple(
+        beat.lettering[0].model_copy(update={"id": f"lettering_{index:03d}", "text": text})
+        for index, text in enumerate(balloons, start=1)
+    )
+    adaptation = adaptation.model_copy(update={"beats": (beat.model_copy(update={"lettering": lettering}),)})
+    brief = _approved_brief().model_copy(update={"protected_language": (_MONKEYS_PAW_BRIEF_PHRASE,)})
+
+    result = validate_book_adaptation(source, brief, adaptation)
+    failures = [f for f in result.invariant_failures if f.code == "protected_language_missing"]
+
+    assert bool(failures) == missing
+    if missing:
+        # A located phrase always has a repair scope.
+        assert failures[0].source_unit_ids == ("source_000001", "source_000002")
+        assert failures[0].evidence[1] == "Source wording to letter: " + repr(_MONKEYS_PAW_WORDING)
+
+
+def test_protected_phrase_absent_from_source_is_an_editorial_note_not_a_blocker():
+    brief = _approved_brief().model_copy(update={"protected_language": ("The door was never there.",)})
+    result = validate_book_adaptation(_source_document(), brief, _with_lettering_text("I saw the door open."))
+
+    assert "protected_language_missing" not in [f.code for f in result.invariant_failures]
+    issue = next(i for i in result.editorial_issues if i.code == "unanchored_protected_language")
+    assert issue.evidence[0] == "Protected phrase not found in source: 'The door was never there.'"
+
+
+def test_unlettered_protected_speech_gets_a_reviewable_source_caption_after_repair():
+    from novel_to_comic.book_adaptation import _letter_missing_protected_language, _protected_fallback_applies
+
+    source = _source_from_units(*_MONKEYS_PAW_SOURCE)
+    brief = _approved_brief().model_copy(update={"protected_language": (_MONKEYS_PAW_BRIEF_PHRASE,)})
+    candidate = _with_lettering_text("The sergeant-major said a fakir cursed it.")
+    blocked = validate_book_adaptation(source, brief, candidate)
+    shards = (tuple(unit.id for unit in source.units),)
+    assert _protected_fallback_applies(
+        AdaptationValidation(invariant_failures=tuple(
+            f for f in blocked.invariant_failures if f.code == "protected_language_missing")),
+        candidate, source, brief, shards,
+    )
+
+    lettered = _letter_missing_protected_language(candidate, source, brief, shards)
+    caption = lettered.beats[0].lettering[-1]
+    assert caption.id == "lettering_protected_001"
+    assert (caption.kind, caption.delivery) == ("caption", "quoted_text")
+    assert caption.text == (
+        '"It had a spell put on it by an old fakir, a very holy man. He wanted to show that fate '
+        "ruled people's lives, and that those who interfered with it did so to their sorrow.\""
+    )
+    assert caption.source_unit_ids == ("source_000001", "source_000002")
+    result = validate_book_adaptation(source, brief, lettered)
+    assert "protected_language_missing" not in [f.code for f in result.invariant_failures]
+    assert "protected_language_lettered_by_canary" in [i.code for i in result.editorial_issues]
+    assert _letter_missing_protected_language(lettered, source, brief, shards) == lettered
+    # Placement never crosses shard ownership.
+    split = (("source_000001",), ("source_000002", "source_000003"))
+    assert _letter_missing_protected_language(candidate, source, brief, split) == candidate
 
 
 def test_paraphrased_protected_language_still_blocks() -> None:

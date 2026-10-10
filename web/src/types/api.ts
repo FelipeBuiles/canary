@@ -545,6 +545,8 @@ export interface AdaptationBrief {
   ambiguities: string[];
   motifs: string[];
   protected_language: string[];
+  /** Offered as protected language but absent from the source; never an obligation. */
+  unmatched_protected_language?: string[];
   essential_events: string[];
   character_turns: string[];
   transformation_level: "faithful" | "medium_specific" | "transformative";

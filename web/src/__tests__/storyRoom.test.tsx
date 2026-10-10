@@ -32,6 +32,7 @@ const storyDecision = {
     ambiguities: [],
     motifs: ["Salt air"],
     protected_language: [],
+    unmatched_protected_language: [] as string[],
     essential_events: ["The final discovery"],
     character_turns: ["Defiance becomes terror"],
     transformation_level: "medium_specific",
@@ -110,6 +111,19 @@ describe("StoryRoom", () => {
       extract: { status: "complete" },
       brief: { status: "awaiting_review" },
     };
+  });
+
+  it("shows Brief phrases the book does not contain as unprotected notes", () => {
+    storyState = { data: { ...storyDecision, brief: { ...storyDecision.brief, unmatched_protected_language: ["Be careful what you wish for."] } }, isLoading: false, error: null };
+    renderRoom();
+    const note = screen.getByRole("region", { name: "Not found in the book" });
+    expect(note.textContent).toContain("Be careful what you wish for.");
+    expect(note.closest("details")?.open).toBe(true);
+  });
+
+  it("omits the unprotected-phrase note when every phrase is in the book", () => {
+    renderRoom();
+    expect(screen.queryByRole("region", { name: "Not found in the book" })).toBeNull();
   });
 
   it("places the part and the whole book in the manuscript hero, before the brief", () => {

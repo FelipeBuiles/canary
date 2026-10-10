@@ -41,6 +41,16 @@ from novel_to_comic.narrative_review import (
 )
 from novel_to_comic.stage_runtime import StageRuntime
 from novel_to_comic.paid_shards import run_paid_pipeline, run_paid_shards
+from novel_to_comic.protected_language import (
+    anchor_protected_phrase,
+    contains_protected_language,
+    protected_caption_text,
+    protected_language_key,
+    protected_language_realized,
+    protected_source_key,
+    protected_source_unit_ids,
+    protected_speech,
+)
 from novel_to_comic.target_artifacts import TargetArtifacts
 from novel_to_comic.text_utils import normalize_display_text
 from novel_to_comic.usage import ApiResult, estimate_text_cost
@@ -960,125 +970,19 @@ def _closest_requirement_beat(
     )
 
 
-def _protected_display_wording(text: str) -> str:
-    return re.sub(r"\s+/\s+", " ", normalize_display_text(text)).strip()
-
-
-def _protected_language_key(text: str) -> str:
-    # Briefs frequently preserve dialogue with source quotation marks, while
-    # a comic balloon correctly carries only the spoken words.  Those wrappers
-    # are presentation, not protected wording; retain every interior character
-    # (including Spanish opening/closing punctuation) for the verbatim check.
-    return _protected_display_wording(text).strip('"“”«»').strip()
-
-
-def _protected_language_pattern(phrase: str) -> re.Pattern[str] | None:
-    """Match wording, allowing only the initial case change of an excerpt.
-
-    The Brief may capitalize a clause lifted from mid-sentence. Interior case,
-    punctuation and words remain significant; neither authority is rewritten.
-    """
-    excerpt = _protected_language_key(phrase)
-    if not excerpt:
-        return None
-    initial = "(?:" + "|".join(re.escape(c) for c in {excerpt[0].lower(), excerpt[0].upper()}) + ")"
-    return re.compile(r"(?<!\w)" + initial + re.escape(excerpt[1:]) + r"(?!\w)")
-
-
-def _contains_protected_language(text: str, phrase: str) -> bool:
-    pattern = _protected_language_pattern(phrase)
-    return pattern is not None and pattern.search(_protected_language_key(text)) is not None
-
-
-def _protected_speech(phrase: str) -> tuple[str, ...]:
-    """Return the quotations of a dialogue-led protected passage.
-
-    A Brief may protect speech with its attribution, e.g. ``"Goblins aren't
-    very bright," he thought. "I'm bigger."``. A comic letters only the spoken
-    words: the tag becomes balloon ownership and its comma a sentence break.
-    Such a passage obliges each quotation verbatim, less that tag comma.
-    Narration-led phrases and lone quotations are not dialogue passages.
-    """
-    wording = _protected_display_wording(phrase)
-    spans = list(re.finditer(r'"([^"]*)"|«([^«»]*)»', wording))
-    if not spans or spans[0].start() != 0 or (len(spans) == 1 and spans[0].end() == len(wording)):
-        return ()
-    return tuple(
-        speech
-        for span in spans
-        if (speech := (span.group(1) or span.group(2) or "").strip().removesuffix(",").rstrip())
-    )
-
-
-def _lettered_in_reading_order(phrase: str, wordings: tuple[str, ...]) -> bool:
-    """Whether one balloon, or a run of consecutive ones, letters the phrase.
-
-    A comic splits a long protected speech across balloons. Each word must
-    still survive verbatim and in reading order; a balloon break reads as the
-    space between sentences.
-    """
-    if (pattern := _protected_language_pattern(phrase)) is None:
-        return False
-    keys = tuple(_protected_language_key(wording) for wording in wordings)
-    length = len(_protected_language_key(phrase))
-    for start, first in enumerate(keys):
-        run = first
-        if pattern.search(run):
-            return True
-        # Extend only while the match could still begin inside the first item;
-        # a later start covers the remaining runs.
-        for key in keys[start + 1:]:
-            if len(run) - len(first) >= length:
-                break
-            run = f"{run} {key}"
-            if pattern.search(run):
-                return True
-    return False
-
-
-def _protected_language_realized(phrase: str, wordings: Iterable[str]) -> bool:
-    wordings = tuple(wordings)
-    if _lettered_in_reading_order(phrase, wordings):
-        return True
-    speech = _protected_speech(phrase)
-    return bool(speech) and all(
-        _lettered_in_reading_order(quotation, wordings) for quotation in speech
-    )
-
-
-def _protected_source_unit_ids(source: SourceDocument, phrase: str) -> tuple[str, ...]:
-    """Source units carrying a phrase's protected wording, in source order.
-
-    Extraction splits sentences, quotations, and attribution tags into separate
-    units, while a Brief quotes the passage as a reader sees it. Search the
-    joined source so wording that crosses a unit boundary is still located.
-    """
-    joined, bounds = "", []
-    for unit in source.units:
-        if not (wording := _protected_display_wording(_strip_source_emphasis(unit.text))):
-            continue
-        start = len(joined) + 1 if joined else 0
-        joined = f"{joined} {wording}" if joined else wording
-        bounds.append((unit.id, start, len(joined)))
-    matched: set[str] = set()
-    for needle in _protected_speech(phrase) or (phrase,):
-        if (pattern := _protected_language_pattern(needle)) is None:
-            continue
-        for match in pattern.finditer(joined):
-            matched.update(unit_id for unit_id, start, end in bounds
-                           if start < match.end() and match.start() < end)
-    return tuple(unit_id for unit_id, _, _ in bounds if unit_id in matched)
-
-
 def _protected_language_obligations(source, brief, source_ids):
     owned = set(source_ids)
     obligations = []
     for phrase in brief.protected_language:
-        matches = [unit_id for unit_id in _protected_source_unit_ids(source, phrase) if unit_id in owned]
+        # Oblige the source's own wording; a phrase the source lacks is a
+        # Brief editorial note, not a verbatim obligation.
+        if (wording := anchor_protected_phrase(source, phrase)) is None:
+            continue
+        matches = [unit_id for unit_id in protected_source_unit_ids(source, wording) if unit_id in owned]
         if not matches:
             continue
-        obligation: dict[str, Any] = {"text": phrase}
-        if speech := _protected_speech(phrase):
+        obligation: dict[str, Any] = {"text": wording}
+        if speech := protected_speech(wording):
             obligation["lettered_wording"] = list(speech)
         obligations.append({**obligation, "source_unit_ids": matches})
     return obligations
@@ -1092,17 +996,6 @@ def _quoted_source_wording(text: str) -> tuple[str, ...]:
         for match in re.finditer(r'[“"]\s*(.+?)\s*[”"]', text, flags=re.DOTALL)
         if (wording := re.sub(r"\s+", " ", match.group(1)).strip())
     )
-
-
-def _strip_source_emphasis(text: str) -> str:
-    # Only paired word-boundary emphasis, not arbitrary asterisks/underscores
-    # (multiplication and identifiers remain literal source wording).
-    return re.sub(r"(?<![\w\\])(\*\*|__|\*|_)(?=\S)(.+?\S|\S)\1(?!\w)", r"\2", text)
-
-
-def _protected_source_key(text: str) -> str:
-    """Compare source emphasis as presentation without changing source bytes."""
-    return _protected_language_key(_strip_source_emphasis(text))
 
 
 def _complete_source_quote_excerpt(item: LetteringItem, source_by_id) -> LetteringItem:
@@ -1145,8 +1038,8 @@ def _materialize_protected_lettering(
             and item.text in protected
             and any(
                 source_id in source_by_id
-                and _contains_protected_language(
-                    _protected_source_key(source_by_id[source_id].text), item.text
+                and contains_protected_language(
+                    protected_source_key(source_by_id[source_id].text), item.text
                 )
                 for source_id in item.source_unit_ids
             )
@@ -1157,7 +1050,7 @@ def _materialize_protected_lettering(
     ]
     ledger = list(candidate.ledger)
     existing_keys = [
-        _protected_language_key(item.text) for beat in beats for item in beat.lettering
+        protected_language_key(item.text) for beat in beats for item in beat.lettering
     ]
     source_by_id = {unit.id: unit for unit in source.units}
     ledger_index_by_source = {
@@ -1181,14 +1074,17 @@ def _materialize_protected_lettering(
         "caption": "caption",
     }
     for phrase in brief.protected_language:
-        phrase_key = _protected_language_key(phrase)
-        if _protected_language_realized(phrase, existing_keys):
+        if protected_language_realized(phrase, existing_keys):
             continue
+        wording = anchor_protected_phrase(source, phrase)
+        if wording is None or protected_language_realized(wording, existing_keys):
+            continue
+        phrase_key = protected_language_key(wording)
         source_unit = next(
             (
                 unit
                 for unit in source.units
-                if _contains_protected_language(_protected_source_key(unit.text), phrase)
+                if contains_protected_language(protected_source_key(unit.text), wording)
             ),
             None,
         )
@@ -1245,7 +1141,7 @@ def _materialize_protected_lettering(
         lettering = LetteringItem(
             id=f"lettering_{next_lettering_number:04d}",
             kind=kind,
-            text=phrase,
+            text=wording,
             delivery="quoted_text" if kind == "caption" else None,
             source_unit_ids=(source_unit.id,),
         )
@@ -1314,6 +1210,103 @@ def _materialize_protected_lettering(
             )}).model_dump(mode="json") for beat in beats],
             "ledger": [entry.model_dump(mode="json") for entry in ledger],
         }
+    )
+
+
+_PROTECTED_FALLBACK_PREFIX = "lettering_protected_"
+
+
+def _protected_fallback_beat(
+    beats: Sequence[AdaptedBeat],
+    ledger: Sequence[AdaptationLedgerEntry],
+    source: SourceDocument,
+    unit_ids: tuple[str, ...],
+) -> int | None:
+    """The beat that already carries a protected passage's source, else its scene's nearest."""
+    wanted = set(unit_ids)
+    position = {beat.id: index for index, beat in enumerate(beats)}
+    mapped = [position[beat_id] for entry in ledger if entry.source_unit_id in wanted
+              for beat_id in entry.adapted_beat_ids if beat_id in position]
+    citing = [index for index, beat in enumerate(beats) if wanted.intersection(beat.source_unit_ids)]
+    if mapped or citing:
+        return min(mapped or citing)
+    ordinal = {unit.id: unit.ordinal for unit in source.units}
+    scene_units = next((set(ids) for scene in source.scenes
+                        if wanted.intersection(ids := scene.unit_ids(source))), set())
+    anchor = ordinal[unit_ids[0]]
+    nearby = [
+        (min(abs(ordinal[u] - anchor) for u in beat.source_unit_ids if u in scene_units), index)
+        for index, beat in enumerate(beats)
+        if scene_units.intersection(beat.source_unit_ids)
+    ]
+    return min(nearby)[1] if nearby else None
+
+
+def _letter_missing_protected_language(
+    candidate: BookAdaptation,
+    source: SourceDocument,
+    brief: AdaptationBrief,
+    shards: Sequence[Sequence[str]] = (),
+) -> BookAdaptation:
+    """Letter still-missing protected wording as quoted captions, after repair.
+
+    The last resort once repair rounds are spent: the source wording is known,
+    so a source-faithful caption beats a blocked stage. Each insertion carries
+    a reserved ID that validation surfaces for review, since it may repeat a
+    paraphrased balloon. Placement never crosses shard ownership, and a phrase
+    with no nearby beat stays a blocking failure.
+    """
+    beats = list(candidate.beats)
+    ledger = list(candidate.ledger)
+    owner = {unit: index for index, ids in enumerate(shards) for unit in ids}
+    ordinal = {unit.id: unit.ordinal for unit in source.units}
+    keys = [protected_language_key(item.text) for beat in beats for item in beat.lettering]
+    number = 1 + sum(item.id.startswith(_PROTECTED_FALLBACK_PREFIX) for beat in beats for item in beat.lettering)
+    for phrase in brief.protected_language:
+        if protected_language_realized(phrase, keys):
+            continue
+        wording = anchor_protected_phrase(source, phrase)
+        if wording is None or protected_language_realized(wording, keys):
+            continue
+        unit_ids = protected_source_unit_ids(source, wording)
+        if not unit_ids:
+            continue
+        destination = _protected_fallback_beat(beats, ledger, source, unit_ids)
+        if destination is None:
+            continue
+        beat = beats[destination]
+        if owner and len({owner.get(u) for u in (*beat.source_unit_ids, *unit_ids)}) != 1:
+            continue
+        caption = LetteringItem(
+            id=f"{_PROTECTED_FALLBACK_PREFIX}{number:03d}", kind="caption",
+            delivery="quoted_text", text=protected_caption_text(wording), source_unit_ids=unit_ids,
+        )
+        number += 1
+        beats[destination] = beat.model_copy(update={
+            "lettering": (*beat.lettering, caption),
+            "source_unit_ids": tuple(sorted({*beat.source_unit_ids, *unit_ids}, key=ordinal.__getitem__)),
+        })
+        # An omission exception no longer describes a unit this caption letters.
+        for index, entry in enumerate(ledger):
+            if entry.source_unit_id in unit_ids and entry.disposition == "intentionally_omitted":
+                ledger[index] = entry.model_copy(update={
+                    "disposition": "caption", "adapted_beat_ids": (beat.id,), "reason": None,
+                })
+        keys.append(protected_language_key(caption.text))
+    if beats == list(candidate.beats):
+        return candidate
+    return BookAdaptation.model_validate({
+        **candidate.model_dump(mode="json"), "content_sha256": "",
+        "beats": [beat.model_dump(mode="json") for beat in beats],
+        "ledger": [entry.model_dump(mode="json") for entry in ledger],
+    })
+
+
+def _protected_fallback_applies(validation, candidate, source, brief, shards) -> bool:
+    """Whether missing protected wording is all that blocks, and lettering it changes the script."""
+    return (
+        {failure.code for failure in validation.invariant_failures} == {"protected_language_missing"}
+        and _letter_missing_protected_language(candidate, source, brief, shards) != candidate
     )
 
 
@@ -4052,7 +4045,12 @@ async def produce_book_adaptation(
         history: list[ValidationAttempt] = []
         previous_failures: tuple[InvariantFailure, ...] = ()
         pending_repair_batch = resume_work.pending_repair if resume_work else None
-        for validation_attempt in range(1, _MAX_ADAPT_VALIDATION_ATTEMPTS + 1):
+        # Repair rounds are bounded by _may_repair_validation_attempt; one
+        # extra provider-free check may follow, lettering protected wording.
+        lettered_fallback = False
+        validation_attempt = 0
+        while True:
+            validation_attempt += 1
             progress.publish("checking")
             draft, beat_to_shard = _merged_draft(drafts)
             candidate = BookAdaptation(
@@ -4070,6 +4068,8 @@ async def produce_book_adaptation(
                 brief,
                 story_bible=story_bible,
             )
+            if lettered_fallback:
+                candidate = _letter_missing_protected_language(candidate, source, brief, shards)
             validation = validate_book_adaptation(
                 source,
                 brief,
@@ -4108,8 +4108,13 @@ async def produce_book_adaptation(
                     current_failures=validation.invariant_failures,
                 )
                 or any(f.code == "narrative_review_invalid" for f in validation.invariant_failures)
+                or lettered_fallback
             ):
                 # Malformed editorial evidence cannot justify rewriting story.
+                if not lettered_fallback and _protected_fallback_applies(validation, candidate, source, brief, shards):
+                    lettered_fallback = True
+                    ctx.log("Adapt repair left protected language unlettered; lettering its source wording.")
+                    continue
                 break
             previous_failures = validation.invariant_failures
             drafts = _partition_reviewed_candidate(candidate, shards)
@@ -4119,6 +4124,9 @@ async def produce_book_adaptation(
                 shard_source_ids=shards,
             )
             if not affected:
+                if _protected_fallback_applies(validation, candidate, source, brief, shards):
+                    lettered_fallback = True
+                    continue
                 break
             progress.repairing(affected)
             repair_scopes = [
@@ -4653,19 +4661,38 @@ def validate_book_adaptation(
     # balloon. They routinely disagree on quote style, dash form, and line
     # wrapping while carrying identical words, so compare under the shared
     # display-text policy instead of raw substring identity.
-    complete_wording = tuple(_protected_language_key(item.text) for item in lettering)
-    missing_protected = [
-        phrase
-        for phrase in brief.protected_language
-        if not _protected_language_realized(phrase, complete_wording)
-    ]
-    for phrase_index, phrase in enumerate(missing_protected):
-        missing_source_ids = _protected_source_unit_ids(source, phrase)
+    complete_wording = tuple(protected_language_key(item.text) for item in lettering)
+    missing_protected: list[tuple[str, str]] = []
+    for phrase_index, phrase in enumerate(brief.protected_language):
+        if not phrase.strip() or protected_language_realized(phrase, complete_wording):
+            continue
+        wording = anchor_protected_phrase(source, phrase)
+        if wording is None:
+            # The Brief quoted wording this source does not carry. No lettering
+            # can be both source-faithful and verbatim, so it cannot block.
+            issues.append(EditorialIssue(
+                id=f"adapt_issue_unanchored_protected_language_{phrase_index}",
+                owner_stage="adapt",
+                code="unanchored_protected_language",
+                message="A protected phrase in the Brief does not appear in the source.",
+                evidence=[
+                    "Protected phrase not found in source: " + repr(phrase),
+                    "To keep it word for word, replace it in the Brief with the book's exact wording.",
+                ],
+            ))
+            continue
+        if not protected_language_realized(wording, complete_wording):
+            missing_protected.append((phrase, wording))
+    for phrase_index, (phrase, wording) in enumerate(missing_protected):
+        missing_source_ids = protected_source_unit_ids(source, wording)
         missing_beats = tuple(dict.fromkeys(
             beat_id for entry in adaptation.ledger
             if entry.source_unit_id in missing_source_ids
             for beat_id in entry.adapted_beat_ids
         ))
+        evidence = ["Missing exact protected phrase: " + repr(phrase)]
+        if wording != phrase:
+            evidence.append("Source wording to letter: " + repr(wording))
         failures.append(
             InvariantFailure(
                 id="adapt_failure_protected_language_missing" + (f"_{phrase_index}" if phrase_index else ""),
@@ -4674,11 +4701,26 @@ def validate_book_adaptation(
                 message="Protected language must survive verbatim in publishable wording.",
                 source_unit_ids=missing_source_ids,
                 artifact_ids=missing_beats,
-                evidence=[
-                    "Missing exact protected phrase: " + repr(phrase)
-                ],
+                evidence=evidence,
             )
         )
+    for item in lettering:
+        if item.id.startswith(_PROTECTED_FALLBACK_PREFIX):
+            issues.append(EditorialIssue(
+                id=f"adapt_issue_protected_language_lettered_by_canary_{item.id}",
+                owner_stage="adapt",
+                code="protected_language_lettered_by_canary",
+                message=(
+                    "Canary lettered protected language that Adapt left out. "
+                    "Check that it reads naturally and does not repeat a balloon."
+                ),
+                source_unit_ids=item.source_unit_ids,
+                artifact_ids=[item.id],
+                evidence=[
+                    "Canary lettered this protected passage from the book: " + repr(item.text),
+                    "Check that it reads naturally and does not repeat a balloon.",
+                ],
+            ))
 
     # The approved Brief is the sole requirement text registry.
     registry = _requirement_registry(brief)
@@ -4993,9 +5035,9 @@ def _omission_issues(
     )
     issues: list[EditorialIssue] = []
     protected_units = {
-        normalize_display_text(phrase): set(_protected_source_unit_ids(source, phrase))
+        normalize_display_text(phrase): set(protected_source_unit_ids(source, wording))
         for phrase in brief.protected_language
-        if phrase.strip()
+        if (wording := anchor_protected_phrase(source, phrase)) is not None
     }
     for entry in omitted:
         dropped = [phrase for phrase, unit_ids in protected_units.items()

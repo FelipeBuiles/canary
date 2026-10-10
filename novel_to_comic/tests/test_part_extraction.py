@@ -249,7 +249,7 @@ def test_every_part_of_a_multi_part_book_knows_its_place_in_brief_and_adapt(tmp_
     bible = _extract(root, "part_0001", config)
     first = part_workspace(root, "part_0001")
 
-    prompt, _envelope, _inherited = _inference_prompt(first)
+    prompt, _envelope, _inherited, _source = _inference_prompt(first)
     context = json.loads(prompt[prompt.index("{"):])
     # Part 1 of 2 is not a complete story, even before any later part exists.
     assert prompt.startswith("This source is part 1 of 2 of one book.")
