@@ -57,6 +57,10 @@ retained as current reference.
   supported version lines, upgrade contracts, and operational rollout checks.
 - [Backend test maintenance](reference/backend-tests.md): timing and duplication
   audit, coverage-preserving trimming, and real-browser fixture reuse.
+- [Test coverage analysis, October 9](reviews/2026-10-09-test-coverage.md):
+  measured line/branch snapshot with LCOV and Cobertura exports, contract
+  evidence, CI gaps, and prioritized follow-up; historical evidence rather
+  than a coverage policy.
 - [Stage contracts](reference/stage-contracts.md): source-owned stage authority,
   user gates, correction jobs, recovery, and generated-output compatibility.
 - [Textract close-up OCR](reference/textract-ocr.md): opt-in hosted verification,

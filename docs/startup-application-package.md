@@ -30,6 +30,18 @@ Our goal is to make comic adaptation accessible to authors who already have a st
 
 We plan to use Claude through Anthropic's API for the narrative tasks in Scenewright: understanding manuscripts, drafting adaptation briefs, turning prose into visual beats and dialogue, and planning comic pages. Each task uses approved story context and produces structured outputs linked to the source text. Authors retain control through approval checkpoints and page review. Program credits would let us evaluate Claude on representative stories and expand its use where it improves source fidelity, narrative coherence, or correction effort. We'd track those outcomes alongside latency and cost per reviewed page.
 
+### Anthropic form — "How you're building"
+
+Written in the founder's voice. Claude is already integrated: Opus 5.5, Sonnet 5.5, and Haiku 5.5 run on the direct Anthropic API with native structured output (`text_models.py`, `ai/anthropic_schema.py`). Each answer must be 50–500 characters.
+
+**What are you building on Claude?**
+
+Scenewright turns novels into finished comics, and Claude does the reading. On the Anthropic API, Opus builds the story bible, drafts the adaptation brief, and decides what each page shows and each character says, with every beat linked to its source passage. Sonnet and Haiku handle lighter steps. Our image models draw from Claude's page plans, so the whole comic depends on how well Claude reads the book.
+
+**Where do you want support from Anthropic?**
+
+Both building and running it. I build Scenewright with Claude Code, and a Claude Team plan would let me use it daily, from debugging the pipeline to polishing the studio. In the product, one book sends Claude through the manuscript several times, so API credits would let me run real books end to end, find where Sonnet or Haiku can replace Opus, and pilot with authors at no cost to them. I'd also value guidance on prompt caching across stages that share one manuscript.
+
 ### Google — under 100 words
 
 We plan to use Gemini on Vertex AI for manuscript understanding and visual generation in Scenewright. Our code already includes Google image-generation integrations. The workflow supplies story context and approved visual references to produce style proofs, cast references, and complete comic pages, which authors review and revise. Google program support would help us evaluate model choices across those tasks, focusing on narrative fidelity, character continuity, page composition, latency, and cost per reviewed page. We would expand usage based on the results and the services covered by the program.
